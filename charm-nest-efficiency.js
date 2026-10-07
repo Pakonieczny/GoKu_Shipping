@@ -94,7 +94,19 @@
   const tx = (node, text) => { if (!node) return; node._tx = text || ""; if (!hcOn()) node.title = text || ""; };
   const shown = node => String(node ? node.textContent : "").replace(/[▼▲]/g, "").replace(/\s+/g, " ").trim();
   /** a number with its name, its value as shown, one line of definition and (when the row has it) the live detail */
-  const metricCard = (node, key, ctx, val) => hc(node, () => { const v = val ? val() : shown(node); return { title: HC[key][0], sub: typeof ctx === "function" ? ctx() : ctx || "", rows: v && v !== "—" ? [{ k: "Now", v }] : [], note: HC[key][1], foot: node._tx || "" }; });
+  const metricCard = (node, key, ctx, val, more) => hc(node, () => { const v = val ? val() : shown(node); return { title: HC[key][0], sub: typeof ctx === "function" ? ctx() : ctx || "", rows: (v && v !== "—" ? [{ k: "Now", v }] : []).concat(more ? more() : []), note: HC[key][1], foot: node._tx || "" }; });
+  /** What a station's figure is made of, in plain words (Paul, 7 Oct 2026: the station totals did not match the one person shown): a row per person who has something at it, then the line nobody is
+   *  credited with, then the orders two people both touched (counted once), so the rows add up to the figure. col: "parts" | "orders" | "matched" | "both" (pieces and orders, for a group's caption). */
+  const NOONE = "No one signed in at the desk";
+  function madeOf(s, col, ev) {
+    if (!s) return [];
+    const val = (o, c) => (c === "parts" ? pcs(o.parts) : nf(o[c])), rows = [], both = o => { const b = []; if (ev !== false && N(o.parts) > 0) b.push(pcs(o.parts)); b.push(`${nf(o.orders)} ${Math.round(N(o.orders)) === 1 ? "order" : "orders"}`); return b.join(" · "); };
+    for (const b of s.byPerson || []) if (col === "both" ? b.orders > 0 || b.parts > 0 : b[col] > 0) rows.push({ k: b.name, v: col === "both" ? both(b) : val(b, col) });
+    const u = s.unattr;
+    if (u && (col === "both" ? u.orders > 0 || u.parts > 0 || u.scans > 0 : u[col] > 0)) rows.push({ k: NOONE, v: col === "both" ? both(u) : val(u, col), d: "Scanned with no one signed in: no person to credit" });
+    if (s.shared > 0 && (col === "orders" || col === "both")) rows.push({ k: "Counted by two people", v: "−" + nf(s.shared), d: "An order two people both touched is counted once" });
+    return rows;
+  }
 
   /* ── motion: one tween for numbers and chart geometry (instant under reduced motion) ── */
   function tween(ms, step, done) {
@@ -146,17 +158,23 @@
       return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), nowDevices, devices, source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders, noThroughput: weldOnly(p, stations) };
     });
     const b = r.business || {}, bt = b.totals || {};
+    const here = new Set(people.map(p => p.name.toLowerCase()));
+    const absent = [...new Set((Array.isArray(r.absent) ? r.absent : []).map(n => String(n || "").trim()).filter(n => n && !here.has(n.toLowerCase())))].map(name => ({ name, on: false, absent: true, inDay: "", firstIn: null, lastOut: null, onSince: null, nowAt: [], nowDevices: [], devices: [], source: "none", stations: [], perHour: hours24(null), orders: [], noThroughput: false,
+      t: { parts: 0, scanParts: 0, scans: 0, rejects: 0, errors: 0, orders: 0, activeMin: 0, idleMin: 0, signedInMin: 0, rate: 0, secPerScan: 0 } }));   // (the roster's people with no sign-in and no work in these days: listed, "Not signed in today")
+    const uo = b.unattributed && typeof b.unattributed === "object" ? { parts: N(b.unattributed.parts), scans: N(b.unattributed.scans), orders: N(b.unattributed.orders), matched: N(b.unattributed.matched) } : null;
     const stRows = new Map();
     for (const s of Array.isArray(b.stations) ? b.stations : []) if (s && s.station) {
       const k = displayStation(String(s.station)), had = stRows.get(k), now = (Array.isArray(s.peopleNow) ? s.peopleNow : []).map(String), tm = taskMin(s.taskMin);
-      if (had) { had.parts += N(s.parts); had.scans += N(s.scans); had.orders += N(s.orders); had.matched += N(s.matched); if (tm) had.taskMin = had.taskMin ? { welding: had.taskMin.welding + tm.welding, matching: had.taskMin.matching + tm.matching, unknown: had.taskMin.unknown + tm.unknown } : tm; for (const n of now) if (!had.now.includes(n)) had.now.push(n); }
-      else stRows.set(k, { station: k, parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), matched: N(s.matched), taskMin: tm, now, hours: new Array(24).fill(0),
+      const by = (Array.isArray(s.byPerson) ? s.byPerson : []).filter(x => x && x.name).map(x => ({ name: String(x.name), parts: N(x.parts), scans: N(x.scans), orders: N(x.orders), matched: N(x.matched) })), ua = s.unattributed && typeof s.unattributed === "object" ? { parts: N(s.unattributed.parts), scans: N(s.unattributed.scans), orders: N(s.unattributed.orders), matched: N(s.unattributed.matched) } : null;
+      if (had) { had.byPerson.push(...by); if (ua) had.unattr = had.unattr ? { parts: had.unattr.parts + ua.parts, scans: had.unattr.scans + ua.scans, orders: had.unattr.orders + ua.orders, matched: had.unattr.matched + ua.matched } : ua; had.shared += N(s.shared);
+        had.parts += N(s.parts); had.scans += N(s.scans); had.orders += N(s.orders); had.matched += N(s.matched); if (tm) had.taskMin = had.taskMin ? { welding: had.taskMin.welding + tm.welding, matching: had.taskMin.matching + tm.matching, unknown: had.taskMin.unknown + tm.unknown } : tm; for (const n of now) if (!had.now.includes(n)) had.now.push(n); }
+      else stRows.set(k, { station: k, parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), matched: N(s.matched), taskMin: tm, now, hours: new Array(24).fill(0), byPerson: by, unattr: ua, shared: N(s.shared),
         desks: NUMBERED[k] && Array.isArray(s.devices) ? s.devices.filter(d => d && deskKey(k, d.device)).map(d => ({ device: deskKey(k, d.device), parts: N(d.parts), scans: N(d.scans), orders: N(d.orders), now: (Array.isArray(d.peopleNow) ? d.peopleNow : []).map(String) })) : null,   // (one entry per desk, Assembly 1..4 / Shipping 1..3; null from a service that does not tell desks apart)
         rest: NUMBERED[k] && s.unassigned && typeof s.unassigned === "object" ? { parts: N(s.unassigned.parts), scans: N(s.unassigned.scans), orders: N(s.unassigned.orders) } : null });   // (what no desk claims: old records, shown as the kind alone)
     }
     const ph = {};                                                           // (per-hour pieces by station, a stored "sorter" or "qr" series added to Sorting's)
     for (const [k0, v] of Object.entries(b.perHour && typeof b.perHour === "object" ? b.perHour : {})) { const k = displayStation(k0); ph[k] = ph[k] ? sum24([ph[k], hours24(v)]) : hours24(v); }
-    for (const k of Object.keys(ph)) { if (!stRows.has(k)) stRows.set(k, { station: k, parts: 0, scans: 0, orders: 0, matched: 0, taskMin: null, now: [], hours: null }); stRows.get(k).hours = hours24(ph[k]); }
+    for (const k of Object.keys(ph)) { if (!stRows.has(k)) stRows.set(k, { station: k, parts: 0, scans: 0, orders: 0, matched: 0, taskMin: null, now: [], hours: null, byPerson: [], unattr: null, shared: 0 }); stRows.get(k).hours = hours24(ph[k]); }
     const hoursAll = Object.keys(ph).length ? sum24(Object.keys(ph).map(k => hours24(ph[k]))) : sum24(people.map(p => p.perHour));
     const sumP = k => people.reduce((n, p) => n + p.t[k], 0);
     const activeMin = sumP("activeMin"), parts = bt.parts == null ? sumP("parts") : N(bt.parts);
@@ -164,8 +182,8 @@
     const marker = f => f.action === "note" && !f.orderId && !N(f.parts) && (f.detail == null || /^(opened|selected) order$/i.test(String(f.detail).trim()));
     const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: displayStation(String(f.station || "")), device: deskKey(displayStation(String(f.station || "")), f.device), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
     return {
-      day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people,
-      biz: { parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
+      day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people, everyone: people.concat(absent),   // (everyone: the people with something, then the roster's others "not signed in"; People and its roster list this, every count and total reads `people`)
+      biz: { unattributed: uo && (uo.parts > 0 || uo.scans > 0 || uo.orders > 0 || uo.matched > 0) ? uo : null, parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
         trend: (Array.isArray(b.trend) ? b.trend : []).filter(d => d && d.day).map(d => ({ day: String(d.day), parts: N(d.parts), orders: N(d.orders), people: N(d.people), source: String(d.source || "") })) },
       feed, sources: r.sources || {}, notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial, errors: Array.isArray(r.errors) ? r.errors : []
     };
@@ -410,6 +428,7 @@
 .efPH,.efPRow{display:grid;grid-template-columns:minmax(214px,1.2fr) minmax(214px,1.5fr) 56px 56px 66px 56px 66px 100px 92px;align-items:center;gap:0 12px}
 .efPH{padding:9px 18px 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-weight:700;border-bottom:1px solid var(--line2)}
 .efPH span:nth-child(n+3):nth-child(-n+7){text-align:right}.ef[data-range="n"] .efPHs{visibility:hidden}
+.efRc.absent .efRcName{color:var(--ink45)}.efRc.absent .efRcFig b{color:var(--ink25)}.efP.absent .efName{color:var(--ink45)}.efP.absent .efN>b{color:var(--ink25)}.efUn .efWho{cursor:default}.efUn .efName{font-weight:600;color:var(--ink70);white-space:normal;line-height:1.25}.efUn .efSt{background:transparent;border:1px dashed var(--ink25)}
 .efP+.efP{border-top:1px solid var(--line2)}.efP{transition:background .3s}.efP.open{background:var(--card2)}.efP.open:last-child{border-radius:0 0 12px 12px}
 .efPRow{padding:9px 18px}
 .efWho{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;gap:1px 10px;text-align:left;border:0;background:transparent;padding:2px 0;border-radius:6px;min-width:0;align-items:center}
@@ -844,7 +863,7 @@
     const k = E.keyIn.value.trim(); if (!k) { setText(E.keyErr, "Enter the passcode."); E.keyIn.focus(); return; }
     st.checking = true; E.keyBtn.disabled = true; E.keyBtn.innerHTML = `<span class="spin" aria-hidden="true"></span>Checking…`; setText(E.keyErr, "");
     try {
-      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined }, k);
+      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, roster: true }, k);
       st.key = k; store.set(KEY_STORE, k); E.keyIn.value = ""; E.key.classList.add("hidden"); unlockBar(); st.err = ""; accept(r, true); schedule(options.pollMs); ensureMounts(); pollLive();
     } catch (x) {
       E.keyIn.value = ""; setText(E.keyErr, x.auth ? "That passcode was not accepted. Try again." : x.message); E.keyIn.focus();
@@ -892,7 +911,7 @@
     const gen = st.gen, delta = st.data && st.data.cursor && !st.reset ? st.data.cursor : "";
     st.busy = true; st.ctl = root.AbortController ? new AbortController() : null; paintLive();
     try {
-      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, after: delta || undefined }, null, st.ctl && st.ctl.signal);
+      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, after: delta || undefined, roster: true }, null, st.ctl && st.ctl.signal);
       if (gen !== st.gen) return;
       st.fails = 0; st.err = ""; st.errShort = ""; accept(r, false);
     } catch (e) {
@@ -1036,8 +1055,9 @@
   /** The caption row of a numbered station's group: its name and its own totals (all its desks together). */
   function headRow(x, M) {
     let h = st.stHeads.get(x.head);
-    if (!h) { const e = el("div", "efSG", `<span class="efSGN"></span><span class="efSGT"></span>`); e.dataset.group = x.head; h = { e, n: e.firstChild, t: e.lastChild }; st.stHeads.set(x.head, h); setText(h.n, NAMES[x.head]); e.title = "All the stations of this kind together"; }
-    const s = x.s, ev = M.sources.events !== false, bits = [];
+    if (!h) { const e = el("div", "efSG", `<span class="efSGN"></span><span class="efSGT"></span>`); e.dataset.group = x.head; h = { e, n: e.firstChild, t: e.lastChild }; st.stHeads.set(x.head, h); setText(h.n, NAMES[x.head]); if (!hcOn()) e.title = "All the stations of this kind together";
+      hc(e, () => { const rows = madeOf(h.s, "both", h.ev); return { title: NAMES[x.head], sub: "All the stations of this kind together", rows, note: rows.length ? "Who the totals are made of. An order two people both touched is counted once." : "" }; }); }
+    const s = x.s, ev = M.sources.events !== false, bits = []; h.s = s; h.ev = ev;
     if (ev) bits.push(pcs(s.parts)); if (ev || M.sources.seals) bits.push(`${nf(s.orders)} ${Math.round(s.orders) === 1 ? "order" : "orders"}`);
     setText(h.t, bits.join(" · "));
     return h;
@@ -1054,7 +1074,7 @@
         r = { e, w: e.querySelector(".efSW"), pc: e.querySelector('[data-c="parts"]'), oc: e.querySelector('[data-c="orders"]'), pl: e.querySelector('[data-c="parts"] small'), ol: e.querySelector('[data-c="orders"] small'), wd: false, s: null, parts: e.querySelector('[data-c="parts"] .efNum'), orders: e.querySelector('[data-c="orders"] .efNum'), sp: spark(e.querySelector(".efSp"), { w: 112, h: 22 }), spEl: e.querySelector(".efSp") };
         st.stRows.set(k, r);
         const sn = () => stName(k);
-        metricCard(e.querySelector('[data-c="parts"]'), "parts", sn, () => shown(r.parts)); metricCard(e.querySelector('[data-c="orders"]'), "orders", sn, () => shown(r.orders));
+        metricCard(e.querySelector('[data-c="parts"]'), "parts", sn, () => shown(r.parts), () => madeOf(r.s, "parts")); metricCard(e.querySelector('[data-c="orders"]'), "orders", sn, () => shown(r.orders), () => madeOf(r.s, "orders"));
         hc(r.w, () => (r.names ? { title: HC.here[0], sub: sn(), note: r.names, foot: r.quiet || HC.here[1] } : null));
         hc(r.spEl, () => (r.spEl.style.visibility === "hidden" ? null : { title: HC.byhour[0], sub: sn(), note: HC.byhour[1] }));
       }
@@ -1072,9 +1092,9 @@
       if (wd !== r.wd) {   // the Welding station (R2 of stations round 2): its matched scans and its time on task stand where pieces and orders are, and the cards say so
         r.wd = wd; r.e.dataset.weld = wd ? "1" : ""; setText(r.pl, wd ? "matched" : "pieces"); setText(r.ol, wd ? "" : "orders"); if (wd) r.oc.setAttribute("aria-label", "Time on task"); else r.oc.removeAttribute("aria-label");   // (the time stands alone: "on task" does not fit the column; its card says it)
         if (wd) {
-          hc(r.pc, () => ({ title: "Matched", sub: stName(k), rows: r.s && shown(r.parts) !== "—" ? [{ k: "Now", v: shown(r.parts) }] : [], note: "Order codes scanned as Matching. A scan is not a finished piece or a completed order: the Welding station is not counted in pieces or orders." }));
+          hc(r.pc, () => ({ title: "Matched", sub: stName(k), rows: (r.s && shown(r.parts) !== "—" ? [{ k: "Now", v: shown(r.parts) }] : []).concat(madeOf(r.s, "matched")), note: "Order codes scanned as Matching. A scan is not a finished piece or a completed order: the Welding station is not counted in pieces or orders." }));
           hc(r.oc, () => { const t = (r.s && r.s.taskMin) || tm; return { title: "Time on task", sub: stName(k), rows: [{ k: "Welding", v: dur(t.welding + t.unknown) }, { k: "Matching", v: dur(t.matching) }].concat(t.unknown > 0 ? [{ k: "No task recorded", v: dur(t.unknown), d: "Older sign-ins: counted as Welding" }] : []), note: "Time signed in at the Welding station, per task. Two people in the same task at once count once." }; });
-        } else { metricCard(r.pc, "parts", () => stName(k), () => shown(r.parts)); metricCard(r.oc, "orders", () => stName(k), () => shown(r.orders)); }
+        } else { metricCard(r.pc, "parts", () => stName(k), () => shown(r.parts), () => madeOf(r.s, "parts")); metricCard(r.oc, "orders", () => stName(k), () => shown(r.orders), () => madeOf(r.s, "orders")); }
       }
       const idle = evS && (wd ? !s.matched && !tmTot : !s.parts && !s.orders) && !now.length;
       if (wd) { fig(r.parts, s.matched, evS, nf, first); fig(r.orders, tmTot, evS, dur, first); }
@@ -1109,12 +1129,15 @@
     metricCard(r.parts.parentNode, "parts", who); metricCard(r.scans.parentNode, "scans", who); metricCard(r.ord, "orders", who); metricCard(r.rate.parentNode, "rate", who); metricCard(r.sec.parentNode, "sec", who);
     metricCard(r.act, "active", who);
     hc(r.spEl, () => (r.spEl.style.visibility === "hidden" ? null : { title: HC.byhour[0], sub: r.name, note: HC.byhour[1], foot: r.spEl._tx || "" }));
-    hc(r.who, () => ({ avatar: r.name, title: r.name, sub: r.st.classList.contains("on") ? "On now" : "Locked out", rows: r.when.textContent ? [{ k: "Day", v: r.when.textContent }] : [], note: "Press to open their page." }));
+    hc(r.who, () => ({ avatar: r.name, title: r.name, sub: r.absent ? "Not signed in" : r.st.classList.contains("on") ? "On now" : "Locked out", rows: r.when.textContent ? [{ k: "Day", v: r.when.textContent }] : [], note: "Press to open their page." }));
     return r;
   }
   /** "Parts scanned" is the pieces scanned; when a station logged scans without a piece count, the scans themselves. */
   const scanned = t => (t.scanParts > 0 ? { n: t.scanParts, tip: t.scans && t.scans !== t.scanParts ? `${nf(t.scanParts)} pieces scanned in ${nf(t.scans)} scans` : "Pieces scanned" } : { n: t.scans, tip: t.scans ? `${nf(t.scans)} scans (pieces were not counted)` : "" });
+  /** A roster person with no sign-in and no work in the days shown (Paul: "I'm not seeing Ivy anywhere"). */
+  const absentText = M => (M.days > 1 ? "Not signed in in these days" : M.past ? "Not signed in on this day" : "Not signed in today");
   function whenText(p, M) {
+    if (p.absent) return absentText(M);
     if (!p.firstIn) return p.source === "sessions" || !p.source ? "No sign-in recorded" : "From sealed work";
     const pre = p.inDay && (M.days > 1 || p.inDay !== M.day) ? wdOnly.format(dayDate(p.inDay)) + " " : "";
     let s = `In ${pre}${clock(p.firstIn)}`;
@@ -1136,13 +1159,14 @@
   }
   function updatePerson(r, p, M, first) {
     const on = p.on && !M.past;
-    r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
+    r.absent = !!p.absent; r.e.classList.toggle("absent", r.absent);
+    r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", p.absent ? `${p.name}, ${whenText(p, M)}` : `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
     const wt = whenText(p, M); setText(r.when, wt);
     const wl = weldLine(p);   // (the Welding station's time on task and matched count: the People tab's own helper and wording)
     const chips = chipsOf(p);
     const chipSig = chips.map(c => c.label + c.minutes + (c.taskMin ? ":" + c.taskMin.welding + "/" + c.taskMin.matching + "/" + c.taskMin.unknown : "") + (c.now ? "*" : "")).join() + "|" + on + "|" + (wl ? wl.text : "");
     if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = (chips.length ? chips.map(c => `<span class="efChip${c.now && on ? " now" : ""}"${c.taskMin ? ` title="Welding ${esc(dur(c.taskMin.welding + c.taskMin.unknown))} · Matching ${esc(dur(c.taskMin.matching))}"` : ""}><b>${esc(c.label)}</b>${esc(dur(c.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`) + (wl ? `<span class="efPW" title="${esc(wl.title)}">${esc(wl.text)}</span>` : ""); }
-    const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
+    const t = p.t, src = p.source, kParts = !p.absent && src !== "seals" && src !== "sessions", kOther = !p.absent && src !== "sessions";   // seals know orders and scans, not parts; sessions know only time (a person not signed in has none: dashes, never zeros)
     const sc = scanned(t);
     const nt = p.noThroughput;   // (Welding alone: no pieces, orders or rate to count, a dash as on the People tab and the person's page; scans stay, they are in the Scanned total)
     fig(r.parts, t.parts, kParts && !nt, nf, first); fig(r.scans, sc.n, kOther, nf, first); fig(r.orders, t.orders, kOther && !nt, nf, first);
@@ -1160,7 +1184,7 @@
   }
   const FLIP = (e, from) => { if (still() || !e.animate) return; const to = e.getBoundingClientRect().top; if (from == null) e.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 340, easing: EASE }); else if (Math.abs(from - to) > 1) e.animate([{ transform: `translateY(${from - to}px)` }, { transform: "none" }], { duration: 380, easing: EASE }); };
   function renderPeople(M, first) {
-    const list = M.people.slice().sort((a, b) => b.t.parts - a.t.parts || b.t.scans - a.t.scans || (b.on - a.on) || a.name.localeCompare(b.name));
+    const list = (M.everyone || M.people).slice().sort((a, b) => b.t.parts - a.t.parts || b.t.scans - a.t.scans || (b.on - a.on) || (!!a.absent - !!b.absent) || a.name.localeCompare(b.name));
     setText(E.pn, list.length ? String(list.length) : "");
     const wasTop = new Map([...E.people.children].map(c => [c, c.getBoundingClientRect().top])), want = [];
     let empty = E.people.querySelector(".efPeopleEmpty"); if (empty) empty.remove();
@@ -1172,7 +1196,23 @@
     for (const [name, r] of st.rows) if (!list.some(p => p.name === name)) { st.rows.delete(name); st.open.delete(name); r.e.remove(); }
     let moved = false; want.forEach((r, i) => { if (E.people.children[i] !== r.e) { E.people.insertBefore(r.e, E.people.children[i] || null); moved = true; } });
     if (!first && moved) want.forEach(r => FLIP(r.e, wasTop.has(r.e) ? wasTop.get(r.e) : null));
+    paintUnattributed(M);
     if (!list.length) E.people.appendChild(el("div", "efPeopleEmpty")).textContent = M.days > 1 ? "Nobody signed in during these days." : "Nobody has signed in on this day yet.";
+  }
+  /** The line nobody is credited with, last in the People list (Paul, 7 Oct 2026): scans and work with no one signed in at the desk, so the station totals add up to the people plus this. Not a person: no page, no panel. */
+  function paintUnattributed(M) {
+    const u = M.biz.unattributed;
+    if (!u) { if (st.unRow) { st.unRow.remove(); st.unRow = null; } return; }
+    let e = st.unRow;
+    if (!e) {
+      e = st.unRow = el("article", "efP efUn"); e.dataset.name = "";
+      e.innerHTML = `<div class="efPRow"><div class="efWho"><i class="efSt" aria-hidden="true"></i><span class="efName"></span><span class="efWhen"></span></div><div class="efChips"></div><div class="efN" data-l="Pieces"><b data-r="parts">0</b></div><div class="efN" data-l="Scanned"><b data-r="scans">0</b></div><div class="efN" data-l="Orders"><b data-r="orders">0</b></div><div class="efN" data-l="Per hour"><b>—</b></div><div class="efN" data-l="Per scan"><b>—</b></div><div class="efSp"></div><div class="efAct"></div></div>`;
+      setText(e.querySelector(".efName"), NOONE); setText(e.querySelector(".efWhen"), "Not a person");
+      hc(e.querySelector(".efWho"), () => ({ title: NOONE, sub: "Not a person", note: "Scans and work recorded while no one was signed in at that desk. They are in the station totals, so the people plus this row add up to them." }));
+    }
+    const ev = M.sources.events !== false, set = (k, v) => setText(e.querySelector(`[data-r="${k}"]`), v);
+    set("parts", ev ? nf(u.parts) : "—"); set("scans", nf(u.scans)); set("orders", nf(u.orders));
+    if (E.people.lastElementChild !== e) E.people.appendChild(e);
   }
   /* a person's panel: their newest orders (and, when they worked more than one station, what each gave), or their days */
   function togglePanel(r, tab) {
@@ -1431,17 +1471,18 @@
     if (!E.roster || host.dataset.route !== "people") return;
     if (!M) { return; }
     const q = st.q.trim().toLowerCase();
-    let list = M.people.filter(p => !q || p.name.toLowerCase().includes(q));
-    const by = { now: (a, b) => (b.on && !M.past) - (a.on && !M.past) || b.t.parts - a.t.parts || a.name.localeCompare(b.name), parts: (a, b) => b.t.parts - a.t.parts || b.t.scans - a.t.scans || a.name.localeCompare(b.name), name: (a, b) => a.name.localeCompare(b.name) };
+    const everyone = M.everyone || M.people;
+    let list = everyone.filter(p => !q || p.name.toLowerCase().includes(q));
+    const by = { now: (a, b) => (b.on && !M.past) - (a.on && !M.past) || b.t.parts - a.t.parts || (!!a.absent - !!b.absent) || a.name.localeCompare(b.name), parts: (a, b) => b.t.parts - a.t.parts || b.t.scans - a.t.scans || (!!a.absent - !!b.absent) || a.name.localeCompare(b.name), name: (a, b) => a.name.localeCompare(b.name) };
     list = list.slice().sort(by[st.sort] || by.now);
     host.querySelectorAll(".efSort button").forEach(b => { const on = b.dataset.sort === st.sort; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
-    setText(E.rqN, q ? `${list.length} of ${M.people.length}` : M.people.length ? `${M.people.length} ${M.people.length === 1 ? "person" : "people"}` : "");
+    setText(E.rqN, q ? `${list.length} of ${everyone.length}` : everyone.length ? `${everyone.length} ${everyone.length === 1 ? "person" : "people"}` : "");
     const wasTop = new Map([...E.roster.children].map(c => [c, c.getBoundingClientRect().top])), want = [], ev = M.sources.events !== false;
     for (const p of list) {
       let r = st.roster.get(p.name); const fresh = !r; if (!r) { r = rosterCard(p.name); st.roster.set(p.name, r); }
-      const on = p.on && !M.past, t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";
-      r.e.classList.toggle("on", on);
-      const nowK = p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "", when = on ? `On now · ${deskName(p.nowDevices.find(d => d.split("-")[0] === nowK)) || stName(nowK)}${p.onSince ? ` · since ${clock(p.onSince)}` : ""}` : p.lastOut ? `Out ${clock(p.lastOut)}` : p.inDay && p.inDay !== M.day ? `Last in ${mdFmt.format(dayDate(p.inDay))}` : p.firstIn ? `In ${clock(p.firstIn)}` : "No sign-in recorded";
+      const on = p.on && !M.past, t = p.t, src = p.source, kParts = !p.absent && src !== "seals" && src !== "sessions", kOther = !p.absent && src !== "sessions";
+      r.e.classList.toggle("on", on); r.e.classList.toggle("absent", !!p.absent);
+      const nowK = p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "", when = p.absent ? absentText(M) : on ? `On now · ${deskName(p.nowDevices.find(d => d.split("-")[0] === nowK)) || stName(nowK)}${p.onSince ? ` · since ${clock(p.onSince)}` : ""}` : p.lastOut ? `Out ${clock(p.lastOut)}` : p.inDay && p.inDay !== M.day ? `Last in ${mdFmt.format(dayDate(p.inDay))}` : p.firstIn ? `In ${clock(p.firstIn)}` : "No sign-in recorded";
       setText(r.when, when); r.when.title = when; setText(r.state, "");
       const nt = p.noThroughput;   // (Welding alone: no pieces or orders to count, a dash as on the person's page; the time on task and the matched count stand in below)
       fig(r.f.parts, t.parts, ev && kParts && !nt, nf, fresh); fig(r.f.orders, t.orders, (ev && kOther || !!M.sources.seals) && !nt, nf, fresh); fig(r.f.rate, t.rate, ev && kParts && t.rate > 0 && !nt, rateTxt, fresh);
@@ -1555,6 +1596,6 @@
   }
   if (doc.getElementById("efficiencyView")) mount(); else doc.addEventListener("DOMContentLoaded", mount, { once: true });
   if (root.EfficiencyStations && typeof root.EfficiencyStations.displayStation !== "function") root.EfficiencyStations.displayStation = displayStation;   // (the stations module is older than this file: the same function)
-  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api, displayStation, stationRowsOf, chipsOf, deskName, deskKey, whereOf,
+  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api, displayStation, stationRowsOf, chipsOf, deskName, deskKey, whereOf, madeOf, absentText, whenText, NOONE,
     get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()], view: st.view, tab: st.tab, person: st.person, liveAt: st.liveAt, liveSupported: st.liveSupported, liveFails: st.liveFails, mounted: Object.keys(st.mounts).filter(k => st.mounts[k]) }; } };
 })(window);

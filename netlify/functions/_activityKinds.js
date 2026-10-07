@@ -80,6 +80,25 @@ function deviceNo(station, device) {
   return m && m[1] === station ? `${m[1]}-${+m[2]}` : "";
 }
 
+/* ── The people the console knows by name (Paul, 7 Oct 2026: "There should be 3 employees Ivy, Anna, Giovanna ... Anna has been duplicated with something called 'Anns'. You
+ *  need to amalgamate this duplicate under 'Anna'") ──
+ *  display name -> the other spellings that are the same person. ONE table, read by every reader of names (employeeEfficiency.js and _employeeAttendance.js, and through them the
+ *  live board, the person page, the issue and inbox readers; the Sign-ins list uses personName below). A reader folds a name (accents, case, punctuation and spaces: "ANNS", " anns " and
+ *  "Ivy_Y" are one spelling each) before it looks it up, so only the plain spellings are listed. The Firestore document config/employeeAliases adds to this table (a spelling that
+ *  belongs to someone here can be added there without a release). Nothing here ever rewrites a stored record: the two spellings stay two documents and a reader adds them together.
+ *  Giovanna: "Giovanna C." (the Employee Numbers record). Anna: "Anns". Ivy: "Ivy Y." (the record kept as Ivy_Y). Only a spelling known to be the same person is listed: a different
+ *  person is never merged on a guess. The display names are also the console's roster: a person with no sign-in that day is listed as not signed in. */
+const PEOPLE_ALIASES = Object.freeze({
+  "Giovanna": Object.freeze(["Giovanna C."]),
+  "Anna": Object.freeze(["Anns"]),
+  "Ivy": Object.freeze(["Ivy Y."])
+});
+const foldName = n => String(n == null ? "" : n).replace(/[\u0000-\u001f\u007f]/g, " ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['\u2018\u2019`\u00b4]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const PEOPLE_BY_FOLD = new Map();
+for (const [shown, list] of Object.entries(PEOPLE_ALIASES)) { PEOPLE_BY_FOLD.set(foldName(shown), shown); for (const a of list) PEOPLE_BY_FOLD.set(foldName(a), shown); }
+/** The built-in table alone, no read: the display name a spelling of a known person stands for ("Anns", " ANNS " -> "Anna"), else the name as it was given. For a list that has no alias map to hand. */
+const personName = raw => PEOPLE_BY_FOLD.get(foldName(raw)) || raw;
+
 /** issue kind -> the rollup counter that counts it (kinds that are plain subtractions of the old counters have none:
     `undone` = undos, `refused` = rejects not in a kind below, `failed` = errors that are not a lookup failure or a failed reply) */
 const KIND_X = { cancelAlert: "x_cancel", heldOrSkipped: "x_held", unknownSku: "x_sku", qaFlag: "x_flag", lookupFailed: "x_lookup", reprint: "x_reprint", rescan: "x_rescan" };
@@ -181,4 +200,4 @@ function classify(ev) {
   return out;
 }
 
-module.exports = { NUMBERED, NUMBERED_RE, deviceNo, KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify };
+module.exports = { NUMBERED, NUMBERED_RE, deviceNo, KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify, PEOPLE_ALIASES, personName };

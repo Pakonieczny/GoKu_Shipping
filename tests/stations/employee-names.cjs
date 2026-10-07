@@ -288,7 +288,7 @@ let MAIN;
     'Michael V.': { t: [5, 4, 13, 4, 13, 77, 90, 42.9, 195], hours: { 8: 3, 9: 2 }, st: { welding: 0, design: 3, sorting: 2 } },
     'Giovanna': { t: [10, 2, 10, 2, 14, 0, 240, 42.9, 420], hours: { 8: 10 }, st: { assembly: 10, inbox: 0 } },
     'Ana M.': { t: [8, 2, 8, 2, 9, 0, 180, 53.3, 270], hours: { 8: 6, 10: 2 }, st: { assembly: 6, sorting: 2 } },
-    'Ivy Y.': { t: [0, 1, 8, 0, 5, 0, 120, 0, 300], hours: {}, st: { welding: 0 } },
+    'Ivy': { t: [0, 1, 8, 0, 5, 0, 120, 0, 300], hours: {}, st: { welding: 0 } },
     'Empress D.': { t: [5, 0, 0, 2, 6, 0, 120, 50, 0], hours: { 9: 5 }, st: { design: 5 } },
     'Michelle R.': { t: [5, 1, 5, 1, 4, 0, 120, 75, 240], hours: { 8: 5 }, st: { shipping: 5 } },
     'Paul K.': { t: [3, 1, 3, 1, 4, 10, 90, 45, 240], hours: { 8: 3 }, st: { shipping: 3, inbox: 0 } },
@@ -297,9 +297,9 @@ let MAIN;
   };
   const SHOWN = Object.keys(EXPECT);
   // (RG2: ranked by the pieces that COUNT, and the Welding station does not count since 6 Oct (plans/stations-round2 R2 / WS2: time on task and matched scans there, no completions): so the
-  //  three people whose work was welding (Michael V. 5 of 12, Ivy Y., Michael T.) drop in the order; ties by name)
-  eq(A.people.map(p => p.name), ['Giovanna', 'Ana M.', 'Empress D.', 'Michael V.', 'Michelle R.', 'Paul K.', 'Ivy Y.', 'Michael', 'Michael T.'],
-    'nine people, each once: the seven names with nice display names (Michael V., Ana M., Paul K., Michelle R., Ivy Y.), Giovanna C. + Giovanna one person under the alias spelling, the other two Michaels apart');
+  //  three people whose work was welding (Michael V. 5 of 12, Ivy, Michael T.) drop in the order; ties by name)
+  eq(A.people.map(p => p.name), ['Giovanna', 'Ana M.', 'Empress D.', 'Michael V.', 'Michelle R.', 'Paul K.', 'Ivy', 'Michael', 'Michael T.'],
+    'nine people, each once: the seven names with nice display names (Michael V., Ana M., Paul K., Michelle R.), Giovanna C. + Giovanna and Ivy_Y + Ivy one person each under the built-in alias table (_activityKinds.js PEOPLE_ALIASES), the other two Michaels apart');
   assert(!A.people.some(p => /_/.test(p.name)), 'no underscore on the screen');
   for (const p of A.people) {
     const x = EXPECT[p.name], t = p.totals;
@@ -325,7 +325,7 @@ let MAIN;
   // the live feed: every line carries the one display name
   eq(A.feed.length, 35);
   const feedBy = {}; for (const f of A.feed) feedBy[f.person] = (feedBy[f.person] || 0) + 1;
-  eq(feedBy, { 'Michael V.': 9, 'Giovanna': 6, 'Ana M.': 4, 'Ivy Y.': 2, 'Empress D.': 3, 'Michelle R.': 3, 'Paul K.': 4, 'Michael T.': 2, 'Michael': 2 }, 'the feed lines are under the nine display names, never under an underscore or a second spelling');
+  eq(feedBy, { 'Michael V.': 9, 'Giovanna': 6, 'Ana M.': 4, 'Ivy': 2, 'Empress D.': 3, 'Michelle R.': 3, 'Paul K.': 4, 'Michael T.': 2, 'Michael': 2 }, 'the feed lines are under the nine display names, never under an underscore or a second spelling');
 
   /* ═══════════ 3 · any spelling asks for the same person ═══════════ */
   const personOf = async name => (await ask({ op: 'person', name, day: '2026-10-02', days: 3 }));
@@ -362,10 +362,10 @@ let MAIN;
   col('config').set('employeeAliases', { 'Mike V.': ['Michael_V'], 'Shelly_R': ['Michelle R.'] });
   dropCaches();
   const B = await ask({ day: '2026-10-02' });
-  eq(B.people.map(p => p.name), ['Giovanna', 'Ana M.', 'Empress D.', 'Mike V.', 'Shelly_R', 'Paul K.', 'Ivy Y.', 'Michael', 'Michael T.'], 'the alias doc\'s own spelling wins and is shown as written (Shelly_R keeps its underscore); its aliases fold like names (alias "Michelle R." caught "Michelle_R")');
+  eq(B.people.map(p => p.name), ['Giovanna', 'Ana M.', 'Empress D.', 'Mike V.', 'Shelly_R', 'Paul K.', 'Ivy', 'Michael', 'Michael T.'], 'the alias doc\'s own spelling wins and is shown as written (Shelly_R keeps its underscore); its aliases fold like names (alias "Michelle R." caught "Michelle_R")');
   eq(B.people.map(p => p.totals.parts), A.people.map(p => p.totals.parts), 'the same figures under the new names');
   eq(B.business.totals, A.business.totals, 'the same business');
-  assert(B.feed.every(f => ['Mike V.', 'Giovanna', 'Ana M.', 'Ivy Y.', 'Empress D.', 'Shelly_R', 'Paul K.', 'Michael T.', 'Michael'].includes(f.person)), 'the feed follows');
+  assert(B.feed.every(f => ['Mike V.', 'Giovanna', 'Ana M.', 'Ivy', 'Empress D.', 'Shelly_R', 'Paul K.', 'Michael T.', 'Michael'].includes(f.person)), 'the feed follows');
   eq((await personOf('Michael V.')).name, 'Mike V.', 'asking by the typed spelling finds the aliased person'); eq((await personOf('michelle_r')).name, 'Shelly_R');
   col('config').delete('employeeAliases'); dropCaches();
   eq((await ask({ day: '2026-10-02' })).people.map(p => p.name), A.people.map(p => p.name), 'without the doc the names are the nice ones again');

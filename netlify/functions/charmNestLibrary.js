@@ -3310,7 +3310,7 @@ function sessionRow(id, d, now) {
   if (endAt) minutes = Number.isFinite(+d.minutes) && d.minutes !== null && d.minutes !== "" ? +d.minutes : (endAt - startAt) / 60000;
   else if (now - lastSeenAt > SESSION_GONE_MS && !require("./_stationAutoSignout").keptOpen(d, now)) { endAt = lastSeenAt; endReason = "closed"; minutes = (lastSeenAt - startAt) / 60000; }   // (a quiet Laser page inside its limit, or a Welding page before 17:00, is still signed in)
   else { live = true; minutes = (now - startAt) / 60000; }
-  const row = { id: str(id, 120), person: str(d.person, 80), station: str(d.station, 20), device: str(d.device, 40), computerId: str(d.computerId, 64), computerLabel: str(d.computerLabel, 80),
+  const row = { id: str(id, 120), person: require("./_activityKinds").personName(str(d.person, 80)), station: str(d.station, 20),   // (a known person's other spelling, "Anns", is listed as "Anna": the built-in table, no read; the stored session keeps its own) device: str(d.device, 40), computerId: str(d.computerId, 64), computerLabel: str(d.computerLabel, 80),
     startAt, lastSeenAt, endAt, endReason, minutes: Math.max(0, Math.round(minutes * 10) / 10), live };
   // the station's own wording for a sign-out by the rules (Laser "1 hour without input", "5:00 pm · 30 min without input"; Welding "5:00 pm"): a short label for the Sign-ins window's pill
   if (endAt && (endReason === "idle" || endReason === "closing")) row.endPill = require("./_stationAutoSignout").endPill(row.station, endReason);

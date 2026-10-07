@@ -83,15 +83,17 @@ function niceName(raw) {
   if (words.length > 1) words = words.map(w => /^\p{L}$/u.test(w) ? w + "." : w);
   return words.join(" ");
 }
-// seeded aliases (display name → other spellings); the Firestore doc config/employeeAliases adds to these, never written here
-const BUILTIN_ALIASES = { "Giovanna": ["Giovanna C."] };
+// seeded aliases (display name → other spellings): ONE table, _activityKinds.js PEOPLE_ALIASES (Giovanna, Anna with "Anns", Ivy), shared with _employeeAttendance.js so the two readers cannot
+// disagree; the Firestore doc config/employeeAliases adds to these, never written here. The display names are also the roster the console lists even when nobody of them signed in today.
+const BUILTIN_ALIASES = KIND.PEOPLE_ALIASES || { "Giovanna": ["Giovanna C."] };
+const ROSTER = Object.keys(BUILTIN_ALIASES);
 function buildAliases(extra) {
   const display = new Map(), map = new Map();           // canonical key → display name · folded alias → canonical key
   const add = (name, list) => {
     const d = cleanName(name); if (!okName(d)) return;
     const ck = fold(d); if (!display.has(ck)) display.set(ck, d);
     if (!map.has(ck)) map.set(ck, ck);
-    for (const a of Array.isArray(list) ? list.slice(0, 50) : []) { const an = cleanName(a); if (okName(an)) map.set(fold(an), ck); }
+    for (const a of Array.isArray(list) ? list.slice(0, 50) : typeof list === "string" ? [list] : []) { const an = cleanName(a); if (okName(an) && fold(an) !== ck) map.set(fold(an), ck); }   // (a list may be one plain string; an alias that folds to the name itself says nothing; spellings fold: case, spaces, punctuation)
   };
   for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v);
   if (extra && typeof extra === "object") for (const [k, v] of Object.entries(extra).slice(0, 200)) add(k, v);
@@ -354,6 +356,23 @@ function personsOf(ctx) {
 }
 const displayName = P => P.canon || niceName(bestForm(P.forms));
 
+/** What no person is credited with: a rollup under the one name "Unattributed" (a scan made with nobody signed in at the desk). It is no person, so it has no row in People; it is kept per day and
+ *  station so the Overview can say so plainly ("No one signed in at the desk") and its totals add up: a station's figure is the people's plus this. Read from the rollups already read: no read added. */
+function noteUnattributed(info, x) {
+  if (!validDay(x.day)) return;
+  const byDay = info.unattr || (info.unattr = new Map()); let m = byDay.get(x.day); if (!m) byDay.set(x.day, m = new Map());
+  const at = st => { let t = m.get(st); if (!t) m.set(st, t = { parts: 0, scans: 0, matched: 0, fin: 0, ids: new Set() }); return t; };
+  for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
+    if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;
+    const st = displayStation(st0), v = KIND.readStationCounters(st, v0), t = at(st);
+    t.parts += Math.max(0, num(v.parts) - num(v.undoParts)); t.scans += Math.max(0, num(v.scans)); t.matched += Math.max(0, num(v.matched)); t.fin += Math.max(0, num(v.orders) - num(v.undoOrders));
+  }
+  for (const [id, mm] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
+    const oid = digits(id); if (!oid || !mm || typeof mm !== "object") continue;
+    for (const k of Object.keys(mm)) if (mm[k] && okStation(k) && KIND.throughput(displayStation(k))) at(displayStation(k)).ids.add(oid);
+  }
+}
+
 /** Reads and joins everything for the days winFrom..toDay. Returns the people (per day) and what could not be read. */
 async function assemble(ctx, winFrom, toDay) {
   const info = { errors: [], capped: [], sealsLeftOut: 0 };
@@ -369,7 +388,7 @@ async function assemble(ctx, winFrom, toDay) {
   if (rr.ok) {
     if (rr.value.capped) info.capped.push("rollups");
     for (const x of rr.value.docs) {
-      if (x.person === KIND.UNATTRIBUTED) continue;                       // (a matched scan made with nobody in Matching: no person; the Stations board counts it)
+      if (x.person === KIND.UNATTRIBUTED) { noteUnattributed(info, x); continue; }   // (a matched scan made with nobody in Matching: no person; the Stations board counts it, and so does the Overview's "unattributed" line, see noteUnattributed)
       const person = P.get(x.person); if (!person || !validDay(x.day)) continue;
       eventDays.add(x.day);
       const pd = P.pd(person, x.day); pd.src = "events";
@@ -534,7 +553,10 @@ function parseCursor(v) {
 const cursorOf = events => events.length ? `${events[0].k}~${events[0].id}` : "0~";
 const newer = (e, c) => e.k > c.k || (e.k === c.k && e.id > c.id);
 
-async function buildOverview(ctx, day, days, withTrend) {
+/* `roster: true` (the console's own request, and nobody else's): the answer also carries what the console needs to make the people and the totals add up in plain sight (Paul, 7 Oct 2026):
+   `absent` (the roster's people with nothing in the range), per station `byPerson`, `shared` and `unattributed` (the line nobody is credited with, which is also in the station's and the
+   business's figures), and `business.unattributed`. Without it the answer is exactly what it was (several tests and readers pin its shape and its figures). No read is added either way. */
+async function buildOverview(ctx, day, days, withTrend, withRoster) {
   // the daily trend needs a fortnight; a single-day screen (trend:false) reads only its own day, so it does not pull the fortnight's
   // rollups, sign-ins and (for the days before the events began) up to ten days of seals on every poll
   const from = addDays(day, -(days - 1)), winDays = withTrend ? Math.max(14, days) : days, winFrom = addDays(day, -(winDays - 1));
@@ -559,9 +581,11 @@ async function buildOverview(ctx, day, days, withTrend) {
   }
   const allIds = new Map(), stIds = {}, stNow = {}, perStationHours = {}, dvTot = {}, devNow = {};   // (dvTot: per desk over everybody; devNow: who is signed in at each desk now)
   let src = { events: false, seals: false, sessions: false };
+  const seen = new Set();                                                 // the people (keys) with anything in the range: the roster's other names are listed as not signed in
   for (const P of asm.P.people.values()) {
     const pds = rangeDays.map(d => P.days.get(d)).filter(Boolean), S = summarize(pds);
     if (!S.hasAny) continue;
+    seen.add(P.key);
     for (const pd of pds) { if (pd.src === "events") src.events = true; else if (pd.src === "seals") src.seals = true; if (pd.spans.length) src.sessions = true; }
     const live = day === ctx.today ? P.live : [];   // "on" is now: a past day shows nobody on
     const inPd = pds.filter(pd => pd.firstIn).sort((a, b) => b.day < a.day ? -1 : 1)[0] || null;
@@ -578,12 +602,29 @@ async function buildOverview(ctx, day, days, withTrend) {
   }
   people.sort((a, b) => (a.status === "on" ? 0 : 1) - (b.status === "on" ? 0 : 1) || b.totals.parts - a.totals.parts || a.name.localeCompare(b.name));
   // the business: summed over EVERYBODY, then the list is cut (the totals must not lose the people the list does not show)
-  const totals = { parts: 0, scans: 0, orders: [...allIds.values()].filter(isWork).length, people: people.length };
+  // what nobody is credited with, over the range (a scan made with nobody signed in at the desk, filed under "Unattributed"): a line of its own, added to the station's and the business's totals
+  const un = new Map();
+  if (withRoster) for (const d of rangeDays) { const m = info.unattr && info.unattr.get(d); if (!m) continue; for (const [st, t] of m) { let x = un.get(st); if (!x) un.set(st, x = { parts: 0, scans: 0, matched: 0, fin: 0, ids: new Set() }); x.parts += t.parts; x.scans += t.scans; x.matched += t.matched; x.fin += t.fin; t.ids.forEach(i => x.ids.add(i)); } }
+  for (const [st, t] of un) for (const id of t.ids) { (stIds[st] || (stIds[st] = new Set())).add(id); let a = allIds.get(id); if (!a) allIds.set(id, a = new Set()); a.add(st); }
+  const unOrders = t => Math.max(t.ids.size, t.fin), unExtra = t => Math.max(0, t.fin - t.ids.size);      // (orders finished with no id on the record count too)
+  let unExtraAll = 0; for (const [st, t] of un) if (KIND.throughput(st) && st !== "inbox") unExtraAll += unExtra(t);
+  const totals = { parts: 0, scans: 0, orders: [...allIds.values()].filter(isWork).length + unExtraAll, people: people.length };
+  for (const t of un.values()) { totals.parts += t.parts; totals.scans += t.scans; }
   const perSt = {};
-  for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0 }); t.parts += s.parts; t.scans += s.scans; if (s.taskMin) { t.matched = (t.matched || 0) + s.matched; const m = t.taskMin || (t.taskMin = { welding: 0, matching: 0, unknown: 0 }); for (const k of Object.keys(m)) m[k] = r1(m[k] + (s.taskMin[k] || 0)); } } }
+  for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0, by: [] }); t.parts += s.parts; t.scans += s.scans;
+    if (s.parts > 0 || s.scans > 0 || s.orders > 0 || s.matched > 0) t.by.push({ name: p.name, parts: s.parts, scans: s.scans, orders: s.orders, matched: s.matched || 0 });   // (who the station's figure is made of: the people with something at it)
+    if (s.taskMin) { t.matched = (t.matched || 0) + s.matched; const m = t.taskMin || (t.taskMin = { welding: 0, matching: 0, unknown: 0 }); for (const k of Object.keys(m)) m[k] = r1(m[k] + (s.taskMin[k] || 0)); } } }
   const order = st => { const i = SHOWN.indexOf(st); return i < 0 ? 99 : i; };
-  const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow)))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
-    .map(st => { const row = { station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }; if (!KIND.throughput(st)) { row.matched = (perSt[st] || {}).matched || 0; row.taskMin = (perSt[st] || {}).taskMin || { welding: 0, matching: 0, unknown: 0 }; }
+  const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow), [...un.keys()]))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
+    .map(st => { const u = un.get(st), by = ((perSt[st] || {}).by || []).slice().sort((a, b) => b.orders - a.orders || b.parts - a.parts || b.scans - a.scans || (a.name < b.name ? -1 : 1));
+      const row = { station: st, parts: ((perSt[st] || {}).parts || 0) + (u ? u.parts : 0), scans: ((perSt[st] || {}).scans || 0) + (u ? u.scans : 0), orders: (stIds[st] ? stIds[st].size : 0) + (u ? unExtra(u) : 0), peopleNow: (stNow[st] || []).slice().sort() };
+      if (!KIND.throughput(st)) { row.matched = ((perSt[st] || {}).matched || 0) + (u ? u.matched : 0); row.taskMin = (perSt[st] || {}).taskMin || { welding: 0, matching: 0, unknown: 0 }; }
+      // who the figure is made of: the people with something here, plus the line nobody is credited with; `shared` = orders two of them both touched (counted once in `orders`), so people + no one - shared = orders
+      if (withRoster) {
+        row.byPerson = by.map(b => { const o = { name: b.name, parts: b.parts, scans: b.scans, orders: b.orders }; if (!KIND.throughput(st)) o.matched = b.matched; return o; });
+        if (u && (u.parts > 0 || u.scans > 0 || u.matched > 0 || unOrders(u) > 0)) { row.unattributed = { parts: u.parts, scans: u.scans, orders: unOrders(u) }; if (!KIND.throughput(st)) row.unattributed.matched = u.matched; }
+        row.shared = Math.max(0, by.reduce((n, b) => n + b.orders, 0) + (u ? unOrders(u) : 0) - row.orders);
+      }
       if (NUMBERED[st]) {   // Assembly 1..4 / Shipping 1..3: one entry per desk (all of the shop's desks listed, idle ones too) and what no desk claims (events and sessions from before desks were told apart: shown as the kind alone)
         const keys = []; for (let n = 1; n <= NUMBERED[st]; n++) keys.push(`${st}-${n}`);
         for (const dk of Object.keys(dvTot).concat(Object.keys(devNow))) if (dk.split("-")[0] === st && !keys.includes(dk)) keys.push(dk);
@@ -595,6 +636,9 @@ async function buildOverview(ctx, day, days, withTrend) {
       return row; });
   const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(v => v > 0)) perHour[st] = arr.map(shown);
   if (people.length > LIM.people) { info.capped.push("people"); people.length = LIM.people; }       // (the list only: the totals above counted everybody)
+  // the roster's people with no sign-in and no work in the range (Paul, 7 Oct 2026: "I'm not seeing Ivy anywhere"): listed by name so the console can say "Not signed in today". Not in `people`
+  // (those are the people with something to show, and the counts and rankings keep reading them); no read added: the roster is the built-in table of names.
+  const absent = []; if (withRoster) for (const nm of ROSTER) { const k = nameKeyOf(ctx, nm); if (seen.has(k)) continue; seen.add(k); absent.push(canonOf(ctx, k) || niceName(nm)); }
   const trend = dayList(winFrom, day).map(d => {
     let parts = 0, n = 0, rank = 0; const ids = new Map();
     for (const P of asm.P.people.values()) {
@@ -614,7 +658,10 @@ async function buildOverview(ctx, day, days, withTrend) {
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   if (info.errors.length) notes.push("Some data could not be read just now; the screen shows what was.");
   const partial = !src.events || info.errors.length > 0 || info.capped.length > 0;
-  return { now: ctx.now, cursor: cursorOf(events), people, business: { totals, perHour, stations: stationList, trend },
+  const unTotal = { parts: 0, scans: 0, orders: unExtraAll, matched: 0 }; for (const [st, t] of un) { unTotal.parts += t.parts; unTotal.scans += t.scans; unTotal.matched += t.matched; if (KIND.throughput(st) && st !== "inbox") unTotal.orders += t.ids.size; }
+  const business = { totals, perHour, stations: stationList, trend };
+  if (withRoster && (unTotal.parts > 0 || unTotal.scans > 0 || unTotal.orders > 0 || unTotal.matched > 0)) business.unattributed = unTotal;      // (the whole line nobody is credited with: the People list shows it as a row)
+  return { now: ctx.now, cursor: cursorOf(events), people, absent: withRoster ? absent : undefined, business,
     feedAll: inRange.slice(0, LIM.feedDelta).map(e => { const P = asm.P.people.get(nameKeyOf(ctx, e.person)); return Object.assign({}, e, { person: P ? displayName(P) : canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person) }); }), sources: src, notes, partial, errors: info.errors };
 }
 
@@ -624,13 +671,15 @@ async function opOverview(ctx, body) {
   if (day > ctx.today) day = ctx.today;
   const n = Math.floor(num(body.days)), days = n <= 1 ? 1 : n <= 7 ? 7 : 30;
   const withTrend = !(body.trend === false || body.trend === 0 || body.trend === "0");
-  const ovKey = `ov|${ctx.prefix}|${day}|${days}|${withTrend ? "t" : "n"}`;
-  const base = await cached(ctx, ovKey, TTL_LIVE, () => buildOverview(ctx, day, days, withTrend));
+  const withRoster = body.roster === true || body.roster === 1 || body.roster === "1";
+  const ovKey = `ov|${ctx.prefix}|${day}|${days}|${withTrend ? "t" : "n"}${withRoster ? "|r" : ""}`;
+  const base = await cached(ctx, ovKey, TTL_LIVE, () => buildOverview(ctx, day, days, withTrend, withRoster));
   if (base.errors.length) ctx.cache.memo.delete(ovKey);                // (an answer with a failed read in it is not kept: the next call tries the source again)
   const after = parseCursor(body.after);
   const feed = (after ? base.feedAll.filter(e => newer(e, after)) : base.feedAll.slice(0, LIM.feed)).slice(0, after ? LIM.feedDelta : LIM.feed)
     .map(e => { const o = { id: e.id, at: e.at, person: e.person, station: e.station, action: e.action, orderId: e.orderId, parts: e.parts }, dk = deviceNo(e.stored, e.device); if (dk) o.device = dk; return o; });   // (device: the desk of a numbered station, "assembly-2"; absent for every other page and for old events)
   const out = { ok: true, now: base.now, day, days, cursor: base.cursor, delta: !!after, people: base.people, business: base.business, feed, sources: base.sources, notes: base.notes };
+  if (withRoster) out.absent = base.absent;
   if (base.partial) out.partial = true;
   if (base.errors.length) out.errors = base.errors;
   return json(200, out);

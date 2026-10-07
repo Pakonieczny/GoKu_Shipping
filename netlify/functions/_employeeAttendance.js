@@ -122,14 +122,14 @@ function bestForm(forms) {
   for (const [form, n] of forms) { const v = n * 2 + (form !== form.toLowerCase() && form !== form.toUpperCase() ? 1 : 0); if (v > score || (v === score && form < best)) { best = form; score = v; } }
   return best;
 }
-const BUILTIN_ALIASES = { "Giovanna": ["Giovanna C."] };     // the same seed the console uses
+const BUILTIN_ALIASES = KIND.PEOPLE_ALIASES || { "Giovanna": ["Giovanna C."] };     // the console's own table (_activityKinds.js PEOPLE_ALIASES: Giovanna, Anna with "Anns", Ivy): one table, so the two readers cannot disagree
 function buildAliases(extra) {
   const display = new Map(), map = new Map();
   const add = (name, list) => {
     const d = cleanName(name); if (!okName(d)) return;
     const ck = fold(d); if (!display.has(ck)) display.set(ck, d);
     if (!map.has(ck)) map.set(ck, ck);
-    for (const a of Array.isArray(list) ? list.slice(0, 50) : []) { const an = cleanName(a); if (okName(an)) map.set(fold(an), ck); }
+    for (const a of Array.isArray(list) ? list.slice(0, 50) : typeof list === "string" ? [list] : []) { const an = cleanName(a); if (okName(an) && fold(an) !== ck) map.set(fold(an), ck); }
   };
   for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v);
   if (isObj(extra)) for (const [k, v] of Object.entries(extra).slice(0, 200)) add(k, v);
@@ -138,7 +138,11 @@ function buildAliases(extra) {
 function keyFn(aliases) {
   return name => {
     let k = fold(name); const m = aliases && aliases.map;
-    if (m) for (let i = 0; i < 3 && m.has(k) && m.get(k) !== k; i++) k = m.get(k);
+    if (m) {
+      const seen = [];                                             // as the console: follow the aliases to the end; a loop settles on its smallest key (every spelling of it is ONE person)
+      while (m.has(k) && m.get(k) !== k && !seen.includes(k) && seen.length < 8) { seen.push(k); k = m.get(k); }
+      if (seen.includes(k)) k = seen.slice(seen.indexOf(k)).sort()[0];
+    }
     return k;
   };
 }
