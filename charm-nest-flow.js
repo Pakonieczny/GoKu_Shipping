@@ -10,6 +10,7 @@
  *   LibraryFlow.plan({kind,id,to,by})    Promise<Plan>: reads, never writes
  *   LibraryFlow.commit(plan,{confirmed,by,onStep})   Promise<{ok,applied:[{key,label}],error}>
  *   LibraryFlow.approve({kind,id,by,confirmed})      Promise<Plan>: runs every safe automatic step now, lists what is still missing
+ *   LibraryFlow.cutLine({kind,id,by,onStep})         Promise<{ok,error,lines,cut,sheets}>: the person's yes in the green dash line window: the Cut Sheet press (line drawn and dated, cut recorded) for each partial sheet of the item; never moves it
  *
  *   Plan = { ok, from:{area,setId}, to:{area,setId}, auto:[{key,label,detail}], needs:[{key,label,detail,items}],
  *            confirm:[{key,label,detail}], notes:[string], kind, id, move:{kind,id,to}, noop?:true }
@@ -66,7 +67,11 @@
   const count = (n, one, more) => `${n} ${n === 1 ? one : (more || one + 's')}`;
   const laserOf = s => (s.laser && typeof s.laser === 'object' && s.laser.stages) ? s.laser : RD().laserSheet(s);
   const committedSet = d => !!(d && (+d.committedAt > 0 || /^complete/.test(String(d.status || ''))));
-  const needsRoseLine = s => !!s && s.metal === 'rose' && !s.roseCutAt && !s.rosePlanHash;
+  /* The ONE test for "this metal gets a green dash line": charm-nest-rose.js CharmNestRose.cuts (Rose Gold, 10K, 14K once that
+     file says so; Rose Gold alone before it). A partial sheet of such a metal that is not cut and has no line yet needs one. */
+  const cuts = m => { try { if (hooks.cuts) return !!hooks.cuts(m); const R = root.CharmNestRose; return R && typeof R.cuts === 'function' ? !!R.cuts(m) : m === 'rose'; } catch (_) { return m === 'rose'; } };
+  const needsCutLine = s => !!s && cuts(s.metal) && !s.roseCutAt && !s.rosePlanHash;
+  const needsRoseLine = needsCutLine;       // (the old name: the rest of this file and its tests use it)
 
   /* ── reading the records ────────────────────────────────────────────────────────────────────────────────────────
    * state = { sheets:{id:record}, sets:{id:setRecord}, runs:{runId:{open}}, live:{sheetId:{…}} }: what op flowState
@@ -270,7 +275,10 @@
   // the yes for the green dash line: the Rose Gold module's own words when it answered, else ours
   function roseLineConfirm(want, env) {
     const R = roseAnswer(env), c = R && R.confirm && R.confirm.key === 'roseLine' ? R.confirm : null, names = want.map(sheetName);
-    return c ? { key: 'roseLine', label: c.label, detail: c.detail } : { key: 'roseLine', label: `Add the green dash line to ${names.length === 1 ? names[0] : count(names.length, 'Rose Gold sheet')}?`, detail: `This calculates the cut contour for ${names.length === 1 ? 'these charms' : 'the charms on ' + names.join(', ')}. Nothing is added until you press the button.` };
+    // which sheets, and how many charms each has to be lined (the Library's green line window says it; a screen that does not need it ignores it)
+    const sheets = ((R && R.sheets) || []).filter(x => x && x.needsLine).map(x => ({ sheetId: x.sheetId, label: x.label, metal: x.metal, charms: x.needs || x.charms || 0 }));
+    const who = { count: want.length, sheetIds: want.map(sid), ...(sheets.length ? { sheets } : {}) };
+    return c ? { key: 'roseLine', label: c.label, detail: c.detail, ...who } : { key: 'roseLine', label: `Add the green dash line to ${names.length === 1 ? names[0] : count(names.length, 'sheet')}?`, detail: `This calculates the cut contour for ${names.length === 1 ? 'these charms' : 'the charms on ' + names.join(', ')}. Nothing is added until you press the button.`, ...who };
   }
   function roseConfirm(plan, mine, env) {
     const want = mine.filter(needsRoseLine);
@@ -624,6 +632,7 @@
     areaOf: null, sets: null, setOf: null,
     sync: null,                // (process) -> void: the page's own records and cards follow what the cloud now says
     rose: () => root.LibraryFlowRose || null,
+    cuts: null,                // (metal) -> boolean: which metals get a green dash line (default CharmNestRose.cuts; tests set it)
     wait: ms => new Promise(r => setTimeout(r, ms))
   };
   const cloud = body => {
@@ -858,6 +867,29 @@
     return after;
   }
 
+  /**
+   * cutLine({kind, id, by, onStep}): the person said yes in the Library's green dash line window (charm-nest-library-cutline.js; Paul,
+   * 7 Oct: a partial sheet dragged to Laser cutting). Runs the Cut Sheet press for every sheet of the item that is partial and has no
+   * line (LibraryFlowRose.calculate with recordCut:true: the line is drawn and dated, then the cut is recorded, which is permanent)
+   * and nothing else: it never moves the item and never seals it (the move that follows does). The yes is the press, so it is the
+   * caller's to ask for; this never asks. A sheet it cannot give a line (not open on the Nest tab, still saving) is refused before
+   * anything is written, in plain words. Resolves { ok, error, lines, cut, sheets, warnings }; never throws.
+   */
+  async function cutLine(req) {
+    req = req || {};
+    const item = itemOf(req), by = String(req.by || hooks.employee() || '').trim(), M = hooks.rose();
+    if (!item.id) return { ok: false, error: 'There is nothing to make the green dash line for', sheets: [] };
+    if (!by) return { ok: false, error: 'Sign in first: the cut is recorded with your name', sheets: [] };
+    if (!M || typeof M.calculate !== 'function') return { ok: false, error: 'The green dash line cannot be calculated from here: open the sheet on the Nest tab and press Cut Sheet there', sheets: [] };
+    try {
+      const r = await M.calculate(item, { by, recordCut: true, onStep: x => { try { req.onStep && req.onStep(x); } catch (_) { /* a listener never stops it */ } } });
+      if (!r || typeof r !== 'object') return { ok: false, error: 'No answer came back, nothing was changed', sheets: [] };
+      // a line that is saved but whose cut could not be recorded is not the whole press: the move waits, and the sheet says why
+      if (r.ok !== false && (r.warnings || []).length) return { ...r, ok: false, error: `${r.warnings.join('. ')}. Press Cut Sheet on the Nest tab to record it` };
+      return r;
+    } catch (e) { return { ok: false, error: (e && e.message) || String(e), sheets: [] }; }
+  }
+
   function targets(item) { return zones(item, pageAdapter()).filter(z => z.ok).map(keyOfZone); }
   function explainTargets(item) { return zones(item, pageAdapter()); }
   function onSheet(item, otherId, o) { return sheetZone(item, otherId, pageAdapter(), o); }
@@ -943,6 +975,6 @@
   }
   if (typeof document !== 'undefined') { try { wirePage(); document.addEventListener('DOMContentLoaded', () => { try { wirePage(); } catch (_) { /* hooks stay as they were */ } }, { once: true }); } catch (_) { /* a page without these parts */ } }
   const configure = o => { Object.assign(hooks, o || {}); Object.assign(mine, o || {}); return api; };
-  const api = { targets, explainTargets, sheetZone: onSheet, plan, commit, approve, configure, hooks, core: { planMove, view, areaOf, groupReady, sheetGaps, zones, sheetZone, sheetName, setName, makeRoseJoin }, AREAS, AREA_NAMES: AREA };
+  const api = { targets, explainTargets, sheetZone: onSheet, plan, commit, approve, cutLine, configure, hooks, core: { planMove, view, areaOf, groupReady, sheetGaps, zones, sheetZone, sheetName, setName, makeRoseJoin, needsCutLine, cuts }, AREAS, AREA_NAMES: AREA };
   return api;
 });

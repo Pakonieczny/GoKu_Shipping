@@ -601,7 +601,47 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     catch (e) { console.warn('Library move', e); return { ok: false, error: String(e && e.message || e) }; }
     finally { clearSources(); if (D.move === m) D.move = null; sync(); }
   }
+  /* ═══ a partial sheet to Laser cutting: asked first, its green dash line made and shown, then the move below ═══
+     (Paul, 7 Oct: a partial 10K, 14K or Rose Gold sheet dragged, or moved with "Move to…", to Laser cutting first gets a window of the shared-orders
+     look that says the system will generate the green dash line that completes it, with a way not to proceed; the person's yes is the press, and
+     only then the line is generated, shown on the sheet's own card, and the card flies.) LibraryCutLine is what the person sees, LibraryFlow.cutLine
+     the one write. Returns null (nothing to ask: the move below goes on as it was), { o } (it goes on with these options: the plan already read, or
+     the card lifted again after its line) or { stop, result } (the person said no, or the line could not be made: the card is where it was). */
+  async function cutLineGate(f, m, o) {
+    const CL = W.LibraryCutLine, item = m.item;
+    if (!CL || typeof CL.guess !== 'function' || typeof f.cutLine !== 'function' || o.cutLine === false) return null;
+    const hit = CL.guess(item, m.to, placeOf(item).area), home = hit ? elOf(item) : null;
+    if (!hit || !home) return null;
+    const label = labelOf(item), name = targetName(m.to), here = AREA[placeOf(item).area];
+    // the plan is read first and quietly (the copy waits in the hand); a labelled spinner on the card only when that takes a moment
+    const wait = CL.busy(hit.ids, 'Checking the move…', { el: home, delay: 400 });
+    let raw;
+    try { raw = await timeout(f.plan({ kind: item.kind, id: item.id, to: m.to, by: who() }), 45000, 'Checking the move'); }
+    catch (_) { wait.stop(); return null; }       // (the move below asks again and says what went wrong)
+    wait.stop();
+    const plan = normPlan(raw), c = plan.confirm.find(x => x.key === 'roseLine');
+    // the green dash line is the only yes this window covers, and only for a move that is otherwise allowed: anything else is the move's own business
+    if (!c || plan.needs.length || plan.ok === false || plan.confirm.some(x => x.key !== 'roseLine')) return { o: Object.assign({}, o, { plan0: raw }) };
+    const again = base => {      // the card lifted again where it stands (as "Move to…" does), for the flight that follows
+      const h = elOf(item), lift = h ? makeLift(item, null, { still: true }) : null;
+      if (h && lift) h.classList.add('dndSource');
+      m.lift = lift; return Object.assign({}, base, { lift, zone: null, dock: null, zones: null, via: 'menu' });
+    };
+    // it asks: the copy goes home (nothing has changed) and the window grows out of the card
+    if (o.zone) clearMarks(o.zones);
+    if (o.dock) { try { o.dock.close(); } catch (_) { /* gone */ } }
+    const lift = m.lift; m.lift = null;
+    await settleBack(item, lift);
+    const yes = await CL.ask(item, c, { from: elOf(item) || home, dest: name, fromName: here ? here.name : 'In progress', what: item.kind === 'set' ? label : '' });
+    if (yes === null) return { o: again(Object.assign({}, o, { plan0: raw })) };         // (no window here: the bar of the move asks, as before)
+    if (!yes) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, cancelled: true } }; }
+    const ids = c.sheetIds && c.sheetIds.length ? c.sheetIds : hit.hits;
+    const res = await CL.make({ ids, el: elOf(item) || home, run: onStep => f.cutLine({ kind: item.kind, id: item.id, by: who(), onStep }) });
+    if (!res || res.ok === false) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, error: res && res.error } }; }
+    return { o: again(o) };
+  }
   async function run(f, m, o) {
+    { const g = await cutLineGate(f, m, o); if (g) { if (g.stop) return g.result; o = g.o; } }
     const item = m.item, name = targetName(m.to), kind = item.kind, label = labelOf(item), zone = o.zone || null;
     let dk = o.dock || null;
     // where the plan is shown: on the place where it was dropped (a set card, a section), or in the dock
@@ -652,7 +692,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       await h; refocus(item, o); await end(ms);
     };
     // the plan (read only; nothing is written until it is committed)
-    const planP = timeout(f.plan({ kind, id: item.id, to: m.to, by: who() }), 45000, 'Checking the move');
+    const planP = o.plan0 ? Promise.resolve(o.plan0) : timeout(f.plan({ kind, id: item.id, to: m.to, by: who() }), 45000, 'Checking the move');   // (plan0: the gate above has read it already)
     const viewOf = raw => { const v = normPlan(raw); return m.to.set ? Object.assign({}, v, { to: Object.assign({}, v.to || {}, { label: name }) }) : v; };
     bar.wait('Checking the move…');
     let raw;

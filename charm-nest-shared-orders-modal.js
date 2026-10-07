@@ -825,12 +825,103 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     return { el: M.dlg, close: () => closeIt(M, 'close'), update: list => update(M, list), refresh: () => reread(M, 'live'), isOpen: () => live(M) && M.dlg.open, orders: () => M.orders.map(rawOf) };
   }
 
+  /* ── a plain question in this same window (Paul, 7 Oct 2026: a partial gold sheet dragged to Laser cutting must first ask, in "the same type of
+        popup" as this one, and tell the person that the system will generate the green dash line) ──
+       SharedOrdersModal.ask({ title:[text | {b:text}], sub, chips:[{label, here}], count, cards:[{ key, label, shot:Element|null, tag, facts:[[strong, rest]],
+                               lines:[{icon:'dash'|'lock', text}] }], note, yes, no, armMs, from, onClose }) -> Promise<boolean>
+       The window, its head, chips, count, cards and buttons are this file's own (soDlg, soHead, soCard, soBtn): the very same look. It writes nothing.
+       true only from a real press on the yes button (pointer down or Enter / Space, then its click, after armMs: a script's click, a ghost click after a touch
+       drag and a click before the button is armed are no yes); the no button, the close button, Esc and a click outside are false, and the safe button takes the
+       focus. One window at a time: with this window or the shared-orders list already open it answers false at once (never a pop-up on a pop-up). */
+  const ASK_STYLE = `
+.soCutTop{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 12px 6px}
+.soCutTop .soTileWrap{width:100%}
+.soCutTile{aspect-ratio:auto;min-height:40px;border-radius:9px}
+.soCutTile>img,.soCutTile>canvas{display:block;width:100%;height:auto;max-height:none;padding:0;opacity:1;object-fit:contain;border-radius:9px}
+.soCutTile .soPh{z-index:0}.soCutTile>img,.soCutTile>canvas{position:relative;z-index:1}
+.soCutFacts{padding:2px 14px 6px;justify-content:center}
+.soCutDash{flex:0 0 auto;width:20px;height:0;margin-top:7px;border-top:2px dashed #008974}
+.soCutNote{margin:12px 2px 0;color:var(--ink70,#5b554c);font-size:12px;line-height:1.4;text-wrap:pretty}
+.soCutNote:empty{display:none}
+.soCutBtns{justify-content:flex-end;margin-top:10px}
+.soCutCard .soLocked{padding:0 14px 8px}
+.soBtn[aria-disabled=true]{position:relative;overflow:hidden;opacity:.6;cursor:default}
+.soBtn[aria-disabled=true]::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:100%;background:currentColor;opacity:.45;transform-origin:left;animation:soArm var(--so-arm,700ms) linear forwards}
+@keyframes soArm{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){.soBtn[aria-disabled=true]::after{animation:none!important}}
+`;
+  let ASK = null;
+  function askCss() { css(); if (doc.getElementById('soAskCss')) return; const s = doc.createElement('style'); s.id = 'soAskCss'; s.textContent = ASK_STYLE; (doc.head || doc.documentElement).appendChild(s); }
+  const segs = parts => arr(parts).map(p => p && typeof p === 'object' ? `<b>${esc(p.b)}</b>` : esc(p)).join('');
+  const segsPlain = parts => arr(parts).map(p => p && typeof p === 'object' ? p.b : p).join('');
+  function ask(opts) {
+    opts = opts && typeof opts === 'object' ? opts : {};
+    return new Promise(resolve => {
+      try {
+        if ((CUR && live(CUR)) || (ASK && !ASK.closed) || typeof doc.createElement('dialog').showModal !== 'function') return resolve(false);
+        askCss();
+        const cards = arr(opts.cards);
+        const M = { opts, dlg: doc.createElement('dialog'), closed: false, answer: false, armed: false, pressed: false, pressT: 0, armT: 0, pressedInside: false };
+        const dlg = M.dlg, plain = segsPlain(opts.title);
+        dlg.className = 'soDlg'; dlg.dataset.sharedOrders = ''; dlg.dataset.ask = ''; dlg.dataset.state = 'list'; dlg.dataset.n = String(Math.min(2, Math.max(1, cards.length)));
+        const chips = arr(opts.chips).map(c => `<span class="soChip${c.here ? ' here' : ''}" style="--dot:${dotOf(c.label)}"><i></i><span>${esc(c.label)}</span></span>`).join('');
+        const lineIcon = k => k === 'dash' ? '<i class="soCutDash" aria-hidden="true"></i>' : k === 'lock' ? ICON.lock : '';
+        const cardLi = c => `<li class="soCard soCutCard" data-key="${esc(c.key || '')}"><div class="soCutTop"><span class="soTileWrap"><span class="soTile soCutTile" data-shot><span class="soPh">${ICON.charm}</span></span></span><span class="soChip" style="--dot:${dotOf(c.label)}"><i></i><span>${esc(shortOf(c.label))}</span></span>${c.tag ? `<span class="soWhere">${esc(c.tag)}</span>` : ''}</div>`
+          + (arr(c.facts).length ? `<div class="soMeta soCutFacts">${arr(c.facts).map(f => `<span class="soOrderNo">${esc(f[0])}</span>${f[1] ? `<span class="soWho">${esc(f[1])}</span>` : ''}`).join('')}</div>` : '')
+          + arr(c.lines).map(l => `<p class="soLocked">${lineIcon(l.icon)}<span>${esc(l.text)}</span></p>`).join('') + '</li>';
+        dlg.innerHTML = `<div class="soBox"><header class="soHead"><div class="soTitles"><h2 class="soTitle">${segs(opts.title)}</h2><p class="soSub">${esc(opts.sub || '')}</p><div class="soSheets">${chips}</div></div><div class="soHeadRight"><span class="soCount">${esc(opts.count || '')}</span><button type="button" class="soX" data-x aria-label="Close">${ICON.close}</button></div></header><div class="soBody"><ul class="soGrid" role="list">${cards.map(cardLi).join('')}</ul><p class="soCutNote">${esc(opts.note || '')}</p><div class="soBtns soCutBtns"><button type="button" class="soBtn" data-no>${esc(opts.no || 'Cancel')}</button><button type="button" class="soBtn gold" data-yes aria-disabled="true">${esc(opts.yes || 'Yes')}</button></div></div><div class="soLive" role="status" aria-live="polite"></div></div>`;
+        dlg.setAttribute('aria-label', plain);
+        cards.forEach((c, i) => { const slot = dlg.querySelectorAll('[data-shot]')[i], el = c.shot; if (slot && el && el.nodeType === 1) slot.appendChild(el); });
+        const yes = dlg.querySelector('[data-yes]'), no = dlg.querySelector('[data-no]');
+        const armMs = opts.armMs == null ? 700 : Math.max(0, +opts.armMs || 0), arm = () => { M.armed = true; yes.removeAttribute('aria-disabled'); };
+        if (armMs) { dlg.style.setProperty('--so-arm', armMs + 'ms'); M.armT = setTimeout(arm, armMs); } else arm();
+        const hold = () => { M.pressed = true; clearTimeout(M.pressT); }, release = () => { clearTimeout(M.pressT); M.pressT = setTimeout(() => { M.pressed = false; }, 600); };
+        yes.addEventListener('pointerdown', e => { if (e.button === 0 || e.button === undefined) hold(); });
+        yes.addEventListener('pointerup', () => { if (M.pressed) release(); });
+        yes.addEventListener('pointerleave', e => { if (!e.pointerType || e.pointerType === 'mouse') { clearTimeout(M.pressT); M.pressed = false; } });   // (a touch or pen leaves after it lifts, and its click comes after that)
+        yes.addEventListener('pointercancel', () => { clearTimeout(M.pressT); M.pressed = false; });
+        yes.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') hold(); });
+        yes.addEventListener('keyup', () => { if (M.pressed) release(); });
+        yes.addEventListener('click', e => {
+          const was = M.pressed; M.pressed = false; clearTimeout(M.pressT); if (e.preventDefault) e.preventDefault();
+          if (!M.armed || M.closed) return;
+          if (!was && !(e.isTrusted && e.detail === 0)) return;   // (a click nobody pressed; a trusted click with no pointer is a screen reader's activate)
+          M.answer = true; closeAsk(M);
+        });
+        no.addEventListener('click', e => { if (e.preventDefault) e.preventDefault(); closeAsk(M); });
+        dlg.querySelector('[data-x]').addEventListener('click', () => closeAsk(M));
+        dlg.addEventListener('pointerdown', e => { M.pressedInside = e.target !== dlg; }, true);
+        dlg.addEventListener('click', e => { if (e.target === dlg && !M.pressedInside) closeAsk(M); });
+        dlg.addEventListener('keydown', e => {
+          if (e.key !== 'Tab') return;
+          const f = [...dlg.querySelectorAll('button:not([disabled])')].filter(el => el.getClientRects().length); if (!f.length) return;
+          const a = doc.activeElement, first = f[0], last = f[f.length - 1], outside = !dlg.contains(a) || a === dlg;
+          if (e.shiftKey && (a === first || outside)) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && (a === last || outside)) { e.preventDefault(); first.focus(); }
+        });
+        dlg.addEventListener('close', () => {
+          if (M.closed) return; M.closed = true; clearTimeout(M.armT); clearTimeout(M.pressT); if (ASK === M) ASK = null;
+          try { if (opts.onClose) opts.onClose({ answer: M.answer }); } catch (e) { warn('onClose', e); }
+          setTimeout(() => { try { dlg.remove(); } catch (_) {} }, 700);
+          resolve(M.answer);
+        });
+        doc.body.appendChild(dlg);
+        if (opts.from) { if (W.Motion && Motion.from) Motion.from(dlg, opts.from); else dlg._mdFrom = opts.from; }
+        dlg.tabIndex = -1; ASK = M;
+        dlg.showModal();
+        try { no.focus({ preventScroll: true }); } catch (_) {}   // (the safe button takes the focus: an Enter right after a drop says no)
+        say(M, `${plain}. ${opts.sub || ''}`);
+      } catch (e) { warn('ask', e); resolve(false); }
+    });
+  }
+  function closeAsk(M) { try { if (M.dlg.open) M.dlg.close(); else M.dlg.dispatchEvent(new Event('close')); } catch (_) { try { M.dlg.dispatchEvent(new Event('close')); } catch (_) {} } }
+
   W.SharedOrdersModal = {
     open,
+    ask,
     close: () => { if (CUR) closeIt(CUR, 'close'); },
     isOpen: () => !!(CUR && live(CUR) && CUR.dlg.open),
     current: () => (CUR && live(CUR) ? handleOf(CUR) : null),
-    version: '20261005-4',
+    version: '20261007-ask1',
     _normalize: normalize
   };
 })();
