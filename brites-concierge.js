@@ -351,7 +351,26 @@
     state.products=products;state.productHandles=products.map(function(p){return p.handle;});state.meanings=preserveMeaning;state.selectedVariants=selectedVariantMap(state.selectedVariants,products);liveMeaningProducts=new Set(Array.from(liveMeaningProducts).filter(function(id){return oldIds.has(id);}));voiceSelectionVersion++;invalidateVoiceAuthority();
     selectedProductId=products.find(function(p){return p.handle===action?.handle;})?.id||'';renderTurn(state.products,state.meanings,state.policyLinks,false);setShopperProgress(products.length?'selection-shown':'needs-help');syncVoiceContext();save();return products;
   }
-  function serviceQuestion(text){if(/\b(?:discount|coupon|promo(?:tion)?|offer|offer code|shipping threshold)\b/i.test(text))return 'offers';if(/\b(?:production|processing|make|made|ready|dispatch)\b/i.test(text)&&/\b(?:time|days|long|when|take|soon)\b/i.test(text))return 'production';if(/\b(?:ethic(?:al|ally)?|sourc(?:e|ed|ing)|origin|united states|usa|u\.s\.)\b/i.test(text))return 'sourcing';if(/\b(?:shipping|delivery|ship|deliver)\b/i.test(text))return 'shipping';if(/\b(?:gift notes?|gift wrapp?(?:ing)?|gift packages?|gift packaging)\b/i.test(text))return 'gifts';if(/\b(?:custom designs?|my design|own design|new piece|engraving|personaliz(?:ation|e))\b/i.test(text)&&/\b(?:can|do|does|how|what|offer|available|tell|help)\b/i.test(text))return 'customization';return '';}
+  function serviceTopics(text){
+    var topics=[];
+    if(/\b(?:production|processing|make|made|ready|dispatch)\b/i.test(text)&&/\b(?:times?|timing|days|long|when|take|takes|soon)\b/i.test(text))topics.push('production');
+    if(/\b(?:ethic(?:al|ally)?|sourc(?:e|ed|ing)|origins?|united states|usa|u\.s\.)\b|\bwhere\s+(?:(?:do|does)\s+)?(?:your|the|these)\s+materials?\s+(?:come|are)\s+from\b/i.test(text))topics.push('sourcing');
+    if(/\b(?:shipping|delivery|ship|deliver)\b/i.test(text))topics.push('shipping');
+    if(/\bgift\s+(?:notes?|messages?|wrapp?(?:ing)?|packages?|packaging|boxes?)\b|\b(?:include|add|write)\s+(?:a\s+)?(?:personal\s+)?(?:gift\s+)?(?:note|message)\b/i.test(text))topics.push('gifts');
+    if(/\b(?:customiz\w*|customis\w*|engrave|engraving|personaliz\w*|personalis\w*|custom\s+(?:options?|designs?|pieces?)|(?:my|own|customer'?s?)\s+design|(?:brand\s+new|new)\s+piece\s+(?:from|based on))\b/i.test(text))topics.push('customization');
+    // Offer as a verb ("Do you offer gift wrapping?") is not a discount.
+    if(/\b(?:discounts?|coupons?|promos?|promo(?:tional)?\s+codes?|promotions?|promotion(?:al)?\s+(?:codes?|offers?)|offers|offer\s+codes?|(?:published|current|available|special|what|any|which)\s+offers?|shipping\s+threshold)\b/i.test(text))topics.push('offers');
+    return topics;
+  }
+  function serviceSectionRequest(text,topics,resolved){
+    if(topics.length!==1||resolved?.ok!==true||!resolved.action||resolved.action.handle)return false;
+    var action=resolved.action,section={production:'shipping',shipping:'shipping',gifts:'gifts',customization:'customize',offers:'offers'}[topics[0]];
+    if(!section||action.section!==section||!['highlight','scroll','gift','customize'].includes(action.type))return false;
+    return /^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|i'd like (?:you )?to)\s+)*(?:show|display|open|view|highlight|scroll|take me|go|let me see)\b/i.test(String(text||'').trim());
+  }
+  function ordinaryServiceQuestion(text){
+    return /^(?:please\s+)?(?:what|whats|how|where|which|are|is|does|do|can|tell me|explain)\b/i.test(String(text||'').trim())&&!/\b(?:do not|don't|dont|not now|not yet|do not discuss|don't discuss)\b|https?:\/\/|<\s*script\b|javascript\s*:|\b(?:execute|run)\s+(?:code|script|javascript)|\b(?:ignore|override|bypass)\b.{0,100}\b(?:instructions|safety|rules|guard|previous|system)\b/i.test(text);
+  }
   function mixedServiceRequest(text){
     // A service heading must not swallow a separate product request or item
     // preferences. Keep the shopper's original words for the core catalogue
@@ -404,11 +423,16 @@
   async function typedStorefrontRequest(text){
     if(!sandbox||!window.BritesSandboxStorefront||!state.open||document.hidden)return {handled:false};
     var bridge=await ensureStorefrontBridge(),page=storefrontContext();if(!bridge||!page||!state.open||document.hidden||busy)return {handled:false};
-    var resolved;try{resolved=bridge.resolve(text,page);}catch(error){return {handled:false};}var serviceKind=serviceQuestion(text);if(serviceKind&&mixedServiceRequest(text))return {handled:false};var kind=resolved?.recognized&&!resolved.ok?'':serviceKind;
+    var resolved;try{resolved=bridge.resolve(text,page);}catch(error){return {handled:false};}var topics=serviceTopics(text),serviceKind=topics[0]||'';
+    // Multi-topic and mixed requests use the core read with the original words.
+    // A single service question keeps the current service snapshot path; it
+    // never authorizes an unrelated piece, details panel or cart action.
+    if(serviceKind&&(mixedServiceRequest(text)||topics.length>1))return {handled:false};
+    var kind=resolved?.recognized&&!resolved.ok&&!ordinaryServiceQuestion(text)?'':serviceKind;
     if(!resolved?.recognized&&!kind)return {handled:false};
     var record={id:++requestSerial,voice:false,turn:conversation,controller:new AbortController(),cancelled:false,timedOut:false},timeout=setTimeout(function(){record.timedOut=true;record.controller.abort();},20000);activeRequest=record;requestController=record.controller;storefrontRequests.add(record);busy=true;invalidateVoiceAuthority();send.disabled=input.disabled=true;stopSpeech();setAvatarEmotion(text);setAvatarState('thinking');bubble(text,'user');state.history.push({role:'user',content:text});state.pendingTurn={message:text,startedAt:Date.now()};showCaption(text,'user');status.textContent=kind?'Checking current studio guidance\u2026':'Updating the test storefront\u2026';save();
     function current(){return activeRequest===record&&!record.cancelled&&!record.controller.signal.aborted&&record.turn===conversation&&state.open&&!document.hidden;}
-    try{var websiteResult=null;if(kind&&resolved.ok){websiteResult=await bridge.execute(resolved.action,{transcript:text,context:page,source:'typed',signal:record.controller.signal,requestId:'typed-'+record.id});if(!current())return {handled:true,error:'The page request was cancelled.'};if(websiteResult?.ok)adoptStorefrontProducts(websiteResult,resolved.action);}var result=kind?await readStorefrontServices({signal:record.controller.signal}):resolved.ok?await bridge.execute(resolved.action,{transcript:text,context:page,source:'typed',signal:record.controller.signal,requestId:'typed-'+record.id}):{ok:false,reason:resolved.reason};if(!current())return {handled:true,error:'The page request was cancelled.'};
+    try{var websiteResult=null;if(kind&&serviceSectionRequest(text,topics,resolved)){websiteResult=await bridge.execute(resolved.action,{transcript:text,context:page,source:'typed',signal:record.controller.signal,requestId:'typed-'+record.id});if(!current())return {handled:true,error:'The page request was cancelled.'};if(websiteResult?.ok)adoptStorefrontProducts(websiteResult,resolved.action);}var result=kind?await readStorefrontServices({signal:record.controller.signal}):resolved.ok?await bridge.execute(resolved.action,{transcript:text,context:page,source:'typed',signal:record.controller.signal,requestId:'typed-'+record.id}):{ok:false,reason:resolved.reason};if(!current())return {handled:true,error:'The page request was cancelled.'};
       var reply=kind?servicesReply(result,kind):boundedText(result?.reply||result?.message||result?.reason,1000)||'Please name the current piece or page action you want.';var ok=kind?!result.error:result?.ok===true;if(ok&&!kind)adoptStorefrontProducts(result,resolved.action);state.pendingTurn=null;latestReply=reply;state.history.push({role:'assistant',content:reply});state.history=state.history.slice(-16);bubble(reply,ok?'':'error');showCaption(reply);setAvatarEmotion(reply,'assistant');setAvatarState(ok?'idle':'error');if(ok){clearVoiceNotice();status.textContent=kind?'Studio guidance checked just now.':'Test storefront updated.';avatarCall('cue',kind?'explain':'present');}else status.textContent='You can clarify the request or browse directly.';
       if(kind&&ok){var sources=kind==='offers'?result.offers.items.map(function(offer){return offer.source;}):result.conflicts.filter(function(c){return c.topic===kind;}).map(function(c){return c.source;});if(!sources.length&&['shipping','production'].includes(kind))sources=result.policyLinks;var unique=new Set();sources.slice(0,4).forEach(function(source){if(unique.has(source.url))return;unique.add(source.url);var link=el('a',source.title,'service-source');link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';messages.appendChild(link);});}
       updateStorefrontPresence();syncVoiceContext();save();return {handled:true,ok:ok,reply:reply,products:ok&&!kind?state.products:[],cartChanged:false};

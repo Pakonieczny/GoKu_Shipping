@@ -14,16 +14,22 @@ function guideFixture({failHome=false,failShipping=false,failReader=false,clock=
 for(const [message,topic] of [
   ['Are your materials ethically sourced from the United States?','sourcing'],
   ['Where do your sourced materials come from?','sourcing'],
+  ['Do you offer ethically sourced materials from the United States?','sourcing'],
+  ['Do you offer sourcing information?','sourcing'],
   ['Do you offer gift notes and wrapping?','gifts'],
+  ['Do you offer gift wrapping?','gifts'],
   ['Show me gift wrapping','gifts'],
   ['Can I give you my design for a brand new piece?','customization'],
   ['Can you engrave this necklace?','customization'],
+  ['Do you offer custom designs?','customization'],
+  ['Do you offer a new piece based on my design?','customization'],
   ['Show custom options','customization'],
   ['What discount codes are published?','offers'],
+  ['What offers/discount codes are published?','offers'],
   ['What offers do you have?','offers'],
   ['How long is production?','shipping']
 ])test('a service question has a direct service-only route: '+message,()=>{
-  const c=storefront.classifyStorefrontServices(message);assert.equal(c.policyOnly,true);assert.ok(c.serviceTopics.includes(topic));
+  const c=storefront.classifyStorefrontServices(message);assert.equal(c.policyOnly,true);assert.deepEqual(c.serviceTopics,[topic]);
 });
 for(const message of [
   'Find a silver bunny necklace and tell me about gift wrapping',
@@ -66,6 +72,18 @@ test('gift services and new designs offer help without inventing per-item eligib
   for(const a of [gift,custom]){assert.equal(a.policyOnly,true);assert.equal(a.policyKnowledge.status,'merchant_guidance');assert.equal(a.serviceKnowledge.status,'merchant_provided');assert.equal(a.serviceKnowledge.independentlyVerified,false);assert.deepEqual(a.policyKnowledge.sources,[]);assert.ok(!/free gift wrapping|this piece can be engraved|design is approved/.test(a.reply));}
   assert.equal(f.calls.length,2);assert.ok(f.calls.every(c=>c.init.method===undefined||c.init.method==='GET'));assert.ok(f.calls.every(c=>c.init.body===undefined&&c.init.credentials==='omit'&&c.init.redirect==='error'));
 });
+test('generic offer verbs preserve the requested service without unrelated promotion replies',async()=>{
+  for(const [message,topic,content] of [
+    ['Do you offer gift notes and wrapping?','gifts',/gift packages, gift notes and gift wrapping/],
+    ['Do you offer ethically sourced materials from the United States?','sourcing',/not independent sourcing certification/],
+    ['Do you offer sourcing information?','sourcing',/published storefront describes materials sourced from the United States and Italy/],
+    ['Do you offer custom designs?','customization',/new pieces based on a customer’s design/],
+    ['Do you offer a new piece based on my design?','customization',/cost and timing need studio review/]
+  ]){
+    const a=await guideFixture().guide.answer({message});assert.match(a.reply,content,message);assert.deepEqual(a.serviceKnowledge.topics,[topic],message);assert.equal(a.policyKnowledge.status,'merchant_guidance',message);assert.deepEqual(a.serviceKnowledge.offers,[],message);assert.doesNotMatch(a.reply,/BRITES10|free standard shipping|Checkout confirms eligibility/,message);
+  }
+  const combined=await guideFixture().guide.answer({message:'Do you offer gift wrapping and discount codes?'});assert.deepEqual(combined.serviceKnowledge.topics,['gifts','offers']);assert.match(combined.reply,/gift packages, gift notes and gift wrapping/);assert.match(combined.reply,/code BRITES10 for 10% off/);assert.match(combined.reply,/not a promise that it applies/);
+});
 test('published codes and precise free-shipping comparison stay unvalidated at checkout',async()=>{
   const a=await guideFixture().guide.answer({message:'What published offers and discount codes are available?'});
   assert.match(a.reply,/code BRITES10 for 10% off/);assert.match(a.reply,/orders over \$75/);assert.match(a.reply,/Checkout confirms eligibility, currency, any minimum spend, expiry and whether offers can be combined/);assert.match(a.reply,/not a promise that it applies/);
@@ -99,8 +117,9 @@ function endpointFixture({failServices=false,allowed=true}={}){
   const handler=new Function('core','claude','policy','diagnostics','Netlify',endpointSource)(injectedCore,{createClaudeClient:()=>{calls.model++;throw Error('Paid model must not be called.');}},{...policy,createPolicyGuide:()=>policy.createPolicyGuide({fetch:async url=>new Response(url===policy.POLICIES.shipping.url?shipping:refund,{headers:{'content-type':'text/html'}})})},diagnostics,{env:{get:()=>undefined}});
   const call=async(body,{origin='https://preview.test'}={})=>{const response=await handler(new Request('https://preview.test/api/concierge',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)}),{ip:'synthetic'});return{status:response.status,body:await response.json()};};return{calls,call,p};
 }
-for(const message of ['Are materials ethically sourced from the United States?','Do you offer gift notes and wrapping?','Can I give you my design for a new piece?','What discount codes are published?','How long is production?'])test('endpoint answers direct service question without catalogue or paid inference: '+message,async()=>{
+for(const message of ['Are materials ethically sourced from the United States?','Do you offer gift notes and wrapping?','Do you offer ethically sourced materials from the United States?','Do you offer sourcing information?','Do you offer custom designs?','Do you offer a new piece based on my design?','Can I give you my design for a new piece?','What discount codes are published?','What offers/discount codes are published?','How long is production?'])test('endpoint answers direct service question without catalogue or paid inference: '+message,async()=>{
   const f=endpointFixture(),r=await f.call({message,preferences:{query:'bunny',privateOwnerField:'PRIVATE_OWNER'}});assert.equal(r.status,200);assert.equal(r.body.policyOnly,true);assert.equal(r.body.aiUsed,false);assert.deepEqual(r.body.products,[]);assert.deepEqual(r.body.actions,[]);assert.equal(r.body.preferences.query,'bunny');assert.equal(f.calls.services,1);assert.equal(f.calls.catalogue,0);assert.equal(f.calls.setup,0);assert.equal(f.calls.model,0);assert.equal(r.body.serviceKnowledge.independentlyVerified,false);assert.doesNotMatch(JSON.stringify(r.body),/PRIVATE_OWNER/);
+  const expected=storefront.classifyStorefrontServices(message).serviceTopics;assert.deepEqual(r.body.serviceKnowledge.topics,expected);if(!expected.includes('offers')){assert.deepEqual(r.body.serviceKnowledge.offers,[]);assert.doesNotMatch(r.body.reply,/BRITES10|free standard shipping|Checkout confirms eligibility/);}
 });
 test('endpoint keeps mixed exact live gifts, unapplied foreign budget and merchant service help',async()=>{
   const f=endpointFixture(),r=await f.call({message:'Find a silver bunny necklace under $50 CAD and explain gift wrapping'});assert.equal(r.status,200);assert.equal(r.body.products[0].id,f.p.id);assert.equal(r.body.currencyMismatch,true);assert.match(r.body.reply,/haven’t applied your CAD budget/);assert.match(r.body.reply,/gift notes and gift wrapping/);assert.equal(r.body.policyOnly,false);assert.equal(f.calls.catalogue,1);assert.equal(f.calls.model,0);assert.equal(r.body.serviceKnowledge.status,'merchant_provided');

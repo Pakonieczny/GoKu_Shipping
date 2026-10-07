@@ -163,7 +163,7 @@
     return Object.fromEntries(fields.map(name=>[name,count(result[name])]));
   }
   async function mount(root,opts={}){
-    const workspace=node('main',null,'workspace');root.replaceChildren(workspace);let data=null,filter='',selected=null,detailRequest=0,correctionPanel=null;
+    const workspace=node('main',null,'workspace');root.replaceChildren(workspace);let data=null,filter='',selected=null,detailRequest=0,correctionPanel=null,clearRevisionLoad=null;
     const header=node('header'),intro=node('div');intro.append(node('span','Shared product knowledge','eyebrow'),node('h1','Research that reaches the buyer'),node('p','Product evidence, competitor offers and recommendations for ads, buyer searches and the gift concierge.','sub'));
     const controls=node('div',null,'controls'),refresh=node('button','Refresh progress','btn'),preview=node('a','Open gift concierge','btn');refresh.type='button';preview.href=opts.conciergeUrl||'/concierge-sandbox.html';preview.target='_blank';preview.rel='noopener';controls.append(refresh,preview);header.append(intro,controls);workspace.appendChild(header);
     let key='';if(!opts.request){try{key=sessionStorage.getItem('brites-growth-key')||'';}catch(e){}}
@@ -242,6 +242,7 @@
     function links(parent,dossier,ids){const sources=sourceLinks(dossier,ids);if(!sources.length)return;const p=node('p',null,'status');sources.forEach((s,i)=>{if(i)p.append(' \xb7 ');const a=node('a',s.title||s.id);a.href=safeLink(s.url);a.target='_blank';a.rel='noopener noreferrer';p.appendChild(a);});parent.appendChild(p);}
     function renderRows(){rows.replaceChildren();(data?.queue||[]).filter(r=>r.rank<=100&&(!filter||[r.title,r.handle,r.sku,r.theme].join(' ').toLowerCase().includes(filter))).forEach(r=>{const b=node('button',null,'row'+(r.id===selected?' active':''));b.type='button';b.setAttribute('aria-pressed',String(r.id===selected));b.append(node('b',r.rank+'. '+r.title),node('small',r.handle||'Live product match pending'),node('span',String(r.status||'pending').replace(/_/g,' '),'tag '+(r.status||'pending')));b.onclick=()=>show(r);rows.appendChild(b);});if(!rows.childElementCount)rows.appendChild(node('p',filter?'No products match this search.':'No ranked products are loaded yet.','empty'));}
     async function show(r){
+      clearRevisionLoad?.();clearRevisionLoad=null;
       clearCorrection();selected=r.id;const seq=++detailRequest;renderRows();detail.replaceChildren(node('span',r.theme||'Product research','eyebrow'),node('h2',r.title));
       if(!productId(r.productId)){detail.appendChild(node('p','An exact live product and variant match is still required. Similar products remain candidates.','empty'));return;}
       const pending=node('p','Reading saved product research\u2026','status');detail.appendChild(pending);
@@ -269,23 +270,48 @@
             }catch{if(seq===detailRequest&&selected===r.id&&knowledgeReport.isConnected){knowledgeReport.textContent='';knowledgeState.textContent='Current selected-product diagnostics could not be verified. No saved research was changed.';}}
             finally{if(readKnowledge.isConnected)readKnowledge.disabled=false;}
           };
-          const revisionInput=node('input'),revisionLabel=node('label','Reviewed keyword revision JSON'),revisionPreview=node('pre'),applyRevision=node('button','Apply reviewed keyword revision','btn'),revisionState=node('p','Optional: load a reviewed, exact-version keyword revision file to preview it before applying. This does not regenerate the approved dossier or refresh Demand.','status');
-          let revision=null;
+          const revisionInput=node('input'),revisionLabel=node('label','Reviewed keyword revision JSON'),revisionPaste=node('textarea'),pasteLabel=node('label','Or paste reviewed keyword revision JSON'),previewPaste=node('button','Preview pasted keyword revision','btn'),revisionPreview=node('pre'),applyRevision=node('button','Apply reviewed keyword revision','btn'),revisionState=node('p','Optional: load a reviewed, exact-version JSON file or paste the same JSON and preview it before applying. This does not regenerate the approved dossier or refresh Demand.','status');
+          let revision=null,revisionLoad=0,cancelFileRead=null;
           revisionInput.type='file';revisionInput.accept='.json,application/json';revisionInput.setAttribute('aria-label','Reviewed keyword revision JSON');revisionPreview.setAttribute('aria-label','Reviewed keyword revision preview');revisionPreview.style.cssText=knowledgeReport.style.cssText;applyRevision.type='button';applyRevision.disabled=true;
-          revisionLabel.appendChild(revisionInput);knowledgeBox.append(revisionLabel,revisionPreview,applyRevision,revisionState);
+          revisionPaste.setAttribute('aria-label','Paste reviewed keyword revision JSON');revisionPaste.rows=7;revisionPaste.maxLength=32767;revisionPaste.spellcheck=false;revisionPaste.style.cssText='display:block;width:100%;box-sizing:border-box;font:inherit';previewPaste.type='button';
+          revisionLabel.appendChild(revisionInput);pasteLabel.appendChild(revisionPaste);knowledgeBox.append(revisionLabel,pasteLabel,previewPaste,revisionPreview,applyRevision,revisionState);
+          function cancelRevisionRead(){revisionLoad++;cancelFileRead?.();cancelFileRead=null;return revisionLoad;}
+          function resetRevisionLoad(){const load=cancelRevisionRead();revision=null;applyRevision.disabled=true;revisionPreview.textContent='';return load;}
+          clearRevisionLoad=resetRevisionLoad;
+          const currentRevisionLoad=load=>load===revisionLoad&&seq===detailRequest&&selected===r.id&&revisionInput.isConnected;
+          function previewRevisionText(text,load){
+            if(!currentRevisionLoad(load))return;
+            if(typeof text!=='string'||!text.trim()||text.length>=32768||new global.Blob([text]).size>=32768)throw Error('Use bounded JSON.');
+            const proposal=keywordRevisionFor(JSON.parse(text),r,dossier);
+            if(!currentRevisionLoad(load))return;
+            revision=proposal;revisionPreview.textContent=JSON.stringify(proposal,null,2);applyRevision.disabled=false;revisionState.textContent='Reviewed terms are previewed above. A separate Apply click rechecks the current approved version and existing source bindings.';
+          }
+          revisionPaste.oninput=()=>{resetRevisionLoad();revisionInput.value='';revisionState.textContent='Pasted JSON has changed. Preview it before applying; no revision has been sent.';};
+          previewPaste.onclick=()=>{
+            const load=resetRevisionLoad();revisionInput.value='';
+            try{previewRevisionText(revisionPaste.value,load);}
+            catch{if(currentRevisionLoad(load))revisionState.textContent='This pasted JSON is invalid, too large or bound to different research. No revision was sent.';}
+          };
           revisionInput.onchange=async()=>{
-            revision=null;applyRevision.disabled=true;revisionPreview.textContent='';
+            const load=resetRevisionLoad();revisionPaste.value='';
             const file=revisionInput.files?.[0];if(!file){revisionState.textContent='No reviewed keyword revision is loaded.';return;}
+            let timer=null;
             try{
               if(!Number.isSafeInteger(file.size)||file.size<=0||file.size>=32768||!file.name.toLowerCase().endsWith('.json'))throw Error('Use one bounded JSON file.');
-              const proposal=keywordRevisionFor(JSON.parse(await file.text()),r,dossier);
-              if(seq!==detailRequest||selected!==r.id||!revisionInput.isConnected)return;
-              revision=proposal;revisionPreview.textContent=JSON.stringify(proposal,null,2);applyRevision.disabled=false;revisionState.textContent='Reviewed terms are previewed above. A separate Apply click rechecks the current approved version and existing source bindings.';
-            }catch{if(seq===detailRequest&&selected===r.id&&revisionInput.isConnected)revisionState.textContent='This file is invalid, too large or bound to different research. No revision was sent.';}
+              revisionState.textContent='Reading the reviewed JSON file\u2026 If loading stalls, paste its JSON below and preview it instead.';
+              const text=await new Promise((resolve,reject)=>{
+                cancelFileRead=()=>{global.clearTimeout(timer);resolve(null);};
+                timer=global.setTimeout(()=>reject(Error('FILE_READ_TIMEOUT')),8000);
+                Promise.resolve().then(()=>file.text()).then(resolve,reject);
+              });
+              global.clearTimeout(timer);if(!currentRevisionLoad(load)||text===null)return;
+              previewRevisionText(text,load);
+            }catch(error){if(currentRevisionLoad(load))revisionState.textContent=error?.message==='FILE_READ_TIMEOUT'?'The file did not finish loading. Paste its JSON below and preview it instead. No revision was sent.':'This file is invalid, too large, unreadable or bound to different research. Paste its JSON below to preview it instead. No revision was sent.';}
+            finally{global.clearTimeout(timer);if(load===revisionLoad)cancelFileRead=null;}
           };
           applyRevision.onclick=async()=>{
             if(!revision||applyRevision.disabled)return;
-            const proposal=revision;applyRevision.disabled=true;revisionInput.disabled=true;revisionState.textContent='Rechecking current approved research before the reviewed revision\u2026';
+            const proposal=revision;cancelRevisionRead();applyRevision.disabled=true;revisionInput.disabled=true;revisionPaste.disabled=true;previewPaste.disabled=true;revisionState.textContent='Rechecking current approved research before the reviewed revision\u2026';
             try{
               const fresh=await request('research?ids='+encodeURIComponent(productId(r.productId)));
               if(seq!==detailRequest||selected!==r.id||!applyRevision.isConnected)return;
@@ -312,7 +338,7 @@
               r.dossierVersion=approved.version;revision=null;await show(r);
               if(selected===r.id)status.textContent='Reviewed keyword revision saved and read back for '+r.handle+' \xb7 approved version '+approved.version+'. Existing Demand retains its previous version and must be rechecked before reuse.';
             }catch{if(seq===detailRequest&&selected===r.id&&applyRevision.isConnected)revisionState.textContent='The reviewed revision or its current readback could not be verified. Refresh this product before retrying; no older research is used as a fallback.';}
-            finally{if(revisionInput.isConnected)revisionInput.disabled=false;if(applyRevision.isConnected)applyRevision.disabled=true;}
+            finally{if(revisionInput.isConnected)revisionInput.disabled=false;if(revisionPaste.isConnected)revisionPaste.disabled=false;if(previewPaste.isConnected)previewPaste.disabled=false;if(applyRevision.isConnected)applyRevision.disabled=true;}
           };
         }
         if(openIssues.length&&global.BritesGrowthCorrections?.mount){const host=node('div');detail.appendChild(host);correctionPanel=global.BritesGrowthCorrections.mount(host,{productId:productId(r.productId),handle:r.handle,dossier,issues,request:correctionRequest});}

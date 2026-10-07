@@ -39,6 +39,7 @@ async function loadFile(f,value,{size=null,name='reviewed-keywords.json',text=nu
   const input=f.root.querySelector('input[type="file"]'),content=JSON.stringify(value);
   assert.ok(input);Object.defineProperty(input,'files',{value:[{name,size:size??Buffer.byteLength(content),text:text||(()=>Promise.resolve(content))}],configurable:true});await input.onchange();return input;
 }
+function pasteJson(f,text){const input=f.root.querySelector('[aria-label="Paste reviewed keyword revision JSON"]');assert.ok(input);input.value=typeof text==='string'?text:JSON.stringify(text);input.oninput();button(f,'Preview pasted keyword revision').onclick();return input;}
 test('operator diagnostics retain exact versions, source dates, holds and keyword index bindings',()=>{
   const f=plainUi(),fixture=data();try{
     fixture.live.meaningHold=true;fixture.supplement.baseDossierVersion='d'.repeat(64);
@@ -90,6 +91,76 @@ test('reviewed JSON is previewed without dispatch and rejects unknown, foreign, 
     await loadFile(f,proposal(f));assert.equal(button(f,'Apply reviewed keyword revision').disabled,false);assert.match(f.root.querySelector('[aria-label="Reviewed keyword revision preview"]').textContent,/reviewed symbol gift/);assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
     for(const value of [proposal(f,{productId:'gid://shopify/Product/3199'}),proposal(f,{baseDossierVersion:'d'.repeat(64)}),proposal(f,{reviewed:false}),proposal(f,{sourceIds:['foreign']}),proposal(f,{keywords:Array.from({length:9},(_,i)=>'symbol gift '+i)}),{...proposal(f),apiKey:'NEVER_EXPOSE_CREDENTIAL'}]){await loadFile(f,value);assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);assert.equal(f.root.querySelector('[aria-label="Reviewed keyword revision preview"]').textContent,'');}
     await loadFile(f,proposal(f),{size:32768});assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+  }finally{f.dom.window.close();}
+});
+test('pasted JSON uses the exact review preview without sending a revision and editing invalidates it',async()=>{
+  const f=await mounted();try{
+    const input=pasteJson(f,proposal(f));assert.equal(button(f,'Apply reviewed keyword revision').disabled,false);
+    const preview=f.root.querySelector('[aria-label="Reviewed keyword revision preview"]');assert.deepEqual(JSON.parse(preview.textContent),proposal(f));
+    assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+    input.value='{';input.oninput();assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);assert.equal(preview.textContent,'');
+    assert.match(f.root.textContent,/Pasted JSON has changed/);assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+  }finally{f.dom.window.close();}
+});
+test('paste rejects malformed, oversized UTF-8, unknown, stale and foreign proposals without dispatch',async()=>{
+  const f=await mounted();try{
+    for(const text of ['{',' '.repeat(32768),JSON.stringify(proposal(f))+' '.repeat(32768),JSON.stringify(proposal(f))+'\u00e9'.repeat(16400),proposal(f,{productId:'gid://shopify/Product/3199'}),proposal(f,{baseDossierVersion:NEXT}),proposal(f,{sourceIds:['foreign']}),{...proposal(f),apiKey:'NEVER_EXPOSE_PASTE_CREDENTIAL'}]){
+      pasteJson(f,text);assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);assert.equal(f.root.querySelector('[aria-label="Reviewed keyword revision preview"]').textContent,'');
+      assert.match(f.root.textContent,/pasted JSON is invalid, too large or bound to different research/);assert.doesNotMatch(f.root.textContent,/NEVER_EXPOSE_PASTE_CREDENTIAL/);
+    }
+    assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+  }finally{f.dom.window.close();}
+});
+test('valid pasted revision still requires separate Apply, exact current research and approved readback',async()=>{
+  const f=await mounted({hook:async(op,payload,{primary})=>{
+    if(op!=='keyword-revision')return;primary.dossier.version=NEXT;primary.dossier.recommendations[0].keywords.push(...payload.keywords);
+    return {ok:true,changed:true,productId:ID,baseDossierVersion:VERSION,version:NEXT,recommendationIndex:0,keywordCount:2,sandboxOnly:true,providerCalls:0,inferenceCalls:0,campaignWrites:0,budgetWrites:0};
+  }});try{
+    pasteJson(f,proposal(f));assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+    const before=f.requests.length;await button(f,'Apply reviewed keyword revision').onclick();
+    const operations=f.requests.slice(before);assert.deepEqual(operations.slice(0,3).map(value=>value.op),['research?ids='+encodeURIComponent(ID),'keyword-revision','research?ids='+encodeURIComponent(ID)]);
+    assert.ok(operations.slice(3).every(value=>value.payload===undefined&&/^(?:research|demand)\?ids=/.test(value.op)));assert.equal(operations.filter(value=>value.op==='keyword-revision').length,1);
+    assert.deepEqual(f.requests.find(value=>value.op==='keyword-revision').payload,proposal(f));assert.match(f.root.textContent,/Reviewed keyword revision saved and read back/);
+  }finally{f.dom.window.close();}
+});
+test('late old file completion cannot replace a newer pasted preview',async()=>{
+  let resolve;const pending=new Promise(done=>{resolve=done;}),f=await mounted();try{
+    const loading=loadFile(f,proposal(f,{keywords:['old file symbol gift']}),{text:()=>pending});
+    await until(()=>/Reading the reviewed JSON file/.test(f.root.textContent));pasteJson(f,proposal(f,{keywords:['current pasted symbol gift']}));
+    await loading;resolve(JSON.stringify(proposal(f,{keywords:['old file symbol gift']})));await new Promise(setImmediate);
+    const preview=JSON.parse(f.root.querySelector('[aria-label="Reviewed keyword revision preview"]').textContent);assert.deepEqual(preview.keywords,['current pasted symbol gift']);
+    assert.equal(button(f,'Apply reviewed keyword revision').disabled,false);assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+  }finally{f.dom.window.close();}
+});
+test('late old file completion cannot replace a newer selected file preview',async()=>{
+  let resolve;const pending=new Promise(done=>{resolve=done;}),f=await mounted();try{
+    const loading=loadFile(f,proposal(f,{keywords:['old file symbol gift']}),{text:()=>pending});await until(()=>/Reading the reviewed JSON file/.test(f.root.textContent));
+    await loadFile(f,proposal(f,{keywords:['current file symbol gift']}));await loading;resolve(JSON.stringify(proposal(f,{keywords:['old file symbol gift']})));await new Promise(setImmediate);
+    assert.deepEqual(JSON.parse(f.root.querySelector('[aria-label="Reviewed keyword revision preview"]').textContent).keywords,['current file symbol gift']);assert.equal(button(f,'Apply reviewed keyword revision').disabled,false);
+  }finally{f.dom.window.close();}
+});
+test('a stalled file read times out with paste recovery feedback and no write',async()=>{
+  const f=await mounted();let expire;const originalSet=f.window.setTimeout.bind(f.window),originalClear=f.window.clearTimeout.bind(f.window),sentinel=987654321;
+  f.window.setTimeout=(callback,ms,...args)=>{if(ms===8000){expire=callback;return sentinel;}return originalSet(callback,ms,...args);};f.window.clearTimeout=id=>{if(id!==sentinel)originalClear(id);};
+  try{
+    const loading=loadFile(f,proposal(f),{text:()=>new Promise(()=>{})});await until(()=>typeof expire==='function');assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);
+    expire();await loading;assert.match(f.root.textContent,/file did not finish loading/);assert.match(f.root.textContent,/Paste its JSON below and preview it instead/);
+    assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);pasteJson(f,proposal(f));assert.equal(button(f,'Apply reviewed keyword revision').disabled,false);
+  }finally{f.dom.window.close();}
+});
+test('unreadable file uses safe paste recovery without exposing the file exception',async()=>{
+  const f=await mounted();try{
+    await loadFile(f,proposal(f),{text:()=>Promise.reject(Error('NEVER_EXPOSE_FILE_CREDENTIAL'))});assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);
+    assert.match(f.root.textContent,/unreadable or bound to different research/);assert.match(f.root.textContent,/Paste its JSON below/);assert.doesNotMatch(f.root.textContent,/NEVER_EXPOSE_FILE_CREDENTIAL/);
+    assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
+  }finally{f.dom.window.close();}
+});
+test('selection change cancels a pending file read immediately without altering the new product',async()=>{
+  const f=await mounted({extra:true});try{
+    const loading=loadFile(f,proposal(f),{text:()=>new Promise(()=>{})});await until(()=>/Reading the reviewed JSON file/.test(f.root.textContent));
+    await f.root.querySelectorAll('.row')[1].onclick();await loading;
+    assert.equal(f.root.querySelector('[aria-label="Selected product research"] h2').textContent,'Second synthetic symbol');assert.equal(f.root.querySelector('[aria-label="Reviewed keyword revision preview"]').textContent,'');
+    assert.equal(button(f,'Apply reviewed keyword revision').disabled,true);assert.equal(f.requests.some(value=>value.op==='keyword-revision'),false);
   }finally{f.dom.window.close();}
 });
 test('explicit Apply accepts the real research response without a state field and verifies approved readback',async()=>{
