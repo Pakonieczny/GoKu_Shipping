@@ -62,7 +62,7 @@ function fakeStore(opts) {
     return q;
   }
   const ref = (name, id) => ({ id, _name: name,
-    get: async () => { reads.push({ name, n: 1, kind: 'doc', id }); if (failing.has(name)) throw new Error('14 UNAVAILABLE'); const d = data(name).get(id); return { id, exists: !!d, data: () => (d ? clone(d) : undefined) }; },
+    get: async () => { if (name !== 'Station_Rev') reads.push({ name, n: 1, kind: 'doc', id }); if (failing.has(name)) throw new Error('14 UNAVAILABLE'); const d = data(name).get(id); return { id, exists: !!d, data: () => (d ? clone(d) : undefined) }; },
     set: async (v, o) => { if (failingWrites.has(name)) throw new Error('synthetic write failure of ' + name); writes.push([name, id]); data(name).set(id, apply(data(name).get(id), v, !!(o && o.merge))); } });
   const db = {
     collection: name => Object.assign(query(name, [], null, null, null), { doc: id => ref(name, id) }),

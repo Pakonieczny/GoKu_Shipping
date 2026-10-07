@@ -153,7 +153,7 @@ async function endOne(db, coll, id, now) {
   try {
     const ref = db.collection(coll).doc(id);
     const list = await Admins.load(db);
-    return await db.runTransaction(async tx => {
+    const res = await db.runTransaction(async tx => {
       const snap = await tx.get(ref);
       if (!snap || !snap.exists) return "gone";
       const v = snap.data() || {};
@@ -163,6 +163,8 @@ async function endOne(db, coll, id, now) {
       tx.set(ref, { endAt: d.endAt, endReason: d.endReason, minutes: minutesOf(ms(v.startAt), d.endAt) }, { merge: true });
       return "ended";
     });
+    if (res === "ended" && coll === COLL) await require("./_employeeRev").afterWrite(db, "", ["ses"]);      // (a session ended by the rules is a change the console's readers look for; FC5)
+    return res;
   } catch (e) {
     console.warn("[autoSignout] could not end a session:", String((e && (e.message || e.code)) || e).slice(0, 120));
     return "error";

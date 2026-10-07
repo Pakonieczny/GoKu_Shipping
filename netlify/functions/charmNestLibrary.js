@@ -3054,20 +3054,45 @@ function sessionRow(id, d, now) {
   if (endAt && (endReason === "idle" || endReason === "closing")) row.endPill = require("./_stationAutoSignout").endPill(row.station, endReason);
   return row;
 }
+/* FC5 (cost): the Sign-ins window asks every 30 s for up to 1,000 sessions of up to 62 days. What began before yesterday's New York midnight is final and is kept
+   10 minutes in the instance; what began yesterday or today is kept while the employee data revision says no session started or ended (one tiny document,
+   _employeeRev.js; a plain beat is not a change, so at most 2 minutes), and the auto sign-out rules are applied again to the kept rows on every call. */
+const SESS_MEMO = new Map(), SESS_PAST_MS = 10 * 60000, SESS_REV_MAX_MS = 60000;
+async function sessionSeg(key, a, z, limit, ttlOnly, rev) {
+  const hit = SESS_MEMO.get(key), t = Date.now();
+  if (hit && (t - hit.at < ttlOnly || (rev && hit.rev === rev && t - hit.at < SESS_REV_MAX_MS))) return hit.p;
+  // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
+  const TS = admin.firestore.Timestamp, ranges = [[a, z]];
+  if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(a), TS.fromMillis(z)]);
+  const entry = { at: t, rev: rev || "", p: Promise.all(ranges.map(([x, y]) => db.collection(SESSIONS).where("startAt", ">=", x).where("startAt", "<", y).orderBy("startAt", "desc").limit(limit + 1).get())).then(raw => {
+    const seen = new Set(), rows = [];
+    for (const snap of raw) for (const d of snap.docs) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); }
+    return rows;
+  }) };
+  SESS_MEMO.set(key, entry);
+  entry.p.catch(() => { if (SESS_MEMO.get(key) === entry) SESS_MEMO.delete(key); });
+  if (SESS_MEMO.size > 40) for (const [k, e] of SESS_MEMO) if (t - e.at > SESS_PAST_MS) SESS_MEMO.delete(k);
+  return entry.p;
+}
 async function op_sessionsList(b) {
   const now = Date.now();
   const until = Math.min(num(b.until) > 0 ? num(b.until) : now + 60000, now + 86400000);
   const since = Math.max(num(b.since) > 0 ? num(b.since) : until - 7 * 86400000, until - SESSION_SPAN_MS);
   if (!(since < until)) return { error: "since must be before until" };
   const limit = Math.max(1, Math.min(1000, Math.floor(num(b.limit)) || 500));
-  // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
-  const TS = admin.firestore.Timestamp, ranges = [[since, until]];
-  if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(since), TS.fromMillis(until)]);
-  const raw = await Promise.all(ranges.map(([a, z]) => db.collection(SESSIONS).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(limit + 1).get()));
-  // the auto sign-out rules (_stationAutoSignout.js): a session idle for 10 minutes, past 5:00 pm Toronto with no recent input, or whose page died is ended at the person's last input (reason idle or closing)
-  const snaps = await Promise.all(raw.map(r => require("./_stationAutoSignout").settledSnap({ db, prefix: "", now }, r)));
+  const AS = require("./_stationAutoSignout");
+  const split = AS.nyMidnightAfter(now - 47 * 3600e3);                 // about yesterday's New York midnight: what began before it is final
+  const R = await require("./_employeeRev").read(db, now), rev = R && R.ok ? String(R.ses) : "";
+  const segs = [];
+  if (since < split) segs.push(sessionSeg(`past|${since}|${Math.min(until, split)}|${limit}`, since, Math.min(until, split), limit, SESS_PAST_MS, ""));
+  if (until > split) segs.push(sessionSeg(`live|${Math.max(since, split)}|${limit}`, Math.max(since, split), until, limit, rev ? 0 : 0, rev));
+  const lists = await Promise.all(segs);
+  // the auto sign-out rules (_stationAutoSignout.js): a session idle for 10 minutes, past 5:00 pm Toronto with no recent input, or whose page died is ended at the person's last input (reason idle or closing).
+  // They run on the clock: applied again, on a copy, to the rows kept, on every call (no read; a write only when a session now ends)
+  const copies = lists.map(l => l.map(x => Object.assign({}, x)));
+  for (const c of copies) await AS.settle({ db, prefix: "", now }, c);
   const seen = new Set(), rows = [];
-  for (const s of snaps) for (const d of s.docs) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d.data() || {}, now); if (r) rows.push(r); }
+  for (const c of copies) for (const d of c) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d, now); if (r) rows.push(r); }
   rows.sort((x, y) => y.startAt - x.startAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
 }

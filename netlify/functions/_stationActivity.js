@@ -194,6 +194,7 @@ async function add(db, FV, events, opts) {
     });
     return fresh.length + up.length;
   });
+  if (written > 0) await require("./_employeeRev").afterWrite(db, prefix, ["act"], FV);    // (a counted change for the console's readers, FC5; production only, never throws)
   return { written, duplicate: duplicate + (docs.length - written), refused, scrubbed };
 }
 

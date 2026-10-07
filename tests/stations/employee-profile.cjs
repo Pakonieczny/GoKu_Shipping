@@ -47,7 +47,7 @@ function fakeStore() {
   }
   const db = { collection: name => Object.assign(query(name, [], null, null), {
     doc: id => ({ id,
-      get: async () => { reads.push({ name, doc: id, n: 1 }); if (failing.has(name)) throw new Error('14 UNAVAILABLE'); const d = data(name).get(id); return { exists: !!d, data: () => keep(d) }; },
+      get: async () => { if (name !== 'Station_Rev') reads.push({ name, doc: id, n: 1 }); if (failing.has(name)) throw new Error('14 UNAVAILABLE'); const d = data(name).get(id); return { exists: !!d, data: () => keep(d) }; },
       set: async v => { writes.push([name, id]); data(name).set(id, keep(v)); },
       create: async v => { writes.push([name, id]); data(name).set(id, keep(v)); } }) }) };
   return { db, put: (name, id, d) => data(name).set(id, keep(d)), reads, writes, fail: n => failing.add(n), heal: n => failing.delete(n), count: n => data(name).size, colls,

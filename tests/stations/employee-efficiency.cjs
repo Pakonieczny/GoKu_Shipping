@@ -251,8 +251,9 @@ async function delta() {
   assert.strictEqual(a.delta, false); assert.strictEqual(a.feed.length, 3, 'a full answer carries the newest events'); assert.strictEqual(a.feed[0].person, 'Ray Welder', 'newest first, under the person\'s one display name');
   assert.deepStrictEqual(Object.keys(a.feed[0]).sort(), ['action', 'at', 'id', 'orderId', 'parts', 'person', 'station']);
   assert(/^\d+~.+/.test(a.cursor));
-  const reads = st.reads.length; await call(st, {}); await call(st, {}); await call(st, { after: a.cursor });
-  assert.strictEqual(st.reads.length, reads, 'inside 5 seconds nothing is read again');
+  const dataReads = () => st.reads.filter(r => r.name !== 'Station_Rev').length;      // (the revision probe, FC5: one tiny document, is not data)
+  const reads = dataReads(); await call(st, {}); await call(st, {}); await call(st, { after: a.cursor });
+  assert.strictEqual(dataReads(), reads, 'inside 5 seconds nothing is read again');
   tick(6000);
   const none = (await call(st, { after: a.cursor })).body;
   assert.strictEqual(none.delta, true); assert.deepStrictEqual(none.feed, [], 'nothing new: an empty feed'); assert.strictEqual(none.cursor, a.cursor);

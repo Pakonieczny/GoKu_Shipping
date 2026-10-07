@@ -22,6 +22,7 @@
 const LIVE = "Station_Live";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions, the activity and this
 const { displayStation } = require("./_activityKinds");     // ONE Sorting station: the stored keys "sorter" (Sorter app) and "qr" (QR Printer page) are shown as "sorting"; history keeps its keys
+const Rev = require("./_employeeRev");                      // the employee data revision: a change the console's readers look for (FC5)
 const AutoSignout = require("./_stationAutoSignout");       // the auto sign-out rules (idle after 10 minutes without input, 5:00 pm Toronto): a session they end is not "signed in" any more
 /* The Welding station (Paul, 6 Oct 2026): two tasks (welding | matching), two people at once, never counted in throughput; see _activityKinds.js */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
@@ -31,7 +32,7 @@ const KEEPALIVE_MS = 30000;        // what the browser does (station-activity.js
 const STALE_MS = 180000;           // a document with no keep-alive for this long is not shown
 const COALESCE_MS = 15000;         // a repeat of the same write inside this is not written again
 const MAX_BODY_CHARS = 8000, MAX_PIECES = 24, MAX_AGE_MS = 12 * 3600e3, SESSION_GONE_MS = 15 * 60000;
-const TTL = { live: 2000, sessions: 15000, today: 20000, found: 15 * 60000, miss: 60000 };
+const TTL = { live: 2000, sessions: 15000, today: 20000, found: 15 * 60000, miss: 5 * 60000 };   // (miss: a design or photo that is not on file is looked for again every 5 minutes, not every minute)
 const UNATTRIBUTED_NOTE = "Scanned with nobody in Matching";     // what the board says of a matched scan made while nobody was signed in under Matching (R3 of stations round 2)
 const LIM = { live: 200, sessions: 300, rollups: 200, matched: 400, matchedShown: 30 };
 
@@ -156,6 +157,7 @@ async function write(db, FV, live, opts) {
     const fp = fpOf(r.order);
     if (last && last.event === "work" && last.fp === fp && now - last.at < COALESCE_MS) return [200, { success: true, coalesced: true }];
     await ref.set(Object.assign(base, { state: "working" }, r.order));
+    await Rev.afterWrite(db, prefix, ["live"], FV);             // (a change the console's readers look for: an order was started; never throws)
     remember(key, fp, "work", now);
     return [200, { success: true, written: 1 }];
   }
@@ -167,6 +169,7 @@ async function write(db, FV, live, opts) {
   const fp = doc.last ? JSON.stringify(doc.last) : "";
   if (last && last.event === "idle" && last.fp === fp && now - last.at < COALESCE_MS) return [200, { success: true, coalesced: true }];
   await ref.set(doc);
+  await Rev.afterWrite(db, prefix, ["live"], FV);               // (an order was finished or closed)
   remember(key, fp, "idle", now);
   return [200, { success: true, written: 1 }];
 }
@@ -294,19 +297,26 @@ async function dress(ctx, list) {
 
 /** the live documents, kept ~2 s */
 function readLive(ctx, H) {
+  // Kept while the revision says no order was started or finished (a keep-alive beat is not a change: the documents are looked at again every 45 s at the latest, far inside STALE_MS;
+  // the age of each beat is judged against the clock of the call in op(), never against the clock of the read).
   return H.cached(ctx, `live|${ctx.prefix}`, TTL.live, async () => {
     const snap = await col(ctx, LIVE).where("beatAt", ">=", ctx.now - STALE_MS).limit(LIM.live + 1).get();
     const rows = []; for (const d of snap.docs.slice(0, LIM.live)) { const v = d.data() || {}; if (!!v.sandbox === !!ctx.prefix) rows.push(Object.assign({ _id: d.id }, v)); }
     return { rows, capped: snap.docs.length > LIM.live };
-  });
+  }, H.revDep && H.revDep(ctx, "live"));
 }
 /** today's sessions that are still open: who is signed in where (15 s) */
 function readSessions(ctx, H) {
   return H.cached(ctx, `lsess|${ctx.prefix}`, TTL.sessions, async () => {
-    // (a session the auto sign-out rules end, `idle` or `closing` at the person's last input, a page that died, is ended here and leaves the board: _stationAutoSignout.js)
-    const snap = await AutoSignout.settledSnap({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get());
-    const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; const station = str(v.station, 20); rows.push({ person: str(v.person, 80), station, device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt), task: station === "welding" && (v.task === "welding" || v.task === "matching") ? v.task : "", role: v.role === "laser" || v.role === "design" ? v.role : "", lastInputAt: ms(v.lastInputAt) }); }
-    return { rows, capped: snap.docs.length > LIM.sessions };
+    const snap = await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get();
+    return { raw: snap.docs.slice(0, LIM.sessions).map(d => Object.assign({ id: d.id }, d.data() || {})), capped: snap.docs.length > LIM.sessions };
+  }, H.revDep && H.revDep(ctx, "ses")).then(async r => {
+    // (a session the auto sign-out rules end, `idle` or `closing` at the person's last input, a page that died, is ended here and leaves the board: _stationAutoSignout.js.
+    //  The rules run on the clock, so they are applied again to a copy of the rows kept, on every call: no read, a write only when a session now ends.)
+    const raw = r.raw.map(x => Object.assign({}, x));
+    await AutoSignout.settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, raw);
+    const rows = []; for (const v of raw) { const station = str(v.station, 20); rows.push({ person: str(v.person, 80), station, device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt), task: station === "welding" && (v.task === "welding" || v.task === "matching") ? v.task : "", role: v.role === "laser" || v.role === "design" ? v.role : "", lastInputAt: ms(v.lastInputAt) }); }
+    return { rows, capped: r.capped };
   });
 }
 /** today's rollups, only the parts the board shows (20 s) → per station { parts, orders, scans, lastAt } */
@@ -338,7 +348,7 @@ function readToday(ctx, H) {
     // Counting only the finished ones made the Stations board say 9 where the Overview, the People cards and the person page said 10 while one order was in hand.
     for (const [st, set] of Object.entries(touched)) { const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 }); t.orders = Math.max(t.orders, set.size); }
     return { by, capped: snap.docs.length > LIM.rollups };
-  });
+  }, H.revDep && H.revDep(ctx, "act"));
 }
 
 /** Today's matched scans at the Welding station (newest first), read only when today's rollups say there are some (the answer is kept while that count stays the same):
