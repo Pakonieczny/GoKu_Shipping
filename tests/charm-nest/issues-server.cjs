@@ -22,7 +22,9 @@ function seed(st, shop, sandbox) {
   st.put(P + 'Charm_Nest_Runs', 'run-1', { runId: 'run-1', lines: shop.lines, ...(Object.keys(shop.archivedLines).length ? { lineArchive: { parts: 1 } } : {}) });
   if (Object.keys(shop.archivedLines).length) {
     const orders = [...new Set(Object.values(shop.archivedLines).map(l => String(l.orderId)))];
-    st.put(P + 'Charm_Nest_Run_Lines', 'part1', { runId: 'run-1', at: 1, seq: 0, orders, keys: Object.keys(shop.archivedLines), json: JSON.stringify(shop.archivedLines) });
+    // (a part is named by the hash of its text, as the server writes it: the server keeps a part it has read under that name for the life of the instance (FC, cost), and this run reseeds one server with 40 different shops)
+    const json = JSON.stringify(shop.archivedLines);
+    st.put(P + 'Charm_Nest_Run_Lines', 'run-1~' + require('crypto').createHash('sha256').update(json).digest('hex').slice(0, 40), { runId: 'run-1', at: 1, seq: 0, orders, keys: Object.keys(shop.archivedLines), json });
   }
   for (const s of shop.sheets) st.put(P + 'Charm_Nest_Sheets', s.id, { ...JSON.parse(JSON.stringify(s)), day: '2026-10-05', stock: { wIn: 6, hIn: 4.5 }, updatedAt: ts, createdAt: ts });
   for (const x of shop.sets) st.put(P + 'Charm_Nest_Sets', x.setId, { ...x, day: '2026-10-05', runId: 'run-1', updatedAt: ts, createdAt: ts });
