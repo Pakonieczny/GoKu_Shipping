@@ -337,24 +337,25 @@ const nyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_
     await until(async () => { const l = liveDoc('sorting', 'sorting-1', PEOPLE.maya); return l && l.state === 'idle'; }, 'the live order goes (an idle for Maya)', 12000);
     say('sorting.html: signOut("idle"): its own login cleared, "Set your name" again, one plain line, the batch stays; the session ends and the live order goes');
 
-    // nobody is signed in: a TYPED batch records nothing (as ever); a PHONE batch is kept (20 minutes) and loads on screen at once
+    // nobody is signed in: a TYPED batch and a PHONE batch record nothing yet; both are kept (20 minutes) and load on screen at once
+    // (7 Oct 2026: a sticker's Print now asks for the name, so the person who signs in there is credited with the batch they were working on)
     const n0 = docsOf('Station_Activity').length;
     await typeBatch(page, [A, C]); await tilesFor(page, 3); await wait(300); await flush();
-    assert.strictEqual(docsOf('Station_Activity').length, n0, 'a typed batch with nobody signed in records nothing');
-    assert.strictEqual(await page.evaluate(() => SortTL.kept()), 0, 'and keeps nothing');
+    assert.strictEqual(docsOf('Station_Activity').length, n0, 'a typed batch with nobody signed in records nothing yet');
+    assert.strictEqual(await page.evaluate(() => SortTL.kept()), 1, 'but it is kept for the next sign-in');
     await page.evaluate(d => __fireSnap(d), { 'Order Number': [B, F].join(','), 'Shipping Label Timestamps': new Date().toISOString() });
     await tilesFor(page, 2); await wait(300); await flush();
     assert.strictEqual(docsOf('Station_Activity').length, n0, 'a phone batch with nobody signed in records nothing yet');
-    assert.strictEqual(await page.evaluate(() => SortTL.kept()), 1, 'it is kept for the next sign-in');
+    assert.strictEqual(await page.evaluate(() => SortTL.kept()), 2, 'it is kept for the next sign-in too');
     assert.strictEqual((await onScreen()).items, 2, 'and it loaded on screen at once: nothing is blocked');
     // the person signs in: the kept scans are theirs, and the batch is in their hand
     await signInByNumber(page, PIN.noor, PEOPLE.noor);
     await flush();
-    assert.deepStrictEqual(eventsOf(PEOPLE.noor).filter(e => e.action === 'scan').map(e => [e.orderId, e.detail, e.parts]).sort(), [[B, 'sheet QR', 1], [F, 'sheet QR', 1]], 'the kept phone scans are recorded under the person who signed in');
+    assert.deepStrictEqual(eventsOf(PEOPLE.noor).filter(e => e.action === 'scan').map(e => [e.orderId, e.detail, e.parts]).sort(), [[A, 'typed', 3], [B, 'sheet QR', 1], [C, 'typed', 1], [F, 'sheet QR', 1]].sort(), 'the kept scans (typed and phone) are recorded under the person who signed in');
     assert.strictEqual(await page.evaluate(() => SortTL.kept()), 0, 'and are not kept any more');
     await until(async () => { const l = liveDoc('sorting', 'sorting-1', PEOPLE.noor); return l && l.state === 'working' && l.title === 'Batch of 2 orders'; }, 'the kept batch is in hand for the new person');
     assert(!eventsOf(PEOPLE.maya).some(e => (e.orderId === B) && e.action === 'scan'), 'nothing of it went to the person before');
-    say('sorting.html: a phone batch that loads with nobody signed in is kept and credited to the person who signs in next; a typed one is not');
+    say('sorting.html: a phone or typed batch that loads with nobody signed in is kept and credited to the person who signs in next');
 
     // kept, then the sign-in day ends: what was kept is never put under the next name
     await said('closing', 'Signed out at 5:00 pm. Click “Set your name” to sign in again.');

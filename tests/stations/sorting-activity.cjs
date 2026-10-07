@@ -1,7 +1,7 @@
 // What the Sorting station and the Charm Sorter record for the Employee efficiency console (station-activity.js), offline.
 // The real station-session.js and station-activity.js run; every request off the fake origin is aborted, Etsy, Firebase,
 // the printer and the order timeline are stubs, and the door (firebaseOrders) is the test's own recorder.
-//   1 · sorting.html: nobody signed in records nothing (a sticker printed then does not use the order up); a typed name
+//   1 · sorting.html: nobody signed in records nothing and a sticker's Print is held, asking for a name (7 Oct 2026); a typed name
 //       or a 6-digit employee number signs in (the number is never sent); a typed batch is one scan per order with its
 //       pieces; a sheet-QR batch says so; a cancelled order is one reject; a sticker is a print and, the first time that
 //       day, the order sorted (complete, once); the same sticker again is a print only; Print Row does the same per order.
@@ -119,18 +119,21 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
     const cellOf = rid => page.evaluate(rid => window.cachedOrderItems.findIndex(t => String(t.receipt_id) === rid), rid);
     const printed = () => page.evaluate(() => [...document.querySelectorAll('iframe')].filter(f => /QR/.test(f.src)).length);
 
-    // nobody is signed in: a batch is loaded and a sticker printed, and nothing is recorded; the order is not used up
+    // nobody is signed in: a batch is loaded and a sticker's Print is held (7 Oct 2026: the name is asked for first); nothing is printed or recorded,
+    // and the order is not used up
     await typeBatch([A, C]); await tilesFor(3);
     let iA = await cellOf(A);
     await page.evaluate(i => openIframePrinterForListing(i), iA);
-    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(f => /QR/.test(f.src)));
-    await page.waitForFunction(() => window.__toasts !== undefined);
+    await wait(700);
+    assert.strictEqual(await printed(), 0, 'nobody signed in: the sticker is held, not printed');
+    assert(await page.evaluate(() => { const i = document.querySelector('#sortingAsChip .st-as-input'); return !!i && !i.hidden; }), 'and the chip asks for a name');
     await flush();
     assert.deepStrictEqual(rec.events, [], 'nobody signed in: no activity is recorded');
     assert.deepStrictEqual(rec.lives, [], 'nobody signed in: nothing is in hand');
-    assert.strictEqual(await page.evaluate(() => localStorage.getItem('sorting.sortedToday')), null, 'and the printed order is not counted as sorted');
+    assert.strictEqual(await page.evaluate(() => localStorage.getItem('sorting.sortedToday')), null, 'and the order is not counted as sorted');
     assert.strictEqual(await page.evaluate(() => StationActivity.who()), null);
-    console.log('sorting.html: nobody signed in → no events, the order is not used up');
+    await page.keyboard.press('Escape');                                   // the held press is dropped
+    console.log('sorting.html: nobody signed in → the sticker is held and the name asked for; no events, the order is not used up');
 
     // a 6-digit employee number signs in (the name is kept, the number never sent)
     await page.click('#sortingAsChip .st-as-name');
@@ -141,8 +144,7 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
     const who = await page.evaluate(() => StationActivity.who());
     assert.deepStrictEqual([who.person, who.station, who.device], ['Maya Sorter', 'sorting', 'sorting-1']);
 
-    // a typed batch: one scan per order, with its pieces (A: 3, C: 1)
-    await typeBatch([A, C]); await tilesFor(3);
+    // the batch typed before the sign-in was kept and is now the person's: one scan per order, with its pieces (A: 3, C: 1)
     await page.waitForFunction(() => StationActivity.pending() >= 2);
     iA = await cellOf(A); const iC = await cellOf(C);
     await flush();
@@ -153,13 +155,13 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
 
     // a sticker: a print, and the order sorted (complete, once, orders 1, its three pieces)
     await page.evaluate(i => openIframePrinterForListing(i), iA);
-    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].filter(f => /QR/.test(f.src)).length >= 2);
+    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].filter(f => /QR/.test(f.src)).length >= 1);
     await flush();
     assert.deepStrictEqual(rec.ev('print').map(brief), [['print', A, 3, 0, 'Maya Sorter', 'sorting', 'sorting-1']]);
     assert.deepStrictEqual(rec.ev('complete').map(brief), [['complete', A, 3, 1, 'Maya Sorter', 'sorting', 'sorting-1']], 'the first sticker of the order is the order sorted');
     // the same sticker again: a print only
     await page.evaluate(i => openIframePrinterForListing(i), iA);
-    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].filter(f => /QR/.test(f.src)).length >= 3);
+    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].filter(f => /QR/.test(f.src)).length >= 2);
     await flush();
     assert.strictEqual(rec.ev('print').length, 2, 'a second print is recorded'); assert(/again/.test(rec.ev('print')[1].detail));
     assert.strictEqual(rec.ev('complete').length, 1, 'but the order is sorted once');
@@ -258,7 +260,7 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
     await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Ivy Two');
     const who = await page.evaluate(() => StationActivity.who());
     assert.deepStrictEqual([who.station, who.device], ['sorting', 'sorting-2']);
-    await page.fill('#etsyOrderNumber', [A, C].join(',')); await page.press('#etsyOrderNumber', 'Enter'); await tilesFor(3);
+    // (the batch typed before the sign-in is kept and is now this person's: it is not typed again)
     const iA = await page.evaluate(rid => window.cachedOrderItems.findIndex(t => String(t.receipt_id) === rid), A);
     await page.evaluate(i => openIframePrinterForListing(i), iA);
     await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(f => /QR/.test(f.src)));
