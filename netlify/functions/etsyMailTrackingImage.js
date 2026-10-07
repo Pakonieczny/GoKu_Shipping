@@ -26,6 +26,9 @@ const CORS = {
 // time the tracking snapshot refreshes, the PNG is overwritten there, and
 // the browser should pull the new one immediately. No browser cache, no
 // CDN cache. Trade a tiny bit of latency for zero stale-image headaches.
+// A picture a browser holds is asked about every time (If-None-Match against the doc's version, above): same freshness as before,
+// but an unchanged picture costs one small read and no Storage download.
+const REVALIDATE_HEADERS = { "Cache-Control": "private, no-cache" };
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
   "Pragma"       : "no-cache",
@@ -56,10 +59,16 @@ exports.handler = async (event) => {
     };
   }
 
-  // Look up the Firebase URL from the cache doc
-  let firebaseUrl;
+  // Look up the Firebase URL from the cache doc (only that field: the rest of the doc is the tracking events, not needed here)
+  let firebaseUrl, etag = null;
   try {
-    const snap = await db.collection("EtsyMail_TrackingCache").doc(trackingCode).get();
+    const [snap] = await db.getAll(db.collection("EtsyMail_TrackingCache").doc(trackingCode), { fieldMask: ["imageUrl"] });
+    // The picture is overwritten whenever the snapshot is refreshed, and the cache doc is written right after, so the doc's own
+    // update time names the picture. A page that already holds that version is told so (304) and nothing is read from Storage.
+    if (snap.exists && snap.updateTime) etag = '"tc-' + snap.updateTime.seconds + "." + snap.updateTime.nanoseconds + '"';
+    if (etag && (event.headers?.["if-none-match"] || event.headers?.["If-None-Match"]) === etag) {
+      return { statusCode: 304, headers: { ...CORS, ...REVALIDATE_HEADERS, ETag: etag }, body: "" };
+    }
     if (!snap.exists) {
       return {
         statusCode: 404,
@@ -103,12 +112,12 @@ exports.handler = async (event) => {
     };
   }
 
-  // Stream the bytes back. No caching anywhere — always fetches fresh.
+  // Send the bytes back with the version they were read at: the browser keeps them and asks again with that version.
   return {
     statusCode: 200,
     headers: {
       ...CORS,
-      ...NO_CACHE_HEADERS,
+      ...(etag ? { ...REVALIDATE_HEADERS, ETag: etag } : NO_CACHE_HEADERS),
       "Content-Type"                 : "image/png",
       "Cross-Origin-Resource-Policy" : "cross-origin"
     },
