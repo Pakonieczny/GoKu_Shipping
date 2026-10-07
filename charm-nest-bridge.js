@@ -325,18 +325,38 @@ const normName = raw => {
   return /\p{L}/u.test(out) ? out : "";
 };
 const employeeName = () => B.employee || (B.link && B.link.state() && B.link.state().employee) || "";
-/* The prompt stays for the steps that cannot go on without a name (an approval, a label, a decision): they ask first. */
-function askEmployee() {
+/* The last name used in this browser (cn.lastEmployee: kept after a sign-out, midnight or an idle end clears cn.employee), so the next
+   press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
+const LAST_KEY = "cn.lastEmployee";
+const lastName = () => { try { return normName(localStorage.getItem(LAST_KEY) || ""); } catch (_) { return ""; } };
+/* A step that records a person (an approval, a label, a decision, a message) takes the signed-in name silently and never pops up a browser
+   box (Paul, 6 Oct 2026). When nobody is signed in the small inline name bar opens (over the open window, if any) with the last name
+   ready and a one-tap "Continue as <name>", and the press that asked goes on by itself the moment a name is saved (askEmployee returns ""
+   for now, as it did when the old box was put away; the caller's `if (!who) return` stands). `again` (optional) is what to run once a name
+   is saved; without it the very button that was pressed (a click still being handled) is pressed again. Put the bar away (Esc, ✕) and
+   nothing happens: nothing typed or chosen is lost. */
+const pressedButton = () => { try { const ev = window.event, t = ev && ev.type === "click" && ev.target && ev.target.closest ? ev.target.closest('button,[role="button"],input[type="button"],input[type="submit"]') : null; return t && !t.closest(".cnNameBar") ? t : null; } catch (_) { return null; } };
+function askEmployee(again) {
   const cur = employeeName();
-  const v = prompt("Your name — recorded with every approval and decision:", cur || "");
-  if (v && v.trim()) B.employee = v;      // (B.employee's setter makes it one name, keeps it in this browser and signs the person in)
-  return employeeName();
+  if (cur) return cur;
+  let go = typeof again === "function" ? again : null;
+  if (!go) { const btn = pressedButton(); if (btn) go = () => { if (btn.isConnected && !btn.disabled && employeeName()) btn.click(); }; }
+  NameBar.open({ kind: "ask", why: "Kept with this approval or decision, and with your work today." });
+  NameBar.resume(go);
+  return "";
+}
+/** The same for a step that can wait: resolves with the name once it is saved, or "" when the bar is put away. */
+function needEmployee(why) {
+  const cur = employeeName();
+  if (cur) return Promise.resolve(cur);
+  return Promise.resolve(NameBar.open({ kind: "ask", why: why || "Kept with this approval or decision, and with your work today." })).then(n => String(n || "").trim() || employeeName(), () => "");
 }
 /* The small name field: inline, never a browser pop-up and never modal, so it can sit over an open window (the order window,
    the sheet window) without being a pop-up on a pop-up. It is what the name buttons open (Review, the order window, the
    station panel), and it is what appears, calmly, when something a person did could not be put under a name. */
 const NameBar = (() => {
   let bar = null, finish = null, pr = null, quietUntil = 0;   // (a hint put away with ✕ or Esc does not come back for 90 s: calm, not nagging)
+  let resumeFn = null;                                         // (the press that asked for a name: goes on by itself once one is saved; put away = forgotten)
   let rbar = null, rspec = null, rquiet = 0, rtimer = 0;      // the role step: the same bar in its other state (below)
   const CSS = ".cnNameBar{position:fixed;right:18px;top:var(--chromeH,96px);z-index:2147483000;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;box-sizing:border-box;max-width:min(540px,calc(100vw - 24px));padding:8px 10px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.14);font:12px var(--sans,system-ui,sans-serif);color:var(--ink70,#555)}"
     + ".cnNameBar label{display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1 1 210px}.cnNameBar label b{font-weight:600;color:var(--ink,#222)}.cnNameBar .cnNbWhy{font-size:11px;color:var(--ink45,#777)}"
@@ -344,6 +364,8 @@ const NameBar = (() => {
     + ".cnNameBar input:focus{outline:2px solid rgba(74,107,120,.35);border-color:var(--slate,#4a6b78);background:var(--card,#fff)}"
     + ".cnNameBar .cnNbX{border:0;background:transparent;color:var(--ink45,#777);cursor:pointer;font-size:14px;line-height:1;padding:4px 6px;border-radius:6px}.cnNameBar .cnNbX:hover{background:var(--paper2,#eee)}"
     + ".cnNameBar .cnNbErr{flex:1 0 100%;font-size:11px;color:var(--ink70,#555)}.cnNameBar [hidden]{display:none}"
+    // "Continue as <name>": the last name used on this computer, one tap (the same bar, the same type)
+    + ".cnNameBar .cnNbCont{flex:1 0 100%;justify-content:center;padding:7px 12px;font-size:12.5px;white-space:normal;overflow-wrap:anywhere}.cnNameBar .cnNbCont b{font-weight:700}"
     // the role step (Laser or Design?), the wait before it, and the quiet switch: the same bar, the same type
     + ".cnNameBar .cnNbLbl{display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1 1 210px}.cnNameBar .cnNbLbl b{font-weight:600;color:var(--ink,#222)}.cnNameBar .cnNbLbl:focus{outline:none}"
     + ".cnNameBar .cnNbRoles{display:flex;gap:6px;flex:0 0 auto}.cnNameBar .cnNbRoles .btn{min-width:68px;padding:6px 12px;font-size:12px}"
@@ -353,7 +375,17 @@ const NameBar = (() => {
   const css = () => { if (document.getElementById("cnNameBarCss")) return; const s = document.createElement("style"); s.id = "cnNameBarCss"; s.textContent = CSS; document.head.appendChild(s); };
   // inside the window that is open (a modal window makes the rest of the page unreachable), else on the page
   const host = () => { try { const open = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }); return open[open.length - 1] || document.body; } catch (_) { return document.body; } };
-  function close(name) { const b = bar, f = finish; bar = null; finish = null; pr = null; if (b && !name && b.dataset.kind === "hint") quietUntil = Date.now() + 90000; try { if (b) b.remove(); } catch (_) {} if (f) f(name || ""); }
+  function close(name) { const b = bar, f = finish; bar = null; finish = null; pr = null; if (!name) resumeFn = null; if (b && !name && b.dataset.kind === "hint") quietUntil = Date.now() + 90000; try { if (b) b.remove(); } catch (_) {} if (f) f(name || ""); }
+  /** the press that asked goes on once a name is saved (a moment later: the bar is gone and the sign-in has settled) */
+  function runResume() { const g = resumeFn; resumeFn = null; if (g) setTimeout(() => { try { g(); } catch (e) { console.error(e); } }, 60); }
+  /** "Continue as <last name>": only while nobody is named here and a name was used before on this computer */
+  function paintChip(b) {
+    try {
+      const c = b && b.querySelector(".cnNbCont"); if (!c) return;
+      const last = employeeName() ? "" : lastName();
+      c.hidden = !last; c.innerHTML = last ? `Continue as <b></b>` : ""; if (last) c.querySelector("b").textContent = last;
+    } catch (_) {}
+  }
   /** Shows the field. o: why (the calm line under the label), kind ("hint": nobody asked for it, so it takes no focus),
       onSet(name) (after a name is saved). Resolves with the name saved, or "" when it is put away. */
   function open(o) {
@@ -365,31 +397,36 @@ const NameBar = (() => {
       if (rbar) roleOff();        // (one bar in this spot: the name field takes the place of the role step; the question comes back at the next press)
       if (bar && !bar.isConnected) { bar = null; finish = null; pr = null; }
       if (bar) {
-        if (hint && bar.dataset.kind === "edit") return pr;       // (someone is already typing a name: nothing to add)
-        if (!hint) bar.dataset.kind = "edit";
+        if (hint && bar.dataset.kind !== "hint") return pr;       // (someone is already typing a name: nothing to add)
+        if (!hint && !(o.kind !== "ask" && bar.dataset.kind === "ask")) bar.dataset.kind = o.kind === "ask" ? "ask" : "edit";
         bar.querySelector(".cnNbWhy").textContent = why; if (bar.parentNode !== host()) host().appendChild(bar);
-        paintSwitch(bar);
-        if (!hint) { const i = bar.querySelector("input"); i.focus(); i.select(); }
+        paintSwitch(bar); paintChip(bar);
+        if (!hint) { const i = bar.querySelector("input"); if (!i.value.trim() && !employeeName()) i.value = lastName(); i.focus(); i.select(); }
         return pr;
       }
       pr = new Promise(res => { finish = res; });
       const id = "cnNb" + Math.random().toString(36).slice(2, 7);
-      bar = document.createElement("form"); bar.className = "cnNameBar"; bar.dataset.kind = hint ? "hint" : "edit"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Your name"); bar.noValidate = true;
-      bar.innerHTML = `<label for="${id}"><b>Your name</b><span class="cnNbWhy" aria-live="polite"></span></label><input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder"><button type="submit" class="btn sage xs">Save</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><span class="cnNbErr" role="alert" hidden></span><button type="button" class="cnNbSwitch" hidden></button>`;
+      bar = document.createElement("form"); bar.className = "cnNameBar"; bar.dataset.kind = hint ? "hint" : o.kind === "ask" ? "ask" : "edit"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Your name"); bar.noValidate = true;
+      bar.innerHTML = `<label for="${id}"><b>Your name</b><span class="cnNbWhy" aria-live="polite"></span></label><input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder"><button type="submit" class="btn sage xs">Save</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><button type="button" class="btn sage xs cnNbCont" hidden></button><span class="cnNbErr" role="alert" hidden></span><button type="button" class="cnNbSwitch" hidden></button>`;
       const input = bar.querySelector("input"), err = bar.querySelector(".cnNbErr");
-      paintSwitch(bar);
+      paintSwitch(bar); paintChip(bar);
       bar.querySelector(".cnNbSwitch").onclick = e => { e.preventDefault(); e.stopPropagation(); try { const R = window.CNRole, r = R && R.role(); if (r) R.switchTo(R.other(r)); } catch (_) {} paintSwitch(me); };
       bar.querySelector(".cnNbWhy").textContent = why;
-      input.value = hint ? "" : employeeName();
+      input.value = hint ? "" : (employeeName() || lastName());       // (nobody named: the last name used on this computer is ready, Enter keeps it)
       const me = bar;
+      const take = n => {
+        B.employee = n;
+        const saved = B.employee; close(saved);
+        try { if (typeof o.onSet === "function") o.onSet(saved); } catch (_) {}
+        runResume();
+      };
       bar.onsubmit = e => {
         e.preventDefault(); e.stopPropagation();
         const n = normName(input.value);
         if (!n) { err.textContent = "Please type your name (letters, not a number)."; err.hidden = false; input.focus(); return; }
-        B.employee = n;
-        const saved = B.employee; close(saved);
-        try { if (typeof o.onSet === "function") o.onSet(saved); } catch (_) {}
+        take(n);
       };
+      bar.querySelector(".cnNbCont").onclick = e => { e.preventDefault(); e.stopPropagation(); const n = lastName(); if (n) take(n); };
       bar.querySelector(".cnNbX").onclick = e => { e.preventDefault(); close(""); };
       input.oninput = () => { err.hidden = true; };
       // (the page's own keys never see what is typed here, and Esc puts only this field away, not the window under it)
@@ -401,7 +438,7 @@ const NameBar = (() => {
     } catch (_) { return Promise.resolve(""); }
   }
   /** A name was set somewhere else: a field that only offered to take one is no longer needed. */
-  const settled = () => { if (bar && bar.dataset.kind === "hint") close(employeeName()); };
+  const settled = () => { if (bar && (bar.dataset.kind === "hint" || bar.dataset.kind === "ask")) { close(employeeName()); runResume(); } };
   /* ── the role step (charm-nest-role.js decides when; Paul, 6 Oct 2026): the same small bar, right after the name is set, asking
      "Laser or Design?" with two buttons, or (only if the Admin answer is slow) a small labelled spinner. Never a pop-up and never on top
      of one: it sits inside the window that is open, like the name field, and follows it when windows open and close. Nothing behind it is
@@ -452,9 +489,9 @@ const NameBar = (() => {
       if (r) sw.textContent = `${R.label(r)} · switch to ${R.label(R.other(r))}`;
     } catch (_) {}
   }
-  return { open, close: () => close(""), settled, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected) };
+  return { open, close: () => close(""), settled, resume: g => { resumeFn = typeof g === "function" ? g : null; }, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected) };
 })();
-window.CNEmployee = { name: employeeName, ask: askEmployee, normalize: normName, edit: NameBar.open, roleBar: NameBar.role };   // (the Library's Completed marks record who, charm-nest-library.js)
+window.CNEmployee = { name: employeeName, ask: askEmployee, need: needEmployee, last: lastName, normalize: normName, edit: NameBar.open, roleBar: NameBar.role };   // (the Library's Completed marks record who, charm-nest-library.js; ask/need never pop up: the inline name bar, then the press goes on)
 /* What a person did here, for the Employee efficiency console (station-activity.js, loaded before this file; the person is
    the name above, as charm-nest-1.html hands it to StationSession). Called only where a person pressed something that
    finished or undid work (print, complete, undo, engraving approved, sent to a sheet, laser/cut marked) and when a held-back
@@ -717,11 +754,23 @@ try {
     Object.defineProperty(B, "employee", { configurable: true, enumerable: true, get: base.get, set: v => {
       const raw = String(v == null ? "" : v).trim(), n = normName(raw);
       base.set.call(B, n);
-      try { if (n) localStorage.setItem("cn.employee", n); else if (raw) localStorage.removeItem("cn.employee"); } catch (_) {}
+      try { if (n) { localStorage.setItem("cn.employee", n); localStorage.setItem(LAST_KEY, n); } else if (raw) localStorage.removeItem("cn.employee"); } catch (_) {}
       if (raw && !n) { try { toast("That isn't a name. Please type your name (letters, not a number).", "bad", 5000); } catch (_) {} }
       if (n) queueMicrotask(() => { try { humanAct.release(); NameBar.settled(); } catch (_) {} });
     } });
+    // a name kept from before this version is the "last name" too (Continue as <name> after the next sign-out)
+    try { const n0 = String(B.employee || "").trim(); if (n0 && !localStorage.getItem(LAST_KEY)) localStorage.setItem(LAST_KEY, n0); } catch (_) {}
   }
+} catch (_) {}
+/* One person is THE person everywhere (Paul, 6 Oct 2026): a name set in another tab of this computer is this tab's name too, and nobody is
+   signed in here when the Sorter opens → the calm name hint, with "Continue as <last name>", appears at sign-in time (a moment after the page
+   is up), not first at the first approval. Purely local: no request, no timer that polls. A name set meanwhile (the Design Station's sign-in,
+   another tab) takes the hint away by itself (NameBar.settled). */
+try {
+  window.addEventListener("storage", e => { try { if (e.key === "cn.employee" && e.newValue && !employeeName()) B.employee = e.newValue; } catch (_) {} });
+  const offer = () => { try { if (!employeeName() && !NameBar.isOpen() && !NameBar.roleOpen()) NameBar.open({ kind: "hint", why: "Sign in with your name: your work is counted under it." }); } catch (_) {} };
+  const arm = () => setTimeout(offer, 1800);
+  if (document.readyState === "complete") arm(); else window.addEventListener("load", arm, { once: true });
 } catch (_) {}
 
 /* ═══ 17 · DesignLink — the Design Station as a slave ═════════════════════ */
@@ -2329,7 +2378,7 @@ const Master = window.Master = (() => {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
         pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img crossorigin="anonymous" src="${cors(x.image)}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img crossorigin="anonymous" src="${cors(x.charm.thumb)}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
         const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button";
-        btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName()) askEmployee(); await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
+        btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName() && !(await needEmployee("Kept with the labels you confirm."))) return; await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
         card.append(head, tray, btn);
       }
       // a finished run is a line you can open; only what is still running stays open in front of you
@@ -4070,7 +4119,7 @@ const Gate = window.Gate = (() => {
   async function release(material) { await put({ released: { [material]: today() } }); await repoolWaiting(material, `${labelOf(material)} released to the laser by hand`); }
   async function cutAnyway(material) { R.forceFill[material] = true; await repoolWaiting(material, `${labelOf(material)}: partial sheet cut by hand`); }
   async function repoolWaiting(material, why) {
-    const who = employeeName() || askEmployee(); if (!who) return;
+    const who = employeeName() || await needEmployee("Kept with this release to the laser."); if (!who) return;
     agent({ bridge: true, metal: material }, "POOL", `${why} (${who})`);
     const rows = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.material === material);
     for (const r of rows) { r.state = "pulled"; r.wait = null; r.reason = null; }
@@ -4331,7 +4380,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** A person's decision on the words (confirm / edit / no engraving), recorded with the name. */
   async function decideWords(job, { text, none, by, note }) {
-    by = by || employeeName() || askEmployee(); if (!by) { toast("Set your name first", "bad"); return; }
+    by = by || employeeName() || await needEmployee("Kept with your decision on these words."); if (!by) return;      // (put away: calm, nothing happens, nothing typed is lost)
     const wasText = job.text;
     if (none) { setNone(job, `no engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, wasText, "none"); Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
     job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: "back", font: null, handwriting: false, image: false }; job.confidence = 1;
@@ -4595,7 +4644,7 @@ const Engrave = window.Engrave = (() => {
     refresh(job);if(measure)Session.schedule();return true;
   }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lineInput=pick.slice(); job.lineMode="preserve"; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
-  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return;
+  async function skip(job, by) { by = by || employeeName() || await needEmployee("Kept with this decision."); if (!by) return;
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
     revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
@@ -4693,7 +4742,7 @@ const Engrave = window.Engrave = (() => {
       }
     }
     if (job.backSaving) return;
-    by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
+    by = by || employeeName() || await needEmployee("Kept with this approval and its seal."); if (!by) return;
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
     const approvedAt=Date.now();let prepared;
@@ -5641,6 +5690,10 @@ const Engrave = window.Engrave = (() => {
       const text = ta.value.trim(), start = ta.selectionStart, end = ta.selectionEnd;
       const focused = keepFocus && document.activeElement === ta;
       if (!text) { if (!keepFocus) toast("Type the words first", "bad"); return; }
+      // the decision is recorded under a name: asked FIRST, in the small bar (never a browser box), before anything is touched, so putting it away
+      // leaves the words exactly as typed (the draft is kept) and the press goes on by itself, with the words typed, once a name is saved (the
+      // card may be drawn again meanwhile: the job and the typed words are all it needs)
+      if (wordsJob && !employeeName()) { if (!(await needEmployee("Kept with your decision on these words."))) return; if (job.backSaving || job.approvalPreparing) return; }
       delete EG.drafts?.[job.key];
       use.disabled = true;
       try {
@@ -8265,6 +8318,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const ub = host.querySelector("[data-cu-undo]"); if (ub) ub.onclick = e => { e.stopPropagation(); undo(it); };
     const box = host.querySelector("[data-cu-name]"), ok = host.querySelector("[data-cu-name-ok]");
     if (!box || !ok) return null;
+    try { if (!box.value && !employeeName()) box.value = lastName(); } catch (_) {}      // (the last name used on this computer is ready: Enter keeps it)
     const go = () => { if (!named(it.key, box.value)) box.focus(); };
     ok.onclick = e => { e.stopPropagation(); go(); };
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
@@ -10864,7 +10918,7 @@ const TeamCard = window.TeamCard = (() => {
   }
   function send(C) {
     const text = C.input.value.trim(); if (!text) return;
-    const who = employeeName() || askEmployee(); if (!who) return;
+    const who = employeeName() || askEmployee(() => send(C)); if (!who) return;
     // the words go into the outbox before the box empties: from here a reload or a lost connection only delays them
     TeamMail.queue(C.rid, text, who);
     C.input.value = ""; TeamMail.setDraft(C.rid, ""); grow(C);
@@ -11170,7 +11224,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   async function send() {
     const r = rowOf(W.key); if (!r) return;
-    const who = me() || askEmployee(); if (!who) return;
+    const who = me() || askEmployee(send); if (!who) return;
     const rid = String(r.order.receiptId), input = byId("owInput");
     const text = input.value.trim(), files = W.tray.slice();
     if (!text && !files.length) return;

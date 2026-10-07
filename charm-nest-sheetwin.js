@@ -12,7 +12,7 @@
   const METAL_OF_CODE = Object.fromEntries(Object.entries(CODE).map(([k, v]) => [v, k]));
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
   // the operator's name, as the bridge keeps it (its helpers are inside the bridge's own scope)
-  const whoAmI = () => (window.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
+  const whoAmI = () => (window.CNEmployee && typeof CNEmployee.name === "function" && CNEmployee.name()) || (window.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
   // the name that goes with each change, asked for in a small bar inside the window (never a browser pop-up over it);
   // once given, the change the person pressed carries on by itself
   function needName(retry) {
@@ -20,7 +20,7 @@
     const bar = W.el.name; if (!bar) return "";
     bar.innerHTML = `<input type="text" maxlength="40" autocomplete="name" spellcheck="false" aria-label="Your name, kept with this change" placeholder="Your name, for the record"><button type="button" class="btn sage xs" data-nm="go">Continue</button><button type="button" class="swIcon" data-nm="x" title="Not now" aria-label="Not now">${ICON.close}</button>`;
     bar.hidden = false;
-    const inp = bar.querySelector("input");
+    const inp = bar.querySelector("input"); try { inp.value = (window.CNEmployee && CNEmployee.last && CNEmployee.last()) || ""; } catch (_) {}      // (the last name used on this computer is ready: Continue keeps it)
     const go = () => {
       const v = inp.value.trim(); if (!v) return inp.focus();
       if (window.B) B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {}

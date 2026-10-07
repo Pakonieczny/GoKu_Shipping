@@ -208,7 +208,7 @@
     }
     const staff = window.CNEmployee || { name: () => '', ask: () => '' };
     let by = o.by || staff.name();
-    if (done && !by) by = staff.ask();
+    if (done && !by) by = typeof staff.need === 'function' ? await staff.need('Kept with this completed mark.') : staff.ask();
     if (done && !by) throw new Error('Say who marked it completed');
     if (!S.cloud.ok) throw new Error('The cloud is offline');
     L.busy.add(key);
