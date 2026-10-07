@@ -66,6 +66,20 @@ function readStationCounters(station, v) {
 /** The orders of a rollup's `touched` map without the ones only a not-counted station touched; a station set without it. */
 const touchedStations = list => (Array.isArray(list) ? list : [...list]).filter(throughput);
 
+/* ── Numbered stations (Paul, 7 Oct 2026: "four stations in the assembly and three stations in shipping") ──
+ *  Assembly is four physical stations (assembly-1..4.html, each with its phone scanner assembly-scan-N) and Shipping is three (shipping-1..3.html, shipping-scan-N):
+ *  one station KEY ("assembly", "shipping") but one device per desk ("assembly-2"). Every page already signs in, logs and heartbeats under its own device, so sessions, events
+ *  and Station_Live documents carry the number; what the portal dropped was the number itself, by summing everything under the kind. deviceNo() is the one reading of it
+ *  (the writer's rollup, the live board and the overview all use it): "assembly-2" at station "assembly" is "assembly-2"; every other page ("weld-1", "charm-nest-1", a
+ *  page of another kind, an old or empty device) is "" (the kind alone). Only these two kinds are numbered (Sorting stays one station, Paul 6 Oct). Nothing stored is rewritten. */
+const NUMBERED = Object.freeze({ assembly: 4, shipping: 3 });        // the desks the shop has today; a higher number that shows up in the data is listed too
+const NUMBERED_RE = /^(assembly|shipping)-0*([1-9]\d?)$/;
+/** "assembly-2" for the page of a numbered station, else "" (see above) */
+function deviceNo(station, device) {
+  const m = NUMBERED_RE.exec(String(device == null ? "" : device).trim().toLowerCase());
+  return m && m[1] === station ? `${m[1]}-${+m[2]}` : "";
+}
+
 /** issue kind -> the rollup counter that counts it (kinds that are plain subtractions of the old counters have none:
     `undone` = undos, `refused` = rejects not in a kind below, `failed` = errors that are not a lookup failure or a failed reply) */
 const KIND_X = { cancelAlert: "x_cancel", heldOrSkipped: "x_held", unknownSku: "x_sku", qaFlag: "x_flag", lookupFailed: "x_lookup", reprint: "x_reprint", rescan: "x_rescan" };
@@ -167,4 +181,4 @@ function classify(ev) {
   return out;
 }
 
-module.exports = { KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify };
+module.exports = { NUMBERED, NUMBERED_RE, deviceNo, KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify };

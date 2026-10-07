@@ -34,6 +34,8 @@ const Rev = require("./_employeeRev");                              // the emplo
 /* The Welding station is not counted in throughput (Paul, 6 Oct 2026): KIND.readStationCounters / throughput are the one rule (see _activityKinds.js). Without the file nothing is left out. */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false, echoScans: () => new Set() };
+/* Assembly 1..4 and Shipping 1..3 are desks of two stations (Paul, 7 Oct 2026): deviceNo("assembly", "assembly-2") is "assembly-2", "" for any other page (the kind alone). See _activityKinds.js. */
+const deviceNo = KIND.deviceNo || (() => ""), NUMBERED = KIND.NUMBERED || {}, NUMBERED_KEY = KIND.NUMBERED_RE || /(?!)/;
 
 const COL = { activity: "Station_Activity", rollup: "Efficiency_Daily", sessions: "Station_Sessions", seals: "Order_Timeline" };
 const STATIONS = ["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"];   // every key a stored row may carry (history keeps "sorter" and "qr")
@@ -308,7 +310,7 @@ function spanOf(s, now) {
   if (!end) { if (now - last >= GONE_MS && !AutoSignout.keptOpen(s, now)) end = last; else { end = now; live = true; } }       // (a quiet page of Laser inside its limit, or of Welding before 17:00, is still signed in)
   end = Math.min(end, now); if (end < start) end = start;
   const station = String(s.station || "");
-  return { id: String(s.id || ""), station: okStation(station) ? displayStation(station) : "", task: station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
+  return { id: String(s.id || ""), station: okStation(station) ? displayStation(station) : "", device: okStation(station) ? deviceNo(station, s.device) : "", task: station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
 }
 /** [{day, s, e}] pieces of [s, e] inside from..to; a span that ends exactly at midnight puts nothing on the next day. */
 function clip(s, e, from, to) {
@@ -332,7 +334,8 @@ function covered(spans) {
 /* ── the people: rollups + sessions + seals, per person per day ── */
 const tmpl = () => ({ scans: 0, scanParts: 0, completes: 0, parts: 0, orders: 0, prints: 0, rejects: 0, errors: 0, notes: 0, undos: 0, undoParts: 0, undoOrders: 0, activeMs: 0, idleMs: 0, matched: 0 });
 const KEYS = Object.keys(tmpl());
-const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, rawMs: 0, stMs: {}, taskMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
+const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, rawMs: 0, stMs: {}, taskMs: {}, dv: {}, dvMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
+const dvAgg = (pd, dk) => pd.dv[dk] || (pd.dv[dk] = { parts: 0, scans: 0, fin: 0, ids: new Set(), lastAt: 0 });   // one desk of a numbered station, one person-day
 const stAgg = (pd, st) => pd.st[st] || (pd.st[st] = tmpl());
 const addOrder = (pd, orderId, st) => { if (!orderId) return; let s = pd.orders.get(orderId); if (!s) pd.orders.set(orderId, s = new Set()); s.add(st); };
 const addHour = (pd, st, h, n) => { if (!(h >= 0 && h < 24) || !n) return; pd.hours[h] += n; (pd.hs[st] || (pd.hs[st] = zeros(24)))[h] += n; };
@@ -393,6 +396,11 @@ async function assemble(ctx, winFrom, toDay) {
         const stations = m && typeof m === "object" ? [...new Set(Object.keys(m).filter(k => m[k] && okStation(k) && KIND.throughput(displayStation(k))).map(displayStation))] : [];   // (an order only the Welding station touched is not an order worked)
         if (!stations.length) continue;
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set()); stations.forEach(s => set.add(s));
+        if (m && typeof m === "object") for (const k of Object.keys(m)) if (typeof m[k] === "string") { const dk = deviceNo(k, m[k]); if (dk) dvAgg(pd, dk).ids.add(oid); }   // (a numbered station's order says which desk touched it; `true` = no desk)
+      }
+      for (const [dk0, v] of Object.entries(x.devices && typeof x.devices === "object" ? x.devices : {})) {   // the desks' own counters (written since desks were told apart)
+        const dk = NUMBERED_KEY.test(dk0) && v && typeof v === "object" ? deviceNo(dk0.split("-")[0], dk0) : ""; if (!dk) continue;
+        const a = dvAgg(pd, dk); a.parts += Math.max(0, num(v.parts) - num(v.undoParts)); a.scans += Math.max(0, num(v.scans)); a.fin += Math.max(0, num(v.orders) - num(v.undoOrders)); a.lastAt = Math.max(a.lastAt, ms(v.lastAt));
       }
       const fa = ms(x.firstAt), la = ms(x.lastAt);
       if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa;
@@ -408,7 +416,7 @@ async function assemble(ctx, winFrom, toDay) {
       if (sp.live) person.live.push(sp);
       for (const c of clip(sp.start, sp.end, winFrom, toDay)) {
         const pd = P.pd(person, c.day);
-        pd.spans.push({ s: c.s, e: c.e, station: sp.station, task: sp.task, live: sp.live, start0: sp.start });
+        pd.spans.push({ s: c.s, e: c.e, station: sp.station, device: sp.device, task: sp.task, live: sp.live, start0: sp.start });
         if (sp.live) pd.liveSpan = true;
         if (!sessionDays.has(c.day)) sessionDays.set(c.day, new Set()); sessionDays.get(c.day).add(person.key);
       }
@@ -451,6 +459,8 @@ async function assemble(ctx, winFrom, toDay) {
         pd.signedMs = covered(pd.spans.map(x => [x.s, x.e])); pd.rawMs = pd.spans.reduce((n, x) => n + (x.e - x.s), 0);
         const per = {}; for (const x of pd.spans) (per[x.station] || (per[x.station] = [])).push([x.s, x.e]);
         for (const [st, list] of Object.entries(per)) pd.stMs[st] = covered(list);
+        const perDesk = {}; for (const x of pd.spans) if (x.device) (perDesk[x.device] || (perDesk[x.device] = [])).push([x.s, x.e]);
+        for (const [dk, list] of Object.entries(perDesk)) pd.dvMs[dk] = covered(list);
         // the Welding station's time per task: a person in both tasks has both (so the tasks can add up to more than the station's own time); an old session without a task is "unknown"
         const pt = {}; for (const x of pd.spans) if (x.station === "welding") (pt[x.task || "unknown"] || (pt[x.task || "unknown"] = [])).push([x.s, x.e]);
         for (const [t, list] of Object.entries(pt)) pd.taskMs[t] = covered(list);
@@ -467,8 +477,11 @@ async function assemble(ctx, winFrom, toDay) {
 const isWork = set => { for (const x of set) if (x !== "inbox") return true; return false; };
 /** Everything about some person-days at once: stations, totals, per hour, order ids. */
 function summarize(pds) {
-  const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}, taskMs = { welding: 0, matching: 0, unknown: 0 }; let signed = 0, evScans = 0, hasE = false, hasS = false, hasAny = false;
+  const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}, taskMs = { welding: 0, matching: 0, unknown: 0 }, dv = {}; let signed = 0, evScans = 0, hasE = false, hasS = false, hasAny = false;
+  const desk = dk => dv[dk] || (dv[dk] = { parts: 0, scans: 0, fin: 0, short: 0, ids: new Set(), ms: 0 });   // one desk of a numbered station over these person-days
   for (const pd of pds) {
+    for (const [dk, a] of Object.entries(pd.dv)) { const t = desk(dk); t.parts += a.parts; t.scans += a.scans; t.fin += a.fin; t.short += Math.max(0, a.fin - a.ids.size); a.ids.forEach(i => t.ids.add(i)); }
+    for (const [dk, v] of Object.entries(pd.dvMs)) desk(dk).ms += v;
     if (pd.src === "events") hasE = true; else if (pd.src === "seals") hasS = true;
     if (pd.src) hasAny = true;
     signed += pd.signedMs;
@@ -506,7 +519,10 @@ function summarize(pds) {
   const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size ? workIds : ordersFin, rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
     rate: activeTp >= 60000 ? r1(parts / (activeTp / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
   const source = hasE && hasS ? "mixed" : hasE ? "events" : hasS ? "seals" : hasAny || signed > 0 ? "sessions" : "none";
-  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0, weldOnly: !tpAct && ntAct };
+  // the desks of the numbered stations (Assembly 1..4, Shipping 1..3): time signed in at each (sessions, any day), and what the desk's own counters say (events written since desks were told apart)
+  const devices = Object.keys(dv).map(dk => ({ station: dk.split("-")[0], device: dk, minutes: r1(dv[dk].ms / 60000), parts: dv[dk].parts, scans: dv[dk].scans, orders: dv[dk].ids.size + dv[dk].short }))
+    .sort((x, y) => y.minutes - x.minutes || y.parts - x.parts || (x.device < y.device ? -1 : 1));
+  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0, weldOnly: !tpAct && ntAct, devices, dv };
 }
 
 /* ── overview ── */
@@ -541,7 +557,7 @@ async function buildOverview(ctx, day, days, withTrend) {
     if (e.action === "complete") { if (KIND.throughput(e.station)) o.made += e.parts; } else if (e.action === "undo") o.undone += e.parts;      // (events arrive newest first: an undo is met before its completion)
     o.lastAt = Math.max(o.lastAt, e.at);
   }
-  const allIds = new Map(), stIds = {}, stNow = {}, perStationHours = {};
+  const allIds = new Map(), stIds = {}, stNow = {}, perStationHours = {}, dvTot = {}, devNow = {};   // (dvTot: per desk over everybody; devNow: who is signed in at each desk now)
   let src = { events: false, seals: false, sessions: false };
   for (const P of asm.P.people.values()) {
     const pds = rangeDays.map(d => P.days.get(d)).filter(Boolean), S = summarize(pds);
@@ -554,8 +570,11 @@ async function buildOverview(ctx, day, days, withTrend) {
     for (const [id, set] of S.ids) { let s = allIds.get(id); if (!s) allIds.set(id, s = new Set()); set.forEach(x => s.add(x)); for (const st of set) (stIds[st] || (stIds[st] = new Set())).add(id); }
     for (const [st, arr] of Object.entries(S.hs)) { const t = perStationHours[st] || (perStationHours[st] = zeros(24)); for (let h = 0; h < 24; h++) t[h] += arr[h]; }
     for (const st of nowAt) (stNow[st] || (stNow[st] = [])).push(name);
+    const nowDevices = [...new Set(live.map(s => s.device).filter(Boolean))];
+    for (const dk of nowDevices) (devNow[dk] || (devNow[dk] = [])).push(name);
+    for (const [dk, t] of Object.entries(S.dv)) { const x = dvTot[dk] || (dvTot[dk] = { parts: 0, scans: 0, short: 0, ids: new Set() }); x.parts += t.parts; x.scans += t.scans; x.short += t.short; t.ids.forEach(i => x.ids.add(i)); }
     people.push(Object.assign({ name, status: live.length ? "on" : "out", firstIn: inPd ? inPd.firstIn : null, lastOut: live.length || !inPd || !inPd.lastOut ? null : inPd.lastOut,
-      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders }, S.weldOnly ? { noThroughput: true } : {}));   // (noThroughput: worked at the Welding station only: no pieces or orders to count, shown as a dash with the time on task and the matched count)
+      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, nowDevices, devices: S.devices, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders }, S.weldOnly ? { noThroughput: true } : {}));   // (noThroughput: worked at the Welding station only: no pieces or orders to count, shown as a dash with the time on task and the matched count)
   }
   people.sort((a, b) => (a.status === "on" ? 0 : 1) - (b.status === "on" ? 0 : 1) || b.totals.parts - a.totals.parts || a.name.localeCompare(b.name));
   // the business: summed over EVERYBODY, then the list is cut (the totals must not lose the people the list does not show)
@@ -564,7 +583,16 @@ async function buildOverview(ctx, day, days, withTrend) {
   for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0 }); t.parts += s.parts; t.scans += s.scans; if (s.taskMin) { t.matched = (t.matched || 0) + s.matched; const m = t.taskMin || (t.taskMin = { welding: 0, matching: 0, unknown: 0 }); for (const k of Object.keys(m)) m[k] = r1(m[k] + (s.taskMin[k] || 0)); } } }
   const order = st => { const i = SHOWN.indexOf(st); return i < 0 ? 99 : i; };
   const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow)))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
-    .map(st => { const row = { station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }; if (!KIND.throughput(st)) { row.matched = (perSt[st] || {}).matched || 0; row.taskMin = (perSt[st] || {}).taskMin || { welding: 0, matching: 0, unknown: 0 }; } return row; });
+    .map(st => { const row = { station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }; if (!KIND.throughput(st)) { row.matched = (perSt[st] || {}).matched || 0; row.taskMin = (perSt[st] || {}).taskMin || { welding: 0, matching: 0, unknown: 0 }; }
+      if (NUMBERED[st]) {   // Assembly 1..4 / Shipping 1..3: one entry per desk (all of the shop's desks listed, idle ones too) and what no desk claims (events and sessions from before desks were told apart: shown as the kind alone)
+        const keys = []; for (let n = 1; n <= NUMBERED[st]; n++) keys.push(`${st}-${n}`);
+        for (const dk of Object.keys(dvTot).concat(Object.keys(devNow))) if (dk.split("-")[0] === st && !keys.includes(dk)) keys.push(dk);
+        keys.sort((a, b) => parseInt(a.split("-")[1], 10) - parseInt(b.split("-")[1], 10));
+        row.devices = keys.map(dk => { const t = dvTot[dk]; return { device: dk, parts: t ? t.parts : 0, scans: t ? t.scans : 0, orders: t ? t.ids.size + t.short : 0, peopleNow: (devNow[dk] || []).slice().sort() }; });
+        const sum = k => row.devices.reduce((n, d) => n + d[k], 0);
+        row.unassigned = { parts: Math.max(0, row.parts - sum("parts")), scans: Math.max(0, row.scans - sum("scans")), orders: Math.max(0, row.orders - sum("orders")) };
+      }
+      return row; });
   const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(v => v > 0)) perHour[st] = arr.map(shown);
   if (people.length > LIM.people) { info.capped.push("people"); people.length = LIM.people; }       // (the list only: the totals above counted everybody)
   const trend = dayList(winFrom, day).map(d => {
@@ -601,7 +629,7 @@ async function opOverview(ctx, body) {
   if (base.errors.length) ctx.cache.memo.delete(ovKey);                // (an answer with a failed read in it is not kept: the next call tries the source again)
   const after = parseCursor(body.after);
   const feed = (after ? base.feedAll.filter(e => newer(e, after)) : base.feedAll.slice(0, LIM.feed)).slice(0, after ? LIM.feedDelta : LIM.feed)
-    .map(e => ({ id: e.id, at: e.at, person: e.person, station: e.station, action: e.action, orderId: e.orderId, parts: e.parts }));
+    .map(e => { const o = { id: e.id, at: e.at, person: e.person, station: e.station, action: e.action, orderId: e.orderId, parts: e.parts }, dk = deviceNo(e.stored, e.device); if (dk) o.device = dk; return o; });   // (device: the desk of a numbered station, "assembly-2"; absent for every other page and for old events)
   const out = { ok: true, now: base.now, day, days, cursor: base.cursor, delta: !!after, people: base.people, business: base.business, feed, sources: base.sources, notes: base.notes };
   if (base.partial) out.partial = true;
   if (base.errors.length) out.errors = base.errors;

@@ -27,6 +27,8 @@ const AutoSignout = require("./_stationAutoSignout");       // the auto sign-out
 /* The Welding station (Paul, 6 Oct 2026): two tasks (welding | matching), two people at once, never counted in throughput; see _activityKinds.js */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false };
+/* Assembly 1..4 and Shipping 1..3 are desks of two stations (Paul, 7 Oct 2026): deviceNo("assembly", "assembly-2") is "assembly-2", "" for any other page. See _activityKinds.js. */
+const deviceNo = KIND.deviceNo || (() => ""), NUMBERED = KIND.NUMBERED || {}, NUMBERED_KEY = KIND.NUMBERED_RE || /(?!)/;
 
 const KEEPALIVE_MS = 30000;        // what the browser does (station-activity.js); told to the console in the answer
 const STALE_MS = 180000;           // a document with no keep-alive for this long is not shown
@@ -323,8 +325,8 @@ function readSessions(ctx, H) {
 function readToday(ctx, H) {
   return H.cached(ctx, `ltoday|${ctx.prefix}`, TTL.today, async () => {
     let q = col(ctx, "Efficiency_Daily").where("day", "==", ctx.today).limit(LIM.rollups + 1);
-    if (typeof q.select === "function") q = q.select("day", "person", "stations", "sandbox", "touched");
-    const snap = await q.get(), by = {}, touched = {};
+    if (typeof q.select === "function") q = q.select("day", "person", "stations", "sandbox", "touched", "devices");
+    const snap = await q.get(), by = {}, touched = {}, dev = {}, devIds = {};
     for (const d of snap.docs.slice(0, LIM.rollups)) {
       const v = d.data() || {};
       if (!!v.sandbox !== !!ctx.prefix) continue;                       // (a document of the other store never counts, as in every other reader)
@@ -342,12 +344,22 @@ function readToday(ctx, H) {
       }
       for (const [st, n] of Object.entries(fin)) by[st].orders += n;
       // the orders the person touched today and where (a scan counts the moment it happens; "orders" above counts only the finished ones)
-      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) if (KIND.throughput(displayStation(st))) (touched[displayStation(st)] || (touched[displayStation(st)] = new Set())).add(oid);
+      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) if (KIND.throughput(displayStation(st))) {
+        (touched[displayStation(st)] || (touched[displayStation(st)] = new Set())).add(oid);
+        if (typeof sts[st] === "string") { const dk = deviceNo(st, sts[st]); if (dk) (devIds[dk] || (devIds[dk] = new Set())).add(oid); }   // (a numbered station's order says which desk touched it; `true` = no desk)
+      }
+      // the desks of the numbered stations (written since desks were told apart): pieces, scans and finished orders per desk, same rollup, no extra read
+      if (v.devices && typeof v.devices === "object") for (const [dk0, x] of Object.entries(v.devices)) {
+        const dk = NUMBERED_KEY.test(dk0) && x && typeof x === "object" ? deviceNo(dk0.split("-")[0], dk0) : ""; if (!dk) continue;
+        const t = dev[dk] || (dev[dk] = { parts: 0, orders: 0, scans: 0, lastAt: 0 });
+        t.parts += Math.max(0, (Number(x.parts) || 0) - (Number(x.undoParts) || 0)); t.orders += Math.max(0, (Number(x.orders) || 0) - (Number(x.undoOrders) || 0)); t.scans += Math.max(0, Number(x.scans) || 0); t.lastAt = Math.max(t.lastAt, ms(x.lastAt));
+      }
     }
+    for (const [dk, set] of Object.entries(devIds)) { const t = dev[dk] || (dev[dk] = { parts: 0, orders: 0, scans: 0, lastAt: 0 }); t.orders = Math.max(t.orders, set.size); }   // (as for a station: an order in hand counts the moment it is scanned, never fewer than the finished ones)
     // A station's orders today = the orders worked there, as the Overview counts them (an order in hand is one the moment it is scanned), never fewer than the finished ones.
     // Counting only the finished ones made the Stations board say 9 where the Overview, the People cards and the person page said 10 while one order was in hand.
     for (const [st, set] of Object.entries(touched)) { const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 }); t.orders = Math.max(t.orders, set.size); }
-    return { by, capped: snap.docs.length > LIM.rollups };
+    return { by, dev, capped: snap.docs.length > LIM.rollups };
   }, H.revDep && H.revDep(ctx, "act"));
 }
 
@@ -424,11 +436,12 @@ async function op(ctx, body, H) {
   for (const c of cur) { if (![...open.keys()].some(x => x.startsWith(`${c.station}|${c.device}|${c.person}|`))) { const r = { name: c.person, stationKey: c.station, device: c.device, since: c.since || c.scannedAt, lastSeenAt: c.beatAt }; open.set(`${c.station}|${c.device}|${c.person}||`, r); pages.push(r); } }
   pages.sort((a, b) => a.since - b.since || (a.name < b.name ? -1 : 1));
   // one person at two pages of one station (the Sorter app and a sorting computer) is ONE person signed in at that station: never listed or counted twice (but a person in two TASKS at the Welding station is two rows)
+  // (a person at two DESKS of a numbered station, Assembly 2 and Assembly 3, is a row at each: the key carries the desk; at the Sorter app and a sorting page, no desk, one row)
   const signedIn = [], oneAt = new Map();
-  for (const r of pages) { const k = `${r.stationKey}|${r.name}|${r.task || ""}|${r.role || ""}`, had = oneAt.get(k); if (had) { had.since = Math.min(had.since, r.since); had.lastSeenAt = Math.max(had.lastSeenAt, r.lastSeenAt); if (r.lastInputAt) had.lastInputAt = Math.max(had.lastInputAt || 0, r.lastInputAt); continue; } const row = Object.assign({}, r); oneAt.set(k, row); signedIn.push(row); }
+  for (const r of pages) { const k = `${r.stationKey}|${r.name}|${r.task || ""}|${r.role || ""}|${deviceNo(r.stationKey, r.device)}`, had = oneAt.get(k); if (had) { had.since = Math.min(had.since, r.since); had.lastSeenAt = Math.max(had.lastSeenAt, r.lastSeenAt); if (r.lastInputAt) had.lastInputAt = Math.max(had.lastInputAt || 0, r.lastInputAt); continue; } const row = Object.assign({}, r); oneAt.set(k, row); signedIn.push(row); }
 
   // 3 · the stations
-  const today = tr.ok ? tr.value.by : {}, stations = [];
+  const today = tr.ok ? tr.value.by : {}, todayDev = tr.ok ? tr.value.dev || {} : null, stations = [];
   // the Welding station: today's matched scans (newest first, dressed with the order's thumbnail like a current order) and the time signed in per task today
   const todayStart = H.nyMidnight(ctx.today), matchedRows = mr.ok ? mr.value.rows : [];
   const matched = matchedRows.slice(0, LIM.matchedShown).map(m => ({ kind: "order", rid: m.rid, orderNumber: m.rid, at: m.at, person: m.unattributed ? "" : H.display(m.person), task: "matching", unattributed: m.unattributed, customer: "", pieces: [], pieceCount: 0, note: m.unattributed ? UNATTRIBUTED_NOTE : "" }));
@@ -449,10 +462,27 @@ async function op(ctx, body, H) {
     let lastEventAt = t.lastAt;
     for (const c of mine) lastEventAt = Math.max(lastEventAt, c.scannedAt);
     for (const v of idleLive) if (displayStation(v.station) === s.key) lastEventAt = Math.max(lastEventAt, ms(v.idleAt) || ms(v.eventAt));
+    // the desks of a numbered station (Assembly 1..4, Shipping 1..3): each page with its own counts today and its own last event; what no desk claims (events written before desks
+    // were told apart) is `unassigned`, shown by the console as the kind alone. A count that cannot be read is null (a dash), never a 0.
+    let unassigned = null;
+    if (NUMBERED[s.key]) {
+      const sumD = k => [...devs.keys()].reduce((n, d) => { const dn = deviceNo(s.key, d); return n + (dn && todayDev && todayDev[dn] ? todayDev[dn][k] : 0); }, 0);
+      for (const [d, x] of devs) {
+        const dn = deviceNo(s.key, d); if (!dn) continue;
+        const t = todayDev ? todayDev[dn] || { parts: 0, orders: 0, scans: 0, lastAt: 0 } : null;
+        let last = t ? t.lastAt : 0;
+        for (const c of mine) if (deviceNo(s.key, c.device) === dn) last = Math.max(last, c.scannedAt);
+        for (const v of idleLive) if (displayStation(v.station) === s.key && deviceNo(s.key, v.device) === dn) last = Math.max(last, ms(v.idleAt) || ms(v.eventAt));
+        x.counts = t ? { partsToday: t.parts, ordersToday: t.orders, scansToday: t.scans } : { partsToday: null, ordersToday: null, scansToday: null };
+        x.lastEventAt = last || null;
+      }
+      if (tr.ok) unassigned = { partsToday: Math.max(0, (today[s.key] ? today[s.key].parts : 0) - sumD("parts")), ordersToday: Math.max(0, (today[s.key] ? today[s.key].orders : 0) - sumD("orders")), scansToday: Math.max(0, (today[s.key] ? today[s.key].scans : 0) - sumD("scans")) };
+    }
     const row = { key: s.key, label: s.label, state: mine.length ? "working" : folks.length ? "idle" : "offline", people, names,
       current: mine.map(c => ({ id: `${c.station}__${c.device}__${c.person}`, person: c.person, device: c.device, deviceLabel: c.deviceLabel, kind: c.kind, rid: c.rid, orderNumber: c.orderNumber, customer: c.customer, title: c.title,
         scannedAt: c.scannedAt, beatAt: c.beatAt, thumbUrl: c.thumbUrl, photoUrl: c.photoUrl, vectorUrl: c.vectorUrl, qr: c.qr, pieces: c.pieces, pieceCount: c.pieceCount, note: c.note })),
       devices: [...devs.values()], lastEventAt: lastEventAt || null, counts: { partsToday: t.parts, ordersToday: t.orders, scansToday: t.scans } };
+    if (NUMBERED[s.key]) row.unassigned = unassigned;
     if (!KIND.throughput(s.key)) {
       // never "pieces / orders today" here: time on task per task and the matched scans stand in their place
       for (const p of people) { if (p.task === "matching") { const n = lastScan.get(p.name); if (n && n > (p.lastInputAt || 0)) p.lastInputAt = n; } p.todayMs = taskMsOf(p.task || "unknown", p.name); }

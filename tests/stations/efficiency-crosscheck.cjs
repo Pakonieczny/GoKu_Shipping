@@ -389,7 +389,7 @@ let MAIN;
   eq(A.business.totals, { parts: 135, scans: 49, orders: 46, people: 10 }, 'parts and scans are the sum of the people; orders are distinct (OX is worked at 4 stations by 4 people and counts once: 48 - 2 = 46)');
   assert.strictEqual(A.business.totals.parts, A.people.reduce((n, p) => n + p.totals.parts, 0)); assert.strictEqual(A.business.totals.scans, A.people.reduce((n, p) => n + p.totals.scans, 0));
   assert.strictEqual(A.people.reduce((n, p) => n + p.totals.orders, 0), 48, 'the people\'s rows add to 48: OX is on three of them');
-  eq(A.business.stations, [
+  eq(A.business.stations.map(({ devices, unassigned, ...row }) => row), [      // (the desks of Assembly and Shipping, `devices` and `unassigned`, are checked in station-numbers.cjs)
     { station: 'sorting', parts: 52, scans: 31, orders: 27, peopleNow: [] }, { station: 'welding', parts: 35, scans: 9, orders: 9, peopleNow: [] },
     { station: 'assembly', parts: 12, scans: 4, orders: 5, peopleNow: ['Ann Assembler'] }, { station: 'shipping', parts: 18, scans: 4, orders: 4, peopleNow: ['Shane Shipper'] },
     { station: 'design', parts: 6, scans: 0, orders: 2, peopleNow: [] }, { station: 'laser', parts: 12, scans: 1, orders: 1, peopleNow: [] },

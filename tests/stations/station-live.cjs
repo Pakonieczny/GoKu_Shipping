@@ -322,7 +322,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     s.reset();
     await ask(); const first = s.reads.slice();
     assert.strictEqual(s.readsOf('Station_Live').length, 1, 'one small query for the live documents'); assert.deepStrictEqual(s.readsOf('Station_Live')[0].filters, ['beatAt>='], 'a single range: no index to create');
-    assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations', 'sandbox', 'touched'], 'only the fields the board shows (the store flag, and the orders touched, so an order in hand counts; and the store flag, so a document of the other store never counts)');
+    assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations', 'sandbox', 'touched', 'devices'], 'only the fields the board shows (the store flag, and the orders touched, so an order in hand counts; and the store flag, so a document of the other store never counts; the desks of Assembly and Shipping)');
     s.reset(); tick(1000); await ask(); assert.strictEqual(s.reads.filter(r => r.name !== 'Station_Rev').length, 0, 'a second poll inside 2 s reads nothing (but the revision probe, FC5)');
     // FC5: nothing was written (the revision has not moved), so nothing is read again: the live documents are kept 45 s, sessions 1 minute, today numbers 2 minutes (a keep-alive beat is not a change)
     tick(1500); s.reset(); await ask();

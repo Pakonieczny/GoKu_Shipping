@@ -76,6 +76,11 @@
    *  Laser or Design person is stored under "laser" or "design" and does not fold. */
   const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
   const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
+  /** Numbered stations (Paul, 7 Oct 2026: "four stations in the assembly and three in shipping"): Assembly is four desks (assembly-1..4) and Shipping three (shipping-1..3). Mirror of
+   *  deviceNo in netlify/functions/_activityKinds.js: "assembly-2" at station "assembly" is "assembly-2"; any other page, or none, is "" (the kind alone, as for every old record). */
+  const NUMBERED = { assembly: "Assembly", shipping: "Shipping" }, DESK_RE = /^(assembly|shipping)-0*([1-9]\d?)$/;
+  const deskKey = (station, device) => { const m = DESK_RE.exec(String(device == null ? "" : device).trim().toLowerCase()); return m && m[1] === station ? `${m[1]}-${+m[2]}` : ""; };
+  const deskLabel = key => { const m = DESK_RE.exec(String(key || "")); return m ? `${NUMBERED[m[1]]} ${+m[2]}` : ""; };
 
   /* ── the answer, normalised (a missing field is empty, never a crash, never a guess) ── */
   const str = v => (v == null ? "" : String(v));
@@ -119,6 +124,34 @@
     return { rid, orderNumber: str(m.orderNumber || rid), at: T(m.at), person: un ? "" : str(m.person), unattributed: un, note: un ? str(m.note) || UNATTRIBUTED_NOTE : "", customer: str(m.customer),
       thumbUrl: str(m.thumbUrl), vectorUrl: str(m.vectorUrl), photoUrl: str(m.photoUrl), pieces };
   }
+  /** The raw station list with each numbered station (Assembly, Shipping) split into one station per desk, from what the live answer already carries (its pages, people and orders in hand,
+   *  with `devices[].counts` and `unassigned`): Assembly 1..4 and Shipping 1..3 each get their own row, always (an idle desk shows a quiet dash). What no desk claims (people on a page
+   *  with no number, work logged before desks were told apart) stays as ONE row of the kind alone, only when there is something to show. Every row carries `group` (the kind) and the
+   *  group's own day totals (`groupCounts`). An answer that does not say `unassigned` (an older service) is left whole. */
+  function splitDesks(list) {
+    const out = [], quiet = { partsToday: null, ordersToday: null, scansToday: null };
+    for (const s of list) {
+      const kind = s && displayStation(String(s.key || ""));
+      if (!s || !NUMBERED[kind] || s.unassigned === undefined) { out.push(s); continue; }
+      const pagesOf = Array.isArray(s.devices) ? s.devices.filter(Boolean) : [], keys = [];
+      for (let n = 1; n <= (kind === "assembly" ? 4 : 3); n++) keys.push(`${kind}-${n}`);
+      for (const d of pagesOf) { const k = deskKey(kind, d.device); if (k && !keys.includes(k)) keys.push(k); }
+      const num = k => parseInt(k.split("-")[1], 10);
+      keys.sort((a, b) => num(a) - num(b));
+      const mine = (x, k) => x && typeof x === "object" && deskKey(kind, x.device) === k, noDesk = x => !(x && typeof x === "object" && deskKey(kind, x.device));
+      const people = Array.isArray(s.people) ? s.people : [], current = Array.isArray(s.current) ? s.current : [];
+      for (const k of keys) {
+        const dv = pagesOf.find(d => deskKey(kind, d.device) === k) || { device: k, label: deskLabel(k), state: "offline", person: "", since: 0 };
+        const cur = current.filter(c => mine(c, k)), ppl = people.filter(p => mine(p, k));
+        const state = ["working", "idle", "offline"].includes(dv.state) ? dv.state : cur.length ? "working" : ppl.length ? "idle" : "offline";
+        out.push({ key: k, label: deskLabel(k), group: kind, groupLabel: s.label, groupCounts: s.counts, state: cur.length ? "working" : state, people: ppl, current: cur, devices: [Object.assign({}, dv, { label: deskLabel(k) })], counts: dv.counts || quiet, lastEventAt: dv.lastEventAt || null });
+      }
+      const rp = people.filter(noDesk), rc = current.filter(noDesk), rd = pagesOf.filter(d => !deskKey(kind, d.device) && d.state !== "offline"), u = s.unassigned && typeof s.unassigned === "object" ? s.unassigned : null;
+      if (rp.length || rc.length || rd.length || (u && (N(u.partsToday) > 0 || N(u.ordersToday) > 0 || N(u.scansToday) > 0)))
+        out.push({ key: kind, label: s.label, group: kind, groupLabel: s.label, groupCounts: s.counts, state: rc.length ? "working" : rp.length || rd.length ? "idle" : "offline", people: rp, current: rc, devices: rd, counts: u || quiet, lastEventAt: s.lastEventAt || null, restOf: true });
+    }
+    return out;
+  }
   /** The raw station list of an answer with every row that folds into one station (stored "sorter" and "qr" rows are Sorting's) joined into the first: its orders in hand, people, pages and counts are added. */
   function foldStations(list) {
     const out = [], at = new Map(), rank = { working: 2, idle: 1, offline: 0 };
@@ -147,14 +180,14 @@
   function norm(r) {
     r = r || {};
     const signedIn = [];                                                   // one row per person, station, role and task: signed in at the Sorter app and at a sorting page is ONE row (Sorting), never two; a person in both Welding tasks is two rows
-    for (const x of (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: displayStation(String(x.stationKey || "")), since: T(x.since), lastSeenAt: T(x.lastSeenAt),
+    for (const x of (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: deskKey(displayStation(String(x.stationKey || "")), x.device) || displayStation(String(x.stationKey || "")), since: T(x.since), lastSeenAt: T(x.lastSeenAt),
       lastInputAt: T(x.lastInputAt), role: low(x.role), device: str(x.device), task: taskOf(x.task) }))) {
       const had = signedIn.find(y => low(y.name) === low(x.name) && y.stationKey === x.stationKey && y.role === x.role && y.task === x.task);
       if (had) { had.since = had.since && x.since ? Math.min(had.since, x.since) : had.since || x.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, x.lastSeenAt || 0) || null; had.lastInputAt = Math.max(had.lastInputAt || 0, x.lastInputAt || 0) || null; had.device = had.device || x.device; } else signedIn.push(x);
     }
     const signAny = new Map(), signAt = new Map();                         // by name, and by "name|task" (the row of the person's own task first)
     for (const x of signedIn) { if (!signAny.has(low(x.name))) signAny.set(low(x.name), x); signAny.set(low(x.name) + "|" + x.task, x); if (!signAt.has(`${x.stationKey}|${low(x.name)}`)) signAt.set(`${x.stationKey}|${low(x.name)}`, x); signAt.set(`${x.stationKey}|${low(x.name)}|${x.task}`, x); }
-    const stations = foldStations(Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
+    const stations = foldStations(splitDesks(Array.isArray(r.stations) ? r.stations : [])).filter(s => s && (s.key || s.label)).map(s => {
       const key = String(s.key || low(s.label)), label = String(s.label || cap(key));
       const current = (Array.isArray(s.current) ? s.current : []).filter(c => c && (c.rid || c.orderNumber || (c.kind === "sheet" && c.title))).map(c => normCurrent(c, { key, label }));
       const sign = { get: n => signAt.get(`${key}|${n}`) || signAny.get(n) };   // (a person at two stations: the row of THIS station first)
@@ -164,7 +197,7 @@
       const devices = (Array.isArray(s.devices) ? s.devices : []).filter(d => d && (d.device || d.label)).map(d => ({ device: str(d.device), label: str(d.label || d.device), state: ["working", "idle", "offline"].includes(d.state) ? d.state : "offline", person: str(d.person), since: T(d.since) }));
       for (const p of people) if (!p.deviceLabel) { const d = devices.find(x => x.state !== "offline" && x.person && low(x.person) === low(p.name)); if (d) { p.device = p.device || d.device; p.deviceLabel = d.label; } }   // (no page named for the person: the station's own page list says where they are)
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
-      const out = { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [], inbox: null, lastIsSheet: false };
+      const out = { key, label, group: s.group || "", groupLabel: s.groupLabel || "", groupCounts: s.groupCounts || null, restOf: s.restOf === true, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [], inbox: null, lastIsSheet: false };
       const ib = normInboxToday(s.inbox);   // (the Inbox station: today's replies and orders covered take the place of pieces and orders; the card says so)
       if (ib) { out.inbox = ib; out.counts = { parts: ib.replies, orders: ib.orders, scans: null }; }
       if (out.noThroughput) {   // the Welding station: never pieces or orders; the matched scans, the time on task per task, and today's matched list
@@ -654,7 +687,7 @@
 <div class="esList" hidden></div>`;
     el.appendChild(R);
     const E = { sum: R.querySelector(".esSum"), live: R.querySelector(".esLive"), liveT: R.querySelector(".esLiveT"), none: R.querySelector(".esNone"), wait: R.querySelector(".esWait"), waitT: R.querySelector(".esWaitT"), retry: R.querySelector(".esRetry"), list: R.querySelector(".esList") };
-    const S = { rows: new Map(), data: null, okAt: 0, lastApply: 0, busy: false, err: null, dead: false, timers: new Set() };
+    const S = { rows: new Map(), caps: new Map(), data: null, okAt: 0, lastApply: 0, busy: false, err: null, dead: false, timers: new Set() };
     const E1 = !opts.own && !options.source ? sharedApi() : null;   // inside the console: its door to the data (one read, its passcode, its Real | Sandbox choice)
     let shared = null;
     const goPerson = opts.onPerson === false ? null : opts.onPerson || (E1 && typeof E1.openPerson === "function" ? n => E1.openPerson(n) : null);
@@ -924,7 +957,8 @@
       if (sh) { if (!X.sheets) { const sp = h("span"), b = h("b"); sp.append(b, " sheets"); X.cnt.insertBefore(sp, X.parts.parentNode); X.sheets = b; } setNum(X.sheets, sh, ctx.quiet); }
       else if (X.sheets) { X.sheets.parentNode.remove(); X.sheets = null; }
       X.cntW.hidden = !wd || !s.today || s.today.matched == null; X.weld.hidden = !wd; if (wd && s.today && s.today.matched != null) setNum(X.matchedN, s.today.matched, ctx.quiet);
-      for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null || (sh > 0 && v === 0); if (v != null) setNum(n, v, ctx.quiet); }
+      const quietDesk = !!s.group && s.state === "offline" && !s.counts.parts && !s.counts.orders;   // (a desk nobody is at and nothing was done at today: a quiet dash, not a 0)
+      for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null || (sh > 0 && v === 0); if (quietDesk && v != null) { if (n._stop) n._stop(); n._v = null; n._cur = null; delete n.dataset.v; setText(n, "—"); } else if (v != null) setNum(n, v, ctx.quiet); }
       inboxCard(X, s, ctx);
       const sig = s.spark ? s.spark.join() : ""; if (sig !== X.sparkSig) { X.sparkSig = sig; X.sparkW.textContent = ""; if (s.spark) { X.sparkW.appendChild(sparkSvg(s.spark, 84, 22)); X.sparkW.title = "Pieces in the last hour"; } }
       // people: arrive and leave softly
@@ -975,8 +1009,17 @@
       const names = new Set(M.signedIn.map(x => low(x.name))); for (const s of M.stations) for (const p of s.people) names.add(low(p.name));
       const ctx = { quiet, at, names };
       E.wait.hidden = true; E.list.hidden = false;
-      const want = new Set(); let i = 0, prev = null;
+      const want = new Set(), caps = new Set(); let i = 0, prev = null;
       for (const s of M.stations) {
+        if (s.group && !caps.has(s.group)) {   // a numbered station's group caption ("Assembly · 61 pieces · 40 orders today") stands above its first desk
+          caps.add(s.group);
+          let C = S.caps.get(s.group);
+          if (!C) { C = h("div", "esKind"); C.dataset.group = s.group; C.append(h("span", "esKindN"), h("span", "esKindT")); S.caps.set(s.group, C); }
+          const gc = s.groupCounts || {}, bits = [has(gc.partsToday) ? `${nf(gc.partsToday)} ${N(gc.partsToday) === 1 ? "piece" : "pieces"}` : "", has(gc.ordersToday) ? `${nf(gc.ordersToday)} ${N(gc.ordersToday) === 1 ? "order" : "orders"}` : ""].filter(Boolean);
+          setText(C.children[0], s.groupLabel || cap(s.group)); setText(C.children[1], bits.length ? `${bits.join(" · ")} today` : ""); C.title = "All the stations of this kind together";
+          if (prev ? prev.nextSibling !== C : E.list.firstChild !== C) E.list.insertBefore(C, prev ? prev.nextSibling : E.list.firstChild);
+          prev = C;
+        }
         want.add(s.key); let X = S.rows.get(s.key), made = false;
         if (!X) { X = stationRow(s); S.rows.set(s.key, X); made = true; }
         if (made) { E.list.insertBefore(X.el, prev ? prev.nextSibling : E.list.firstChild); } else if (prev ? prev.nextSibling !== X.el : E.list.firstChild !== X.el) E.list.insertBefore(X.el, prev ? prev.nextSibling : E.list.firstChild);
@@ -984,6 +1027,7 @@
         if (made && !still() && X.el.animate) X.el.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: options.enterMs, delay: first ? Math.min(i, 8) * 45 : 0, easing: EASE, fill: "backwards" });
         prev = X.el; i++;
       }
+      for (const [g, C] of S.caps) if (!caps.has(g)) { S.caps.delete(g); C.remove(); }
       for (const [k, X] of S.rows) if (!want.has(k)) { S.rows.delete(k); const a = quiet ? null : fade(X.el, { opacity: 1 }, { opacity: 0 }, 260, "forwards"); if (a) a.finished.then(() => X.el.remove(), () => X.el.remove()); else X.el.remove(); }
       const working = M.stations.filter(s => s.state === "working").length, on = names.size, orders = M.stations.reduce((n, s) => n + s.current.length, 0);   // (a person once, however many stations or tasks they are signed in to)
       setText(E.sum, M.stations.length ? `${working} of ${M.stations.length} ${M.stations.length === 1 ? "station" : "stations"} working · ${on} ${on === 1 ? "person" : "people"} on` : "No stations reported yet");
@@ -1153,6 +1197,10 @@
 .esMr[data-un="1"] .esMrW{color:#9a6a1c;font-weight:600;white-space:normal}
 .esMrT{font-size:11.5px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}
 .esMtMore{justify-self:start;border:1px solid var(--line,#e4ddd0);background:var(--card,#fffefb);border-radius:999px;padding:3px 12px;font-size:11.5px;font-weight:650;color:var(--ink70,#5b554c)}.esMtMore:hover{background:var(--paper2,#ebe5d9);color:var(--ink,#1c1a17)}
+/* the group caption of a numbered station (Assembly 1 to 4, Shipping 1 to 3): the kind and its day totals, small, above its desks */
+.esKind{display:flex;align-items:baseline;gap:2px 14px;flex-wrap:wrap;padding:2px 4px 0;margin-bottom:-4px;min-width:0}
+.esKindN{font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:750;color:var(--ink45,#938c80)}
+.esKindT{font-size:11px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}.esKindT:empty{display:none}
 /* the hover card */
 .esTip{position:fixed;z-index:2147483200;left:0;top:0;width:max-content;max-width:min(300px,calc(100vw - 16px));padding:12px 14px 11px;border-radius:12px;background:var(--card,#fffefb);color:var(--ink70,#5b554c);border:1px solid var(--line,#e4ddd0);box-shadow:0 12px 34px rgba(30,26,20,.18),0 2px 6px rgba(30,26,20,.08);visibility:hidden;opacity:0;pointer-events:none;font-size:12px;line-height:1.35;display:grid;gap:9px}
 .esTip[data-on]{visibility:visible;opacity:1}
@@ -1195,7 +1243,7 @@
    *  behaviour of the board's own cards; one card is shared by all of them. */
   function hoverCard(node, spec) { if (!node || typeof spec !== "function") return node; css(); wire(); node.dataset.esTip = ""; node._esTip = spec; return node; }
 
-  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard, displayStation,
+  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard, displayStation, deskKey, deskLabel,
     /* for the checks */
     feed: { get calls() { return Feed.calls; }, get busy() { return Feed.busy; }, get fails() { return Feed.fails; }, wake: () => Feed.wake(), now: () => Feed.now() }, zoomed: () => Z.node, tip: () => Tp.el };
 })(typeof self !== "undefined" ? self : this);

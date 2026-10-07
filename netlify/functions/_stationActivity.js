@@ -12,6 +12,7 @@
 const ACT = "Station_Activity", DAILY = "Efficiency_Daily";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions and this
 let issueKinds = null; try { issueKinds = require("./_activityKinds"); } catch (_) {}   // (the issue counters are an extra: without the file the rollup is as before)
+const deviceNo = (issueKinds && issueKinds.deviceNo) || (() => "");   // (the numbered stations' desk, "assembly-2": see _activityKinds.js)
 const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note", "matched"]);   // matched: one scan of an order at the Welding station's Matching task (never a completion)
 const UNATTRIBUTED = (issueKinds && issueKinds.UNATTRIBUTED) || "Unattributed", TASKS = (issueKinds && issueKinds.TASKS) || ["welding", "matching"];
 const ROLES = ["laser", "design"];
@@ -96,12 +97,22 @@ function tally(st, ev) {
   }
   bump(st, ev.sincePrevMs <= ACTIVE_GAP_MS ? "activeMs" : "idleMs", ev.sincePrevMs);
 }
+/** What one action adds to its DESK (a numbered station's page: Assembly 2, Shipping 3): the same words as tally(), only the few the stations board shows. */
+function tallyDesk(d, ev) {
+  bump(d, "events", 1);
+  switch (ev.action) {
+    case "scan": case "matched": bump(d, "scans", 1); break;
+    case "complete": bump(d, "completes", 1); bump(d, "parts", ev.parts); bump(d, "orders", ev.orders); break;
+    case "undo": bump(d, "undoParts", ev.parts); bump(d, "undoOrders", ev.orders); break;
+    default: break;
+  }
+}
 const incs = (FV, o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, FV.increment(v)]));
 
 /** The merge for one person-day rollup from the new events only; prev is the stored rollup (or null). */
 function rollupPatch(FV, prev, day, person, evs, prefix) {
   prev = prev || {};
-  const st = {}, hours = {}, touched = {}, span = {};
+  const st = {}, hours = {}, touched = {}, span = {}, desks = {}, deskLast = {};
   let first = Infinity, last = 0, n = evs.length;
   const known = prev.touched && typeof prev.touched === "object" ? Object.keys(prev.touched).length : 0;
   let added = 0;
@@ -122,9 +133,18 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
       bump(h.tot, "scans", sc); bump(h.tot, "parts", pr); bump(h.tot, "undoParts", un);
       const b = h.by[ev.station] || (h.by[ev.station] = {}); bump(b, "scans", sc); bump(b, "parts", pr); bump(b, "undoParts", un);
     }
+    // the desk of a numbered station (Assembly 1..4, Shipping 1..3): its own small counters, and the orders it touched say which desk (`true` for any other page and for every
+    // event written before desks were told apart: read as "no desk", so the portal shows the kind alone for them). Same transaction as the rest: no extra read or write.
+    const dk = deviceNo(ev.station, ev.device);
+    if (dk) { tallyDesk(desks[dk] || (desks[dk] = {}), ev); deskLast[dk] = Math.max(deskLast[dk] || 0, ev.at); }
     if (ev.orderId) {
       const had = prev.touched && prev.touched[ev.orderId] != null || touched[ev.orderId] != null;
-      if (had || known + added < MAX_TOUCHED) { if (!had) added++; (touched[ev.orderId] || (touched[ev.orderId] = {}))[ev.station] = true; }
+      if (had || known + added < MAX_TOUCHED) {
+        if (!had) added++;
+        const slot = touched[ev.orderId] || (touched[ev.orderId] = {}), was = prev.touched && prev.touched[ev.orderId] ? prev.touched[ev.orderId][ev.station] : null;
+        if (dk) slot[ev.station] = dk;                                                                       // (the desk that touched it last)
+        else if (typeof was !== "string" && typeof slot[ev.station] !== "string") slot[ev.station] = true;   // (never turns a named desk back into "no desk")
+      }
     }
   }
   const stations = {};
@@ -140,6 +160,10 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
   const out = { day, person, v: 1, events: FV.increment(n), firstAt: Math.min(first, Number(prev.firstAt) || Infinity), lastAt: Math.max(last, Number(prev.lastAt) || 0), stations };
   if (Object.keys(hh).length) out.hours = hh;
   if (Object.keys(touched).length) out.touched = touched;
+  if (Object.keys(desks).length) {                                           // devices: { "assembly-2": { events, scans, completes, parts, orders, undoParts, undoOrders, lastAt } }
+    out.devices = {};
+    for (const k of Object.keys(desks)) out.devices[k] = Object.assign(incs(FV, desks[k]), { lastAt: Math.max(deskLast[k] || 0, Number(prev.devices && prev.devices[k] && prev.devices[k].lastAt) || 0) });
+  }
   if (prefix) out.sandbox = true;
   // ixv: every event of this day was counted with the x_* counters (a day that began before they existed is left without it, so the reader shows dashes, not zeros)
   if (issueKinds && (!prev.events || prev.ixv === 1)) out.ixv = 1;

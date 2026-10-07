@@ -336,7 +336,7 @@ async function rest() {
   assert.deepStrictEqual(Object.keys(o).sort(), ['business', 'cursor', 'day', 'days', 'delta', 'feed', 'now', 'notes', 'ok', 'people', 'sources'].sort());
   assert(isNum(o.now) && o.day === '2026-10-03' && o.days === 1 && typeof o.cursor === 'string');
   for (const p of o.people) {
-    assert.deepStrictEqual(Object.keys(p).sort(), ['firstIn', 'inDay', 'lastOut', 'name', 'nowAt', 'onSince', 'orders', 'perHour', 'source', 'stations', 'status', 'totals'].sort());
+    assert.deepStrictEqual(Object.keys(p).sort(), ['devices', 'firstIn', 'inDay', 'lastOut', 'name', 'nowAt', 'nowDevices', 'onSince', 'orders', 'perHour', 'source', 'stations', 'status', 'totals'].sort());
     assert(p.status === 'on' || p.status === 'out'); assert.strictEqual(p.perHour.length, 24); assert(p.perHour.every(isNum));
     assert.deepStrictEqual(Object.keys(p.totals).sort(), ['activeMin', 'errors', 'idleMin', 'orders', 'parts', 'rate', 'rejects', 'scanParts', 'scans', 'secPerScan', 'signedInMin']); assert(Object.values(p.totals).every(isNum));
     assert(p.orders.length <= 30); for (const s of p.stations) { assert.deepStrictEqual(Object.keys(s).sort(), ['completes', 'minutes', 'orders', 'parts', 'prints', 'scanParts', 'scans', 'station']); assert(Object.values(s).every(v => typeof v === 'string' || isNum(v))); }
@@ -344,7 +344,7 @@ async function rest() {
   assert.deepStrictEqual(Object.keys(o.business).sort(), ['perHour', 'stations', 'totals', 'trend']);
   assert.deepStrictEqual(Object.keys(o.business.totals).sort(), ['orders', 'parts', 'people', 'scans']);
   for (const t of o.business.trend) assert.deepStrictEqual(Object.keys(t).sort(), ['day', 'orders', 'parts', 'people', 'source']);
-  for (const s of o.business.stations) assert.deepStrictEqual(Object.keys(s).sort(), ['orders', 'parts', 'peopleNow', 'scans', 'station']);
+  for (const s of o.business.stations) assert.deepStrictEqual(Object.keys(s).filter(k => k !== 'devices' && k !== 'unassigned').sort(), ['orders', 'parts', 'peopleNow', 'scans', 'station']); // desk fields ride on assembly/shipping rows: tests/stations/station-numbers.cjs
   assert(!JSON.stringify(o).includes(PASS), 'no passcode in an answer');
 
   // person

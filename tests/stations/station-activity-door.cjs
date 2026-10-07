@@ -96,7 +96,7 @@ const reset = () => { docs.clear(); txRuns = 0; };
     assert.strictEqual(d.stations.assembly.activeMs, undefined, 'a counter never added is missing, read as 0');
     assert.deepStrictEqual(d.hours['09'], { scans: 2, parts: 12, undoParts: 2, by: { welding: { scans: 2, parts: 12, undoParts: 2 } } });
     assert.deepStrictEqual(d.hours['10'], { parts: 5, by: { assembly: { parts: 5 } } });
-    assert.deepStrictEqual(d.touched, { 3521000777: { welding: true, assembly: true }, 3521000888: { welding: true } }, 'distinct orders worked');
+    assert.deepStrictEqual(d.touched, { 3521000777: { welding: true, assembly: 'assembly-2' }, 3521000888: { welding: true } }, 'distinct orders worked (a numbered station names the desk that touched the order: Assembly 2)');
     const ev = acts().find(e => e.action === 'complete' && e.station === 'welding');
     assert.deepStrictEqual(Object.keys(ev).sort(), ['action', 'at', 'computer', 'day', 'detail', 'device', 'hour', 'id', 'line', 'orderId', 'orders', 'parts', 'person', 'seq', 'serverAt', 'session', 'sincePrevMs', 'sku', 'station', 'ts', 'v'].sort(), 'the Station_Activity shape');
     assert.strictEqual(ev.ts, 'TS'); assert.strictEqual(ev.day, '2026-10-02'); assert.strictEqual(ev.hour, '09'); assert.strictEqual(ev.serverAt, now);

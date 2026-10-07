@@ -66,7 +66,15 @@
   const rateTxt = v => (v > 0 ? (v >= 10 ? nf(v) : (Math.round(v * 10) / 10).toString()) : "—");
   const secTxt = s => (s > 0 ? (s < 90 ? `${Math.round(s)} s` : `${(Math.round(s / 6) / 10).toString()} min`) : "—");
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`);
-  const stName = s => NAMES[displayStation(s)] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
+  /* Numbered stations (Paul, 7 Oct 2026: "four stations in the assembly and three stations in shipping"): Assembly is four desks (assembly-1..4) and Shipping three (shipping-1..3).
+     Mirror of deviceNo in netlify/functions/_activityKinds.js: "assembly-2" at station "assembly" is "assembly-2"; any other page, or none, is "" (the kind alone, as for every old
+     record: sessions, events and rollups written before desks were told apart carry no number and read as "Assembly"). */
+  const NUMBERED = { assembly: 4, shipping: 3 }, DESK_RE = /^(assembly|shipping)-0*([1-9]\d?)$/;
+  const deskKey = (station, device) => { const m = DESK_RE.exec(String(device == null ? "" : device).trim().toLowerCase()); return m && m[1] === station ? `${m[1]}-${+m[2]}` : ""; };
+  const deskName = key => { const m = DESK_RE.exec(String(key || "")); return m ? `${NAMES[m[1]]} ${+m[2]}` : ""; };
+  const stName = s => deskName(s) || NAMES[displayStation(s)] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");   // (a desk key, "assembly-2", reads "Assembly 2")
+  /** Where something happened, in words: the desk when the record names one ("Assembly 2"), else the station ("Assembly"). */
+  const whereOf = (station, device) => deskName(deskKey(station, device)) || stName(station);
 
   /* ── hover cards: the stations board's own light card (EfficiencyStations.hoverCard) on the Overview's numbers, each with one plain line saying what
    *  it is. Without that module the same words stay a native title. `tx(node, text)` keeps the live detail of a card (what a title used to say). ── */
@@ -133,14 +141,18 @@
       const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), rejects: N(t.rejects), errors: N(t.errors), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
-      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders, noThroughput: weldOnly(p, stations) };
+      const devices = (Array.isArray(p.devices) ? p.devices : []).filter(d => d && deskKey(String(d.station || ""), d.device)).map(d => ({ station: String(d.station), device: deskKey(String(d.station), d.device), minutes: N(d.minutes), parts: N(d.parts), scans: N(d.scans), orders: N(d.orders) }));   // (the desks this person was signed in at: "assembly-2" ...)
+      const nowDevices = [...new Set((Array.isArray(p.nowDevices) ? p.nowDevices : []).map(String).filter(k => DESK_RE.test(k)))];
+      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), nowDevices, devices, source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders, noThroughput: weldOnly(p, stations) };
     });
     const b = r.business || {}, bt = b.totals || {};
     const stRows = new Map();
     for (const s of Array.isArray(b.stations) ? b.stations : []) if (s && s.station) {
       const k = displayStation(String(s.station)), had = stRows.get(k), now = (Array.isArray(s.peopleNow) ? s.peopleNow : []).map(String), tm = taskMin(s.taskMin);
       if (had) { had.parts += N(s.parts); had.scans += N(s.scans); had.orders += N(s.orders); had.matched += N(s.matched); if (tm) had.taskMin = had.taskMin ? { welding: had.taskMin.welding + tm.welding, matching: had.taskMin.matching + tm.matching, unknown: had.taskMin.unknown + tm.unknown } : tm; for (const n of now) if (!had.now.includes(n)) had.now.push(n); }
-      else stRows.set(k, { station: k, parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), matched: N(s.matched), taskMin: tm, now, hours: new Array(24).fill(0) });
+      else stRows.set(k, { station: k, parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), matched: N(s.matched), taskMin: tm, now, hours: new Array(24).fill(0),
+        desks: NUMBERED[k] && Array.isArray(s.devices) ? s.devices.filter(d => d && deskKey(k, d.device)).map(d => ({ device: deskKey(k, d.device), parts: N(d.parts), scans: N(d.scans), orders: N(d.orders), now: (Array.isArray(d.peopleNow) ? d.peopleNow : []).map(String) })) : null,   // (one entry per desk, Assembly 1..4 / Shipping 1..3; null from a service that does not tell desks apart)
+        rest: NUMBERED[k] && s.unassigned && typeof s.unassigned === "object" ? { parts: N(s.unassigned.parts), scans: N(s.unassigned.scans), orders: N(s.unassigned.orders) } : null });   // (what no desk claims: old records, shown as the kind alone)
     }
     const ph = {};                                                           // (per-hour pieces by station, a stored "sorter" or "qr" series added to Sorting's)
     for (const [k0, v] of Object.entries(b.perHour && typeof b.perHour === "object" ? b.perHour : {})) { const k = displayStation(k0); ph[k] = ph[k] ? sum24([ph[k], hours24(v)]) : hours24(v); }
@@ -150,7 +162,7 @@
     const activeMin = sumP("activeMin"), parts = bt.parts == null ? sumP("parts") : N(bt.parts);
     // Design stations log a fixed-text "note" (no order, no parts) only to make work time exact: it stays in time use on the server, but is never a line of the feed
     const marker = f => f.action === "note" && !f.orderId && !N(f.parts) && (f.detail == null || /^(opened|selected) order$/i.test(String(f.detail).trim()));
-    const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: displayStation(String(f.station || "")), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
+    const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: displayStation(String(f.station || "")), device: deskKey(displayStation(String(f.station || "")), f.device), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
     return {
       day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people,
       biz: { parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
@@ -198,8 +210,8 @@
         lastEventAt: T(s.lastEventAt), counts: { partsToday: N(s.counts && s.counts.partsToday), ordersToday: N(s.counts && s.counts.ordersToday) } };
     });
     const signedIn = [];                                                     // one row per person, station and task: at the Sorter app and at a sorting page is ONE row (Sorting), never two; two tasks at Welding stay two
-    for (const p of arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: displayStation(String(p.stationKey || p.station || "")), since: T(p.since), lastSeenAt: T(p.lastSeenAt), task: p.task === "welding" || p.task === "matching" ? p.task : "", lastInputAt: T(p.lastInputAt) }))) {
-      const had = signedIn.find(x => x.name.toLowerCase() === p.name.toLowerCase() && x.stationKey === p.stationKey && x.task === p.task);
+    for (const p of arr(r.signedIn).filter(p => p && p.name).map(p => { const sk = displayStation(String(p.stationKey || p.station || "")); return { name: String(p.name), stationKey: sk, desk: deskKey(sk, p.device), since: T(p.since), lastSeenAt: T(p.lastSeenAt), task: p.task === "welding" || p.task === "matching" ? p.task : "", lastInputAt: T(p.lastInputAt) }; })) {
+      const had = signedIn.find(x => x.name.toLowerCase() === p.name.toLowerCase() && x.stationKey === p.stationKey && x.task === p.task && x.desk === p.desk);   // (a person at two desks of Assembly is a chip at each)
       if (had) { had.since = had.since && p.since ? Math.min(had.since, p.since) : had.since || p.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, p.lastSeenAt || 0) || null; had.lastInputAt = Math.max(had.lastInputAt || 0, p.lastInputAt || 0) || null; } else signedIn.push(p);
     }
     signedIn.sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
@@ -209,7 +221,7 @@
   }
   /** When the server has no `live` read yet: the people the overview says are on now, with what it knows (no order, no last-seen). */
   function liveFromOverview(M) {
-    const signedIn = M.people.filter(p => p.on).map(p => ({ name: p.name, stationKey: p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "", since: p.onSince || p.firstIn, lastSeenAt: null }));
+    const signedIn = M.people.filter(p => p.on).map(p => { const sk = p.nowAt[0] || (p.stations[0] && p.stations[0].station) || ""; return { name: p.name, stationKey: sk, desk: (p.nowDevices.find(d => d.split("-")[0] === sk) || ""), since: p.onSince || p.firstIn, lastSeenAt: null }; });
     return { ok: true, at: M.now, mode: "", stations: [], signedIn, current: [], derived: true };
   }
   /** "37 s", "4 m 12 s", "12 m", "1 h 5 m": a time that visibly ticks while it is short. */
@@ -312,7 +324,7 @@
 
   /* ── state ── */
   const st = { built: false, shown: false, key: store.get(KEY_STORE), keyErr: "", checking: false, days: +store.get(DAYS_STORE) || 1, day: null, gen: 0, data: null, M: null, off: 0, at: 0, fails: 0, busy: false, err: "", timer: 0, tick: 0, ctl: null,
-    rows: new Map(), stRows: new Map(), open: new Map(), hist: new Map(), ord: new Map(), ordOpen: new Set(), find: "", feed: [], feedOpen: false, feedSig: "", win: { lo: 7, hi: 18, nowH: -1, today: true }, charts: {}, sandbox: false, lastNames: [],
+    rows: new Map(), stRows: new Map(), stHeads: new Map(), open: new Map(), hist: new Map(), ord: new Map(), ordOpen: new Set(), find: "", feed: [], feedOpen: false, feedSig: "", win: { lo: 7, hi: 18, nowH: -1, today: true }, charts: {}, sandbox: false, lastNames: [],
     // which data (real by default, whatever the sorter's own mode), the tab and route, the live read
     view: store.get(VIEW_STORE) === "sandbox" ? "sandbox" : "real", tab: "overview", person: "", locked: false,
     live: null, liveAt: 0, liveErr: "", liveShort: "", liveFails: 0, liveBusy: false, liveGen: 0, liveTimer: 0, liveCtl: null, liveSupported: true, liveRetryAt: 0, liveSig: "", resuming: false, hiddenAt: 0, renderErr: "",
@@ -386,7 +398,11 @@
 .efLabel:after{content:"";flex:1;height:1px;background:var(--line);order:1}.efLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}
 .efSR{display:grid;grid-template-columns:96px minmax(0,1fr) 72px 72px 112px;align-items:center;gap:14px;padding:6px 18px;min-height:34px}
 .efSR+.efSR{border-top:1px solid var(--line2)}
-.efSN{font-weight:700;font-size:12.5px}.efSN:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink25);margin-right:8px;vertical-align:1px;transition:background .3s}
+.efSG{display:flex;align-items:baseline;gap:2px 12px;padding:9px 18px 2px;min-width:0}
+.efSR+.efSG{border-top:1px solid var(--line2)}.efSG+.efSR{border-top:0}
+.efSGN{font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:750;color:var(--ink45);white-space:nowrap}.efSGT{margin-left:auto;font-size:11px;color:var(--ink45);font-variant-numeric:tabular-nums;white-space:nowrap}.efSGT:empty{display:none}
+.ef[data-nofig] .efSGT{display:none}
+.efSN{font-weight:700;font-size:12.5px;white-space:nowrap}.efSN:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink25);margin-right:8px;vertical-align:1px;transition:background .3s}
 .efSR.on .efSN:before{background:var(--sage)}.efSR.idle .efSN,.efSR.idle .efSV{color:var(--ink45)}.efSR.idle .efSV b{font-weight:500}
 .efSW{color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efSW.none{color:var(--ink25)}.efQuiet{font-style:normal;color:var(--ink45);font-size:11px;margin-left:10px}.efQuiet:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:6px;vertical-align:1px}
 .efSV{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}.efSV small{font-weight:500;color:var(--ink45);margin-left:4px;font-size:10.5px}
@@ -679,7 +695,7 @@
     st.hist.clear(); st.ord.clear(); st.ordOpen.clear(); st.find = ""; st.open.clear();
     if (E.ov) { E.ov.classList.add("hidden"); E.findIn.value = ""; }
     for (const r of st.rows.values()) r.e.remove(); st.rows.clear(); E.people.textContent = "";
-    for (const r of st.stRows.values()) r.e.remove(); st.stRows.clear();
+    for (const r of st.stRows.values()) r.e.remove(); st.stRows.clear(); for (const h of st.stHeads.values()) h.e.remove(); st.stHeads.clear();
     for (const r of st.wk.values()) r.e.remove(); st.wk.clear(); for (const r of st.si.values()) r.e.remove(); st.si.clear();
     for (const r of st.roster.values()) r.e.remove(); st.roster.clear();
     for (const k of Object.keys(E.kpi)) dash(E.kpi[k].querySelector(".efKV"));
@@ -997,9 +1013,40 @@
     for (const k of have.keys()) if (!out.includes(k)) { const s = have.get(k); if (s.parts || s.orders || s.now.length) out.push(k); }
     return out;
   }
+  /** The Overview's rows, in order. A numbered station (Assembly 1..4, Shipping 1..3) is a small group: a caption row carrying the kind's own day totals, then one row per desk (all of
+   *  the shop's desks, idle ones too), then, only when there is something to show, ONE row of the kind alone for what no desk claims (people on a page with no number, work logged
+   *  before desks were told apart). A service that does not tell desks apart leaves the kind as the one row it was. Every other station is one row, as before. Pure (checked by a test). */
+  function stationRowsOf(M) {
+    const out = [];
+    for (const k of stationList(M)) {
+      const s = M.biz.stations.get(k) || { parts: 0, scans: 0, orders: 0, now: [], hours: null };
+      if (!NUMBERED[k] || !s.desks) { out.push({ key: k, s }); continue; }
+      out.push({ head: k, s });
+      const desks = new Map(s.desks.map(d => [d.device, d])), all = [];
+      for (let n = 1; n <= NUMBERED[k]; n++) all.push(`${k}-${n}`);
+      for (const d of desks.keys()) if (!all.includes(d)) all.push(d);
+      all.sort((a, b) => parseInt(a.split("-")[1], 10) - parseInt(b.split("-")[1], 10));
+      const atDesk = new Set();
+      for (const dk of all) { const d = desks.get(dk) || { parts: 0, scans: 0, orders: 0, now: [] }; d.now.forEach(n => atDesk.add(n)); out.push({ key: dk, desk: true, s: { station: dk, parts: d.parts, scans: d.scans, orders: d.orders, matched: 0, taskMin: null, now: d.now, hours: null } }); }
+      const r = s.rest || { parts: 0, scans: 0, orders: 0 }, now = s.now.filter(n => !atDesk.has(n));
+      if (r.parts > 0 || r.orders > 0 || r.scans > 0 || now.length) out.push({ key: k, rest: true, s: { station: k, parts: r.parts, scans: r.scans, orders: r.orders, matched: 0, taskMin: null, now, hours: null } });
+    }
+    return out;
+  }
+  /** The caption row of a numbered station's group: its name and its own totals (all its desks together). */
+  function headRow(x, M) {
+    let h = st.stHeads.get(x.head);
+    if (!h) { const e = el("div", "efSG", `<span class="efSGN"></span><span class="efSGT"></span>`); e.dataset.group = x.head; h = { e, n: e.firstChild, t: e.lastChild }; st.stHeads.set(x.head, h); setText(h.n, NAMES[x.head]); e.title = "All the stations of this kind together"; }
+    const s = x.s, ev = M.sources.events !== false, bits = [];
+    if (ev) bits.push(pcs(s.parts)); if (ev || M.sources.seals) bits.push(`${nf(s.orders)} ${Math.round(s.orders) === 1 ? "order" : "orders"}`);
+    setText(h.t, bits.join(" · "));
+    return h;
+  }
   function renderStations(M, first) {
-    const keys = stationList(M), trend = M.days > 1;
-    for (const k of keys) {
+    const list = stationRowsOf(M), keys = list.filter(x => !x.head).map(x => x.key), trend = M.days > 1;
+    for (const x of list) {
+      if (x.head) { headRow(x, M); continue; }
+      const k = x.key;
       let r = st.stRows.get(k);
       if (!r) {
         const e = el("div", "efSR", `<span class="efSN"></span><span class="efSW none">—</span><span class="efSV" data-c="parts"><b class="efNum">0</b><small>pieces</small></span><span class="efSV" data-c="orders"><b class="efNum">0</b><small>orders</small></span><span class="efSp"></span>`);
@@ -1011,7 +1058,10 @@
         hc(r.w, () => (r.names ? { title: HC.here[0], sub: sn(), note: r.names, foot: r.quiet || HC.here[1] } : null));
         hc(r.spEl, () => (r.spEl.style.visibility === "hidden" ? null : { title: HC.byhour[0], sub: sn(), note: HC.byhour[1] }));
       }
-      const s = M.biz.stations.get(k) || { parts: 0, orders: 0, now: [], hours: null };
+      r.e.dataset.kind = x.desk ? "desk" : x.rest ? "rest" : "";
+      setText(r.e.querySelector(".efSN"), x.rest ? NAMES[k] : stName(k));   // (the kind alone: "Assembly" beside "Assembly 1 to 4": what no desk claims)
+      r.e.title = x.rest ? "Work and sign-ins with no station number (older records)" : "";
+      const s = x.s;
       const now = M.past ? [] : s.now, hrs = s.hours || [];
       r.e.classList.toggle("on", now.length > 0);
       const names = now.join(", "), w = st.win; let quiet = "";
@@ -1026,13 +1076,19 @@
           hc(r.oc, () => { const t = (r.s && r.s.taskMin) || tm; return { title: "Time on task", sub: stName(k), rows: [{ k: "Welding", v: dur(t.welding + t.unknown) }, { k: "Matching", v: dur(t.matching) }].concat(t.unknown > 0 ? [{ k: "No task recorded", v: dur(t.unknown), d: "Older sign-ins: counted as Welding" }] : []), note: "Time signed in at the Welding station, per task. Two people in the same task at once count once." }; });
         } else { metricCard(r.pc, "parts", () => stName(k), () => shown(r.parts)); metricCard(r.oc, "orders", () => stName(k), () => shown(r.orders)); }
       }
-      if (wd) { fig(r.parts, s.matched, evS, nf, first); fig(r.orders, tmTot, evS, dur, first); } else { fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first); }
-      const idle = evS && (wd ? !s.matched && !tmTot : !s.parts && !s.orders) && !now.length; r.e.classList.toggle("idle", idle);   // a station with nothing yet is quiet on screen too
-      r.spEl.style.visibility = trend || !evS || idle || wd ? "hidden" : "";
-      if (!trend && evS) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push((s.hours || [])[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
+      const idle = evS && (wd ? !s.matched && !tmTot : !s.parts && !s.orders) && !now.length;
+      if (wd) { fig(r.parts, s.matched, evS, nf, first); fig(r.orders, tmTot, evS, dur, first); }
+      else if (x.desk && idle) { dash(r.parts); dash(r.orders); }   // (a desk nobody is at and nothing was done at: a quiet dash, not a 0)
+      else { fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first); }
+      r.e.classList.toggle("idle", idle);   // a station with nothing yet is quiet on screen too
+      const noHours = x.desk || x.rest;     // (the hours are kept per station, not per desk: a desk has no line of its own, the kind's own row did)
+      r.spEl.style.visibility = trend || !evS || idle || wd || noHours ? "hidden" : "";
+      if (!trend && evS && !noHours) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push((s.hours || [])[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     }
-    // keep the rows in the same order, add late ones at the end, drop none that were shown
-    const want = [...st.stRows.keys()].filter(k => keys.includes(k)); want.forEach((k, i) => { const e = st.stRows.get(k).e; if (E.stations.children[i] !== e) E.stations.insertBefore(e, E.stations.children[i] || null); });
+    // keep the rows in order (a numbered station's caption, its desks, then the kind alone), add late ones at the end; a desk, a caption or a kind-alone row that is no longer wanted goes
+    for (const [k, r] of st.stRows) if (!keys.includes(k) && (NUMBERED[k] || DESK_RE.test(k))) { r.e.remove(); st.stRows.delete(k); }
+    for (const [g, h] of st.stHeads) if (!list.some(x => x.head === g)) { h.e.remove(); st.stHeads.delete(g); }
+    list.map(x => (x.head ? st.stHeads.get(x.head) : st.stRows.get(x.key)).e).forEach((e, i) => { if (E.stations.children[i] !== e) E.stations.insertBefore(e, E.stations.children[i] || null); });
   }
   /* the people: a row each, most active first; a reorder slides, a new row fades in */
   function personRow(name) {
@@ -1067,13 +1123,25 @@
     if (M.sources.events !== false) { if (p.source === "seals") s += " · sealed work"; else if (p.source === "sessions" && !M.nofig) s += " · sign-in only"; }   // the note says it once when nobody has events
     return s;
   }
+  /** A person's station chips: one per station, except that a numbered station they were signed in at by desk reads by desk ("Assembly 2 3 h", "Shipping 3 20 m"), the minutes of
+   *  each desk; a station whose sessions name no desk (old sign-ins) stays the kind alone ("Assembly"). */
+  function chipsOf(p) {
+    const out = [];
+    for (const s of p.stations) {
+      const ds = NUMBERED[s.station] ? p.devices.filter(d => d.station === s.station) : [];
+      if (ds.length) for (const d of ds) out.push({ label: deskName(d.device), minutes: d.minutes, now: p.nowDevices.includes(d.device), taskMin: null });
+      else out.push({ label: stName(s.station), minutes: s.minutes, now: p.nowAt.includes(s.station), taskMin: s.taskMin });
+    }
+    return out;
+  }
   function updatePerson(r, p, M, first) {
     const on = p.on && !M.past;
     r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
     const wt = whenText(p, M); setText(r.when, wt);
     const wl = weldLine(p);   // (the Welding station's time on task and matched count: the People tab's own helper and wording)
-    const chipSig = p.stations.map(s => s.station + s.minutes + (s.taskMin ? ":" + s.taskMin.welding + "/" + s.taskMin.matching + "/" + s.taskMin.unknown : "")).join() + "|" + p.nowAt.join() + on + "|" + (wl ? wl.text : "");
-    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = (p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"${s.taskMin ? ` title="Welding ${esc(dur(s.taskMin.welding + s.taskMin.unknown))} · Matching ${esc(dur(s.taskMin.matching))}"` : ""}><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`) + (wl ? `<span class="efPW" title="${esc(wl.title)}">${esc(wl.text)}</span>` : ""); }
+    const chips = chipsOf(p);
+    const chipSig = chips.map(c => c.label + c.minutes + (c.taskMin ? ":" + c.taskMin.welding + "/" + c.taskMin.matching + "/" + c.taskMin.unknown : "") + (c.now ? "*" : "")).join() + "|" + on + "|" + (wl ? wl.text : "");
+    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = (chips.length ? chips.map(c => `<span class="efChip${c.now && on ? " now" : ""}"${c.taskMin ? ` title="Welding ${esc(dur(c.taskMin.welding + c.taskMin.unknown))} · Matching ${esc(dur(c.taskMin.matching))}"` : ""}><b>${esc(c.label)}</b>${esc(dur(c.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`) + (wl ? `<span class="efPW" title="${esc(wl.title)}">${esc(wl.text)}</span>` : ""); }
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
     const sc = scanned(t);
     const nt = p.noThroughput;   // (Welding alone: no pieces, orders or rate to count, a dash as on the People tab and the person's page; scans stay, they are in the Scanned total)
@@ -1236,12 +1304,14 @@
     if (!st.feedOpen) return;
     const sig = M.feed.map(f => f.id).join("|"); if (sig === st.feedSig) return;
     const prev = new Set(st.feedSig ? st.feedSig.split("|") : []); st.feedSig = sig;
-    E.feed.innerHTML = M.feed.length ? M.feed.map(f => `<div class="efFl${prev.size && !prev.has(f.id) ? " new" : ""}"><time>${esc(clock(f.at))}</time><b>${esc(f.person)}</b><span>${esc(stName(f.station))}</span><span>${esc(ACTIONS[f.action] || f.action)}</span><span>${f.orderId ? `<button type="button" class="efOid" data-order="${esc(f.orderId)}" title="Open this order">${esc(f.orderId)}</button>` : ""}${f.parts ? `<em>${pcs(f.parts)}</em>` : ""}</span></div>`).join("") : `<div class="efMuted" style="padding:6px 0">Nothing yet. Actions appear here as stations send them.</div>`;
+    E.feed.innerHTML = M.feed.length ? M.feed.map(f => `<div class="efFl${prev.size && !prev.has(f.id) ? " new" : ""}"><time>${esc(clock(f.at))}</time><b>${esc(f.person)}</b><span>${esc(whereOf(f.station, f.device))}</span><span>${esc(ACTIONS[f.action] || f.action)}</span><span>${f.orderId ? `<button type="button" class="efOid" data-order="${esc(f.orderId)}" title="Open this order">${esc(f.orderId)}</button>` : ""}${f.parts ? `<em>${pcs(f.parts)}</em>` : ""}</span></div>`).join("") : `<div class="efMuted" style="padding:6px 0">Nothing yet. Actions appear here as stations send them.</div>`;
   }
 
   /* ── right now: who is signed in, and the order each person has in hand ── */
   const liveModel = () => st.live || (st.M && (!st.liveSupported || st.liveFails >= 2) ? liveFromOverview(st.M) : null);
   const stationOf = (L, key) => { const s = L && L.stations.find(x => x.key === key); return (s && s.label) || stName(key); };
+  /** Where a signed-in person is, in words: "Matching" at the Welding station's second task, the desk when there is one ("Assembly 2"), else the station. */
+  const siWhere = (L, p) => (p.task === "matching" ? "Matching" : deskName(p.desk) || stationOf(L, p.stationKey));
   const siText = p => [p.since ? `since ${clock(p.since)}` : "", p.lastSeenAt ? `seen ${ago((now() - p.lastSeenAt) / 1000)}` : ""].filter(Boolean).join(" · ") || "signed in";
   const urlOk = u => (/^(https?:\/\/|data:image\/|blob:|\/)/i.test(u) ? u.replace(/["'\\\n\r()]/g, "") : "");
   const bg = (e, u) => { u = urlOk(String(u || "")); if (u) e.style.backgroundImage = `url("${u}")`; };
@@ -1260,22 +1330,22 @@
     const e = el("button", "efSi"); e.type = "button"; e.dataset.name = p.name;
     e.innerHTML = `<span class="efAv" aria-hidden="true"></span><span class="efSiN"><span class="efSiNm"></span><em></em></span><span class="efSiW"></span>`;
     const r = { e, av: e.querySelector(".efAv"), nm: e.querySelector(".efSiNm"), stn: e.querySelector("em"), w: e.querySelector(".efSiW"), p };
-    hc(e, () => { const q = r.p || p, ls = q.lastSeenAt ? Math.max(0, (now() - q.lastSeenAt) / 1000) : null; return { avatar: q.name, title: q.name, sub: `Signed in at ${stationOf(r.L, q.stationKey)}${q.task ? ` · Task: ${q.task === "matching" ? "Matching" : "Welding"}` : ""}`, rows: [{ k: "Since", v: q.since ? clock(q.since) : "—", d: "When this person signed in at this station" }, { k: "Last seen", v: ls == null ? "—" : ago(ls), d: "The last sign of life from the station" }], note: "Press to open their page." }; });
+    hc(e, () => { const q = r.p || p, ls = q.lastSeenAt ? Math.max(0, (now() - q.lastSeenAt) / 1000) : null; return { avatar: q.name, title: q.name, sub: `Signed in at ${deskName(q.desk) || stationOf(r.L, q.stationKey)}${q.task ? ` · Task: ${q.task === "matching" ? "Matching" : "Welding"}` : ""}`, rows: [{ k: "Since", v: q.since ? clock(q.since) : "—", d: "When this person signed in at this station" }, { k: "Last seen", v: ls == null ? "—" : ago(ls), d: "The last sign of life from the station" }], note: "Press to open their page." }; });
     return r;
   }
   function renderSignedIn(L, first) {
     const list = L ? L.signedIn : [], seen = new Set();
     setText(E.siC, list.length ? String(list.length) : "");
     // one chip per row of the list (person, station, task), as the count says: a person at the Inbox and at Assembly, or at Welding and at Matching, has two chips (UX1: it was keyed by name alone, so "Signed in now 12" showed nine chips)
-    const key = p => `${p.name}\n${p.stationKey}\n${p.task || ""}`;
+    const key = p => `${p.name}\n${p.stationKey}\n${p.task || ""}\n${p.desk || ""}`;
     for (const p of list) {
       seen.add(key(p)); let r = st.si.get(key(p)), fresh = !r;
       if (!r) { r = siRow(p); st.si.set(key(p), r); }
-      r.p = p; setText(r.av, initials(p.name)); setText(r.nm, p.name); setText(r.stn, p.task === "matching" ? "Matching" : stationOf(L, p.stationKey)); setText(r.w, siText(p));
+      r.p = p; setText(r.av, initials(p.name)); setText(r.nm, p.name); setText(r.stn, siWhere(L, p)); setText(r.w, siText(p));
       const seenAgo = p.lastSeenAt ? now() - p.lastSeenAt : 0, ok = !p.lastSeenAt || seenAgo < 6 * 60000;
       r.e.classList.toggle("fresh", ok);
-      r.p = p; r.L = L; if (!hcOn()) r.e.title = `${p.name} · signed in at ${stationOf(L, p.stationKey)}${p.since ? ` since ${clock(p.since)}` : ""}${p.lastSeenAt ? ` · last seen ${clock(p.lastSeenAt)}` : ""} · open ${p.name}'s page`;
-      r.e.setAttribute("aria-label", `${p.name}, ${p.task === "matching" ? "Matching" : stationOf(L, p.stationKey)}, ${siText(p)}. Open their page`);
+      r.p = p; r.L = L; if (!hcOn()) r.e.title = `${p.name} · signed in at ${siWhere(L, p)}${p.since ? ` since ${clock(p.since)}` : ""}${p.lastSeenAt ? ` · last seen ${clock(p.lastSeenAt)}` : ""} · open ${p.name}'s page`;
+      r.e.setAttribute("aria-label", `${p.name}, ${siWhere(L, p)}, ${siText(p)}. Open their page`);
       if (fresh) { E.siGrid.appendChild(r.e); enter(r.e, first); }
     }
     for (const [k, r] of st.si) if (!seen.has(k)) { st.si.delete(k); leave(r.e); }
@@ -1293,7 +1363,7 @@
       if (c.pieces.length > 10) { const m = pcs.appendChild(el("span", "efMuted")); m.textContent = `+${c.pieces.length - 10}`; m.style.alignSelf = "center"; }
     }
     const info = e.appendChild(el("div", "efOcInfo")), top = info.appendChild(el("div", "efOcTop"));
-    top.appendChild(el("span", "efOcWho")).textContent = c.person || "—"; top.appendChild(el("span", "efOcSt")).textContent = c.stationLabel || stName(c.station);
+    top.appendChild(el("span", "efOcWho")).textContent = c.person || "—"; top.appendChild(el("span", "efOcSt")).textContent = deskName(deskKey(c.station, c.raw && c.raw.device)) || c.stationLabel || stName(c.station);
     if (c.orderNumber) { const b = info.appendChild(el("button", "efOcOrd")); b.type = "button"; b.dataset.order = c.rid || c.orderNumber; b.textContent = c.orderNumber; b.title = "Open this order"; }
     if (c.customer || c.note) info.appendChild(el("span", "efOcCust")).textContent = [c.customer, c.note].filter(Boolean).join(" · ");
     if (c.scannedAt) { const t = info.appendChild(el("span", "efOcTime")); t.appendChild(el("small")).textContent = "Scanned"; const b = t.appendChild(el("span")); b.dataset.since = String(c.scannedAt); b.textContent = since(now() - c.scannedAt); t.appendChild(el("small")).textContent = " ago"; t.lastChild.style.marginLeft = "4px"; }
@@ -1317,7 +1387,7 @@
       const key = `${c.station}|${c.person}|${c.rid}`; seen.add(key);
       let r = st.wk.get(key); const fresh = !r;
       if (!r) { r = { e: el("div", "efWk"), sig: "", card: false }; r.e.dataset.key = key; st.wk.set(key, r); }
-      const sig = JSON.stringify([c.rid, c.orderNumber, c.customer, c.note, c.thumbUrl, c.qr && c.qr.text, c.person, c.station, c.scannedAt, c.pieces.map(p => [p.id, p.thumbUrl, p.label])]);
+      const sig = JSON.stringify([c.rid, c.orderNumber, c.customer, c.note, c.thumbUrl, c.qr && c.qr.text, c.person, c.station, c.raw && c.raw.device, c.scannedAt, c.pieces.map(p => [p.id, p.thumbUrl, p.label])]);
       const haveCard = !!(root.EfficiencyStations && typeof root.EfficiencyStations.orderCard === "function");
       if (r.sig !== sig || (haveCard && !r.card)) {
         r.sig = sig; const x = wkContent(c); r.card = x.card; r.e.textContent = "";
@@ -1371,7 +1441,7 @@
       let r = st.roster.get(p.name); const fresh = !r; if (!r) { r = rosterCard(p.name); st.roster.set(p.name, r); }
       const on = p.on && !M.past, t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";
       r.e.classList.toggle("on", on);
-      const when = on ? `On now · ${stName(p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "")}${p.onSince ? ` · since ${clock(p.onSince)}` : ""}` : p.lastOut ? `Out ${clock(p.lastOut)}` : p.inDay && p.inDay !== M.day ? `Last in ${mdFmt.format(dayDate(p.inDay))}` : p.firstIn ? `In ${clock(p.firstIn)}` : "No sign-in recorded";
+      const nowK = p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "", when = on ? `On now · ${deskName(p.nowDevices.find(d => d.split("-")[0] === nowK)) || stName(nowK)}${p.onSince ? ` · since ${clock(p.onSince)}` : ""}` : p.lastOut ? `Out ${clock(p.lastOut)}` : p.inDay && p.inDay !== M.day ? `Last in ${mdFmt.format(dayDate(p.inDay))}` : p.firstIn ? `In ${clock(p.firstIn)}` : "No sign-in recorded";
       setText(r.when, when); r.when.title = when; setText(r.state, "");
       const nt = p.noThroughput;   // (Welding alone: no pieces or orders to count, a dash as on the person's page; the time on task and the matched count stand in below)
       fig(r.f.parts, t.parts, ev && kParts && !nt, nf, fresh); fig(r.f.orders, t.orders, (ev && kOther || !!M.sources.seals) && !nt, nf, fresh); fig(r.f.rate, t.rate, ev && kParts && t.rate > 0 && !nt, rateTxt, fresh);
@@ -1485,6 +1555,6 @@
   }
   if (doc.getElementById("efficiencyView")) mount(); else doc.addEventListener("DOMContentLoaded", mount, { once: true });
   if (root.EfficiencyStations && typeof root.EfficiencyStations.displayStation !== "function") root.EfficiencyStations.displayStation = displayStation;   // (the stations module is older than this file: the same function)
-  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api, displayStation,
+  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api, displayStation, stationRowsOf, chipsOf, deskName, deskKey, whereOf,
     get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()], view: st.view, tab: st.tab, person: st.person, liveAt: st.liveAt, liveSupported: st.liveSupported, liveFails: st.liveFails, mounted: Object.keys(st.mounts).filter(k => st.mounts[k]) }; } };
 })(window);
