@@ -195,13 +195,15 @@ async function page() {
   const sealing = requests.filter(r => r.payload.recordSeals === true); assert.equal(sealing.length, 1); assert.equal(sealing[0].payload.op, 'laserStatus'); assert(!('ifRevs' in sealing[0].payload) && !('wantRevs' in sealing[0].payload), 'its request is unchanged');
   assert(fast().every(r => r.payload.recordSeals === false), 'no fast read ever asks to record seals'); assert(requests.every(r => r.payload.recordSeals === false || r === sealing[0]), 'and nothing else asks for it either');
 
-  // 6. one read in flight, even when the answer is slower than the loop; a write meanwhile asks for exactly one more, at once
+  // 6. the loop never reads over its own read, even when the answer is slower than the loop; a person's write while one is out starts ONE read beside it at once
+  //    (the one out may have been asked before the write: waiting for it would show the write seconds late), and the writes that follow within 600 ms ask for one more after both are back
   await advance(4000); world.latency = 5000; const n2 = fast().length;
   while (fast().length === n2) await advance(10); await advance(1000);
-  const during = fast().length; L.nudge(); L.nudge(); await advance(500); assert.equal(fast().length, during, 'a write while a read is out does not start another');
+  const during = fast().length; assert.equal(maxFast, 1, 'until then, one fast read in flight at a time'); L.nudge(); await advance(100); assert.equal(fast().length, during + 1, 'a write while a read is out starts one beside it, at once'); assert.equal(maxFast, 2);
+  L.nudge(); L.nudge(); await advance(300); assert.equal(fast().length, during + 1, 'the writes right after it start no more beside them');
   await advance(30000); const phase = fast().slice(n2);
-  assert(phase.length >= 3 && gaps(phase).every(g => g >= 5000), 'each read starts after the last one is back'); assert.equal(maxFast, 1, 'never more than one fast read in flight'); world.latency = 120;
-  assert(phase[1].at - phase[0].at === 5000, 'the one asked for by the write follows the read in flight at once');
+  assert(phase.length >= 4 && gaps(phase.slice(2)).every(g => g >= 5000), 'the loop starts each read after the last one is back'); assert.equal(maxFast, 2, 'never more than the loop\'s read and the write\'s in flight'); world.latency = 120;
+  assert.equal(phase[1].at - phase[0].at, 1000, 'the write\'s read left the moment it was announced'); assert.equal(phase[2].at - phase[0].at, 6000, 'and the one for the writes after it follows when both are back');
 
   // 7. failures: 6, 12, 24, 30, 30 s apart, then 3 s again at the first answer; online reads at once and starts over
   await advance(12000); world.fail = true;
@@ -256,6 +258,6 @@ async function page() {
 (async () => {
   const cost = await cloud();
   const live = await page();
-  console.log('Library live OK: laserStatus is a pure read unless recordSeals is true, ifRevs answers "unchanged" from one read per watched document, a local change shows in ' + live.quick + ' ms and one made elsewhere in ' + live.slow + ' ms, back-off to 30 s, silent while hidden, one read in flight, no recordSeals:true on the fast path, unchanged answers redraw nothing, rail and Moving bar survive, cards glide between In progress and Laser cutting');
+  console.log('Library live OK: laserStatus is a pure read unless recordSeals is true, ifRevs answers "unchanged" from one read per watched document, a local change shows in ' + live.quick + ' ms and one made elsewhere in ' + live.slow + ' ms, back-off to 30 s, silent while hidden, one loop read in flight (a person write starts one beside it), no recordSeals:true on the fast path, unchanged answers redraw nothing, rail and Moving bar survive, cards glide between In progress and Laser cutting');
   console.log('Cost of one probe (documents read), against a full read:'); console.table(cost);
 })().catch(e => { console.error(e); process.exitCode = 1; });
