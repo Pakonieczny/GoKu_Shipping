@@ -278,7 +278,7 @@ const noWrites = async (w, fn) => { const before = JSON.stringify([...w.st.docs.
     const w = await fresh(false); try {
       const a1 = (await w.call({ op: 'getOrderPieces', orderId: RID.A })).body, a2 = (await w.call({ op: 'getOrderPieces', orderId: RID.A })).body, c1 = (await w.call({ op: 'getOrderPieces', orderId: RID.C })).body;
       assert(/^[0-9a-f]{12}$/.test(a1.rev), a1.rev); assert.equal(a1.rev, a2.rev); assert.equal(a1.orders[RID.A].rev, a2.orders[RID.A].rev);
-      const same = (await w.call({ op: 'getOrderPieces', orderId: RID.A, ifRev: a1.rev })).body; assert.deepEqual(same, { ok: true, unchanged: true, rev: a1.rev });
+      const same = (await w.call({ op: 'getOrderPieces', orderId: RID.A, ifRev: a1.rev })).body; assert.deepEqual(same, { ok: true, unchanged: true, rev: a1.rev, gen: a1.gen });   // (FC3: the answer also names the placement counter it was read at)
       w.st.put('Charm_Pool', PC1, { note: 'unrelated write to another order' });
       const a3 = (await w.call({ op: 'getOrderPieces', orderId: RID.A })).body, c2 = (await w.call({ op: 'getOrderPieces', orderId: RID.C })).body;
       assert.equal(a3.rev, a1.rev, 'another order\'s write is not this order\'s change'); assert.notEqual(c2.orders[RID.C].rev, c1.orders[RID.C].rev);
@@ -302,7 +302,7 @@ const noWrites = async (w, fn) => { const before = JSON.stringify([...w.st.docs.
   await t('F3 a consistent order costs getOrderPieces its pool rows and its sheets and no more (two queries, no sheet read by id)', async () => {
     const w = await fresh(false); try {
       w.st.queries = w.st.queries || 0; w.st.reads = w.st.reads || 0; const q = w.st.queries, r = w.st.reads; const a = (await w.call({ op: 'getOrderPieces', orderId: RID.A })).body;
-      assert.equal(w.st.queries - q, 2, 'queries'); assert.equal(w.st.reads - r, a.orders[RID.A].pools.length + a.orders[RID.A].sheets.length, 'documents read');
+      assert.equal(w.st.queries - q, 2, 'queries'); assert.equal(w.st.reads - r, a.orders[RID.A].pools.length + a.orders[RID.A].sheets.length + 1, "documents read (and the one placement counter, FC3)");
     } finally { w.srv.close(); }
   });
 

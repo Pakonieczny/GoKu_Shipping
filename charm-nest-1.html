@@ -3042,7 +3042,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1-tl2fit1-pl1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
-<script src="charm-nest-assets.js"></script>
+<script src="charm-nest-assets.js?v=20261007-imgcache"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
@@ -3054,7 +3054,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
-<script src="charm-nest-order-pieces.js?v=20261005-op2-hand1-pf2"></script>
+<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
@@ -5952,7 +5952,7 @@ function drawRecalled(sh, cv) {
   if (faceOf(cv) === "back" && cardBack()) return drawRecalledBack(sh, cv, ctx, w / f.fw, sw, sh2);
   if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); return; }
   if (!sh._img || sh._imgSource !== r.previewSrc) {
-    r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0) : "");
+    r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.previewAt || r.createdAt || r.updatedAt || 0) : "");
     const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img; sh._imgSource=r.previewSrc;
     img.onload = () => { if (sh.el) drawPreview(sh); };
     img.onerror = () => { sh._imgFailed = true; if (sh.el) { const c2 = $(`[data-r="canvas"]`, sh.el); if (c2) { const x = c2.getContext("2d"); x.fillStyle = "#9a9388"; x.font = `${Math.round(c2.width / 40)}px sans-serif`; x.textAlign = "center"; x.fillText("the saved preview could not be loaded", c2.width / 2, c2.height / 2); } } };

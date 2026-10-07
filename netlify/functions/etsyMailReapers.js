@@ -383,8 +383,11 @@ async function runAutoPipelinePass() {
   const tStart = Date.now();
   const cutoffMs = Date.now() - STALE_CLAIM_THRESHOLD_MS;
 
+  // Cost: only the one field the staleness test reads (reapStaleClaim
+  // re-reads the whole thread inside its own transaction).
   const snap = await db.collection(THREADS_COLL)
     .where("lastAutoDecision", "==", "in_progress")
+    .select("lastAutoDecisionAt")
     .limit(MAX_REAP_PER_RUN_PIPELINE * 2)
     .get();
 
@@ -538,8 +541,11 @@ async function runSendQueuePass() {
   const failures = [];
 
   // ── Pass 2a: stale `queued` drafts ────────────────────────────
+  // Cost: drafts are fat (text, attachments, listings); the staleness test
+  // reads one field, and reapStaleDraft re-reads the draft in its transaction.
   const queuedSnap = await db.collection(DRAFTS_COLL)
     .where("status", "==", "queued")
+    .select("queuedAt")
     .limit(MAX_REAP_PER_RUN_SEND * 2)
     .get();
   totalScanned += queuedSnap.size;
@@ -569,6 +575,7 @@ async function runSendQueuePass() {
   if (totalReaped < MAX_REAP_PER_RUN_SEND) {
     const sendingSnap = await db.collection(DRAFTS_COLL)
       .where("status", "==", "sending")
+      .select("sendHeartbeatAt")
       .limit(MAX_REAP_PER_RUN_SEND * 2)
       .get();
     totalScanned += sendingSnap.size;
@@ -890,6 +897,7 @@ async function reapStuckScrapeClaims() {
   const snap = await db.collection(JOBS_COLL)
     .where("jobType", "==", "scrape")
     .where("status",  "==", "claimed")
+    .select("claimedAt")
     .limit(MAX_SCRAPE_REAP_PER_RUN * 5)
     .get();
 
@@ -1012,8 +1020,11 @@ async function reapDetectedThreadsWithoutLiveJobs() {
   // the result set is bounded by however many threads are mid-pipeline
   // at any given moment. The MAX_SCRAPE_REAP_PER_RUN * 5 over-fetch
   // gives us plenty of headroom.
+  // Cost: only the thread fields this sweep reads (a masked read is billed
+  // by bytes as well as by document).
   const snap = await db.collection(THREADS_COLL)
     .where("status", "==", "detected_from_gmail")
+    .select("threadId", "gmailMessageId", "gmailThreadId", "etsyConversationUrl", "customerName", "subject", "createdAt")
     .limit(MAX_SCRAPE_REAP_PER_RUN * 5)
     .get();
 
@@ -1176,8 +1187,11 @@ async function reapUnknownAfterScrape() {
   // selective single field (customerName=="Unknown") and filter status
   // / grace / one-shot guard client-side. "Unknown" threads should be
   // rare in steady state, so the result set stays small even at scale.
+  // Cost: threads that stay "Unknown" are read again on every tick, so the
+  // read carries only the fields this sweep uses.
   const snap = await db.collection(THREADS_COLL)
     .where("customerName", "==", "Unknown")
+    .select("threadId", "subject", "customerName", "status", "_unknownRetryAttempted", "lastSyncedAt", "etsyConversationUrl", "gmailMessageId", "gmailThreadId")
     .limit(MAX_SCRAPE_REAP_PER_RUN * 2)   // overfetch; will filter
     .get();
 
@@ -1344,26 +1358,57 @@ async function reapUnknownAfterScrape() {
  * budget. Repeated runs across reaper ticks gradually clean the whole
  * collection — once it's clean, every subsequent run is a no-op.
  */
+//
+// Cost (Oct 2026): the walk used to read the 200 most recently updated threads
+// in full on EVERY 5-minute tick, clean or not (57,600 document reads a day for
+// a repair that finds nothing). It now keeps one tiny watermark document
+// (EtsyMail_Config/unmangleScan: wmSec/wmNs = updatedAt of the last thread examined)
+// and asks only for threads updated after it, with just the fields it checks.
+// A tick with no change costs the watermark read plus one query that returns
+// nothing; what is repaired, and how, is unchanged. The first tick (no
+// watermark yet) makes the old newest-200 pass, and repeats it until one pass
+// is not cut short by the batch cap, so a backlog is still cleaned a batch at
+// a time.
+const UNMANGLE_STATE_DOC = "unmangleScan";
+const UNMANGLE_FIELDS = ["customerName", "subject", "lastSenderName", "updatedAt"];
+
 async function reapMangledUnicodeFields() {
   // Walk recently-updated threads first — the operator is most likely
   // to be looking at those, so fixing them first gives the fastest
   // perceived improvement. We page through up to BATCH * 4 candidates
   // per tick and only update the ones that actually need it.
   const BATCH = MAX_SCRAPE_REAP_PER_RUN;
-  const snap = await db.collection(THREADS_COLL)
-    .orderBy("updatedAt", "desc")
-    .limit(BATCH * 4)
-    .get();
+  const stRef = db.collection(CONFIG_COLL).doc(UNMANGLE_STATE_DOC);
+  const stSnap = await stRef.get();
+  const stData = stSnap.exists ? (stSnap.data() || {}) : {};
+  // The watermark is the exact Timestamp (seconds + nanoseconds) of the last
+  // thread examined, so the strict ">" below never returns that thread again.
+  const wm = typeof stData.wmSec === "number" && typeof stData.wmNs === "number"
+    ? { sec: stData.wmSec, ns: stData.wmNs } : null;
+
+  let q = db.collection(THREADS_COLL).select(...UNMANGLE_FIELDS);
+  q = wm == null
+    ? q.orderBy("updatedAt", "desc").limit(BATCH * 4)
+    : q.where("updatedAt", ">", new admin.firestore.Timestamp(wm.sec, wm.ns)).orderBy("updatedAt", "asc").limit(BATCH * 4);
+  const snap = await q.get();
 
   if (snap.empty) return { fixed: 0, scanned: 0 };
 
   let fixed = 0;
   let scanned = 0;
+  let walkedAll = true;                       // false when the batch cap cut the walk short
+  let seen = wm;                              // newest updatedAt this tick has examined
+  const later = (a, b) => !b || a.sec > b.sec || (a.sec === b.sec && a.ns > b.ns);
 
   for (const threadSnap of snap.docs) {
-    if (fixed >= BATCH) break;
+    if (fixed >= BATCH) { walkedAll = false; break; }
     scanned++;
     const data = threadSnap.data() || {};
+    const u = data.updatedAt;
+    if (u && typeof u.seconds === "number" && typeof u.nanoseconds === "number") {
+      const cur = { sec: u.seconds, ns: u.nanoseconds };
+      if (later(cur, seen)) seen = cur;
+    }
 
     // Check the two fields we know the scraper mangles. Skipping any
     // field that doesn't actually have a `\uXXXX` non-ASCII escape
@@ -1405,6 +1450,14 @@ async function reapMangledUnicodeFields() {
     } catch (err) {
       console.warn(`[gmail-scrape-reaper] subsweep D unmangle failed for ${threadSnap.id}:`, err.message);
     }
+  }
+
+  // Move the watermark to the newest thread examined (only when it moved, so a
+  // quiet tick writes nothing). Oldest-first walks stop where they stopped; a
+  // first newest-first walk only sets it once it was not cut short.
+  if (seen && later(seen, wm) && (wm != null || walkedAll)) {
+    try { await stRef.set({ wmSec: seen.sec, wmNs: seen.ns, updatedAt: FV.serverTimestamp() }, { merge: true }); }
+    catch (err) { console.warn("[gmail-scrape-reaper] subsweep D watermark write failed:", err.message); }
   }
 
   return { fixed, scanned };
@@ -1493,7 +1546,7 @@ function _trackingApplyJobToArrays(trackingImages, attachments, jobId, job) {
 /** Reconcile a single draft: look up each referenced job, and if any are
  *  ready, transactionally write the merged state. Best-effort; per-draft
  *  errors are caught and reported in the outcome row. */
-async function _reconcileOneDraft(draftRef, dryRun) {
+async function _reconcileOneDraft(draftRef, dryRun, preloaded) {
   const outcome = {
     draftId         : draftRef.id,
     jobsExamined    : [],
@@ -1503,19 +1556,27 @@ async function _reconcileOneDraft(draftRef, dryRun) {
     error           : null
   };
 
-  let draftSnap;
-  try {
-    draftSnap = await draftRef.get();
-  } catch (e) {
-    outcome.error = `Draft read failed: ${e.message}`;
-    return outcome;
+  // Cost: the scan has just read this draft (trackingImages + threadId, the
+  // only fields used here); a second whole-draft read for every draft that has
+  // a pending image, on every tick, was pure repeat. The transaction below
+  // still re-reads the whole draft before it writes anything.
+  let draft;
+  if (preloaded) {
+    draft = preloaded;
+  } else {
+    let draftSnap;
+    try {
+      draftSnap = await draftRef.get();
+    } catch (e) {
+      outcome.error = `Draft read failed: ${e.message}`;
+      return outcome;
+    }
+    if (!draftSnap.exists) {
+      outcome.error = "Draft not found";
+      return outcome;
+    }
+    draft = draftSnap.data() || {};
   }
-  if (!draftSnap.exists) {
-    outcome.error = "Draft not found";
-    return outcome;
-  }
-
-  const draft = draftSnap.data() || {};
   const trackingImages = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
   const pending = trackingImages.filter(i => i && i.jobId && i.status !== "ready");
   if (!pending.length) return outcome;
@@ -1625,8 +1686,11 @@ async function runTrackingReconcilePass({ limit, dryRun = false, verbose = false
 
   let draftsSnap;
   try {
+    // Cost: drafts are the fattest documents of the inbox; the scan reads the
+    // two small fields it uses (the jobs' answers and the thread id for the audit).
     draftsSnap = await db.collection(DRAFTS_COLL)
       .orderBy("createdAt", "desc")
+      .select("trackingImages", "threadId")
       .limit(effectiveLimit)
       .get();
   } catch (e) {
@@ -1644,7 +1708,7 @@ async function runTrackingReconcilePass({ limit, dryRun = false, verbose = false
     if (!hasPending) continue;
     summary.hadPending++;
 
-    const outcome = await _reconcileOneDraft(doc.ref, dryRun);
+    const outcome = await _reconcileOneDraft(doc.ref, dryRun, draft);
     if (outcome.error) summary.errors++;
     if (outcome.jobsReconciled.length) summary.reaped++;
     summary.skippedNotReady += outcome.jobsNotReady.length;
@@ -2312,6 +2376,7 @@ async function runDeferredAutoPipelinePass() {
   try {
     snap = await db.collection(THREADS_COLL)
       .where("lastAutoDecision", "==", "deferred_quiet_period")
+      .select("autoPipelineDeferUntilMs")
       .limit(MAX_DEFERRED_FIRES_PER_RUN)
       .get();
   } catch (e) {

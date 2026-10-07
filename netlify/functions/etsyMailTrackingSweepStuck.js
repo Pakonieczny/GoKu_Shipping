@@ -63,6 +63,7 @@ async function sweepBatch({ field, status, maxAgeMs, errorCode, errorMessage, ba
     .where("status", "==", status)
     .where(field, "<", cutoff)
     .orderBy(field, "asc")
+    .select()   // the sweep needs only each job's id and reference, never its fields
     .limit(batchLimit)
     .get();
 
