@@ -167,6 +167,8 @@ function slim(d) {
 const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
+/** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
+const FILTER_SHEET = ["archived", "laserDoneAt", "setId", "draft", "solidIncluded", "metal", "runId", "updatedAt"];
 /** A sheet's sources are, with each one's download links, the largest field its entry reads (and its entry keeps a name and a hash of each): putSheet keeps that short
     list beside them (sourcesLite) and the live read takes it instead. A record saved before that has no short list, so its sources are read, as they always were. */
 async function withSources(records) {
@@ -188,7 +190,7 @@ async function sheetEntries(rows, budget) {
     let chunk = rows.slice(i, i + 100);
     const unread = chunk.filter(r => r.length === 1);
     if (unread.length) {
-      const read = new Map((await db.getAll(...unread.map(r => col(SHEETS).doc(r[0])), { fieldMask: SLIM_SHEET })).filter(s => s.exists).map(s => [s.id, s.data()]));
+      const read = new Map((await db.getAll(...unread.map(r => col(SHEETS).doc(r[0])), { fieldMask: SLIM_SHEET })).filter(s => s.exists).map(s => [s.id, { ...s.data(), id: s.id }]));
       chunk = chunk.map(r => (r.length === 1 ? [r[0], read.get(r[0])] : r)).filter(r => r[1] && !r[1].archived);
     }
     await withPlacements(chunk);
@@ -606,14 +608,23 @@ async function op_listingPhotos(b) {
   return {images,states,retryAts,etsyCalls,retryAt};
 }
 
+/* The newest 200 calibration rows, as the Sorter reads them once when it opens (and again at each cloud-probe retry): 200 reads and
+   the rows' bytes each time. A row is written as a sheet is nested (op_putCalibration) and only steers the saturation estimate of the
+   next sheet, so an instance keeps what it read for CAL_KEEP_MS (and drops it when it writes one itself). Production's own copy:
+   the calibration collection is shared by the sandbox, which does not write it. */
+const CAL_KEEP_MS = 10 * 60000;
+let calKept = null;
+async function calibrationRows() {
+  if (calKept && Date.now() - calKept.at >= 0 && Date.now() - calKept.at < CAL_KEEP_MS) return calKept.rows;
+  const cal=await db.collection(CAL).orderBy("createdAt","desc").limit(200).get();
+  const rows=cal.docs.map(d=>{const r=d.data();return {sheetId:r.sheetId,metal:r.metal,count:num(r.count),cv:num(r.cv),largestFrac:num(r.largestFrac),density:num(r.density),placedAll:!!r.placedAll};});
+  calKept = { at: Date.now(), rows };
+  return rows;
+}
 async function op_ping(b={}) {
   // Count index entries instead of downloading whole collections on every save.
   const [s,c]=await Promise.all([col(SHEETS).where("archived","==",false).count().get(),db.collection(LIB).count().get()]);
-  let calibration;
-  if(b.calibration!==false){
-    const cal=await db.collection(CAL).orderBy("createdAt","desc").limit(200).get();
-    calibration=cal.docs.map(d=>{const r=d.data();return {sheetId:r.sheetId,metal:r.metal,count:num(r.count),cv:num(r.cv),largestFrac:num(r.largestFrac),density:num(r.density),placedAll:!!r.placedAll};});
-  }
+  const calibration=b.calibration!==false?await calibrationRows():undefined;
   return {ok:true,sheets:s.data().count,charms:c.data().count,...(calibration?{calibration}:{})};
 }
 async function op_lookupCharms(b) {
@@ -758,6 +769,9 @@ async function op_putSheet(b) {
     doc.backPool = [...backs.values()].map(sheetBack);
     const bytes = Buffer.byteLength(JSON.stringify(Object.assign({}, old, doc)));
     if (bytes > SHEET_DOC_BYTES) return { error: `Sheet ${s.id} was not saved: its record would be ${Math.round(bytes / 1024).toLocaleString("en-US")} KB, over the ${SHEET_DOC_BYTES / 1000} KB one sheet record may hold (Firestore keeps at most 1 MiB in one document). Move some of its charms to another sheet and save again.`, status: 413 };
+    // a completed sheet whose set, draft or archive state this save changes changes the Completed count (doneCounts)
+    const decides = d => [d.setId || "", !!d.draft, d.solidIncluded === false, !!d.archived].join("|");
+    if (num(old.laserDoneAt) > 0 && decides(Object.assign({}, old, doc)) !== decides(old)) DONE_TOUCH = true;
     tx.set(ref, doc, {merge:true});
     return null;
   });
@@ -773,7 +787,11 @@ async function op_listSheets(b) {
     let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
     if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
     if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
-    const snap = await q.limit(limit).select(...SLIM_SHEET).get();
+    // The Current tab (excludeDone) reads the newest `limit` sheets by day to leave out the ones the laser has cut, which are most of them:
+    // those are read for the few fields that decide it (FILTER_SHEET), and only the sheets that are listed are read for their entries
+    // (sheetEntries reads a row given as [id] itself), not all `limit` of them whole to throw most away (Firebase cost, FC2).
+    const slimOnly = !!b.excludeDone;
+    const snap = await q.limit(limit).select(...(slimOnly ? FILTER_SHEET : SLIM_SHEET)).get();
     // (excludeDone: the Library's Current tab, which leaves out what the laser has cut, and its readiness is not worked out)
     const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})));
     rows = records.filter(d=>!d.archived && !(b.excludeDone && Readiness.filed(d))).map(d=>[d.id,d]);
@@ -781,6 +799,7 @@ async function op_listSheets(b) {
     if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
     if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
     rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+    if (slimOnly) rows = rows.map(([id]) => [id]);
   }
   const { sheets, rest } = await sheetEntries(rows, answerBudget());
   return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
@@ -941,6 +960,7 @@ async function op_putCalibration(b) {
   const row = { sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() };
   if (/^[\w.\-]{1,80}$/.test(row.sheetId)) await db.collection(CAL).doc(row.sheetId).set(row);
   else await db.collection(CAL).add(row);
+  calKept = null;
   return { ok: true };
 }
 async function op_getCalibration(b) {
@@ -1871,6 +1891,8 @@ function withoutCleared(set, patch) {
   return Object.assign({}, patch, { orders });
 }
 async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
+/** What chooses the sets op_setList answers with: its filters (status, laserDoneAt, the completion day and time) and its order (seq). */
+const FILTER_SET = ["setId", "seq", "day", "status", "completionDay", "completedAt", "committedAt", "laserDoneAt", "updatedAt"];
 async function op_setList(b) {
   // Completion can occur days after allocation. Filter and sort before limiting;
   // legacy sets keep their original saved day until an actual completion exists.
@@ -1891,9 +1913,14 @@ async function op_setList(b) {
     const limit = Math.min(500, num(b.limit) || 200);
     let q = col(SETS).orderBy("updatedAt", "desc");
     if (isDay(b.from) && !PREFIX) q = q.where("updatedAt", ">=", new Date(Date.parse(b.from + "T00:00:00Z") - 7 * 86400000));
-    const snap = await q.limit(Math.min(1000, 3 * limit)).get();
+    // (the up to 3 x limit sets are read for the fields that choose among them, FILTER_SET; the `limit` chosen are then read whole: a set
+    // record holds its orders with their lines and copies, and most of the sets read were left out again — Firebase cost, FC2)
+    const snap = await q.limit(Math.min(1000, 3 * limit)).select(...FILTER_SET).get();
     rows = snap.docs.map(setRow);
     rows=rows.filter(([,r])=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)&&!(b.excludeDone && num(r.laserDoneAt)>0)).sort(([,x],[,y])=>OrderRules.compareCompleted(x,y)).slice(0,limit);
+    const whole = new Map();
+    for (let i = 0; i < rows.length; i += 100) for (const d of await db.getAll(...rows.slice(i, i + 100).map(([id]) => col(SETS).doc(id)))) if (d.exists) whole.set(d.id, setRow(d)[1]);
+    rows = rows.filter(([id]) => whole.has(id)).map(([id]) => [id, whole.get(id)]);
     if (b.includeSheets) sheetIds = [...new Set(rows.flatMap(([,r])=>r.sheetIds || []))].filter(isId);
   }
   let n = 0; while (n < rows.length && budget.fits(rows[n][1])) n++;
@@ -2043,7 +2070,8 @@ async function op_runGet(b) {
   return { run: d };
 }
 async function op_runList(b) {
-  const snap = await col(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).get();
+  // (only the fields a row is made of: a run record is a big document, and a list of 10 to 50 of them read whole to count their lines — FC2)
+  const snap = await col(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).select("runId", "setId", "day", "step", "status", "mode", "lines", "holds", "errors", "liveLines", "lineArchive", "updatedAt", "createdAt", "stoppedBy").get();
   // counts include what the record left out for its line archive
   let rows = snap.docs.map(d => { const r = d.data(), out = r.lineArchive || {}; return { runId: r.runId, setId: r.setId || null, day: r.day, step: r.step, status: r.status, mode: r.mode || null, lines: (r.lines ? Object.keys(r.lines).length : num((r.liveLines || {}).lines)) + num(out.lines), holds: (r.holds ? Object.keys(r.holds).length : 0) + num(out.held), errors: (r.errors || []).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null }; });
   if (b.status) rows = rows.filter(r => r.status === b.status);
@@ -2251,11 +2279,43 @@ async function doneMembers(sets, fields) {
 /* What the tab counts is what Completed lists: sheets not archived. A sheet is never marked while archived (op_laserDone)
    and one archived with a mark keeps it as archivedLaserDoneAt/By (op_archiveEmptySheet; laserDoneList moves one marked
    before that as it reads it), so the one-field count below holds no archived sheet, with no composite index. */
-async function doneCounts() {
+async function countDone() {
   const [s,t]=await Promise.all([col(SHEETS).where("laserDoneAt",">",0).select("setId","draft","solidIncluded","laserDoneAt","archived").get(),col(SETS).where("laserDoneAt",">",0).count().get()]);
   const records=await filingRecords(s.docs.map(d=>d.data()));
   return {sheets:records.filter(d=>!d.archived && Readiness.filed(d)).length,sets:t.data().count};
 }
+/* That count reads every sheet ever completed (and their sets), each time the Completed list opens and each minute an open
+   Library asks for its tab's number, and it only grows (seals are permanent). It is the same number until something that
+   decides it is written, so the answer is kept in ONE document, Charm_Nest_Rev/done { n, forN, sheets, sets, at }: `n` is a
+   counter raised by the writes that can change the count (laserDone, a sheet deleted, archived or restored, a purge, and a
+   saved sheet that was completed and changed its set, draft or archive state: bumpDoneRev), `forN` the counter the kept
+   numbers were counted at. A reader that finds forN equal to n and the numbers younger than DONE_COUNTS_TTL answers them for
+   one document read; otherwise it counts as before and keeps the result (a counter raised while it counted leaves forN
+   behind, so the next reader counts again). The time limit covers a record written by hand, which nothing here raised the
+   counter for. Production only: the sandbox counts every time (it keeps no counter: a reset would leave it behind). */
+const DONE_COUNTS_TTL = 20 * 60000;
+async function doneCounts(o = {}) {
+  if (PREFIX) return countDone();
+  let rev = null;
+  if (!o.fresh) { try { const s = await db.collection(REV_COLL).doc("done").get(); rev = s.exists ? (s.data() || {}) : {}; } catch (e) { console.warn("[charmNestLibrary] done counts not read:", (e && e.message) || e); } }
+  const age = Date.now() - num(rev && rev.at);
+  if (rev && Number.isFinite(rev.sheets) && Number.isFinite(rev.sets) && num(rev.forN) === num(rev.n) && num(rev.at) > 0 && age >= 0 && age < DONE_COUNTS_TTL) return { sheets: rev.sheets, sets: rev.sets };
+  const counts = await countDone();
+  if (rev) { try { await db.collection(REV_COLL).doc("done").set({ sheets: counts.sheets, sets: counts.sets, forN: num(rev.n), at: Date.now() }, { merge: true }); } catch (e) { console.warn("[charmNestLibrary] done counts not kept:", (e && e.message) || e); } }
+  return counts;
+}
+/** Raises the done revision (see doneCounts): true when it was raised. Production only; tried twice, as the placement counter is. */
+async function bumpDoneRev(op) {
+  if (PREFIX) return false;
+  for (let tries = 0; tries < 2; tries++) {
+    try { await db.collection(REV_COLL).doc("done").set({ n: FV.increment(1), op: String(op || "").slice(0, 40), nAt: FV.serverTimestamp() }, { merge: true }); return true; }
+    catch (e) { console.warn("[charmNestLibrary] done revision not raised:", (e && e.message) || e); if (!tries) await new Promise(r => setTimeout(r, 120)); }
+  }
+  return false;
+}
+// the ops whose writes can change the Completed count (laserDone raises it itself, before it counts; putSheet sets DONE_TOUCH when a completed sheet changes what decides it)
+const DONE_BUMP_OPS = new Set(["deleteSheet", "archiveEmptySheet", "restoreSheet", "purgeHistory"]);
+let DONE_TOUCH = false;
 /** Marks a sheet or a set cut on the laser (done), or takes the mark back (done:false), in one transaction. A set marks
     each of its sheets; a sheet marked earlier keeps its own time and name. The set of a sheet is completed with its last
     sheet and taken back with any of them. */
@@ -2346,7 +2406,8 @@ async function op_laserDone(b) {
       ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: Object.assign({ signedIn: true, marked: kind, via: via || undefined }, tm && tm.seconds != null ? { sheetSeconds: tm.seconds, startedFrom: tm.startedFrom } : {}), id: `${m.sheetId}-${at}` }
       : { orderId, type: "note", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy, signedIn: !!by, via: via || undefined }, id: `laserUndone-${m.sheetId}-${m.was}` });
   }), "laser done");
-  return Object.assign(res, { counts: await doneCounts() });
+  const raised = await bumpDoneRev("laserDone");   // (raised before the count: it is then made again, not read from what it was)
+  return Object.assign(res, { counts: await doneCounts({ fresh: !raised }) });
 }
 /** A page of what the laser has done, newest first: sheets, or sets with a summary of their sheets (kind: "sets"). A
     cursor ({ at, skip }) is where the last page stopped: the records completed at or before `at`, past the first `skip`
@@ -3364,14 +3425,17 @@ exports.handler = async (event) => {
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
+  DONE_TOUCH = false;
   const fn = OPS[body.op];
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   try {
     const out = await fn(body);
     await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
+    if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
+    if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     console.error("[charmNestLibrary]", body.op, e);
     return json(500, { error: e.message || String(e) });
   }
