@@ -58,7 +58,7 @@ async function run(metal, word, code) {
   assert.equal(plan.metal, metal); assert.equal(rec.metal, metal); assert.equal(rec.via, 'nest', 'the cut says it was pressed in the Nest tab');
   assert(toasts.some(([m]) => m.includes(word + ' charms nest past this green line')), 'the toast names the metal: ' + JSON.stringify(toasts));
   assert(sh.el.querySelectorAll('.roseLineTimeline time').length === 1, 'one dated line in the timeline above the sheet');
-  assert(sh.el.querySelector('[data-solid="size"]').disabled, 'a cut sheet\'s size is locked');
+  assert(sh.el.querySelector('[data-solid="include"]').disabled, 'a cut sheet stays in its set');
   // the dash contour paints (this paint threw "Cannot access 'cuts' before initialization" once: it is checked for every metal)
   const ctx = new Proxy({ calls: [] }, { get(o, k) { if (k in o) return o[k]; return (...args) => o.calls.push([k, ...args]); }, set(o, k, v) { o[k] = v; return true; } });
   RS.paint(ctx, sh, 2, 'history'); assert(ctx.calls.some(c => c[0] === 'fillRect'), 'the removed region is shaded');

@@ -94,21 +94,26 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
   const gateEl = sh.el.querySelector('.shGate'), btn = gateEl.querySelector('.sheetOptionsBtn'), box = gateEl._optBox;
   assert(btn && /^Options/.test(btn.textContent) && btn.tagName === 'BUTTON', 'a plain Options button'); assert(box && box.hidden && gateEl.contains(box), 'the controls wait in the gate node');
   assert(!doc.querySelector('dialog.osDlg') && calls.length === 0, 'closed: no window, nothing read');
-  assert(!sh.el.querySelector('.psChain, .psChip') && !/Partial sheets/i.test(sh.el.textContent.replace(/Sheet dimensions/, '')), 'no PARTIAL SHEETS chip strip on the sheet card');
-  for (const k of ['include', 'w', 'h', 'size', 'status', 'size-help']) assert(box.querySelector(`[data-solid="${k}"]`), 'the hook stays: data-solid=' + k);
+  assert(!sh.el.querySelector('.psChain, .psChip') && !/Partial sheets/i.test(sh.el.textContent), 'no PARTIAL SHEETS chip strip on the sheet card');
+  for (const k of ['include', 'status', 'retry']) assert(box.querySelector(`[data-solid="${k}"]`), 'the hook stays: data-solid=' + k);
+  for (const k of ['w', 'h', 'size', 'size-help']) assert(!sh.el.querySelector(`[data-solid="${k}"]`), 'the Sheet dimensions card is gone: no data-solid=' + k);
+  assert(!/Sheet dimensions|Apply size|Dimensions belong/.test(sh.el.textContent + box.textContent), 'and none of its words');
   assert(box.querySelector('[data-rose-allowance]') && box.querySelector('[data-rose-choose]'), 'the contour allowance and the stock choice are in the same box');
 
   // 2. open: the window, ONE Sheet card + small Settings, the controls are the same elements, the focus rests on the window
-  const width = box.querySelector('[data-solid="w"]');
   btn.focus(); btn.click();
   const dlg = doc.querySelector('dialog.osDlg'); assert(dlg && dlg.hasAttribute('open'), 'the window opens');
   assert.equal(dlg.querySelector('.osTitle h2').textContent, '14K Gold · Sheet 1', 'the title names the sheet'); assert(dlg.querySelector('.osMetal').textContent === '14K');
   assert.deepEqual([...box.children].map(c => c.dataset.card), ['sheet', 'settings'], 'one Sheet card and the small settings'); assert(dlg.contains(box) && !box.hidden, 'the controls are mounted in it');
-  assert.equal(width, dlg.querySelector('[data-solid="w"]'), 'the very same input'); assert.equal(dlg.querySelector('.osCardTitle').textContent, 'Sheet');
+  assert.equal(dlg.querySelector('.osCardTitle').textContent, 'Sheet');
+  const inc = dlg.querySelector('.osHead .osInclude'); assert(inc && inc.parentNode.classList.contains('osIncSlot') && inc.querySelector('input[data-solid="include"]'), 'the include switch is in the title row, top right');
+  assert.deepEqual([...dlg.querySelector('.osHead').children].map(c => c.className), ['osId', 'osIncSlot', 'osX'], 'beside the close button, before it'); assert(!box.contains(inc), 'carried up out of the box while the window is open');
+  assert.equal(inc.querySelector('label').textContent.trim(), 'In current set', 'with a short title'); assert(inc.querySelector('[data-solid="retry"]').hidden && inc.querySelector('[data-solid="status"]').textContent === '', 'and no other words: the retry button shows only when a save failed, the status line is read aloud only'); assert(!inc.querySelector('[title]') && !dlg.querySelector('.osHead [title]'), 'no tooltip');
+  assert(!/Include Sheet|committed set|stays there|Sheet dimensions|Apply size|Dimensions belong/.test(dlg.textContent.replace(/Include \w+ sheet \d in current set/g, '')), 'the long label, the status lines and the dimensions card are gone');
+  assert(!dlg.querySelector('[data-solid="w"],[data-solid="h"],[data-solid="size"],[data-solid="size-help"],.osSheetTop,.osSize'), 'no width, height or Apply size in the window');
   assert(!dlg.querySelector('details,summary,.psView,[data-card="history"],[data-card="all"],[data-card="partial"],.psChain'), 'no sub menu, no Partial sheets card, no Sheet history card, no chip strip');
   assert(!/Sheet history|Sheets on partial sheets|All partial sheets/.test(dlg.textContent), 'and none of their words');
   const sheetCard = box.querySelector('[data-card="sheet"]'), menu = sheetCard.querySelector('.osSource'); assert(menu, 'the Sheet source is inside the Sheet card');
-  assert(sheetCard.querySelector('[data-solid="include"]') && sheetCard.querySelector('[data-solid="status"]') && sheetCard.querySelector('[data-solid="w"]') && sheetCard.querySelector('[data-solid="size"]'), 'Include (with its status line) and the size row are in the same card');
   const sw = menu.querySelector('.psSwitch'); assert.deepEqual([...sw.querySelectorAll('input[type=radio]')].map(r => r.value), ['auto', 'new'], 'the rule is a two-option switch'); assert(sw.querySelector('input[value="auto"]').checked);
   assert.match(menu.querySelector('.psPolicyLbl').textContent, /When a sheet needs more metal/); assert.match(sw.textContent, /Reuse partial sheets automatically/); assert.match(sw.textContent, /Offer a brand new sheet at 100 × 50 mm/);
   const tabs = [...menu.querySelectorAll('[data-os="tab"]')]; assert.deepEqual(tabs.map(t => t.querySelector('b').textContent), ['From partial sheets', 'New sheet'], 'two large options'); assert.deepEqual(tabs.map(t => t.getAttribute('aria-selected')), ['true', 'false']);
@@ -116,14 +121,12 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
   assert.deepEqual(calls.filter(c => c[0] === 'list'), [], 'the window reads no partial list of its own');
 
   // 3. the controls fire their handlers from inside it, and a repaint keeps the focus and a typed value
-  const height = box.querySelector('[data-solid="h"]'), allowance = box.querySelector('[data-rose-allowance]');
-  width.focus(); width.value = '120.5'; width.dispatchEvent(new w.Event('input')); height.value = '60'; height.dispatchEvent(new w.Event('input')); allowance.value = '0.35'; allowance.dispatchEvent(new w.Event('input'));
+  const allowance = box.querySelector('[data-rose-allowance]');
+  allowance.focus(); allowance.value = '0.35'; allowance.dispatchEvent(new w.Event('input'));
   for (let n = 0; n < 6; n++) w.CN.renderCard(sh);
-  assert.equal(doc.activeElement, width, 'a repaint never steals the focus'); assert.equal(width.value, '120.5'); assert.equal(allowance.value, '0.35'); assert.equal(box.querySelector('[data-solid="w"]'), width, 'and replaces nothing');
-  box.querySelector('[data-solid="size"]').click(); await until(() => w.saved === 1);
-  assert.deepEqual(Array.from(settings.stock[metal], n => +(n * 25.4).toFixed(2)), [120.5, 60], 'Apply size ran its handler');
+  assert.equal(doc.activeElement, allowance, 'a repaint never steals the focus'); assert.equal(allowance.value, '0.35'); assert.equal(box.querySelector('[data-rose-allowance]'), allowance, 'and replaces nothing'); assert.equal(dlg.querySelector('[data-solid="include"]'), inc.querySelector('input'), 'the switch is the same element after a repaint');
   allowance.dispatchEvent(new w.Event('change')); assert.equal(sh.roseAllowanceMm, 0.35, 'the contour allowance ran its handler');
-  const include = box.querySelector('[data-solid="include"]'); assert.equal(typeof include.onchange, 'function', 'Include is wired'); assert(!include.disabled);
+  const include = dlg.querySelector('[data-solid="include"]'); assert.equal(typeof include.onchange, 'function', 'Include is wired'); assert(!include.disabled);
   const merge = box.querySelector('[data-solid="merge"]'); assert(merge && !merge.hidden, 'two sheets of 14K can be merged: the section shows');
   box.querySelector('[data-solid="merge-move"]').click(); assert(!box.querySelector('[data-solid="merge-ask"]').hidden && /go into Sheet 1's free room/.test(box.querySelector('[data-solid="merge-ask-text"]').textContent), 'Move all asks first, in words');
   box.querySelector('[data-solid="merge-cancel"]').click(); assert(box.querySelector('[data-solid="merge-ask"]').hidden, 'Cancel puts the question away');
@@ -217,10 +220,10 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
   await until(() => /between 5 and 500 mm/.test(dlg.querySelector('.osNote').textContent)); assert(dlg.querySelector('.osNote').classList.contains('on'));
 
   // 12. Esc: the window closes (nothing else is open); the controls go home, hidden, without the source; the focus returns to the Options button
-  width.value = '77'; width.dispatchEvent(new w.Event('input'));
+  allowance.value = '0.41'; allowance.dispatchEvent(new w.Event('input'));
   esc(dlg); await until(() => !doc.querySelector('dialog.osDlg'));
-  assert(box.hidden && gateEl.contains(box) && !box.querySelector('.osSource') && [...box.children].length === 2, 'the controls are back in their card, without the source area'); assert.equal(doc.activeElement, btn, 'the focus is back on the Options button');
-  assert.equal(width.value, '77', 'what was typed is still there'); w.CN.renderCard(sh); assert.equal(width.value, '77', 'and a draw of the card keeps it'); assert(!w.Gate.state().optionsOpen[metal]);
+  assert(box.hidden && gateEl.contains(box) && !box.querySelector('.osSource') && [...box.children].length === 3 && box.firstElementChild === inc && inc.querySelector('[data-solid="include"]'), 'the controls are back in their card (the switch with them), without the source area'); assert(!inc.isConnected || box.contains(inc)); assert.equal(doc.activeElement, btn, 'the focus is back on the Options button');
+  assert.equal(allowance.value, '0.41', 'what was typed is still there'); w.CN.renderCard(sh); assert.equal(allowance.value, '0.41', 'and a draw of the card keeps it'); assert(!w.Gate.state().optionsOpen[metal]);
 
   // 13. open again: one more list (a probe, never a timer); Use this one hands the pick to the engine and the window closes on the work; the close x and the backdrop close it
   btn.click(); await until(() => calls.filter(c => c[0] === 'searchAll').length === 2 && doc.querySelector('.ohc'));

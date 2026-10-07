@@ -1225,7 +1225,7 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
 .setPicker{grid-column:1/-1;position:relative;justify-self:end;font-size:12px}.setPicker summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:18px;padding:6px 16px;background:var(--card)}.setMenu{position:absolute;right:0;top:34px;width:330px;max-height:55vh;overflow:auto;z-index:20;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.setMenu button{display:block;text-align:left;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}.setMenu button:hover{background:var(--goldSoft)}.setMenu small,.setPreviewGrid small{display:block;color:var(--ink45);font-size:11px}.setPreviewGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.setPreviewGrid figure{margin:0;overflow:hidden}.setPreviewGrid img{width:100%;border:1px solid var(--line);border-radius:10px}.setPreviewGrid figcaption{padding:8px 0;overflow-wrap:anywhere}
 .solidOptions{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:22px;align-items:start;width:100%;font-size:13.5px;color:var(--ink70)}
-.sheetOptionSection,.solidOptions .roseStockOptions{padding:17px 18px;display:grid;gap:12px;border:0}.sheetOptionSection+.sheetOptionSection,.solidOptions .roseStockOptions{border-top:1px solid var(--line)}.sheetOptionSection h4,.solidOptions .roseStockOptions h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin:0}.sheetInclude{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:13px}.sheetInclude input{width:17px;height:17px;margin:0;accent-color:var(--m-rose)}.sheetOptionStatus:empty{display:none}.sheetSizeAction{display:flex;align-items:center;justify-content:space-between;gap:12px}.sheetSizeAction .help{font-size:11px;line-height:1.5;flex:1}.sheetSizeAction button{flex:none}
+.sheetOptionSection,.solidOptions .roseStockOptions{padding:17px 18px;display:grid;gap:12px;border:0}.sheetOptionSection+.sheetOptionSection,.solidOptions .roseStockOptions{border-top:1px solid var(--line)}.sheetOptionSection h4,.solidOptions .roseStockOptions h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin:0}.sheetSizeAction{display:flex;align-items:center;justify-content:space-between;gap:12px}.sheetSizeAction .help{font-size:11px;line-height:1.5;flex:1}.sheetSizeAction button{flex:none}
 .sheetMergeHelp{margin:0;font-size:11px;line-height:1.5}.sheetMergeHelp.bad{color:var(--clay)}.sheetMergeActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.sheetMergeActions .btn,.sheetMergeAskBtns .btn{margin-left:0}.sheetMergeAsk{display:grid;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card2)}.sheetMergeAsk .help{font-size:11.5px;line-height:1.5;color:var(--ink)}.sheetMergeAskBtns{display:flex;justify-content:flex-end;gap:8px}.sheetMergeBusy{display:flex;align-items:center;gap:8px;font-size:11px;line-height:1.5;color:var(--ink70)}.sheetMergeBusy .spin{width:11px;height:11px;flex:0 0 11px;border-width:2px}
 /* a 10K/14K merge, as it is seen on the card (Gate: playMerge): the sheets side by side, the charms flying, then one */
 .mergeFx{position:absolute;inset:0;z-index:25;pointer-events:none}.mergeFx>*{position:absolute;margin:0;box-sizing:border-box;transform-origin:0 0;will-change:transform,opacity}
@@ -1261,6 +1261,20 @@ dialog.osDlg:focus,dialog.osDlg:focus-visible{outline:none}
 .osX svg{width:17px;height:17px;display:block}
 .osX:hover{background:var(--paper2);color:var(--ink)}
 .osX:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.osIncSlot{display:flex;align-items:center;gap:10px;flex:0 0 auto;min-width:0}
+.osInclude{display:flex;align-items:center;gap:10px}
+.osSwitch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;color:var(--ink);font:600 13px/1.2 var(--sans);white-space:nowrap;-webkit-user-select:none;user-select:none}
+.osSwitch input{-webkit-appearance:none;appearance:none;position:relative;flex:0 0 auto;width:40px;height:24px;margin:0;border:1px solid var(--line);border-radius:999px;background:var(--paper2);cursor:inherit;transition:background-color .16s ease,border-color .16s ease}
+.osSwitch input::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(30,24,16,.3);transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.osSwitch input:checked{background:var(--velvet);border-color:var(--velvet)}
+.osSwitch input:checked::after{transform:translateX(16px)}
+.osSwitch input:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.osSwitch input:disabled{opacity:.55}
+.osSwitch input:disabled:checked{opacity:.8;background:var(--ink70);border-color:var(--ink70)}
+.osSwitch:has(input:disabled){cursor:default}
+.osSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+.osInclude .btn.xs{padding:6px 12px;font-size:12px}
+.osInclude [hidden]{display:none!important}
 .osBody{position:relative;overflow:auto;overscroll-behavior:contain;background:var(--card2);padding:22px 24px 30px;scroll-padding:20px}
 .osCard{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);padding:24px 26px 26px;min-width:0;display:flex;flex-direction:column;gap:18px}
 .osBody .solidOptions{grid-template-columns:minmax(0,1fr);gap:22px}
@@ -1268,16 +1282,6 @@ dialog.osDlg:focus,dialog.osDlg:focus-visible{outline:none}
 .osCardTitle{margin:0;font:500 26px/1.2 var(--serif);color:var(--ink);letter-spacing:.005em}
 .osLead{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--ink70);max-width:64ch;text-wrap:pretty}
 .osSheet{gap:22px}
-.osSheetTop{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:stretch}
-.solidOptions .osSheetTop>.sheetOptionSection{padding:18px 20px;border:1px solid var(--line2);border-radius:12px;background:var(--card2);display:grid;gap:12px;align-content:start}
-.solidOptions .osSheetTop .sheetOptionSection h4{font-size:10.5px}
-.solidOptions .osSheetTop .sheetInclude{font-size:15px}
-.solidOptions .osSheetTop .sheetInclude input{width:20px;height:20px}
-.solidOptions .osSheetTop .help{font-size:12.5px;line-height:1.55}
-.solidOptions .osSheetTop .solidSize input{padding:11px 12px;font-size:15px}
-.osSizeLine{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px 14px}
-.osSizeLine .solidSize{grid-template-columns:repeat(2,minmax(96px,132px))}
-.osSizeLine>.btn{margin-bottom:1px}
 .osSettings{display:grid;gap:12px}
 .osSettings:not(:has(.osSheetGrid>:not([hidden]))){display:none}
 .osGroupLabel{margin:0 0 0 4px;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45)}
@@ -1287,7 +1291,7 @@ dialog.osDlg:focus,dialog.osDlg:focus-visible{outline:none}
 .solidOptions .osSettings .help{font-size:12.5px;line-height:1.55}
 .solidOptions .osSettings .roseAllowance input{width:96px;padding:10px;font-size:15px}
 .solidOptions .osSettings .roseStockOptions p{font-size:12.5px}
-.solidOptions .osSheetTop .btn.xs,.solidOptions .osSettings .btn.xs,.osCard .btn.xs{padding:8px 15px;font-size:12.5px}
+.solidOptions .osSettings .btn.xs,.osCard .btn.xs{padding:8px 15px;font-size:12.5px}
 /* the Sheet source: the rule as one compact switch, then the two large options and their panels */
 .osSource{display:grid;gap:18px;padding-top:24px;border-top:1px solid var(--line)}
 .osLabel{margin:0;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45)}
@@ -1372,10 +1376,10 @@ dialog.osAskDlg:focus,dialog.osAskDlg:focus-visible{outline:none}
 .osNote.on{opacity:1;transform:translate(-50%,0)}
 .osNote[data-kind=bad]{background:var(--clay)}
 .osNote[data-kind=ok]{background:var(--sage)}
-@media (max-width:1000px){.osSheetTop{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:640px){.osTabs{grid-template-columns:minmax(0,1fr);gap:10px}.osTab{padding:15px 16px}.osNew{padding:18px 16px}.osNewSize{grid-template-columns:repeat(2,minmax(0,1fr));width:100%}.osNewRow>.btn{width:100%}.osAskBtns .btn{flex:1 1 auto}}
 @media (max-width:760px){dialog.osDlg{width:100vw;height:100vh;height:100dvh;max-height:none;border-radius:0}.osBody{padding:14px 12px 24px}.osCard{padding:18px 16px 20px;border-radius:14px}.osCardTitle{font-size:22px}.osTitle h2{font-size:19px}.osHead{padding-left:14px}}
-@media (prefers-reduced-motion:reduce){dialog.osDlg[open],dialog.osDlg::backdrop{animation:osFade .16s ease backwards}dialog.osDlg.closing,dialog.osDlg.closing::backdrop{animation:osFadeOut .12s ease both}.osNote,.osSearch,.osChip{transition:none}.osSpin{animation-duration:1.6s}}
+@media (max-width:560px){.osHead{gap:8px;padding:10px 6px 10px 12px}.osId{gap:8px}.osMetal{min-width:34px;padding:0 6px}.osTitle h2{font-size:16.5px;line-height:1.15;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.osTitle>span{display:none}.osIncSlot{gap:6px}.osSwitch{gap:7px;font-size:12px}.osSwitch input{width:36px;height:22px}.osSwitch input::after{width:16px;height:16px}.osSwitch input:checked::after{transform:translateX(14px)}.osInclude{gap:6px}.osInclude .btn.xs{padding:5px 9px;font-size:11.5px}}
+@media (prefers-reduced-motion:reduce){dialog.osDlg[open],dialog.osDlg::backdrop{animation:osFade .16s ease backwards}dialog.osDlg.closing,dialog.osDlg.closing::backdrop{animation:osFadeOut .12s ease both}.osNote,.osSearch,.osChip,.osSwitch input,.osSwitch input::after{transition:none}.osSpin{animation-duration:1.6s}}
 
 /* the door back into every run that ever ran (dialog.hist is the Sets menu's read-only preview, SetPicker.preview) */
 dialog.hist{border:0;border-radius:var(--r);box-shadow:0 24px 70px rgba(0,0,0,.26);padding:0;width:min(980px,94vw);max-height:88vh;background:var(--card);color:var(--ink)}
@@ -6997,7 +7001,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7069,7 +7073,7 @@ try {
 <script src="charm-nest-partial-ui.js?v=20261007-ps1-os1-mn2"></script>
 <!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
-<script src="charm-nest-options-modal.js?v=20261007-os2-mn2"></script>
+<script src="charm-nest-options-modal.js?v=20261007-os2-mn3-inc1"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1"></script>

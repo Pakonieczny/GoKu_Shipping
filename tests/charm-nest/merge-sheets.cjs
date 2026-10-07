@@ -298,11 +298,9 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
         const { ctx, page, errors, layout } = await open(false);
         await press(page, 'move');
         const during = await page.evaluate(() => ({ open: !!document.querySelector('dialog.osDlg[open]'),
-          stage: document.querySelector('.sheetCard[data-m="gold14k"] [data-r="stage"]').textContent,
-          size: (document.querySelector('dialog.osDlg [data-solid="size-help"]') || document.querySelector('.sheetCard[data-m="gold14k"] [data-solid="size-help"]')).textContent }));
+          stage: document.querySelector('.sheetCard[data-m="gold14k"] [data-r="stage"]').textContent }));
         assert.equal(during.open, false, 'the Options panel closes first: the sheet is in full view');
         assert.match(during.stage, /^Merge · /, "the card's own line says what the merge does");
-        assert.equal(during.size, 'Wait until the merge finishes.', 'the size waits for the merge, and says so');
         await page.waitForSelector(`${card} .mergeFx`, { timeout: 1500 });
         const scene = await page.evaluate(() => { const fx = document.querySelector('.sheetCard[data-m="gold14k"] .mergeFx'); return { sheets: fx.querySelectorAll('.mergeFxSheet').length, pieces: fx.querySelectorAll('.mergeFxPiece').length, tags: [...fx.querySelectorAll('.mergeFxTag')].map(t => t.textContent), live: Gate.mergeFx().live }; });
         assert.equal(scene.sheets, 2, 'both sheets are seen, side by side');
