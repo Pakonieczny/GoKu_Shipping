@@ -146,7 +146,8 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
   }
   for (let index = 0; index < updates.length; index += 200) {
     const batch = db.batch();
-    for (const update of updates.slice(index, index + 200)) batch.set(update.ref, update.patch, { merge: true });
+    // `rev` marks the record as changed for batch_list's small answers (see the batch_list branch).
+    for (const update of updates.slice(index, index + 200)) batch.set(update.ref, { ...update.patch, rev: timestamp() }, { merge: true });
     await batch.commit();
   }
   // COST: `sets` lists every set of the session (about 130 bytes each, up to 130 KB for 1000 sets) and the Batch panel only

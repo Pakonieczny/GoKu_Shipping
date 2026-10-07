@@ -54,7 +54,9 @@ async function readOpenOrders(accountId, { admin = null } = {}) {
   for (const status of OPEN_ORDER_STATUSES) {
     try { out.push(...rows(await D.col(D.COL.orders).where("accountId", "==", accountId).where("status", "==", status).get())); } catch {}
   }
-  const sets=rows(await D.col(D.COL.orderSets).where('accountId','==',accountId).get());
+  /* Cost: this runs on every executor tick and every portfolio view; only seven fields of an order set are used below. */
+  const setQuery=D.col(D.COL.orderSets).where('accountId','==',accountId);
+  const sets=rows(await (typeof setQuery.select==='function'?setQuery.select('coreVersion','entered','entryExpired','closed','orderSetId','symbol','reservedMinor'):setQuery).get());
   for(const x of sets.filter(x=>x.coreVersion&&!x.entered&&!x.entryExpired&&!x.closed))out.push({orderId:x.orderSetId,accountId,symbol:x.symbol,status:'working',side:'buy',qty:0,filledQty:0,reservedMinor:x.reservedMinor,coreVersion:x.coreVersion});
   return out;
 }
@@ -69,12 +71,14 @@ async function readBalances(accountId, { admin = null } = {}) {
     balanceRevision: Number(a.balanceRevision) || 0,
     portfolioVersion: Number(a.portfolioVersion) || Number(a.balanceRevision) || 0, writerEpoch: Number(a.writerEpoch) || 0, exists: s.exists };
 }
-async function readActiveMandates(accountId, { admin = null } = {}) {
+async function readActiveMandates(accountId, { admin = null, joinSymbols = null } = {}) {
   const D=admin || A, SC=require("./_investorStorageCodec");
   const decode=d=>d && d._codec ? SC.decode(d) : d;
   const pointers=rows(await D.col(D.COL.activeMandates).where("accountId","==",accountId).get());
   return Promise.all(pointers.map(async pointer=>{
     if(!pointer.appliedVersionId) return pointer;
+    /* `joinSymbols` (optional, set only by the executor tick): attach the applied mandate and proposal only to the symbols in the set. */
+    if(joinSymbols && !joinSymbols.has(pointer.symbol)) return pointer;
     const b=await D.col(D.COL.mandates).doc(pointer.appliedVersionId).get();
     if(!b.exists) return pointer;
     const binding=decode(b.data());
@@ -125,11 +129,23 @@ function orderView(o) {
     mandateVersionId: o.mandateVersionId || null, orderSetId: o.orderSetId || null, pausedReason: o.pausedReason || null,
   };
 }
-async function snapshot({ accountId, asOfMs = A.now(), admin = null, sectorOf = null } = {}) {
+async function snapshot({ accountId, asOfMs = A.now(), admin = null, sectorOf = null, liveMandatesOnly = false } = {}) {
   const acct = String(accountId || "paper-1");
-  const [positions, orders, balances, mandates, reservation] = await Promise.all([
-    readPositions(acct, { admin }), readOpenOrders(acct, { admin }), readBalances(acct, { admin }), readActiveMandates(acct, { admin }), readReservationAccount(acct, { admin }),
-  ]);
+  let positions, orders, balances, mandates, reservation;
+  if (liveMandatesOnly) {
+    /* Cost (the executor tick, every minute): positions, working orders, cash and NAV come out exactly as below. The only difference is that the
+       applied mandate and proposal (two more documents per symbol) are fetched just for symbols that are held or have a working order, the only
+       ones whose protection levels the snapshot's positions and orders read; the other symbols' pointers are returned bare. Used only where
+       `activeMandates` and `contentHash` are not read. */
+    [positions, orders, balances, reservation] = await Promise.all([
+      readPositions(acct, { admin }), readOpenOrders(acct, { admin }), readBalances(acct, { admin }), readReservationAccount(acct, { admin }),
+    ]);
+    mandates = await readActiveMandates(acct, { admin, joinSymbols: new Set([...positions.map((p) => p.symbol), ...orders.map((o) => o.symbol)]) });
+  } else {
+    [positions, orders, balances, mandates, reservation] = await Promise.all([
+      readPositions(acct, { admin }), readOpenOrders(acct, { admin }), readBalances(acct, { admin }), readActiveMandates(acct, { admin }), readReservationAccount(acct, { admin }),
+    ]);
+  }
   const mandateBySymbol = Object.fromEntries(mandates.map((m) => [m.symbol, m]));
   const sector = sectorOf || defaultSectorOf();
   const pos = positions.map((p) => ({ ...positionView(p, mandateBySymbol), sector: p.sector || sector(p.symbol) }));

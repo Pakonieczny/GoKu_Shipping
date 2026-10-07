@@ -64,7 +64,8 @@ async function run(claim,{deps={}}={}) {
       const profile=await IS.resolveIdentity(row);
       if(profile.cik) {
         const latest=await E.pollEdgar(profile.cik,{forms:""});
-        const known=await E.documentsForCompany(symbol,Date.now(),10,120);
+        /* cost: only accession numbers are read here, not the document text */
+        const known=await E.documentsForCompany(symbol,Date.now(),10,120,{light:true});
         const accessions=new Set(known.map(d=>d.accession));
         for(const item of (latest.entries || []).filter(x=>!accessions.has(x.accession)).slice(0,8)) {
           const body=await E.fetchFilingBody(item).catch(()=>({text:""}));
@@ -75,7 +76,7 @@ async function run(claim,{deps={}}={}) {
       const sweep=IS.createSweep({companies:[symbol]});
       // Company websites use their existing entitlement and source guards.
       await IS.pollCompany({...profile,sourceIds:(profile.sourceIds || []).filter(s=>s === "company.direct")},{budgetMs:30000,sweep});
-      const docs=await E.documentsForCompany(symbol,Date.now(),10,120);
+      const docs=await E.documentsForCompany(symbol,Date.now(),10,120,{light:true});   // cost: only decisionKnownAtMs is read here
       if(docs.some(d=>Number(d.decisionKnownAtMs)>=cp.startedAtMs)) cp.changed.push(symbol);
     } catch(e) { cp.sourceErrors.push({symbol,error:String(e.code || e.message).slice(0,100)}); }
     await J.renewRunLease(claim);

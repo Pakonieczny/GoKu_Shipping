@@ -35,6 +35,17 @@ for (const [sid, count] of SESS) {
 }
 for (let i = 0; i < 600; i++) seed['ListingGenerator1Batches/old_' + i] = record('sess_aaaaaaaa', 2000 + i, 'JOB_STATE_FAILED', { collected: false, setComplete: false, retryBatchName: 'batch_next_' + i, retryRequested: true, createdAt: new Date(Date.now() - 86400000 - i) });
 m.db.seed(seed);
+// FC12b: every change to a job record must also move `rev` (batch_list's small answers rely on it). Checked on the in-memory store.
+const unmarked = [], docsSet = m.db.docs.set.bind(m.db.docs);
+m.db.docs.set = (p, d) => {
+  const prev = m.db.docs.get(p);
+  if (prev && p.startsWith('ListingGenerator1Batches/')) {
+    const body = (x) => JSON.stringify({ ...x, rev: null });
+    const ms = (x) => x && x.rev && x.rev.toMillis ? x.rev.toMillis() : 0;
+    if (body(prev) !== body(d) && (!d.rev || ms(d) === ms(prev) && ms(prev) < Date.now())) unmarked.push(p);
+  }
+  return docsSet(p, d);
+};
 const files = m._storage.files;
 for (const [sid, count] of SESS) for (let n = 1; n <= count; n++) { for (let s = 1; s <= 5; s++) files.set('listing-generator-1/Rings/Ready_To_List/Set_' + n + '/Slot_' + s + '.png', Buffer.alloc(8)); files.set('listing-generator-1/Rings/Ready_To_List/Set_' + n + '/manifest.json', Buffer.alloc(8)); }
 
@@ -64,5 +75,6 @@ for (const [sid, count] of SESS) for (let n = 1; n <= count; n++) { for (let s =
   const manual = await run('batch_sweep (manual)', { kind: 'batch_sweep' });
   assert(manual.d.reads > 3500, 'a manual sweep still re-reads the sessions (' + manual.d.reads + ' reads)');
   console.log('manual sweep (unchanged behaviour): reads', manual.d.reads, ' MB', (manual.d.bytes / 1e6).toFixed(1), ' Storage lists', manual.d.storage.lists);
+  assert.deepEqual(unmarked, [], 'no sweep or reconcile write to a job record leaves rev unchanged');
   m.print();
 })().catch((e) => { console.error(e); process.exit(1); });

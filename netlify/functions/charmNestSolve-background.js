@@ -41,15 +41,18 @@ exports.handler = async (event) => {
   }).filter(p => p.w > 0 && p.h > 0 && p.bits.length === p.w * p.h);
   const solverJob = Object.assign({}, job, { pieces, timeBudgetMs: Math.min(+job.timeBudgetMs || 180000, MAX_BUDGET_MS) });
 
-  let stop = false, lastWrite = 0, lastCheck = 0, best = null, trials = 0;
+  let stop = false, lastWrite = 0, lastCheck = 0, best = null, trials = 0, bestWritten = null;
   const write = async (extra) => {
     lastWrite = Date.now();
-    await ref.set(Object.assign({ status: "running", trials, updatedAt: FV.serverTimestamp() }, best ? { best: slimBest(best) } : {}, extra || {}), { merge: true }).catch(e => console.warn("[charmNestSolve] write", e.message));
+    // the best layout goes up when it is a new one: a progress write with the same layout as the last carries only the count
+    const fresh = best && best !== bestWritten ? { best: slimBest(best) } : {};
+    await ref.set(Object.assign({ status: "running", trials, updatedAt: FV.serverTimestamp() }, fresh, extra || {}), { merge: true }).then(() => { if (fresh.best) bestWritten = best; }).catch(e => console.warn("[charmNestSolve] write", e.message));
   };
   const maybePoll = async () => {
     if (Date.now() - lastCheck < 4000) return;
     lastCheck = Date.now();
-    try { const s = await ref.get(); if (s.exists && s.data().stopRequested) stop = true; } catch (_) { /* ignore */ }
+    // (one field: the job record carries the best layout, which it would otherwise send back whole every four seconds)
+    try { const [s] = await db.getAll(ref, { fieldMask: ["stopRequested"] }); if (s.exists && s.data().stopRequested) stop = true; } catch (_) { /* ignore */ }
   };
   try {
     let result = await Solver.solve(solverJob, {
