@@ -13,6 +13,9 @@
      await PartialSheets.history({ stockId, revision? } | { sheetId }, { force })  -> { ok, stock, cuts:[{ n, revision, at, by, sheetId, sheetName, setName, via, rings, areaMm2, bboxMm, exact }], rev }   (ONE op, sheetHistory:
          every cut of one physical sheet, oldest first; cached by stockId + revision: one call per sheet shown)
      await PartialSheets.searchAll({ force, more, limit? }) -> { items:[card], rev, at, more }   (ONE op, partialSearchList: every partial, every status and metal, newest cut first; the modal filters it in the browser)
+     await PartialSheets.make({ metal, wMm, hMm }) -> { ok, item: card }   (ONE op, sheetMake: a blank sheet of the person's size, 5 to 500 mm each side, any number of them; a card of kind 'new')
+     await PartialSheets.remove(id, reason)        -> { ok, item: card }   (ONE op, sheetDelete: soft delete of an available sheet nobody holds; the reason, 3 to 300 characters, is kept with who and when)
+     (make / remove send the signed-in person themselves, like every write here, and mark the lists changed: on(fn) hears { metal:'*', reason:'changed' }; no polling)
      (history / searchAll announce themselves with on(fn) as { reason: 'history' | 'search' } and no metal: the Partial Sheet panel ignores them)
 
    Cost (the Google bill): NO timer, NO polling. A list is asked when the panel opens, after something this page changed (changed()), on a Refresh press
@@ -23,7 +26,7 @@
   'use strict';
   if (!window.CN || !window.CharmNestPartial) { setTimeout(init, 150); return; }
   const C = window.CN, P = window.CharmNestPartial, METALS = ['rose', 'gold10k', 'gold14k'], FRESH_MS = 20000, STALE_MS = 60000;
-  const DEFAULT_POLICY = { mode: 'auto', wMm: 100, hMm: 50 };
+  const DEFAULT_POLICY = { mode: 'auto', wMm: 100, hMm: 50 }, SIZE_MM = [5, 500];
   const api = (body, label, quiet) => C.api('charmNestLibrary', body, { label: label || 'Partial sheets', quiet: !!quiet });
   const need = metal => { if (!METALS.includes(metal)) throw new Error('Choose Rose Gold, 10K Gold or 14K Gold'); return metal; };
   // the signed-in person (the sorter's sign-in, or the Design Station's); nobody signed in is sent as "" and kept as none
@@ -153,6 +156,24 @@
   // the tab is looked at again after a minute: the panel (if open) asks again, with its revision
   try { document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') return; const t = Object.values(lists); if (t.length && t.some(l => Date.now() - l.at > STALE_MS)) { changed(); emit({ metal: '*', reason: 'visible' }); } }); } catch (_) {}
 
-  window.PartialSheets = { list, cached, changed, on, policy, loadPolicy, setPolicy, claim, release, use, plan, stocks, history, searchAll, estimateFit: P.estimateFit, METALS, DEFAULT_POLICY };
+  /* A person makes a blank sheet (any size, as many as they like) or deletes an available one (a soft delete that stays in the sheet's history). Both are ONE server transaction and
+     mark every cached list changed (the next list sends its revision: one tiny read when nothing else moved). The sheet's cached history is dropped: it now says made / deleted. */
+  async function make(o = {}) {
+    need(o.metal);
+    const wMm = +o.wMm, hMm = +o.hMm;
+    if (![wMm, hMm].every(n => Number.isFinite(n) && n >= SIZE_MM[0] && n <= SIZE_MM[1])) throw new Error(`The new sheet's width and height can each be ${SIZE_MM[0]} to ${SIZE_MM[1]} mm`);
+    const r = await api({ op: 'sheetMake', metal: o.metal, wMm, hMm, by: who() }, 'Making a new sheet');
+    if (r && r.item && r.item.stockId) hist.delete(r.item.stockId);
+    changed(); return r;
+  }
+  async function remove(id, reason) {
+    const why = String(reason == null ? '' : reason).trim();
+    if (why.length < 3 || why.length > 300) throw new Error('Say why you are deleting this sheet (3 to 300 characters)');
+    const r = await api({ op: 'sheetDelete', id: String(id || ''), reason: why, by: who() }, 'Deleting the sheet');
+    if (r && r.item && r.item.stockId) { hist.delete(r.item.stockId); for (const k of [...stockCache.keys()]) if (k.startsWith(r.item.stockId + '-')) stockCache.delete(k); }
+    changed(); return r;
+  }
+
+  window.PartialSheets = { list, cached, changed, on, policy, loadPolicy, setPolicy, claim, release, use, plan, stocks, history, searchAll, make, remove, estimateFit: P.estimateFit, METALS, DEFAULT_POLICY };
   window.partialPolicy = metal => window.PartialSheets.policy(metal);
 })();

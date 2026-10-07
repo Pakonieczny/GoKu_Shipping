@@ -24,7 +24,15 @@
    with the nester. Ops (see plans/partial-sheets/contract.md): partialList (one cheap read per metal: field mask, revision probe, no
    polling), partialPolicyGet / partialPolicySet (the setting per metal), partialClaim / partialRelease / partialUse, partialPlan.
    OPTIONS STUDIO (Paul 7 Oct): sheetHistory (every cut of ONE physical sheet, oldest first, each with the leftover it made) and
-   partialSearchList (every partial, all statuses and metals, for the page's own search): both only read. Nothing is ever deleted. */
+   partialSearchList (every partial, all statuses and metals, for the page's own search): both only read. Nothing is ever deleted.
+   OPTIONS STUDIO round 2 (Paul 7 Oct): sheetMake (a person makes a blank sheet of any size, 5 to 500 mm each side, any number of them) and sheetDelete (a sheet made
+   by accident, or any AVAILABLE sheet nobody holds, is marked 'deleted' with who, when and why). A made sheet is ONE physical stock document (revision 0, made:true,
+   owner null, available true) plus ONE record Charm_Nest_Remnants/{stockId}-0 (kind 'new', ringsJson = the full rectangle, status 'available', madeAt / madeBy), created in
+   ONE transaction with the counter's bump. It is then a partial like any other: partialClaim by its record id, the nester's stock with an empty profile (profileJson null),
+   and a cut on it makes revision 1 and turns the revision-0 record 'used' exactly as a cut turns a leftover. A delete is a status and a stamp on the record (status
+   'deleted', deletedAt / deletedBy / deletedReason; the stock gets available:false, deleted:true): NO document is ever removed, the record keeps its history and shows
+   only in partialSearchList and sheetHistory (`deleted`). */
+const crypto = require('crypto');
 const Rose = require('../../charm-nest-rose');
 const Partial = require('../../charm-nest-partial');
 const COLL = 'Charm_Nest_Remnants';
@@ -32,8 +40,8 @@ const MM = Rose.MM;
 const CODES = { rose: 'RG', gold10k: '10K', gold14k: '14K', gold: 'GF', silver: 'SS' };
 const FIELDS = ['v', 'metal', 'code', 'sheetId', 'sheetName', 'setId', 'setName', 'fileBase', 'stockId', 'revision', 'via', 'cutAt', 'by', 'sheetWMm', 'sheetHMm', 'ringsJson', 'areaMm2', 'bboxMm',
   'status', 'statusAt', 'statusBy', 'marked', 'auto', 'reason', 'usedBySheetId', 'usedBySheetName', 'usedAt', 'usedBy', 'createdAt',
-  'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy'];
-const STATUSES = ['available', 'used', 'discarded'];   // what a person can mark; 'inUse' is only ever set by a claim (roseClaim / partialClaim) and cleared by a release or the next cut
+  'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy', 'kind', 'madeAt', 'madeBy', 'deletedAt', 'deletedBy', 'deletedReason'];
+const STATUSES = ['available', 'used', 'discarded'];   // what a person can mark; 'inUse' is only ever set by a claim (roseClaim / partialClaim) and cleared by a release or the next cut; 'deleted' only by sheetDelete
 const PARTIAL_METALS = ['rose', 'gold10k', 'gold14k'];
 const STOCKS = 'Charm_Nest_Rose_Stock', POLICY_DEFAULT = { mode: 'auto', wMm: 100, hMm: 50 }, SIZE_MM = [5, 500];
 const NOT_HELD = { inUseBySheetId: null, inUseBySheetName: null, inUseAt: null, inUseBy: null };   // what a record says when no sheet holds it
@@ -118,8 +126,8 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const revision = +stock.revision, at = +cut.at, by = person(cut.by), sheetId = String(cut.sheetId || sheet.id || sheet.sheetId || '');
     const id = `${stock.id}-${revision}`;
     const sheetName = String((sheetLabel && sheetLabel(sheet)) || sheet.fileBase || sheetId).slice(0, 80), setName = sheet.setId ? String((setLabel && setLabel(sheet.setId)) || (sheet.setSeq ? 'Set ' + sheet.setSeq : '')).slice(0, 40) : '';
-    // reads first: the leftover this cut was made on (the stock's previous revision), if it was saved
-    const prevRef = revision > 1 ? coll().doc(`${stock.id}-${revision - 1}`) : null, prev = prevRef ? await tx.get(prevRef) : null;
+    // reads first: the leftover this cut was made on (the stock's previous revision), if it was saved; the first cut of a sheet a person made (stock.made) was made on its revision-0 record
+    const prevRef = revision > 1 || (revision === 1 && stock.made === true) ? coll().doc(`${stock.id}-${revision - 1}`) : null, prev = prevRef ? await tx.get(prevRef) : null;
     const g = leftover(plan.profile), usable = !!stock.available && g.areaMm2 > 0, metalKey = String(metal || sheet.metal || 'rose').slice(0, 20);
     const rec = {
       v: 1, metal: metalKey, code: CODES[metalKey] || '', sheetId, sheetName, setId: sheet.setId || null, setName, fileBase: String(sheet.fileBase || sheet.folder || sheetId).slice(0, 120),
@@ -173,6 +181,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       const ref = coll().doc(id), d = await tx.get(ref);
       if (!d.exists) throw new Error('Leftover sheet not found');
       const r = d.data();
+      if (r.status === 'deleted') throw new Error('This sheet was deleted: a deleted sheet stays deleted');
       if (r.status === status) return { ok: true, same: true, item: clean(id, r) };
       if (r.status === 'inUse') throw new Error(`A sheet holds this leftover now${r.inUseBySheetName ? ' (' + r.inUseBySheetName + ')' : ''}: give it back first`);
       if (r.usedBySheetId && !r.marked) throw new Error('A later sheet was cut from this leftover, so it stays used');
@@ -234,8 +243,8 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
        sync.claimed(tx, rem, { sheetId, sheetName, by, at })  -> the fields it set | null           (available -> inUse, lastUsed* = now)
        sync.released(tx, rem, { sheetId, at })                -> the fields it set | null           (inUse by this sheet -> available again; lastUsedAt is kept) */
   const sync = {
-    async read(tx, stockId, revision, partialId) {
-      const id = partialId || (+revision >= 1 ? `${stockId}-${+revision}` : null);
+    async read(tx, stockId, revision, partialId, made) {   // (made: the stock is a sheet a person made, whose revision-0 record is `{stockId}-0`)
+      const id = partialId || (+revision >= 1 || made === true ? `${stockId}-${+revision || 0}` : null);
       if (!id || !okId(id)) return null;
       const ref = coll().doc(id), snap = await tx.get(ref);
       return { ref, id, exists: snap.exists, data: snap.exists ? snap.data() || {} : null };
@@ -248,6 +257,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       if (r.status === 'inUse' && r.inUseBySheetId !== sheetId) throw new Error(`This partial sheet is in use by ${whoIsIn(r)}`);
       if (r.status === 'used') throw new Error('This partial sheet was already used');
       if (r.status === 'discarded') throw new Error('This partial sheet was discarded');
+      if (r.status === 'deleted') throw new Error('This partial sheet was deleted');
     },
     claimed(tx, rem, { sheetId, sheetName, by, at }) {
       if (!rem || !rem.exists || rem.data.status !== 'available') return null;   // (held by this sheet already, or not on the list: nothing to change)
@@ -308,6 +318,9 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     if (d.status === 'inUse') Object.assign(out, { inUseBySheetId: d.inUseBySheetId || '', inUseBySheetName: d.inUseBySheetName || '', inUseAt: d.inUseAt != null ? +d.inUseAt : null });
     if (d.status === 'used') Object.assign(out, { usedBySheetId: d.usedBySheetId || '', usedBySheetName: d.usedBySheetName || '', usedAt: d.usedAt != null ? +d.usedAt : null });
     if (d.reason) out.reason = d.reason;
+    // a sheet a person made (kind 'new'; a cut leftover has no kind): who and when; a deleted one: who, when and why. cutAt / cutBy of a made sheet are its madeAt / madeBy (the list's sort key), never a cut.
+    if (d.kind === 'new') Object.assign(out, { kind: 'new', madeAt: +d.madeAt || null, madeBy: d.madeBy || '' });
+    if (d.status === 'deleted' || d.deletedAt != null) Object.assign(out, { deletedAt: +d.deletedAt || null, deletedBy: d.deletedBy || '', deletedReason: d.deletedReason || '' });
     if (typical && (out.status === 'available' || out.status === 'inUse') && out.outline.length) { const e = Partial.estimateFit(out.outline, typical, { sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm }); out.estimate = { pieces: e.pieces, low: e.low, high: e.high, packedPct: e.packedPct }; }
     return out;
   }
@@ -371,7 +384,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     if (!okId(sheetId)) throw new Error('Choose a sheet');
     const held = await stocks().where('owner', '==', sheetId).limit(1).get(), d = held.docs[0];
     if (!d) return { ok: true, released: false, partialId: null };
-    const stock = d.data() || {}, partialId = +stock.revision >= 1 ? `${d.id}-${+stock.revision}` : null;
+    const stock = d.data() || {}, partialId = +stock.revision >= 1 || stock.made === true ? `${d.id}-${+stock.revision || 0}` : null;
     await stockApi.roseRelease({ stockId: d.id, sheetId, by: person(b.by) });
     return { ok: true, released: true, stockId: d.id, partialId };
   }
@@ -386,6 +399,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       if (r.status === 'inUse' && r.inUseBySheetId !== sheetId) throw new Error(`This partial sheet is in use by ${whoIsIn(r)}`);
       if (r.status === 'used') throw new Error('This partial sheet was already used');
       if (r.status === 'discarded') throw new Error('This partial sheet was discarded');
+      if (r.status === 'deleted') throw new Error('This partial sheet was deleted');
       if (stock && (stock.revision !== r.revision || (stock.owner && stock.owner !== sheetId))) throw new Error(stock.owner && stock.owner !== sheetId ? 'This partial sheet is in use by another sheet' : 'This partial sheet changed. Refresh the list');
       const at = Date.now(), name = String(b.sheetName || (r.status === 'inUse' && r.inUseBySheetName) || sheetId).slice(0, 80);
       const patch = { status: 'used', statusAt: at, statusBy: by, usedBySheetId: sheetId, usedBySheetName: name, usedAt: at, usedBy: by, marked: false, ...NOT_HELD, lastUsedAt: at, lastUsedBy: by, lastUsedSheet: name, lastUsedSheetId: sheetId };
@@ -427,8 +441,10 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const s = await q.get(), x = s.docs[0] ? s.docs[0].data() || {} : null;
     return x && okId(x.stockId) ? x.stockId : null;
   }
-  /* sheetHistory { stockId } | { sheetId } -> { ok, stock: { id, metal, code, wMm, hMm, revision, ownerSheetId, ownerSheetName }, cuts: [ { n, revision, at, by, sheetId, sheetName, setName, via,
-     rings, areaMm2, bboxMm, exact, derived? } ] oldest first, rev }. rings = the leftover AFTER that cut (closed rings, real mm, top left origin). Reads: the stock (1), its saved
+  /* sheetHistory { stockId } | { sheetId } -> { ok, stock: { id, metal, code, wMm, hMm, revision, ownerSheetId, ownerSheetName, kind? }, cuts: [ { n, revision, at, by, sheetId, sheetName, setName, via,
+     rings, areaMm2, bboxMm, exact, derived? } ] oldest first, made: { at, by } | null, deleted: { at, by, reason } | null, rev }. made = a sheet a person made (sheetMake: stock.kind 'new'; null for
+     every other, whose maker was never recorded); deleted = sheetDelete's stamp on the sheet's current leftover (null when it is not deleted). Both come from the stock and the records
+     already read: no extra read. rings = the leftover AFTER that cut (closed rings, real mm, top left origin). Reads: the stock (1), its saved
      leftovers (one query by stockId, field mask), and a cut document (with its heavy plan) ONLY for a revision that has no saved leftover (a cut made before leftovers were saved:
      its rings are derived from plan.profile by leftover(), nothing is written). exact:false = the date or the person could not be recovered (at null / by ''). rev = the stock's
      revision as a string (the page caches a history by stockId + revision). */
@@ -443,7 +459,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const st = await stocks().doc(stockId).get();
     if (!st.exists) throw new Error('Sheet not found');
     const s = st.data() || {}, metal = String(s.metal || 'rose'), R = Math.max(0, Math.floor(+s.revision) || 0), byRev = new Map(), cuts = new Map();
-    if (R > 0) {
+    if (R > 0) {   // (a never-cut sheet has no leftover record to read: a made one carries its maker, a deleted one its stamp, on the stock itself)
       let q = coll().where('stockId', '==', stockId).limit(500); if (typeof q.select === 'function') q = q.select(...FIELDS);
       for (const d of (await q.get()).docs) { const x = d.data() || {}, n = Math.floor(+x.revision); if (n >= 1 && n <= R) byRev.set(n, x); }
       const miss = []; for (let n = 1; n <= R; n++) if (!byRev.has(n)) miss.push(n);
@@ -472,7 +488,9 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const owner = s.owner ? String(s.owner) : null, head = byRev.get(R);
     let ownerName = owner && head && head.status === 'inUse' && head.inUseBySheetId === owner ? String(head.inUseBySheetName || '') : '';
     if (owner && !ownerName && okId(owner)) { const od = await lightGet(col('Charm_Nest_Sheets').doc(owner), ['metal', 'sheetIndex', 'page', 'fileBase', 'folder']); if (od && od.exists) ownerName = String((sheetLabel && sheetLabel(od.data() || {})) || ''); }
-    return { ok: true, stock: { id: stockId, metal, code: CODES[metal] || '', wMm: r3(s.wPt * MM), hMm: r3(s.hPt * MM), revision: R, ownerSheetId: owner, ownerSheetName: ownerName || null }, cuts: list, rev: String(R) };
+    const made = s.made === true ? { at: +s.madeAt > 0 ? +s.madeAt : null, by: person(s.madeBy) } : null;
+    const dr = head && head.status === 'deleted' ? head : s.deleted === true ? s : null, deleted = dr ? { at: +dr.deletedAt > 0 ? +dr.deletedAt : null, by: person(dr.deletedBy), reason: String(dr.deletedReason || '') } : null;
+    return { ok: true, stock: { id: stockId, metal, code: CODES[metal] || '', wMm: r3(s.wPt * MM), hMm: r3(s.hPt * MM), revision: R, ownerSheetId: owner, ownerSheetName: ownerName || null, ...(made ? { kind: 'new' } : {}) }, cuts: list, made, deleted, rev: String(R) };
   }
 
   /* partialSearchList { ifRev, limit (default 300, max 500), before (the cutAt to read older than), verify } -> { items: [card], rev, more } or { unchanged: true, rev }: every partial of all
@@ -493,6 +511,53 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const typicals = {}, typ = m => (typicals[m] = typicals[m] || typicalOfMetal(stats, m));
     const items = kept.map(r => card(r.id, r.d, typ(r.d.metal || 'rose'))).sort((a, c) => (c.cutAt || 0) - (a.cutAt || 0) || (c.revision || 0) - (a.revision || 0));
     return { items, rev, more: snap.docs.length > limit || kept.length < rows.length, ...(state && !state.backfilled ? { needsBackfill: true } : {}) };
+  }
+
+  /* ── OPTIONS STUDIO round 2: a person makes a blank sheet, or deletes one that is available ── */
+  const sizeMm = v => { const n = +v; return v !== '' && v != null && Number.isFinite(n) && n >= SIZE_MM[0] && n <= SIZE_MM[1] ? Math.round(n * 10) / 10 : null; };
+  const mmWord = x => String(+x.toFixed(1));
+  /* sheetMake { metal, wMm, hMm, by } -> { ok, item: card }: the physical sheet (Charm_Nest_Rose_Stock/nsh-{uuid}: revision 0, no profile, owner null, available, made:true) and its repository
+     record (Charm_Nest_Remnants/{stockId}-0: kind 'new', the full rectangle as ringsJson, status 'available', madeAt / madeBy, labelled "New sheet 120 x 60 mm") in ONE transaction with the
+     counter's bump: 1 stock + 1 record + 1 counter write. The record's cutAt / by hold the making (the list is ordered by cutAt; they are not a cut). Any number of them. Production and the
+     sandbox as partialList (col() picks the collection; the sandbox keeps no counter). The card's estimate costs one read of the metal's piece sums, outside the transaction. */
+  async function sheetMake(b = {}) {
+    const metal = asMetal(b.metal), wMm = sizeMm(b.wMm), hMm = sizeMm(b.hMm), by = person(b.by);
+    if (wMm === null || hMm === null) throw new Error(`The new sheet's width and height can each be ${SIZE_MM[0]} to ${SIZE_MM[1]} mm`);
+    const at = Date.now(), stockId = 'nsh-' + crypto.randomUUID(), id = `${stockId}-0`, name = `New sheet ${mmWord(wMm)} x ${mmWord(hMm)} mm`;
+    const stock = { id: stockId, metal, wPt: wMm / MM, hPt: hMm / MM, revision: 0, profileJson: null, owner: null, available: true, createdMs: at, made: true, madeAt: at, madeBy: by, updatedAt: FV.serverTimestamp() };
+    const rec = {
+      v: 1, kind: 'new', metal, code: CODES[metal] || '', sheetId: '', sheetName: name, setId: null, setName: '', fileBase: '', stockId, revision: 0, via: '', cutAt: at, by,
+      sheetWMm: wMm, sheetHMm: hMm, ringsJson: packRings([[[0, 0], [wMm, 0], [wMm, hMm], [0, hMm]]]), areaMm2: +(wMm * hMm).toFixed(2), bboxMm: { x: 0, y: 0, w: wMm, h: hMm },
+      status: 'available', statusAt: at, statusBy: by, madeAt: at, madeBy: by, createdAt: FV.serverTimestamp(),
+      lastUsedAt: at, lastUsedBy: by, lastUsedSheet: '', lastUsedSheetId: '', ...NOT_HELD
+    };
+    await db.runTransaction(async tx => { tx.set(stocks().doc(stockId), stock); tx.set(coll().doc(id), rec); bump(tx); return true; });
+    const typical = typicalOfMetal(await readStats(), metal);
+    return { ok: true, item: card(id, { ...rec, createdAt: null }, typical) };
+  }
+
+  /* sheetDelete { id, reason, by } -> { ok, item: card }: SOFT delete of a sheet (new or a partial) that is 'available' and that no sheet holds. The reason is 3 to 300 characters after trimming.
+     The record gets status 'deleted' + deletedAt / deletedBy / deletedReason (statusAt / statusBy too), the stock available:false, deleted:true (+ the same stamp), the counter moves: one
+     transaction, no document removed, no array written. A held, used or discarded sheet is refused in words. */
+  async function sheetDelete(b = {}) {
+    const id = String(b.id || ''), reason = String(b.reason == null ? '' : b.reason).trim(), by = person(b.by);
+    if (!okId(id)) throw new Error('Choose a sheet to delete');
+    if (reason.length < 3 || reason.length > 300) throw new Error('Say why you are deleting this sheet (3 to 300 characters)');
+    return db.runTransaction(async tx => {
+      const ref = coll().doc(id), d = await tx.get(ref);
+      if (!d.exists) throw new Error('Sheet not found');
+      const r = d.data() || {}, stockRef = okId(r.stockId) ? stocks().doc(r.stockId) : null, st = stockRef ? await tx.get(stockRef) : null, stock = st && st.exists ? st.data() || {} : null;
+      if (r.status === 'deleted') throw new Error('This sheet was already deleted');
+      if (r.status === 'inUse' || (stock && stock.owner)) throw new Error(`A sheet holds this sheet now${whoIsIn(r) !== 'another sheet' ? ' (' + whoIsIn(r) + ')' : ''}: give it back first, then delete it`);
+      if (r.status === 'used') throw new Error('This sheet was used, so it cannot be deleted: its history stays');
+      if (r.status !== 'available') throw new Error('Only an available sheet can be deleted');
+      if (stock && +stock.revision !== +r.revision) throw new Error('This sheet changed. Refresh the list');
+      const at = Date.now(), patch = { status: 'deleted', statusAt: at, statusBy: by, deletedAt: at, deletedBy: by, deletedReason: reason, marked: false, ...NOT_HELD };
+      tx.update(ref, patch);
+      if (stock) tx.update(stockRef, { available: false, deleted: true, deletedAt: at, deletedBy: by, deletedReason: reason, updatedAt: FV.serverTimestamp() });
+      bump(tx);
+      return { ok: true, item: card(id, { ...r, ...patch }, null) };
+    });
   }
   const bind = s => { stockApi = s; };
 
@@ -518,7 +583,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     return { ok: true, changed };
   }
 
-  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialStocks, sheetHistory, partialSearchList, partialBackfill: remnantBackfill } };
+  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialStocks, sheetHistory, partialSearchList, sheetMake, sheetDelete, partialBackfill: remnantBackfill } };
 };
 module.exports.leftover = leftover;
 module.exports.FIELDS = FIELDS;
