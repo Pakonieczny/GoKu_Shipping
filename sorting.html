@@ -1631,6 +1631,8 @@ window.SortTL = (function () {
      it goes on by itself the moment one is set (within 2 minutes). Never blocks when this page has no sign-in module (nothing to ask). */
   const HOLD_MS = 2 * 60 * 1000;
   let held = null;                                   // { go, at }: the print waiting for a name (the newest press only)
+  let heldRel = null;                                // the page-refresh hold (station-fresh.js) while a press waits: a reload must not lose it
+  const freeHold = () => { try { heldRel && heldRel(); } catch (_) {} heldRel = null; };
   function nameNeeded() {
     try { return !getEmployee() && !!document.getElementById("sortingAsChip") && !!(window.StationSession && typeof StationSession.page === "function" && StationSession.page()); }
     catch (_) { return false; }
@@ -1639,6 +1641,7 @@ window.SortTL = (function () {
   function nameFirst(go) {
     if (!nameNeeded()) return true;
     held = { go, at: Date.now() };
+    freeHold(); try { heldRel = window.StationFresh && StationFresh.hold ? StationFresh.hold("name") : null; } catch (_) {}
     try {
       const chip = document.getElementById("sortingAsChip"), btn = chip.querySelector(".st-as-name"), inp = chip.querySelector(".st-as-input");
       if (inp.hidden) { inp.value = ""; btn.hidden = true; inp.hidden = false; }
@@ -1647,9 +1650,9 @@ window.SortTL = (function () {
     busy("ask", "Type your name or employee number, then Enter: the sticker prints right after");
     return false;
   }
-  function dropHeld(msg) { held = null; idle("ask"); if (msg) toast(msg); }
+  function dropHeld(msg) { held = null; freeHold(); idle("ask"); if (msg) toast(msg); }
   function resume() {
-    const h = held; held = null; idle("ask");
+    const h = held; held = null; freeHold(); idle("ask");
     if (!h) return;
     if (Date.now() - h.at > HOLD_MS) { toast("That sticker was not printed (it waited too long). Press Print again."); return; }
     try { h.go(); } catch (e) { console.warn("Held print failed:", e); }
@@ -1814,7 +1817,7 @@ window.SortTL = (function () {
       if (onScreen.length) batchInHand(last.how, onScreen);       // (a batch no longer on screen is not put in hand)
     } catch (_) {}
   }
-  const dropKept = () => { kept.length = 0; held = null; };       // (a sign-out ended: what was kept before it is never put under the next name, nor a print that waited for one)
+  const dropKept = () => { kept.length = 0; held = null; freeHold(); };       // (a sign-out ended: what was kept before it is never put under the next name, nor a print that waited for one)
   function batchLoaded(sc) {
     sc = sc || scanned;
     if (sc && !sc.done) {
