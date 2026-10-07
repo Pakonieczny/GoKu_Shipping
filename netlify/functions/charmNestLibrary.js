@@ -2400,6 +2400,12 @@ async function op_laserDone(b) {
     return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks, process, added };
   });
   if (res.error) return res;
+  /* RV1: the sheets are marked (or taken back) as of this line. Everything below (laser time, timeline notes, the Completed recount: every completed sheet
+     ever) takes seconds, and the handler raises the placement counter only after laserDone has returned, so another computer's order window, which asks
+     getOrderPieces by that counter, would learn of the mark that much later. Raised here, at once; the handler's own raise after the op stays.
+     The Completed memo's counter likewise: a tab that refreshed its count between the commit and a late raise kept the old number for its minute. */
+  await bumpPlacementGen("laserDone");
+  const raised = await bumpDoneRev("laserDone");   // (raised before the count below: it is then made again, not read from what it was)
   const marks = res.marks || []; delete res.marks;
   /* How long each sheet marked here took (Paul, 6 Oct: "elapsed time since most recent login or, if login is continuous, since the last sheet was marked completed";
      _laserSheetTime.js): decided once, on the server's own clock, from the person's Laser sign-in (Station_Sessions) and their earlier completions, and written once to
@@ -2424,7 +2430,6 @@ async function op_laserDone(b) {
       ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: Object.assign({ signedIn: true, marked: kind, via: via || undefined }, tm && tm.seconds != null ? { sheetSeconds: tm.seconds, startedFrom: tm.startedFrom } : {}), id: `${m.sheetId}-${at}` }
       : { orderId, type: "note", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy, signedIn: !!by, via: via || undefined }, id: `laserUndone-${m.sheetId}-${m.was}` });
   }), "laser done");
-  const raised = await bumpDoneRev("laserDone");   // (raised before the count: it is then made again, not read from what it was)
   return Object.assign(res, { counts: await doneCounts({ fresh: !raised }) });
 }
 /** A page of what the laser has done, newest first: sheets, or sets with a summary of their sheets (kind: "sets"). A
