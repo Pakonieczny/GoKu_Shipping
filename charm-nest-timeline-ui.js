@@ -47,9 +47,10 @@
      hour, answered or not. Now the poll carries the revision of the answer the view holds (OrderTimeline.get ifRev: the server compares the update times of
      the documents the answer is made of, no field read back) and gets { unchanged } when none moved, which is nearly always: the view is redrawn from a
      whole answer only when something changed, and a whole answer is read at least every FULL_EVERY (a record rewritten in place leaves no trace in the
-     digest). The pace follows the person: 2.5 s while anyone touches the page or something moved in the last 3 minutes, then 5 s, after 10 minutes 10 s,
-     after an hour 30 s (a window left open overnight); a touch of the page, a change made on it, or the tab shown again is back at 2.5 s at once. */
-  const FULL_EVERY = 60000, IDLE_STEPS = [[3 * 60000, 1], [10 * 60000, 2], [60 * 60000, 4], [Infinity, 12]];
+     digest). The pace follows the person: 2.5 s while anyone touched the page or something moved in the last 10 minutes (a person watching for what another
+     computer does is served as before), then 5 s, and 10 s once the window has sat unused for an hour (one left open overnight); a touch of the page, a change
+     made on it, or the tab shown again is back at 2.5 s at once. */
+  const FULL_EVERY = 60000, IDLE_STEPS = [[10 * 60000, 1], [60 * 60000, 2], [Infinity, 4]];
   let lastTouch = Date.now(), touchAt = 0; const wakers = new Set();
   const touch = () => {
     const t = Date.now(); lastTouch = t;
