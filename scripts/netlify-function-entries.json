@@ -198,6 +198,7 @@
     "_stationAutoSignout.js",
     "_stationSignoutPolicy.js",
     "_stationLive.js",
+    "_deskBackfill.js",
     "_laserSheetTime.js",
     "_stationPinLogin.js",
     "_orderCancel.js",
