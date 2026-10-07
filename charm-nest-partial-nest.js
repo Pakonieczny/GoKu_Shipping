@@ -22,6 +22,8 @@
   const C=window.CN,S=C.S,R=window.CharmNestRose,MM=25.4/72;
   const cuts=metal=>!!metal&&(metal==='rose'||R.cuts(metal));
   const listeners=new Set();
+  // the last answers of preview, so the commit does what was shown: the same sheet, the same partials asked, the same pieces
+  const seen=new Map(),sigOf=(sh,ids)=>[sh.sheetId||sh.page,(ids||[]).join(),piecesOf(sh).map(c=>c.id).join()].join('|');
   const emit=e=>{for(const f of [...listeners]){try{f(e);}catch(_){}}};
   const refuse=(code,why)=>({ok:false,code,why});
   const label=sh=>{try{const v=window.SheetEvents&&window.SheetEvents.label&&window.SheetEvents.label(sh);if(v)return v;}catch(_){}return `${R.cutCode(sh.metal)} Sheet ${sh.page||1}`;};
@@ -207,6 +209,7 @@
         words:words(all.length,links,left,nextInfo,sh),
         note:'A quick trial pack on the exact leftover outline. The nest itself can place a piece more or less.',auto};
       out.continues.words=left?out.words.replace(/^[^;]*; /,''):'';
+      seen.set(sigOf(sh,ids),out);if(seen.size>20)seen.delete(seen.keys().next().value);
       step('done',out.words);return out;
     }catch(e){return refusal('failed','The trial pack could not run: '+(e&&e.message||e));}
   }
@@ -223,7 +226,10 @@
       step('check','Checking the sheet…');
       if(ids&&ids.length&&ids[0]===partialOf(sh))return fail('same','This sheet already sits on that partial sheet.');
       const list=await cardsOf(metal),pol=policy(metal);
-      const order=[];for(const id of ids||[]){const c=list.find(x=>x.id===id);if(!c)return fail('gone','That partial sheet is not available any more. Choose another.');order.push(c);}
+      const asked=ids||[],shown=o.preview&&o.preview.ok?o.preview:seen.get(sigOf(sh,asked))||null;
+      // what was previewed is what is done: the partials of its chain, in its order (the person's own first, then the ones the trial added)
+      const planned=shown&&shown.links&&shown.links.length&&shown.links[0].partialId===asked[0]?shown.links.map(l=>l.partialId):asked;
+      const order=[];for(const id of planned){const c=list.find(x=>x.id===id);if(!c){if(asked.includes(id))return fail('gone','That partial sheet is not available any more. Choose another.');continue;}order.push(c);}
       if(!order.length){
         if(pol.mode==='new')return fail('choose','This metal makes a new sheet by itself. Choose a partial sheet to use one.');
         const c=bestFit(list,pieces,new Set());if(!c)return fail('none','There is no partial sheet available for this metal.');order.push(c);
@@ -253,7 +259,8 @@
       emit({type:'seated',metal,sheetId:sh.sheetId||null});
       step('done',`${label(sh)} is nesting on the partial sheet.`);
       sh._partialBusy=false;
-      const pv=o.preview&&o.preview.ok?o.preview:null;
+      seen.delete(sigOf(sh,asked));
+      const pv=shown;
       return {ok:true,started:true,sheets:[sh],links:pv?pv.links:[],moved:pieces.length,continues:pv?pv.continues.n:null};
     }catch(e){return fail('failed',e&&e.message||String(e));}
   }
@@ -314,25 +321,23 @@
        | { ok:false, reason }          useOn(sheet, partialId, {onStep}) -> { ok, used:[partialId...], placed, rest } | { ok:false, error }
      chain(metal) -> [{ n, partialId, name, wMm, hMm, areaMm2, pieces, sheetPage, full }]       on(fn) -> fn({metal}) when the chain changes
      The commit uses the chain the person was just shown (the last preview of the same sheet, partial and pieces), so what happens is what was previewed. */
-  const seen=new Map(),sig=(sh,ids)=>[sh.sheetId||sh.page,ids.join(),piecesOf(sh).map(c=>c.id).join()].join('|');
   const nameOf=c=>c?([c.sourceSheet,c.sourceSet].filter(Boolean).join(' · ')||c.id):'';
   const cardOf=(metal,id)=>((cache[metal]&&cache[metal].items)||[]).find(c=>c.id===id)||null;
   const engine={
     async preview(sh,partialId){
       const ids=(Array.isArray(partialId)?partialId:partialId?[partialId]:[]).filter(Boolean),pv=await preview(sh,ids);
       if(!pv||!pv.ok)return {ok:false,reason:(pv&&pv.why)||'This sheet cannot move to a partial sheet.',code:pv&&pv.code};
-      seen.set(sig(sh,ids),pv);
       const chainRows=pv.links.map(l=>{const c=cardOf(sh.metal,l.partialId);return {partialId:l.partialId,name:nameOf(c)||l.label,wMm:l.wMm,hMm:l.hMm,areaMm2:l.areaMm2,fits:l.placed};});
       const own=ids.length?pv.links.find(l=>l.partialId===ids[0]):pv.links[0],fits=own&&pv.links[0]===own?own.placed:0;   // (a partial that takes nothing is not in the links: 0 fit on it)
       return {ok:true,pieces:pv.pieces,fitsAll:pv.fitsAll,fits,rest:pv.pieces-fits,chain:chainRows,then:pv.continues.n?(pv.continues.next==='partial'?'wait':'new'):null,note:pv.note,words:pv.words};
     },
     async useOn(sh,partialId,o={}){
-      const ids=(Array.isArray(partialId)?partialId:[partialId]).filter(Boolean),pv=seen.get(sig(sh,ids))||null;
+      const ids=(Array.isArray(partialId)?partialId:[partialId]).filter(Boolean),pv=seen.get(sigOf(sh,ids))||null;
       const order=pv&&pv.links.length&&pv.links[0].partialId===ids[0]?pv.links.map(l=>l.partialId):ids;   // the chain as it was previewed, the person's pick first
       const map={check:'start',claim:'claimed',nest:'nesting',done:'done'};
       const r=await seat(sh,order,{preview:pv,onStep:s=>{try{o.onStep&&o.onStep({key:map[s.key]||s.key,sheet:sh,partialId:ids[0],text:s.text});}catch(_){}}});
       if(!r.ok)return {ok:false,error:r.why,code:r.code};
-      seen.delete(sig(sh,ids));
+      seen.delete(sigOf(sh,ids));
       const first=pv&&pv.links[0]?pv.links[0].placed:null;
       return {ok:true,used:order,placed:first,rest:first==null?null:piecesOf(sh).length-first};
     },
