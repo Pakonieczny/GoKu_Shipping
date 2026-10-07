@@ -123,7 +123,7 @@
 .psView[hidden]{display:none!important}
 .psView .osLead .psBusy{display:inline-flex;vertical-align:middle}
 .psList{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
-.psCard{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:14px;box-shadow:var(--sh);padding:14px 16px 16px;display:flex;flex-direction:column;gap:9px;min-width:0;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);transition:border-color .16s ease,box-shadow .2s ease}
+.psCard{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:14px;box-shadow:var(--sh);padding:14px 16px 16px;display:flex;flex-direction:column;gap:9px;min-width:0;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);transition:transform .13s ease,border-color .16s ease,box-shadow .2s ease}
 .psCard[data-m=rose]{--accent:var(--m-rose)}.psCard[data-m=gold10k]{--accent:var(--m-gold10k)}.psCard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .psCard:hover{border-color:var(--goldLine)}
 .psCard:focus-visible{outline:2px solid var(--gold);outline-offset:2px}

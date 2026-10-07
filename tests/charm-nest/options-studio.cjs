@@ -1,6 +1,6 @@
 // The Options Studio (charm-nest-options-modal.js, OptionsStudio): ONE large window for a sheet card's Options, in jsdom, with the page's own Gate
 // (charm-nest-bridge.js renderRelease), Cut Sheet's controls (charm-nest-rose-ui.js), the Partial sheets card (charm-nest-partial-ui.js) and fakes for the
-// data layer (PartialSheets: list, history, searchAll, policy) and for OptionsHistory (the drawing is OPT-HIST's own and has its own test).
+// data layer (PartialSheets: list, history, searchAll, policy); the real OptionsHistory draws the history and filters the search.
 // Proves: the Options button opens the window with the four cards; the include / size / Apply size / contour / merge controls still fire their handlers
 // from inside it, and a repaint keeps the focus and a typed value; Esc closes it, puts the controls back and returns the focus; the partial sheet cards
 // and the policy cards show; the history card renders from a fixture; the search filters ONE loaded list (nothing is read per keystroke).
@@ -56,14 +56,9 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
   w.PartialNest = { canSeat: () => ({ ok: true }), chain: () => [], on() { },
     async preview(s, ids) { calls.push(['preview', ids.join('+')]); return { ok: true, pieces: 2, fitsAll: true, links: [{ partialId: ids[0], wMm: 40, hMm: 30, placed: 2 }], continues: { n: 0, next: 'none' } }; },
     async seat() { return { ok: true, moved: 2, continues: 0 }; } };
-  const drawn = [];
-  w.OptionsHistory = {
-    svg(h, o) { drawn.push(['svg', h.cuts.length, o && o.selected]); return `<svg class="ohSvg" data-cuts="${h.cuts.length}"></svg>`; },
-    timeline(h) { return `<ol class="ohList">${h.cuts.map(c => `<li data-cut="${c.n}">Cut ${c.n} · ${c.by}</li>`).join('')}</ol>`; },
-    bind(root, h, o) { drawn.push(['bind', root.className]); },
-    filter(items, query, o = {}) { const t = String(query || '').toLowerCase().split(/\s+/).filter(Boolean); return items.filter(c => (!o.metal || c.metal === o.metal) && (!o.status || c.status === o.status) && t.every(x => JSON.stringify(c).toLowerCase().includes(x))); } };
   w.eval(fs.readFileSync('charm-nest-rose-ui.js', 'utf8'));
   w.eval(fs.readFileSync('charm-nest-partial-ui.js', 'utf8'));
+  w.eval(fs.readFileSync('charm-nest-options-history.js', 'utf8'));   // (OPT-HIST's own drawing, timeline and filter: the window only calls them)
   w.eval(fs.readFileSync('charm-nest-options-modal.js', 'utf8'));
   w.CN.renderCard(sh);
 
@@ -112,9 +107,10 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
 
   // 5. the history card, from a fixture: the sheet takes its physical sheet (the next draw of the controls says so): one call for it, the drawing and the timeline from OptionsHistory
   assert.equal(calls.filter(c => c[0] === 'history').length, 0); sh.roseStock = { id: 'stock-own', wPt: WPT, hPt: HPT, revision: 2 }; w.CN.renderCard(sh);
-  await until(() => dlg.querySelector('.osHist'));
-  assert.deepEqual(calls.filter(c => c[0] === 'history'), [['history', '{"stockId":"stock-own"}']], 'one history call, for the physical sheet this sheet holds');
-  assert(dlg.querySelector('.osHistDraw svg.ohSvg[data-cuts="2"]'), 'the drawing'); assert.equal(dlg.querySelectorAll('.osHistSide li').length, 2, 'the timeline: one line per cut'); assert(drawn.some(d => d[0] === 'bind'), 'drawing and list are bound');
+  await until(() => dlg.querySelector('.ohView'));
+  assert.deepEqual(calls.filter(c => c[0] === 'history'), [['history', '{"stockId":"stock-own","revision":2}']], 'one history call, for the physical sheet this sheet holds (with the revision it knows: the data layer caches by it)');
+  assert(dlg.querySelector('.ohView svg.ohSvg'), 'the drawing'); assert.equal(dlg.querySelectorAll('.ohTl .ohItem[data-cut]').length, 2, 'the timeline: one line per cut'); assert.match(dlg.querySelector('.ohTl').textContent, /Paul/);
+  dlg.querySelector('.ohItem[data-cut="2"]').click(); assert.equal(dlg.querySelector('.ohItem[data-cut="2"]').getAttribute('aria-pressed'), 'true', 'a press on a cut in the list lights it (drawing and list are bound)');
   assert.match(box.querySelector('[data-card="history"] .osLead').textContent, /14K sheet, 100 × 50 mm · 2 cuts · held by 14K Gold Sheet 1/);
 
   // 6. the search: ONE list, read once; the browser filters it; a press on a result shows its history
@@ -128,7 +124,7 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
   all.querySelector('[data-os="status"][data-v="discarded"]').click(); assert.deepEqual(ids(), ['k-1'], 'status chip'); all.querySelector('[data-os="clear"]').click(); assert.equal(ids().length, 5);
   assert.equal(calls.filter(c => c[0] === 'searchAll').length, 1, 'typing and the chips read nothing');
   all.querySelector('.psCard[data-id="p-used"]').click(); await until(() => calls.some(c => c[0] === 'history' && /stock-p-used/.test(c[1])));
-  assert.deepEqual(calls.filter(c => c[0] === 'history').slice(-1)[0], ['history', '{"stockId":"stock-p-used"}']); await until(() => /sheet picked in the search/.test(box.querySelector('[data-card="history"] [data-os="hwho"]').textContent));
+  assert.deepEqual(calls.filter(c => c[0] === 'history').slice(-1)[0], ['history', '{"stockId":"stock-p-used","revision":1}']); await until(() => /sheet picked in the search/.test(box.querySelector('[data-card="history"] [data-os="hwho"]').textContent));
   assert(all.querySelector('.psCard[data-id="p-used"]').classList.contains('on'), 'the picked result is marked'); assert(box.querySelector('[data-os="own"]'), 'and the way back to this sheet is there');
 
   // 7. a toast sits under a modal window: what it says is said in the window's note too
@@ -144,7 +140,7 @@ const card = (metal, id, o = {}) => ({ id, metal, code: { rose: 'RG', gold10k: '
   assert.equal(width.value, '77', 'what was typed is still there'); w.CN.renderCard(sh); assert.equal(width.value, '77', 'and a draw of the card keeps it'); assert(!w.Gate.state().optionsOpen[metal]);
 
   // 9. open again: one more list call (never a timer), the search list is the one already read; the close button closes it, the backdrop too
-  btn.click(); await until(() => calls.filter(c => c[0] === 'list').length === 2 && doc.querySelector('.osHist'));
+  btn.click(); await until(() => calls.filter(c => c[0] === 'list').length === 2 && doc.querySelector('.ohView'));
   assert.equal(calls.filter(c => c[0] === 'searchAll').length, 2, 'a second opening probes the search list once more, nothing per keystroke'); assert(doc.querySelectorAll('dialog.osDlg').length === 1);
   doc.querySelector('[data-os="close"]').click(); await until(() => !doc.querySelector('dialog.osDlg')); assert.equal(doc.activeElement, btn);
   // a sheet drawn anew for another page puts the window away at once

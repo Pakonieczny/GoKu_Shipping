@@ -1239,7 +1239,7 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
       (OptionsStudio, charm-nest-options-modal.js). The controls the Gate draws (.solidOptions, the box) are mounted in it while it is open:
       its cards are This sheet, Partial sheets (charm-nest-partial-ui.js), Sheet history and All partial sheets. ── */
 .solidOptions[hidden]{display:none!important}
-dialog.osDlg{width:min(1400px,92vw);height:min(90vh,1000px);max-height:none;border:0;padding:0;border-radius:16px;overflow:hidden;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+dialog.osDlg{width:min(1400px,92vw);height:min(90vh,1000px);max-width:none;max-height:none;border:0;padding:0;border-radius:16px;overflow:hidden;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
 dialog.osDlg::backdrop{background:rgba(20,18,15,.5);animation:osFade .22s ease both}
 dialog.osDlg[open]{display:block;animation:osIn .18s cubic-bezier(.2,.8,.2,1) backwards}
 dialog.osDlg.closing{animation:osOut .15s ease both}
@@ -1312,7 +1312,7 @@ dialog.osDlg:focus,dialog.osDlg:focus-visible{outline:none}
 .osNote[data-kind=bad]{background:var(--clay)}
 .osNote[data-kind=ok]{background:var(--sage)}
 @media (max-width:1000px){.solidOptions{grid-template-columns:minmax(0,1fr)}.osHist{grid-template-columns:minmax(0,1fr)}.osHistSide{max-height:none}}
-@media (max-width:760px){dialog.osDlg{width:100vw;height:100dvh;max-height:100dvh;border-radius:0}.osBody{padding:14px 12px 24px}.osCard{padding:18px 16px 20px;border-radius:14px}.osCardTitle{font-size:22px}.osTitle h2{font-size:19px}.osHead{padding-left:14px}}
+@media (max-width:760px){dialog.osDlg{width:100vw;height:100vh;height:100dvh;max-height:none;border-radius:0}.osBody{padding:14px 12px 24px}.osCard{padding:18px 16px 20px;border-radius:14px}.osCardTitle{font-size:22px}.osTitle h2{font-size:19px}.osHead{padding-left:14px}}
 @media (prefers-reduced-motion:reduce){dialog.osDlg[open],dialog.osDlg::backdrop{animation:osFade .16s ease backwards}dialog.osDlg.closing,dialog.osDlg.closing::backdrop{animation:osFadeOut .12s ease both}.osNote,.osSearch,.osChip{transition:none}.osSpin{animation-duration:1.6s}}
 
 /* the door back into every run that ever ran (dialog.hist is the Sets menu's read-only preview, SetPicker.preview) */
@@ -7006,7 +7006,8 @@ try {
 <!-- the Partial sheets card of the Options window: the list of partial sheets, the policy, the chain strip and the re-seat animation (PartialSheetsUI; its data is PartialSheets, its work PartialEngine) -->
 <script src="charm-nest-partial-ui.js?v=20261007-ps1-os1"></script>
 <!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
-<script src="charm-nest-options-modal.js?v=20261007-os1"></script>
+<script src="charm-nest-options-history.js?v=20261007-oh1"></script>
+<script src="charm-nest-options-modal.js?v=20261007-os2"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1"></script>

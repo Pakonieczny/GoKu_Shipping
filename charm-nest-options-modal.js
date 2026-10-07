@@ -65,9 +65,9 @@
   const titleOf = sh => { try { return `${root.CN && root.CN.labelOf ? root.CN.labelOf(sh.metal) : CODE[sh.metal]} · Sheet ${sh.page || 1}`; } catch (_) { return 'Sheet options'; } };
 
   /* ── the history card's data: the stock this sheet holds (or was cut from) ── */
-  const ownArg = sh => {
-    const id = (sh.roseStock && sh.roseStock.id) || (sh.recalled && sh.recalled.roseStockId);
-    if (id) return { stockId: id };
+  const ownArg = sh => {   // (the revision is the hint PartialSheets.history caches by: a sheet that knows it is answered from the cache with no call)
+    const id = (sh.roseStock && sh.roseStock.id) || (sh.recalled && sh.recalled.roseStockId), rev = sh.roseStock && Number.isFinite(+sh.roseStock.revision) ? +sh.roseStock.revision : Number.isFinite(+sh.roseRevision) ? +sh.roseRevision : null;
+    if (id) return rev != null ? { stockId: id, revision: rev } : { stockId: id };
     if (sh.roseCutAt && sh.sheetId) return { sheetId: sh.sheetId };
     return null;
   };
@@ -106,9 +106,10 @@
       const k = t.dataset.os;
       if (k === 'close') return void close(M.m);
       if (k === 'own') return void showOwn(M);
-      if (k === 'hretry') return void (M.h && M.h.arg ? showHistory(M, M.h.arg, M.h) : showOwn(M));
+      if (k === 'hretry') return void (M.h && M.h.arg ? showHistory(M, M.h.arg, { own: M.h.own, item: M.h.item, force: true }) : showOwn(M));
       if (k === 'reload') return void loadAll(M, { force: true });
       if (k === 'more') { ALL.shown += PAGE; return void paintAll(M); }
+      if (k === 'older') return void loadAll(M, { more: true });
       if (k === 'clear') { ALL.q = ''; ALL.metal = ''; ALL.status = ''; ALL.shown = PAGE; const i = M.cards.all.querySelector('input[type=search]'); if (i) i.value = ''; return void paintAll(M); }
       if (k === 'metal') { ALL.metal = t.dataset.v || ''; ALL.shown = PAGE; return void paintAll(M); }
       if (k === 'status') { ALL.status = ALL.status === t.dataset.v ? '' : t.dataset.v; ALL.shown = PAGE; return void paintAll(M); }
@@ -117,7 +118,7 @@
     M.cards.all.addEventListener('click', e => {
       const card = e.target.closest && e.target.closest('.psCard'); if (!card) return;
       const c = (ALL.items || []).find(x => String(x.id) === card.dataset.id); if (!c) return;
-      showHistory(M, { stockId: stockOfItem(c) }, { item: c, select: c.revision });
+      showHistory(M, Number.isFinite(+c.revision) ? { stockId: stockOfItem(c), revision: +c.revision } : { stockId: stockOfItem(c) }, { item: c, select: c.revision });
       paintAll(M);
       try { M.cards.history.scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' }); } catch (_) {}
     });
@@ -164,10 +165,10 @@
     M.h = { arg, key: argKey(arg), own: !!o.own, item: o.item || null, sel: o.select != null ? o.select : null, data: null, loading: true, error: '' };
     paintHistory(M);
     if (!P || typeof P.history !== 'function') { M.h.loading = false; M.h.error = 'The sheet history is not available on this page yet.'; paintHistory(M); return; }
-    Promise.resolve().then(() => P.history(arg)).then(d => {
+    Promise.resolve().then(() => P.history(arg, { force: !!o.force })).then(d => {
       if (M.done || M.hseq !== seq) return;
       M.h.loading = false; M.h.data = d && d.stock ? d : d && d.history ? d.history : d; M.h.error = '';
-      if (M.h.sel != null) { const cuts = (M.h.data && M.h.data.cuts) || [], hit = cuts.find(c => c.revision === M.h.sel); M.h.sel = hit ? hit.n : null; }   // (a partial sheet picked below: the cut that left it is lit)
+      if (M.h.sel != null) { const cuts = (M.h.data && M.h.data.cuts) || [], at = cuts.findIndex(c => c.revision === M.h.sel); M.h.sel = at >= 0 ? at + 1 : null; }   // (a partial sheet picked below: the cut that left it is lit; the timeline counts 1, 2, 3 ...)
       paintHistory(M);
     }).catch(e => { if (M.done || M.hseq !== seq) return; M.h.loading = false; M.h.error = (e && e.message) || String(e); paintHistory(M); });
   }
@@ -188,11 +189,14 @@
     lead.textContent = [code && size ? `${code} sheet, ${size}` : size, plural(cuts.length, 'cut'), stock.ownerSheetName ? `held by ${stock.ownerSheetName}` : cuts.length ? 'not held by a sheet now' : ''].filter(Boolean).join(' · ') + '. The pieces cut away stay grey; a green dashed line marks each cut.';
     if (!h.own) { who.hidden = false; who.innerHTML = `<span>The sheet picked in the search below${h.item ? ': <b>' + esc((h.item.sourceSheet || 'Partial sheet') + (h.item.sourceSet ? ' · ' + h.item.sourceSet : '')) + '</b>' : ''}.</span>${ownArg(M.sh) ? '<button type="button" class="osLinkBtn" data-os="own">Back to this sheet</button>' : ''}`; }
     const X = OH();
-    if (!X || typeof X.svg !== 'function') { body.innerHTML = `<div class="osEmpty"><b>The history picture is not ready on this page yet.</b><span>Reload the page to get it.</span></div>`; return; }
+    if (!X || (typeof X.view !== 'function' && typeof X.svg !== 'function')) { body.innerHTML = `<div class="osEmpty"><b>The history picture is not ready on this page yet.</b><span>Reload the page to get it.</span></div>`; return; }
     try {
-      const opt = { selected: h.sel, frame: true };
-      body.innerHTML = `<div class="osHist" data-os="hist"><div class="osHistDraw" data-os="hdraw">${asHtml(X.svg(data, opt))}</div><div class="osHistSide" data-os="hlist">${typeof X.timeline === 'function' ? asHtml(X.timeline(data, { selected: h.sel })) : ''}</div></div>`;
-      if (typeof X.bind === 'function') X.bind(q(body, 'hist'), data, { onSelect: n => { h.sel = n; } });
+      // the drawing is about as wide as its column of the card (labels are sized for it); a narrow window stacks it over the timeline
+      const cw = body.clientWidth || 0, width = Math.max(320, Math.min(900, cw ? (cw >= 900 ? Math.round((cw - 24) * 1.8 / 2.8) : cw) : 720));
+      const o = { selected: h.sel, width };
+      body.innerHTML = typeof X.view === 'function' ? X.view(data, o)
+        : `<div class="osHist"><div class="osHistDraw">${asHtml(X.svg(data, o))}</div><div class="osHistSide">${typeof X.timeline === 'function' ? asHtml(X.timeline(data, o)) : ''}</div></div>`;
+      if (typeof X.bind === 'function') X.bind(body.firstElementChild, data, { selected: h.sel, onSelect: n => { h.sel = n; } });
     } catch (e) { warn('history', e); body.innerHTML = `<div class="osEmpty bad"><b>The sheet history could not be drawn.</b></div>`; }
   }
 
@@ -203,7 +207,7 @@
     c.innerHTML = `<header class="osCardHead"><div><h3 class="osCardTitle" id="osA-${esc(M.m)}">All partial sheets</h3><p class="osLead">Every partial sheet of every metal, whatever became of it. Search by sheet, set, person, date (oct 5), metal, status or size, then press one to see its history above.</p></div><button type="button" class="btn ghost xs" data-os="reload" title="Read the list again">Refresh</button></header>`
       + `<div class="osFilters"><label class="osSearch">${ICON.search}<input type="search" autocomplete="off" spellcheck="false" placeholder="Search partial sheets" aria-label="Search all partial sheets"></label>`
       + chips('metal', METAL_CHIPS, 'Metal') + chips('status', STATUS_CHIPS, 'Status') + `</div>`
-      + `<p class="osCount" data-os="count" role="status"></p><div class="psList osResults" data-os="results" aria-live="polite"></div><button type="button" class="btn ghost osMore" data-os="more" hidden>Show more</button>`;
+      + `<p class="osCount" data-os="count" role="status"></p><div class="psList osResults" data-os="results" aria-live="polite"></div><button type="button" class="btn ghost osMore" data-os="more" hidden>Show more</button><button type="button" class="btn ghost osMore" data-os="older" hidden>Load older partial sheets</button>`;
     return c;
   }
   function fallbackFilter(items, query, o = {}) {   // (OptionsHistory.filter is the real one; this keeps the card working until that file is on the page)
@@ -216,17 +220,17 @@
     try { return X && typeof X.filter === 'function' ? X.filter(items, ALL.q, o) : fallbackFilter(items, ALL.q, o); } catch (e) { warn('filter', e); return fallbackFilter(items, ALL.q, o); }
   }
   function paintAll(M) {
-    const card = M.cards.all, res = q(card, 'results'), count = q(card, 'count'), more = q(card, 'more'), reload = q(card, 'reload');
+    const card = M.cards.all, res = q(card, 'results'), count = q(card, 'count'), more = q(card, 'more'), older = q(card, 'older'), reload = q(card, 'reload');
     for (const b of card.querySelectorAll('[data-os="metal"]')) b.setAttribute('aria-pressed', String((b.dataset.v || '') === ALL.metal));
     for (const b of card.querySelectorAll('[data-os="status"]')) b.setAttribute('aria-pressed', String(b.dataset.v === ALL.status));
-    reload.disabled = ALL.loading; more.hidden = true;
+    reload.disabled = ALL.loading; more.hidden = true; older.hidden = true;
     if (!ALL.items) {
       count.textContent = '';
       res.innerHTML = ALL.error ? `<div class="osEmpty bad"><b>Could not read the partial sheets: ${esc(ALL.error)}</b><button type="button" class="btn ghost xs" data-os="reload">Try again</button></div>` : spin('Reading all partial sheets…', true);
       return;
     }
     const list = filtered(), total = ALL.items.length, active = !!(ALL.q || ALL.metal || ALL.status), shown = list.slice(0, ALL.shown), P = PUI();
-    count.innerHTML = (ALL.loading ? spin('Reading again…') : '') + `<span>${active ? `${list.length} of ${plural(total, 'partial sheet')}` : plural(total, 'partial sheet')}${ALL.more ? ' (the newest are listed)' : ''}</span>${active ? '<button type="button" class="osLinkBtn" data-os="clear">Clear</button>' : ''}`;
+    count.innerHTML = (ALL.loading ? spin('Reading again…') : '') + `<span>${active ? `${list.length} of ${plural(total, 'partial sheet')}` : plural(total, 'partial sheet')}${ALL.more ? ', the newest first' : ''}</span>${active ? '<button type="button" class="osLinkBtn" data-os="clear">Clear</button>' : ''}`;
     if (!list.length) {
       res.innerHTML = `<div class="osEmpty"><b>${total ? 'No partial sheet matches.' : 'No partial sheets have been made yet.'}</b><span>${total ? 'Try fewer words, another date or size, or clear the filters.' : 'When a green line is cut on a Rose Gold, 10K or 14K sheet, the metal that is left is saved here.'}</span></div>`;
       return;
@@ -236,13 +240,14 @@
     res.innerHTML = P && P.card ? shown.map((c, i) => P.card(c, { selected: c.id === sel }, i)).join('') : '';
     if (focused) { const f = [...res.querySelectorAll('.psCard')].find(x => x.dataset.id === focused); if (f) f.focus({ preventScroll: true }); }
     more.hidden = list.length <= shown.length; more.textContent = `Show ${Math.min(PAGE, list.length - shown.length)} more`;
+    older.hidden = !(ALL.more && !ALL.loading && list.length <= shown.length);   // (every one read is on show: the server has older ones: one more call, on a press)
   }
   async function loadAll(M, o = {}) {
     const P = PS();
     if (!P || typeof P.searchAll !== 'function') { ALL.error = 'The list of all partial sheets is not available on this page yet.'; paintAll(M); return; }
     if (ALL.loading) return;
     ALL.loading = true; ALL.error = ''; paintAll(M);
-    try { const r = await P.searchAll({ force: !!o.force }); ALL.items = Array.isArray(r) ? r : (r && r.items) || []; ALL.more = !!(r && r.more); }
+    try { const r = await P.searchAll({ force: !!o.force, more: !!o.more }); ALL.items = Array.isArray(r) ? r : (r && r.items) || []; ALL.more = !!(r && r.more); }
     catch (e) { ALL.error = (e && e.message) || String(e); }
     finally { ALL.loading = false; if (CUR && !CUR.done) paintAll(CUR); }   // (the window that is open now: it may not be the one that asked)
   }
