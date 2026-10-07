@@ -262,7 +262,7 @@ const st = {
     const { page, errors } = await open(file, lockedStation ? { seed: o => { try { sessionStorage.setItem('designStation.passcode', 'synthetic-operator-key-9d4'); } catch (_) {} } } : {});
     await until(() => page.evaluate(() => typeof proceedToPrint === 'function' && window.StationSession && StationSession.page() && window.StationActivity && window.StationLiveOrder), file + ' loaded');
     // boot() wires the queue, then reads the finished-orders and note flags and re-renders the list: the rows the test adds must come after that
-    await until(() => page.evaluate(() => { const h = document.getElementById('newOrderContainer'), b = document.querySelector('#settingsBody'); return !!(h && h.dataset.wired === '1' && b && b.children.length); }) && sent.some(x => /staffNotes=1/.test(x.url)), `${file}: boot wired the queue`);
+    await until(() => page.evaluate(() => { const h = document.getElementById('newOrderContainer'), b = document.querySelector('#settingsBody'); return !!(h && h.dataset.wired === '1' && b && b.children.length); }), `${file}: boot wired the queue`);   // (the boot no longer reads the whole completion ledger and every note: nothing is listed before a Refresh. FC6, Firebase cost)
     await wait(1200);
     await page.evaluate(() => { window.buildNewOrderList = async () => {}; window.ensureSelectedPreviews = async () => {}; });
     assert.deepStrictEqual(await page.evaluate(() => window.__initArgs), { station: 'design', device }, `${file}: the page signs in as station design, device ${device}`);
