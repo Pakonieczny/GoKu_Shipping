@@ -30,6 +30,7 @@ const { CORS, parseBody, num } = require("./_charmNestAuth");
 const admin = require("./firebaseAdmin");
 const { displayStation } = require("./_activityKinds");      // ONE Sorting station: the stored keys "sorter" and "qr" are SHOWN as "sorting" (history keeps its keys; only a read folds them)
 const db = admin.firestore();
+const Rev = require("./_employeeRev");                              // the employee data revision (FC5): a poll that finds it unmoved keeps what it read (see _employeeRev.js)
 /* The Welding station is not counted in throughput (Paul, 6 Oct 2026): KIND.readStationCounters / throughput are the one rule (see _activityKinds.js). Without the file nothing is left out. */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false, echoScans: () => new Set() };
@@ -43,6 +44,9 @@ const TTL_LIVE = 5000, TTL_PAST = 10 * 60000, TTL_SEALS_LIVE = 120000;
 const LIM = { sessions: 1500, rollups: 2000, sealsDay: 2000, sealDays: 10, window: 500, dayEvents: 1500, orderEvents: 500, orderSeals: 400,
   feed: 40, feedDelta: 200, orders: 30, people: 60, orderEventsOut: 300, body: 8000 };
 const FAILS_PER_MIN = 10;
+/* How long a read is kept while the revision has not moved (ms). The live documents carry keep-alive beats that are not counted as changes, so they are looked at again
+   sooner; sessions and rollups only change with a counted write (and a session's own time rules are applied again on every call, see readSessionsRange). */
+const REV_MAX = { act: 120000, ses: 60000, live: 45000 };
 
 /* ── small helpers ── */
 const json = (statusCode, body) => ({ statusCode, headers: CORS, body: JSON.stringify(body) });
@@ -132,12 +136,17 @@ function dayList(from, to) { const out = []; for (let d = from, i = 0; d <= to &
 /* ── caches (per warm instance, one set per Firestore handle) ── */
 const caches = new WeakMap();
 function cacheOf(handle) { let c = caches.get(handle); if (!c) { c = { memo: new Map(), recent: new Map(), fails: new Map() }; caches.set(handle, c); } return c; }
-/** A shared, time-limited read. A failed read is forgotten at once. */
-function cached(ctx, key, ttl, fn) {
+/** The revision a read may lean on: { v, max } for the kind of change that can alter it ("act" | "ses" | "live"), or undefined (no revision, the sandbox, a failed look: the short lifetimes alone). */
+function revDep(ctx, kind, max) { return ctx.rev && ctx.rev.ok && !ctx.prefix ? { v: String(ctx.rev[kind]), max: max || REV_MAX[kind] } : undefined; }
+/** An entry read under the same revision, younger than its maximum age, is still true. */
+function stillTrue(ctx, e, dep) { return !!(dep && e && e.dep && e.dep.v === dep.v && ctx.now - e.at < Math.min(dep.max, e.dep.max)); }
+/** A shared, time-limited read. A failed read is forgotten at once. `dep`: see revDep. */
+function cached(ctx, key, ttl, fn, dep) {
   ttl = Math.min(ttl, ctx.life);
   const memo = ctx.cache.memo, hit = memo.get(key);
   if (hit && ctx.now - hit.at < Math.min(ttl, hit.ttl)) return hit.p;   // (an entry read while its day was live stays short-lived after midnight)
-  const entry = { at: ctx.now, ttl, p: null };
+  if (hit && stillTrue(ctx, hit, dep)) return hit.p;                    // (the revision has not moved since it was read: nothing was written, so it is still true)
+  const entry = { at: ctx.now, ttl, p: null, dep: dep || null };
   entry.p = Promise.resolve().then(fn);
   memo.set(key, entry);
   entry.p.catch(() => { if (memo.get(key) === entry) memo.delete(key); });
@@ -166,10 +175,10 @@ const col = (ctx, name) => ctx.db.collection(ctx.prefix + name);
 
 /** Rollups of the days from..to, a day at a time in the cache (today 5 s, a past day 10 min), one range query for the stale ones. */
 async function readRollups(ctx, from, to) {
-  const days = dayList(from, to), stale = [], entries = new Map();
+  const days = dayList(from, to), stale = [], entries = new Map(), dep = revDep(ctx, "act");   // (today's rollups change only with a counted activity write: kept while the revision is the same)
   for (const d of days) {
     const e = ctx.cache.memo.get(`roll|${ctx.prefix}|${d}`);
-    if (e && ctx.now - e.at < Math.min(d === ctx.today ? TTL_LIVE : TTL_PAST, e.ttl)) entries.set(d, e.p); else stale.push(d);
+    if (e && (ctx.now - e.at < Math.min(d === ctx.today ? TTL_LIVE : TTL_PAST, e.ttl) || (d === ctx.today && stillTrue(ctx, e, dep)))) entries.set(d, e.p); else stale.push(d);
   }
   if (stale.length) {
     const a = stale[0], z = stale[stale.length - 1];
@@ -179,7 +188,7 @@ async function readRollups(ctx, from, to) {
       return { by, capped: snap.docs.length > LIM.rollups };
     });
     for (const d of stale) {
-      const entry = { at: ctx.now, ttl: Math.min(d === ctx.today ? TTL_LIVE : TTL_PAST, ctx.life), p: fetchP.then(r => ({ docs: r.by.get(d) || [], capped: r.capped })) };
+      const entry = { at: ctx.now, ttl: Math.min(d === ctx.today ? TTL_LIVE : TTL_PAST, ctx.life), dep: d === ctx.today ? dep || null : null, p: fetchP.then(r => ({ docs: r.by.get(d) || [], capped: r.capped })) };
       ctx.cache.memo.set(`roll|${ctx.prefix}|${d}`, entry);
       entry.p.catch(() => { if (ctx.cache.memo.get(`roll|${ctx.prefix}|${d}`) === entry) ctx.cache.memo.delete(`roll|${ctx.prefix}|${d}`); });
       entries.set(d, entry.p);
@@ -191,16 +200,20 @@ async function readRollups(ctx, from, to) {
 }
 
 /** Sessions that started in [fromMs, toMs): the server's times are ms or Firestore times, and a range matches only one kind, so both are read. */
-function readSessionsRange(ctx, fromMs, toMs) {
-  return cached(ctx, `sess|${ctx.prefix}|${fromMs}|${toMs}`, toMs > nyMidnight(ctx.today) ? TTL_LIVE : TTL_PAST, async () => {
+async function readSessionsRange(ctx, fromMs, toMs) {
+  const live = toMs > nyMidnight(ctx.today);
+  const raw = await cached(ctx, `sess|${ctx.prefix}|${fromMs}|${toMs}`, live ? TTL_LIVE : TTL_PAST, async () => {
     const TS = ctx.admin.firestore.Timestamp, ranges = [[fromMs, toMs]];
     if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(fromMs), TS.fromMillis(toMs)]);
     const snaps = await Promise.all(ranges.map(([a, z]) => col(ctx, COL.sessions).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(LIM.sessions + 1).get()));
     const seen = new Set(), rows = []; let truncated = false;
     for (const s of snaps) { if (s.docs.length > LIM.sessions) truncated = true; for (const d of s.docs.slice(0, LIM.sessions)) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); } }
-    await AutoSignout.settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, rows);       // the auto sign-out rules: a session that is idle (10 minutes without input), past 5:00 pm Toronto with no recent input, or whose page died ends at the person's last input (_stationAutoSignout.js)
     return { rows, truncated };
-  });
+  }, live ? revDep(ctx, "ses") : undefined);
+  // The auto sign-out rules: a session that is idle (10 minutes without input), past 5:00 pm Toronto with no recent input, or whose page died ends at the person's last input (_stationAutoSignout.js).
+  // They run on the clock, so they are applied on EVERY call to the rows kept (no read; a write only when a session now ends), whatever the age of the read: a session is ended as soon as the rule says.
+  await AutoSignout.settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, raw.rows);
+  return raw;
 }
 /** The window's sessions in two parts: what started before yesterday's midnight is final (a session never outlives its New York midnight)
     and is kept 10 minutes; what started yesterday or today can still change and is read afresh every 5 s. A poll used to re-read the
@@ -256,6 +269,8 @@ function readRecent(ctx) {
   if (!R) { R = { events: [], loaded: false, at: 0, newest: 0, p: null }; ctx.cache.recent.set(ctx.prefix, R); }
   if (R.p) return R.p;
   if (R.loaded && ctx.now - R.at < TTL_LIVE) return Promise.resolve(R.events);
+  const dep = revDep(ctx, "act");                                          // (no event was written since the last look: nothing to top up)
+  if (R.loaded && dep && R.dep && R.dep.v === dep.v && ctx.now - R.at < dep.max) return Promise.resolve(R.events);
   R.p = (async () => {
     try {
       const TS = ctx.admin.firestore.Timestamp, c = col(ctx, COL.activity);
@@ -270,7 +285,7 @@ function readRecent(ctx) {
       for (const d of snap.docs) { const e = eventRow(d.id, d.data() || {}, ctx); if (e) byId.set(e.id, e); }
       R.events = [...byId.values()].sort(byNewest).slice(0, LIM.window);
       R.newest = R.events.reduce((m, e) => Math.max(m, e.tsMs), 0);
-      R.loaded = true; R.at = Date.now();
+      R.loaded = true; R.at = Date.now(); R.dep = dep || null;
       return R.events;
     } finally { R.p = null; }
   })();
@@ -670,10 +685,10 @@ async function opOrders(ctx, body) {
 }
 
 /* ── the door ── */
-const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
+const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, revDep, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
-OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, revDep, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
 /* op "laserSheets" (R7, Paul 6 Oct): one person's cut sheets and how long each took, from the Laser_Sheet_Times records the Library's laserDone wrote (kept in _laserSheetTime.js) */
 OPS.laserSheets = (ctx, body) => require("./_laserSheetTime").opSheets(ctx, body, { json, nyMidnight, nameKeyOf, cleanName, okName, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
 /* the inbox figures (Paul, 6 Oct 2026: replies sent per employee, orders covered, messages per customer): _employeeInbox.js gets this file's own name, day and cache rules
@@ -708,8 +723,8 @@ async function handle(event, handle_) {
   const opName = typeof body.op === "string" ? body.op : "overview";
   const op = Object.prototype.hasOwnProperty.call(OPS, opName) ? OPS[opName] : null;       // (an own entry only: "constructor" and "toString" are not ops)
   if (!op) return json(400, { ok: false, error: "unknown op" });
-  const al = await safe(loadAliases(ctx), "aliases");
-  ctx.aliases = al.ok ? al.value : buildAliases(null); ctx.aliasError = al.ok ? "" : al.error;
+  const [al, rev] = await Promise.all([safe(loadAliases(ctx), "aliases"), ctx.prefix ? null : Rev.read(ctx.db, ctx.now)]);   // (the revision: one small document, kept 1 s; the sandbox never uses it)
+  ctx.aliases = al.ok ? al.value : buildAliases(null); ctx.aliasError = al.ok ? "" : al.error; ctx.rev = rev;
   try {
     const res = await op(ctx, body);
     if (ctx.aliasError && res && res.statusCode === 200) {           // without the alias list two spellings of one person may show as two: every answer says so, once

@@ -70,15 +70,16 @@ exports.handler = async function (event) {
   try { db = admin.firestore(); } catch (e) { row("Firestore", "admin SDK", "fail", errText(e)); }
   if (db) {
     for (const [name, what] of COLLECTIONS) {
-      const { r, e, ms } = await timed(() => db.collection(name).limit(500).select().get());
+      // (an aggregation answers "the collection answers, and holds this many" for one read per thousand entries, where up to 500 documents were read)
+      const { r, e, ms } = await timed(() => db.collection(name).count().get());
       if (e) row("Firestore", name, "fail", errText(e), what, ms);
-      else row("Firestore", name, "ok", `${r.size >= 500 ? "500+" : r.size} document(s)`, what, ms);
+      else row("Firestore", name, "ok", `${r.data().count} document(s)`, what, ms);
     }
     /* the queries the app runs, through the library itself: a missing composite index shows here with its link */
     let lib = null; try { lib = require("./charmNestLibrary"); } catch (e) { row("Firestore queries", "charmNestLibrary", "fail", errText(e)); }
     if (lib && lib.ops) {
       const day = new Date().toISOString().slice(0, 10);
-      const QUERIES = [["ping", {}, "sheets and charms counted"], ["setList", { from: day, to: day }, "sets by date"], ["runList", { limit: 5 }, "runs, newest first"], ["listSheets", { limit: 5 }, "sheets, newest first"], ["listSheets", { limit: 5, setId: "diag-none" }, "sheets of one set"], ["masterList", { limit: 5 }, "master index"], ["masterListFiles", {}, "master files"], ["poolList", { runId: "diag-none" }, "pool rows of a run"], ["backList", { sheetId: "diag-none" }, "backs of a sheet"], ["aliasGet", {}, "SKU aliases"], ["noDesignGet", {}, "no-design list"], ["optionMapGet", {}, "option maps"], ["getCalibration", {}, "calibration"]];
+      const QUERIES = [["ping", { calibration: false }, "sheets and charms counted"], ["setList", { from: day, to: day }, "sets by date"], ["runList", { limit: 5 }, "runs, newest first"], ["listSheets", { limit: 5 }, "sheets, newest first"], ["listSheets", { limit: 5, setId: "diag-none" }, "sheets of one set"], ["masterList", { limit: 5 }, "master index"], ["masterListFiles", {}, "master files"], ["poolList", { runId: "diag-none" }, "pool rows of a run"], ["backList", { sheetId: "diag-none" }, "backs of a sheet"], ["aliasGet", {}, "SKU aliases"], ["noDesignGet", {}, "no-design list"], ["optionMapGet", {}, "option maps"], ["getCalibration", { limit: 5 }, "calibration"]];
       for (const [op, args, what] of QUERIES) {
         const fn = lib.ops[op]; if (!fn) { row("Firestore queries", op, "skip", "not an op in this build", what); continue; }
         const { r, e, ms } = await timed(() => fn(Object.assign({ op }, args)));
