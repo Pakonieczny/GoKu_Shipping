@@ -104,14 +104,14 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
   const clean = (id, d) => { const o = { id }; for (const k of FIELDS) if (d[k] !== undefined) o[k] = d[k]; delete o.ringsJson; o.rings = unpackRings(d); o.createdAt = ms(d.createdAt); return o; };
 
   /* What a cut teaches about the metal's regular piece, from the sheet it was made on (already in the cut's transaction: no read): for every placed piece its
-     footprint (silhouette, grown by half a POSITIVE clearance on every side: the page's inflatedArea) and the shorter / longer side of its box, in mm. Added
+     footprint (silhouette, grown by half the clearance on every side, the SIGNED clearance exactly as the page's inflatedArea: the page's own -0.5 pt tightens it a little) and the shorter / longer side of its box, in mm. Added
      to the metal's running sums with increments (no read), so the typical piece costs one tiny document read and never a scan. */
   function pieceStats(sheet) {
-    const byId = new Map((sheet.charms || []).map(c => [c.id, c])), out = { n: 0, areaMm2: 0, minMm: 0, maxMm: 0 }, g = Math.max(0, +(sheet.params && sheet.params.clearancePt) || 0) / 2;
+    const byId = new Map((sheet.charms || []).map(c => [c.id, c])), out = { n: 0, areaMm2: 0, minMm: 0, maxMm: 0 }, g = (+(sheet.params && sheet.params.clearancePt) || 0) / 2;
     for (const p of sheet.placements || []) {
       const c = byId.get(p.id); if (!c || !(+c.areaPt2 > 0) || !(+c.widthPt > 0) || !(+c.heightPt > 0)) continue;
       const sc = +p.scale > 0 ? +p.scale : 1, w = c.widthPt * sc, h = c.heightPt * sc;
-      out.n++; out.areaMm2 += (c.areaPt2 * sc * sc + g * 2 * (w + h) + Math.PI * g * g) * MM * MM; out.minMm += Math.min(w, h) * MM; out.maxMm += Math.max(w, h) * MM;
+      out.n++; out.areaMm2 += Math.max(c.areaPt2 * sc * sc * 0.5, c.areaPt2 * sc * sc + g * 2 * (w + h) + Math.PI * g * g) * MM * MM; out.minMm += Math.min(w, h) * MM; out.maxMm += Math.max(w, h) * MM;
     }
     return out;
   }

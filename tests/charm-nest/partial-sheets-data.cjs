@@ -10,22 +10,26 @@ const Remnants = require('../../netlify/functions/_charmNestRemnants'), RoseStoc
 const MM = Rose.MM;
 const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
 const shape = (id, x, y, w, h) => ({ id, paths: [rect(x, y, x + w, y + h)] });
-const T = { areaMm2: 110, minMm: 9, maxMm: 14 }, SHEET = { sheetWMm: 100, sheetHMm: 50 };
+const T = { areaMm2: 61, minMm: 6.7, maxMm: 10.4 }, SHEET = { sheetWMm: 100, sheetHMm: 50 };
 
 (async () => {
   // 1. estimateFit: a rectangle, an L shape, thin strips; always low <= pieces <= high
   const block = P.estimateFit([rect(0, 0, 50, 40)], T, SHEET);   // sheet border on two sides, green cut edge on the other two
-  assert.deepEqual([block.pieces, block.low, block.high, block.packedPct], [11, 9, 13, 65], 'the header example');
+  assert.deepEqual([block.pieces, block.low, block.high, block.packedPct], [22, 20, 24, 72], 'the header example');
+  assert.deepEqual(P.typicalFromSums(null), { ...T, n: 0 }, 'the default regular piece is the real 14K Gold piece: 61 mm2 with its spacing');
+  // Paul, 7 Oct 2026: a clean 50 x 44.4 mm sheet (the Options window's New sheet, the full rectangle) holds about 24 to 28 pieces, not 12
+  const clean = P.estimateFit([rect(0, 0, 50, 44.4)], P.typicalFromSums(null), { sheetWMm: 50, sheetHMm: 44.4 });
+  assert(clean.pieces >= 24 && clean.pieces <= 28 && clean.low >= 22 && clean.high <= 28 && clean.low <= clean.pieces && clean.pieces <= clean.high, `a clean 50 x 44.4 sheet: ${clean.low} to ${clean.high}, about ${clean.pieces}`);
   assert(Math.abs(block.usableMm2 - (50 - .53 - 1) * (40 - .53 - 1)) < 25, 'usable = outline less the inset band and the edge distance');
   const whole = P.estimateFit([rect(0, 0, 100, 50)], T, SHEET), half = P.estimateFit([rect(0, 0, 50, 50)], T, SHEET);
-  assert(whole.pieces > 25 && whole.pieces <= Math.floor(0.68 * 100 * 50 / 110), `a whole 100 x 50 sheet holds about 30 pieces at 68 percent, not more than the area allows (${whole.pieces})`);
-  assert(half.pieces < whole.pieces && half.pieces >= 12 && half.pieces <= 14, 'half the sheet, about half the pieces (' + half.pieces + ')');
+  assert(whole.pieces > 50 && whole.pieces <= Math.floor(0.75 * 100 * 50 / 61), `a whole 100 x 50 sheet holds about 60 pieces at 75 percent, not more than the area allows (${whole.pieces})`);
+  assert(half.pieces < whole.pieces && half.pieces >= 26 && half.pieces <= 31, 'half the sheet, about half the pieces (' + half.pieces + ')');
   // an L shape: the 50 x 40 block plus a 30 x 10 arm going right along the top: more than the block alone, less than its bounding box
   const L = [[[0, 0], [80, 0], [80, 10], [50, 10], [50, 40], [0, 40]]], el = P.estimateFit(L, T, SHEET), box = P.estimateFit([rect(0, 0, 80, 40)], T, SHEET);
   assert(el.pieces > block.pieces && el.pieces < box.pieces, `L shape: ${block.pieces} < ${el.pieces} < ${box.pieces}`);
-  // thin strips: narrower than a typical piece (9 mm) holds none of it; a wider strip holds some, packed lower than a clean block
+  // thin strips: narrower than a typical piece (6.7 mm) holds none of it; a wider strip holds some, packed lower than a clean block
   const thin = P.estimateFit([rect(0, 0, 100, 6)], T, SHEET), strip = P.estimateFit([rect(0, 0, 100, 12)], T, SHEET), wide = P.estimateFit([rect(0, 0, 100, 25)], T, SHEET);
-  assert.equal(thin.pieces, 0, 'a 6 mm strip holds no typical piece'); assert(thin.high >= 1 && thin.high <= 4, 'only smaller pieces would fit it (high ' + thin.high + ')');
+  assert.equal(thin.pieces, 0, 'a 6 mm strip holds no typical piece'); assert(thin.high >= 1 && thin.high <= 6, 'only smaller pieces would fit it (high ' + thin.high + ')');
   assert(strip.pieces >= 3 && strip.pieces < wide.pieces, `a 12 mm strip holds a few (${strip.pieces}), a 25 mm one more (${wide.pieces})`);
   assert(strip.packedPct <= block.packedPct && wide.packedPct >= strip.packedPct, 'strips are never packed better than a clean block');
   for (const e of [block, whole, half, el, thin, strip, wide]) assert(e.low <= e.pieces && e.pieces <= e.high && e.packedPct >= 0 && e.packedPct <= 100, 'low <= pieces <= high');
@@ -34,7 +38,7 @@ const T = { areaMm2: 110, minMm: 9, maxMm: 14 }, SHEET = { sheetWMm: 100, sheetH
   const t0 = Date.now(); for (let i = 0; i < 100; i++) P.estimateFit(L, T, SHEET); assert(Date.now() - t0 < 2500, '100 estimates are quick (' + (Date.now() - t0) + ' ms)');
   // the typical piece from the running sums: the default with no history, the metal's own average blended under a small prior
   assert.deepEqual(P.typicalFromSums(null), { ...P.DEFAULT_TYPICAL, n: 0 });
-  const tf = P.typicalFromSums({ n: 50, areaMm2: 50 * 200, minMm: 50 * 12, maxMm: 50 * 20 }); assert(tf.areaMm2 > 190 && tf.areaMm2 < 200 && tf.n === 50, 'fifty pieces of 200 mm2 pull the typical piece to about 200 (' + tf.areaMm2 + ')');
+  const tf = P.typicalFromSums({ n: 50, areaMm2: 50 * 100, minMm: 50 * 8, maxMm: 50 * 13 }); assert(tf.areaMm2 > 95 && tf.areaMm2 < 100 && tf.n === 50, 'fifty pieces of 100 mm2 pull the typical piece to about 100 (' + tf.areaMm2 + ')');
   // planFor: filled one after the other, no limit on how many, whether all fit
   const card = (id, rings, at, extra) => ({ id, status: 'available', outline: rings, sheetWMm: 100, sheetHMm: 50, lastUsedAt: at, ...extra });
   const cards = [card('a-1', [rect(0, 0, 50, 40)], 3000), card('b-1', [rect(0, 0, 100, 25)], 2000), card('c-1', [rect(0, 0, 100, 6)], 5000), card('d-1', [rect(0, 0, 40, 30)], 1000, { status: 'inUse' })];
@@ -92,7 +96,7 @@ const T = { areaMm2: 110, minMm: 9, maxMm: 14 }, SHEET = { sheetWMm: 100, sheetH
   assert(Math.abs(c.wPt - 100 / MM) < .01 && Math.abs(c.hPt - 50 / MM) < .01, 'the physical sheet in points (the claim tolerates .01)');
   assert(c.estimate.pieces >= 1 && c.estimate.low <= c.estimate.pieces && c.estimate.pieces <= c.estimate.high && c.estimate.packedPct > 0, 'the estimate is on the card');
   assert.deepEqual(list.policies.rose, { mode: 'auto', wMm: 100, hMm: 50, by: '', at: null }, 'no setting saved: automatic, 100 x 50');
-  assert.deepEqual([list.typical.n, list.typical.areaMm2 > 100], [1, true]);
+  assert.deepEqual([list.typical.n, list.typical.areaMm2 > 61 && list.typical.areaMm2 < 600 * MM * MM], [1, true], 'one 600 pt2 piece (74.6 mm2) moves the typical piece a little from the 61 mm2 default');
   assert.deepEqual(await O.partialList({ metal: 'rose', ifRev: list.rev }), { unchanged: true, rev: list.rev }, 'nothing moved: one tiny read');
   assert.deepEqual((await O.partialList({ metal: 'gold10k' })).items, [], 'each metal has its own repository');
   await assert.rejects(() => O.partialList({ metal: 'silver' }), /Choose Rose Gold, 10K Gold or 14K Gold/);
