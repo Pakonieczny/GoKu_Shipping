@@ -66,10 +66,10 @@
   // Graphic expressions are geometry/path changes, not just another light colour.
   const FACE_EXPRESSIONS = Object.freeze({
     neutral: Object.freeze({faceBrowLift: .05, faceBrowTilt: 0, eyeSmile: .08, cheekGlow: .18, smileCurve: .3, faceSignal: .12}),
-    attentive: Object.freeze({faceBrowLift: .65, faceBrowTilt: 0, eyeSmile: 0, cheekGlow: .27, smileCurve: .24, faceSignal: .9}),
-    curious: Object.freeze({faceBrowLift: .42, faceBrowTilt: .65, eyeSmile: .02, cheekGlow: .22, smileCurve: .15, faceSignal: .55}),
+    attentive: Object.freeze({faceBrowLift: .85, faceBrowTilt: 0, eyeSmile: 0, cheekGlow: .27, smileCurve: .24, faceSignal: .9}),
+    curious: Object.freeze({faceBrowLift: .55, faceBrowTilt: .85, eyeSmile: .02, cheekGlow: .22, smileCurve: .15, faceSignal: .55}),
     explaining: Object.freeze({faceBrowLift: .28, faceBrowTilt: -.12, eyeSmile: .15, cheekGlow: .38, smileCurve: .42, faceSignal: .65}),
-    delighted: Object.freeze({faceBrowLift: .5, faceBrowTilt: 0, eyeSmile: .72, cheekGlow: .85, smileCurve: .9, faceSignal: .8}),
+    delighted: Object.freeze({faceBrowLift: .5, faceBrowTilt: 0, eyeSmile: .92, cheekGlow: .95, smileCurve: 1, faceSignal: .8}),
     reassuring: Object.freeze({faceBrowLift: .15, faceBrowTilt: -.3, eyeSmile: .24, cheekGlow: .32, smileCurve: .42, faceSignal: .18}),
     warm: Object.freeze({faceBrowLift: .22, faceBrowTilt: 0, eyeSmile: .52, cheekGlow: .62, smileCurve: .72, faceSignal: .3})
   });
@@ -89,7 +89,7 @@
   }
   let instanceCount = 0;
   function declaredScene(raw, textureSize) {
-    if (!raw || ![1, 2, 3, 4].includes(raw.schema) || !Array.isArray(raw.textures) || raw.textures.length < 1 || raw.textures.length > 16) return null;
+    if (!raw || ![1, 2, 3, 4, 5].includes(raw.schema) || !Array.isArray(raw.textures) || raw.textures.length < 1 || raw.textures.length > 16) return null;
     const textures = raw.textures.map(value => ({name: typeof value?.name === 'string' ? value.name.slice(0, 80) : '', kind: typeof value?.kind === 'string' ? value.kind.slice(0, 32) : '', width: textureSize, height: textureSize}));
     if (textures.some(value => !value.name || !value.kind)) return null;
     return {schema: raw.schema, source: 'loaded_scene_module', textures};
@@ -105,8 +105,7 @@
     emotion = validEmotion(emotion); const warm = emotion === 'warm', curious = emotion === 'curious'; const calm = emotion === 'calm' || emotion === 'reassuring' || emotion === 'appreciated';
     const motion = reducedMotion ? 0 : calm ? .4 : 1, talking = state === 'speaking', thoughtful = state === 'thinking', listening = state === 'listening', happy = state === 'success' && !calm, concerned = state === 'error';
     const blink = motion ? blinkFor(time) : 0;
-    // Only the guide's output energy may articulate speech; listening is still.
-    const audioEnergy = talking ? clamp(level, 0, 1) : 0, speech = talking ? (reducedMotion ? .3 : .88 * audioEnergy) : 0;
+    const audioEnergy = talking && !reducedMotion ? clamp(level, 0, 1) : 0, speech = talking ? (reducedMotion ? .3 : .88 * audioEnergy) : 0;
     const face = faceFor(state, emotion, emotionalGain);
     const expressive = mannerismFor({name: mannerism, elapsed: mannerismElapsed, reducedMotion, emotion: emotion === 'appreciated' ? 'reassuring' : emotion, intensity: emotionalGain, durationMs: mannerismDurationMs});
     const heart = emotion === 'appreciated' ? reducedMotion ? 1 : smooth(appreciationElapsed / .18) * (1 - smooth((appreciationElapsed - 1.17) / .28)) : 0;
@@ -114,7 +113,6 @@
     const greeting = expressive.name === 'greet', acknowledgement = expressive.name === 'acknowledge', focus = expressive.name === 'focus';
     const apertureAccent = expressive.listen * .035 - expressive.think * .055 + expressive.speak * .025 - expressive.comfort * .018 + expressive.celebrate * .06;
     const stateEnergy = talking ? speech : thoughtful ? .22 : listening ? .1 : happy ? .34 : concerned ? .08 : .035;
-    // A phrase accent follows an actual rest/energy onset, never a looping wave.
     const phraseGesture = talking && motion && Number.isFinite(speechBeatElapsed) ? pulse(speechBeatElapsed, .025, .68) * audioEnergy : 0;
     const product = productFocus && typeof productFocus === 'object' ? {x: clamp(productFocus.x, -1, 1), y: clamp(productFocus.y, -1, 1)} : null;
     const present = product && !reducedMotion ? expressive.offer * (calm ? .3 : 1) : 0;
@@ -168,15 +166,14 @@
     const loadingNotice = doc.createElement('div'); loadingNotice.className = 'brites-avatar__loading'; loadingNotice.textContent = 'Preparing your guide\u2026'; loadingNotice.setAttribute('aria-hidden', 'true');
     const id = 'britesRobot' + (++instanceCount);
     fallback.innerHTML = `<svg viewBox="0 0 320 280" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-      <defs><linearGradient id="${id}Ivory" x2=".4" y2="1"><stop stop-color="#fffefa"/><stop offset="1" stop-color="#d9dfe4"/></linearGradient><linearGradient id="${id}Gold" x2=".2" y2="1"><stop stop-color="#f2dda8"/><stop offset=".5" stop-color="#ac824b"/><stop offset="1" stop-color="#e4c78e"/></linearGradient><radialGradient id="${id}Glass"><stop stop-color="#1e3848"/><stop offset="1" stop-color="#09121d"/></radialGradient></defs>
-      <ellipse class="brites-avatar__shadow" cx="160" cy="248" rx="49" ry="6" fill="#243745" opacity=".15"/>
+      <defs><linearGradient id="${id}Ivory" x2=".45" y2="1"><stop stop-color="#ffffff"/><stop offset=".65" stop-color="#f8f5ed"/><stop offset="1" stop-color="#e2e8ec"/></linearGradient><linearGradient id="${id}Gold" x2=".2" y2="1"><stop stop-color="#f2dda8"/><stop offset=".5" stop-color="#b99762"/><stop offset="1" stop-color="#e4c78e"/></linearGradient><radialGradient id="${id}Glass"><stop stop-color="#183247"/><stop offset="1" stop-color="#09121d"/></radialGradient></defs>
+      <ellipse class="brites-avatar__shadow" cx="160" cy="264" rx="51" ry="5" fill="#243745" opacity=".10"/>
       <g class="brites-avatar__robot">
-        <rect x="137" y="225" width="18" height="23" rx="8" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><rect x="165" y="225" width="18" height="23" rx="8" fill="url(#${id}Ivory)" stroke="#ccd5dc"/>
-        <path d="M138 244h16M166 244h16" stroke="url(#${id}Gold)" stroke-width="3" stroke-linecap="round"/>
-        <g class="brites-avatar__antenna"><path d="M160 63V40" stroke="url(#${id}Gold)" stroke-width="5" stroke-linecap="round"/><circle cx="160" cy="36" r="5" class="brites-avatar__signal"/></g>
-        <ellipse cx="160" cy="197" rx="34" ry="38" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><path d="M131 214Q160 226 189 214" fill="none" stroke="url(#${id}Gold)" stroke-width="4"/><path d="M154 188l6-7 6 7-6 8z" fill="url(#${id}Gold)"/>
-        <g class="brites-avatar__arm brites-avatar__arm--left"><rect x="107" y="180" width="14" height="31" rx="7" fill="url(#${id}Ivory)" stroke="#ccd5dc"/></g><g class="brites-avatar__arm brites-avatar__arm--right"><rect x="199" y="180" width="14" height="31" rx="7" fill="url(#${id}Ivory)" stroke="#ccd5dc"/></g>
-        <g class="brites-avatar__head"><rect x="76" y="61" width="168" height="125" rx="45" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><rect x="89" y="73" width="142" height="101" rx="34" fill="url(#${id}Gold)"/><rect x="92" y="76" width="136" height="95" rx="31" fill="url(#${id}Glass)"/>
+        <ellipse cx="160" cy="261" rx="48" ry="5" fill="#ebe9e1" stroke="#d8d6cd"/>
+        <path class="brites-avatar__porcelain-body" d="M160 136C128 136 111 166 114 201C117 238 132 260 148 260H172C188 260 203 238 206 201C209 166 192 136 160 136Z" fill="url(#${id}Ivory)" stroke="#d8e1e7"/>
+        <path d="M155 200l5-6 5 6-5 7Z" fill="#86cbdc" stroke="url(#${id}Gold)" stroke-width="1"/>
+        <g class="brites-avatar__arm brites-avatar__arm--left"><path d="M117 169C101 170 91 191 94 221C96 238 103 242 110 232C116 214 119 190 117 169Z" fill="url(#${id}Ivory)" stroke="#d8e1e7"/><path d="M107 186Q98 206 103 225" fill="none" stroke="url(#${id}Gold)" stroke-width="1"/></g><g class="brites-avatar__arm brites-avatar__arm--right"><path d="M203 169C219 170 229 191 226 221C224 238 217 242 210 232C204 214 201 190 203 169Z" fill="url(#${id}Ivory)" stroke="#d8e1e7"/><path d="M213 186Q222 206 217 225" fill="none" stroke="url(#${id}Gold)" stroke-width="1"/></g>
+        <g class="brites-avatar__head"><ellipse cx="160" cy="116" rx="82" ry="68" fill="url(#${id}Ivory)" stroke="#d8e1e7"/><rect x="89" y="73" width="142" height="101" rx="46" fill="url(#${id}Gold)"/><rect x="91" y="75" width="138" height="97" rx="45" fill="url(#${id}Glass)"/>
           <g class="brites-avatar__eye-gaze"><g class="brites-avatar__eye"><path class="brites-avatar__ribbon--left" d="M113 115Q113 108 120 108H141Q148 108 148 115Q148 122 141 122H120Q113 122 113 115Z"/><path class="brites-avatar__ribbon--right" d="M172 115Q172 108 179 108H200Q207 108 207 115Q207 122 200 122H179Q172 122 172 115Z"/></g><g class="brites-avatar__heart"><path d="M130 127C124 122 114 115 114 108C114 100 125 97 130 104C135 97 146 100 146 108C146 115 136 122 130 127Z"/><path d="M190 127C184 122 174 115 174 108C174 100 185 97 190 104C195 97 206 100 206 108C206 115 196 122 190 127Z"/></g></g>
           <g class="brites-avatar__face-design" fill="none" stroke="#9de7ff" stroke-linecap="round" stroke-linejoin="round">
             <path class="brites-avatar__brow--left" d="M115 94Q130 87 145 94" stroke-width="2.5"/><path class="brites-avatar__brow--right" d="M175 94Q190 87 205 94" stroke-width="2.5"/>
@@ -187,6 +184,7 @@
           </g><path d="M125 95Q130 89 134 87" fill="none" stroke="#fff" opacity=".16" stroke-width="3" stroke-linecap="round"/>
         </g>
       </g></svg>`;
+    const speechMouthNode = doc.createElementNS('http://www.w3.org/2000/svg','ellipse'); speechMouthNode.setAttribute('class','brites-avatar__speech-mouth'); speechMouthNode.setAttribute('cx','160'); speechMouthNode.setAttribute('cy','145'); speechMouthNode.setAttribute('rx','12'); speechMouthNode.setAttribute('ry','2'); speechMouthNode.setAttribute('fill','none'); speechMouthNode.setAttribute('stroke-width','2.5'); fallback.querySelector('.brites-avatar__face-design').appendChild(speechMouthNode);
     const faceNodes = Object.fromEntries(['brow--left', 'brow--right', 'cheek--left', 'cheek--right', 'smile-signal', 'eye-smile', 'face-signal', 'ribbon--left', 'ribbon--right'].map(name => [name, fallback.querySelector('.brites-avatar__' + name)]));
     const caption = doc.createElement('div'); caption.className = 'brites-avatar__caption';
     caption.setAttribute('aria-hidden', 'true');
@@ -217,7 +215,6 @@
       mannerismTimer = win.setTimeout(() => {cancelMannerism(); if (!destroyed) sync();}, mannerismDurationMs || MANNERISMS[name] * 1000);
       emit('mannerism', {name, id: mannerismId, duration: MANNERISMS[name]});
     }
-    // One optional shopper-initiated greeting per opening.
     function triggerGreeting() {if (destroyed || greetedThisOpening || !canDisplay() || paused || reducedMotion) return false; playMannerism('greet'); greetedThisOpening = mannerism === 'greet'; sync(); return greetedThisOpening;}
     function advanceGaze(time) {
       const delta = clamp(time - gazeAt, 0, .12); gazeAt = time;
@@ -228,7 +225,15 @@
         for (const axis of ['x', 'y']) {point[axis] += (gazeTarget[axis] - point[axis]) * follow; if (Math.abs(gazeTarget[axis] - point[axis]) < .0005) point[axis] = gazeTarget[axis];}
       }
     }
-    function poseAt(time, fallbackTarget = false) {advanceGaze(time); return poseFor({state, time, elapsed: time - stateAt, level, gaze, headGaze, productFocus: productFocus ? {...productFocus, elapsed: fallbackTarget ? Math.max(.44, time - productFocus.at) : time - productFocus.at} : null, reducedMotion, emotion, mannerism, mannerismElapsed: fallbackTarget && productFocus && mannerism === 'explain' ? Math.max(.44, time - mannerismAt) : time - mannerismAt, speechBeatElapsed: speechBeatAt === null ? -1 : time - speechBeatAt, appreciationElapsed: time - appreciationAt, performance, mannerismDurationMs});}
+    let displayedFace = null, faceAt = null, faceSettling = false;
+    function poseAt(time, fallbackTarget = false) {advanceGaze(time); const pose = poseFor({state, time, elapsed: time - stateAt, level, gaze, headGaze, productFocus: productFocus ? {...productFocus, elapsed: fallbackTarget ? Math.max(.44, time - productFocus.at) : time - productFocus.at} : null, reducedMotion, emotion, mannerism, mannerismElapsed: fallbackTarget && productFocus && mannerism === 'explain' ? Math.max(.44, time - mannerismAt) : time - mannerismAt, speechBeatElapsed: speechBeatAt === null ? -1 : time - speechBeatAt, appreciationElapsed: time - appreciationAt, performance, mannerismDurationMs});
+      const keys = [...Object.keys(FACE_EXPRESSIONS.neutral), 'eyeScaleX', 'eyeScaleY', 'eyeDeformation'];
+      const delta = faceAt === null ? 0 : clamp(time - faceAt, 0, .12); faceAt = time;
+      if (!displayedFace || reducedMotion || paused || !canDisplay()) displayedFace = Object.fromEntries(keys.map(key => [key, pose[key]]));
+      else {const blend = 1 - Math.exp(-delta / .12); for (const key of keys) {displayedFace[key] += (pose[key] - displayedFace[key]) * blend; if(Math.abs(pose[key]-displayedFace[key])<.0005)displayedFace[key]=pose[key];}}
+      faceSettling = !reducedMotion && !paused && keys.some(key => Math.abs(pose[key]-displayedFace[key]) >= .0005);
+      return {...pose, ...displayedFace};
+    }
     function emit(type, detail) {frame.dispatchEvent(new win.CustomEvent('brites-avatar:' + type, {detail, bubbles: true, composed: true})); try {options.onStatus?.(type, detail);} catch {}}
     function canDisplay() {return visible && intersecting && !doc.hidden && !destroyed;}
     function active() {return canDisplay() && !paused && !failed;}
@@ -269,6 +274,7 @@
       frame.style.setProperty('--brites-head-gaze-y', (pose.headPitch * 22).toFixed(2) + 'px');
       frame.style.setProperty('--brites-face-cheek', String(pose.cheekGlow));
       frame.style.setProperty('--brites-face-smile', String(pose.smileCurve));
+      const mouthActive = pose.state === 'speaking' && pose.speechEnergy > .015 && pose.heart <= .05; speechMouthNode.setAttribute('opacity', mouthActive ? '1' : '0'); speechMouthNode.setAttribute('ry', (2 + pose.speechEnergy * 9).toFixed(2)); speechMouthNode.setAttribute('rx', (12 + pose.speechEnergy * 3).toFixed(2));
       frame.style.setProperty('--brites-focus-head', (pose.productFocused ? pose.targetX * 8 : 0).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-talk-arm', (-pose.armLiftRight * 75).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-point-left', (pose.armLiftLeft * 75).toFixed(2) + 'deg');
@@ -282,6 +288,7 @@
       const browY = 94 - pose.faceBrowLift * 5, browArc = browY - 3 - pose.faceBrowLift * 3, browTilt = pose.faceBrowTilt * 5;
       faceNodes['brow--left'].setAttribute('d', `M115 ${(browY + browTilt * 1.2).toFixed(2)}Q130 ${(browArc + browTilt * .8).toFixed(2)} 145 ${(browY + browTilt * .4).toFixed(2)}`);
       faceNodes['brow--right'].setAttribute('d', `M175 ${(browY - browTilt * .4).toFixed(2)}Q190 ${(browArc - browTilt * .8).toFixed(2)} 205 ${(browY - browTilt * 1.2).toFixed(2)}`);
+      faceNodes['smile-signal'].setAttribute('opacity', mouthActive ? '0' : '1');
       faceNodes['smile-signal'].setAttribute('d', `M147 145Q160 ${(145 + pose.smileCurve * 10).toFixed(2)} 173 145`);
       for (const [side, center, sign] of [['left',130,-1],['right',190,1]]) {
         const curve=pose.eyeSmile*10, tilt=pose.faceBrowTilt*sign*3, half=Math.max(1.1,7*(1-pose.lidClosure));
@@ -300,6 +307,7 @@
       const statusLabel = state === 'success' && (emotion === 'calm' || emotion === 'reassuring') ? 'Here with you' : MOODS[state].label;
       const pending = !hasWebglFrame() && !fallbackPresented;
       caption.textContent = pending ? '' : statusLabel + (fallbackPresented ? ' \u00b7 2-D companion' : '');
+      if(faceSettling) queuePointerFrame();
       frame.setAttribute('aria-label', 'Brites jewellery gift guide. ' + (pending ? 'Preparing your guide.' : statusLabel) + (fallbackPresented ? '. Animated 2-D companion; 3-D unavailable.' : '') + (paused ? '. Animation paused.' : ''));
     }
     function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; frameReady = false; pendingReadyType = null; fallbackPresented = true; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} finally {surface.replaceChildren();} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
@@ -345,12 +353,12 @@
     function stopPointerFrame() {if (pointerFrame !== null) win.cancelAnimationFrame?.(pointerFrame); pointerFrame = null;}
     function queuePointerFrame() {
       if (pointerFrame !== null || !canDisplay() || paused || reducedMotion || !win.requestAnimationFrame) return;
-      if (!['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) return;
+      if (!faceSettling && !['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) return;
       pointerFrame = win.requestAnimationFrame(() => {
         pointerFrame = null;
         if (!canDisplay() || paused || reducedMotion) return;
         syncFallback();
-        if (['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) queuePointerFrame();
+        if (faceSettling || ['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) queuePointerFrame();
       });
     }
     function lookAt(x, y, soften = false) {
@@ -389,11 +397,10 @@
     }
     function clearFocus() {if (destroyed) return; if (productFocus && mannerism === 'explain') cancelMannerism(); productFocus = null; sync();}
     function cue(name) {if (destroyed || !canDisplay() || paused || reducedMotion) return false; const key = name === 'present' ? 'explain' : name; if (!Object.hasOwn(MANNERISMS, key)) return false; playMannerism(key); sync(); return mannerism === key;}
-    function setLevel(value) {if (destroyed || paused || !canDisplay()) return; level = clamp(value, 0, 1); if (state === 'speaking' && !paused && canDisplay()) {if (level < .045) speechRested = true; else if (level > .1 && speechRested && (speechBeatAt === null || now() - speechBeatAt > .42)) {speechBeatAt = now(); speechRested = false;}} syncFallback(); if (reducedMotion && state === 'speaking') sync();}
+    function setLevel(value) {if (destroyed || paused || reducedMotion || !canDisplay()) return; level = clamp(value, 0, 1); if (state === 'speaking' && !paused && canDisplay()) {if (level < .045) speechRested = true; else if (level > .1 && speechRested && (speechBeatAt === null || now() - speechBeatAt > .42)) {speechBeatAt = now(); speechRested = false;}} syncFallback(); if (reducedMotion && state === 'speaking') sync();}
     const visibility = () => sync(), motion = event => {reducedMotion = event.matches; sync();};
     function currentGazeAnchor(box) {
       try {const projected = !failed && engine?.gazeAnchor?.(); if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y)) return projected;} catch {}
-      // SVG preserveAspectRatio centers the 320x280 drawing inside its viewport.
       const svgBox = fallback.querySelector('svg').getBoundingClientRect();
       const artWidth = svgBox.width > 0 ? svgBox.width : Math.min(box.width, 380), artHeight = svgBox.height > 0 ? svgBox.height : Math.min(box.height, 460);
       const scale = Math.min(artWidth / 320, artHeight / 280), left = svgBox.width > 0 ? svgBox.left : box.left + (box.width - artWidth) / 2, top = svgBox.height > 0 ? svgBox.top : box.top + (box.height - artHeight) / 2;

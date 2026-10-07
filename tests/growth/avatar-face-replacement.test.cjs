@@ -57,14 +57,14 @@ test('the new face contains two filled light ribbons and no old ring or foregrou
   const h = harness(t), visor = h.get('original-wide-visor'), bezel = h.get('original-visor-bezel'), pair = h.get('expression-eye-pair');
   assert.ok(geometrySize(visor).x / geometrySize(visor).y > 1.4, 'visor is visibly wider than tall');
   assert.equal(visor.geometry.type, 'ExtrudeGeometry'); assert.equal(bezel.geometry.type, 'ExtrudeGeometry');
-  assert.equal(h.get('original-pebble-shell').geometry.type, 'ExtrudeGeometry', 'the new head silhouette replaces the old spherical shell');
+  assert.equal(h.get('original-pebble-shell').geometry.type, 'SphereGeometry', 'the continuous design has a smooth oval helmet rather than a square monitor');
   assert.equal(h.get('expression-upper-shutter'), undefined); assert.equal(h.get('expression-lower-shutter'), undefined);
   const visibleMeshes = []; pair.traverse(part => {if (part.isMesh && part.visible) visibleMeshes.push(part);});
   assert.equal(visibleMeshes.length, 2); assert.deepEqual(visibleMeshes.map(part => part.name), eyeNames);
   for (const part of visibleMeshes) {assert.equal(part.geometry.type, 'ExtrudeGeometry'); validGeometry(part); assert.ok(geometrySize(part).x > .4); assert.ok(geometrySize(part).z > .03);}
   assert.equal(h.get('retired-aperture-ornament').children.length, 0, 'retired ring contains no mesh');
   assert.equal(h.engine.snapshot().character.digitalEyes, 2);
-  assert.deepEqual({...h.engine.snapshot().character.faceGeometry}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5});
+  assert.deepEqual({...h.engine.snapshot().character.faceGeometry}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5, speechMouth: true});
 });
 
 test('opaque old geometry cannot cover either replacement eye along the viewing ray', t => {
@@ -149,12 +149,12 @@ test('paired light materials bypass tone mapping while the ceramic and metal ret
   assert.equal(h.engine.snapshot().textures.length, 6); assert.equal(h.engine.snapshot().shadow.enabled, true); assert.equal(h.engine.snapshot().finish.bloom, 'disabled pending GPU verification');
 });
 
-test('the wider head remains connected to its support and its soles remain on the platform', t => {
+test('the oval helmet remains connected and the continuous body stays planted on the platform', t => {
   const h = harness(t), head = new THREE.Box3().setFromObject(h.get('original-pebble-shell')), neck = new THREE.Box3().setFromObject(h.get('supported-neck'));
   assert.ok(head.min.y < neck.max.y, 'neck reaches inside the ceramic shell');
   const platformTop = new THREE.Box3().setFromObject(h.get('grounding-platform')).max.y;
   for (const fields of [{state: 'idle', bob: -.4, stanceScale: .94, bodyRoll: -.3, bodyYaw: -.3, lean: -.3}, {state: 'speaking', level: 1, bob: .4, stanceScale: 1.06, bodyRoll: .3, bodyYaw: .3, lean: .3}, {state: 'success', emotion: 'celebrate', bob: .14, stanceScale: 1.04}]) {
     h.pose(fields);
-    for (const side of [-1, 1]) assert.ok(Math.abs(new THREE.Box3().setFromObject(h.get('grounded-sole-' + side)).min.y - platformTop) < 1e-6);
+    assert.ok(Math.abs(new THREE.Box3().setFromObject(h.get('sculpted-porcelain-torso')).min.y - platformTop) < 1e-6);
   }
 });

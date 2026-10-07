@@ -5,7 +5,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const client=require('../../brites-concierge-voice');
 const server=require('../../netlify/functions/_britesConciergeVoice');
-const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
 const HANDLE='simple-compass-necklace',VARIANT='gid://shopify/ProductVariant/101';
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};}

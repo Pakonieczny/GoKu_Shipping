@@ -25,23 +25,27 @@ function fixture(t) {
 }
 test('retired dangling orbits and fine jewellery chain cannot contribute any visible geometry', t => {
   const f = fixture(t);
-  for (const name of ['retired-aperture-ornament', 'retired-chain-ornament', 'retired-background-orbit', 'retired-stage-ornament']) {
+  for (const name of ['retired-aperture-ornament', 'retired-background-orbit', 'retired-stage-ornament']) {
     const object = f.scene.getObjectByName(name); assert.ok(object); assert.equal(object.visible, false); assert.equal(object.castShadow, false, name);
   }
+  assert.equal(f.scene.getObjectByName('retired-chain-ornament'), undefined, 'old jewellery chain is removed entirely');
 });
-test('warm continuous studio sweep receives real shadow configuration and has finite valid geometry', t => {
+test('hidden continuous studio sweep stays out of the pale frame while a separate floor receives shadows', t => {
   const f = fixture(t), sweep = f.scene.getObjectByName('continuous-studio-sweep');
-  assert.ok(sweep.isMesh); assert.equal(sweep.receiveShadow, true); assert.equal(sweep.castShadow, false);
-  assert.ok(sweep.material.roughness > .9); assert.equal(sweep.material.metalness, 0);
+  assert.ok(sweep.isMesh); assert.equal(sweep.visible, false); assert.equal(sweep.receiveShadow, false); assert.equal(sweep.castShadow, false);
+  assert.ok(sweep.material.isMeshBasicMaterial); assert.equal(sweep.material.toneMapped, false);
   const position = sweep.geometry.attributes.position;
   assert.ok(Array.from(position.array).every(Number.isFinite));
   assert.ok(Array.from(sweep.geometry.index.array).every(index => Number.isInteger(index) && index >= 0 && index < position.count));
-  assert.ok(new Set(Array.from(position.array).filter((_, index) => index % 3 === 1)).size > 3, 'curved sweep has several heights, not a flat panel');
+  assert.ok(new Set(Array.from(position.array).filter((_, index) => index % 3 === 1)).size > 3, 'retained curved sweep has finite construction');
+  let receiver; f.scene.traverse(object => {if (object.isMesh && object.material.isShadowMaterial) receiver = object;});
+  assert.ok(receiver); assert.equal(receiver.receiveShadow, true); assert.equal(receiver.visible, true); assert.ok(receiver.material.opacity <= .15);
+  assert.equal(f.scene.background.getHexString(), 'faf8f2');
 });
 test('satin gold and low normal strength avoid concentrated glitter while retaining PBR textures', t => {
   const f = fixture(t), materials = new Set(); f.scene.traverse(object => {if (object.isMesh) materials.add(object.material);});
-  const gold = [...materials].find(material => material.color?.getHexString() === 'b79a69');
-  assert.ok(gold.isMeshPhysicalMaterial); assert.ok(gold.roughness >= .65); assert.ok(gold.bumpScale <= .0005); assert.ok(gold.anisotropy <= .2); assert.ok(gold.roughnessMap);
+  const gold = [...materials].find(material => material.color?.getHexString() === 'c8b187');
+  assert.ok(gold.isMeshPhysicalMaterial); assert.ok(gold.roughness >= .64); assert.ok(gold.bumpScale <= .0005); assert.ok(gold.roughnessMap);
   const ceramic = [...materials].find(material => material.normalMap);
   assert.ok(ceramic.normalScale.x <= .06); assert.ok(ceramic.bumpScale <= .001); assert.ok(ceramic.map);
 });

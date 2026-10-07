@@ -3,7 +3,7 @@
 // provider, browser permission or physically audible playback is tested here.
 const test=require('node:test'),assert=require('node:assert/strict');
 const adapter=require('../../brites-concierge-voice.js');
-const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function fixture(t,options={}){

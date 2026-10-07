@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const server=require('../../netlify/functions/_britesConciergeVoice');
 const client=require('../../brites-concierge-voice');
-const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
 const env={BRITES_GROWTH_SANDBOX:'1',BRITES_GROWTH_NAMESPACE:'Brites_Growth_Sandbox',BRITES_CONCIERGE_REALTIME_ENABLED:'1',OPENAI_API_KEY:'test-only-secret',BRITES_CONCIERGE_REALTIME_RESERVE_USD:'0.5'};
 function req(body,origin='https://preview.test'){return new Request('https://preview.test/api/concierge-voice',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});}
 function fixture(options={}){const calls=[],reservations=[],deadlines=[];const handler=server.createHandler({env,authorize:async()=>true,service:{setup:async()=>({aiEnabled:true,aiDailyUsdCap:1}),rateLimit:async()=>true},reserveBudget:async usd=>{reservations.push(usd);return {allocatedUsd:usd};},scheduleHangup:async x=>{deadlines.push(x);return true;},fetch:async(url,init)=>{calls.push({url,init});return url.endsWith('/hangup')?new Response(null,{status:200}):new Response(SDP,{status:201,headers:{Location:'/v1/realtime/calls/rtc_example'}});},now:()=>100000,...options});return {handler,calls,reservations,deadlines};}

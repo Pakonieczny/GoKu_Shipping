@@ -17,8 +17,8 @@ test('conversation transitions have explicit original-robot behavior cues', () =
     greet: 'anticipation', acknowledge: 'listening', focus: 'thinking',
     explain: 'speaking', confirm: 'celebrate', reassure: 'reassure'
   });
-  assert.match(sceneSource, /identity: 'original twin-ribbon pebble robot'/);
-  assert.match(sceneSource, /no human iris or mouth/);
+  assert.match(sceneSource, /identity: 'original pearlfin porcelain guide'/);
+  assert.match(sceneSource, /no human iris or anatomical mouth/);
 });
 
 test('each cue anticipates, expresses and settles on its finite deadline', () => {

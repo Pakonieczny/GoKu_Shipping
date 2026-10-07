@@ -3,12 +3,12 @@
 // provider calls, audible-media, physical microphone or GPU certification.
 const test=require('node:test'),assert=require('node:assert/strict');
 const client=require('../../brites-concierge-voice.js');
-const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
 const cue={mood:'curious',gesture:'present',intensity:.45,durationMs:1200};
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(t,{greeting=false,callback=true}={}){
   let channel,timer=0,input=0,response=0;const sent=[],calls=[],performances=[],cancelled=[],states=[],timers=new Map(),listeners=new Map();
-  const stream={getTracks:()=>[{stop(){}}],getAudioTracks:()=>[]};
+  const liveTrack={kind:'audio',readyState:'live',stop(){}};const stream={getTracks:()=>[liveTrack],getAudioTracks:()=>[liveTrack]};
   const document={hidden:false,body:{appendChild(){}},createElement:()=>({setAttribute(){},play:async()=>{},pause(){},remove(){}}),addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)};
   class Peer{constructor(){this.iceGatheringState='complete';}addTrack(){}createDataChannel(){channel={readyState:'connecting',send:raw=>sent.push(JSON.parse(raw)),close(){}};return channel;}async createOffer(){return {sdp:SDP,type:'offer'};}async setLocalDescription(value){this.localDescription=value;}async setRemoteDescription(){channel.readyState='open';channel.onopen();}close(){}}
   const runtime={document,location:{origin:'https://preview.test'},navigator:{mediaDevices:{getUserMedia:async()=>stream}},RTCPeerConnection:Peer,AbortController,setTimeout(fn,ms){const id=++timer;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name),fetch:async(url,init)=>Response.json(JSON.parse(init.body).action==='start'?{sdp:SDP,stopToken:'synthetic-stop-token',maxDurationMs:120000}:{enabled:true,stopped:true})};

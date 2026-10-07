@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const server=require('../../netlify/functions/_britesConciergeVoice.js'),client=require('../../brites-concierge-voice.js');
-const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:fixture 1 udp 123 192.0.2.1 49152 typ host\r\n';
 const env={BRITES_GROWTH_SANDBOX:'1',BRITES_GROWTH_NAMESPACE:'Brites_Growth_Sandbox',BRITES_CONCIERGE_REALTIME_ENABLED:'1',BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO:'1',BRITES_CONCIERGE_REALTIME_DEMO_USD_CAP:'10',BRITES_CONCIERGE_REALTIME_RESERVE_USD:'1',OPENAI_API_KEY:'fixture-only-provider-key'};
 function request(body,{origin='https://preview.test',operator=false}={}){return new Request('https://preview.test/api/concierge-voice',{method:'POST',headers:{...(origin?{Origin:origin}:{}),'Content-Type':'application/json',...(operator?{'X-Growth-Key':'fixture-admin'}:{})},body:JSON.stringify(body)});}
 function fixture(changes={}){

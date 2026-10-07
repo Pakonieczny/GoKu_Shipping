@@ -99,7 +99,7 @@ for(const [header,credential,authReads] of [['X-Growth-Key','synthetic-operator-
   assert.equal(value.budget.reservedCents,1000);assert.equal(value.budget.nextReservationFits,false);assert.equal(value.recordWindow.limit,50);assert.equal(value.deadlineWindow.limit,20);assert.equal(value.recordWindow.unattributed,1);
   assert.deepEqual(value.lastStart,{at:1000000,stage:'provider',providerStatus:429,code:'insufficient_quota'});
   assert.deepEqual(f.queries,[{name:'VoiceUsage',field:'startedAt',direction:'desc',limit:50},{name:'VoiceDeadlines',field:'at',direction:'desc',limit:20},{name:'VoiceContinuations',field:'issuedAt',direction:'desc',limit:50}]);
-  assert.deepEqual(f.counts,{db:1,service:1,authReads,reads:5,writes:0,setup:0,provider:0});assert.deepEqual([...f.rows],before);
+  assert.deepEqual(f.counts,{db:1,service:1,authReads,reads:7,writes:0,setup:0,provider:0});assert.deepEqual([...f.rows],before);
   assert.equal(value.providerCalls,0);assert.equal(value.financialWrites,0);assert.equal(value.refunds,0);assert.doesNotMatch(JSON.stringify(value),/synthetic-operator-key|synthetic-edit-passcode/);
 });
 test('disabled voice rejects non-fixed allocation bodies before initializing diagnostic storage',async()=>{

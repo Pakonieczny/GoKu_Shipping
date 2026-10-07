@@ -75,7 +75,7 @@ test('production finish preserves the dark visor and removes the broad reflectiv
   assert.equal(h.engine.snapshot().character.digitalEyes, 2);
   assert.ok(h.bloom.threshold > 2);
   assert.ok(h.bloom.strength < .1);
-  assert.ok(h.renderer.toneMappingExposure < 1);
+  assert.ok(h.renderer.toneMappingExposure >= 1 && h.renderer.toneMappingExposure <= 1.2);
 });
 
 test('studio lighting uses actual finite HDR radiance independently of the display skybox', t => {
@@ -88,7 +88,7 @@ test('studio lighting uses actual finite HDR radiance independently of the displ
   assert.ok(max > 3);
   h.engine.setMotion({active: true, reducedMotion: false}); h.advance(1000);
   assert.notEqual(h.renderer.scene.background, texture);
-  assert.equal(h.renderer.scene.background.isCubeTexture, true);
+  assert.equal(h.renderer.scene.background.isColor, true);
   assert.equal(h.engine.snapshot().environment.hdr, true);
   assert.equal(h.engine.snapshot().environment.hdri, false);
 });

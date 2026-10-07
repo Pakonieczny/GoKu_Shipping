@@ -117,9 +117,9 @@ test('actual production mesh construction stays finite and adaptive tessellation
 test('scene network and source budgets prevent accidental eager or oversized avatar regressions', () => {
   const controller = fs.readFileSync(path.join(root, 'brites-concierge-avatar.js'), 'utf8');
   assert.ok(fileBytes('assets/brites-concierge-avatar-scene.mjs') <= 640 * 1024);
-  // Allow the semantic facial rig and bounded page-wide gaze controller while
+  // Allow the semantic facial rig, measured speech aperture and bounded expression easing while
   // retaining the same on-demand compiled-scene download limit.
-  assert.ok(fileBytes('brites-concierge-avatar.js') <= 48 * 1024);
+  assert.ok(fileBytes('brites-concierge-avatar.js') <= 50 * 1024);
   assert.ok(fileBytes('brites-concierge-avatar.css') <= 12 * 1024);
   assert.doesNotMatch(controller, /avatar-concept\.png/);
   assert.match(controller, /await import\(moduleUrl\)/);

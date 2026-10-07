@@ -3,7 +3,7 @@
 // microphone, physical audio playback or end-to-end latency claim.
 const test=require('node:test'),assert=require('node:assert/strict');
 const adapter=require('../../brites-concierge-voice.js');
-const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
 function fixture(t){
   let channel,peer,nextTimer=0;const sent=[],states=[],errors=[],tools=[],timers=new Map();
   const track={stop(){}},stream={getTracks:()=>[track],getAudioTracks:()=>[track]};

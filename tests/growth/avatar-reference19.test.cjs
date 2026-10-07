@@ -49,12 +49,12 @@ test('state transition easing and filled ribbon identity stay original and bound
   assert.match(scene, /transitionMs: 320/);
   assert.match(scene, /colorEase = colorProgress \* colorProgress \* \(3 - 2 \* colorProgress\)/);
   assert.match(scene, /speechShape = reducedMotion \? 0/);
-  assert.match(scene, /identity: 'original twin-ribbon pebble robot'/);
+  assert.match(scene, /identity: 'original pearlfin porcelain guide'/);
   assert.match(scene, /two deformable geometric light ribbons/);
   assert.doesNotMatch(scene, /const halo =|const innerHalo =/);
-  assert.match(scene, /no human iris or mouth/);
+  assert.match(scene, /no human iris or anatomical mouth/);
   assert.match(bundledScene, /original authored choreography/);
-  assert.match(bundledScene, /original twin-ribbon pebble robot/);
+  assert.match(bundledScene, /original pearlfin porcelain guide/);
   assert.match(bundledScene, /rare irregular 0\.19-0\.21 second closure/);
   assert.doesNotMatch((scene + controller).toLowerCase(), /wall[- ]?e|disney/);
 });

@@ -69,5 +69,5 @@ test('failed and timed-out texture requests dispose allocations and never silent
 test('floating scene is transparent and restores studio ground without rebuilding geometry', t => {
   const f = scene(t), before = f.engine.snapshot().geometry.model.triangles;
   f.engine.setFloating(true); assert.equal(f.renderer.alpha, 0); assert.equal(f.renderer.scene.background, null); assert.equal(f.renderer.scene.getObjectByName('continuous-studio-sweep').visible, false);
-  f.engine.setFloating(false); assert.equal(f.renderer.alpha, 1); assert.ok(f.renderer.scene.background.isCubeTexture); assert.equal(f.renderer.scene.getObjectByName('continuous-studio-sweep').visible, true); assert.equal(f.engine.snapshot().geometry.model.triangles, before);
+  f.engine.setFloating(false); assert.equal(f.renderer.alpha, 1); assert.ok(f.renderer.scene.background.isColor); assert.equal(f.renderer.scene.background.getHexString(),'faf8f2'); assert.equal(f.renderer.scene.getObjectByName('continuous-studio-sweep').visible, false); assert.equal(f.renderer.scene.getObjectByName('grounding-platform').visible, true); assert.equal(f.engine.snapshot().geometry.model.triangles, before);
 });

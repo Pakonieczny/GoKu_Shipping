@@ -34,6 +34,7 @@
     micTimeout:'Microphone permission timed out. Allow microphone access, then select Talk to me again.',
     media:'OpenAI voice could not establish a media connection in this browser. You can retry or type here.',
     network:'OpenAI voice could not finish network setup in this browser. You can retry or type here.',
+    noNetworkRoute:'This browser could not prepare a voice network connection. Try another browser, or type here.',
     playback:'Your browser paused OpenAI audio. End voice and start again to allow playback.',
     unsupported:'This browser cannot start OpenAI voice. Try a browser with microphone access, or type here.',
     audioSetup:'Voice audio initialization timed out.',
@@ -56,7 +57,7 @@
   function safeErrorMessage(error){return Object.values(MESSAGES).includes(error?.message)?error.message:MESSAGES.unavailable;}
   function publicFailure(error){
     const message=safeErrorMessage(error),entry=Object.entries(MESSAGES).find(([,value])=>value===message),kind=entry?.[0]||'unavailable';
-    const code={signIn:'PREVIEW_SIGN_IN_REQUIRED',allocation:'VOICE_ALLOCATION_UNAVAILABLE',disabled:'VOICE_DISABLED',expired:'VOICE_SESSION_EXPIRED',rate:'VOICE_RATE_LIMITED',micDenied:'MIC_PERMISSION_REQUIRED',micMissing:'MIC_NOT_FOUND',micBusy:'MIC_UNAVAILABLE',micTimeout:'MIC_PERMISSION_TIMEOUT',micUnknown:'MIC_UNAVAILABLE',playback:'AUDIO_PLAYBACK_BLOCKED',unsupported:'BROWSER_UNSUPPORTED',network:'VOICE_NETWORK_FAILED',media:'VOICE_MEDIA_FAILED',availabilityTimeout:'VOICE_AVAILABILITY_TIMEOUT',setupTimeout:'VOICE_SETUP_TIMEOUT',disconnected:'VOICE_DISCONNECTED'}[kind]||'VOICE_UNAVAILABLE';
+    const code={signIn:'PREVIEW_SIGN_IN_REQUIRED',allocation:'VOICE_ALLOCATION_UNAVAILABLE',disabled:'VOICE_DISABLED',expired:'VOICE_SESSION_EXPIRED',rate:'VOICE_RATE_LIMITED',micDenied:'MIC_PERMISSION_REQUIRED',micMissing:'MIC_NOT_FOUND',micBusy:'MIC_UNAVAILABLE',micTimeout:'MIC_PERMISSION_TIMEOUT',micUnknown:'MIC_UNAVAILABLE',playback:'AUDIO_PLAYBACK_BLOCKED',unsupported:'BROWSER_UNSUPPORTED',network:'VOICE_NETWORK_FAILED',noNetworkRoute:'VOICE_NETWORK_UNAVAILABLE',media:'VOICE_MEDIA_FAILED',availabilityTimeout:'VOICE_AVAILABILITY_TIMEOUT',setupTimeout:'VOICE_SETUP_TIMEOUT',disconnected:'VOICE_DISCONNECTED'}[kind]||'VOICE_UNAVAILABLE';
     const recovery=kind==='signIn'?'sign-in':kind==='playback'?'playback':kind==='micDenied'||kind==='micTimeout'?'permission':kind==='disabled'||kind==='allocation'||kind==='unsupported'?'type':'retry';
     return Object.freeze({code,message,recovery,retryable:!['type','sign-in'].includes(recovery)});
   }
@@ -65,14 +66,34 @@
     const ownOrigin=rt.location?.origin||'https://preview.invalid';
     if(new URL(endpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
-    let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false,lastError=null,playbackBlocked=false;
-    let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',turnPerformanceUsed=false,performanceContinuationUsed=false;const sources=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set();
+    let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,disconnectDeadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false,lastError=null,playbackBlocked=false,outputMeterState='waiting';
+    let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',turnPerformanceUsed=false,performanceContinuationUsed=false;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set();
     const eventId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u001f\u007f]/.test(value)?value:'';
     function remember(map,key,value){if(!key||map.has(key))return;map.set(key,value);if(map.size>100)map.delete(map.keys().next().value);}
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
     function clear(id){if(id!=null){rt.clearTimeout(id);timers.delete(id);}}
     function setState(next){if(state===next)return;state=next;notify('onState',next);}
     function reportFailure(error){lastError=publicFailure(error);notify('onError',lastError.message,lastError);return lastError;}
+    function reportOutputMeterState(){
+      if(disposed||state==='idle'||state==='closing'||!audio?.srcObject)return;
+      const next=!outputMeter||!ctx||ctx.state==='closed'?'unavailable':['suspended','interrupted'].includes(ctx.state)?'paused':'ready';
+      if(next!==outputMeterState){outputMeterState=next;notify('onOutputMeterState',next);}
+    }
+    function resumeMeterContext(){
+      const current=epoch,context=ctx;if(!context)return;
+      const settled=()=>{if(current===epoch&&ctx===context)reportOutputMeterState();};
+      try{Promise.resolve(context.resume()).then(settled,settled);}catch{settled();}
+    }
+    function prepareMeterContext(current){
+      const AudioContext=rt.AudioContext||rt.webkitAudioContext;if(!AudioContext)return;
+      try{
+        ctx=new AudioContext();const context=ctx;
+        context.onstatechange=()=>{if(current===epoch&&ctx===context)reportOutputMeterState();};
+        // Preserve the explicit Talk gesture before availability/permission
+        // awaits. This optional analyser never opens a mic or plays a sound.
+        resumeMeterContext();
+      }catch{try{Promise.resolve(ctx?.close()).catch(()=>{});}catch{}ctx=null;}
+    }
     function send(value){if(dc?.readyState==='open'){dc.send(JSON.stringify(value));return true;}return false;}
     function updateContext(value){
       if(disposed||doc?.hidden||state==='idle'||state==='closing'||dc?.readyState!=='open')return false;
@@ -112,6 +133,22 @@
       try{onState();await bounded(completed,10000,MESSAGES.network);}
       finally{connection.removeEventListener('icegatheringstatechange',onState);}
     }
+    function hasVoiceNetworkRoute(sdp){
+      if(typeof sdp!=='string')return false;
+      // An SDP with no gathered candidates cannot make this non-trickle
+      // WebRTC connection. Reject it before allocating a provider call. Host
+      // mDNS, IPv6, relay and TCP candidates remain valid browser choices.
+      return sdp.split(/\r?\n/).some(line=>{const candidate=/^a=candidate:\S+ [12] (?:udp|tcp) \d+ \S+ (\d+) typ (?:host|srflx|prflx|relay)(?:\s|$)/i.exec(line);return !!candidate&&Number(candidate[1])>0&&Number(candidate[1])<=65535;});
+    }
+    function watchMicrophone(stream,current){
+      const tracks=stream?.getAudioTracks?.();
+      if(!tracks?.length||tracks.some(track=>track.readyState==='ended'))throw Error(MESSAGES.micMissing);
+      for(const track of tracks){
+        const ended=()=>{if(current!==epoch||disposed||mic!==stream||state==='idle'||state==='closing')return;reportFailure(Error(MESSAGES.micMissing));void stop('connection');};
+        if(typeof track.addEventListener==='function'){track.addEventListener('ended',ended);microphoneListeners.push(()=>track.removeEventListener('ended',ended));}
+        else {const previous=track.onended;track.onended=ended;microphoneListeners.push(()=>{if(track.onended===ended)track.onended=previous||null;});}
+      }
+    }
     async function request(body,{signal,keepalive=false}={}){
       const headers={...(typeof options.headers==='function'?options.headers():options.headers||{}),'Content-Type':'application/json'};
       // Never follow a moved endpoint: a custom preview operator header must
@@ -126,16 +163,17 @@
     }
     function cleanup(){
       for(const controller of toolControllers)controller.abort();toolControllers.clear();
-      abort?.abort();abort=null;for(const cancel of [...pending])cancel();clear(deadline);deadline=null;
+      abort?.abort();abort=null;for(const cancel of [...pending])cancel();clear(deadline);deadline=null;clear(disconnectDeadline);disconnectDeadline=null;
       if(raf!=null){rt.cancelAnimationFrame?.(raf);raf=null;}
       for(const id of timers)rt.clearTimeout(id);timers.clear();
+      microphoneListeners.forEach(remove=>{try{remove();}catch{}});microphoneListeners.length=0;
       mic?.getTracks().forEach(track=>track.stop());mic=null;
       if(audio){audio.pause();audio.srcObject=null;audio.remove?.();audio=null;}
       sources.forEach(node=>{try{node.disconnect();}catch{}});sources.length=0;
-      if(ctx){try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
+      if(ctx){ctx.onstatechange=null;try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
       if(dc){dc.onopen=dc.onmessage=dc.onerror=dc.onclose=null;dc.close();dc=null;}
       if(pc){pc.ontrack=pc.onconnectionstatechange=null;pc.close();pc=null;}
-      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=null;outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();notify('onLevel',{input:0,output:0});
+      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();notify('onLevel',{input:0,output:0});
     }
     function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;source.connect(analyser);sources.push(source,analyser);return {channel,analyser,samples:new Float32Array(analyser.fftSize)};}catch{return null;}}
     function blockPlayback(current,playbackAudio,stream){
@@ -152,13 +190,22 @@
       try{
         // Invoke both operations before the first await so a visible recovery
         // button's user activation reaches the browser playback APIs.
-        if(ctx){try{Promise.resolve(ctx.resume()).catch(()=>{});}catch{}}
+        resumeMeterContext();
         const played=Promise.resolve(playbackAudio.play());await bounded(played,5000,MESSAGES.playback);
         if(current!==epoch||disposed||audio!==playbackAudio||state==='idle'||state==='closing')return false;
         playbackBlocked=false;if(lastError?.code==='AUDIO_PLAYBACK_BLOCKED')lastError=null;notify('onPlaybackResumed');settleState();return true;
       }catch{blockPlayback(current,playbackAudio,stream);return false;}
     }
-    function sample(){if(disposed||!ctx)return;const levels={input:0,output:0};for(const value of [inputMeter,outputMeter])if(value){try{value.analyser.getFloatTimeDomainData(value.samples);levels[value.channel]=rms(value.samples);}catch{/* A visual meter cannot interrupt the voice session. */}}notify('onLevel',levels);try{raf=rt.requestAnimationFrame?.(sample);}catch{raf=null;}}
+    function sample(){
+      if(disposed||!ctx)return;const levels={input:0,output:0};
+      if(!['suspended','interrupted','closed'].includes(ctx.state))for(const value of [inputMeter,outputMeter])if(value){
+        try{value.analyser.getFloatTimeDomainData(value.samples);levels[value.channel]=rms(value.samples);}
+        catch{if(value.channel==='output'){outputMeter=null;reportOutputMeterState();}else inputMeter=null;}
+      }
+      // A failed visual analyser cannot interrupt native playback or replace
+      // missing samples with fabricated speech motion.
+      notify('onLevel',levels);try{raf=rt.requestAnimationFrame?.(sample);}catch{raf=null;}
+    }
     function settleState(){if(state==='idle'||state==='closing')return;if(outputPlaying)setState('speaking');else if(inputSpeaking)setState('listening');else if(toolControllers.size||responsePending)setState('thinking');else setState('listening');}
     function executePerformance(event){
       const responseId=eventId(event.response_id),callId=eventId(event.call_id),bound=responseId?responseTurns.get(responseId):null,performance=performanceResponses.get(responseId);
@@ -279,6 +326,7 @@
       const current=++epoch;++turnVersion;lastError=null;playbackBlocked=false;setState('connecting');abort=new rt.AbortController();
       try{
         if(!rt.RTCPeerConnection||!nav?.mediaDevices?.getUserMedia)throw Error(MESSAGES.unsupported);
+        prepareMeterContext(current);
         // Check explicit sandbox allocation/provider configuration before
         // requesting access to the shopper's microphone.
         notify('onConnectionPhase','checking');
@@ -287,20 +335,30 @@
         notify('onConnectionPhase','microphone');
         let gum;try{gum=nav.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});}catch(error){throw microphoneError(error);}
         gum.then(stream=>{if(current!==epoch||disposed)stream.getTracks().forEach(track=>track.stop());},()=>{});
-        try{mic=await bounded(gum,20000,MESSAGES.micTimeout);}catch(error){throw microphoneError(error);}if(current!==epoch)throw Error('Voice start cancelled.');
+        try{mic=await bounded(gum,20000,MESSAGES.micTimeout);}catch(error){throw microphoneError(error);}if(current!==epoch)throw Error('Voice start cancelled.');watchMicrophone(mic,current);
         notify('onConnectionPhase','connecting');
         pc=new rt.RTCPeerConnection();audio=doc.createElement('audio');audio.autoplay=true;audio.setAttribute('aria-hidden','true');audio.hidden=true;doc.body?.appendChild(audio);
         // Web Audio is only the optional visual meter. A suspended/missing
         // AudioContext must never prevent native WebRTC speech from connecting.
-        const AudioContext=rt.AudioContext||rt.webkitAudioContext;if(AudioContext){try{ctx=new AudioContext();Promise.resolve(ctx.resume()).catch(()=>{});inputMeter=meter(mic,'input');sample();}catch{try{Promise.resolve(ctx?.close()).catch(()=>{});}catch{}ctx=null;}}
-        pc.ontrack=event=>{if(current!==epoch||!audio||state==='closing'||state==='idle')return;const stream=event.streams?.[0]||(rt.MediaStream?new rt.MediaStream([event.track]):null);if(!stream)return;audio.srcObject=stream;outputMeter=meter(stream,'output');const playbackAudio=audio;try{Promise.resolve(playbackAudio.play()).catch(()=>blockPlayback(current,playbackAudio,stream));}catch{blockPlayback(current,playbackAudio,stream);}};
+        if(ctx){inputMeter=meter(mic,'input');sample();}
+        pc.ontrack=event=>{if(current!==epoch||!audio||state==='closing'||state==='idle')return;const stream=event.streams?.[0]||(rt.MediaStream?new rt.MediaStream([event.track]):null);if(!stream)return;audio.srcObject=stream;outputMeter=meter(stream,'output');reportOutputMeterState();const playbackAudio=audio;try{Promise.resolve(playbackAudio.play()).catch(()=>blockPlayback(current,playbackAudio,stream));}catch{blockPlayback(current,playbackAudio,stream);}};
         mic.getAudioTracks().forEach(track=>pc.addTrack(track,mic));
         dc=pc.createDataChannel('oai-events');const channel=dc,connection=pc;channel.onmessage=event=>receive(event.data,current);channel.onerror=()=>{if(current!==epoch||disposed||dc!==channel||state==='closing'||state==='idle')return;reportFailure(Error(MESSAGES.disconnected));void stop('connection');};
-        connection.onconnectionstatechange=()=>{if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;if(['failed','closed'].includes(connection.connectionState)){reportFailure(Error(MESSAGES.media));void stop('connection');}};
+        connection.onconnectionstatechange=()=>{
+          if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;
+          if(connection.connectionState==='disconnected'){
+            // Brief interruptions may recover this same peer. Keep the
+            // deadline tied to its first interruption rather than extending
+            // it on duplicate events; never open a replacement paid session.
+            if(disconnectDeadline==null){notify('onConnectionPhase','reconnecting');disconnectDeadline=timeout(8000,()=>{disconnectDeadline=null;if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle'||connection.connectionState==='connected')return;reportFailure(Error(MESSAGES.media));void stop('connection');});}
+          }else if(['failed','closed'].includes(connection.connectionState)){clear(disconnectDeadline);disconnectDeadline=null;reportFailure(Error(MESSAGES.media));void stop('connection');}
+          else if(connection.connectionState==='connected'){const recovering=disconnectDeadline!=null;clear(disconnectDeadline);disconnectDeadline=null;if(recovering)notify('onConnectionPhase','connected');}
+        };
         const ready=new Promise((resolve,reject)=>{channel.onopen=resolve;channel.onclose=()=>{if(current!==epoch||disposed||dc!==channel)return;if(state==='connecting')reject(Error(MESSAGES.media));else if(state!=='closing'&&state!=='idle'){reportFailure(Error(MESSAGES.media));void stop('connection');}};});ready.catch(()=>{});
         const offer=await bounded(pc.createOffer(),5000,MESSAGES.setupTimeout);await bounded(pc.setLocalDescription(offer),5000,MESSAGES.setupTimeout);
         await gatherIce(pc,current);if(current!==epoch)throw Error('Voice start cancelled.');
-        const opening=request({action:'start',sdp:pc.localDescription?.sdp||offer.sdp,...(capabilities.demoToken?{demoToken:capabilities.demoToken}:{})},{signal:abort.signal});
+        const localSdp=pc.localDescription?.sdp||offer.sdp;if(!hasVoiceNetworkRoute(localSdp))throw Error(MESSAGES.noNetworkRoute);
+        const opening=request({action:'start',sdp:localSdp,...(capabilities.demoToken?{demoToken:capabilities.demoToken}:{})},{signal:abort.signal});
         opening.then(answer=>{if(current!==epoch)void stopLateAnswer(answer);},()=>{});
         const answer=await bounded(opening,15000,MESSAGES.setupTimeout);
         if(current!==epoch)throw Error('Voice start cancelled.');
@@ -325,7 +383,7 @@
     const onHidden=()=>{if(doc?.hidden)void stop('hidden');},onPageHide=()=>void stop('pagehide');
     doc?.addEventListener('visibilitychange',onHidden);rt.addEventListener?.('pagehide',onPageHide);
     async function dispose(){disposed=true;doc?.removeEventListener('visibilitychange',onHidden);rt.removeEventListener?.('pagehide',onPageHide);await stop('disposed');}
-    return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;}};
+    return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;},get outputMeterState(){return outputMeterState;}};
   }
   return {create,rms,validateToolArguments,publicContext,MESSAGES,publicFailure};
 });

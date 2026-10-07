@@ -54,7 +54,7 @@ test('the real scene has readable faceted face geometry, not only recoloured eye
     if (mesh.geometry.index) assert.ok([...mesh.geometry.index.array].every(index => index >= 0 && index < mesh.geometry.attributes.position.count), name + ' valid indices');
   }
   const description = h.engine.snapshot().character.faceGeometry;
-  assert.deepEqual({...description}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5});
+  assert.deepEqual({...description}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5, speechMouth: true});
   assert.match(h.declarations.interactionProfile.signal, /brow silhouette/);
 });
 
@@ -90,7 +90,7 @@ test('expression cue inputs are bounded and malformed cues cannot deform face ge
   for(const name of ['expression-eye-left','expression-eye-right'])assert.ok([...h.get(name).geometry.attributes.position.array].every(Number.isFinite));
 });
 
-test('soles remain exactly supported when speech and legacy bob/scale inputs vary', t => {
+test('the continuous porcelain body remains exactly supported when speech and legacy bob/scale inputs vary', t => {
   const h = harness(t), platform = new THREE.Box3().setFromObject(h.get('grounding-platform')).max.y;
   assert.ok(Math.abs(platform + 1.52) < 1e-6);
   for (const fields of [
@@ -99,13 +99,11 @@ test('soles remain exactly supported when speech and legacy bob/scale inputs var
     {state: 'success', emotion: 'celebrate', bob: .14, stanceScale: 1.04}
   ]) {
     h.pose(fields);
-    for (const side of [-1, 1]) {
-      const lowerEdge = new THREE.Box3().setFromObject(h.get('grounded-sole-' + side)).min.y;
-      assert.ok(Math.abs(lowerEdge - platform) < 1e-6, 'sole/platform contact');
-    }
+    const lowerEdge = new THREE.Box3().setFromObject(h.get('sculpted-porcelain-torso')).min.y;
+    assert.ok(Math.abs(lowerEdge - platform) < 1e-6, 'continuous body/platform contact');
   }
-  assert.equal(h.engine.snapshot().grounding.feetFixed, true);
-  assert.equal(h.engine.snapshot().grounding.upperBodyPivot, 'waist');
+  assert.equal(h.engine.snapshot().grounding.bodyFixed, true);
+  assert.equal(h.engine.snapshot().grounding.upperBodyPivot, 'head and fins');
 });
 
 test('upper-body motion is bounded while the support root stays perfectly stationary', t => {
@@ -140,7 +138,7 @@ test('transparent guide retains a bounded support cue and restores the studio on
   assert.equal(h.get('grounding-platform').visible, false); assert.equal(h.get('continuous-studio-sweep').visible, false);
   assert.equal(h.get('bounded-ground-contact-cue').visible, true); assert.equal(h.scene.background, null);
   const cue = h.get('bounded-ground-contact-cue'); assert.ok(cue.material.opacity <= .2); assert.ok(cue.geometry.parameters.radius < .7);
-  h.engine.setFloating(false); assert.equal(h.get('grounding-platform').visible, true); assert.equal(cue.visible, false); assert.ok(h.scene.background.isCubeTexture);
+  h.engine.setFloating(false); assert.equal(h.get('grounding-platform').visible, true); assert.equal(cue.visible, false); assert.ok(h.scene.background.isColor);
 });
 
 test('time alone no longer spins a visible face ornament or loops a speech arm', t => {

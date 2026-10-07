@@ -74,7 +74,7 @@ test('successful explicit voice opt-in toggles off and dismissal/hidden document
   const h=harness(t,{started:true,startMic:true});h.open();await h.activate();
   assert.equal(h.voiceButton.textContent,'End voice');assert.equal(h.voiceButton.getAttribute('aria-pressed'),'true');assert.deepEqual(h.deviceCalls,['microphone']);
   h.voiceConfig.onState('listening');assert.match(h.root.querySelector('.voice-state').textContent,/Listening/);
-  h.voiceConfig.onLevel({input:.2,output:.6});assert.equal(h.avatarCalls.levels.at(-1),.6);
+  h.voiceConfig.onLevel({input:.2,output:.6});assert.equal(h.avatarCalls.levels.at(-1),0,'listening does not animate output speech');h.voiceConfig.onState('speaking');h.voiceConfig.onLevel({input:.2,output:.6});assert.equal(h.avatarCalls.levels.at(-1),.6);
   const stops=h.voiceCalls.stop;h.voiceButton.click();await settle();assert.ok(h.voiceCalls.stop>stops);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
   await h.activate();const hiddenStops=h.voiceCalls.stop;h.hide(true);await settle();assert.ok(h.voiceCalls.stop>hiddenStops);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');assert.equal(h.avatarCalls.visible.at(-1),false);
   h.hide(false);await h.activate();const closeStops=h.voiceCalls.stop;h.close();await settle();assert.ok(h.voiceCalls.stop>closeStops);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
@@ -89,7 +89,7 @@ test('bereavement conversation stays calm and avoids celebration even when produ
   const h=harness(t);h.open();await settle();h.avatarCalls.states.length=0;
   await h.ask('My mother passed away. I want a memorial necklace.');
   assert.equal(h.avatarCalls.emotions.at(-1),'calm');assert.equal(h.avatarCalls.states.at(-1),'idle');assert.ok(!h.avatarCalls.states.includes('success'));assert.equal(h.root.querySelectorAll('.card').length,1);
-  await h.ask('A birthday gift with a bunny');assert.equal(h.avatarCalls.emotions.at(-1),'celebrate');assert.equal(h.avatarCalls.states.at(-1),'success');
+  const birthdayStart=h.avatarCalls.emotions.length;await h.ask('A birthday gift with a bunny');const birthday=h.avatarCalls.emotions.slice(birthdayStart);assert.ok(birthday.includes('celebrate'),'the corrected birthday is acknowledged');assert.equal(birthday.at(-1),'warm','the neutral assistant reply supplies the following tone');assert.equal(h.avatarCalls.states.at(-1),'success');
 });
 test('final voice transcripts update contextual emotion and conversation but do not issue a catalogue or cart request by themselves', async t => {
   const h=harness(t,{started:true});h.open();await h.activate();const before=h.network.length;
@@ -142,7 +142,7 @@ test('the remembrance invitation uses a calm pose instead of a celebration', asy
   assert.equal(h.network.find(call=>call.body?.message)?.body.message,'I would like a meaningful remembrance piece.');assert.equal(h.avatarCalls.emotions.at(-1),'calm');
 });
 test('a rejected memorial occasion does not suppress a corrected birthday celebration', async t => {
-  const h=harness(t);h.open();await h.ask('Not a memorial gift. A bunny birthday gift instead.');assert.equal(h.avatarCalls.emotions.at(-1),'celebrate');
+  const h=harness(t);h.open();await settle();const before=h.avatarCalls.emotions.length;await h.ask('Not a memorial gift. A bunny birthday gift instead.');const correction=h.avatarCalls.emotions.slice(before);assert.ok(correction.includes('celebrate'),'the stated birthday receives its celebration');assert.equal(correction.includes('calm'),false,'a negated memorial does not impose a grief presentation');assert.equal(correction.at(-1),'warm','the ordinary assistant explanation follows the birthday acknowledgement');
 });
 
 
