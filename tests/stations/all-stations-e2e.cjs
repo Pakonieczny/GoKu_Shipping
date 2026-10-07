@@ -736,6 +736,10 @@ fs.mkdirSync(SHOTS, { recursive: true });
             const t = await W.now(); if (t <= TOR(17, 5)) await poke(S.pages.asm2);
             if (t <= TOR(16, 55)) { await poke(S.pages.ship1); S.last.ivyInput = await lastInputOf(S.pages.ship1); }
             if (t <= TOR(16, 58)) { await poke(S.pages.weld); S.last.weldInput = await lastInputOf(S.pages.weld); }     // (Welding: input two minutes before five still gets the 17:00 sign-out: no activity condition)
+            // (LS2: the Sorter app runs its timers in a Web Worker (charm-nest-clock.js) that Playwright's fake clock does not drive, so its 30 s tick, the one that beats, ran on REAL seconds and a
+            //  Laser person signed in at 16:20 sent no beat for 40 stepped minutes (tests/stations/laser-resignin.cjs shows it and that nothing is wrong in the page). A real worker runs on real time = the
+            //  page's time. Here the page's own wake handler (a focus event) runs its tick once a stepped minute, which is what the worker's timer does in a real browser.)
+            await S.pages.laser.evaluate(() => window.dispatchEvent(new Event('focus'))).catch(() => {});
             if (!S.last.lenaInput && t >= TOR(16, 45)) { await poke(S.pages.laser); S.last.lenaInput = await lastInputOf(S.pages.laser); }   // (Laser: the last input is 16:45, so thirty minutes end at 17:15)
           } });
         }
