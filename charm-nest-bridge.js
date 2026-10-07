@@ -3274,8 +3274,11 @@ const Gate = window.Gate = (() => {
     window.Cleanups?.seen(rows);   // a sheet here whose record carries a cleanup this page has not applied gets it
     const run = B.run; if (!run || !modern(run.runId) || ["complete","abandoned"].includes(run.status)) return rows;
     const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
+    const own=new Set(Sets.ofRun(run.runId).map(s=>s.setId)), done=new Set(Sets.ofRun(run.runId).filter(s=>s.committedAt).map(s=>s.setId));
     return rows.map(row=>{
       if(row.runId!==run.runId || !solid(row.metal)) return row;
+      // a sheet in a committed set (or in a set this run does not hold), and a sheet a set edit held back, is as the cloud says: added to and taken out of a committed set from the Library (Paul, 7 Oct)
+      if((row.setId && !row.draft && row.solidIncluded!==false && (!own.has(row.setId) || done.has(row.setId))) || (row.laserHold && +row.laserHold.at>0))return row;
       const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) || !!live.cardinalPull : !!selected()[row.metal] && row.solidIncluded!==false;
       return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });

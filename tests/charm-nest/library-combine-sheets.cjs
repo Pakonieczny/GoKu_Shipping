@@ -65,12 +65,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     let list = zs('k14-1');
     assert.equal(z(list, x => x.area === 'progress').ok, false, 'In progress: it is already there'); assert.match(z(list, x => x.area === 'progress').reason, /already in In progress/);
     assert.equal(z(list, x => x.area === 'laser').ok, true); assert.equal(z(list, x => x.area === 'completed').ok, true);
-    assert.equal(z(list, x => x.set === 'set-1').ok, false); assert.match(z(list, x => x.set === 'set-1').reason, /already committed/, 'the greyed Set 1 chip');
+    assert.equal(z(list, x => x.set === 'set-1').ok, true, 'Set 1 is committed but takes a sheet now (Paul 7 Oct; rules in library-set-edit.cjs)'); assert.equal(z(list, x => x.set === 'set-1').reason, '');
     assert.equal(z(list, x => x.newSet).ok, true, 'New set is open to a draft when no set is open');
     // Laser cutting and Completed are armed but refused with the reason that it is not in a set yet (it is a draft)
     for (const area of ['laser', 'completed']) { const p = await plan('k14-1', { area }); assert.equal(p.ok, false); assert(keys(p).includes('membership'), JSON.stringify(keys(p))); assert.match(p.needs.find(n => n.key === 'membership').label, /14K Sheet 1 is not in a set yet/); }
-    // the committed set: refused by name
-    let p = await plan('k14-1', { set: 'set-1' }); assert.equal(p.ok, false); assert(keys(p).includes('setCommitted'), JSON.stringify(keys(p)));
+    // the committed set: takes the sheet as one server step (its rules are checked in library-set-edit.cjs), no longer refused by name
+    let p = await plan('k14-1', { set: 'set-1' }); assert(!keys(p).includes('setCommitted'), JSON.stringify(keys(p))); assert(p.steps.some(x => x.type === 'setMember'), JSON.stringify(p.steps)); assert.equal(joins.length, 0, 'planning writes nothing');
     // New set: a plan that can be committed, nothing written by planning
     p = await plan('k14-1', { newSet: true }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.steps.map(x => x.type), ['include']); assert.equal(joins.length, 0);
 

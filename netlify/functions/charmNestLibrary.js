@@ -796,6 +796,18 @@ async function op_putSheet(b) {
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
     if(guard&&Object.prototype.hasOwnProperty.call(s,'charms')&&(!Array.isArray(s.charms)||guard.placements.some(p=>!s.charms.some(c=>c?.id===p.id))))throw new Error('The protected Rose Gold charms cannot be removed');
     if(old.rosePlanJson && s.placements && require('./_charmNestRoseStock').fingerprint(s)!==old.roseFingerprint)Object.assign(doc,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
+    /* (Paul, 7 Oct) the sheets of a committed set are added and taken out by flowApply's set edit alone (charm-nest-set-edit.js): a page
+       that still holds an older membership (a second screen, a save that was under way) saves the rest of its sheet and leaves
+       the sheet's set, number and draft state as the edit made them. Read only when the save would change them. */
+    const mine = k => Object.prototype.hasOwnProperty.call(doc, k);
+    if (["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"].some(mine)) {
+      const was = SetEdit.inSetOf(old), want = SetEdit.inSetOf({ setId: mine("setId") ? doc.setId : old.setId, draft: mine("draft") ? doc.draft : old.draft, solidIncluded: mine("solidIncluded") ? doc.solidIncluded : old.solidIncluded });
+      const differs = was !== want || (!!was && ((mine("sheetIndex") && num(doc.sheetIndex) !== num(old.sheetIndex)) || (mine("setSeq") && num(doc.setSeq) !== num(old.setSeq))));
+      if (differs) {
+        const ids = [...new Set([was, want].filter(Boolean))].filter(isId), sets = ids.length ? await txGetAll(tx, ids.map(id => col(SETS).doc(id))) : [];
+        if (sets.some(d => d.exists && SetEdit.committedSet(d.data()))) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
+      }
+    }
     if (!ex.exists) doc.createdAt = FV.serverTimestamp();
     if(s.metal==='rose' && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
     const ids = new Set(s.poolIds || old.poolIds || []), backs = new Map();
@@ -1910,8 +1922,11 @@ async function op_setUpdate(b) {
   const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
   const ref=col(SETS).doc(id);
   await db.runTransaction(async tx=>{
-    const old=await tx.get(ref),patch=withoutCleared(old.exists?old.data():null,b.patch || {}),next={...(old.exists?old.data():{}),...patch};
-    if(/^complete/.test(next.status || '')) {
+    const old=await tx.get(ref),patch=keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {})),next={...(old.exists?old.data():{}),...patch};
+    // (Paul, 7 Oct) a committed set whose sheets were added or taken out (its `setEdit`) may hold a sheet that is not ready yet: the set then waits
+    // in In progress (readiness is derived from the sheets), and a later save of it by a page is never refused for that
+    const editedCommitted=!!(old.exists && old.data().setEdit && SetEdit.committedSet(old.data()));
+    if(/^complete/.test(next.status || '') && !editedCommitted) {
       const ids=[...new Set(next.sheetIds || [])];
       if(!ids.length)throw new Error('A set without sheets is not ready for laser');
       const docs=[];for(const sheetId of ids)docs.push(await tx.get(col(SHEETS).doc(sheetId)));
@@ -1946,6 +1961,16 @@ function withoutCleared(set, patch) {
   const orders = {};
   for (const [k, o] of Object.entries(patch.orders)) orders[k] = o && Array.isArray(o.lines) ? Object.assign({}, o, { lines: o.lines.map(l => (l && Array.isArray(l.copies) ? Object.assign({}, l, { copies: l.copies.filter(c => !(c && gone.has(c.poolId))) }) : l)) }) : o;
   return Object.assign({}, patch, { orders });
+}
+/* (Paul, 7 Oct) A committed set whose sheets were added or taken out (its `setEdit`) keeps the sheets, orders, labels and committed list the
+   edit left: a page that still lists the sheets it had before saves its other fields (status, completion, files) and not these. */
+function keepEditedSheets(set, patch) {
+  if (!set || !set.setEdit || !SetEdit.committedSet(set) || !patch || !Array.isArray(patch.sheetIds)) return patch;
+  const have = (Array.isArray(set.sheetIds) ? set.sheetIds : []).map(String).sort().join("|");
+  if (patch.sheetIds.map(String).sort().join("|") === have) return patch;
+  const out = Object.assign({}, patch);
+  for (const k of ["sheetIds", "materials", "orders", "labelFiles", "labels", "committed"]) delete out[k];
+  return out;
 }
 async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
 /** What chooses the sets op_setList answers with: its filters (status, laserDoneAt, the completion day and time) and its order (seq). */
@@ -3376,7 +3401,7 @@ async function op_flowState(b) {
   if (runIds.length) for (const r of await db.getAll(...runIds.map(id => col(RUNS).doc(id)), { fieldMask: ["status"] })) runs[r.id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) };
   // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
   const mv = b.move && typeof b.move === "object" ? b.move : null;
-  const shared = mv && mv.to && (mv.to.set || mv.to.newSet) ? await sharedAnswer(mv) : null;
+  const shared = mv && mv.to && (mv.to.set || mv.to.newSet || mv.to.leave) ? await sharedAnswer(mv) : null;
   // a set of several sheets advances as one: its gate (Readiness.setGate) from these same records, so the page can say why none of it is approved
   const gates = {};
   for (const x of docs) if ((x.sheetIds || []).length > 1) { const g = Readiness.setGate({ ...x, name: x.name || (x.seq ? "Set " + x.seq : "") }, (status.sheets || []).filter(r => r.setId === x.setId)); gates[x.setId] = { ready: g.ready, reason: g.reason, blockers: g.blockers, toApprove: g.toApprove }; }
@@ -3473,6 +3498,144 @@ async function approveGate(steps) {
   }
   return null;
 }
+/* ── Adding a sheet to, and taking a sheet out of, a set that is already committed (Paul, 7 Oct 2026, Library):
+     "The User should be able to add/remove individual sheets from a set of sheets even in the Laser cutting process as long as
+      A. there are NO shared pieces from a multi-piece order on that particular sheet shared with other sheets in the same Set,
+      B. the sheet has NOT been marked by the user as completed (Laser cut)."
+   charm-nest-set-edit.js is the ONE rule (SetEdit.verifyMoves), read here inside the transaction from the sheets, their sets and the
+   sheets that share an order with them, and by the page's plan from the same records. What the edit writes:
+   · each sheet that moves: its membership fields (draft, setId, setSeq, sheetIndex, solidIncluded, label, fileBase) and a flowHistory entry;
+     a sheet taken out is also HELD back from Laser cutting (laserHold, as a person's hold is), so the open run does not pull it into
+     its next set by itself; a sheet put in has the hold this edit made lifted (a person's own hold stays). Never a seal, a stamp, an
+     approval or a cut record: those are not touched, so they stay on the sheet for good.
+   · each set it changes: sheetIds, materials, the order lines of the copies on the moved sheets, the label list, `labels` emptied
+     (the old labels PDF and manifest no longer describe the set until the page has remade them: setFiles), `committed` without the
+     orders that left with their only sheet (listed in `committedOut` with who and when), `setEdit` {at, by} and a flowHistory entry.
+     The rest of the set stays committed, keeps its seals and its place; a set whose remaining sheets are all cut is completed with the
+     time and name of the last cut (nobody is marked as having cut anything).
+   · one note on the timeline of each order of each moved sheet.
+   Pool rows and the Design Station's archive records are not rewritten (a piece's place is read from the saved sheets, getOrderPieces).
+   putSheet and setUpdate leave this membership alone for a page that still holds the old one. ── */
+const SetEdit = require("../../charm-nest-set-edit.js");
+const EDIT_SHEET = SHARED_FIELDS.concat(["laserDoneBy", "laserHold", "flowHistory", "fileBase", "folder", "setSeq", "label"]);
+const EDIT_MEMBER = SHARED_FIELDS.concat(["laserDoneBy"]);
+const isSolid = m => m === "gold10k" || m === "gold14k";
+async function applySetMembers(step, by, device, via) {
+  const moves = [], seen = new Set();
+  for (const m of (Array.isArray(step.moves) ? step.moves : []).slice(0, 12)) {
+    const id = str(m && m.sheetId, 80), to = m && m.to ? str(m.to, 80) : null;
+    if (!isId(id) || (m && m.to && !isId(to))) return { error: "bad sheet or set id", status: 400 };
+    if (!seen.has(id)) { seen.add(id); moves.push({ id, to, pulled: !!(m && m.pulled) }); }
+  }
+  if (!moves.length) return { error: "no sheet to move", status: 400 };
+  const expect = step.expect && typeof step.expect === "object" ? step.expect : {};
+  // the sheets that share an order with a moving sheet (found now, read again inside the transaction)
+  const near = (await sharedSheets(moves.map(m => m.id))).sheets.map(s => s.id).filter(id => !seen.has(id)).slice(0, 400);
+  const at = Date.now();
+  const res = await db.runTransaction(async tx => {
+    const rec = new Map(), setDoc = new Map();
+    const readSheets = async (list, mask) => { for (let i = 0; i < list.length; i += 100) for (const d of await txGetAll(tx, list.slice(i, i + 100).map(id => col(SHEETS).doc(id)), mask)) rec.set(d.id, d.exists ? { ...d.data(), id: d.id } : null); };
+    await readSheets(moves.map(m => m.id), EDIT_SHEET);
+    for (const m of moves) { if (!rec.get(m.id)) return { error: "There is no such sheet", status: 404 }; if (rec.get(m.id).archived) return { error: "That sheet was repacked into other sheets: it is no longer in the Library", status: 409 }; }
+    const setIds = [...new Set(moves.flatMap(m => [SetEdit.inSetOf(rec.get(m.id)), m.to]).filter(Boolean))];
+    for (const d of await txGetAll(tx, setIds.map(id => col(SETS).doc(id)))) setDoc.set(d.id, d.exists ? { ...d.data(), setId: d.id } : null);
+    const memberIds = [...new Set([...setDoc.values()].flatMap(d => (d && Array.isArray(d.sheetIds) ? d.sheetIds : []).map(String)).filter(isId))].filter(id => !rec.has(id)).slice(0, 300);
+    await readSheets(memberIds, EDIT_MEMBER);
+    await readSheets(near.filter(id => !rec.has(id)), SHARED_FIELDS);
+    for (const m of moves) { const e = expect[m.id]; if (e && typeof e === "object" && Object.prototype.hasOwnProperty.call(e, "setId") && (e.setId || null) !== (SetEdit.inSetOf(rec.get(m.id)) || null)) return { error: "The sheet changed since this move was planned: nothing was changed. Try the move again", status: 409 }; }
+    const sets = {}; for (const [id, d] of setDoc) sets[id] = { doc: d, members: d ? (Array.isArray(d.sheetIds) ? d.sheetIds : []).map(i => rec.get(String(i))).filter(r => r && !r.archived) : [] };
+    const v = SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean) });
+    if (!v.ok) return { error: SetEdit.sayWhy(v), status: 409, reasons: v.reasons, shared: v.shared };
+    if (v.noop) return { ok: true, noop: true, changed: [], at };
+    // the pieces' SKUs, for the order lines of the sheets that join (one small read of their pool rows)
+    const joinIds = moves.filter(m => m.to && SetEdit.inSetOf(rec.get(m.id)) !== m.to).map(m => m.id), skus = {};
+    const pools = [...new Set(joinIds.flatMap(id => (rec.get(id).poolIds || []).map(String)))].filter(k => /^\d{1,30}_\d{1,30}_\d{1,4}$/.test(k)).slice(0, 600);
+    for (let i = 0; i < pools.length; i += 100) for (const d of await txGetAll(tx, pools.slice(i, i + 100).map(id => col(POOL).doc(id)), ["sku"])) if (d.exists && d.data().sku) skus[d.id] = String(d.data().sku);
+    // ── every read is made: the writes follow ──
+    const process = [], membership = { sheets: [], sets: [] }, changed = [], setPatch = new Map(), leaveOf = new Map(), joinOf = new Map(), doneSets = [];
+    const setWord = id => SetEdit.setWord(setDoc.get(id) || {});
+    for (const m of moves) {
+      const r = rec.get(m.id), from = SetEdit.inSetOf(r);
+      if (from === m.to) continue;
+      if (from) (leaveOf.get(from) || leaveOf.set(from, []).get(from)).push(r);
+      if (m.to) (joinOf.get(m.to) || joinOf.set(m.to, []).get(m.to)).push(Object.assign({}, r));
+    }
+    for (const id of new Set([...leaveOf.keys(), ...joinOf.keys()])) {
+      const S = sets[id], leave = leaveOf.get(id) || [], join = joinOf.get(id) || [];
+      // the number a sheet gets in the set it joins, counting the sheets that joined before it in this call
+      const taken = S.members.filter(x => !leave.some(l => l.id === x.id));
+      for (const j of join) { j.sheetIndex = SetEdit.indexFor(j, taken); j.fileBase = OrderRules.sheetName(j.metal, S.doc.day, S.doc.seq, j.sheetIndex); j.label = null; taken.push(j); }
+      const after = SetEdit.setAfter(S.doc, { leave, join, members: S.members, skus, by, at });
+      const stay = S.members.filter(x => !leave.some(l => l.id === x.id)).concat(join);
+      const patch = { sheetIds: after.sheetIds, materials: after.materials, orders: after.orders, labelFiles: after.labelFiles, labels: null, setEdit: { at, by }, updatedAt: FV.serverTimestamp() };
+      if (after.committed) patch.committed = after.committed;
+      if (after.committedOut) patch.committedOut = after.committedOut;
+      const entry = { id: `edit-${at}-${id}`, at, by, type: "setEdit", out: leave.map(l => l.id), in: join.map(j => j.id), note: [leave.length ? `${leave.map(l => sheetLabel(l)).join(", ")} taken out` : "", join.length ? `${join.map(j => sheetLabel(j)).join(", ")} added` : ""].filter(Boolean).join("; ") };
+      patch.flowHistory = (Array.isArray(S.doc.flowHistory) ? S.doc.flowHistory : []).concat([entry]).slice(-100);
+      // the set's remaining sheets are all cut: the set is completed (with the last cut's time and name: nobody is marked here)
+      if (!(num(S.doc.laserDoneAt) > 0) && !join.length && stay.length && stay.every(x => num(x.laserDoneAt) > 0)) {
+        const last = stay.reduce((a, b) => (num(b.laserDoneAt) > num(a.laserDoneAt) ? b : a));
+        patch.laserDoneAt = num(last.laserDoneAt); patch.laserDoneBy = last.laserDoneBy || null; doneSets.push(id);
+        process.push(processRecord("set", id, { ...S.doc, laserDoneAt: patch.laserDoneAt, laserDoneBy: patch.laserDoneBy }));
+      }
+      setPatch.set(id, patch);
+      membership.sets.push({ setId: id, patch: { sheetIds: patch.sheetIds, materials: patch.materials, orders: patch.orders, labelFiles: patch.labelFiles, labels: null, setEdit: patch.setEdit, ...(patch.committed ? { committed: patch.committed } : {}), ...(patch.committedOut ? { committedOut: patch.committedOut } : {}), ...(patch.laserDoneAt ? { laserDoneAt: patch.laserDoneAt, laserDoneBy: patch.laserDoneBy } : {}) } });
+    }
+    for (const m of moves) {
+      const r = rec.get(m.id), from = SetEdit.inSetOf(r);
+      if (from === m.to) continue;
+      const solid = isSolid(r.metal), isHeld = num(r.laserHold && r.laserHold.at) > 0, history = Array.isArray(r.flowHistory) ? r.flowHistory.slice() : [];
+      let view, hold;
+      if (!m.to) {
+        const note = `Taken out of ${setWord(from)}`;
+        view = { draft: true, setId: null, setSeq: null, sheetIndex: null, label: null, releaseFull: false, solidIncluded: solid ? false : null };
+        history.push({ id: `setLeave-${at}-${m.id}`, at, by, type: "setLeave", note, setId: from, laserDoneAt: num(r.laserDoneAt) || null });
+        if (!isHeld) { hold = { at, by, note }; view.laserHold = hold; process.push({ kind: "sheet", id: m.id, patch: { laserHold: hold } }); }
+      } else {
+        const T = setDoc.get(m.to), J = joinOf.get(m.to).find(j => j.id === m.id), idx = J.sheetIndex, fileBase = J.fileBase;
+        view = { draft: false, setId: m.to, setSeq: num(T.seq) || null, sheetIndex: idx, label: null, fileBase, folder: fileBase, solidIncluded: solid ? (m.pulled ? null : true) : null };
+        history.push({ id: `setJoin-${at}-${m.id}`, at, by, type: "setJoin", note: `Put in ${setWord(m.to)}`, setId: m.to, fromSetId: from, laserDoneAt: num(r.laserDoneAt) || null });
+        if (isHeld && /^Taken out of /.test(str(r.laserHold.note, 200))) { view.laserHold = null; hold = FV.delete(); history.push({ id: `release-${at}-${m.id}`, at, by, type: "release", note: `Put in ${setWord(m.to)}`, setId: m.to, laserDoneAt: null }); process.push({ kind: "sheet", id: m.id, patch: { laserHold: null } }); }
+      }
+      const patch = { ...view, flowHistory: history.slice(-100), updatedAt: FV.serverTimestamp() };
+      if (hold !== undefined) patch.laserHold = hold; else delete patch.laserHold;
+      tx.set(col(SHEETS).doc(m.id), patch, { merge: true });
+      membership.sheets.push({ id: m.id, patch: view });
+      changed.push({ id: m.id, to: m.to, from, d: Object.assign({}, r, view) });
+    }
+    for (const [id, patch] of setPatch) tx.update(col(SETS).doc(id), patch);
+    return { ok: true, at, changed, process, membership, doneSets };
+  });
+  if (res.error) return res;
+  if (res.doneSets && res.doneSets.length) DONE_TOUCH = true;
+  const events = (res.changed || []).flatMap(c => {
+    const sheet = sheetLabel(c.d), os = SetEdit.orderIdsOf(c.d).slice(0, 300), word = id => setLabel(id) || "its set", kind = c.to ? "setJoin" : "setLeave";
+    return os.map(orderId => ({ orderId, type: "note", at: res.at, by, station: "laser", device, sheetId: c.id, sheet, setId: c.to || c.from || "", text: c.to ? `put in ${word(c.to)} · ${sheet}` : `taken out of ${word(c.from)} · ${sheet}`, data: { flow: kind, signedIn: true, via: via || undefined, from: c.from || undefined, to: c.to || undefined }, id: `flow-${kind}-${c.id}-${res.at}` }));
+  });
+  if (events.length) await stamp(() => events, "set edit");
+  return { ok: true, applied: (res.changed || []).map(c => ({ id: c.id, type: "setMember", to: c.to })), process: res.process || [], added: [], membership: res.membership || { sheets: [], sets: [] }, setDone: res.doneSets || [], noop: !!res.noop, at: res.at };
+}
+/** The page's rebuilt set files (the labels PDF, the manifest, set.json and the label list) for a committed set: written only for the
+    sheets the set has now. Nothing else of the set is touched. */
+async function applySetFiles(step, by) {
+  const setId = str(step.setId, 80); if (!isId(setId)) return { error: "bad set id", status: 400 };
+  const file = f => ({ path: str(f && f.path, 400) || null, url: str(f && f.url, 2000) || null, sheet: str(f && f.sheet, 160) || null, sheetId: str(f && f.sheetId, 80) || null, part: num(f && f.part) || 1, parts: num(f && f.parts) || 1, orders: (Array.isArray(f && f.orders) ? f.orders : []).map(x => str(x, 40)).slice(0, 500), payload: f && f.payload ? str(f.payload, 4000) : null, metal: f && f.metal ? str(f.metal, 24) : null, ecc: f && f.ecc ? str(f.ecc, 4) : null, label: f && f.label ? str(f.label, 400) : null });
+  const link = x => (x && x.url ? { path: str(x.path, 400) || null, url: str(x.url, 2000) } : null);
+  const r = await db.runTransaction(async tx => {
+    const ref = col(SETS).doc(setId), s = await tx.get(ref); if (!s.exists) return { error: "There is no such set", status: 404 };
+    const d = s.data(); if (!SetEdit.committedSet(d)) return { error: "A set's files are remade here only after it was committed", status: 409 };
+    const own = new Set((d.sheetIds || []).map(String)), patch = { updatedAt: FV.serverTimestamp() };
+    if (Array.isArray(step.labelFiles)) patch.labelFiles = step.labelFiles.filter(f => f && own.has(str(f.sheetId, 80))).map(file).slice(0, 600);
+    if (step.labels && typeof step.labels === "object") {
+      const L = step.labels, pdf = link(L.pdf), manifest = link(L.manifest), json = link(L.json);
+      patch.labels = { ...(pdf ? { pdf } : {}), ...(manifest ? { manifest } : {}), ...(json ? { json } : {}), files: (Array.isArray(L.files) ? L.files : []).filter(f => f && f.url).map(f => ({ path: str(f.path, 400) || null, url: str(f.url, 2000), sheet: str(f.sheet, 160) || null })).slice(0, 600) };
+    }
+    patch.setEdit = Object.assign({}, d.setEdit || {}, { filesAt: Date.now(), filesBy: by });
+    tx.update(ref, patch);
+    return { ok: true };
+  });
+  return r.error ? r : { ok: true, applied: [{ id: setId, type: "setFiles" }], process: [], added: [], at: Date.now() };
+}
 async function op_flowApply(b) {
   const by = str(b.by, 80).trim();
   if (!by) return { error: "Say who made this change", status: 400 };
@@ -3480,7 +3643,18 @@ async function op_flowApply(b) {
   if (!steps.length) return { error: "no step to apply", status: 400 };
   const process = [], added = [], applied = [];
   const holds = steps.filter(x => x && (x.type === "hold" || x.type === "release")), seals = steps.filter(x => x && x.type === "seal");
-  if (holds.length + seals.length !== steps.length) return { error: "unknown step", status: 400 };
+  const members = steps.filter(x => x && x.type === "setMember"), setFiles = steps.filter(x => x && x.type === "setFiles");
+  if (holds.length + seals.length + members.length + setFiles.length !== steps.length) return { error: "unknown step", status: 400 };
+  // a change of a committed set's sheets (Paul, 7 Oct) is applied on its own: its steps never mix with a hold or a seal
+  if (members.length || setFiles.length) {
+    if (holds.length || seals.length || members.length > 1 || setFiles.length > 1) return { error: "a set edit is applied on its own", status: 400 };
+    const device0 = str(b.device, 40).replace(/[^\w.-]/g, ""), via0 = str(b.via, 24).replace(/[^\w .-]/g, "").trim();
+    const edited = members.length ? await applySetMembers(members[0], by, device0, via0) : null;
+    if (edited && edited.error) return edited;
+    const filed = setFiles.length ? await applySetFiles(setFiles[0], by) : null;
+    if (filed && filed.error) return edited ? { ...filed, applied: edited.applied, membership: edited.membership, process: edited.process, partial: true } : filed;
+    return { ...(edited || filed), applied: [].concat(edited ? edited.applied : [], filed ? filed.applied : []), process: edited ? edited.process : [], ...(edited ? { membership: edited.membership, setDone: edited.setDone } : {}) };
+  }
   const device = str(b.device, 40).replace(/[^\w.-]/g, ""), via = str(b.via, 24).replace(/[^\w .-]/g, "").trim();
   const refused = await approveGate(steps); if (refused) return refused;     // (a set advances as one: nothing is written for half of it)
   let events = [];

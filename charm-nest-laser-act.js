@@ -97,8 +97,9 @@
       const ld = LD(), rec = id => (typeof ld.recordOf === "function" ? ld.recordOf(id) : null);
       const nameOf = (kind, id) => { try { return typeof ld.nameOf === "function" ? ld.nameOf(kind, id) : ""; } catch (_) { return ""; } };
       const setOf = id => { try { return typeof ld.setSheets === "function" ? ld.setSheets(id) : []; } catch (_) { return []; } };
-      const group = { seal: [], release: [], hold: [] };
+      const group = { seal: [], release: [], hold: [], setMember: [] };
       for (const s of steps || []) {
+        if (s && s.type === "setMember") { for (const m of s.moves || []) group.setMember.push({ out: !m.to, id: m.sheetId, name: nameOf("sheet", m.sheetId) }); continue; }   // (a sheet taken out of, or put in, a committed set: Paul, 7 Oct)
         if (!s || !group[s.type]) continue;
         if (s.type === "seal") {
           const ids = s.kind === "set" ? setOf(s.id) : [s.id];
@@ -116,6 +117,7 @@
       if (rel.ids.length) did = send("note", rel.ids.map(id => ({ id, rec: rec(id) })), `hold lifted${rel.label ? " · " + rel.label : ""}`, false) || did;
       const hold = merge(group.hold);
       if (hold.ids.length) did = send("note", hold.ids.map(id => ({ id, rec: rec(id) })), `put back in progress${hold.label ? " · " + hold.label : ""}`, false) || did;
+      for (const out of [true, false]) { const g = group.setMember.filter(x => x.out === out); if (g.length) did = send("note", g.map(x => ({ id: x.id, rec: rec(x.id) })), `${out ? "taken out of its set" : "put in a committed set"} · ${g.map(x => x.name).filter(Boolean).join(", ")}`, false) || did; }
       return did;
     } catch (_) { return false; }
   }

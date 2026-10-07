@@ -269,7 +269,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const add = (spec, name, sub) => {
       const key = specKey(spec), t = legal.get(key);
       let ok = !!t && t.ok !== false && !t.illegal, reason = (t && t.reason) || '';
-      if (spec.area && here.area === spec.area) { ok = false; reason = `Already in ${name}`; }
+      if (spec.area && here.area === spec.area && !(t && t.leaveSet)) { ok = false; reason = `Already in ${name}`; }   // (leaveSet: a sheet of a committed set that waits in In progress can still be taken out of its set, Paul 7 Oct)
       if (spec.set && here.setId === spec.set) { ok = false; reason = 'Already in this set'; }
       if (!ok && !reason) reason = defaultReason(item, spec, reasons);
       // (never: a place that is the item's own, or that this kind of item can never go to: the Move to… menu leaves it out)
