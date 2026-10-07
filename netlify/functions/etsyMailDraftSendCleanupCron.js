@@ -50,6 +50,7 @@ exports.handler = async () => {
     // scanning all "sending" drafts is tiny — there are rarely >50).
     const snap = await db.collection(DRAFTS_COLL)
       .where("status", "==", "sending")
+      .select("sendHeartbeatAt")   // drafts are fat; the transaction below re-reads the whole draft
       .limit(SCAN_LIMIT)
       .get();
 

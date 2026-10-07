@@ -254,10 +254,13 @@ async function fireBackgroundWorker(threadId) {
  *  Uses index (customListingStatus ASC, customerAcceptedAt ASC). */
 async function fetchQueued() {
   const cutoffTs = admin.firestore.Timestamp.fromMillis(Date.now() - ACCEPTANCE_COOLDOWN_MS);
+  // Cost: this runs every minute; tryClaim re-reads the whole thread inside its
+  // transaction, so the scan carries only the one field the handler looks at.
   return db.collection(THREADS_COLL)
     .where("customListingStatus", "==", "queued")
     .where("customerAcceptedAt",  "<=", cutoffTs)
     .orderBy("customerAcceptedAt", "asc")   // FIFO: oldest queued first
+    .select("customListingStatus")
     .limit(QUEUED_FETCH_SIZE)
     .get();
 }
@@ -270,6 +273,7 @@ async function fetchStuck() {
     .where("customListingStatus",    "==", "creating")
     .where("customListingStartedAt", "<=", stuckCutoff)
     .orderBy("customListingStartedAt", "asc")
+    .select("customListingStatus")
     .limit(STUCK_FETCH_SIZE)
     .get();
 }
@@ -282,8 +286,11 @@ async function fetchStuck() {
  *  never touches Etsy. */
 async function settleListingReplies() {
   const out = { checked: 0, sent: 0, failed: 0 };
+  // Cost: read again every minute while a link message is waiting, so only the six fields used.
   const snap = await db.collection(THREADS_COLL)
     .where("customListingReplyStatus", "==", "queued")
+    .select("customListingReplyQueuedAt", "customListingReplyEnqueuedAt", "customListingSentAt", "customListingCreatedAt",
+      "customListingUrl", "customListingReplyDraftId")
     .limit(20)
     .get();
   const tsMs = v => (v && v.toMillis) ? v.toMillis() : 0;
@@ -304,7 +311,8 @@ async function settleListingReplies() {
     out.checked++;
     const url = String(t.customListingUrl || "");
     const draftId = t.customListingReplyDraftId || ("draft_" + doc.id);
-    const ds = await db.collection("EtsyMail_Drafts").doc(draftId).get();
+    // (a draft is fat: take the three fields the check uses)
+    const [ds] = await db.getAll(db.collection("EtsyMail_Drafts").doc(draftId), { fieldMask: ["status", "text", "sendErrorCode"] });
     const d = ds.exists ? ds.data() : null;
     const norm = s => String(s || "").replace(/\s+/g, " ").trim();
     const ours = !!d && !!url && norm(d.text).includes(url);
@@ -319,7 +327,7 @@ async function settleListingReplies() {
       let seen = false;
       if (url) {
         const ms = await db.collection(THREADS_COLL).doc(doc.id).collection("messages")
-          .orderBy("timestamp", "desc").limit(30).get();
+          .orderBy("timestamp", "desc").select("direction", "localOptimistic", "text").limit(30).get();
         seen = ms.docs.some(m => {
           const x = m.data() || {};
           return x.direction === "outbound" && !x.localOptimistic && String(x.text || "").includes(url);
