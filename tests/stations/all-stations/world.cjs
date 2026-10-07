@@ -60,6 +60,20 @@ class World {
     // (the real timers, kept for the fake Firestore's polling, before the fake clock replaces them)
     await ctx.addInitScript(() => { window.__rst = window.setTimeout.bind(window); window.__rsi = window.setInterval.bind(window); });
     await ctx.clock.install({ time: now });
+    /* The Sorter app (and the Design Station framed by it) loads charm-nest-clock.js, which routes every setTimeout / setInterval of the page through a dedicated
+       Web Worker so a tab out of view keeps full speed. A Worker's timers are NOT driven by Playwright's fake clock: they run on REAL time. So in this test the Sorter's
+       StationSession tick (every 30 s), rules tick (10 s) and midnight timer fired only when real seconds passed, not when the fake clock was stepped: a Laser person
+       signed in again at 16:20 got no beat for 40 fake minutes (they fall inside about 30 real seconds) while the other pages beat on schedule, and which beats
+       fell where depended on the machine's speed (LS2: this was the "intermittent" Laser / idle failures, a test artifact, not a product defect: a real browser's
+       worker runs on real time, which IS the page's time). charm-nest-clock.js itself says "If the worker cannot start, the page keeps the browser's own timers":
+       the clock worker alone is refused here, so the page's timers are the fake clock's, like every other page's. Any other Worker is untouched.
+       KEEP_CLOCK_WORKER=1 puts the old behaviour back (tests/stations/laser-resignin.cjs uses it to show the difference). */
+    if (!process.env.KEEP_CLOCK_WORKER) await ctx.addInitScript(() => {
+      try {
+        const Real = window.Worker;
+        if (typeof Real === 'function') window.Worker = new Proxy(Real, { construct(target, args, nt) { if (/charm-nest-clock/.test(String(args[0]))) throw new Error('no clock worker in the test (its timers would not follow the fake clock)'); return Reflect.construct(target, args, nt); } });
+      } catch (_) {}
+    });
     const fbJs = fs.readFileSync(path.join(__dirname, 'fake-firebase.js'));
     const cors = { 'Access-Control-Allow-Origin': '*', 'Cross-Origin-Resource-Policy': 'cross-origin' };
     const jq = lib('jquery.min.js'), mz = lib('materialize.min.js'), mzCss = lib('materialize.min.css');
