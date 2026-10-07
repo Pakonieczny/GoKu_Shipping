@@ -242,7 +242,7 @@
   const lockedWhy = sh => {
     if (!sh) return '';
     try { const E = ENG(), r = E && E.canSeat ? E.canSeat(sh) : null; if (r) return r.ok === false ? (r.why || 'This sheet cannot use a partial sheet now.') : ''; } catch (_) {}
-    return sh.roseCutAt ? `${sheetWord(sh)} has a recorded cut, so it stays on the sheet it was cut from.` : '';   // (the engine's canSeat is the rule; without it only a recorded cut refuses)
+    return +sh.laserDoneAt > 0 ? `${sheetWord(sh)} is Completed (laser cut), so it stays on the sheet it was cut from.` : '';   // (the engine's canSeat is the rule; without it only a Completed sheet refuses: a recorded cut is set aside by the move)
   };
 
   /* ── the rule, as ONE compact two-option switch (the window puts it at the top of the Sheet menu; paintPolicy keeps it true) ── */

@@ -90,6 +90,7 @@ function withoutPieces(guard, gone, ctx = {}) {
 /* remnantSync (PS3, _charmNestRemnants.js `sync`): the partial sheet's record (Charm_Nest_Remnants/{stockId}-{revision}) follows the stock's owner INSIDE roseClaim's
    and roseRelease's own transactions: claimed -> 'inUse' (+ lastUsedAt), released -> 'available' again. The stock stays the one source of truth for who holds it. */
 module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant,remnantSync}){
+  const COMPLETED='This sheet is Completed (laser cut): its metal has been cut, so it cannot move to another partial sheet';
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   // Rose Gold, 10K and 14K solid gold share these operations (charm-nest-rose.js: cuts(metal)); a physical sheet belongs to one metal.
   // Stock saved before the metal was kept is Rose Gold's.
@@ -131,33 +132,71 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(old&&(Math.abs(old.wPt-b.wPt)>.01||Math.abs(old.hPt-b.hPt)>.01))throw new Error('The physical sheet size cannot change');
       if(old?.owner&&old.owner!==b.sheetId)throw new Error('This '+metalWord(metal)+' sheet is reserved for another layout');
       if(old&&b.revision!=null&&old.revision!==b.revision)throw new Error('This remnant changed. Reload its history before nesting');
-      const sd=await tx.get(sheets().doc(b.sheetId));
-      if(sd.exists&&sd.data().roseCutAt)throw new Error("This layout was already cut; start a new sheet");
-      if(sd.exists&&sd.data().metal&&sd.data().metal!==metal)throw new Error('This sheet is '+metalWord(sd.data().metal)+', not '+metalWord(metal));
+      const sd=await tx.get(sheets().doc(b.sheetId)),own=sd.exists?sd.data():null;
+      // a recorded cut (Paul, 7 Oct: "This sheet is already in use so why can't I choose to use it?"): only a re-seat (an exact claim with swap) may set it aside, and only while the
+      // metal is not really cut. Cut Sheet records the cut and draws the green line; the metal is cut for good when the laser marks the sheet (or its set) Completed (laserDoneAt).
+      const reseat=b.exact===true&&b.swap===true,wasCut=!!(own&&own.roseCutAt);
+      if(wasCut&&!reseat)throw new Error("This layout was already cut; start a new sheet");
+      if(wasCut){
+        if(+own.laserDoneAt>0)throw new Error(COMPLETED);
+        const cutSet=id(own.setId)?await tx.get(col('Charm_Nest_Sets').doc(own.setId)):null;
+        if(cutSet&&cutSet.exists&&+cutSet.data().laserDoneAt>0)throw new Error(COMPLETED);
+      }
+      if(own&&own.metal&&own.metal!==metal)throw new Error('This sheet is '+metalWord(own.metal)+', not '+metalWord(metal));
       // the partial sheet's record (a read, before the first write); a chosen partial (partialId) must be available or already this sheet's
       const rem=remnantSync&&old&&(b.partialId||old.owner!==b.sheetId)?await remnantSync.read(tx,ref.id,old.revision,b.partialId,old.made):null;   // (a sheet that already holds it claimed it before: nothing to read, nothing to change)
       if(b.partialId)remnantSync.check(rem,{metal,sheetId:b.sheetId,stockId:ref.id,revision:old.revision});
       // swap (a chosen partial for a sheet that holds another physical sheet): that one is given back in THIS transaction, so a refused claim loses nothing.
       // (Paul, 7 Oct: "There's no reason why I should be prevented.") A sheet in a committed or the current set, approved for Laser cutting, or holding a saved
-      // green line that was never cut MAY swap: its set, seals and history are not touched here. The only refusal that stays is the recorded cut (above:
-      // roseCutAt; a cut makes a new revision of the stock, so a stock a cut was recorded on is a leftover, never "held" by the sheet).
+      // green line that was never cut MAY swap: its set, seals and history are not touched here. So may a sheet with a recorded cut that is not Completed (below: the cut is
+      // set aside; a cut makes a new revision of the stock, so a stock a cut was recorded on is a leftover, never "held" by the sheet). Only Completed (laserDoneAt) refuses.
       let off=null;const heldId=held.docs[0]?.id;
       if(b.swap&&heldId&&heldId!==ref.id){
         const oref=stocks().doc(heldId),od=await tx.get(oref),os=od.exists?od.data():null;
         if(os&&os.owner===b.sheetId)off={ref:oref,fresh:metalOf(os)!=='rose'&&!os.revision&&!os.profileJson&&!os.made,rem:remnantSync?await remnantSync.read(tx,heldId,os.revision,null,os.made):null};
       }
+      // the leftover the sheet's own recorded cut made (stock of the cut, at the revision the cut gave it), read before the first write: it is the partial being chosen (the sheet
+      // seats on its own leftover), or free metal that must not stay on offer once the cut is set aside, or already taken by another sheet (then the sheet cannot move)
+      let cutLeft=null;
+      if(wasCut&&id(own.roseStockId)){
+        const cutRef=stocks().doc(own.roseStockId),csd=own.roseStockId===ref.id?d:await tx.get(cutRef),cs=csd.exists?csd.data():null;
+        const rev=own.roseCutRevision!=null&&Number.isFinite(+own.roseCutRevision)?+own.roseCutRevision:(cs&&cs.lastCutSheetId===b.sheetId?+cs.revision:null);   // (a cut saved before the revision was kept on the sheet: the stock says whose last cut it was)
+        if(rev>=1){
+          const mine=own.roseStockId===ref.id&&!!old&&+old.revision===rev;
+          cutLeft={ref:cutRef,stock:cs,revision:rev,id:own.roseStockId+'-'+rev,mine,rem:mine?rem:(remnantSync?await remnantSync.read(tx,own.roseStockId,rev,null,false):null)};
+        }
+      }
+      let cutNote=null,discard=false;
+      if(wasCut){
+        cutNote={at:+own.roseCutAt||null,revision:cutLeft?cutLeft.revision:(own.roseCutRevision!=null?+own.roseCutRevision:null),stockId:own.roseStockId||null,leftover:cutLeft?cutLeft.id:null,how:'none'};
+        if(cutLeft&&cutLeft.mine)cutNote.how='claimed';
+        else if(cutLeft){
+          const r=cutLeft.rem&&cutLeft.rem.exists?cutLeft.rem.data:null,cs=cutLeft.stock,current=!!cs&&+cs.revision===cutLeft.revision;
+          const usedBy=r&&r.status==='used'&&r.usedBySheetId!==b.sheetId?(r.usedBySheetName||'another sheet'):cs&&+cs.revision>cutLeft.revision&&!(r&&r.status==='used')?'another sheet':null;
+          const holder=usedBy?null:r&&r.status==='inUse'&&r.inUseBySheetId!==b.sheetId?(r.inUseBySheetName||'another sheet'):current&&cs.owner&&cs.owner!==b.sheetId?'another sheet':null;
+          if(holder||usedBy)throw new Error(`The leftover sheet this sheet's cut made is already taken (${holder?'in use by ':'used by '}${holder||usedBy}), so its metal is not free. This sheet cannot move to another partial sheet`);
+          discard=r?r.status==='available':!!(current&&cs.available);
+          cutNote.how=discard?'discarded':'kept';
+        }
+      }
       const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),metal,owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
       // a re-seat (an exact claim with swap) starts the layout over on the new outline: the green line saved for the old seat (a plan, or the lines an append kept) is
       // dropped with it, never carried onto another sheet's outline; every other claim keeps the saved lines as it always did (protected layout)
-      const reseat=b.exact===true&&b.swap===true,own=sd.exists?sd.data():null;
-      const guard=own&&!reseat?protectedLayout(own):null,protectedJson=guard?JSON.stringify(guard):null;
-      if(off){if(off.fresh)tx.delete(off.ref);else tx.update(off.ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(remnantSync&&!off.fresh)remnantSync.released(tx,off.rem,{sheetId:b.sheetId,at:Date.now()});}
+      const guard=own&&!reseat?protectedLayout(own):null,protectedJson=guard?JSON.stringify(guard):null,at=Date.now();
+      if(off){if(off.fresh)tx.delete(off.ref);else tx.update(off.ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(remnantSync&&!off.fresh)remnantSync.released(tx,off.rem,{sheetId:b.sheetId,at});}
+      // the old cut's leftover, not the partial being chosen: no longer free metal (its record 'discarded' with why, who and when, kept for good and shown under Discarded; the stock
+      // stops being offered to the older path too). A person can still put it back from its card. Nothing is deleted.
+      if(discard){
+        if(remnantSync&&remnantSync.superseded&&cutLeft.rem&&cutLeft.rem.exists)remnantSync.superseded(tx,cutLeft.rem,{sheetId:b.sheetId,sheetName:b.sheetName||(own&&sheetLabel?sheetLabel(own):''),by:b.by,at});
+        if(cutLeft.stock&&+cutLeft.stock.revision===cutLeft.revision&&!cutLeft.stock.owner)tx.update(cutLeft.ref,{available:false,updatedAt:FV.serverTimestamp()});
+      }
       tx.set(ref,next);
-      // (the line that went is noted on the sheet's record, small and append-only: when, who, which seat, what kind)
-      const dropped=reseat&&own&&(own.rosePlanJson||own.roseProtectedJson)?[...(Array.isArray(own.roseReseated)?own.roseReseated:[]).slice(-9),{at:Date.now(),by:String(b.by||'').slice(0,80),fromStockId:heldId||null,toStockId:ref.id,plan:!!own.rosePlanJson,kept:!!own.roseProtectedJson}]:null;
-      if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting||reseat?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{}),...(dropped?{roseReseated:dropped}:{})});
-      const partial=remnantSync?remnantSync.claimed(tx,rem,{sheetId:b.sheetId,sheetName:b.sheetName||(sd.exists&&sheetLabel?sheetLabel(sd.data()):''),by:b.by,at:Date.now()}):null;
-      return {stock:{...next,updatedAt:null},protectedJson,...(partial?{partial}:{})};
+      // (what went is noted on the sheet's record, small and append-only: when, who, which seat, what kind; a recorded cut that was set aside, which leftover it made and what became of it)
+      const dropped=reseat&&own&&(own.rosePlanJson||own.roseProtectedJson||wasCut)?[...(Array.isArray(own.roseReseated)?own.roseReseated:[]).slice(-9),{at,by:String(b.by||'').slice(0,80),fromStockId:heldId||null,toStockId:ref.id,plan:!!own.rosePlanJson,kept:!!own.roseProtectedJson,...(cutNote?{cut:cutNote}:{})}]:null;
+      // (the sheet owes a new Cut Sheet on its new seat: its recorded cut is cleared on the sheet, the old cut's own record, the leftover and the history stay)
+      if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting||reseat?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{}),...(wasCut?{roseCutAt:null,roseCutRevision:null}:{}),...(dropped?{roseReseated:dropped}:{})});
+      const partial=remnantSync?remnantSync.claimed(tx,rem,{sheetId:b.sheetId,sheetName:b.sheetName||(sd.exists&&sheetLabel?sheetLabel(sd.data()):''),by:b.by,at}):null;
+      return {stock:{...next,updatedAt:null},protectedJson,...(partial?{partial}:{}),...(cutNote?{setAside:cutNote}:{})};
     });return stock;
   }
   async function roseRelease(b){
@@ -230,8 +269,12 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
   async function roseRecordCut(b){
     if(!id(b.sheetId)||!id(b.stockId)||!b.planHash)throw new Error('Prepare the cut contour first');
     const out=await db.runTransaction(async tx=>{
-      const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId),er=ref.collection('cuts').doc(b.sheetId);
-      const d=await tx.get(ref),sd=await tx.get(sr),ed=await tx.get(er),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
+      const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId);
+      const d=await tx.get(ref),sd=await tx.get(sr),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
+      // a cut is kept under its sheet's id on the stock. A sheet that set an earlier cut on this very stock aside (it was moved onto the leftover that cut made, roseClaim) cuts again
+      // under the revision it makes, so the old cut's record stays exactly as it was; a retry of the same press (the same request revision) finds the same document
+      const again=!!(sheet&&Array.isArray(sheet.roseReseated)&&sheet.roseReseated.some(x=>x&&x.cut&&x.cut.stockId===b.stockId));
+      const er=ref.collection('cuts').doc(again?`${b.sheetId}-${(+b.revision||0)+1}`:b.sheetId),ed=await tx.get(er);
       if(ed.exists){if(ed.data().planHash!==b.planHash)throw new Error('This cut was already recorded with a different plan');return {ok:true,cut:ed.data(),stock};}
       if(!stock||stock.owner!==b.sheetId||stock.revision!==b.revision||!sheet||sheet.rosePlanHash!==b.planHash||sheet.roseFingerprint!==fingerprint(sheet)||sheet.roseCutAt)throw new Error('The layout or remnant changed. Refresh before recording a cut');
       if(!Rose.cuts(sheet.metal)||metalOf(stock)!==sheet.metal)throw new Error('This physical sheet is '+metalWord(metalOf(stock))+', not '+metalWord(sheet.metal));

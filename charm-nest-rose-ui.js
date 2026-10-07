@@ -25,7 +25,8 @@
     if(!sh.roseStock||sh.roseCutAt)sh.roseStock=result.stock;
     sh.roseHistory=older?[...(sh.roseHistory||[]),...decode(result.cuts)]:decode(result.cuts);
     sh.roseMore=result.more;sh._roseLoaded=true;
-    const completed=sh.roseHistory.find(c=>c.sheetId===sh.sheetId);if(completed){sh.roseCutAt=completed.at;sh.roseStock=result.stock;}
+    // (a cut on the stock a sheet HOLDS is an old cut it set aside when it was moved onto the leftover that cut made: the stock is its seat again, not cut)
+    const completed=result.stock&&result.stock.owner===sh.sheetId?null:sh.roseHistory.find(c=>c.sheetId===sh.sheetId);if(completed){sh.roseCutAt=completed.at;sh.roseStock=result.stock;}
     if(sh.recalled){const rec=(await api('getSheet',{id:sh.sheetId})).sheet;sh.roseCutAt=rec.roseCutAt||null;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseRevision=rec.roseRevision;sh.roseProtected=parse(rec.roseProtectedJson);}
     refresh(sh);
   }
@@ -103,19 +104,26 @@
   // Partial sheets (charm-nest-partial-nest.js): a sheet in use moves onto the leftover the person chose. With swap the server gives back the physical
   // sheet the sheet holds (a fresh uncut gold sheet is deleted, a leftover returns to the list) and reserves the chosen leftover in ONE transaction
   // (roseClaim with the leftover's id and revision, exact + partialId: the chosen partial is checked itself; nesting:true marks the saved record changed,
-  // as any re-nest does). A refused claim loses nothing: the sheet still holds what it held. A recorded cut is refused by the server. (Paul, 7 Oct: a sheet
-  // in a committed or the current set, approved for Laser cutting, or with a saved green line that was never cut may swap too: with swap the server drops the
-  // line laid on the old seat, as it gives that seat back, and this page drops its copy below, so no line of the old seat survives on the new one. The set,
-  // the seals and the orders' history stay as they are.)
+  // as any re-nest does). A refused claim loses nothing: the sheet still holds what it held. (Paul, 7 Oct: a sheet in a committed or the current set, approved for
+  // Laser cutting, or with a saved green line that was never cut may swap too: with swap the server drops the line laid on the old seat, as it gives that seat back, and
+  // this page drops its copy below, so no line of the old seat survives on the new one. The set, the seals and the orders' history stay as they are.
+  // And "This sheet is already in use so why can't I choose to use it?": a sheet with a recorded cut that the laser has not marked Completed may swap as well. The server
+  // sets the cut aside in the same transaction (the cut's own record, its leftover and the history stay for good; the sheet's cut mark and line go, so the sheet owes a new
+  // Cut Sheet on its new seat), and this page drops the cut mark below. Only a Completed (laser cut) sheet is refused: its metal has really been cut.)
   async function seatOn(sh,stock,o={}){
-    if(!hasLine(sh)||sh.roseCutAt)throw new Error('This sheet cannot take a partial sheet');
+    if(!hasLine(sh))throw new Error('This sheet cannot take a partial sheet');
+    if(+sh.laserDoneAt>0)throw new Error('This sheet is Completed (laser cut): its metal has been cut, so it cannot move to another partial sheet');
+    if(sh.roseCutAt&&!(o.swap&&stock.partialId))throw new Error('This sheet cannot take a partial sheet');
     if(!S.cloud.ok)throw new Error(`Reconnect to reserve the ${word(sh)} partial sheet`);
     sh.sheetId ||= (isRose(sh)?'rose':sh.metal)+'-'+Date.now().toString(36)+'-'+C.uid();
+    let who='';try{who=String(window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){}   // (the signed-in person, as Cut Sheet names them: nobody types it)
     // exact + partialId: the server checks the chosen partial sheet itself (available or this sheet's, same metal, same revision) and refuses to keep or create another
-    const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:stock.wPt,hPt:stock.hPt,stockId:stock.id,revision:stock.revision,nesting:true,...(stock.partialId?{exact:true,partialId:stock.partialId}:{}),...(o.swap?{swap:true}:{})});
+    const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:stock.wPt,hPt:stock.hPt,stockId:stock.id,revision:stock.revision,nesting:true,...(who?{by:who}:{}),...(stock.partialId?{exact:true,partialId:stock.partialId}:{}),...(o.swap?{swap:true}:{})});
     if(!r.stock)throw new Error('The partial sheet could not be reserved');
     sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;sh.roseChoice=null;sh.roseFresh=false;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
     if(o.swap){delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;delete sh.roseProtected;sh._roseError=null;}   // (the line of the old seat: the server dropped it in the same transaction)
+    if(o.aside)try{o.aside(r.setAside||null);}catch(_){}   // (what the server did with a recorded cut it set aside: setAside.how 'claimed' | 'discarded' | 'kept' | 'none', for the history line)
+    if(o.swap&&sh.roseCutAt)delete sh.roseCutAt;   // (the recorded cut was set aside in that transaction: the sheet is nested again and owes a new Cut Sheet; sheetDirty and the nest read this)
     if(r.protectedJson)sh.roseProtected=parse(r.protectedJson);   // (the saved record already held green lines: the sheet stays as it is; the caller sees roseProtected)
     try{await load(sh);}catch(_){}   // (the cut history is only for the timeline: the reservation stands without it)
     window.Session?.schedule();refresh(sh);return r.stock;

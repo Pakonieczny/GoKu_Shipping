@@ -15,11 +15,14 @@
      metal, made with the next partial as its stock (claimed at its nest start, nestClaim). When the listed partials run out the policy decides: automatic
      takes the best fit of the metal's other available partials, otherwise (and for 'new') a new sheet as the nester makes it today.
    - incoming pieces take the same road: they nest on the open sheet first; what does not fit overflows to the next page of the chain.
-   A recorded cut is permanent: a sheet with one keeps its stock and cannot be seated again (canSeat says so in words). Nothing else stops a sheet
-   (Paul, 7 Oct 2026: "I'm prevented from using All, new sheets and existing partial sheets. There's no reason why I should be prevented."): a sheet in a
-   committed or the current set, approved for Laser cutting but not cut, opened from a saved set, released full, or holding a saved green line that was
-   never cut moves its pieces onto any partial sheet or made sheet; it keeps its place in its set (seat). Only a recorded cut, a Completed (laser cut)
-   sheet, a sheet busy right now, one with nothing to move and no cloud refuse. */
+   Only what is physically or logically impossible stops a sheet (Paul, 7 Oct 2026: "I'm prevented from using All, new sheets and existing partial sheets.
+   There's no reason why I should be prevented."): a sheet in a committed or the current set, approved for Laser cutting but not cut, opened from a saved set,
+   released full, or holding a saved green line that was never cut moves its pieces onto any partial sheet or made sheet; it keeps its place in its set (seat).
+   And "This sheet is already in use so why can't I choose to use it?": so does a sheet with a RECORDED CUT (Cut Sheet) that the laser has not marked
+   Completed. Cut Sheet draws the green line and records the cut; the metal is only really cut when the sheet is Completed (laserDoneAt). The server sets the
+   recorded cut aside in the same transaction as the claim (the cut's own record, the leftover it made and the history stay for good; the sheet's cut mark goes,
+   so it owes a new Cut Sheet and its approval on the new seat; the leftover that cut made is claimed when it is the partial chosen, otherwise it is no longer
+   free metal and shows Discarded). Only a Completed (laser cut) sheet, a sheet busy right now, one with nothing to move and no cloud refuse. */
 (function init(){
   'use strict';
   if(!window.CN||!window.RoseStock||!window.CharmNestRose){setTimeout(init,150);return;}
@@ -81,21 +84,24 @@
     const out={id:s.id,metal:card.metal,wPt:s.wPt,hPt:s.hPt,revision:s.revision||0,profileJson:s.profileJson||null};stocks.set(k,out);return out;
   }
   const cardSize=c=>({wMm:c.wMm!=null?c.wMm:c.bboxMm?c.bboxMm.w:c.sheetWMm||0,hMm:c.hMm!=null?c.hMm:c.bboxMm?c.bboxMm.h:c.sheetHMm||0});
+  const cutOf=sh=>!!sh.roseCutAt||!!(sh.recalled&&sh.recalled.roseCutAt);   // (a recorded cut: Cut Sheet was pressed; the sheet is only cut for good when doneOf says so)
   function partialOf(sh){
     if(!sh)return null;
     if(sh._partialId)return sh._partialId;
-    const s=sh.roseStock;return s&&s.id&&(s.revision>0||s.made)?s.id+'-'+(s.revision||0):null;   // (a made sheet, revision 0, is recognised by the stock's own made mark, or by _partialId above)
+    const s=sh.roseStock;if(!(s&&s.id))return null;
+    // (a cut sheet's stock is the leftover its cut made; the sheet itself sits on the revision it was cut on, which roseRevision keeps)
+    const rev=cutOf(sh)&&Number.isFinite(+sh.roseRevision)?+sh.roseRevision:(s.revision||0);
+    return rev>0||s.made?s.id+'-'+rev:null;   // (a made sheet, revision 0, is recognised by the stock's own made mark, or by _partialId above)
   }
 
   /* ── what can be seated: only what is physically or logically impossible refuses (see the head of this file) ── */
-  const cutOf=sh=>!!sh.roseCutAt||!!(sh.recalled&&sh.recalled.roseCutAt);
   const doneOf=sh=>+sh.laserDoneAt>0||+(sh.recalled&&sh.recalled.laserDoneAt)>0;   // (a sheet opened from a saved set is drawn from its record: the mark is on the record)
   // a sheet opened from a saved set has no pieces on the page until it is rebuilt from its record (Recall.rebuild, "Rebuild to edit"); seating does that first
   const unopened=sh=>!!sh.recalled&&!(sh.charms&&sh.charms.length);
   const canOpen=()=>!!(window.Recall&&typeof window.Recall.rebuild==='function');
   function canSeat(sh){
     if(!sh||!sh.metal||!cuts(sh.metal))return refuse('metal','Partial sheets are for Rose Gold, 10K Gold and 14K Gold sheets.');
-    if(cutOf(sh))return refuse('cut','This sheet has a recorded cut. A recorded cut is permanent, so it keeps its metal and cannot move to another partial sheet. A partial sheet can be used on a new sheet.');
+    // (a recorded cut alone is no reason: it is set aside by the move. Completed means the laser really cut the metal.)
     if(doneOf(sh))return refuse('laser','This sheet is Completed (laser cut): its metal has been cut, so its pieces cannot move to another partial sheet.');
     // (Gate.holding: the sheet is being rewritten by something else right now, the sheet window or an order's release)
     if(['nesting','finishing','queued'].includes(sh.status)||sh._operationStarting||sh._partialBusy||(sh.persisted&&!sh.persistedDone)||(window.Gate&&window.Gate.holding&&window.Gate.holding(sh)))return refuse('busy','This sheet is nesting or saving right now. Wait a moment, then choose the partial sheet.');
@@ -109,7 +115,7 @@
   // Rebuild to edit, the page's own (Recall.rebuild reads the saved record and the master files and changes nothing in the cloud); every piece must come back, or nothing moves
   async function openSaved(sh){
     const want=+(sh.recalled&&sh.recalled.placedCount)||0;
-    await window.Recall.rebuild(sh);
+    await window.Recall.rebuild(sh,{cutOk:true});   // (cutOk: a saved sheet with a recorded cut that is not Completed may be opened for this move alone; Rebuild to edit still refuses it)
     const got=piecesOf(sh).length;
     if(sh.recalled||!got)throw new Error('This saved sheet could not be opened, so nothing was moved');
     if(got<want)throw new Error(`Only ${got} of the ${want} pieces of this saved sheet could be read back, so nothing was moved`);
@@ -228,6 +234,11 @@
         words:words(all.length,links,left,nextInfo,sh),
         note:'A quick trial pack on the exact leftover outline. The nest itself can place a piece more or less.',auto};
       out.continues.words=left?out.words.replace(/^[^;]*; /,''):'';
+      // a sheet with a recorded cut (not Completed) is told what the move does to it, before it is pressed
+      if(cutOf(sh)){
+        const own=sh.roseStock&&sh.roseStock.id&&sh.roseStock.revision>0?sh.roseStock.id+'-'+sh.roseStock.revision:null;
+        out.words+=own&&order[0]&&order[0].id===own?' This is the leftover its own cut made: the sheet takes it back, the recorded cut stays in the history, and the sheet needs Cut Sheet again.':' Its recorded cut is set aside (it stays in the history): the leftover that cut made is no longer offered as free metal, and the sheet needs Cut Sheet again.';
+      }
       seen.set(sigOf(sh,ids),out);if(seen.size>20)seen.delete(seen.keys().next().value);
       step('done',out.words);return out;
     }catch(e){return refusal('failed','The trial pack could not run: '+(e&&e.message||e));}
@@ -257,7 +268,7 @@
     try{
       step('check','Checking the sheet…');
       // a sheet opened from a saved set: the physical sheet its record names is read before the page lets go of the record (Recall.rebuild clears it)
-      const savedStock=sh.recalled&&sh.recalled.roseStockId||null;
+      const savedStock=sh.recalled&&sh.recalled.roseStockId||null,wasCut=cutOf(sh);   // (wasCut: a recorded cut that is not Completed; the move sets it aside, see the head of this file)
       if(unopened(sh)){step('open','Opening the sheet from its saved set…');await openSaved(sh);pieces=piecesOf(sh);}
       if(ids&&ids.length&&ids[0]===partialOf(sh))return fail('same','This sheet already sits on that partial sheet.');
       const list=await cardsOf(metal),pol=policy(metal);
@@ -278,9 +289,11 @@
       const stock={...await stockOf(first),partialId:first.id},held=(sh.roseStock&&sh.roseStock.id)||savedStock,RS=window.RoseStock;
       // 1. ONE transaction on the server: the physical sheet this sheet holds goes back (a fresh uncut gold sheet is deleted, a leftover returns to the
       // list) and the chosen partial is reserved for it. Another sheet may have taken it a moment ago: the claim is then refused and nothing changed.
-      step('claim',held?'Giving the old sheet back and reserving the partial sheet…':'Reserving the partial sheet…');
-      // (swap also when the sheet holds a saved green line that was never cut: the server drops that line with the old seat, seatOn drops this page's copy)
-      try{await RS.seatOn(sh,stock,{swap:!!(held||sh.rosePlan||sh.roseProtected)});}
+      step('claim',wasCut?'Setting the recorded cut aside and reserving the partial sheet…':held?'Giving the old sheet back and reserving the partial sheet…':'Reserving the partial sheet…');
+      // (swap also when the sheet holds a saved green line that was never cut, or a recorded cut that is not Completed: the server drops that line / sets that cut aside with the old
+      // seat, seatOn drops this page's copy)
+      let moved=null;
+      try{await RS.seatOn(sh,stock,{swap:!!(held||wasCut||sh.rosePlan||sh.roseProtected),aside:x=>{moved=x||null;}});}
       catch(e){
         window.PartialSheets&&window.PartialSheets.changed&&window.PartialSheets.changed();
         return fail('taken','That partial sheet could not be reserved: '+e.message);
@@ -295,7 +308,7 @@
       sh._byHand=true;
       C.startNest(sh);
       const sz=cardSize(first);
-      try{C.agent({metal},'nest',`Partial sheet: ${label(sh)} moved onto a partial sheet of ${mm1(sz.wMm)} x ${mm1(sz.hMm)} mm${chain.length?`, with ${chain.length} more partial ${plural(chain.length,'sheet')} to take what does not fit`:''}; its ${pieces.length} ${plural(pieces.length,'piece')} are nested again${committed?'; it stays in its committed set':inCurrent?'; it stays in its set':''}${approved?'; it was approved for Laser cutting, so its new layout is checked and approved again':''}${held&&held!==stock.id?'; the sheet it sat on went back to the list':''}`);}catch(_){}
+      try{C.agent({metal},'nest',`Partial sheet: ${label(sh)} moved onto a partial sheet of ${mm1(sz.wMm)} x ${mm1(sz.hMm)} mm${chain.length?`, with ${chain.length} more partial ${plural(chain.length,'sheet')} to take what does not fit`:''}; its ${pieces.length} ${plural(pieces.length,'piece')} are nested again${committed?'; it stays in its committed set':inCurrent?'; it stays in its set':''}${approved?'; it was approved for Laser cutting, so its new layout is checked and approved again':''}${!wasCut&&held&&held!==stock.id?'; the sheet it sat on went back to the list':''}${wasCut?`; its recorded cut was set aside (the cut and its history stay), so it needs Cut Sheet again${moved&&moved.how==='claimed'?'; it sits on the leftover that cut made':moved&&moved.how==='discarded'?'; the leftover that cut made is no longer free metal and shows Discarded':''}`:''}`);}catch(_){}
       emit({type:'seated',metal,sheetId:sh.sheetId||null});
       step('done',`${label(sh)} is nesting on the partial sheet.`);
       sh._partialBusy=false;

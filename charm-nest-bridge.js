@@ -14228,14 +14228,16 @@ const Recall = window.Recall = (() => {
   /** Bring one recalled sheet's charms back from the master files so it can be edited and nested again. On demand only. */
   // one rebuild per page at a time: a second press, or a button drawn again while it runs, joins the first instead of
   // adding every charm to the page twice
-  function rebuild(pg) {
+  // opts.cutOk (only the partial sheet move, charm-nest-partial-nest.js): a saved sheet with a recorded cut that is not Completed may be opened, because the move sets that cut aside;
+  // every other caller still refuses a cut layout
+  function rebuild(pg, opts) {
     if (pg._rebuilding) return pg._rebuilding;
-    const task = rebuildOnce(pg).finally(() => { pg._rebuilding = null; });
+    const task = rebuildOnce(pg, opts || {}).finally(() => { pg._rebuilding = null; });
     pg._rebuilding = task; return task;
   }
-  async function rebuildOnce(pg) {
+  async function rebuildOnce(pg, opts) {
     const rec = pg.recalled; if (!rec) return;
-    if(rec.roseCutAt || pg.roseCutAt)throw new Error("This layout was already cut. Start a new sheet for its remnant.");
+    if((rec.roseCutAt || pg.roseCutAt) && !(opts && opts.cutOk === true && !(+rec.laserDoneAt > 0) && !(+pg.laserDoneAt > 0)))throw new Error("This layout was already cut. Start a new sheet for its remnant.");
     const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`) : null;
     try {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");

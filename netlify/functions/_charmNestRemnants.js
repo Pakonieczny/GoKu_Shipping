@@ -40,10 +40,12 @@ const MM = Rose.MM;
 const CODES = { rose: 'RG', gold10k: '10K', gold14k: '14K', gold: 'GF', silver: 'SS' };
 const FIELDS = ['v', 'metal', 'code', 'sheetId', 'sheetName', 'setId', 'setName', 'fileBase', 'stockId', 'revision', 'via', 'cutAt', 'by', 'sheetWMm', 'sheetHMm', 'ringsJson', 'areaMm2', 'bboxMm',
   'status', 'statusAt', 'statusBy', 'marked', 'auto', 'reason', 'usedBySheetId', 'usedBySheetName', 'usedAt', 'usedBy', 'createdAt',
-  'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy', 'kind', 'madeAt', 'madeBy', 'deletedAt', 'deletedBy', 'deletedReason'];
+  'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy', 'kind', 'madeAt', 'madeBy', 'deletedAt', 'deletedBy', 'deletedReason',
+  'supersededAt', 'supersededBy', 'supersededSheetId', 'supersededSheetName'];
 const STATUSES = ['available', 'used', 'discarded'];   // what a person can mark; 'inUse' is only ever set by a claim (roseClaim / partialClaim) and cleared by a release or the next cut; 'deleted' only by sheetDelete
 const PARTIAL_METALS = ['rose', 'gold10k', 'gold14k'];
 const STOCKS = 'Charm_Nest_Rose_Stock', POLICY_DEFAULT = { mode: 'auto', wMm: 100, hMm: 50 }, SIZE_MM = [5, 500];
+const SUPERSEDED_REASON = 'Its sheet was moved to another partial sheet';   // (the reason a leftover shows when the cut that made it was set aside)
 const NOT_HELD = { inUseBySheetId: null, inUseBySheetName: null, inUseAt: null, inUseBy: null };   // what a record says when no sheet holds it
 const okId = s => typeof s === 'string' && /^[\w-]{4,100}$/.test(s);
 const person = s => { const t = String(s == null ? '' : s).trim().slice(0, 80); return /^operator$/i.test(t) ? '' : t; };
@@ -265,6 +267,15 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       tx.update(rem.ref, patch); bump(tx);
       return patch;
     },
+    /* superseded: the leftover a sheet's own recorded cut made, while that sheet is moved to another partial sheet and the cut is set aside (roseClaim, a re-seat of a sheet
+       that is cut but not Completed). Its metal is not free metal any more: an 'available' record becomes 'discarded' with the reason, who and when (marked, so a person can
+       still put it back from its card). Held or used ones are never touched. Nothing is removed. */
+    superseded(tx, rem, { sheetId, sheetName, by, at }) {
+      if (!rem || !rem.exists || rem.data.status !== 'available') return null;
+      const who = person(by), patch = { status: 'discarded', statusAt: at, statusBy: who, marked: true, reason: SUPERSEDED_REASON, supersededAt: at, supersededBy: who, supersededSheetId: sheetId, supersededSheetName: String(sheetName || sheetId).slice(0, 80), ...NOT_HELD };
+      tx.update(rem.ref, patch); bump(tx);
+      return patch;
+    },
     released(tx, rem, { sheetId, at }) {
       if (!rem || !rem.exists) return null;
       const r = rem.data, own = r.status === 'inUse' && r.inUseBySheetId === sheetId, undone = r.status === 'used' && r.usedBySheetId === sheetId && !r.marked;   // (used through partialUse, never cut: giving the sheet back undoes it)
@@ -318,6 +329,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     if (d.status === 'inUse') Object.assign(out, { inUseBySheetId: d.inUseBySheetId || '', inUseBySheetName: d.inUseBySheetName || '', inUseAt: d.inUseAt != null ? +d.inUseAt : null });
     if (d.status === 'used') Object.assign(out, { usedBySheetId: d.usedBySheetId || '', usedBySheetName: d.usedBySheetName || '', usedAt: d.usedAt != null ? +d.usedAt : null });
     if (d.reason) out.reason = d.reason;
+    if (d.status === 'discarded') Object.assign(out, { statusBy: d.statusBy || '', statusAt: d.statusAt != null ? +d.statusAt : null });   // (who discarded it and when: the history shows it)
     // a sheet a person made (kind 'new'; a cut leftover has no kind): who and when; a deleted one: who, when and why. cutAt / cutBy of a made sheet are its madeAt / madeBy (the list's sort key), never a cut.
     if (d.kind === 'new') Object.assign(out, { kind: 'new', madeAt: +d.madeAt || null, madeBy: d.madeBy || '' });
     if (d.status === 'deleted' || d.deletedAt != null) Object.assign(out, { deletedAt: +d.deletedAt || null, deletedBy: d.deletedBy || '', deletedReason: d.deletedReason || '' });

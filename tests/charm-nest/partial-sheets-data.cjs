@@ -195,11 +195,73 @@ const T = { areaMm2: 61, minMm: 6.7, maxMm: 10.4 }, SHEET = { sheetWMm: 100, she
     const c = await seatedSheet('sheet-12', 12, { roseProtectedJson: JSON.stringify({ profile: { version: 1 }, lines: [], shapes: [], placements: [], stages: [] }) });
     const keep = await api.roseClaim({ sheetId: 'sheet-12', wPt: 100 / MM, hPt: 50 / MM, stockId: c.f.stock.id, nesting: true });
     assert(keep.protectedJson && store.get('Charm_Nest_Sheets/sheet-12').roseProtectedJson, 'a plain nest claim keeps the protected lines');
-    // 4. a recorded cut is permanent: refused, and the sheet still holds what it held
-    const d = await seatedSheet('sheet-11', 11, { roseCutAt: 1760000000000 });
-    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-11', swap: true }), /already cut/);
+    // 4. a Completed (laser cut) sheet is refused whatever else is true, and the sheet still holds what it held; a plain nest claim of a recorded cut is still "already cut"
+    const d = await seatedSheet('sheet-11', 11, { roseCutAt: 1760000000000, laserDoneAt: 1760000100000 });
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-11', swap: true }), /Completed \(laser cut\)/);
+    await assert.rejects(() => api.roseClaim({ sheetId: 'sheet-11', wPt: 100 / MM, hPt: 50 / MM, nesting: true }), /already cut/);
     assert.equal(stockDoc(d.f.stock.id).owner, 'sheet-11', 'a refused swap loses nothing'); assert.equal(store.get('Charm_Nest_Remnants/' + pid).status, 'available');
     for (const id of mine) store.delete('Charm_Nest_Rose_Stock/' + id); for (const id of ['sheet-9', 'sheet-10', 'sheet-11', 'sheet-12']) store.delete('Charm_Nest_Sheets/' + id);
+  }
+
+  // Paul, 7 Oct: "This sheet is already in use so why can't I choose to use it?" (a test sheet he had pressed Cut Sheet on). A sheet with a RECORDED CUT that the laser has not marked
+  // Completed may use any partial sheet, and the leftover its own cut made. The old cut is set aside inside the claim's transaction: its records (the cuts entry, the leftover
+  // record, the history) are never deleted or rewritten; the sheet's cut mark and line go (it owes a new Cut Sheet); the leftover the old cut made is claimed (the sheet's own)
+  // or is no longer free metal ('discarded' with why, who and when; a person can put it back); a leftover another sheet already holds keeps the sheet where it is. Only Completed refuses.
+  {
+    const keep = new Map([...store].map(([k, v]) => [k, clone(v)])), stockDoc = id => store.get('Charm_Nest_Rose_Stock/' + id), recOf = id => store.get('Charm_Nest_Remnants/' + id), sheetOf = id => store.get('Charm_Nest_Sheets/' + id);
+    const cutFresh = (sheetId, idx, shapes) => cutOne(sheetId, shapes, idx, { fresh: true }, 'Paul'), cutPath = (stk, doc) => `Charm_Nest_Rose_Stock/${stk}/cuts/${doc}`;
+    assert.equal(recOf(pid).status, 'available', 'the partial the sheets move onto is free');
+    // 1. onto another partial: the old leftover is discarded, nothing is deleted or rewritten
+    const c1 = await cutFresh('sheet-20', 20, [shape('p1', 2, 2, 10, 30)]), f1 = c1.stock.id, left1 = `${f1}-1`, cut1 = clone(store.get(cutPath(f1, 'sheet-20'))), rec1 = clone(recOf(left1));
+    assert(sheetOf('sheet-20').roseCutAt > 0 && sheetOf('sheet-20').roseCutRevision === 1 && rec1.status === 'available', 'the sheet has a recorded cut and its leftover is on offer');
+    const r1 = await O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-20', swap: true, by: 'Paul' }), d20 = sheetOf('sheet-20');
+    assert.equal(r1.stock.id, stockId); assert.deepEqual([r1.setAside.how, r1.setAside.leftover, r1.setAside.revision, r1.setAside.stockId], ['discarded', left1, 1, f1]);
+    assert.deepEqual([d20.roseCutAt, d20.roseCutRevision, d20.rosePlanJson, d20.rosePlanHash, d20.roseFingerprint, d20.dirty, d20.roseStockId, d20.roseRevision, d20.setId, d20.draft], [null, null, null, null, null, true, stockId, 1, 'set-2026-1', false],
+      'the cut mark and the line of the old seat are cleared, the sheet is marked changed, its set and record are otherwise untouched');
+    assert.deepEqual(d20.roseReseated.map(x => [x.cut.stockId, x.cut.revision, x.cut.leftover, x.cut.how, x.plan, x.by]), [[f1, 1, left1, 'discarded', true, 'Paul']], 'an append-only note says what was set aside');
+    assert.deepEqual(d20.placements.map(x => x.id), ['p1'], 'its pieces are not deleted by the claim');
+    const o1 = recOf(left1);
+    assert.deepEqual([o1.status, o1.reason, o1.statusBy, o1.marked, o1.supersededSheetId, o1.supersededSheetName, o1.inUseBySheetId], ['discarded', 'Its sheet was moved to another partial sheet', 'Paul', true, 'sheet-20', 'RG Sheet 20', null]); assert(o1.statusAt > 0 && o1.supersededAt === o1.statusAt);
+    for (const k of ['ringsJson', 'areaMm2', 'bboxMm', 'sheetId', 'sheetName', 'setName', 'cutAt', 'by', 'revision', 'stockId', 'code', 'metal', 'via', 'sheetWMm', 'sheetHMm', 'createdAt']) assert.deepEqual(o1[k], rec1[k], 'the old leftover record keeps its ' + k);
+    assert.deepEqual(store.get(cutPath(f1, 'sheet-20')), cut1, 'the cut\'s own record is exactly as it was'); assert.deepEqual([stockDoc(f1).available, stockDoc(f1).owner, stockDoc(f1).revision], [false, null, 1], 'the stock stops offering it to the older path too');
+    assert(!(await O.partialList({ metal: 'rose' })).items.some(i => i.id === left1), 'no longer offered as free metal');
+    const disc = (await O.partialList({ metal: 'rose', used: true })).items.find(i => i.id === left1); assert.deepEqual([disc.status, disc.reason, disc.statusBy, disc.inUseBySheetId], ['discarded', 'Its sheet was moved to another partial sheet', 'Paul', undefined], 'the filter Discarded shows it, with who');
+    assert.deepEqual([stockDoc(stockId).owner, recOf(pid).status, recOf(pid).inUseBySheetId], ['sheet-20', 'inUse', 'sheet-20'], 'the sheet holds the partial it chose');
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: left1, sheetId: 'sheet-29' }), /was discarded/, 'nobody can claim it meanwhile');
+    await O.remnantMark({ id: left1, status: 'available', by: 'Pat Lee' }); assert.deepEqual([recOf(left1).status, stockDoc(f1).available], ['available', true], 'a person can still put it back from its card');
+    sheetOf('sheet-20').draft = true; await O.partialRelease({ sheetId: 'sheet-20' }); assert.equal(recOf(pid).status, 'available', '(the partial is free again for the next case)');
+    // 2. onto the leftover its own cut made: the sheet claims it, no duplicate record, the old cut stays; a new Cut Sheet is recorded beside the old one
+    const c2 = await cutFresh('sheet-21', 21, [shape('p1', 2, 2, 10, 30)]), f2 = c2.stock.id, left2 = `${f2}-1`, cut2 = clone(store.get(cutPath(f2, 'sheet-21'))), recs2 = () => [...store.keys()].filter(k => k.startsWith('Charm_Nest_Remnants/' + f2 + '-'));
+    assert.equal(recs2().length, 1);
+    const r2 = await O.partialClaim({ metal: 'rose', id: left2, sheetId: 'sheet-21', swap: true, by: 'Paul' }), d21 = sheetOf('sheet-21');
+    assert.deepEqual([r2.stock.id, r2.setAside.how, r2.setAside.leftover], [f2, 'claimed', left2]);
+    assert.deepEqual([d21.roseCutAt, d21.roseCutRevision, d21.rosePlanHash, d21.roseStockId, d21.roseRevision, d21.dirty, stockDoc(f2).owner, stockDoc(f2).available, stockDoc(f2).revision], [null, null, null, f2, 1, true, 'sheet-21', false, 1]);
+    assert.deepEqual([recOf(left2).status, recOf(left2).inUseBySheetId, recOf(left2).inUseBy, recs2().length], ['inUse', 'sheet-21', 'Paul', 1], 'the leftover is held by its own sheet, no duplicate record');
+    assert.deepEqual(store.get(cutPath(f2, 'sheet-21')), cut2, 'the old cut stays in history exactly as it was');
+    const shapes2 = [shape('p2', 25, 2, 8, 25)], doc2 = { ...d21, ...sheetDoc('sheet-21', shapes2, 21) };
+    store.set('Charm_Nest_Sheets/sheet-21', doc2);   // (the page nested the pieces again on the leftover and saved: not dirty)
+    const pl2 = await api.rosePlan({ sheetId: 'sheet-21', stockId: f2, revision: 1, fingerprint: RoseStock.fingerprint(doc2), shapesJson: JSON.stringify(shapes2), allowanceMm: .2, cut: true });
+    const press = { sheetId: 'sheet-21', stockId: f2, revision: 1, planHash: pl2.planHash, by: 'Paul', via: 'nest', device: 'charm-nest-1' }, cutAgain = await api.roseRecordCut(press);
+    assert.deepEqual([cutAgain.stock.revision, sheetOf('sheet-21').roseCutAt, sheetOf('sheet-21').roseCutRevision], [2, cutAgain.cut.at, 2], 'Cut Sheet works again on the new seat');
+    assert.deepEqual(store.get(cutPath(f2, 'sheet-21')), cut2, 'the first cut\'s record is still exactly as it was'); assert(store.get(cutPath(f2, 'sheet-21-2')) && store.get(cutPath(f2, 'sheet-21-2')).revision === 2, 'the second cut has its own record');
+    assert.deepEqual([recOf(left2).status, recOf(left2).usedBySheetId, recOf(`${f2}-2`).status], ['used', 'sheet-21', 'available'], 'the leftover it sat on is used by its cut; the new leftover is on offer');
+    assert.equal((await api.roseRecordCut(press)).cut.at, cutAgain.cut.at, 'a retry of the same press records nothing twice'); assert.equal(recs2().length, 2);
+    // 3. the leftover its cut made is already taken by another sheet: refused in plain words, nothing changed
+    const c3 = await cutFresh('sheet-22', 22, [shape('p1', 2, 2, 10, 30)]), f3 = c3.stock.id, left3 = `${f3}-1`;
+    await O.partialClaim({ metal: 'rose', id: left3, sheetId: 'sheet-23', sheetName: 'RG Sheet 23', by: 'Ana' });
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-22', swap: true }), /already taken \(in use by RG Sheet 23\), so its metal is not free/);
+    await O.partialUse({ id: left3, sheetId: 'sheet-23', by: 'Ana', sheetName: 'RG Sheet 23' });
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-22', swap: true }), /already taken \(used by RG Sheet 23\)/);
+    assert.deepEqual([sheetOf('sheet-22').roseCutAt > 0, sheetOf('sheet-22').rosePlanHash != null, sheetOf('sheet-22').roseStockId, recOf(pid).status, stockDoc(pid.replace(/-\d+$/, '')).owner, recOf(left3).status], [true, true, f3, 'available', null, 'used'], 'a refused move changes nothing');
+    // 4. Completed (the sheet's own mark, or its set's) is the one thing that stays refused
+    const c4 = await cutFresh('sheet-24', 24, [shape('p1', 2, 2, 10, 30)]), f4 = c4.stock.id; sheetOf('sheet-24').laserDoneAt = 1760000200000;
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-24', swap: true }), /Completed \(laser cut\): its metal has been cut/);
+    const c5 = await cutFresh('sheet-25', 25, [shape('p1', 2, 2, 10, 30)]); store.set('Charm_Nest_Sets/set-2026-1', { laserDoneAt: 1760000300000 });
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-25', swap: true }), /Completed \(laser cut\)/); store.delete('Charm_Nest_Sets/set-2026-1');
+    assert.deepEqual([recOf(`${f4}-1`).status, recOf(`${c5.stock.id}-1`).status, sheetOf('sheet-24').roseCutAt > 0, sheetOf('sheet-25').roseCutAt > 0, recOf(pid).status], ['available', 'available', true, true, 'available'], 'nothing changed');
+    // 5. without the swap (the plain nest claim) a recorded cut is still "already cut"
+    await assert.rejects(() => api.roseClaim({ sheetId: 'sheet-22', wPt: 100 / MM, hPt: 50 / MM, stockId: pid.replace(/-\d+$/, ''), exact: true, partialId: pid }), /already cut/);
+    store.clear(); for (const [k, v] of keep) store.set(k, v);   // (the fake store as it was: the cases above are not part of the later counts)
   }
 
   // the cut: the leftover it was made on is used (by that sheet), the new one is available with lastUsed = the cut; the held record clears
