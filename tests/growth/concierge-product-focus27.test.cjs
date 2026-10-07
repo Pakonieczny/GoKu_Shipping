@@ -70,3 +70,10 @@ test('presentation gaze expires but its old timer cannot clear later intentional
   const h=fixture(t);await h.ready();await h.voice();h.flushPresentation();assert.equal(h.config.getContext().focusedHandle,'');
   await h.ask();h.root.querySelectorAll('.card')[1].dispatchEvent(new h.w.Event('pointerenter'));h.flushPresentation();assert.equal(h.config.getContext().focusedHandle,compass.handle);assert.equal(h.calls.emotions.at(-1),'curious');
 });
+
+
+test('shadow-root pointer motion keeps focus inside a piece and releases it when the shopper moves elsewhere',async t=>{
+  const h=fixture(t);await h.ready();await h.voice();const card=h.root.querySelectorAll('.card')[1],control=card.querySelector('.choose');control.focus();assert.equal(h.config.getContext().focusedHandle,compass.handle);
+  control.dispatchEvent(new h.w.Event('pointermove',{bubbles:true,composed:true}));assert.equal(h.config.getContext().focusedHandle,compass.handle,'document event is retargeted to the host but its composed path still contains the card');
+  h.d.querySelector('#outside').dispatchEvent(new h.w.Event('pointermove',{bubbles:true,composed:true}));assert.equal(h.config.getContext().focusedHandle,'');assert.equal(card.dataset.attentive,undefined);
+});
