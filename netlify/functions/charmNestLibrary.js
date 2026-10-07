@@ -631,12 +631,14 @@ async function op_putCharms(b) {
   if (PREFIX) return { ok: true, count: 0, skipped: "the sandbox reads the shared charm library and does not write to it" };
   const rows = (b.charms || []).filter(c => c && isHash(c.hash)).slice(0, MAX_PUT);
   let batch = db.batch(), n = 0, count = 0;
+  // (the charms' rank of name read together and with that one field, where each was read whole, one after another)
+  const known = new Map();
+  for (let i = 0; i < rows.length; i += 100) for (const sn of await db.getAll(...rows.slice(i, i + 100).map(c => db.collection(LIB).doc(c.hash)), { fieldMask: ["namedBy"] })) known.set(sn.id, sn.exists ? sn.data() : null);
   for (const c of rows) {
     const ref = db.collection(LIB).doc(c.hash);
     const doc = { hash: c.hash, updatedAt: FV.serverTimestamp(), lastUsed: FV.serverTimestamp(), timesUsed: FV.increment(1) };
     // never overwrite an operator's name with a model's or a fallback's
-    const existing = await ref.get();
-    const ex = existing.exists ? existing.data() : null;
+    const ex = known.get(c.hash) || null;
     const incomingRank = { operator: 3, claude: 2, library: 1, fallback: 0 }[c.namedBy] ?? 0;
     const existingRank = ex ? ({ operator: 3, claude: 2, library: 1, fallback: 0 }[ex.namedBy] ?? 0) : -1;
     if (c.name && incomingRank >= existingRank) { doc.name = str(c.name, 80); doc.slug = str(c.slug || c.name, 80); doc.label = str(c.label, 200); doc.confidence = num(c.confidence) || null; doc.namedBy = str(c.namedBy, 20); }
@@ -751,9 +753,15 @@ async function op_putSheet(b) {
       const prev = backs.get(bk.poolId);
       if (!prev || (+bk.approvedAt || 0) >= (+prev.approvedAt || 0)) backs.set(bk.poolId, bk);
     }
-    for (const [id,bk] of backs) {
-      const saved = await tx.get(col(BACK).doc(id));
-      if (saved.exists && ((saved.data().invalidated && (+saved.data().approvedAt || 0) >= (+bk.approvedAt || 0)) || (+saved.data().invalidatedAt || 0) >= (+bk.approvedAt || 0))) backs.delete(id);
+    /* An approval this record already holds as it stands needs no look: a back is invalidated, and its sheet's record changed, in
+       one commit (op_backInvalidate, putBacks, poolTakeOff), so the record that lists it says it is live. Only a back the
+       record does not hold (a page's newer approval, or one a stale page would put back) is read, all together and with the
+       three fields that decide it, where each was read whole, one after another, at every save of the sheet. */
+    const held = new Map((Array.isArray(old.backPool) ? old.backPool : []).map(bk => [bk && bk.poolId, +(bk && bk.approvedAt) || 0]));
+    const look = [...backs].filter(([id, bk]) => !(held.has(id) && held.get(id) === (+bk.approvedAt || 0)));
+    for (let i = 0; i < look.length; i += 100) {
+      const part = look.slice(i, i + 100), saved = await txGetAll(tx, part.map(([id]) => col(BACK).doc(id)), ["invalidated", "approvedAt", "invalidatedAt"]);
+      saved.forEach((sv, j) => { const [id, bk] = part[j]; if (sv.exists && ((sv.data().invalidated && (+sv.data().approvedAt || 0) >= (+bk.approvedAt || 0)) || (+sv.data().invalidatedAt || 0) >= (+bk.approvedAt || 0))) backs.delete(id); });
     }
     doc.backPool = [...backs.values()].map(sheetBack);
     const bytes = Buffer.byteLength(JSON.stringify(Object.assign({}, old, doc)));
@@ -1041,6 +1049,10 @@ const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", C
 const SANDBOX_MAPS = [ALIASES, NODESIGN, OPTMAP];
 const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
+/* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
+   take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
+const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy"];
+const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt"];
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
 async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
 
@@ -1108,11 +1120,16 @@ async function op_masterPatch(b) {
 async function op_masterPutFile(b) { return Master.putFile(db, FV, b); }
 /** The 200 master files indexed last, newest first (it took the first 200 Firestore handed out and sorted those), as many
     as fit in one answer (a file's record keeps lists of up to 2,000 SKUs); and the index's signature (masterIndexSig). */
-async function op_masterListFiles() {
+async function op_masterListFiles(b = {}) {
+  /* A page that holds the files sends the signature they came with (ifFilesSig: how many records, the newest one's stamp;
+     every write of a file record stamps indexedAt, a removal changes the count): unchanged, they are not read or sent again
+     (the background reload asked for every file record, with the lists of up to 2,000 SKUs each, at every orders check). */
+  const filesSig = await collSig(Master.FILES, "indexedAt");
+  if (filesSig && b.ifFilesSig === filesSig) return { unchanged: true, filesSig, index: await masterIndexSig() };
   const [snap, index] = await Promise.all([db.collection(Master.FILES).orderBy("indexedAt", "desc").limit(200).get(), masterIndexSig()]);
   const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }), budget = answerBudget();
   let n = 0; while (n < rows.length && budget.fits(rows[n])) n++;
-  return { files: rows.slice(0, n), index, truncated: n < rows.length };
+  return Object.assign({ files: rows.slice(0, n), index, truncated: n < rows.length }, filesSig ? { filesSig } : {});
 }
 /** Remove one SKU from the index (a stray record, a SKU that should never have been read). */
 async function op_masterRemoveSku(b) {
@@ -1233,7 +1250,7 @@ async function op_poolPut(b) {
      Timeout" page came back as the reason the orders were held (25 Sep). A row sent twice is written once, merged. */
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()], found = [];
-  for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId))));
+  for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), { fieldMask: POOL_PUT_FIELDS }));
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
      still lists it, is not written over by a fresh placement (no sheet id). It is answered as placed, with where it is. */
@@ -1273,7 +1290,7 @@ async function poolTakeOff(ids, patch, told) {
     const part = ids.slice(i, i + 200), want = new Set(part);
     const made = await db.runTransaction(async tx => {
       // (every read first: a transaction writes after it has read)
-      const rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id))) : [], sheets = new Map();
+      const rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS) : [], sheets = new Map();
       for (let j = 0; j < part.length; j += 30) for (const d of (await tx.get(col(SHEETS).where("poolIds", "array-contains-any", part.slice(j, j + 30)).select(...TAKE_OFF_SHEET_FIELDS))).docs) sheets.set(d.id, Object.assign(d.data(), { id: d.id }));
       const at = FV.serverTimestamp(), where = new Map(), seen = new Map(), touched = [];
       for (const s of sheets.values()) for (const id of s.poolIds || []) if (want.has(String(id)) && !where.has(String(id))) where.set(String(id), s);
@@ -1300,7 +1317,7 @@ async function op_poolUpdate(b) {
     return { ok: true, count: ids.length, sheets: done.edited };
   }
   let before = null;
-  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)))).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
+  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
   catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
   let batch = db.batch(), n = 0;
   for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
@@ -1385,7 +1402,8 @@ const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
-  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut"]);
+  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
+  "sandboxCancel", "sandboxPut", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -1458,10 +1476,12 @@ async function op_sandboxPut(b) {
   await db.collection(SANDBOX).doc("current").set(doc);
   return { ok: true, snapshot: doc };
 }
-async function op_sandboxStatus() {
+async function op_sandboxStatus(b) {
   const doc = await db.collection(SANDBOX).doc("current").get();
-  const counts = {};
-  for (const name of [...SANDBOXED, ...SANDBOX_MAPS]) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
+  // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
+  if (b && b.light === true) return { ok: true, light: true, snapshot: doc.exists ? doc.data() : null, records: {} };
+  const counts = {}, names = [...SANDBOXED, ...SANDBOX_MAPS];
+  (await Promise.all(names.map(name => db.collection("Sandbox_" + name).count().get()))).forEach((s, i) => { counts[names[i]] = s.data().count; });   // (one aggregation read per 1,000 records of each, asked all at once)
   return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
 }
 /* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
@@ -1489,9 +1509,10 @@ async function sandboxWipe(budgetMs) {
   const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, ...SANDBOX_MAPS, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
   const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
   // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
-  // which no query of that collection returns: they go with the order's other records, which name it, and last of all
-  // with the collection's list of such parents (listDocuments names a document that only holds a subcollection too)
-  const KIN = new Set(["Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Charm_Nest_Arrivals"]), kinDone = new Set();
+  // which no query of that collection returns: they go with the collection's list of such parents, last of all
+  // (listDocuments names a document that only holds a subcollection too). They used to be looked for once more under every
+  // document of four order families first (one query each, a read each, thousands in a long replay) for the same orders.
+  const KIN = new Set(), kinDone = new Set();
   const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };
   const more = () => ({ ok: true, more: true, deleted, files });
   // which collections still hold anything, asked all at once: a call that follows another goes straight to the work left
@@ -1643,7 +1664,7 @@ async function op_purgeHistory(b) {
   }
   const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
   const SUBS = { [BRIDGE]: ["log"] };
-  const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
+  const wipe = async q => { let n = 0; for (;;) { const s = await q.select().limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
   const docs = {};
   // production's own part, exactly as it was: its history families only (never its seals, custom orders or cancel records)
   for (const name of names) {
@@ -2600,12 +2621,33 @@ async function noDesignRows(get) {
   const hidden = new Set(own.filter(r => r.tombstone).map(r => r.tombstone));
   return shared.filter(r => !hidden.has(r.id)).concat(own.filter(r => !r.tombstone));
 }
-async function op_aliasGet() {
+/* A learned map's signature (cost, 7 Oct 2026): how many documents a collection holds and the stamp of the newest write to
+   one, read as an aggregation and one masked document instead of every document. A page that holds the map sends the
+   signature it came with (ifSig) and is answered `unchanged` with nothing read but those; a map is written only by the
+   ops below, each of which stamps its document (updatedAt; a no-design row createdAt, and a removal changes the count), so a
+   change always changes the signature. The signature is taken BEFORE the documents are read: a write that lands meanwhile
+   shows as a change the next time. In the sandbox the signature covers the shared collection and the sandbox's own copy. */
+const MAP_STAMP = { [ALIASES]: "updatedAt", [OPTMAP]: "updatedAt", [NODESIGN]: "createdAt" };
+const stampOf = t => (t && t.seconds != null ? `${t.seconds}.${t.nanoseconds}` : String(ms(t) || 0));
+/* (a signature that cannot be taken, for whatever reason, is null: the page is then answered with the whole map, as before) */
+async function collSig(name, stamp) {
+  try {
+    const c = db.collection(name);
+    const [n, top] = await Promise.all([c.count().get(), c.orderBy(stamp, "desc").limit(1).select(stamp).get()]);
+    return `${n.data().count}:${top.docs.length ? stampOf(top.docs[0].data()[stamp]) : "0"}`;
+  } catch (e) { console.warn(`[charmNestLibrary] signature of ${name} not taken:`, (e && e.message) || e); return null; }
+}
+async function mapSig(name) {
+  const shared = await collSig(name, MAP_STAMP[name]); if (!shared || !PREFIX) return shared;
+  const own = await collSig(PREFIX + name, MAP_STAMP[name]); return own ? `${shared}~${own}` : null;
+}
+async function op_aliasGet(b = {}) {
+  const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };
   const { docs, own = [], truncated } = await mapDocs(ALIASES), out = {};
   docs.forEach(d => { out[d.id] = d.data(); });
   // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
   own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}) : mine; });
-  return { aliases: out, truncated };
+  return Object.assign({ aliases: out, truncated }, sig ? { sig } : {});
 }
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
    variations each have a SKU one variation's answer is never another's; a line with no SKU answers for the listing (sku).
@@ -2619,11 +2661,12 @@ async function op_aliasPut(b) {
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
   await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
 }
-async function op_noDesignGet() {
+async function op_noDesignGet(b = {}) {
+  const sig = await mapSig(NODESIGN); if (sig && b.ifSig === sig) return { unchanged: true, sig };
   const { docs, own = [], truncated } = await mapDocs(NODESIGN);
   const hidden = new Set(own.map(d => d.data()).filter(r => r.tombstone).map(r => r.tombstone));
   const rows = docs.filter(d => !hidden.has(d.id)).concat(own.filter(d => !d.data().tombstone)).map(d => Object.assign({ id: d.id }, d.data()));
-  return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated };
+  return Object.assign({ list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }, sig ? { sig } : {});
 }
 async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(PREFIX + NODESIGN).add(doc); return { ok: true, id: ref.id }; }
 /* In the sandbox only the sandbox's own row is deleted. A shared row (production's) is never touched from there: the
@@ -2636,12 +2679,13 @@ async function op_noDesignDelete(b) {
   await db.collection(PREFIX + NODESIGN).doc("del_" + b.id).set({ tombstone: b.id, by: str(b.by || "operator", 80), createdAt: FV.serverTimestamp() });
   return { ok: true };
 }
-async function op_optionMapGet() {
+async function op_optionMapGet(b = {}) {
+  const sig = await mapSig(OPTMAP); if (sig && b.ifSig === sig) return { unchanged: true, sig };
   const { docs, own = [], truncated } = await mapDocs(OPTMAP), out = {};
   docs.forEach(d => { out[d.id] = d.data().map || {}; });
   // the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
   own.forEach(d => { const mine = d.data().map || {}, was = out[d.id] || {}, next = {}; for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) next[n] = Object.assign({}, was[n], mine[n]); out[d.id] = next; });
-  return { maps: out, truncated };
+  return Object.assign({ maps: out, truncated }, sig ? { sig } : {});
 }
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
@@ -2983,13 +3027,21 @@ const countOf = () => col(CANCELLED).count().get().then(s => s.data().count);
 async function op_cancelList(b) {
   const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
   const tidyRec = d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; };
+  /* FC3b (cost): the placement feed asked this (idsOnly, after) every 2.5 s per open tab: a query and a count() (4 to 7 reads) to learn
+     that nothing was written. Every writer of a cancel record raises Charm_Nest_Rev/cancel in its own transaction or batch
+     (_orderCancel.bump); a page that sends the counter it saw (ifGen) is answered `unchanged` for ONE read when it has not moved. The
+     counter is read BEFORE the records, so a record written in between only makes the next ask read again. `wantGen` asks for it with
+     the answer (no ifGen yet). Production only (the sandbox answers in full, as before); a counter that cannot be read is no gen. */
+  const gen = b.idsOnly && (b.ifGen != null || b.wantGen) && !PREFIX ? await OrderCancel.gen(db, PREFIX) : null;
   if (b.after !== undefined) {
     const a = b.after && typeof b.after === "object" ? b.after : {}, s0 = Math.round(num(a.s)), n0 = Math.round(num(a.n)), id0 = orderIdOf(a.id);
     if (!(s0 > 0) || !(n0 >= 0 && n0 < 1e9) || !id0) return { error: "bad cursor" };
+    if (gen != null && b.ifGen != null && Number(b.ifGen) === gen) return { cursor: { s: s0, n: n0, id: id0 }, more: false, ids: [], unchanged: true, gen };
     let q = col(CANCELLED).orderBy("createdAt").orderBy(docOrder()).startAfter(new admin.firestore.Timestamp(s0, n0), id0).limit(n);
     if (b.idsOnly) q = q.select("orderId", "createdAt");
     const [s, total] = await Promise.all([q.get(), b.idsOnly ? countOf() : null]);
     const out = { cursor: (s.size && cursorOf(s.docs[s.size - 1])) || { s: s0, n: n0, id: id0 }, more: s.size >= n };
+    if (gen != null) out.gen = gen;
     return b.idsOnly ? Object.assign(out, { ids: s.docs.map(d => d.id), total }) : Object.assign(out, { list: s.docs.map(tidyRec) });
   }
   const top = b.track ? await col(CANCELLED).orderBy("createdAt", "desc").orderBy(docOrder(), "desc").select("createdAt").limit(1).get() : null;
@@ -2998,7 +3050,7 @@ async function op_cancelList(b) {
   //  the order a person cancelled today, which the orders check must keep out of the pull)
   if (b.idsOnly) {
     const [s, total] = await Promise.all([col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(), top ? countOf() : null]);
-    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {});
+    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {}, gen != null ? { gen } : {});
   }
   let cq=col(CANCELLED).orderBy("at",b.direction==='asc'?'asc':'desc');
   const dates=Activity.bounds(b.range);
@@ -3079,7 +3131,8 @@ async function op_cancelRestore(b) {
     text: `Was cancelled${c.by ? " by " + c.by : ""}${c.why ? ": " + c.why : ""}`, data: { cancelled: c }, id: String(num(c.at) || "record") }; }, "cancel restored");
   const batch = db.batch();
   if (rec) batch.set(col(CANCEL_HISTORY).doc(`${id}~${Math.round(num(rec.at)) || Date.now()}`), Object.assign({}, rec, { restoredAt: Date.now(), restoredBy: str(b.by, 80) || "operator" }));
-  batch.delete(ref); await batch.commit(); return { ok: true };
+  batch.delete(ref); OrderCancel.bump(batch, db, FV, PREFIX);   // (FC3b: the cancel counter moves with the delete, in this batch: readers of the cancelled list ask after it, see cancelList)
+  await batch.commit(); return { ok: true };
 }
 /** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */
 function cancelCopy(r) {

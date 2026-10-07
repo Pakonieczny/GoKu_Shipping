@@ -196,7 +196,10 @@ async function advance(D, simId, { budgetMs = 11 * 60000, fetchImpl = globalThis
   }
 }
 async function list(D, owner, limit = 30) {
-  const snap = await D.col(COL).where("owner", "==", owner).get();
+  /* Cost: the console polls this list every few seconds. A simulation document carries its days, trades, curve and state
+     (hundreds of KB); the list shows none of them, so only the fields summary() reads are requested. */
+  const q = D.col(COL).where("owner", "==", owner);
+  const snap = await (typeof q.select === "function" ? q.select("simId", "status", "source", "symbols", "dates", "cursor", "settings", "stats", "error", "warnings", "from", "to", "createdAtMs", "updatedAtMs", "completedAtMs", "leaseUntilMs") : q).get();
   const rows = snap.docs.map((d) => d.data()).sort((a, b) => Number(b.createdAtMs) - Number(a.createdAtMs)).slice(0, limit);
   return rows.map((d) => summary(d));
 }

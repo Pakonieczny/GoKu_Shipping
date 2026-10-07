@@ -45,6 +45,17 @@ const HORIZONS = [1, 5, 20, 60];
 function lazy(m) { try { return require(m); } catch { return null; } }
 function db(admin) { return admin || A; }
 function rows(snap) { const out = []; if (snap && typeof snap.forEach === "function") snap.forEach((d) => out.push(d.data())); return out; }
+/* Document data in document-id order, the order a plain equality query returns (an `in` query is not promised to). */
+function rowsById(snap) { const docs = []; if (snap && typeof snap.forEach === "function") snap.forEach((d) => docs.push(d)); return docs.map((d, i) => [String(d.id == null ? "" : d.id), i, d]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1])).map((x) => x[2].data()); }
+const OPEN_OUTBOX_STATUSES = ["PENDING", "FAILED", "DEAD"];
+/* Cost (the Portfolio view asks every 10 s): the transitions still open. The whole outbox history of the account used to be read and
+   filtered in memory; the same filter now runs on Firestore's side (if it refuses the combined query the old read is the fallback). */
+async function openOutboxFor(D, accountId) {
+  let snap;
+  try { snap = await D.col(D.COL.executionOutbox).where("accountId", "==", accountId).where("status", "in", OPEN_OUTBOX_STATUSES).get(); }
+  catch (e) { snap = await D.col(D.COL.executionOutbox).where("accountId", "==", accountId).get(); }
+  return rowsById(snap).filter((t) => OPEN_OUTBOX_STATUSES.includes(t.status)).sort((a, b) => Number(b.createdAtMs) - Number(a.createdAtMs)).slice(0, 100);
+}
 function decode(d) { const SC = lazy("./_investorStorageCodec"); if (!SC || !d || !d._codec) return d; try { return SC.decode(d); } catch { return d; } }
 function sha(v) { return crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(POLICY.canonical(v))).digest("hex"); }
 function typed(code, message, extra = {}) { return Object.assign(new Error(message || code), { code, ...extra }); }
@@ -363,7 +374,10 @@ async function readManagerDashboard({ params, ctx }) {
   const AL = require("./_investorAlerts");
   const O = lazy("./_investorOpenai");
   const [snap, run, pointers, alerts, deltas, spend, orderSetSnapshot] = await Promise.all([
-    PF.snapshot({ accountId, asOfMs: nowMs, admin: D }), latestRunDoc(D, ctrl), pointersFor(D, accountId), AL.listActive({ admin: D, accountId }), pendingDeltas(D, { limit: 50 }), spendView(D, { nowMs, policy }), D.col(D.COL.orderSets).where('accountId','==',accountId).get(),
+    /* liveMandatesOnly: the dashboard reads cash, NAV, positions and aggregates from the snapshot, never its activeMandates list or hash. */
+    PF.snapshot({ accountId, asOfMs: nowMs, admin: D, liveMandatesOnly: true }), latestRunDoc(D, ctrl), pointersFor(D, accountId), AL.listActive({ admin: D, accountId }), pendingDeltas(D, { limit: 50 }), spendView(D, { nowMs, policy }),
+    /* Cost (the dashboard is asked every 30 s per open page): workflowOf reads these seven fields of an order set and no others. */
+    (q => typeof q.select === 'function' ? q.select('planId', 'planHash', 'entered', 'entryExpired', 'pausedReason', 'symbol', 'status') : q)(D.col(D.COL.orderSets).where('accountId','==',accountId)).get(),
   ]);
   const decisions = await decisionsForRun(D, run && run.managerRunId);
   // The ledger transfers reservations out of cash; do not subtract them twice.
@@ -669,7 +683,7 @@ async function readPortfolio({ params, ctx }) {
   const { admin: D, control: ctrl, accountId, nowMs } = ctx;
   const PF = require("./_investorPortfolio");
   const [snap, pointers, orderSets, fills, outbox, events] = await Promise.all([PF.snapshot({ accountId, asOfMs: nowMs, admin: D }), pointersFor(D, accountId), orderSetsFor(D, accountId), fillsFor(D, accountId),
-    rows(await D.col(D.COL.executionOutbox).where("accountId", "==", accountId).get()).filter((t) => ["PENDING", "FAILED", "DEAD"].includes(t.status)).sort((a, b) => Number(b.createdAtMs) - Number(a.createdAtMs)).slice(0, 100),
+    openOutboxFor(D, accountId),
     rows(await D.col(D.COL.mandateEvents).where("accountId", "==", accountId).get()).sort((a, b) => Number(b.atMs) - Number(a.atMs)).slice(0, 200)]);
   const pointerBy = new Map(pointers.filter((p) => !TERMINAL_POINTER.has(p.status)).map((p) => [p.symbol, p]));
   const envelopesById = {};
@@ -694,7 +708,15 @@ async function readPortfolio({ params, ctx }) {
   };
   return { data };
 }
-async function realizedMinor(D, accountId) { try { return rows(await D.col(D.COL.trades).where("accountId", "==", accountId).get()).filter((t) => t.engineVersion === "manager").reduce((n, t) => n + big(t.realizedMinor || 0), 0n); } catch { return 0n; } }
+/* Cost (every Portfolio poll): only manager trades count and only their realizedMinor is used, so Firestore filters and sends that one field. */
+async function realizedMinor(D, accountId) {
+  const sum = (snap) => rows(snap).filter((t) => t.engineVersion === "manager").reduce((n, t) => n + big(t.realizedMinor || 0), 0n);
+  try {
+    let narrowed = null;
+    try { const q = D.col(D.COL.trades).where("accountId", "==", accountId).where("engineVersion", "==", "manager"); narrowed = await (typeof q.select === "function" ? q.select("engineVersion", "realizedMinor") : q).get(); } catch (e) { narrowed = null; }
+    return sum(narrowed || await D.col(D.COL.trades).where("accountId", "==", accountId).get());
+  } catch { return 0n; }
+}
 async function readMandates({ params, ctx }) {
   const { admin: D, control: ctrl, accountId, nowMs } = ctx;
   const [pointers, orderSets, fills] = await Promise.all([pointersFor(D, accountId), orderSetsFor(D, accountId), fillsFor(D, accountId)]);
@@ -1807,7 +1829,7 @@ function errorOf(err, correlationId) {
   return S.errorShape(code, err && err.message ? err.message : "internal error", { correlationId, fieldIssues: err && err.fieldIssues ? err.fieldIssues : [] });
 }
 /** The v2 entry point. Returns {statusCode, body, headers?}. `authOverride` lets the attestation run without an HTTP session. */
-async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), authOverride = null }) {
+async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), authOverride = null, controlHint = null }) {
   const D = db(admin);
   const correlationId = `c_${crypto.randomBytes(6).toString("hex")}`;
   const v = S.validateRequest(body);
@@ -1818,7 +1840,8 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
   if (!auth.ok) return { statusCode: statusOf({ code: auth.code }), body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape(auth.code, auth.message, { correlationId }) }) };
   // V2 bypasses the V1 dashboard loader; load the same saved feed as workers.
   if (!admin) await require('./_investorMarket').loadMarketSettings();
-  const ctrl = await controlDoc(D);
+  /* The handler's stop gate read the control document moments ago; reuse it (same document, one read fewer per request). */
+  const ctrl = (!admin && controlHint && typeof controlHint === "object") ? controlHint : await controlDoc(D);
   if (A.stopState(ctrl) && action !== "firebaseStop") return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("FIREBASE_STOPPED", "Firebase is stopped by the operator (" + new Date(Number(ctrl.firebaseStop.atMs) || nowMs).toISOString() + "). Nothing reads or writes the database until you press Resume.", { correlationId }) }) };
   const accountId = String(params.accountId || ctrl.accountId || "paper-1");
   const policy = POLICY.loadActiveSync(ctrl);
