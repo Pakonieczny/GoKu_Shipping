@@ -23,7 +23,8 @@
    transactions (`sync`, handed to _charmNestRoseStock.js), so a partial can never be held by two sheets and the list can never disagree
    with the nester. Ops (see plans/partial-sheets/contract.md): partialList (one cheap read per metal: field mask, revision probe, no
    polling), partialPolicyGet / partialPolicySet (the setting per metal), partialClaim / partialRelease / partialUse, partialPlan.
-   Nothing is ever deleted. */
+   OPTIONS STUDIO (Paul 7 Oct): sheetHistory (every cut of ONE physical sheet, oldest first, each with the leftover it made) and
+   partialSearchList (every partial, all statuses and metals, for the page's own search): both only read. Nothing is ever deleted. */
 const Rose = require('../../charm-nest-rose');
 const Partial = require('../../charm-nest-partial');
 const COLL = 'Charm_Nest_Remnants';
@@ -409,6 +410,90 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     });
     return { stocks: out };
   }
+
+  /* ── OPTIONS STUDIO (Paul 7 Oct): the history of a physical sheet, and the list the page searches. Both only read: nothing here writes. ── */
+  const r3 = x => +(+x).toFixed(3);
+  const parseJson = t => { try { return typeof t === 'string' ? JSON.parse(t) : null; } catch (_) { return null; } };
+  // one field-masked document read where the SDK allows it (db.getAll with a fieldMask: a sheet document is heavy), else a plain read
+  const lightGet = async (ref, fields) => { try { if (typeof db.getAll === 'function') { const [s] = await db.getAll(ref, { fieldMask: fields }); if (s) return s; } } catch (_) {} return ref.get(); };
+  const setOfFile = f => { const m = /(?:^|_)Set-(\d+)(?:_|$)/i.exec(String(f || '')); return m ? `Set ${+m[1]}` : ''; };   // (a file name is RG_2026-10-05_Set-3_Sheet-1)
+  const nameOfFile = f => { try { return String((sheetLabel && sheetLabel(null, f)) || f || '').slice(0, 80); } catch (_) { return String(f || '').slice(0, 80); } };
+  /* the physical sheet a sheet holds or was cut from: the sheet document's own roseStockId (one masked read), else the leftover its cut made (one record by sheetId; the
+     collection group of cuts would need an index) */
+  async function stockOfSheet(sheetId) {
+    const sd = await lightGet(col('Charm_Nest_Sheets').doc(sheetId), ['roseStockId']), sid = sd && sd.exists ? (sd.data() || {}).roseStockId : null;
+    if (okId(sid)) return sid;
+    let q = coll().where('sheetId', '==', sheetId).limit(1); if (typeof q.select === 'function') q = q.select('stockId');
+    const s = await q.get(), x = s.docs[0] ? s.docs[0].data() || {} : null;
+    return x && okId(x.stockId) ? x.stockId : null;
+  }
+  /* sheetHistory { stockId } | { sheetId } -> { ok, stock: { id, metal, code, wMm, hMm, revision, ownerSheetId, ownerSheetName }, cuts: [ { n, revision, at, by, sheetId, sheetName, setName, via,
+     rings, areaMm2, bboxMm, exact, derived? } ] oldest first, rev }. rings = the leftover AFTER that cut (closed rings, real mm, top left origin). Reads: the stock (1), its saved
+     leftovers (one query by stockId, field mask), and a cut document (with its heavy plan) ONLY for a revision that has no saved leftover (a cut made before leftovers were saved:
+     its rings are derived from plan.profile by leftover(), nothing is written). exact:false = the date or the person could not be recovered (at null / by ''). rev = the stock's
+     revision as a string (the page caches a history by stockId + revision). */
+  async function sheetHistory(b = {}) {
+    let stockId = b.stockId == null || b.stockId === '' ? '' : String(b.stockId);
+    if (stockId && !okId(stockId)) throw new Error('Choose a sheet');
+    if (!stockId) {
+      const sheetId = String(b.sheetId || ''); if (!okId(sheetId)) throw new Error('Choose a sheet');
+      stockId = await stockOfSheet(sheetId);
+      if (!stockId) throw new Error('This sheet is not on a physical sheet yet');
+    }
+    const st = await stocks().doc(stockId).get();
+    if (!st.exists) throw new Error('Sheet not found');
+    const s = st.data() || {}, metal = String(s.metal || 'rose'), R = Math.max(0, Math.floor(+s.revision) || 0), byRev = new Map(), cuts = new Map();
+    if (R > 0) {
+      let q = coll().where('stockId', '==', stockId).limit(500); if (typeof q.select === 'function') q = q.select(...FIELDS);
+      for (const d of (await q.get()).docs) { const x = d.data() || {}, n = Math.floor(+x.revision); if (n >= 1 && n <= R) byRev.set(n, x); }
+      const miss = []; for (let n = 1; n <= R; n++) if (!byRev.has(n)) miss.push(n);
+      await Promise.all(miss.map(async n => {
+        let cq = stocks().doc(stockId).collection('cuts').where('revision', '==', n).limit(1); if (typeof cq.select === 'function') cq = cq.select('sheetId', 'revision', 'at', 'by', 'fileBase', 'planJson');
+        const d = (await cq.get()).docs[0]; if (d) cuts.set(n, d.data() || {});
+      }));
+    }
+    const list = [];
+    for (let n = 1; n <= R; n++) {
+      const rec = byRev.get(n), cut = cuts.get(n);
+      if (rec) {
+        const at = +rec.cutAt > 0 ? +rec.cutAt : null, by = person(rec.by), bb = rec.bboxMm || { x: 0, y: 0, w: 0, h: 0 };
+        list.push({ n: list.length + 1, revision: n, at, by, sheetId: String(rec.sheetId || ''), sheetName: String(rec.sheetName || nameOfFile(rec.fileBase)), setName: String(rec.setName || setOfFile(rec.fileBase)), via: String(rec.via || ''),
+          rings: unpackRings(rec), areaMm2: Number.isFinite(+rec.areaMm2) ? +rec.areaMm2 : 0, bboxMm: bb, exact: at !== null && !!by });
+      } else if (cut) {
+        // no saved leftover for this cut: the frontier after it is in the cut's own plan (the last one also in the stock's profileJson)
+        let profile = (parseJson(cut.planJson) || {}).profile; if (!profile && n === R) profile = parseJson(s.profileJson);
+        let g = null; try { Rose.validate(profile, s.wPt, s.hPt); g = leftover(profile); } catch (_) { g = null; }
+        const at = +cut.at > 0 ? +cut.at : null, by = person(cut.by);
+        list.push({ n: list.length + 1, revision: n, at, by, sheetId: String(cut.sheetId || ''), sheetName: nameOfFile(cut.fileBase || cut.sheetId), setName: setOfFile(cut.fileBase), via: '',
+          rings: g ? g.rings : [], areaMm2: g ? g.areaMm2 : 0, bboxMm: g ? g.bboxMm : { x: 0, y: 0, w: 0, h: 0 }, exact: at !== null && !!by && !!g, derived: true });
+      }
+    }
+    // who holds it now: the current leftover's record names the sheet; else one masked read of the sheet (a held stock that was never cut has no record)
+    const owner = s.owner ? String(s.owner) : null, head = byRev.get(R);
+    let ownerName = owner && head && head.status === 'inUse' && head.inUseBySheetId === owner ? String(head.inUseBySheetName || '') : '';
+    if (owner && !ownerName && okId(owner)) { const od = await lightGet(col('Charm_Nest_Sheets').doc(owner), ['metal', 'sheetIndex', 'page', 'fileBase', 'folder']); if (od && od.exists) ownerName = String((sheetLabel && sheetLabel(od.data() || {})) || ''); }
+    return { ok: true, stock: { id: stockId, metal, code: CODES[metal] || '', wMm: r3(s.wPt * MM), hMm: r3(s.hPt * MM), revision: R, ownerSheetId: owner, ownerSheetName: ownerName || null }, cuts: list, rev: String(R) };
+  }
+
+  /* partialSearchList { ifRev, limit (default 300, max 500), before (the cutAt to read older than), verify } -> { items: [card], rev, more } or { unchanged: true, rev }: every partial of all
+     three metals and ALL statuses, newest cut first, the very card partialList returns (an estimate only for an available / held one). ONE query with a field mask, answered
+     { unchanged } from one tiny document when the counter has not moved: the page searches this one list in the browser. Reads only (no backfill). The answer is kept under about
+     4.5 MB (the function's response limit): a longer list says more:true and the page asks for the older ones with `before`. */
+  async function partialSearchList(b = {}) {
+    const state = await revState(), rev = state ? state.rev : null, ifRev = typeof b.ifRev === 'string' && /^[\w.-]{1,40}$/.test(b.ifRev) ? b.ifRev : null;
+    if (rev !== null && ifRev !== null && ifRev === rev && b.verify !== true) return { unchanged: true, rev };
+    const limit = Math.min(500, Math.max(1, Math.floor(+b.limit) || 300));
+    let q = coll().orderBy('cutAt', 'desc');
+    if (b.before != null && b.before !== '' && Number.isFinite(+b.before) && +b.before > 0) q = q.startAfter(+b.before);
+    q = q.limit(limit + 1);
+    if (typeof q.select === 'function') q = q.select(...FIELDS);
+    const [snap, stats] = await Promise.all([q.get(), readStats()]);
+    const rows = snap.docs.slice(0, limit).map(d => ({ id: d.id, d: d.data() || {} })), kept = []; let bytes = 0;
+    for (const r of rows) { bytes += 1500 + (typeof r.d.ringsJson === 'string' ? r.d.ringsJson.length : 0); if (kept.length && bytes > 4500000) break; kept.push(r); }
+    const typicals = {}, typ = m => (typicals[m] = typicals[m] || typicalOfMetal(stats, m));
+    const items = kept.map(r => card(r.id, r.d, typ(r.d.metal || 'rose'))).sort((a, c) => (c.cutAt || 0) - (a.cutAt || 0) || (c.revision || 0) - (a.revision || 0));
+    return { items, rev, more: snap.docs.length > limit || kept.length < rows.length, ...(state && !state.backfilled ? { needsBackfill: true } : {}) };
+  }
   const bind = s => { stockApi = s; };
 
   /* remnantReconcile {}: ONCE, for what was true before the stock's claims kept the records in step: a record that says 'available' while a sheet already holds its physical sheet
@@ -433,7 +518,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     return { ok: true, changed };
   }
 
-  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialStocks, partialBackfill: remnantBackfill } };
+  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialStocks, sheetHistory, partialSearchList, partialBackfill: remnantBackfill } };
 };
 module.exports.leftover = leftover;
 module.exports.FIELDS = FIELDS;
