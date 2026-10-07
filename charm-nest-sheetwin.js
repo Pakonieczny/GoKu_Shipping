@@ -12,7 +12,7 @@
   const METAL_OF_CODE = Object.fromEntries(Object.entries(CODE).map(([k, v]) => [v, k]));
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
   // the operator's name, as the bridge keeps it (its helpers are inside the bridge's own scope)
-  const whoAmI = () => (window.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
+  const whoAmI = () => (window.CNEmployee && typeof CNEmployee.name === "function" && CNEmployee.name()) || (window.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
   // the name that goes with each change, asked for in a small bar inside the window (never a browser pop-up over it);
   // once given, the change the person pressed carries on by itself
   function needName(retry) {
@@ -20,7 +20,7 @@
     const bar = W.el.name; if (!bar) return "";
     bar.innerHTML = `<input type="text" maxlength="40" autocomplete="name" spellcheck="false" aria-label="Your name, kept with this change" placeholder="Your name, for the record"><button type="button" class="btn sage xs" data-nm="go">Continue</button><button type="button" class="swIcon" data-nm="x" title="Not now" aria-label="Not now">${ICON.close}</button>`;
     bar.hidden = false;
-    const inp = bar.querySelector("input");
+    const inp = bar.querySelector("input"); try { inp.value = (window.CNEmployee && CNEmployee.last && CNEmployee.last()) || ""; } catch (_) {}      // (the last name used on this computer is ready: Continue keeps it)
     const go = () => {
       const v = inp.value.trim(); if (!v) return inp.focus();
       if (window.B) B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {}
@@ -136,6 +136,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swState.ready{background:var(--sageSoft);color:#3f5b3c}
 .swState.done{background:var(--velvet);color:#f3ead7}
 .swStateSeal{display:inline-flex;align-items:center;flex:0 0 auto;min-width:0}.swStateSeal:empty{display:none}
+.swStateSeal .sealRow.sheetCutRow{margin:-6px 0}
 .swIcon{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--ink70);cursor:pointer}
 .swIcon svg{width:16px;height:16px}
 .swIcon:hover{background:var(--paper2);color:var(--ink)}
@@ -1187,13 +1188,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     if (!prelim || !W.setSheets.length) renderSheetChips();
   }
-  /** The sheet's own completion seal in the header, beside "Completed" (the Library's card draws the same one, LASER CUT): the latest, small, and "+N" for
-   *  the others it holds. A seal is permanent, so it stays when the sheet is taken back to Current. A sheet nobody cut has none, and none is made up. */
+  /** The sheet's own completion seal in the header, beside "Completed" (the Library's card and Completed row draw the same one, LASER CUT): the very
+   *  same component (Seal.sheetCut, 72 px, zoom x1.8) and the very same rule (LibraryDone.cutStamp): ONE seal, the latest completion, only while the sheet
+   *  is completed (Paul, 7 Oct 2026: "one seal per each sheet ... no interim seals no duplicates"). A reopened sheet shows none here (every stamp stays in its
+   *  record and on its order timelines); a sheet nobody cut has none, and none is made up. */
   function sheetSeal(r) {
     try {
-      if (!window.Seal || !Seal.compactRow || !window.CharmNestReadiness || !r) return "";
-      const cuts = CharmNestReadiness.processStamps(r).filter(s => s.how === "laserDone" && +s.at > 0).sort((a, b) => a.at - b.at), lead = cuts[cuts.length - 1];
-      return lead ? Seal.compactRow(Object.assign({ scope: "sheet", owner: "sheet:" + (r.id || r.sheetId || "") }, lead), cuts.length - 1, 22) : "";
+      if (!window.Seal || !Seal.sheetCut || !window.LibraryDone || !LibraryDone.cutStamp || !r) return "";
+      return Seal.sheetCut(LibraryDone.cutStamp(r), { owner: "sheet:" + (r.id || r.sheetId || "") });
     } catch (e) { console.warn("sheet window: completed seal", e); return ""; }
   }
   async function markDone(done) {

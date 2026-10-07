@@ -2372,17 +2372,16 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .owSheetMatches b{font:600 13px var(--mono)}
 .owSheetMatches small{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){#reviewView .cnOrderFind{flex-basis:120px}}
-/* Library stamps use a compact 44px cap (it was 72px); the history group still shrinks uniformly when crowded. */
-/* Process seals share the wooden press, inked artwork and lens used by order seals. */
-.processSealRow.sealRow{gap:4px;justify-content:flex-end;margin:0;max-width:100%;flex-wrap:nowrap;pointer-events:none}
-.processSealRow.sealRow .seal+.seal{margin-left:0}
-.libCard>.processSealRow{position:absolute;right:20px;bottom:calc(min(44px,var(--seal-fit,var(--seal-base))) / -2);z-index:3;max-width:calc(100% - 40px)}
-.libCard:has(>.processSealRow){padding-bottom:10px}
-.libCard:has(.sheetBackStatus .laserSeal)>.processSealRow{right:calc(var(--seal-base) / 2 + 24px);max-width:calc(100% - var(--seal-base) / 2 - 44px)}
-.processSealRow .seal{background:transparent;border-radius:0;cursor:zoom-in;mix-blend-mode:normal}
-.setProcessSeals.sealRow{margin:calc(min(44px,var(--seal-fit,var(--seal-base))) * -.28) 12px calc(min(44px,var(--seal-fit,var(--seal-base))) * -.28) auto;flex:0 1 auto}
-.ldProcessSeals.sealRow{grid-column:2 / -1;justify-content:flex-start;margin:0 0 5px;gap:4px}
-.librarySheet:has(.processSealRow)>.productionRow{margin-top:24px}
+/* The Library's seals (Paul, 7 Oct 2026: "only one seal per each sheet and only visible when a given sheet has completed the laser cutting process ...
+   make the seals a bit bigger and zoom a bit bigger so they are easily legible"): ONE seal per sheet, its LASER CUT, 72 px at rest and x1.8 on zoom, drawn by the one
+   component (Seal.sheetCut, charm-nest-motion.js, which owns the size). It sits IN the footer of a sheet card, between the counts and the "28 / 28" counter, so it covers
+   neither and cannot leave the card; in a Completed row it has its own place at the row's right end (below the line on a phone). The old rules (every stamp in a row
+   hanging 22 px under the card, 44 px, set seals) are gone: a set shows no seal. */
+.libCard .m>.sealRow.sheetCutRow{margin:-2px 0 -2px auto}
+.libCard .m:has(>.sheetCutRow)>.sheetBackStatus{margin-left:0}
+.ldLine:has(>.sheetCutRow){position:relative;min-height:78px;padding-right:98px}
+.ldLine>.sealRow.sheetCutRow{position:absolute;right:12px;top:50%;margin:-36px 0 0}
+@container workspace (max-width:520px){.ldLine:has(>.sheetCutRow){min-height:62px;padding-right:10px}.ldLine>.sealRow.sheetCutRow{position:static;grid-column:1 / -1;justify-self:end;margin:-4px 0}}
 .ldMark{position:absolute;top:-9px;right:-9px;z-index:2;width:26px;height:26px;border-radius:50%;border:1px solid var(--ink25);background:var(--card);color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer;box-shadow:0 2px 6px rgba(30,26,20,.14);opacity:0;transform:scale(.8);transition:opacity .14s ease,transform .14s ease,background-color .14s,color .14s,border-color .14s}
 .ldMark svg{width:14px;height:14px;display:block}
 .libCard:hover>.ldMark,.libCard:focus-within>.ldMark,.ldMark:focus-visible,.ldMark.busy{opacity:1;transform:none}
@@ -2792,7 +2791,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .sealRow .seal+.seal{margin-left:0}
 .sealRow.mini{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0 calc(var(--seal-fit,var(--seal-base)) * -.28) -12px}
 .seal{position:relative;display:inline-block;flex:0 0 var(--seal-fit,var(--seal-base));width:var(--seal-fit,var(--seal-base));height:var(--seal-fit,var(--seal-base));border-radius:50%;transform:rotate(var(--rot,-8deg));mix-blend-mode:multiply;opacity:.94;pointer-events:auto;transition:filter .9s ease-out,opacity .2s}
-.libCard .seal,.setCard .seal,.ldProcessSeals .seal{flex:0 0 min(44px,var(--seal-fit,var(--seal-base)));width:min(44px,var(--seal-fit,var(--seal-base)));height:min(44px,var(--seal-fit,var(--seal-base)));opacity:1}
+.libCard .seal,.setCard .seal{flex:0 0 min(44px,var(--seal-fit,var(--seal-base)));width:min(44px,var(--seal-fit,var(--seal-base)));height:min(44px,var(--seal-fit,var(--seal-base)));opacity:1}
 .seal svg{display:block;width:100%;height:100%;overflow:visible;pointer-events:none}
 .seal.loose{position:absolute;z-index:3}
 .seal.pending{opacity:0}
@@ -3039,11 +3038,11 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261005-zg-seal-small-rt1-sealpc1-sealcmp1-pdot1"></script>
+<script src="charm-nest-motion.js?v=20261007-cutseal1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1-tl2fit1-pl1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
-<script src="charm-nest-assets.js"></script>
+<script src="charm-nest-assets.js?v=20261007-imgcache"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
@@ -3055,7 +3054,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
-<script src="charm-nest-order-pieces.js?v=20261005-op2-hand1-pf2"></script>
+<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
@@ -5954,7 +5953,7 @@ function drawRecalled(sh, cv) {
   if (faceOf(cv) === "back" && cardBack()) return drawRecalledBack(sh, cv, ctx, w / f.fw, sw, sh2);
   if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); return; }
   if (!sh._img || sh._imgSource !== r.previewSrc) {
-    r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0) : "");
+    r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.previewAt || r.createdAt || r.updatedAt || 0) : "");
     const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img; sh._imgSource=r.previewSrc;
     img.onload = () => { if (sh.el) drawPreview(sh); };
     img.onerror = () => { sh._imgFailed = true; if (sh.el) { const c2 = $(`[data-r="canvas"]`, sh.el); if (c2) { const x = c2.getContext("2d"); x.fillStyle = "#9a9388"; x.font = `${Math.round(c2.width / 40)}px sans-serif`; x.textAlign = "center"; x.fillText("the saved preview could not be loaded", c2.width / 2, c2.height / 2); } } };
@@ -6851,7 +6850,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-lb2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-lb2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -6898,7 +6897,7 @@ try {
   try { if (roleOn()) CNRole.start(); } catch (_) {}
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk3-en2-pf6-en3b"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-cutseal1-nm1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
@@ -6911,7 +6910,7 @@ try {
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20261005-egl1-sa5"></script>
+<script src="charm-nest-library.js?v=20261007-cutseal1-nm1"></script>
 <script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>

@@ -13981,6 +13981,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (_batchPollTimer) return;
       _batchPollTimer = setInterval(() => {
         if (_batchPollInFlight) return;
+        // COST: a hidden tab shows nothing, and the server's own collector (every ten minutes) refreshes and
+        // saves jobs without any tab. Each pass reads up to 1,500 job records, so skip it while hidden;
+        // visibilitychange (below) checks at once when the tab comes back.
+        if (document.hidden) return;
         // Stop polling once every visible batch is final (collected,
         // failed, cancelled, expired). Auto-collect-pending batches
         // remain "open" until the collect call updates their record.
@@ -14011,6 +14015,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
     }
 
     document.getElementById("batchJobsRefreshBtn")?.addEventListener("click", () => _checkBatchJobsNow(true));
+
+    // Back on the tab after a hidden spell: one immediate check instead of waiting out the next minute.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden || !_batchPollTimer || _batchPollInFlight) return;
+      const panel = document.getElementById("batchJobsPanel");
+      const charmPanel = document.getElementById("charmBatchJobsPanel");
+      if ((panel && panel.style.display !== "none") || (charmPanel && charmPanel.style.display !== "none")) _checkBatchJobsNow(false);
+    });
 
     // Auto-load batches list when entering batch mode for the first time.
     if (_isBatchModeActive()) {

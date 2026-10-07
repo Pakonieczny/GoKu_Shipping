@@ -55,6 +55,7 @@ const SEEN_MAX = 150;
 const PAIR_TTL_MS = 10 * MIN;
 const SERVER_RETRIES = 3;             // a send the inbox could not take for a server fault is tried this many times
 const AUTO_RESOLVE_IDLE_MS = 21 * DAY;
+const PRUNE_EVERY_MS = 30 * MIN;      // how often reconcile runs the clean-up of old records
 const KEEP_RESOLVED_MS = 180 * DAY;
 const KEEP_TRANSLATION_MS = 60 * DAY;
 const INBOX_URL = "https://etsy-mail-1.goldenspike.app/";
@@ -1563,7 +1564,12 @@ async function reconcile({ budgetMs = 20000 } = {}) {
     out.settled += await checkInflight(bell.inflight);
     out.dispatched += await checkWaiting(bell.waiting);
 
-    const open = await db.collection(COLL.eng).where("status", "==", "open").limit(400).get();
+    // Cost: every open question is read again on every 5-minute tick, so the read
+    // leaves out the fields this pass never looks at (seen[], sim[], previews, line labels).
+    const open = await db.collection(COLL.eng).where("status", "==", "open")
+      .select("id", "receiptId", "status", "sandbox", "threadId", "customer", "outbox", "checkedToMs", "pulledToMs",
+        "startedAtMs", "createdAtMs", "reopenedAtMs", "resolvedAtMs", "lastInboundAtMs", "lastOutboundAtMs", "lastLookAtMs")
+      .limit(400).get();
     out.open = open.size;
     const byThread = new Map();
     for (const d of open.docs) {
@@ -1575,7 +1581,9 @@ async function reconcile({ budgetMs = 20000 } = {}) {
     const threadIds = [...byThread.keys()];
     const threadDocs = new Map();
     for (let i = 0; i < threadIds.length && left() > 5000; i += 100) {
-      const snaps = await db.getAll(...threadIds.slice(i, i + 100).map(id => db.collection(COLL.threads).doc(id)));
+      // Cost: only the four conversation fields this pass reads, not the whole thread.
+      const snaps = await db.getAll(...threadIds.slice(i, i + 100).map(id => db.collection(COLL.threads).doc(id)),
+        { fieldMask: ["orderLinkIds", "lastInboundAt", "lastOutboundAt", "lastOperatorReplyAt"] });
       for (const s of snaps) if (s.exists) threadDocs.set(s.id, s.data());
     }
     for (const [threadId, engs] of byThread) {
@@ -1620,7 +1628,12 @@ async function reconcile({ budgetMs = 20000 } = {}) {
       await releaseManual(linked.id);
       if (await dispatchNext(c.thread.id)) out.dispatched++;
     }
-    if (left() > 3000) out.deleted += await prune();
+    // Cost: the clean-up (about eight reads when nothing is old) is for records weeks
+    // and months old, so it runs every half hour, not on every five-minute tick.
+    if (left() > 3000 && Date.now() - (bell.prunedAtMs || 0) > PRUNE_EVERY_MS) {
+      out.deleted += await prune();
+      note({ prunedAtMs: Date.now() });
+    }
   } catch (e) { console.warn("orderLink reconcile:", e.message); out.error = e.message; }
   finally { await flush(); }
   return out;
