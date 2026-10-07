@@ -1354,7 +1354,7 @@ const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
-  "runPut", "runArchive", "releasePut", "arrivalRecord"]);
+  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut"]);
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -1362,8 +1362,11 @@ async function placementGen() {
 }
 async function bumpPlacementGen(op) {
   if (PREFIX || NO_GEN_BUMP.has(op)) return;
-  try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); }
-  catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); }
+  // (a second try after a short wait: a counter that is not raised leaves readers on `unchanged` until their once-a-minute full read)
+  for (let tries = 0; tries < 2; tries++) {
+    try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); return; }
+    catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); if (!tries) await new Promise(r => setTimeout(r, 120)); }
+  }
 }
 const msRow = r => { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; return r; };
 async function readOrderPieces(rd, ids, sheetIds) {
