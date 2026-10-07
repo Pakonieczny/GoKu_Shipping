@@ -1458,10 +1458,12 @@ async function op_sandboxPut(b) {
   await db.collection(SANDBOX).doc("current").set(doc);
   return { ok: true, snapshot: doc };
 }
-async function op_sandboxStatus() {
+async function op_sandboxStatus(b) {
   const doc = await db.collection(SANDBOX).doc("current").get();
-  const counts = {};
-  for (const name of [...SANDBOXED, ...SANDBOX_MAPS]) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
+  // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
+  if (b && b.light === true) return { ok: true, light: true, snapshot: doc.exists ? doc.data() : null, records: {} };
+  const counts = {}, names = [...SANDBOXED, ...SANDBOX_MAPS];
+  (await Promise.all(names.map(name => db.collection("Sandbox_" + name).count().get()))).forEach((s, i) => { counts[names[i]] = s.data().count; });   // (one aggregation read per 1,000 records of each, asked all at once)
   return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
 }
 /* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
@@ -1489,9 +1491,10 @@ async function sandboxWipe(budgetMs) {
   const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, ...SANDBOX_MAPS, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
   const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
   // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
-  // which no query of that collection returns: they go with the order's other records, which name it, and last of all
-  // with the collection's list of such parents (listDocuments names a document that only holds a subcollection too)
-  const KIN = new Set(["Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Charm_Nest_Arrivals"]), kinDone = new Set();
+  // which no query of that collection returns: they go with the collection's list of such parents, last of all
+  // (listDocuments names a document that only holds a subcollection too). They used to be looked for once more under every
+  // document of four order families first (one query each, a read each, thousands in a long replay) for the same orders.
+  const KIN = new Set(), kinDone = new Set();
   const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };
   const more = () => ({ ok: true, more: true, deleted, files });
   // which collections still hold anything, asked all at once: a call that follows another goes straight to the work left
@@ -1643,7 +1646,7 @@ async function op_purgeHistory(b) {
   }
   const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
   const SUBS = { [BRIDGE]: ["log"] };
-  const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
+  const wipe = async q => { let n = 0; for (;;) { const s = await q.select().limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
   const docs = {};
   // production's own part, exactly as it was: its history families only (never its seals, custom orders or cancel records)
   for (const name of names) {

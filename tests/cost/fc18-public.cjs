@@ -57,7 +57,7 @@ const body = r => JSON.parse(r.body);
 
 (async () => {
   const L = 'reviews list popular (120 reviews)';
-  // perHourCalls = calls that reach Firestore per hour for one caller at 1 request/s: before the change every call did (3600); after it only a miss does (once per TTL per instance)
+  // perHourCalls = calls of that kind per hour for one caller at 1 request/s, AFTER the change: before it every call was a full read (3600 an hour); now only a miss is (once per TTL per instance, once per 5 minutes for the SKU ticks)
   const first = await one(L + ' call 1', 30, () => get(reviews, { action: 'list', handle: 'popular-charm-necklace' }), { reads: 130, bytes: 40000 });
   const second = await one(L + ' call 2 (same instance, seconds later)', 0, () => get(reviews, { action: 'list', handle: 'popular-charm-necklace' }), { reads: 0, bytes: 0 });
   const rr = body(first);
@@ -96,8 +96,23 @@ const body = r => JSON.parse(r.body);
   const p2 = await one('review feed ?pretty=1 call 2', 0, () => get(feed, { pretty: '1' }));
   assert.ok(p2.body.includes('\n  <review>'), 'pretty feed is still indented');
   assert.strictEqual(p2.body.replace(/\n\s*/g, '').replace(/ +$/g, ''), xml.replace(/\n\s*/g, ''), 'pretty and compact feeds carry the same reviews');
-  const s1 = await one('sku console ticks GET (3,000 ticked listings)', 3600, () => get(sku, {}, { origin: 'https://sku.goldenspike.app' }), { bytes: 10000 });
+  const s1 = await one('sku console ticks GET (3,000 ticked listings)', 12, () => get(sku, {}, { origin: 'https://sku.goldenspike.app' }), { bytes: 10000 });
   assert.strictEqual(body(s1).ids.length, 3000, 'all ticks still come back');
+  const SKU_O = { origin: 'https://sku.goldenspike.app' };
+  const s2 = await one('sku console ticks GET again (nothing ticked since)', 3600, () => get(sku, {}, SKU_O), { reads: 1, bytes: 100 });
+  assert.deepStrictEqual(body(s2), body(s1), 'same answer');
+  const post = (b) => sku.handler({ httpMethod: 'POST', headers: SKU_O, queryStringParameters: {}, body: JSON.stringify(b) });
+  assert.strictEqual((await post({ listing_id: 4242424242, checked: true })).statusCode, 200);
+  const s3 = await one('sku console ticks GET after a tick (a person ticking)', 0, () => get(sku, {}, SKU_O));
+  assert.ok(body(s3).ids.includes('4242424242') && body(s3).ids.length === 3001, 'a new tick shows on the very next call');
+  // a tick written through ANOTHER instance (not this module's copy): only the revision document tells this instance
+  await db.doc('sku_checked/4343434343').set({ checked: true, listing_id: 4343434343 });
+  assert.strictEqual(body(await get(sku, {}, SKU_O)).ids.length, 3001, 'a tick written without a revision bump waits for the copy to expire (5 minutes)');
+  await db.doc('sku_checked_meta/rev').set({ n: 99 });
+  assert.strictEqual(body(await get(sku, {}, SKU_O)).ids.length, 3002, 'a bumped revision (another instance wrote a tick) is seen on the next call');
+  assert.strictEqual((await post({ listing_id: 4242424242, checked: false })).statusCode, 200);
+  assert.strictEqual(body(await get(sku, {}, SKU_O)).ids.includes('4242424242'), false, 'an un-tick shows on the next call');
+  assert.strictEqual((await post({ listing_id: 'x', checked: true })).statusCode, 400, 'bad ids are refused as before');
   assert.strictEqual(stats1.ok, true);
 
   say('');
