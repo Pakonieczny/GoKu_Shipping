@@ -27,6 +27,11 @@ async function main() {
   const ev = (type, at, extra) => srv.st.put('Order_Timeline', `${A.rid}~${type}~${extra && extra.id || type}`, Object.assign({ orderId: A.rid, type, at, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra));
   ev('arrived', NOW - 3 * DAY * 1000, { source: 'etsy', by: 'Etsy' }); ev('placed', NOW - 2 * DAY * 1000, { sheet: 'GF Sheet 1', sheetId: 'sh1' });
 
+  // the piece stands on its sheet (the page's PiecePlacement reads the pool piece and the sheet): since 5 Oct the rail follows where the piece IS, so a
+  // piece on no sheet has Nested and every step after it hollow and would never stamp Engraved, however fast the approval arrives (LB2, 7 Oct)
+  { const pid = `${A.rid}_${A.tid}_1`;
+    srv.st.put('Charm_Pool', pid, { poolId: pid, orderId: A.rid, transactionId: A.tid, lineKey: `${A.rid}_${A.tid}`, sku: A.sku, material: 'gold', copy: 1, quantity: 1, runId: 'r1', state: 'written', sheetId: 'sh1', setId: 'GF_Set-1', sheetName: 'GF Sheet 1', createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 });
+    srv.st.put('Charm_Nest_Sheets', 'sh1', { id: 'sh1', setId: 'GF_Set-1', setSeq: 1, sheetIndex: 1, runId: 'r1', metal: 'gold', day: '2026-10-06', fileBase: 'GF Sheet 1', folder: 'GF Sheet 1', status: 'complete', placedCount: 1, charmCount: 1, placements: [{ id: 'c0', cxPt: 30, cyPt: 30, angle: 0, wPt: 28, hPt: 28 }], charms: [{ id: 'c0', poolId: pid, order: A.rid, sku: A.sku, name: 'x' }], poolIds: [pid], orders: [A.rid] }); }
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctl = { gets: [], inflight: 0, maxInflight: 0, fail: false };
   const errors = [];
