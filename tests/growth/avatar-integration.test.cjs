@@ -160,7 +160,11 @@ test('reduced motion keeps expression changes but removes timed motion', async t
   h.visibility.motion(false); assert.equal(h.calls.motion.at(-1).reducedMotion, false);
   const resumed = h.sceneOptions.onFrame(1);
   assert.equal(resumed.bob, 0); assert.equal(resumed.gazeY, 0);
-  h.api.setLevel(.25); assert.notEqual(h.sceneOptions.onFrame(9).mouthOpen, resumed.mouthOpen, 'expression follows measured output, not a fake wall-clock pulse');
+  h.api.setLevel(.25); const audible = h.sceneOptions.onFrame(9);
+  assert.ok(audible.speechEnergy > resumed.speechEnergy, 'voice emission follows measured output after resuming');
+  assert.equal(audible.mouthOpen, 0); assert.equal(resumed.mouthOpen, 0);
+  assert.equal(audible.mouthCurve, resumed.mouthCurve, 'the semantic curve remains closed at every volume');
+  assert.deepEqual(audible.speechBands, [0, 0, 0, 0, 0, 0], 'legacy amplitude cannot invent a spectrum');
 });
 
 test('scene loading rejection resolves a static fallback', async t => {

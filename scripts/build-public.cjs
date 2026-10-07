@@ -31,6 +31,8 @@ const assets = [
   "brites-concierge-expression.js",
   "concierge-expression-qa.html",
   "concierge-expression-qa.js",
+  "concierge-voice-qa.html",
+  "concierge-voice-qa.js",
   "brites-concierge-voice-actions.js",
   "brites-concierge-guide.js",
   "brites-concierge-guide.css",

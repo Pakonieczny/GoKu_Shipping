@@ -153,7 +153,7 @@ test('native clear, turn replacement and disconnect remove old clock identity',a
   f.begin('input-new');f.bind('response-new');f.emit({type:'output_audio_buffer.started',response_id:'response-new'});f.audio().currentTime=.2;const current=f.frame();assert.equal(current.responseId,'response-new');assert.equal(current.outputTimeMs,200,'a new response gets an independent observed media baseline');
   f.emit({type:'output_audio_buffer.started',response_id:'response-old'});assert.equal(f.frame().responseId,'response-new','late old response cannot claim the current media clock');
   f.voice.interrupt();assert.equal(Object.hasOwn(f.levels.at(-1),'outputTimeMs'),false);assert.equal(Object.hasOwn(f.frame(),'outputTimeMs'),false);
-  const staleFrame=f.frames.values().next().value;await f.voice.stop();assert.deepEqual(f.levels.at(-1),{input:0,output:0});const count=f.levels.length;staleFrame();assert.equal(f.levels.length,count,'a frame captured before cleanup cannot publish a disconnected clock');assert.equal(f.frames.size,0);
+  const staleFrame=f.frames.values().next().value;await f.voice.stop();assert.deepEqual(f.levels.at(-1),{input:0,output:0,outputSignal:{amplitude:0,bands:[0,0,0,0,0,0],brightness:0,valid:false}});const count=f.levels.length;staleFrame();assert.equal(f.levels.length,count,'a frame captured before cleanup cannot publish a disconnected clock');assert.equal(f.frames.size,0);
 });
 
 test('remote stream replacement accepts its actual new local clock without retaining a previous stream watermark',async t=>{

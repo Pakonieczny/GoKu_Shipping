@@ -75,7 +75,7 @@
   // Action authority belongs to the actual finalized shopper audio turn. It is
   // never restored from history, saved storage, or a model-generated tool argument.
   var voiceAuthority=null,voiceAuthorityEpoch=0,voiceInputItemId='',voiceInputTurnVersion=null,voiceSelectionVersion=0,voiceInputSelectionVersion=null,voiceInputFocusedProductId='',voiceLoadEpoch=0,voiceStopPending=null,voiceStopping=false,selectedProductId='',preparedVoiceAction=null,voiceProductReads=new Set(),voiceActionsLoading=null,productAttention=null,pagePieceRead=null,attentionContextTimer=null,guide=null,guideLoading=null,guideEnabled=false,shopperProgress='none',performanceBlockedUntil=0,currentPerformance=null,emotionGuard=null;
-  var voiceAvailabilityCode='',voiceAvailabilityRead=null,voiceOutputMeterState='waiting',conversationEmotion='warm',liveMeaningProducts=new Set(),performanceEmotionTimer=null,attentionReleaseTimer=null;
+  var voiceAvailabilityCode='',voiceAvailabilityRead=null,voiceOutputMeterState='waiting',conversationEmotion='warm',liveMeaningProducts=new Set(),performanceEmotionTimer=null,attentionReleaseTimer=null,voiceOutputBinding=null,voiceVisualSample=null,voiceClosedOutputs=new Map();
   try{var saved=JSON.parse(sessionStorage.getItem(key)||'null');if(saved&&Date.now()-saved.updatedAt<86400000)state=Object.assign(state,saved);}catch(e){}
   state.history=(Array.isArray(state.history)?state.history:[]).slice(-16).flatMap(function(message){return message&&['user','assistant'].includes(message.role)&&typeof message.content==='string'?[{role:message.role,content:message.content.slice(0,3750)}]:[];});
   state.preferences=state.preferences&&typeof state.preferences==='object'&&!Array.isArray(state.preferences)?state.preferences:{};
@@ -101,7 +101,7 @@
   var bar=el('header',null,'bar'),title=el('div');title.append(el('div','BRITES JEWELRY','brand'),el('h2','Your little gift guide'));var close=el('button','\u00d7','icon');close.type='button';close.setAttribute('aria-label','Close gift concierge');bar.append(title,close);panel.appendChild(bar);
   var avatarStage=el('div',null,'concierge-avatar-stage');avatarStage.setAttribute('aria-hidden','true');panel.appendChild(avatarStage);
   var expressionController=null,expressionLoading=null,expressionTimer=null,pendingVoicePerformance=null,expressionPending=null,expressionMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');
-  expressionMotion?.addEventListener?.('change',function(){expressionCall('setReducedMotion',expressionMotion.matches);if(expressionMotion.matches)cancelExpressions();});
+  expressionMotion?.addEventListener?.('change',function(){expressionCall('setReducedMotion',expressionMotion.matches);if(expressionMotion.matches){cancelExpressions();clearVoiceVisualSignal();}});
   function expressionCall(method,value){
     if(method==='cancel')expressionPending=null;
     var pending=expressionPending;
@@ -151,7 +151,70 @@
   document.addEventListener('pointerover',attendPageLink);document.addEventListener('focusin',attendPageLink);
   function leavePageLink(event){var candidate=pageProductLink(event.target);if(candidate&&!candidate.link.contains(event.relatedTarget)){if(productAttention?.source==='page-pointer'&&productAttention.target===candidate.link)clearProductAttention();else if(!productAttention)avatarCall('clearFocus');}}
   document.addEventListener('pointerout',leavePageLink);document.addEventListener('focusout',leavePageLink);
-  function setAvatarState(value){avatarState=value;avatarCall('setState',value);refreshAvatarEmotion();}
+  function liveVoiceOutput(){
+    if(!voice||!(voiceActive||voiceStarting))return null;
+    try{if('currentOutput' in voice){var actual=voice.currentOutput;return actual?.playing===true&&actual.currentTurn!==false?actual:null;}}catch(e){return null;}
+    return voiceOutputBinding?.epoch===voiceEpoch&&voiceOutputBinding.playing===true?voiceOutputBinding:null;
+  }
+  function voiceDisplayState(value){return state.open&&!document.hidden&&!voicePlaybackBlocked&&liveVoiceOutput()?'speaking':value;}
+  function retireVoiceOutput(id){if(typeof id!=='string'||!id)return;var binding=voiceOutputBinding?.responseId===id?voiceOutputBinding:null;voiceClosedOutputs.set(id,{inputItemId:binding?.inputItemId||voiceInputItemId,turnVersion:Number.isInteger(binding?.turnVersion)?binding.turnVersion:voiceInputTurnVersion});if(voiceClosedOutputs.size>32)voiceClosedOutputs.delete(voiceClosedOutputs.keys().next().value);}
+  function currentVoiceSample(value,playbackStart){
+    if(value?.currentTurn===false)return false;
+    var closed=value?.responseId&&voiceClosedOutputs.get(value.responseId);
+    if(closed&&(!Number.isInteger(closed.turnVersion)||!Number.isInteger(value.turnVersion)||closed.turnVersion===value.turnVersion)&&(!closed.inputItemId||!value.inputItemId||closed.inputItemId===value.inputItemId))return false;
+    if(value?.inputItemId&&voiceInputItemId&&value.inputItemId!==voiceInputItemId||Number.isInteger(value?.turnVersion)&&Number.isInteger(voiceInputTurnVersion)&&value.turnVersion!==voiceInputTurnVersion)return false;
+    var actual=liveVoiceOutput(),nativeKnown=!!voice&&'currentOutput' in voice;
+    // The current adapter supplies exact buffer attribution even without a
+    // media clock. An unqualified positive sample cannot borrow that buffer.
+    if(nativeKnown&&(Number(value?.output)>0||value?.outputSignal?.valid===true)&&(
+      !actual||value.currentTurn!==true||value.responseId!==actual.responseId||value.inputItemId!==actual.inputItemId||value.turnVersion!==actual.turnVersion))return false;
+    var legacyStart=playbackStart&&voice&&!nativeKnown;
+    if(actual&&(!legacyStart&&value?.responseId&&actual.responseId&&value.responseId!==actual.responseId||value?.inputItemId&&actual.inputItemId&&value.inputItemId!==actual.inputItemId||Number.isInteger(value?.turnVersion)&&Number.isInteger(actual.turnVersion)&&value.turnVersion!==actual.turnVersion))return false;
+    return true;
+  }
+  function applyVoiceSignal(signal,level){
+    if(avatar&&typeof avatar.setSpeechSignal==='function'){
+      avatarCall('setSpeechSignal',signal);
+      // Older voice adapters still provide honest measured RMS, without bins.
+      if(!signal&&level>0)avatarCall('setLevel',level);
+    }else avatarCall('setLevel',level);
+  }
+  function clearVoiceVisualSignal(clearBinding){
+    voiceVisualSample=null;
+    if(clearBinding){retireVoiceOutput(voiceOutputBinding?.responseId);voiceOutputBinding=null;}
+    applyVoiceSignal(null,0);
+  }
+  function measuredVoiceSignal(value){
+    if(!value||value.valid!==true||!Number.isFinite(value.amplitude)||value.amplitude<0||value.amplitude>1||!Number.isFinite(value.brightness)||value.brightness<0||value.brightness>1||!Array.isArray(value.bands)||value.bands.length!==6||value.bands.some(function(band){return !Number.isFinite(band)||band<0||band>1;}))return null;
+    return {amplitude:value.amplitude,bands:value.bands.slice(),brightness:value.brightness,valid:true};
+  }
+  function renderVoiceSample(value){
+    if(!currentVoiceSample(value))return false;
+    var actual=liveVoiceOutput(),nativeKnown=false;try{nativeKnown=!!voice&&'currentOutput' in voice;}catch(e){}
+    if(nativeKnown&&!actual&&Number(value?.output)>0)return false;
+    if(!state.open||document.hidden||avatarPaused||expressionMotion?.matches===true||voicePlaybackBlocked||voiceOutputMeterState==='paused'||voiceOutputMeterState==='unavailable'){clearVoiceVisualSignal();return false;}
+    var speaking=!!actual||avatarState==='speaking',hasSignal=value&&Object.prototype.hasOwnProperty.call(value,'outputSignal'),signal=hasSignal?measuredVoiceSignal(value.outputSignal):null,level=speaking?(hasSignal?(signal?.amplitude||0):Number.isFinite(value?.output)?Math.max(0,Math.min(1,value.output)):0):0;
+    if(!speaking)signal=null;
+    if(actual&&avatarState!=='speaking')setAvatarState('speaking');
+    voiceVisualSample={epoch:voiceEpoch,client:voice,at:Date.now(),responseId:value?.responseId||actual?.responseId||'',inputItemId:value?.inputItemId||actual?.inputItemId||'',turnVersion:Number.isInteger(value?.turnVersion)?value.turnVersion:actual?.turnVersion,currentTurn:value?.currentTurn,signal:signal,level:level};
+    applyVoiceSignal(signal,level);return true;
+  }
+  function joinCurrentVoiceSignal(){
+    var sample=voiceVisualSample;
+    if(!sample||sample.epoch!==voiceEpoch||sample.client!==voice||Date.now()-sample.at>250||Date.now()<sample.at||!state.open||document.hidden||avatarPaused||expressionMotion?.matches===true||voicePlaybackBlocked||voiceOutputMeterState==='paused'||voiceOutputMeterState==='unavailable'||!currentVoiceSample(sample)){clearVoiceVisualSignal();return;}
+    var actual=liveVoiceOutput(),nativeKnown=false;try{nativeKnown=!!voice&&'currentOutput' in voice;}catch(e){}
+    if(nativeKnown&&!actual||!actual&&avatarState!=='speaking'){clearVoiceVisualSignal();return;}
+    if(actual)setAvatarState('speaking');applyVoiceSignal(sample.signal,sample.level);
+  }
+  function noteVoicePlayback(value){
+    if(!value||!currentVoiceSample(value,value.playing===true))return false;
+    if(value.playing===true){
+      if(voiceOutputBinding?.responseId!==value.responseId){retireVoiceOutput(voiceOutputBinding?.responseId);clearVoiceVisualSignal();}
+      voiceOutputBinding=Object.assign({},value,{epoch:voiceEpoch,playing:true});
+    }else{retireVoiceOutput(value.responseId||voiceOutputBinding?.responseId);voiceOutputBinding=null;clearVoiceVisualSignal();}
+    return true;
+  }
+  function setAvatarState(value){value=voiceDisplayState(value);avatarState=value;avatarCall('setState',value);refreshAvatarEmotion();}
   function refreshAvatarEmotion(){var focused=productAttention&&['pointer','keyboard','page-pointer','requested-options','requested-view','story'].includes(productAttention.source)&&avatarState!=='speaking'&&!busy&&!cartPending;var next=emotionGuard||(focused?'curious':conversationEmotion);if(next===avatarEmotion)return;if(currentPerformance&&currentPerformance.expiresAt>Date.now()&&!emotionGuard)return;avatarEmotion=next;if(!state.open||document.hidden||avatarPaused)return;if(emotionGuard)cancelAvatarPerformance();avatarCall('setEmotion',avatarEmotion);}
   function setAvatarEmotion(text,role){role=role||'user';var tone=conversationalTone(text,role,emotionGuard);if(role==='user')emotionGuard=tone.guard;conversationEmotion=tone.mood;refreshAvatarEmotion();}
   function ensureAvatar(){
@@ -161,7 +224,7 @@
     var attempt=new Promise(function(resolve){
       var loader=null,finished=false;
       function finish(value){if(finished)return;finished=true;if(loader){loader.onload=loader.onerror=null;loader.remove();}resolve(value);}
-      function init(){if(finished)return;try{if(!window.BritesConciergeAvatar){finish(null);return;}avatar=window.BritesConciergeAvatar.create({container:avatarStage,assetBase:apiBase+'/',sceneModuleUrl:'assets/brites-concierge-avatar-scene.mjs',initialState:avatarState,greetingOnOpen:false,visible:state.open&&!document.hidden});avatarCall('setEmotion',avatarEmotion);avatarCall('setPaused',avatarPaused);avatarCall('setFloating',guide?.snapshot().floating===true);guide?.setPaused(avatarPaused);if(avatarPaused)clearGuide();finish(avatar);}catch(e){finish(null);}}
+      function init(){if(finished)return;try{if(!window.BritesConciergeAvatar){finish(null);return;}avatar=window.BritesConciergeAvatar.create({container:avatarStage,assetBase:apiBase+'/',sceneModuleUrl:'assets/brites-concierge-avatar-scene.mjs',initialState:avatarState,greetingOnOpen:false,visible:state.open&&!document.hidden});avatarCall('setEmotion',avatarEmotion);avatarCall('setPaused',avatarPaused);avatarCall('setFloating',guide?.snapshot().floating===true);guide?.setPaused(avatarPaused);if(avatarPaused)clearGuide();joinCurrentVoiceSignal();finish(avatar);}catch(e){finish(null);}}
       if(window.BritesConciergeAvatar){init();return;}
       loader=el('script');loader.src=apiBase+'/brites-concierge-avatar.js';loader.async=true;loader.onload=init;loader.onerror=function(){finish(null);};root.appendChild(loader);
     });
@@ -182,14 +245,14 @@
   typeButton.onclick=function(){setTextVisible(!textVisible,true);};
   captionButton.onclick=function(){captionsVisible=!captionsVisible;captions.hidden=!captionsVisible;captionButton.setAttribute('aria-pressed',String(captionsVisible));};
   historyButton.onclick=function(){historyVisible=!historyVisible;messages.hidden=!historyVisible;historyButton.setAttribute('aria-expanded',String(historyVisible));panel.classList.toggle('history-open',historyVisible);if(historyVisible)messages.scrollTop=messages.scrollHeight;};
-  pauseAvatar.onclick=function(){avatarPaused=!avatarPaused;if(avatarPaused){cancelAvatarPerformance();cancelExpressions();}expressionCall('setPaused',avatarPaused);avatarCall('setPaused',avatarPaused);guide?.setPaused(avatarPaused);if(avatarPaused)clearGuide();pauseAvatar.setAttribute('aria-pressed',String(avatarPaused));pauseAvatar.textContent=avatarPaused?'Resume animation':'Pause animation';};
-  function voiceUiStopped(){cancelAvatarPerformance();cancelExpressions();voiceActive=voiceStarting=false;voicePlaybackBlocked=false;voiceOutputMeterState='waiting';voiceButton.disabled=false;voiceButton.setAttribute('aria-pressed','false');voiceButton.textContent=voiceAvailabilityCode?'Check voice availability':'Talk to me';voiceStatus.dataset.active='false';voiceStatus.textContent=voiceAvailabilityCode==='VOICE_ALLOCATION_UNAVAILABLE'?'Voice paused':voiceAvailabilityCode?'Voice unavailable':voiceFailure?'Voice not connected':'Here to help';interruptButton.hidden=enableAudioButton.hidden=true;panel.dataset.voice=voiceAvailabilityCode?'unavailable':voiceFailure?'error':'idle';avatarCall('setLevel',0);setAvatarState(busy||cartPending?'thinking':voiceFailure&&!voiceAvailabilityCode?'error':'idle');}
+  pauseAvatar.onclick=function(){avatarPaused=!avatarPaused;if(avatarPaused){cancelAvatarPerformance();cancelExpressions();clearVoiceVisualSignal();}expressionCall('setPaused',avatarPaused);avatarCall('setPaused',avatarPaused);guide?.setPaused(avatarPaused);if(avatarPaused)clearGuide();pauseAvatar.setAttribute('aria-pressed',String(avatarPaused));pauseAvatar.textContent=avatarPaused?'Resume animation':'Pause animation';};
+  function voiceUiStopped(){cancelAvatarPerformance();cancelExpressions();clearVoiceVisualSignal(true);voiceActive=voiceStarting=false;voicePlaybackBlocked=false;voiceOutputMeterState='waiting';voiceButton.disabled=false;voiceButton.setAttribute('aria-pressed','false');voiceButton.textContent=voiceAvailabilityCode?'Check voice availability':'Talk to me';voiceStatus.dataset.active='false';voiceStatus.textContent=voiceAvailabilityCode==='VOICE_ALLOCATION_UNAVAILABLE'?'Voice paused':voiceAvailabilityCode?'Voice unavailable':voiceFailure?'Voice not connected':'Here to help';interruptButton.hidden=enableAudioButton.hidden=true;panel.dataset.voice=voiceAvailabilityCode?'unavailable':voiceFailure?'error':'idle';setAvatarState(busy||cartPending?'thinking':voiceFailure&&!voiceAvailabilityCode?'error':'idle');}
   function cancelRequest(record){if(!record||record.cancelled)return;record.cancelled=true;record.controller.abort();if(activeRequest===record){activeRequest=null;requestController=null;busy=false;send.disabled=input.disabled=false;if(status.textContent==='Checking the live selection\u2026')status.textContent='';}}
   function cancelVoiceLookup(){if(activeRequest?.voice)cancelRequest(activeRequest);}
   // Final ASR may follow the native model's read-only inspect request. Preserve
   // only that same input/turn read; every new speech, selection or action clears it.
   function invalidateVoiceAuthority(preserveRead){voiceAuthorityEpoch++;voiceAuthority=null;voiceProductReads.forEach(function(record){var sameRead=preserveRead&&record.prepare===false&&record.inputItemId===preserveRead.itemId&&record.turnVersion===preserveRead.turnVersion&&record.selectionVersion===voiceSelectionVersion;if(!sameRead)record.controller.abort();});if(preparedVoiceAction){var prepared=preparedVoiceAction;preparedVoiceAction=null;try{prepared.clear();}catch(e){}}}
-  function voiceSpeechStarted(value){if(!state.open||!(voiceActive||voiceStarting))return;cancelAvatarPerformance();beginExpressionTurn(value);expressionCall('setListening',true);invalidateVoiceAuthority();voiceTranscriptUser='';voiceInputItemId=boundedText(value?.itemId,200);voiceInputTurnVersion=Number.isInteger(value?.turnVersion)?value.turnVersion:null;voiceInputSelectionVersion=voiceSelectionVersion;voiceInputFocusedProductId=(['pointer','keyboard','page-pointer'].includes(productAttention?.source)?productAttention.productId:'')||selectedProductId||'';}
+  function voiceSpeechStarted(value){if(!state.open||!(voiceActive||voiceStarting))return;clearVoiceVisualSignal(true);cancelAvatarPerformance();beginExpressionTurn(value);expressionCall('setListening',true);invalidateVoiceAuthority();voiceTranscriptUser='';voiceInputItemId=boundedText(value?.itemId,200);voiceInputTurnVersion=Number.isInteger(value?.turnVersion)?value.turnVersion:null;voiceInputSelectionVersion=voiceSelectionVersion;voiceInputFocusedProductId=(['pointer','keyboard','page-pointer'].includes(productAttention?.source)?productAttention.productId:'')||selectedProductId||'';}
   function clearVoiceNotice(){if(status.dataset.voiceError==='true'||status.dataset.voiceNotice==='true')status.textContent='';delete status.dataset.voiceError;delete status.dataset.voiceNotice;}
   function stopVoice(preserveFailure){cancelVoiceAvailability();if(preserveFailure!==true){voiceFailure='';clearVoiceNotice();}cancelAvatarPerformance();voiceEpoch++;voiceTranscriptUser='';invalidateVoiceAuthority();voiceInputItemId='';voiceInputTurnVersion=null;voiceInputSelectionVersion=null;cancelVoiceLookup();voiceUiStopped();voiceStopping=true;var pending;try{pending=Promise.resolve(voice?.stop());}catch(e){pending=Promise.resolve();}voiceStopPending=pending.catch(function(){});var tracked=voiceStopPending;tracked.then(function(){if(voiceStopPending===tracked){voiceStopPending=null;voiceStopping=false;}});return tracked;}
   // Only exact, fixed local adapter reasons may reach the shopper. An unknown
@@ -219,14 +282,14 @@
   function refreshVoiceFeedback(){
     if(!state.open||!(voiceActive||voiceStarting))return;
     enableAudioButton.hidden=!voicePlaybackBlocked&&voiceOutputMeterState!=='paused';enableAudioButton.textContent=voicePlaybackBlocked?'Enable audio':'Enable facial feedback';
-    if(voiceStarting&&['connecting','idle','closing'].includes(voice?.state)){avatarCall('setLevel',0);return;}
-    if(voicePlaybackBlocked){voiceStatus.textContent='Voice connected \u00b7 audio paused';panel.dataset.voice='audio-paused';interruptButton.hidden=true;status.dataset.voiceNotice='true';status.textContent='Your browser paused the guide\u2019s voice. Select Enable audio to hear it.';avatarCall('setLevel',0);setAvatarState('listening');return;}
-    var current=voice?.state||avatarState;voiceStatus.textContent=current==='speaking'?'Your guide is speaking':current==='thinking'?'Thinking with you':'Listening to you';panel.dataset.voice=['speaking','thinking'].includes(current)?current:'listening';setAvatarState(['speaking','thinking'].includes(current)?current:'listening');interruptButton.hidden=current!=='speaking';
-    if(voiceOutputMeterState==='paused'){avatarCall('setLevel',0);status.dataset.voiceNotice='true';status.textContent='The guide\u2019s sound-reactive face is paused. Select Enable facial feedback to sync it with the voice.';}
-    else if(voiceOutputMeterState==='unavailable'){avatarCall('setLevel',0);status.dataset.voiceNotice='true';status.textContent='Voice stays connected. Sound-reactive facial movement is unavailable in this browser.';}
+    if(voiceStarting&&['connecting','idle','closing'].includes(voice?.state)){clearVoiceVisualSignal();return;}
+    if(voicePlaybackBlocked){voiceStatus.textContent='Voice connected \u00b7 audio paused';panel.dataset.voice='audio-paused';interruptButton.hidden=true;status.dataset.voiceNotice='true';status.textContent='Your browser paused the guide\u2019s voice. Select Enable audio to hear it.';clearVoiceVisualSignal();setAvatarState('listening');return;}
+    var current=voiceDisplayState(voice?.state||avatarState);voiceStatus.textContent=current==='speaking'?'Your guide is speaking':current==='thinking'?'Thinking with you':'Listening to you';panel.dataset.voice=['speaking','thinking'].includes(current)?current:'listening';setAvatarState(['speaking','thinking'].includes(current)?current:'listening');interruptButton.hidden=current!=='speaking';
+    if(voiceOutputMeterState==='paused'){clearVoiceVisualSignal();status.dataset.voiceNotice='true';status.textContent='The guide\u2019s sound-reactive face is paused. Select Enable facial feedback to sync it with the voice.';}
+    else if(voiceOutputMeterState==='unavailable'){clearVoiceVisualSignal();status.dataset.voiceNotice='true';status.textContent='Voice stays connected. Sound-reactive facial movement is unavailable in this browser.';}
     else if(status.dataset.voiceNotice==='true'&&/paused the guide|sound-reactive face|Sound-reactive facial/.test(status.textContent))clearVoiceNotice();
   }
-  function voicePlaybackPaused(){voicePlaybackBlocked=true;cancelExpressions();refreshVoiceFeedback();}
+  function voicePlaybackPaused(){voicePlaybackBlocked=true;clearVoiceVisualSignal();cancelExpressions();refreshVoiceFeedback();}
   function voicePlaybackResumed(){voicePlaybackBlocked=false;refreshVoiceFeedback();}
   function voiceMeterChanged(value){if(!['paused','ready','unavailable'].includes(value))return;voiceOutputMeterState=value;refreshVoiceFeedback();}
   enableAudioButton.onclick=async function(){var client=voice,epoch=voiceEpoch;if((!voicePlaybackBlocked&&voiceOutputMeterState!=='paused')||!client||typeof client.resumeAudio!=='function')return;enableAudioButton.disabled=true;try{var resumed=await client.resumeAudio();if(voice===client&&epoch===voiceEpoch&&resumed===true){voicePlaybackBlocked=client.playbackBlocked===true;if(['paused','ready','unavailable'].includes(client.outputMeterState))voiceOutputMeterState=client.outputMeterState;refreshVoiceFeedback();}}catch(e){if(voice===client&&epoch===voiceEpoch)status.textContent='Audio feedback is still paused. Select the enable button again, or choose Type instead.';}finally{enableAudioButton.disabled=false;}};
@@ -362,16 +425,20 @@
         if(!factory||typeof factory.create!=='function'){finish(null);return;}
         var client= factory.create({endpoint:apiBase+'/api/concierge-voice',headers:previewVoiceHeaders,getContext:publicPageContext,
           onState:function(value){
-            if(!current(client))return;if(value==='listening'||value==='thinking'||value==='connecting')cancelAvatarPerformance();if(value!=='speaking')avatarCall('setLevel',0);
-            if(voicePlaybackBlocked){avatarCall('setLevel',0);setAvatarState('listening');return;}
+            if(!current(client))return;
+            // Legacy adapters have no native-buffer getter; a listening/closing
+            // state is then their only authoritative end-of-playback evidence.
+            if(!('currentOutput' in client)&&['listening','connecting','idle','closing','error'].includes(value))clearVoiceVisualSignal(true);
+            value=voiceDisplayState(value);if(value==='listening'||value==='thinking'||value==='connecting')cancelAvatarPerformance();if(value!=='speaking')clearVoiceVisualSignal();
+            if(voicePlaybackBlocked){clearVoiceVisualSignal();setAvatarState('listening');return;}
             setAvatarState(value==='connecting'?'thinking':value);expressionCall('setListening',value==='listening');if(value==='speaking'&&pendingVoicePerformance){var pending=pendingVoicePerformance;pendingVoicePerformance=null;applyAvatarPerformance(pending.value,'voice',pending.metadata);}panel.dataset.voice=value;
             voiceStatus.textContent=value==='connecting'?'Connecting your voice\u2026':value==='listening'?'Listening to you':value==='thinking'?'Thinking with you':value==='speaking'?'Your guide is speaking':'Here to help';interruptButton.hidden=value!=='speaking';if(['paused','unavailable'].includes(voiceOutputMeterState)&&value!=='connecting')refreshVoiceFeedback();
           },
           onConnectionPhase:function(value){if(!current(client)||!voiceStarting)return;var labels={checking:'Checking voice availability\u2026',microphone:'Allow microphone access to talk',connecting:'Connecting your voice\u2026'};if(labels[value])voiceStatus.textContent=labels[value];},
           // A shopper's microphone must never animate the guide as if it were
           // speaking. Only remote output energy drives its speech expression.
-          onLevel:function(value){if(!current(client))return;var sample=value&&typeof value==='object'?Object.assign({},value):{input:0,output:value};if(voicePlaybackBlocked||voiceOutputMeterState==='paused'||voiceOutputMeterState==='unavailable')sample.output=0;var admitted=expressionCall('level',sample);if(admitted===false)return;var output=sample.output;avatarCall('setLevel',avatarState!=='speaking'?0:Number.isFinite(output)?Math.max(0,Math.min(1,output)):0);},
-          onPlaybackState:function(value){if(!current(client))return;expressionCall('playback',value);expressionLoop();},
+          onLevel:function(value){if(!current(client))return;var sample=value&&typeof value==='object'?Object.assign({},value):{input:0,output:value};if(!currentVoiceSample(sample))return;if(voicePlaybackBlocked||voiceOutputMeterState==='paused'||voiceOutputMeterState==='unavailable')sample.output=0;expressionCall('level',sample);renderVoiceSample(sample);},
+          onPlaybackState:function(value){if(!current(client)||!noteVoicePlayback(value))return;expressionCall('playback',value);expressionLoop();},
           onListeningTranscript:function(value){if(!current(client))return;expressionCall('transcript',Object.assign({role:'user'},value));expressionLoop();},
           onOutputMeterState:function(value){if(current(client))voiceMeterChanged(value);},
           onPlaybackBlocked:function(){if(current(client))voicePlaybackPaused();},
@@ -397,11 +464,11 @@
       timer=setTimeout(function(){finish(null);},7000);loader.onload=function(){try{init();}catch(e){finish(null);}};loader.onerror=function(){finish(null);};root.appendChild(loader);
     });voiceLoading=attempt;attempt.then(function(){if(voiceLoading===attempt)voiceLoading=null;});return attempt;
   }
-  interruptButton.onclick=function(){if(!voiceActive)return;cancelAvatarPerformance();cancelExpressions();invalidateVoiceAuthority();voiceInputItemId='';voiceInputTurnVersion=null;cancelVoiceLookup();try{voice?.interrupt();}catch(e){}setAvatarState('listening');voiceStatus.textContent='Listening to you';interruptButton.hidden=true;};
-  voiceButton.onclick=async function(){if(voiceActive||voiceStarting){stopVoice();return;}if(voiceAvailabilityCode){void checkVoiceAvailability(true);return;}cancelVoiceAvailability();voiceFailure='';voicePlaybackBlocked=false;enableAudioButton.hidden=true;clearVoiceNotice();delete voiceButton.dataset.retry;invalidateVoiceAuthority();voiceInputItemId='';voiceInputTurnVersion=null;var epoch=++voiceEpoch;voiceStarting=true;voiceButton.disabled=false;voiceButton.textContent='Cancel connection';voiceButton.setAttribute('aria-pressed','true');voiceStatus.textContent='Connecting your voice\u2026';setAvatarState('thinking');panel.dataset.voice='connecting';status.textContent='';voiceCaptionItems.clear();voiceFinalItems.clear();try{avatarCall('setLevel',0);if(voiceStopPending){voiceStatus.textContent='Finishing the previous voice session\u2026';await voiceStopPending;if(epoch!==voiceEpoch||!state.open||document.hidden)return;voiceStatus.textContent='Connecting your voice\u2026';}void ensureExpressions();beginExpressionTurn({});var client=await ensureVoice();if(!client||!state.open||epoch!==voiceEpoch){if(epoch===voiceEpoch)voiceError();return;}var started=await client.start();if(epoch!==voiceEpoch)return;if(!state.open||document.hidden){stopVoice();return;}if(started!==true){voiceError(client.lastError?.message);return;}voiceStarting=false;voiceActive=true;voiceButton.setAttribute('aria-pressed','true');voiceButton.textContent='End voice';voiceStatus.dataset.active='true';if(voicePlaybackBlocked||client.playbackBlocked)voicePlaybackPaused();else if(voiceStatus.textContent==='Connecting your voice\u2026'||voiceStatus.textContent==='Allow microphone access to talk'||voiceStatus.textContent==='Checking voice availability\u2026')voiceStatus.textContent='Listening to you';if(['paused','ready','unavailable'].includes(client.outputMeterState))voiceMeterChanged(client.outputMeterState);}catch(e){if(epoch===voiceEpoch)voiceError();}finally{if(epoch===voiceEpoch)voiceButton.disabled=false;}};
+  interruptButton.onclick=function(){if(!voiceActive)return;cancelAvatarPerformance();cancelExpressions();clearVoiceVisualSignal(true);invalidateVoiceAuthority();voiceInputItemId='';voiceInputTurnVersion=null;cancelVoiceLookup();try{voice?.interrupt();}catch(e){}setAvatarState('listening');voiceStatus.textContent='Listening to you';interruptButton.hidden=true;};
+  voiceButton.onclick=async function(){if(voiceActive||voiceStarting){stopVoice();return;}if(voiceAvailabilityCode){void checkVoiceAvailability(true);return;}cancelVoiceAvailability();voiceFailure='';voicePlaybackBlocked=false;enableAudioButton.hidden=true;clearVoiceNotice();delete voiceButton.dataset.retry;invalidateVoiceAuthority();voiceInputItemId='';voiceInputTurnVersion=null;var epoch=++voiceEpoch;voiceStarting=true;voiceButton.disabled=false;voiceButton.textContent='Cancel connection';voiceButton.setAttribute('aria-pressed','true');voiceStatus.textContent='Connecting your voice\u2026';setAvatarState('thinking');panel.dataset.voice='connecting';status.textContent='';voiceCaptionItems.clear();voiceFinalItems.clear();try{clearVoiceVisualSignal(true);if(voiceStopPending){voiceStatus.textContent='Finishing the previous voice session\u2026';await voiceStopPending;if(epoch!==voiceEpoch||!state.open||document.hidden)return;voiceStatus.textContent='Connecting your voice\u2026';}void ensureExpressions();beginExpressionTurn({});var client=await ensureVoice();if(!client||!state.open||epoch!==voiceEpoch){if(epoch===voiceEpoch)voiceError();return;}var started=await client.start();if(epoch!==voiceEpoch)return;if(!state.open||document.hidden){stopVoice();return;}if(started!==true){voiceError(client.lastError?.message);return;}voiceStarting=false;voiceActive=true;voiceButton.setAttribute('aria-pressed','true');voiceButton.textContent='End voice';voiceStatus.dataset.active='true';if(voicePlaybackBlocked||client.playbackBlocked)voicePlaybackPaused();else if(voiceStatus.textContent==='Connecting your voice\u2026'||voiceStatus.textContent==='Allow microphone access to talk'||voiceStatus.textContent==='Checking voice availability\u2026')voiceStatus.textContent='Listening to you';if(['paused','ready','unavailable'].includes(client.outputMeterState))voiceMeterChanged(client.outputMeterState);}catch(e){if(epoch===voiceEpoch)voiceError();}finally{if(epoch===voiceEpoch)voiceButton.disabled=false;}};
   function bubble(text,role){var b=el('div',text,'bubble '+(role||''));messages.appendChild(b);messages.scrollTop=messages.scrollHeight;if(role!=='user'&&!voiceActive&&!voiceStarting&&state.open)showCaption(text);return b;}
   function welcome(){bubble('Looking for something personal? We can find a piece for a milestone, a memory, or simply something you love.');var chips=el('div',null,'chips');[['Celebrate a milestone','I would like a meaningful piece to celebrate an achievement.'],['Remember someone','I would like a meaningful remembrance piece.'],['Something with a bunny','Something with a bunny'],['Help me choose for $60 or less','Help me choose for $60 or less']].forEach(function(choice){var b=el('button',choice[0],'chip');b.type='button';b.onclick=function(){setTextVisible(true,false);ask(choice[1]);};chips.appendChild(b);});messages.appendChild(chips);}
-  function stopSpeech(){avatarCall('setLevel',0);setAvatarState(busy||cartPending?'thinking':'idle');}
+  function stopSpeech(){clearVoiceVisualSignal();setAvatarState(busy||cartPending?'thinking':'idle');}
   async function ensurePagePiece(){
     var handle=publicPageContext().currentHandle;if(!state.open||document.hidden||!handle)return;pagePieceRead?.abort();var controller=new AbortController();pagePieceRead=controller;
     try{var response=await fetch(apiBase+'/api/growth/product?handle='+encodeURIComponent(handle),{cache:'no-store',signal:controller.signal}),checked=await response.json(),piece=checked?.live===true?savedProduct(checked.product):null;if(controller.signal.aborted||pagePieceRead!==controller||!state.open||document.hidden||publicPageContext().currentHandle!==handle||!response.ok||!piece||piece.handle!==handle||!safeUrl(piece.url,handle))return;

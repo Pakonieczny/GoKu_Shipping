@@ -8,6 +8,7 @@ const fs = require('node:fs'), vm = require('node:vm');
 const {JSDOM} = require('jsdom'), THREE = require('three');
 const avatar = require('../../brites-concierge-avatar.js');
 const source = fs.readFileSync(require.resolve('../../brites-concierge-avatar-scene.mjs'), 'utf8');
+const measured = amplitude => ({amplitude, bands: [.2, .35, .55, .4, .25, .1], brightness: .4, valid: amplitude > 0});
 
 function harness(t) {
   const dom = new JSDOM('<div id="stage"></div>', {pretendToBeVisual: true}), win = dom.window, stage = win.document.getElementById('stage');
@@ -95,25 +96,28 @@ test('studio uses a constant pale backdrop and a separate actual shadow receiver
   assert.ok(new THREE.Box3().setFromObject(h.get('grounding-platform')).getSize(new THREE.Vector3()).x<1.6);
 });
 
-test('speech aperture, bars and cheeks visibly respond to measured output and settle on silence', t => {
+test('closed speech curve, spectral contours and cheek lights use measured output and settle on silence', t => {
   const h=harness(t), mouth=h.get('expression-speech-mouth'), smile=h.get('expression-smile-glyph');
-  h.pose({state:'speaking',speechEnergy:0}); assert.equal(mouth.visible,false); assert.equal(smile.visible,true);
-  h.pose({state:'speaking',speechEnergy:.12}); assert.equal(mouth.visible,true); assert.equal(smile.visible,false); const softHeight=mouth.scale.y,softCheek=h.get('expression-cheek-left').scale.x;
-  h.pose({state:'speaking',speechEnergy:.88}); assert.ok(mouth.scale.y>softHeight*2); assert.ok(h.get('expression-cheek-left').scale.x>softCheek); assert.equal(h.get('expression-speech-bar-2').visible,true);
-  const snapshot=JSON.stringify([mouth.scale.toArray(),h.get('expression-speech-bar-2').scale.toArray()]);
-  h.advance(10000);h.pose({state:'speaking',speechEnergy:.88}); assert.equal(JSON.stringify([mouth.scale.toArray(),h.get('expression-speech-bar-2').scale.toArray()]),snapshot,'clock alone cannot invent an audio waveform');
-  h.pose({state:'listening',speechEnergy:1}); assert.equal(mouth.visible,false); assert.equal(smile.visible,true); assert.equal(h.get('expression-speech-bar-2').visible,false);
-  h.pose({state:'speaking',speechEnergy:0}); assert.equal(mouth.visible,false);
+  h.pose({state:'speaking',speechSignal:measured(0)}); assert.equal(mouth.visible,false); assert.equal(smile.visible,true);
+  h.pose({state:'speaking',speechSignal:measured(.12)}); assert.equal(mouth.visible,true); assert.equal(smile.visible,true); const softOpacity=mouth.material.opacity,softCheek=h.get('expression-cheek-left').scale.x,softVertices=Array.from(smile.geometry.attributes.position.array);
+  h.pose({state:'speaking',speechSignal:measured(.88)}); assert.ok(mouth.material.opacity>softOpacity*2); assert.deepEqual(Array.from(smile.geometry.attributes.position.array),softVertices); assert.equal(mouth.scale.y,1); assert.ok(h.get('expression-cheek-left').scale.x>softCheek); assert.equal(h.get('expression-speech-bar-2').visible,true);
+  const capture=()=>JSON.stringify([mouth.geometry.attributes.position.array,h.get('expression-speech-ripple-0').position.toArray(),h.get('expression-speech-bar-2').geometry.attributes.position.array]);const snapshot=capture();
+  h.advance(10000);h.pose({state:'speaking',speechSignal:measured(.88)}); assert.equal(capture(),snapshot,'clock alone cannot invent an audio waveform');
+  h.pose({state:'listening',speechSignal:measured(1)}); assert.equal(mouth.visible,false); assert.equal(smile.visible,true); assert.equal(h.get('expression-speech-bar-2').visible,false);
+  h.pose({state:'speaking',speechSignal:measured(0)}); assert.equal(mouth.visible,false);
+  assert.equal(mouth.geometry.type,'TubeGeometry');
   validGeometry(mouth);
 });
 
-test('the 2-D fallback uses the same new silhouette and measured speech aperture', async t => {
+test('the 2-D fallback retains a closed expressive curve while measured emission changes', async t => {
   const dom=new JSDOM('<div id="mount"></div>',{url:'https://sandbox.example/',pretendToBeVisual:true}),win=dom.window;
+  let clock=1000;Object.defineProperty(win.performance,'now',{value:()=>clock});
   win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
   const guide=avatar.create({container:win.document.getElementById('mount'),visible:true,greetingOnOpen:false,loadScene:async()=>{throw Error('Synthetic disabled WebGL');}});
   t.after(()=>{guide.destroy();win.close();});await guide.ready;
+  const advance=()=>{for(let i=0;i<25;i++){clock+=16;guide.lookAt(0,0,false);}};
   const body=guide.element.querySelector('.brites-avatar__porcelain-body'),mouth=guide.element.querySelector('.brites-avatar__speech-mouth');assert.ok(body && mouth);assert.equal(guide.element.querySelector('.brites-avatar__antenna'),null);
-  guide.setState('speaking');guide.setLevel(.2);const quiet=Number(mouth.getAttribute('ry'));guide.setLevel(.8);assert.ok(Number(mouth.getAttribute('ry'))>quiet);assert.equal(mouth.getAttribute('opacity'),'1');
+  guide.setState('speaking');advance();guide.setLevel(.2);advance();const quiet=Number(mouth.getAttribute('opacity')),curve=mouth.getAttribute('d');guide.setLevel(.8);advance();assert.ok(Number(mouth.getAttribute('opacity'))>quiet);assert.equal(mouth.getAttribute('d'),curve);assert.equal(mouth.tagName.toLowerCase(),'path');assert.equal(mouth.getAttribute('ry'),null);assert.equal(guide.element.querySelector('.brites-avatar__smile-signal').getAttribute('opacity'),'1');
   guide.setLevel(0);assert.equal(mouth.getAttribute('opacity'),'0');guide.setState('listening');guide.setLevel(1);assert.equal(mouth.getAttribute('opacity'),'0');
   assert.equal(guide.snapshot().fallback.format,'animated_svg_2d');
 });

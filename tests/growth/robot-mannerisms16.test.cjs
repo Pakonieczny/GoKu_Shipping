@@ -66,7 +66,7 @@ test('reduced motion keeps static state cues and schedules no animation timer', 
   const f = fixture(t, {reduced: true}); f.api.setState('success'); f.api.setVisible(false); f.api.setVisible(true); assert.equal(f.jobs.size, 0); assert.equal(f.api.snapshot().mannerism.active, false);
   const start = avatar.poseFor({state: 'listening', mannerism: 'greet', mannerismElapsed: .3, reducedMotion: true}), end = avatar.poseFor({state: 'listening', mannerism: 'greet', mannerismElapsed: 50, reducedMotion: true}); assert.deepEqual(start, end); assert.equal(start.offer, 0);
 });
-test('audio energy affects speaking pulse without becoming a semantic confirmation', t => {
+test('audio energy affects speaking emission without becoming a semantic confirmation', t => {
   const f = fixture(t); f.api.setState('speaking'); f.advance(1500); const serial = f.api.snapshot().mannerism.id;
   for (const level of [0, .2, .8, 1]) f.api.setLevel(level); assert.equal(f.api.snapshot().mannerism.name, null); assert.equal(f.api.snapshot().mannerism.id, serial); assert.equal(f.api.snapshot().state, 'speaking');
 });
@@ -86,16 +86,18 @@ function cpuMeshFixture() {
   assert.ok(start > 0 && end > start && poseStart > end && poseEnd > poseStart);
   const names = ['ivory','gold','paleGold','face','lidMaterial','eyeMaterial','pupilMaterial','glint','gemMaterial','corneaMaterial','irisMaterial','mouthMaterial'];
   const materials = Object.fromEntries(names.map(name => [name, ['irisMaterial', 'mouthMaterial', 'glint'].includes(name) ? new THREE.MeshBasicMaterial({toneMapped: false}) : new THREE.MeshPhysicalMaterial()]));
+  const materialRegistry = new Set(Object.values(materials)), basic = options => {const value = new THREE.MeshBasicMaterial(options); materialRegistry.add(value); return value;};
   const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start,end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(poseStart,poseEnd) + '\nreturn {avatar,arms,eyes,statusBars,heartGlyphs,pose:value=>applyPose(value),destroy:()=>geometries.forEach(value=>value.dispose())};})()';
-  const model = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width:390}), ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors:{idle:'#4aa8ff',listening:'#49c9ff',thinking:'#ab87ff',speaking:'#ffcb79',success:'#72ddd1',error:'#ffc28e'}}});
-  return {...model, dispose(){model.destroy(); Object.values(materials).forEach(value => value.dispose());}};
+  const model = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width:390}), basic, ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors:{idle:'#4aa8ff',listening:'#49c9ff',thinking:'#ab87ff',speaking:'#70d8f1',success:'#72ddd1',error:'#ffc28e'}}});
+  return {...model, dispose(){model.destroy(); materialRegistry.forEach(value => value.dispose());}};
 }
 test('production mesh does not celebrate a calm memorial confirmation', () => {
   const f = cpuMeshFixture(); try {
     f.pose(avatar.poseFor({state:'idle',emotion:'calm',time:0})); const neutral = f.eyes.map(eye => eye.apertureGeometry.attributes.position.array.slice());
     f.pose(avatar.poseFor({state:'success',emotion:'calm',time:0,elapsed:.6})); assert.equal(f.eyes.length, 2);
     f.eyes.forEach((eye, index) => assert.deepEqual(eye.apertureGeometry.attributes.position.array, neutral[index]));
-    assert.ok(f.statusBars.every(bar => !bar.visible)); assert.ok(f.heartGlyphs.every(heart => !heart.visible));
+    assert.ok(f.statusBars.every(({mesh}) => mesh.visible===false)); assert.ok(f.heartGlyphs.every(heart => !heart.visible));
+    assert.equal(f.avatar.getObjectByName('expression-smile-glyph').visible,true);assert.equal(f.avatar.getObjectByName('expression-speech-mouth').visible,false);
     assert.equal(f.avatar.position.y, 0); for (const {group} of f.arms) assert.ok(group.rotation.y === 0);
   } finally {f.dispose();}
 });

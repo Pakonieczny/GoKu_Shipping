@@ -18,12 +18,49 @@
     {id:'analysis',label:'Facial audio analysis unavailable',text:'We can still choose together. I will explain the details. Which shape feels right for them?',duration:12500,check:'analysis-unavailable',analysisUnavailable:true},
     {id:'hidden',label:'Hide the guide and return safely',text:'Let us look at the details. You can choose the meaning that feels personal. What do you think?',duration:12500,check:'hidden',hideAt:3400,showAt:6600},
     {id:'reduced',label:'Reduced motion during a multi-clause answer',text:'That is a lovely milestone. We can choose something personal. Which design would you like to compare?',duration:12500,check:'reduced',reduced:true},
-    {id:'generation',label:'Generation ends while audio continues',text:'The finish changes the look of a piece. A small symbol may be a personal reminder. Which style feels right?',duration:14000,check:'multiple-cues',generationAhead:true},
+    {id:'generation',label:'Spectrum and selection while audio continues',text:'The finish changes the look of a piece. A small symbol may be a personal reminder. Which style feels right?',duration:14000,check:'multiple-cues',generationAhead:true,focusAt:3500,selectionAt:5000,clearFocusAt:7800,quietAt:6200,quietUntil:6600},
     {id:'late',label:'Late old-response events after a new turn',text:'That sounds like a joyful milestone. We can find a personal design. Does she wear silver or gold?',duration:10500,check:'interrupted',interruptAt:4100,lateAt:5700}
   ].map(item=>Object.freeze(item)));
   const finite=value=>Number.isFinite(value)?value:null;
   const round=value=>Number.isFinite(value)?Math.round(value*1000)/1000:null;
   const clean=value=>typeof value==='string'?value.slice(0,400):'';
+  const SPECTRA=Object.freeze([
+    Object.freeze([.9,.72,.4,.18,.07,.03]),
+    Object.freeze([.13,.36,.78,.66,.25,.08]),
+    Object.freeze([.03,.08,.19,.37,.72,.92])
+  ]);
+  const INSPECTION_PHASES=Object.freeze([
+    {id:'before-output',label:'Before output',at:800},
+    {id:'speaking',label:'Speaking · middle spectrum',at:1200},
+    {id:'spectrum-high',label:'Speaking · higher spectrum',at:1800},
+    {id:'quiet',label:'Quiet output sample',at:1300},
+    {id:'product-focus',label:'Product focus while speaking',scenarioId:'generation',at:3600},
+    {id:'product-selection',label:'Product selection while speaking',scenarioId:'generation',at:5000},
+    {id:'paused',label:'During animation-only pause',scenarioId:'pause',at:4100},
+    {id:'pause-resumed',label:'After animation-only pause',scenarioId:'pause',at:7000},
+    {id:'hidden',label:'During hidden guide',scenarioId:'hidden',at:4100},
+    {id:'shown',label:'After guide returns',scenarioId:'hidden',at:7200},
+    {id:'listening',label:'Listening before words',scenarioId:'listen',at:1200},
+    {id:'listening-support',label:'Listening after supportive words',scenarioId:'listen-support',at:4000},
+    {id:'inquiry',label:'Final spoken question'}
+  ].map(value=>Object.freeze(value)));
+  function authoredSignal(at,amplitude){
+    const level=Number.isFinite(amplitude)?Math.max(0,Math.min(1,amplitude)):0;
+    if(!Number.isFinite(at)||level<=.015)return {amplitude:0,bands:[0,0,0,0,0,0],brightness:0,valid:false};
+    const spectrum=SPECTRA[Math.floor(Math.max(0,at)/700)%SPECTRA.length],bands=spectrum.map(value=>round(value*level)),total=bands.reduce((a,b)=>a+b,0);
+    return {amplitude:round(level),bands,brightness:round(total?bands.reduce((sum,value,index)=>sum+value*(index/5),0)/total:0),valid:true};
+  }
+  function inspectionTarget(scenario,phaseId,expressionFactory){
+    const phase=INSPECTION_PHASES.find(value=>value.id===phaseId);
+    if(!phase||!SCENARIOS.includes(scenario))return null;
+    if(phase.scenarioId&&phase.scenarioId!==scenario.id)return null;
+    if(phase.id==='inquiry'){
+      if(scenario.role==='user'||scenario.pauseAt||scenario.hideAt||scenario.interruptAt||scenario.reduced||scenario.analysisUnavailable)return null;
+      const question=expressionFactory?.plan?.(scenario.text,{context:scenario.context||''})?.findLast(value=>value.kind==='inquiry');
+      return question?Math.min(scenario.duration-750,900+question.startMs+Math.min(500,question.durationMs*.3)):null;
+    }
+    return Math.min(scenario.duration-50,phase.at);
+  }
   function tapeFor(scenario){
     if(!SCENARIOS.includes(scenario))throw Error('Choose an authored scenario.');
     const role=scenario.role||'assistant',events=[{at:0,type:'begin',role}];
@@ -41,6 +78,10 @@
     if(scenario.pauseAt)events.push({at:scenario.pauseAt,type:'pause',value:true},{at:scenario.resumeAt,type:'pause',value:false});
     if(scenario.hideAt)events.push({at:scenario.hideAt,type:'hidden',value:true},{at:scenario.showAt,type:'hidden',value:false});
     if(scenario.lateAt)events.push({at:scenario.lateAt,type:'late'});
+    if(scenario.focusAt)events.push({at:scenario.focusAt,type:'focus',choice:'a'});
+    if(scenario.selectionAt)events.push({at:scenario.selectionAt,type:'selection',choice:'b'});
+    if(scenario.clearFocusAt)events.push({at:scenario.clearFocusAt,type:'focus',choice:null});
+    if(scenario.quietAt)events.push({at:scenario.quietAt,type:'quiet',value:true},{at:scenario.quietUntil,type:'quiet',value:false});
     events.push({at:scenario.duration,type:'finish'});
     return events.sort((a,b)=>a.at-b.at);
   }
@@ -49,8 +90,9 @@
     const attr=(name,key)=>frame?.querySelector('.brites-avatar__'+name)?.getAttribute(key)||'';
     const css=name=>frame?.style?.getPropertyValue(name)||'';
     const features={brows:[raw.faceBrowLift,raw.faceBrowTilt].filter(Number.isFinite).map(round).join(',')||attr('brow--left','d'),eyes:[raw.eyeScaleX,raw.eyeScaleY,raw.eyeSmile,raw.eyeOpen].filter(Number.isFinite).map(round).join(',')||attr('ribbon--left','d'),cheeks:Number.isFinite(raw.cheekGlow)?String(round(raw.cheekGlow)):attr('cheek--left','opacity'),smile:Number.isFinite(raw.smileCurve)?String(round(raw.smileCurve)):attr('smile-signal','d')};
-    const aperture=finite(raw.speechEnergy)??finite(Number(css('--brites-speech-level')))??0;
-    return {mode:state.mode,state:state.state,paused:state.paused===true,visible:state.visible===true,reducedMotion:state.reducedMotion===true,expression:state.expression?{kind:state.expression.kind,intensity:round(state.expression.intensity)}:null,emotion:state.emotion||null,features,mouthEnergy:round(aperture),mouthRy:round(Number(attr('speech-mouth','ry'))),mouthVisible:attr('speech-mouth','opacity')==='1',facePose:Object.fromEntries(Object.entries(raw).filter(([key,value])=>/^(?:faceBrow|eye|cheekGlow|smileCurve|head|speechEnergy)/.test(key)&&Number.isFinite(value)).map(([key,value])=>[key,round(value)]))};
+    const energy=finite(raw.speechEnergy)??finite(Number(css('--brites-speech-level')))??0,signal=state.speechSignal,visual=state.speechVisual;
+    const paths=selector=>[...(frame?.querySelectorAll(selector)||[])].map(node=>({d:node.getAttribute('d')||'',opacity:node.getAttribute('opacity')||'',stroke:node.getAttribute('stroke')||''}));
+    return {mode:state.mode,state:state.state,paused:state.paused===true,visible:state.visible===true,reducedMotion:state.reducedMotion===true,expression:state.expression?{kind:state.expression.kind,intensity:round(state.expression.intensity)}:null,emotion:state.emotion||null,features,mouthEnergy:round(energy),speechEnergy:round(energy),curveClosed:visual?.curveClosed===true,openingEllipsePresent:!!frame?.querySelector('ellipse.brites-avatar__speech-mouth'),curvePath:attr('smile-signal','d'),curveTag:frame?.querySelector('.brites-avatar__smile-signal')?.localName||null,speechSignal:signal?{amplitude:round(signal.amplitude),bands:Array.isArray(signal.bands)?signal.bands.map(round):null,brightness:round(signal.brightness),valid:signal.valid===true}:null,speechVisual:visual?{curveClosed:visual.curveClosed===true,rippleActive:visual.rippleActive===true,amplitude:round(visual.amplitude),bands:Array.isArray(visual.bands)?visual.bands.map(round):null,brightness:round(visual.brightness)}:null,ripplePaths:paths('.brites-avatar__speech-ripple'),bandPaths:paths('.brites-avatar__speech-band'),productFocus:state.productFocus?{x:round(state.productFocus.x),y:round(state.productFocus.y)}:null,facePose:Object.fromEntries(Object.entries(raw).filter(([key,value])=>/^(?:faceBrow|eye|cheekGlow|smileCurve|head|speechEnergy|mouthOpen|mouthCurve)/.test(key)&&Number.isFinite(value)).map(([key,value])=>[key,round(value)]))};
   }
   function safeEvent(value){
     if(typeof value==='string')return {type:clean(value)};
@@ -64,7 +106,7 @@
     // browser update drains at most 50ms of source audio per planner tick, but
     // only its final pose is sent to the real rig and captured once.
     const SOURCE_STEP_MS=50,MAX_SOURCE_DRAINS=400;
-    let clock=0,serial=0,controller=null,scenario=null,tape=[],next=0,nextSourceAt=0,running=false,manualPause=false,startAt=0,heldAt=0,playing=false,listening=false,interrupted=false,hidden=false,reduced=false,scriptedPaused=false,everPaused=false,everHidden=false,rigState='idle',pendingExpression=null,output=0,input=0,lastSampleAt=-Infinity,sourceSampleCount=0,sourcePlaybackSamples=0,observedUpdateCount=0,sourceBeforePlayback=[],sourceInterruptionChecks=[],sourceEventCoverage=[],sourcePhraseIndices=new Set(),sourceCueKinds=new Set(),finalInquiryReached=false,expectedFinalPhraseIndex=-1,samples=[],log=[],cues=[];
+    let clock=0,serial=0,controller=null,scenario=null,tape=[],next=0,nextSourceAt=0,running=false,manualPause=false,inspectionHeld=false,inspectionUsed=false,heldPhase=null,startAt=0,heldAt=0,playing=false,listening=false,interrupted=false,hidden=false,reduced=false,quiet=false,scriptedPaused=false,everPaused=false,everHidden=false,rigState='idle',pendingExpression=null,output=0,input=0,outputSignal=authoredSignal(0,0),sourceFocusChoice=null,selectedChoice=null,appliedFocusChoice=null,lastSampleAt=-Infinity,sourceSampleCount=0,sourcePlaybackSamples=0,observedUpdateCount=0,sourceBeforePlayback=[],sourceInterruptionChecks=[],sourceEventCoverage=[],sourcePhraseIndices=new Set(),sourceCueKinds=new Set(),finalInquiryReached=false,expectedFinalPhraseIndex=-1,samples=[],log=[],cues=[];
     function record(value){log.push({at:Math.round(clock),...safeEvent(value)});if(log.length>MAX_LOG)log.shift();}
     function applyExpression(cue){
       const value=cue&&typeof cue==='object'?{kind:cue.kind,intensity:cue.intensity}:null;
@@ -76,10 +118,17 @@
       record({type:'source-face-target',kind:value?.kind||'neutral',intensity:round(value?.intensity)});
     }
     function render(){
-      avatar.setPaused(manualPause||scriptedPaused);avatar.setVisible(!hidden);avatar.setState(rigState);avatar.setExpression(pendingExpression);avatar.setLevel(output);
+      avatar.setPaused(manualPause||scriptedPaused);avatar.setVisible(!hidden);avatar.setState(rigState);avatar.setExpression(pendingExpression);
+      if(avatar.setSpeechSignal)avatar.setSpeechSignal(outputSignal);else avatar.setLevel(output);
+      applyProductFocus();
+    }
+    function applyProductFocus(){
+      if(hidden||scriptedPaused||manualPause||sourceFocusChoice===appliedFocusChoice)return;
+      if(sourceFocusChoice)avatar.focusProduct?.({x:sourceFocusChoice==='a'?-.35:.42,y:.1});else avatar.clearFocus?.();
+      appliedFocusChoice=sourceFocusChoice;
     }
     function reset(){
-      controller?.destroy();controller=null;running=false;manualPause=false;playing=listening=interrupted=hidden=scriptedPaused=everPaused=everHidden=false;input=output=0;rigState='idle';pendingExpression=null;avatar.setPaused(false);avatar.setVisible(true);avatar.setLevel(0);avatar.setExpression(null);avatar.setState('idle');clock=0;nextSourceAt=0;lastSampleAt=-Infinity;sourceSampleCount=sourcePlaybackSamples=observedUpdateCount=0;samples=[];log=[];cues=[];sourceBeforePlayback=[];sourceInterruptionChecks=[];sourceEventCoverage=[];sourcePhraseIndices=new Set();sourceCueKinds=new Set();finalInquiryReached=false;expectedFinalPhraseIndex=-1;scenario=null;tape=[];next=0;
+      controller?.destroy();controller=null;running=false;manualPause=inspectionHeld=inspectionUsed=false;heldPhase=null;playing=listening=interrupted=hidden=quiet=scriptedPaused=everPaused=everHidden=false;input=output=0;outputSignal=authoredSignal(0,0);sourceFocusChoice=selectedChoice=appliedFocusChoice=null;rigState='idle';pendingExpression=null;avatar.setPaused(false);avatar.setVisible(true);if(avatar.setSpeechSignal)avatar.setSpeechSignal(outputSignal);else avatar.setLevel(0);avatar.clearFocus?.();avatar.setExpression(null);avatar.setState('idle');clock=0;nextSourceAt=0;lastSampleAt=-Infinity;sourceSampleCount=sourcePlaybackSamples=observedUpdateCount=0;samples=[];log=[];cues=[];sourceBeforePlayback=[];sourceInterruptionChecks=[];sourceEventCoverage=[];sourcePhraseIndices=new Set();sourceCueKinds=new Set();finalInquiryReached=false;expectedFinalPhraseIndex=-1;scenario=null;tape=[];next=0;
     }
     function start(value,{reducedMotion=false}={}){
       reset();scenario=value;tape=tapeFor(value);serial++;reduced=reducedMotion||value.reduced===true;startAt=now();clock=0;running=true;
@@ -111,11 +160,15 @@
         if(hidden){playing=false;output=0;rigState='listening';}
       }
       else if(event.type==='late'){controller.transcript({role:'assistant',text:scenario.text,final:true,itemId:id,responseId,currentTurn:false});controller.playback({playing:true,responseId});record({type:'fixture-late-old-response'});}
+      else if(event.type==='focus')sourceFocusChoice=event.choice;
+      else if(event.type==='selection'){sourceFocusChoice=selectedChoice=event.choice;}
+      else if(event.type==='quiet')quiet=event.value===true;
       else if(event.type==='finish')finish();
     }
     function levels(){
       const paused=scriptedPaused||hidden||manualPause;
-      output=playing&&!interrupted&&!paused&&!scenario.analysisUnavailable&&!reduced?(Math.floor(clock/180)%7===0?0:[.12,.42,.25,.68,.18,.5][Math.floor(clock/100)%6]):0;
+      output=playing&&!interrupted&&!paused&&!quiet&&!scenario.analysisUnavailable&&!reduced?(Math.floor(clock/180)%7===0?0:[.12,.42,.25,.68,.18,.5][Math.floor(clock/100)%6]):0;
+      outputSignal=authoredSignal(clock,output);
       input=listening&&!scenario.silence&&!paused?([0,.18,.43,.11,.3][Math.floor(clock/240)%5]):0;
       sourceSampleCount++;if(playing)sourcePlaybackSamples++;
       controller?.level({input,output});controller?.tick?.();
@@ -130,11 +183,11 @@
       // source targets. Their sparse gaps remain visible in the final report.
       if(!force&&clock-lastSampleAt<100&&clock<scenario.duration)return null;lastSampleAt=clock;
       const face=faceSample(avatar),state=controller?.snapshot()||{};
-      const entry={at:Math.round(clock),phase:clean(state.phase)||(!playing&&clock<900?'before-output':playing?'speaking':listening?'listening':'settling'),cueKind:state.cue?.kind||state.expression?.kind||null,currentPhrase:typeof state.currentPhrase==='number'?state.currentPhrase:null,input:round(input),output:round(output),face};
+      const entry={at:Math.round(clock),observedAtMs:round(now()),inspectionHeld,phase:clean(state.phase)||(!playing&&clock<900?'before-output':playing?'speaking':listening?'listening':'settling'),cueKind:state.cue?.kind||state.expression?.kind||null,currentPhrase:typeof state.currentPhrase==='number'?state.currentPhrase:null,input:round(input),output:round(output),outputSignal:{...outputSignal,bands:[...outputSignal.bands]},selectedChoice,focusChoice:sourceFocusChoice,face};
       samples.push(entry);if(samples.length>MAX_SAMPLES)samples.shift();onUpdate(snapshot());return entry;
     }
     function update(elapsed){
-      if(!running||manualPause||!Number.isFinite(elapsed))return snapshot();
+      if(!running||manualPause||inspectionHeld||!Number.isFinite(elapsed))return snapshot();
       const target=Math.max(clock,Math.min(scenario.duration,elapsed));let drains=0;observedUpdateCount++;
       while(running){
         const eventAt=next<tape.length?tape[next].at:Infinity,at=Math.min(nextSourceAt,eventAt);
@@ -150,42 +203,65 @@
       if(!running){const completed=result();onComplete(completed);onUpdate(snapshot());}
       return snapshot();
     }
-    function step(){if(!running||manualPause)return snapshot();return update(now()-startAt);}
+    function step(){if(!running||manualPause||inspectionHeld)return snapshot();return update(now()-startAt);}
+    function inspectAt(elapsed,phaseId='authored-timestamp'){
+      if(!running||manualPause||!Number.isFinite(elapsed)||elapsed<clock||elapsed>=scenario.duration)return false;
+      inspectionUsed=true;inspectionHeld=false;update(elapsed);inspectionHeld=true;heldPhase=clean(phaseId);heldAt=now();onUpdate(snapshot());return snapshot();
+    }
+    function continueInspection(){if(!running||!inspectionHeld)return false;inspectionHeld=false;heldPhase=null;startAt=now()-clock;onUpdate(snapshot());return snapshot();}
+    function observe(){if(!scenario)return false;capture(true);return snapshot();}
+    function productAction(type,choice){
+      if(!running||!['focus','selection'].includes(type)||![null,'a','b'].includes(choice))return false;
+      sourceFocusChoice=choice;if(type==='selection')selectedChoice=choice;
+      // This explicit author UI action does not change role, clock, playback,
+      // expression or the current measured-shape signal.
+      applyProductFocus();record({type:'author-product-'+type,reason:choice||'cleared'});capture(true);return snapshot();
+    }
     function pause(value){
       if(!running)return;manualPause=value===true;everPaused=everPaused||manualPause;controller.setPaused(manualPause);
-      if(manualPause){heldAt=now();output=0;}else startAt+=Math.max(0,now()-heldAt);
+      if(manualPause){heldAt=now();output=0;outputSignal=authoredSignal(clock,0);}else startAt+=Math.max(0,now()-heldAt);
       render();onUpdate(snapshot());
     }
     function interrupt(paint=true){
-      if(!running)return;interrupted=true;playing=false;listening=true;output=0;controller.cancel();controller.beginTurn({id:'fixture-interrupt-'+serial,role:'user',context:scenario.context||''});controller.setListening(true);rigState='listening';record({type:'fixture-interrupted'});if(paint)render();
+      if(!running)return;interrupted=true;playing=false;listening=true;output=0;outputSignal=authoredSignal(clock,0);controller.cancel();controller.beginTurn({id:'fixture-interrupt-'+serial,role:'user',context:scenario.context||''});controller.setListening(true);rigState='listening';record({type:'fixture-interrupted'});if(paint)render();
     }
     function finish(){
-      if(!running)return;playing=listening=false;input=output=0;controller.playback({playing:false,cleared:true,responseId:'fixture-response-'+serial});controller.cancel();scriptedPaused=hidden=false;rigState='listening';controller.tick?.();running=false;
+      if(!running)return;playing=listening=false;input=output=0;outputSignal=authoredSignal(clock,0);controller.playback({playing:false,cleared:true,responseId:'fixture-response-'+serial});controller.cancel();scriptedPaused=hidden=false;rigState='listening';controller.tick?.();running=false;
     }
-    function snapshot(){const state=controller?.snapshot()||{};return {scenario:scenario?.id||null,label:scenario?.label||null,running,manualPause,clockMs:Math.round(clock),durationMs:scenario?.duration||0,alignment:'authored-source-clock; production estimated playback cues; observed rig snapshots',nativeAudioTested:false,microphoneRequests:0,providerCalls:0,cartWrites:0,navigationChanges:0,inputRms:round(input),outputRms:round(output),interrupted,reducedFixture:reduced,sourceSampleCount,sourcePlaybackSamples,actualRenderedFrameSampleCount:samples.length,controller:{phase:state.phase||null,currentPhrase:state.currentPhrase??null,clockMs:round(state.clockMs),timing:state.timing||'estimated-audio-activity',cue:state.cue?{kind:state.cue.kind,intensity:round(state.cue.intensity)}:null},face:faceSample(avatar),cues:cues.slice(-20),log:log.slice(-MAX_LOG)};}
+    function snapshot(){const state=controller?.snapshot()||{};return {scenario:scenario?.id||null,label:scenario?.label||null,running,manualPause,inspectionHeld,inspectionUsed,heldPhase,clockMs:Math.round(clock),durationMs:scenario?.duration||0,alignment:'authored-source-clock; synthetic amplitude/spectrum; production rig snapshots',nativeAudioTested:false,microphoneRequests:0,providerCalls:0,cartWrites:0,navigationChanges:0,inputRms:round(input),outputRms:round(output),authoredOutputSignal:{...outputSignal,bands:[...outputSignal.bands]},product:{focusChoice:sourceFocusChoice,selectedChoice},interrupted,reducedFixture:reduced,sourceSampleCount,sourcePlaybackSamples,actualRenderedFrameSampleCount:samples.length,controller:{phase:state.phase||null,currentPhrase:state.currentPhrase??null,clockMs:round(state.clockMs),timing:state.timing||'estimated-audio-activity',cue:state.cue?{kind:state.cue.kind,intensity:round(state.cue.intensity)}:null},face:faceSample(avatar),cues:cues.slice(-20),log:log.slice(-MAX_LOG)};}
     function result(){
       const changed={},names=['brows','eyes','cheeks','smile'];for(const name of names)changed[name]=new Set(samples.map(value=>value.face.features[name]).filter(Boolean)).size;
       const channels=names.filter(name=>changed[name]>1),kinds=[...sourceCueKinds],observedKinds=[...new Set(samples.map(value=>value.cueKind).filter(Boolean))],mouthValues=[...new Set(samples.map(value=>value.face.mouthEnergy))],before=scenario?.role==='user'||sourceBeforePlayback.every(value=>value.output===0&&!value.kind)&&samples.filter(value=>value.at<900).every(value=>value.output===0&&!value.cueKind&&!value.face.expression),late=sourceInterruptionChecks.every(value=>value.output===0&&value.state!=='speaking')&&samples.filter(value=>value.at>=sourceInterruptionChecks[0]?.at).every(value=>value.face.mouthEnergy===0&&value.face.state!=='speaking');
       const normalSpeech=scenario?.role!=='user'&&!interrupted&&!everPaused&&!everHidden&&!reduced&&!scenario?.analysisUnavailable;
       const inquiryRequired=normalSpeech&&/\?\s*$/.test(scenario?.text||'');
-      const invariants={beforePlaybackNoSpeechCue:before,noSyntheticPaidCalls:true,interruptionStopsMouth:sourceInterruptionChecks.length?late:null,listeningMouthClosed:scenario?.role==='user'?samples.every(value=>value.face.mouthEnergy===0):null,analysisUnavailableNoFakeMouth:scenario?.analysisUnavailable?samples.every(value=>value.face.mouthEnergy===0):null,reducedNoMovingMouth:reduced?samples.every(value=>value.face.mouthEnergy===0):null,finalInquiryCueReached:inquiryRequired?finalInquiryReached:null,finalOutputRmsZero:output===0};
+      const selectionSamples=samples.filter(value=>value.selectedChoice&&value.output>.015),quietSamples=samples.filter(value=>value.output<=.015);
+      const signalMatches=value=>value.face.speechSignal?.valid===true&&Math.abs(value.face.speechSignal.amplitude-value.outputSignal.amplitude)<.001&&Math.abs(value.face.speechSignal.brightness-value.outputSignal.brightness)<.001&&JSON.stringify(value.face.speechSignal.bands)===JSON.stringify(value.outputSignal.bands);
+      // Signal retention is distinct from the rig's measured attack envelope:
+      // the first valid source sample can precede a visible ripple. Report that
+      // actual appearance below rather than inventing a positive first frame.
+      const invariants={beforePlaybackNoSpeechCue:before,noSyntheticPaidCalls:true,closedCurveWithoutOpeningEllipse:samples.every(value=>value.face.curveClosed===true&&!value.face.openingEllipsePresent),quietSignalClearsRipple:quietSamples.every(value=>value.face.speechVisual?.rippleActive===false&&value.face.speechSignal?.valid!==true),productSelectionKeepsVoiceSignal:scenario?.selectionAt&&selectionSamples.length?selectionSamples.every(value=>value.face.state==='speaking'&&signalMatches(value)):null,interruptionStopsMouth:sourceInterruptionChecks.length?late:null,listeningMouthClosed:scenario?.role==='user'?samples.every(value=>value.face.mouthEnergy===0):null,analysisUnavailableNoFakeMouth:scenario?.analysisUnavailable?samples.every(value=>value.face.mouthEnergy===0):null,reducedNoMovingMouth:reduced?samples.every(value=>value.face.mouthEnergy===0):null,finalInquiryCueReached:inquiryRequired?finalInquiryReached:null,finalOutputRmsZero:output===0};
       const maxGapMs=samples.reduce((gap,value,index)=>index?Math.max(gap,value.at-samples[index-1].at):gap,0),visibleIncomplete=maxGapMs>250;
       const failed=Object.entries(invariants).filter(([,value])=>value===false).map(([name])=>name),multi=!(scenario?.check==='multiple-cues')||kinds.length>1&&channels.length>=2;
-      return {scenario:scenario?.id,label:scenario?.label,fixture:'explicit-synthetic-expression-events',result:failed.length||!multi?'needs-review':visibleIncomplete?'source-check-passed-visible-coverage-incomplete':'behavior-check-passed',failedInvariants:failed,multipleCueCheck:scenario?.check==='multiple-cues'?multi:null,distinctCueKinds:kinds,observedCueKinds:observedKinds,sourcePhraseIndices:[...sourcePhraseIndices],sourceEventCoverage,sourceSampleCount,sourcePlaybackSamples,sourceStepMs:SOURCE_STEP_MS,actualRenderedFrameSampleCount:samples.length,actualRenderedFrameSampleMeaning:'observed rig snapshots, at most one per browser update; not a GPU frame count',observedUpdateCount,maxObservedFrameGapMs:maxGapMs,visibleTrajectoryCoverage:visibleIncomplete?'incomplete-sparse-observations':'sampled-at-most-10Hz',changedFaceChannels:channels,distinctFeatureSamples:changed,distinctMouthEnergySamples:mouthValues.length,sampleCount:samples.length,invariants,rendererMode:avatar.snapshot().mode,providerCalls:0,microphoneRequests:0,gpuAppearance:'unverified',nativeSpokenTiming:'unverified',trustImprovement:'not-measured'};
+      const observedFaceKinds=[...new Set(samples.map(value=>value.face.expression?.kind).filter(Boolean))],spectra=new Set(samples.filter(value=>value.face.speechSignal?.valid).map(value=>JSON.stringify(value.face.speechSignal.bands))),displayedSpectra=new Set(samples.filter(value=>value.face.speechVisual?.rippleActive).map(value=>JSON.stringify(value.face.speechVisual.bands))),ripplePaths=new Set(samples.map(value=>JSON.stringify(value.face.ripplePaths)+JSON.stringify(value.face.bandPaths))),observationGap=samples.reduce((gap,value,index)=>index?Math.max(gap,value.observedAtMs-samples[index-1].observedAtMs):gap,0);
+      return {scenario:scenario?.id,label:scenario?.label,fixture:'explicit-synthetic-expression-and-spectrum-events',result:failed.length||!multi?'needs-review':visibleIncomplete?'source-check-passed-visible-coverage-incomplete':'behavior-check-passed',failedInvariants:failed,multipleCueCheck:scenario?.check==='multiple-cues'?multi:null,distinctCueKinds:kinds,observedCueKinds:observedKinds,observedControllerCueKinds:observedKinds,observedActualFaceExpressionKinds:observedFaceKinds,rigExpressionMeaning:'expression targets on the actual rig; eased displayed geometry is reported in changedFaceChannels and facePose',distinctObservedSpectra:spectra.size,distinctObservedSignalTargets:spectra.size,distinctObservedDisplayedSpectra:displayedSpectra.size,distinctObservedRipplePaths:ripplePaths.size,selectionSourcePositiveSamples:selectionSamples.length,selectionObservedRippleSamples:selectionSamples.filter(value=>value.face.speechVisual?.rippleActive===true).length,sourcePhraseIndices:[...sourcePhraseIndices],sourceEventCoverage,sourceSampleCount,sourcePlaybackSamples,sourceStepMs:SOURCE_STEP_MS,actualRenderedFrameSampleCount:samples.length,actualRenderedFrameSampleMeaning:'real rig snapshots, once per source update or explicit observe/product action; not a GPU frame count',observedUpdateCount,maxObservedFrameGapMs:maxGapMs,maxObservedSourceTimeGapMs:maxGapMs,maxObservationTimeGapMs:observationGap,visibleTrajectoryCoverage:inspectionUsed?'authored-phase-inspection-no-natural-cadence-claim':visibleIncomplete?'incomplete-sparse-observations':'sampled-at-most-10Hz',changedFaceChannels:channels,distinctFeatureSamples:changed,distinctMouthEnergySamples:mouthValues.length,sampleCount:samples.length,invariants,rendererMode:avatar.snapshot().mode,providerCalls:0,microphoneRequests:0,gpuAppearance:'unverified',nativeSpokenTiming:'unverified',trustImprovement:'not-measured'};
     }
-    return {start,update,step,pause,interrupt,reset,snapshot,result,destroy(){controller?.destroy();controller=null;running=false;}};
+    return {start,update,step,pause,inspectAt,continueInspection,observe,productAction,interrupt,reset,snapshot,result,destroy(){controller?.destroy();controller=null;running=false;}};
   }
-  const api={SCENARIOS,tapeFor,faceSample,createRunner};
+  const api={SCENARIOS,INSPECTION_PHASES,authoredSignal,inspectionTarget,tapeFor,faceSample,createRunner};
   if(typeof module==='object'&&module.exports)module.exports=api;
   else scope.BritesConciergeExpressionQA=api;
   if(!scope.document||scope.location?.pathname!=='/concierge-expression-qa.html')return;
-  const doc=scope.document,select=doc.getElementById('scenario'),status=doc.getElementById('scenario-status'),text=doc.getElementById('current-text'),phase=doc.getElementById('phase-state'),pose=doc.getElementById('pose-metrics'),output=doc.getElementById('scenario-results'),transitions=doc.getElementById('transition-log'),renderer=doc.getElementById('renderer-state'),avatarMount=doc.getElementById('avatar');
+  const doc=scope.document,select=doc.getElementById('scenario'),inspection=doc.getElementById('inspection-phase'),status=doc.getElementById('scenario-status'),text=doc.getElementById('current-text'),phase=doc.getElementById('phase-state'),pose=doc.getElementById('pose-metrics'),output=doc.getElementById('scenario-results'),transitions=doc.getElementById('transition-log'),renderer=doc.getElementById('renderer-state'),avatarMount=doc.getElementById('avatar');
   avatarMount.style.height='440px';select.style.maxWidth='100%';select.style.width='100%';pose.style.whiteSpace=output.style.whiteSpace=transitions.style.whiteSpace='pre-wrap';pose.style.overflowWrap=output.style.overflowWrap=transitions.style.overflowWrap='anywhere';transitions.style.maxHeight=output.style.maxHeight='420px';transitions.style.overflow=output.style.overflow='auto';
+  doc.querySelector('h1').style.fontSize='clamp(28px,3.5vw,42px)';inspection.style.maxWidth='100%';inspection.style.width='100%';
   for(const item of SCENARIOS){const option=doc.createElement('option');option.value=item.id;option.textContent=item.label;select.appendChild(option);}
+  for(const item of INSPECTION_PHASES){const option=doc.createElement('option');option.value=item.id;option.textContent=item.label;inspection.appendChild(option);}
   const results=[];let runner=null,avatar=null,reduced=false,suite=false,suiteIndex=0,frame=null,lastPaint=0;
   function show(snapshot){
-    if(!snapshot)return;phase.textContent='Phase: '+(snapshot.controller.phase||snapshot.face.state)+' · '+(snapshot.clockMs/1000).toFixed(1)+' / '+(snapshot.durationMs/1000).toFixed(1)+' seconds · face '+(snapshot.controller.cue?.kind||snapshot.face.expression?.kind||'neutral');
-    pose.textContent=JSON.stringify({fixture:snapshot.alignment,sourcePlaybackSamples:snapshot.sourcePlaybackSamples,actualRenderedFrameSampleCount:snapshot.actualRenderedFrameSampleCount,frameSampleMeaning:'Observed rig snapshots only; intermediate authored cues are not rendered evidence.',phase:snapshot.controller.phase,currentPhrase:snapshot.controller.currentPhrase,cue:snapshot.controller.cue,inputRms:snapshot.inputRms,outputRms:snapshot.outputRms,actualFace:snapshot.face,providerCalls:0,microphoneRequests:0},null,2);
+    if(!snapshot)return;phase.textContent='Phase: '+(snapshot.controller.phase||snapshot.face.state)+' · '+(snapshot.clockMs/1000).toFixed(1)+' / '+(snapshot.durationMs/1000).toFixed(1)+' seconds · controller '+(snapshot.controller.cue?.kind||'neutral')+' · rig target '+(snapshot.face.expression?.kind||'neutral')+(snapshot.inspectionHeld?' · HELD authored sample':'');
+    pose.textContent=JSON.stringify({fixture:snapshot.alignment,inspectionHeld:snapshot.inspectionHeld,inspectionUsed:snapshot.inspectionUsed,heldPhase:snapshot.heldPhase,sourceClockMs:snapshot.clockMs,sourcePlaybackSamples:snapshot.sourcePlaybackSamples,actualRenderedFrameSampleCount:snapshot.actualRenderedFrameSampleCount,frameSampleMeaning:'Observed rig snapshots only; intermediate authored cues are not rendered evidence.',phase:snapshot.controller.phase,currentPhrase:snapshot.controller.currentPhrase,controllerCue:snapshot.controller.cue,authoredOutputSignal:snapshot.authoredOutputSignal,inputRms:snapshot.inputRms,outputRms:snapshot.outputRms,product:snapshot.product,actualFace:snapshot.face,providerCalls:0,microphoneRequests:0},null,2);
+    doc.getElementById('continue-inspection').disabled=!snapshot.inspectionHeld;doc.getElementById('pause-sequence').disabled=snapshot.inspectionHeld;
+    doc.getElementById('fixture-selection').textContent=snapshot.product.selectedChoice?'Synthetic selection '+snapshot.product.selectedChoice.toUpperCase()+'.':snapshot.product.focusChoice?'Synthetic focus '+snapshot.product.focusChoice.toUpperCase()+'.':'No synthetic selection.';
     transitions.textContent=JSON.stringify(snapshot.log,null,2);const mode=snapshot.face.mode;renderer.textContent=mode==='webgl'?'WebGL scene is active. GPU appearance and shadows still require visual review.':mode==='fallback'?'Actual animated 2-D fallback is active. GPU, shadows and FPS remain unverified.':'The production renderer is preparing.';
   }
   function complete(value){results.push(value);if(results.length>MAX_RESULTS)results.shift();output.textContent=JSON.stringify({fixture:'synthetic-events-actual-face-rig',completed:results.length,results},null,2);status.textContent=value.label+': '+value.result.replaceAll('-',' ')+'. Native spoken timing and GPU quality remain unverified.';if(suite){suiteIndex++;if(suiteIndex<SCENARIOS.length){start(SCENARIOS[suiteIndex]);}else{suite=false;status.textContent='All '+SCENARIOS.length+' authored scenarios completed. Inspect results and visual transitions; hardware acceptance remains separate.';}}}
@@ -198,6 +274,17 @@
   }catch{status.textContent='The production planner or rig is unavailable. This fixture cannot simulate a pass.';doc.querySelectorAll('button').forEach(button=>button.disabled=true);}
   doc.getElementById('run-scenario').onclick=()=>{suite=false;start(SCENARIOS.find(value=>value.id===select.value)||SCENARIOS[0]);};
   doc.getElementById('run-suite').onclick=()=>{suite=true;suiteIndex=0;results.length=0;start(SCENARIOS[0]);};
+  doc.getElementById('inspect-phase').onclick=()=>{
+    suite=false;const selected=INSPECTION_PHASES.find(value=>value.id===inspection.value),item=selected?.scenarioId?SCENARIOS.find(value=>value.id===selected.scenarioId):SCENARIOS.find(value=>value.id===select.value);
+    const at=inspectionTarget(item,selected?.id,scope.BritesConciergeExpression);
+    if(at===null){status.textContent='That phase does not apply to this scenario. Choose a complete speaking scenario for the question inspector.';return;}
+    start(item);runner.inspectAt(at,selected.id);show(runner.snapshot());status.textContent='Held '+selected.label+' at '+(at/1000).toFixed(2)+' source seconds. Authored replay; no live audio or intervening rendered frames.';
+  };
+  doc.getElementById('continue-inspection').onclick=()=>{if(runner?.continueInspection())status.textContent='Authored source continues from the held timestamp. This is separate from canceling Pause sequence.';};
+  doc.getElementById('observe-inspection').onclick=()=>{if(runner?.observe())status.textContent='Current actual rig pose captured once. Source time and events were not advanced.';};
+  doc.getElementById('focus-sample').onclick=()=>{if(runner?.productAction('focus','a'))status.textContent='Synthetic product focus changed; current playback role and speech signal were preserved.';};
+  doc.getElementById('select-sample').onclick=()=>{if(runner?.productAction('selection','b'))status.textContent='Synthetic selection changed; current playback role and speech signal were preserved.';};
+  doc.getElementById('clear-sample').onclick=()=>{if(runner?.productAction('focus',null))status.textContent='Synthetic focus cleared without changing the current speech signal.';};
   doc.getElementById('pause-sequence').onclick=function(){const paused=this.getAttribute('aria-pressed')!=='true';runner?.pause(paused);this.setAttribute('aria-pressed',String(paused));this.textContent=paused?'Continue sequence':'Pause sequence';status.textContent=paused?'Sequence and face animation paused. Old cues are canceled.':'Sequence resumed; canceled cues will not replay.';};
   doc.getElementById('interrupt-sequence').onclick=()=>{runner?.interrupt();show(runner?.snapshot());status.textContent='Synthetic shopper interrupted. Pending speaking cues were canceled.';};
   doc.getElementById('reset-sequence').onclick=()=>{suite=false;runner?.reset();show(runner?.snapshot());status.textContent='Sequence reset. No previous cues will replay.';};

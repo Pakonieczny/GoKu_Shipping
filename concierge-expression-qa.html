@@ -16,8 +16,8 @@
     <header>
       <div>
         <span class="eyebrow">BRITES · CONVERSATIONAL EXPRESSION STUDIO</span>
-        <h1>Expressions through a conversation.</h1>
-        <p class="sub"><strong>Synthetic transcript and audio-envelope events, actual production face rig.</strong> This studio requests no microphone, sends no OpenAI calls and changes no cart or product selection. It tests facial transitions and cancellation. Native spoken timing, physical audio and GPU appearance require separate hardware checks.</p>
+        <h1>A closed curve, a responsive voice.</h1>
+        <p class="sub"><strong>Authored amplitude and spectrum, actual production face rig.</strong> These synthetic fixtures make no microphone or OpenAI calls and change no shopper cart or product. Native audio and GPU appearance require separate hardware checks.</p>
       </div>
       <a class="btn" href="/concierge-sandbox.html">Open shopper demo</a>
     </header>
@@ -33,6 +33,23 @@
         <button id="reduce-motion" type="button" class="btn" aria-pressed="false">Reduced-motion fixture</button>
       </div>
       <p id="scenario-status" class="status" role="status" aria-live="polite">Preparing the production rig.</p>
+      <details open>
+        <summary>Hold an authored phase for inspection</summary>
+        <label for="inspection-phase">Phase to hold</label>
+        <select id="inspection-phase"></select>
+        <div class="controls">
+          <button id="inspect-phase" type="button" class="btn">Inspect held phase</button>
+          <button id="continue-inspection" type="button" class="btn">Continue from held source</button>
+          <button id="observe-inspection" type="button" class="btn">Capture current rig pose</button>
+        </div>
+        <p class="sub">A held phase replays authored events to one source timestamp and keeps that sample visible. It creates no intervening rendered frames and is separate from Pause sequence, which cancels pending expressions.</p>
+      </details>
+      <div class="controls" aria-label="Synthetic product actions">
+        <button id="focus-sample" type="button" class="btn">Focus sample A</button>
+        <button id="select-sample" type="button" class="btn">Select sample B</button>
+        <button id="clear-sample" type="button" class="btn">Clear sample focus</button>
+        <span id="fixture-selection">No synthetic selection.</span>
+      </div>
     </section>
     <section class="layout">
       <div class="box">
@@ -42,8 +59,8 @@
         <p id="phase-state">Phase: idle.</p>
       </div>
       <div class="box">
-        <h2>What is actually changing</h2>
-        <p>Watch brows, eye shape, cheeks and mouth separately. The sampled face values come from the actual rig. RMS below is an authored fixture envelope; it is not captured audio or phoneme lip sync.</p>
+        <h2>Curve, spectrum and expression</h2>
+        <p>The emotional curve stays closed. Watch its amplitude and spectral ripple, friendly eyes, brows and cheeks. Controller cues, rig expression targets and eased displayed geometry are reported separately. Signals below are authored fixtures, not captured audio or phoneme lip sync.</p>
         <pre id="pose-metrics" aria-label="Current expression pose"></pre>
         <h2>Scenario results</h2>
         <pre id="scenario-results" aria-label="Expression scenario results"></pre>

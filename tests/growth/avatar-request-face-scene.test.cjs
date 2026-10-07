@@ -9,6 +9,7 @@ const {JSDOM} = require('jsdom'), THREE = require('three');
 const avatar = require('../../brites-concierge-avatar.js');
 const source = fs.readFileSync(require.resolve('../../brites-concierge-avatar-scene.mjs'), 'utf8');
 const css = fs.readFileSync(require.resolve('../../brites-concierge-avatar.css'), 'utf8');
+const measured = amplitude => ({amplitude, bands: [.2, .35, .55, .4, .25, .1], brightness: .4, valid: amplitude > 0});
 
 function harness(t) {
   const dom = new JSDOM('<div id="stage"></div>', {pretendToBeVisual: true});
@@ -46,23 +47,25 @@ function harness(t) {
 }
 
 test('the real scene has readable faceted face geometry, not only recoloured eye rings', t => {
-  const h = harness(t), names = ['expression-brow-left', 'expression-brow-right', 'expression-eye-left', 'expression-eye-right', 'expression-cheek-left', 'expression-cheek-right', 'expression-smile-glyph', 'expression-signal-0', 'expression-signal-1', 'expression-signal-2'];
+  const h = harness(t), names = ['expression-brow-left', 'expression-brow-right', 'expression-eye-left', 'expression-eye-right', 'expression-cheek-left', 'expression-cheek-right', 'expression-smile-glyph'];
   for (const name of names) {
     const mesh = h.get(name); assert.ok(mesh?.isMesh, name); assert.equal(mesh.visible, true, name);
     for (const attribute of Object.values(mesh.geometry.attributes)) assert.ok([...attribute.array].every(Number.isFinite), name + ' finite buffer');
     assert.ok(mesh.geometry.attributes.position.count > 0, name + ' real geometry');
     if (mesh.geometry.index) assert.ok([...mesh.geometry.index.array].every(index => index >= 0 && index < mesh.geometry.attributes.position.count), name + ' valid indices');
   }
+  for (const name of ['expression-signal-0', 'expression-signal-1', 'expression-signal-2']) assert.equal(h.get(name).visible, false, 'obsolete signal dots never compete with the measured voice contours');
   const description = h.engine.snapshot().character.faceGeometry;
-  assert.deepEqual({...description}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5, speechMouth: true});
+  assert.deepEqual({...description}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 0, appreciationGlyphs: 2, speechBars: 0, speechBands: 6, speechRipples: 2, speechMouth: true, mouthClosed: true});
   assert.match(h.declarations.interactionProfile.signal, /brow silhouette/);
 });
 
 test('warmth and delight change smile curvature, cheek facets and both eye silhouettes', t => {
-  const h = harness(t); h.pose({faceExpression: 'neutral', faceBrowLift: 0, faceBrowTilt: 0, smileCurve: .1, eyeSmile: 0, lidClosure: 0, cheekGlow: .1});
-  const neutral = {smile: h.get('expression-smile-glyph').scale.y, cheek: h.get('expression-cheek-left').scale.x, eyes: ['expression-eye-left','expression-eye-right'].map(name=>h.get(name).geometry.attributes.position.array.slice())};
-  h.pose({faceExpression: 'warm', faceBrowLift: .2, faceBrowTilt: 0, smileCurve: .75, eyeSmile: .7, lidClosure: .098, cheekGlow: .75});
-  assert.ok(h.get('expression-smile-glyph').scale.y > neutral.smile * 2);
+  const h = harness(t); h.pose({faceExpression: 'neutral', faceBrowLift: 0, faceBrowTilt: 0, smileCurve: .1, mouthCurve: -.02, eyeSmile: 0, lidClosure: 0, cheekGlow: .1});
+  const neutral = {smile: h.get('expression-smile-glyph').geometry.attributes.position.array.slice(), cheek: h.get('expression-cheek-left').scale.x, eyes: ['expression-eye-left','expression-eye-right'].map(name=>h.get(name).geometry.attributes.position.array.slice())};
+  h.pose({faceExpression: 'warm', faceBrowLift: .2, faceBrowTilt: 0, smileCurve: .75, mouthCurve: .052, eyeSmile: .7, lidClosure: .056, cheekGlow: .75});
+  assert.notDeepEqual(h.get('expression-smile-glyph').geometry.attributes.position.array, neutral.smile, 'warmth deforms actual closed-curve vertices');
+  assert.equal(h.get('expression-smile-glyph').scale.y, 1, 'warmth changes curvature rather than opening a mouth area');
   assert.ok(h.get('expression-cheek-left').scale.x > neutral.cheek);
   for(const [i,name] of ['expression-eye-left','expression-eye-right'].entries())assert.notDeepEqual(h.get(name).geometry.attributes.position.array,neutral.eyes[i]);
   assert.equal(h.engine.snapshot().character.faceExpression, 'warm');
@@ -149,16 +152,17 @@ test('time alone no longer spins a visible face ornament or loops a speech arm',
   assert.deepEqual(after, before); assert.equal(h.get('retired-aperture-ornament').visible, false);
 });
 
-test('idle, silent speech and held output levels keep scene orientation and status shapes steady', t => {
-  const h = harness(t), names = ['supported-upper-body', 'articulated-expression-head', 'retired-aperture-ornament', 'expression-speech-bar-0', 'expression-speech-bar-1', 'expression-speech-bar-2', 'expression-speech-bar-3', 'expression-speech-bar-4'];
-  const capture = () => names.map(name => {const part = h.get(name); return {name, position: part.position.toArray(), rotation: part.rotation.toArray(), scale: part.scale.toArray()};});
-  for (const state of ['idle', 'speaking', 'thinking', 'listening']) for (const speechEnergy of [0, .8]) {
-    const fields = {state, speechEnergy, mouthOpen: speechEnergy, statusWave: 0, headPitch: 0, headYaw: 0, headRoll: 0, bodyRoll: 0, bodyYaw: 0, lean: 0, ringRotation: -.1, armLiftLeft: 0, armLiftRight: 0, offer: 0, helloWave: 0};
+test('idle, silent speech and held measured spectra keep scene orientation and actual contour vertices steady', t => {
+  const h = harness(t), names = ['supported-upper-body', 'articulated-expression-head', 'retired-aperture-ornament', 'expression-speech-mouth', 'expression-speech-ripple-0', ...Array.from({length: 6}, (_, index) => 'expression-speech-bar-' + index)];
+  const capture = () => names.map(name => {const part = h.get(name); return {name, visible: part.visible, position: part.position.toArray(), rotation: part.rotation.toArray(), scale: part.scale.toArray(), vertices: part.isMesh ? Array.from(part.geometry.attributes.position.array) : null};});
+  for (const state of ['idle', 'speaking', 'thinking', 'listening']) for (const amplitude of [0, .8]) {
+    const fields = {state, speechSignal: measured(amplitude), mouthOpen: amplitude, statusWave: 0, headPitch: 0, headYaw: 0, headRoll: 0, bodyRoll: 0, bodyYaw: 0, lean: 0, ringRotation: -.1, armLiftLeft: 0, armLiftRight: 0, offer: 0, helloWave: 0};
     h.advance(1000); h.pose(fields); const first = capture();
-    h.advance(11000); h.pose(fields); assert.deepEqual(capture(), first, state + ' held energy ' + speechEnergy);
+    h.advance(11000); h.pose(fields); assert.deepEqual(capture(), first, state + ' held amplitude ' + amplitude);
   }
-  h.pose({state: 'speaking', speechEnergy: 0, statusWave: 0}); const silent = h.get('expression-speech-bar-2').scale.y;
-  h.pose({state: 'speaking', speechEnergy: .8, statusWave: 0}); assert.ok(h.get('expression-speech-bar-2').scale.y > silent);
+  h.pose({state: 'speaking', speechSignal: measured(0), statusWave: 0}); const silent = Array.from(h.get('expression-speech-bar-2').geometry.attributes.position.array);
+  h.pose({state: 'speaking', speechSignal: measured(.8), statusWave: 0}); assert.notDeepEqual(Array.from(h.get('expression-speech-bar-2').geometry.attributes.position.array), silent); assert.equal(h.get('expression-speech-bar-2').visible, true);
+  h.pose({state: 'speaking', level: .8}); for (let index = 0; index < 6; index++) assert.equal(h.get('expression-speech-bar-' + index).visible, false, 'legacy RMS cannot fabricate the spectral bins');
 });
 
 test('2-D fallback removes float, automatic look, orbit and speech gesture loops', () => {

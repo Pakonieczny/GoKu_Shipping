@@ -7,7 +7,7 @@
     idle: {color: '#4aa8ff', emotion: 'welcoming', label: 'Ready to help'},
     listening: {color: '#49c9ff', emotion: 'attentive', label: 'Listening'},
     thinking: {color: '#ab87ff', emotion: 'curious', label: 'Thinking'},
-    speaking: {color: '#ffcb79', emotion: 'explaining', label: 'Speaking'},
+    speaking: {color: '#70d8f1', emotion: 'explaining', label: 'Speaking'},
     success: {color: '#72ddd1', emotion: 'delighted', label: 'Happy to help'},
     error: {color: '#ffc28e', emotion: 'considerate', label: 'Let\u2019s try another way'}
   });
@@ -65,13 +65,13 @@
   const PERFORMANCE_GESTURES = Object.freeze(['none', 'greet', 'acknowledge', 'focus', 'explain', 'present', 'reassure', 'confirm']);
   // Graphic expressions are geometry/path changes, not just another light colour.
   const FACE_EXPRESSIONS = Object.freeze({
-    neutral: Object.freeze({faceBrowLift: .05, faceBrowTilt: 0, eyeSmile: .08, cheekGlow: .18, smileCurve: .3, faceSignal: .12}),
-    attentive: Object.freeze({faceBrowLift: .85, faceBrowTilt: 0, eyeSmile: 0, cheekGlow: .27, smileCurve: .24, faceSignal: .9}),
-    curious: Object.freeze({faceBrowLift: .55, faceBrowTilt: .85, eyeSmile: .02, cheekGlow: .22, smileCurve: .15, faceSignal: .55}),
-    explaining: Object.freeze({faceBrowLift: .28, faceBrowTilt: -.12, eyeSmile: .15, cheekGlow: .38, smileCurve: .42, faceSignal: .65}),
-    delighted: Object.freeze({faceBrowLift: .5, faceBrowTilt: 0, eyeSmile: .92, cheekGlow: .95, smileCurve: 1, faceSignal: .8}),
-    reassuring: Object.freeze({faceBrowLift: .15, faceBrowTilt: -.3, eyeSmile: .24, cheekGlow: .32, smileCurve: .42, faceSignal: .18}),
-    warm: Object.freeze({faceBrowLift: .22, faceBrowTilt: 0, eyeSmile: .52, cheekGlow: .62, smileCurve: .72, faceSignal: .3})
+    neutral: Object.freeze({faceBrowLift: .15, faceBrowTilt: 0, eyeSmile: .08, cheekGlow: .2, smileCurve: .34, faceSignal: .12}),
+    attentive: Object.freeze({faceBrowLift: .7, faceBrowTilt: 0, eyeSmile: .02, cheekGlow: .3, smileCurve: .32, faceSignal: .9}),
+    curious: Object.freeze({faceBrowLift: .78, faceBrowTilt: .55, eyeSmile: .02, cheekGlow: .3, smileCurve: .22, faceSignal: .55}),
+    explaining: Object.freeze({faceBrowLift: .45, faceBrowTilt: .04, eyeSmile: .14, cheekGlow: .48, smileCurve: .46, faceSignal: .65}),
+    delighted: Object.freeze({faceBrowLift: .6, faceBrowTilt: 0, eyeSmile: .48, cheekGlow: .84, smileCurve: .92, faceSignal: .8}),
+    reassuring: Object.freeze({faceBrowLift: .42, faceBrowTilt: -.42, eyeSmile: .08, cheekGlow: .36, smileCurve: .2, faceSignal: .18}),
+    warm: Object.freeze({faceBrowLift: .35, faceBrowTilt: 0, eyeSmile: .28, cheekGlow: .6, smileCurve: .72, faceSignal: .3})
   });
   // Conversational acts are presentation cues, never classifications of a
   // shopper's feelings. The caller supplies one bounded target and envelope.
@@ -80,6 +80,11 @@
   function validateExpression(value) {
     try {if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 2 || !Object.keys(value).every(key => key === 'kind' || key === 'intensity') || !EXPRESSION_KINDS.includes(value.kind) || !Number.isFinite(value.intensity) || value.intensity < 0 || value.intensity > 1) return null;
       return Object.freeze({kind: value.kind, intensity: value.intensity});} catch {return null;}
+  }
+  const EMPTY_SPEECH_SIGNAL = Object.freeze({amplitude: 0, bands: Object.freeze([0, 0, 0, 0, 0, 0]), brightness: 0, valid: false});
+  function validateSpeechSignal(value) {
+    try {if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 4 || !Object.keys(value).every(key => ['amplitude', 'bands', 'brightness', 'valid'].includes(key)) || typeof value.valid !== 'boolean' || !Number.isFinite(value.amplitude) || value.amplitude < 0 || value.amplitude > 1 || !Number.isFinite(value.brightness) || value.brightness < 0 || value.brightness > 1 || !Array.isArray(value.bands) || value.bands.length !== 6 || [...value.bands].some(band => !Number.isFinite(band) || band < 0 || band > 1)) return null;
+      return value.valid ? Object.freeze({amplitude: value.amplitude, bands: Object.freeze([...value.bands]), brightness: value.brightness, valid: true}) : EMPTY_SPEECH_SIGNAL;} catch {return null;}
   }
   function faceFor(state, emotion, intensity = 1) {
     const quiet = emotion === 'calm' || emotion === 'reassuring';
@@ -91,9 +96,9 @@
     const cue = validateExpression(value); if (!cue || cue.intensity === 0) return {...base, expressionKind: null, expressionHeadRoll: 0};
     const kind = quiet && cue.kind === 'celebrate' ? 'support' : cue.kind, name = EXPRESSION_FACES[kind];
     const target = {...FACE_EXPRESSIONS[name]};
-    if (kind === 'emphasize') {target.faceBrowLift = .66; target.faceBrowTilt = .08; target.eyeSmile = .1; target.smileCurve = .36;}
-    if (kind === 'reflect') {target.faceBrowLift = .24; target.faceBrowTilt = .3; target.eyeSmile = .06; target.smileCurve = .22;}
-    if (kind === 'resolve') {target.faceBrowLift = .32; target.eyeSmile = .34; target.smileCurve = .58;}
+    if (kind === 'emphasize') {target.faceBrowLift = .88; target.faceBrowTilt = .08; target.eyeSmile = .03; target.smileCurve = .42;}
+    if (kind === 'reflect') {target.faceBrowLift = .32; target.faceBrowTilt = .24; target.eyeSmile = .04; target.smileCurve = .12;}
+    if (kind === 'resolve') {target.faceBrowLift = .5; target.faceBrowTilt = -.08; target.eyeSmile = .12; target.smileCurve = .52;}
     const amount = cue.intensity * (quiet ? .65 : 1), face = {...base, faceExpression: name, expressionKind: kind, expressionHeadRoll: ({inquiry: .017, reflect: -.012, support: -.01, appreciate: -.008, resolve: .006}[kind] || 0) * amount};
     for (const key of Object.keys(FACE_EXPRESSIONS.neutral)) face[key] += (target[key] - face[key]) * amount;
     if (listening) {face.eyeSmile = Math.min(face.eyeSmile, .22); face.cheekGlow = Math.min(face.cheekGlow, .4); face.smileCurve = Math.min(face.smileCurve, .45);}
@@ -119,14 +124,16 @@
     const mobile = hints.mobile === true || (hints.width > 0 && hints.width < 600) || (hints.memory > 0 && hints.memory <= 4);
     return {name: mobile ? 'adaptive' : 'high', pixelRatio: Math.min(mobile ? 1.5 : 2, Math.max(1, hints.pixelRatio || 1)), shadowSize: mobile ? 1024 : 2048, textureSize: mobile ? 1024 : 2048, fps: mobile ? 30 : 60, geometryScale: mobile ? .8 : 1, bloom: !mobile && hints.bloom !== false};
   }
-  function poseFor({state = 'idle', time = 0, elapsed = 0, level = 0, gaze = {x: 0, y: 0}, headGaze = null, reducedMotion = false, emotion = null, expression = null, mannerism = null, mannerismElapsed = 0, productFocus = null, speechBeatElapsed = null, appreciationElapsed = 0, performance = null, mannerismDurationMs = null} = {}) {
+  function poseFor({state = 'idle', time = 0, elapsed = 0, level = 0, speechSignal = null, gaze = {x: 0, y: 0}, headGaze = null, reducedMotion = false, emotion = null, expression = null, mannerism = null, mannerismElapsed = 0, productFocus = null, speechBeatElapsed = null, appreciationElapsed = 0, performance = null, mannerismDurationMs = null} = {}) {
     state = validState(state); time = reducedMotion ? 0 : Number.isFinite(time) ? time : 0; elapsed = Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0;
     gaze = gaze && typeof gaze === 'object' ? gaze : {}; const gazeX = Number.isFinite(gaze.x) ? gaze.x : 0, gazeY = Number.isFinite(gaze.y) ? gaze.y : 0;
     const plan = validateAvatarPerformance(performance), emotionalGain = plan ? plan.intensity : 1;
     emotion = validEmotion(emotion); const warm = emotion === 'warm', curious = emotion === 'curious'; const calm = emotion === 'calm' || emotion === 'reassuring' || emotion === 'appreciated';
     const motion = reducedMotion ? 0 : calm ? .4 : 1, talking = state === 'speaking', thoughtful = state === 'thinking', listening = state === 'listening', happy = state === 'success' && !calm, concerned = state === 'error';
     const blink = motion ? blinkFor(time) : 0;
-    const audioEnergy = talking && !reducedMotion ? clamp(level, 0, 1) : 0, speech = talking ? (reducedMotion ? .3 : .88 * audioEnergy) : 0;
+    const measured = speechSignal === null ? null : validateSpeechSignal(speechSignal), signalUsable = talking && !reducedMotion && (speechSignal === null || measured?.valid === true);
+    const audioEnergy = signalUsable ? measured ? measured.amplitude : clamp(level, 0, 1) : 0, speech = .88 * audioEnergy;
+    const speechBands = signalUsable && measured ? [...measured.bands] : [...EMPTY_SPEECH_SIGNAL.bands], speechBrightness = signalUsable && measured ? measured.brightness : 0;
     const face = expressionFace(faceFor(state, emotion, emotionalGain), reducedMotion ? null : expression, calm, listening);
     const expressive = mannerismFor({name: mannerism, elapsed: mannerismElapsed, reducedMotion, emotion: emotion === 'appreciated' ? 'reassuring' : emotion, intensity: emotionalGain, durationMs: mannerismDurationMs});
     const heart = emotion === 'appreciated' && !talking ? reducedMotion ? 1 : smooth(appreciationElapsed / .18) * (1 - smooth((appreciationElapsed - 1.17) / .28)) : 0;
@@ -146,11 +153,11 @@
     const leftArm = calm ? .025 : thoughtful ? .18 : happy ? .1 : listening ? .045 : 0;
     const rightArm = calm ? .025 : thoughtful ? .25 : happy ? .16 : listening ? .07 : 0;
     return {
-      mannerism: expressive.name, mannerismCue: expressive.cue, mannerismPhase: expressive.phase, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, helloWave, speechEnergy: audioEnergy, phraseGesture, productFocused: !!product, present, targetX: product?.x || 0, targetY: product?.y || 0, speechAccent, lean: expressive.body * (acknowledgement ? .04 : .02) + phraseGesture * .018,
-      state, heart, ...face, lidClosure: clamp(blink + face.eyeSmile * .18, 0, 1), stanceScale: 1, bodyDepth: 0, bodyYaw: 0, eyeColor: heart > .01 ? '#ed93aa' : MOODS[state].color, emotion: emotion || MOODS[state].emotion, blink,
-      eyeDeformation: speechAccent * .075 + (warm ? .1 : curious ? -.055 : emotion === 'reassuring' ? .05 : 0) * emotionalGain + (calm ? -.025 : happy ? .24 : thoughtful ? -.14 : listening ? .1 : concerned ? -.08 : greeting ? expressive.eye * .1 : 0) + apertureAccent,
+      mannerism: expressive.name, mannerismCue: expressive.cue, mannerismPhase: expressive.phase, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, helloWave, speechEnergy: audioEnergy, speechBands, speechBrightness, speechSignalValid: signalUsable && audioEnergy > .015, phraseGesture, productFocused: !!product, present, targetX: product?.x || 0, targetY: product?.y || 0, speechAccent, lean: expressive.body * (acknowledgement ? .04 : .02) + phraseGesture * .018,
+      state, heart, ...face, lidClosure: clamp(blink + face.eyeSmile * .08, 0, 1), stanceScale: 1, bodyDepth: 0, bodyYaw: 0, eyeColor: heart > .01 ? '#ed93aa' : MOODS[state].color, emotion: emotion || MOODS[state].emotion, blink,
+      eyeDeformation: (warm ? .1 : curious ? -.055 : emotion === 'reassuring' ? .05 : 0) * emotionalGain + (calm ? -.025 : happy ? .24 : thoughtful ? -.14 : listening ? .1 : concerned ? -.08 : greeting ? expressive.eye * .1 : 0) + apertureAccent,
       eyeScaleX: (curious ? 1 - .04 * emotionalGain : 1) * (happy ? 1.08 : thoughtful ? .93 : 1) + expressive.comfort * .025,
-      eyeScaleY: (warm || emotion === 'reassuring' ? 1 - .06 * emotionalGain : curious ? 1 + .035 * emotionalGain : 1) * (happy ? .82 : listening ? 1.06 : concerned ? .9 : 1) + expressive.listen * .025 - expressive.speak * .015,
+      eyeScaleY: (warm || emotion === 'reassuring' ? 1 + .025 * emotionalGain : curious ? 1 + .055 * emotionalGain : 1) * (happy ? 1.04 : listening ? 1.08 : talking ? 1.06 : 1) + expressive.listen * .025,
       ringRotation: thoughtful ? -.1 : expressive.celebrate * .09 - expressive.comfort * .04,
       ringRipple: clamp(stateEnergy + expressive.listen * .08 + expressive.think * .14 + expressive.speak * .18 + expressive.celebrate * .16, 0, 1),
       antennaTilt: (thoughtful ? -.14 : listening ? .08 : happy ? .18 : 0) + expressive.anticipate * .055 + expressive.comfort * -.035,
@@ -160,12 +167,12 @@
       // A positive X rotation tips a forward-facing Three head DOWN. Gaze y is UP.
       headPitch: clamp(-clamp(targetY, -1, 1) * .09 + expressive.nod * .035 + expressive.head * (acknowledgement ? .018 : focus ? -.015 : 0), -.09, .09),
       headRoll: (curious ? .045 : warm ? -.02 : 0) * emotionalGain + (calm ? -.008 : concerned ? -.025 : thoughtful ? .03 : listening ? -.018 : happy ? .012 : 0) + expressive.head * (greeting ? -.03 : acknowledgement ? -.018 : focus ? .015 : 0),
-      eyeOpen: Math.max(.035, (happy ? .7 : concerned ? .85 : listening ? 1.06 : greeting ? 1 - expressive.eye * .12 : 1) * (1 - blink)),
+      eyeOpen: Math.max(.035, (happy ? 1.02 : listening ? 1.06 : talking ? 1.08 : greeting ? 1 - expressive.eye * .04 : 1) * (1 - blink)),
       gazeX: clamp(product ? product.x * eyeFollow : gazeX, -1, 1) * (product ? .1 : .07),
       gazeY: clamp(product ? product.y * eyeFollow : gazeY, -1, 1) * .07,
       browLift: happy ? .08 : listening ? .045 : concerned ? .025 : thoughtful ? .02 : 0,
       browAngle: concerned ? .15 : thoughtful ? -.08 : happy ? -.08 : -.025,
-      mouth: talking ? 'open' : concerned ? 'concern' : 'smile', mouthOpen: speech,
+      mouth: concerned || face.smileCurve < .28 ? 'reflective-curve' : 'smile-curve', mouthOpen: 0, mouthCurve: (face.smileCurve - .28) * .11,
       armLift: Math.max(leftArm, rightArm), armLiftLeft: leftArm + expressive.comfort * .02 + phraseGesture * .09 + (product && product.x < 0 ? present * .48 : 0), armLiftRight: rightArm + expressive.speak * .1 + expressive.celebrate * .08 + phraseGesture * .32 + (product && product.x >= 0 ? present * .48 : 0),
       gesture: expressive.offer * .075,
       armReach: present * .32,
@@ -205,7 +212,9 @@
           </g><path d="M125 95Q130 89 134 87" fill="none" stroke="#fff" opacity=".16" stroke-width="3" stroke-linecap="round"/>
         </g>
       </g></svg>`;
-    const speechMouthNode = doc.createElementNS('http://www.w3.org/2000/svg','ellipse'); speechMouthNode.setAttribute('class','brites-avatar__speech-mouth'); speechMouthNode.setAttribute('cx','160'); speechMouthNode.setAttribute('cy','145'); speechMouthNode.setAttribute('rx','12'); speechMouthNode.setAttribute('ry','2'); speechMouthNode.setAttribute('fill','none'); speechMouthNode.setAttribute('stroke-width','2.5'); fallback.querySelector('.brites-avatar__face-design').appendChild(speechMouthNode);
+    const speechMouthNode = doc.createElementNS('http://www.w3.org/2000/svg','path'); speechMouthNode.setAttribute('class','brites-avatar__speech-mouth'); speechMouthNode.setAttribute('d','M147 145Q160 146 173 145'); speechMouthNode.setAttribute('fill','none'); speechMouthNode.setAttribute('stroke-width','2.6'); speechMouthNode.setAttribute('opacity','0'); fallback.querySelector('.brites-avatar__face-design').appendChild(speechMouthNode);
+    const speechBandNodes = [], speechRippleNodes = [];
+    for (const [count, name, nodes] of [[6, 'speech-band', speechBandNodes], [2, 'speech-ripple', speechRippleNodes]]) for (let index = 0; index < count; index++) {const node = doc.createElementNS('http://www.w3.org/2000/svg','path'); node.setAttribute('class','brites-avatar__'+name); node.setAttribute('data-band',String(index)); node.setAttribute('fill','none'); node.setAttribute('opacity','0'); fallback.querySelector('.brites-avatar__face-design').appendChild(node); nodes.push(node);}
     const faceNodes = Object.fromEntries(['brow--left', 'brow--right', 'cheek--left', 'cheek--right', 'smile-signal', 'eye-smile', 'face-signal', 'ribbon--left', 'ribbon--right'].map(name => [name, fallback.querySelector('.brites-avatar__' + name)]));
     const caption = doc.createElement('div'); caption.className = 'brites-avatar__caption';
     caption.setAttribute('aria-hidden', 'true');
@@ -218,7 +227,7 @@
     let constructionCleanup = null;
     try {
     let state = validState(options.initialState), visible = options.visible === true, intersecting = true, destroyed = false, loading = false, engine = null, declarations = null, failed = false, paused = options.paused === true, emotion = options.emotion === 'appreciated' ? null : validEmotion(options.emotion), failureReason = null, level = 0, gaze = {x: 0, y: 0}, headGaze = {x: 0, y: 0}, gazeTarget = {x: 0, y: 0}, gazeAt = 0, pointerFrame = null, stateAt = 0, mannerism = null, mannerismAt = 0, mannerismId = 0, mannerismTimer = null, greetedThisOpening = false, productFocus = null, speechBeatAt = null, speechRested = true, appreciationAt = 0, appreciationTimer = null, appreciationEpoch = 0, previousEmotion = null, shownProduct = null, productEpoch = 0, floating = false, performance = null, performanceTimer = null, performanceEpoch = 0, performancePreviousEmotion = null, mannerismDurationMs = null;
-    let frameReady = false, pendingReadyType = null, fallbackPresented = false, expression = null, blinkTimer = null, lastFacePose = null;
+    let frameReady = false, pendingReadyType = null, fallbackPresented = false, expression = null, blinkTimer = null, lastFacePose = null, speechSignal = EMPTY_SPEECH_SIGNAL, displayedSpeech = {...EMPTY_SPEECH_SIGNAL, bands: [...EMPTY_SPEECH_SIGNAL.bands]}, signalAt = null, signalSettling = false, lastSpeechVisual = null;
     const media = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
     let systemReducedMotion = !!media?.matches, manualReducedMotion = false, reducedMotion = systemReducedMotion, readyResolve;
     const ready = new Promise(resolve => {readyResolve = resolve;});
@@ -247,14 +256,23 @@
       }
     }
     let displayedFace = null, faceAt = null, faceSettling = false;
-    function poseAt(time, fallbackTarget = false) {advanceGaze(time); const pose = poseFor({state, time, elapsed: time - stateAt, level, gaze, headGaze, productFocus: productFocus ? {...productFocus, elapsed: fallbackTarget ? Math.max(.44, time - productFocus.at) : time - productFocus.at} : null, reducedMotion, emotion, expression, mannerism, mannerismElapsed: fallbackTarget && productFocus && mannerism === 'explain' ? Math.max(.44, time - mannerismAt) : time - mannerismAt, speechBeatElapsed: speechBeatAt === null ? -1 : time - speechBeatAt, appreciationElapsed: time - appreciationAt, performance, mannerismDurationMs});
+    function clearSpeechSignal() {const changed = level !== 0 || speechSignal.valid || displayedSpeech.valid || signalSettling || lastFacePose?.speechEnergy > 0 || lastSpeechVisual?.rippleActive === true; level = 0; speechSignal = EMPTY_SPEECH_SIGNAL; displayedSpeech = {...EMPTY_SPEECH_SIGNAL, bands: [...EMPTY_SPEECH_SIGNAL.bands]}; signalAt = now(); signalSettling = false; if(lastFacePose){lastFacePose.speechEnergy=0;lastFacePose.mouthOpen=0;}lastSpeechVisual={curveClosed:true,rippleActive:false,amplitude:0,bands:[...EMPTY_SPEECH_SIGNAL.bands],brightness:0}; return changed;}
+    function advanceSignal(time) {
+      const delta = signalAt === null ? 0 : clamp(time - signalAt, 0, .12); signalAt = time;
+      if (!speechSignal.valid || state !== 'speaking' || !canDisplay() || paused || reducedMotion) {displayedSpeech = {...EMPTY_SPEECH_SIGNAL, bands: [...EMPTY_SPEECH_SIGNAL.bands]}; signalSettling = false; return;}
+      const blend = (target, current) => {const gain = 1 - Math.exp(-delta / (target > current ? .04 : .1)), next = current + (target - current) * gain; return Math.abs(target-next) < .0005 ? target : next;};
+      displayedSpeech.amplitude = blend(speechSignal.amplitude, displayedSpeech.amplitude); displayedSpeech.brightness = blend(speechSignal.brightness, displayedSpeech.brightness); displayedSpeech.bands = speechSignal.bands.map((value,index) => blend(value,displayedSpeech.bands[index])); displayedSpeech.valid = true;
+      signalSettling = Math.abs(speechSignal.amplitude-displayedSpeech.amplitude) >= .0005 || Math.abs(speechSignal.brightness-displayedSpeech.brightness) >= .0005 || speechSignal.bands.some((value,index) => Math.abs(value-displayedSpeech.bands[index]) >= .0005);
+    }
+    function poseAt(time, fallbackTarget = false) {advanceGaze(time); advanceSignal(time); const pose = poseFor({state, time, elapsed: time - stateAt, level, speechSignal: displayedSpeech, gaze, headGaze, productFocus: productFocus ? {...productFocus, elapsed: fallbackTarget ? Math.max(.44, time - productFocus.at) : time - productFocus.at} : null, reducedMotion, emotion, expression, mannerism, mannerismElapsed: fallbackTarget && productFocus && mannerism === 'explain' ? Math.max(.44, time - mannerismAt) : time - mannerismAt, speechBeatElapsed: speechBeatAt === null ? -1 : time - speechBeatAt, appreciationElapsed: time - appreciationAt, performance, mannerismDurationMs});
       const keys = [...Object.keys(FACE_EXPRESSIONS.neutral), 'eyeScaleX', 'eyeScaleY', 'eyeDeformation', 'expressionHeadRoll'];
       const delta = faceAt === null ? 0 : clamp(time - faceAt, 0, .12); faceAt = time;
       if (!displayedFace || reducedMotion || paused || !canDisplay()) displayedFace = Object.fromEntries(keys.map(key => [key, pose[key]]));
       else {const blend = 1 - Math.exp(-delta / .12); for (const key of keys) {displayedFace[key] += (pose[key] - displayedFace[key]) * blend; if(Math.abs(pose[key]-displayedFace[key])<.0005)displayedFace[key]=pose[key];}}
       faceSettling = !reducedMotion && !paused && keys.some(key => Math.abs(pose[key]-displayedFace[key]) >= .0005);
-      const shown = {...pose, ...displayedFace};
-      lastFacePose = Object.fromEntries(['faceBrowLift', 'faceBrowTilt', 'eyeSmile', 'eyeOpen', 'smileCurve', 'cheekGlow', 'mouthOpen', 'speechEnergy'].map(key => [key, shown[key]])); lastFacePose.headRoll = shown.headRoll + shown.expressionHeadRoll;
+      const shown = {...pose, ...displayedFace}; shown.mouthCurve = (shown.smileCurve - .28) * .11;
+      lastFacePose = Object.fromEntries(['faceBrowLift', 'faceBrowTilt', 'eyeSmile', 'eyeOpen', 'smileCurve', 'cheekGlow', 'mouthOpen', 'mouthCurve', 'speechEnergy'].map(key => [key, shown[key]])); lastFacePose.headRoll = shown.headRoll + shown.expressionHeadRoll;
+      lastSpeechVisual = {curveClosed: true, rippleActive: shown.speechSignalValid, amplitude: shown.speechEnergy, bands: [...shown.speechBands], brightness: shown.speechBrightness};
       return shown;
     }
     function emit(type, detail) {frame.dispatchEvent(new win.CustomEvent('brites-avatar:' + type, {detail, bubbles: true, composed: true})); try {options.onStatus?.(type, detail);} catch {}}
@@ -264,7 +282,7 @@
     function fallbackMoving() {return fallbackPresented && canDisplay() && !paused && !reducedMotion && !hasWebglFrame();}
     function snapshot() {
       const scene = engine?.snapshot?.() || {};
-      return {...scene, state, emotion, expression: expression ? {...expression} : null, facePose: lastFacePose ? {...lastFacePose} : null, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, motionPreferences: {system: systemReducedMotion, manual: manualReducedMotion}, mode: hasWebglFrame() ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
+      return {...scene, state, emotion, expression: expression ? {...expression} : null, facePose: lastFacePose ? {...lastFacePose} : null, speechSignal: {...speechSignal, bands: [...speechSignal.bands]}, speechVisual: lastSpeechVisual ? {...lastSpeechVisual, bands: [...lastSpeechVisual.bands]} : null, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, motionPreferences: {system: systemReducedMotion, manual: manualReducedMotion}, mode: hasWebglFrame() ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
         mannerism: {name: mannerism, cue: BEHAVIOR_CUES[mannerism] || null, id: mannerismId, duration: mannerismDurationMs ? mannerismDurationMs / 1000 : MANNERISMS[mannerism] || 0, active: !!mannerism && canDisplay() && !paused && !reducedMotion, elapsed: mannerism ? Math.max(0, now() - mannerismAt) : 0},
         animated: hasWebglFrame() ? active() && !reducedMotion && scene.animated === true : fallbackMoving(),
         fallback: {format: 'animated_svg_2d', active: fallbackPresented && canDisplay() && !hasWebglFrame(), animated: fallbackMoving(), reason: failureReason},
@@ -285,7 +303,8 @@
     function syncFallback() {
       syncLayers();
       const pose = poseAt(now(), !hasWebglFrame());
-      frame.style.setProperty('--brites-eye-color', emotion === 'appreciated' ? '#ed93aa' : pose.eyeColor);
+      frame.style.setProperty('--brites-eye-color', emotion === 'appreciated' && state !== 'speaking' ? '#ed93aa' : pose.eyeColor);
+      frame.style.setProperty('--brites-voice-color', `hsl(${(183 + pose.speechBrightness * 23).toFixed(1)} 85% ${(72+pose.speechBrightness*8).toFixed(1)}%)`);
       frame.style.setProperty('--brites-eye-x', String(pose.eyeScaleX));
       frame.style.setProperty('--brites-eye-y', String(pose.eyeScaleY));
       frame.style.setProperty('--brites-gaze-x', (pose.gazeX * 180).toFixed(2) + 'px');
@@ -297,7 +316,11 @@
       frame.style.setProperty('--brites-head-gaze-y', (pose.headPitch * 22).toFixed(2) + 'px');
       frame.style.setProperty('--brites-face-cheek', String(pose.cheekGlow));
       frame.style.setProperty('--brites-face-smile', String(pose.smileCurve));
-      const mouthActive = pose.state === 'speaking' && pose.speechEnergy > .015; speechMouthNode.setAttribute('opacity', mouthActive ? '1' : '0'); speechMouthNode.setAttribute('ry', (2 + pose.speechEnergy * 9).toFixed(2)); speechMouthNode.setAttribute('rx', ((12 + pose.speechEnergy * 3) * (1 + pose.smileCurve * .14 - pose.faceBrowTilt * .025)).toFixed(2)); speechMouthNode.setAttribute('cy', (145 + pose.smileCurve * .8).toFixed(2));
+      const mouthActive = pose.speechSignalValid === true, width = 13 + pose.smileCurve * 4, bend = (pose.smileCurve - .28) * 16, mouthPath = `M${(160-width).toFixed(2)} 145Q160 ${(145+bend).toFixed(2)} ${(160+width).toFixed(2)} 145`;
+      speechMouthNode.setAttribute('opacity', mouthActive ? String(.18 + pose.speechEnergy * .52) : '0'); speechMouthNode.setAttribute('d', mouthPath);
+      frame.dataset.speechCurveClosed = 'true'; frame.dataset.speechRipple = String(mouthActive);
+      speechBandNodes.forEach((node,index) => {const value = mouthActive ? pose.speechBands[index] : 0, x = 146 + index * 5.6, height = value * pose.speechEnergy * 4.8; node.setAttribute('d',`M${x.toFixed(2)} 154Q${(x+2.1).toFixed(2)} ${(154-height).toFixed(2)} ${(x+4.2).toFixed(2)} 154`); node.setAttribute('opacity',value > .002 ? String(.18 + Math.min(.5,value*.45+pose.speechEnergy*.12)) : '0'); node.setAttribute('stroke-width',(1.05+value*.7).toFixed(2));});
+      speechRippleNodes.forEach((node,index) => {const offset = 2.8 + index * 2.7 + pose.speechEnergy * (1.1+index*.6), spread = width + 1.5 + index * 2.5 + pose.speechEnergy * 1.2; node.setAttribute('d',`M${(160-spread).toFixed(2)} ${(145+offset).toFixed(2)}Q160 ${(145+bend+offset).toFixed(2)} ${(160+spread).toFixed(2)} ${(145+offset).toFixed(2)}`); node.setAttribute('opacity',mouthActive ? String(pose.speechEnergy*(index ? .12 : .25)) : '0');});
       frame.style.setProperty('--brites-focus-head', (pose.productFocused ? pose.targetX * 8 : 0).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-talk-arm', (-pose.armLiftRight * 75).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-point-left', (pose.armLiftLeft * 75).toFixed(2) + 'deg');
@@ -314,16 +337,16 @@
       const browY = 94 - pose.faceBrowLift * 5, browArc = browY - 3 - pose.faceBrowLift * 3, browTilt = pose.faceBrowTilt * 5;
       faceNodes['brow--left'].setAttribute('d', `M115 ${(browY + browTilt * 1.2).toFixed(2)}Q130 ${(browArc + browTilt * .8).toFixed(2)} 145 ${(browY + browTilt * .4).toFixed(2)}`);
       faceNodes['brow--right'].setAttribute('d', `M175 ${(browY - browTilt * .4).toFixed(2)}Q190 ${(browArc - browTilt * .8).toFixed(2)} 205 ${(browY - browTilt * 1.2).toFixed(2)}`);
-      faceNodes['smile-signal'].setAttribute('opacity', mouthActive ? '0' : '1');
-      faceNodes['smile-signal'].setAttribute('d', `M147 145Q160 ${(145 + pose.smileCurve * 10).toFixed(2)} 173 145`);
+      faceNodes['smile-signal'].setAttribute('opacity', '1');
+      faceNodes['smile-signal'].setAttribute('d', mouthPath);
       for (const [side, center, sign] of [['left',130,-1],['right',190,1]]) {
-        const curve=pose.eyeSmile*10, tilt=pose.faceBrowTilt*sign*3, half=Math.max(1.1,7*(1-pose.lidClosure));
+        const curve=pose.eyeSmile*4.5, tilt=pose.faceBrowTilt*sign*3, half=Math.max(1.1,9.2*(1-pose.lidClosure)*(pose.eyeOpen/1.08));
         faceNodes['ribbon--'+side].setAttribute('d', `M${center-17} ${115-half+tilt}Q${center} ${115-half-curve} ${center+17} ${115-half-tilt}Q${center+22} 115 ${center+17} ${115+half-tilt}Q${center} ${115+half-curve} ${center-17} ${115+half+tilt}Q${center-22} 115 ${center-17} ${115-half+tilt}Z`);
       }
       faceNodes['eye-smile'].setAttribute('opacity', '0');
       faceNodes['cheek--left'].setAttribute('opacity', String(.2 + pose.cheekGlow * .75));
       faceNodes['cheek--right'].setAttribute('opacity', String(.2 + pose.cheekGlow * .75));
-      faceNodes['face-signal'].setAttribute('opacity', String(pose.state==='speaking'?pose.speechEnergy*.85:0));
+      faceNodes['face-signal'].setAttribute('opacity', '0');
       frame.dataset.cue = pose.mannerismCue || '';
       frame.dataset.cuePhase = pose.mannerismPhase || '';
       frame.dataset.motion = canDisplay() && !paused && !reducedMotion ? 'running' : reducedMotion ? 'reduced' : 'paused';
@@ -333,14 +356,14 @@
       const statusLabel = state === 'success' && (emotion === 'calm' || emotion === 'reassuring') ? 'Here with you' : MOODS[state].label;
       const pending = !hasWebglFrame() && !fallbackPresented;
       caption.textContent = pending ? '' : statusLabel + (fallbackPresented ? ' \u00b7 2-D companion' : '');
-      if(faceSettling) queuePointerFrame();
+      if(faceSettling || signalSettling) queuePointerFrame();
       scheduleBlink();
       frame.setAttribute('aria-label', 'Brites jewellery gift guide. ' + (pending ? 'Preparing your guide.' : statusLabel) + (fallbackPresented ? '. Animated 2-D companion; 3-D unavailable.' : '') + (paused ? '. Animation paused.' : ''));
     }
     function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; frameReady = false; pendingReadyType = null; fallbackPresented = true; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} finally {surface.replaceChildren();} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
     function sync() {
-      if (!canDisplay() || paused) {stopPointerFrame(); stopBlink(); expression = null; gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; level = 0; speechBeatAt = null; speechRested = true;}
-      else if (reducedMotion) {stopPointerFrame(); stopBlink(); expression = null; level = 0; cancelMannerism();}
+      if (!canDisplay() || paused) {stopPointerFrame(); stopBlink(); expression = null; gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; clearSpeechSignal(); speechBeatAt = null; speechRested = true;}
+      else if (reducedMotion) {stopPointerFrame(); stopBlink(); expression = null; clearSpeechSignal(); cancelMannerism();}
       frame.hidden = !visible; syncFallback();
       if (engine) {
         try {
@@ -351,7 +374,7 @@
               frameReady = true; fallbackPresented = false; syncLayers();
               if (pendingReadyType) {const type = pendingReadyType; pendingReadyType = null; syncFallback(); emit(type, snapshot()); readyResolve(snapshot());}
             }
-          }
+          } else if (paused && frameReady && canDisplay()) engine.render(poseAt(now()), true);
         } catch {renderingFailure();}
       }
       if (active() && !engine && !loading) load();
@@ -371,7 +394,7 @@
         renderingFailure();
       } finally {loading = false;}
     }
-    function setState(value) {if (destroyed) return; const next = validState(value); if (next === state) return; state = next; expression = null; stateAt = now(); if (next !== 'speaking') level = 0; speechBeatAt = null; speechRested = true; if (!performance) playMannerism({listening: 'acknowledge', thinking: 'focus', speaking: 'explain', success: 'confirm', error: 'reassure'}[state]); frame.dataset.state = state; try {engine?.invalidate();} catch {renderingFailure();} emit('state', {state}); sync();}
+    function setState(value) {if (destroyed) return; const next = validState(value); if (next === state) return; state = next; expression = null; stateAt = now(); clearSpeechSignal(); speechBeatAt = null; speechRested = true; if (!performance) playMannerism({listening: 'acknowledge', thinking: 'focus', speaking: 'explain', success: 'confirm', error: 'reassure'}[state]); frame.dataset.state = state; try {engine?.invalidate();} catch {renderingFailure();} emit('state', {state}); sync();}
     function setVisible(value) {if (destroyed) return; const opening = value === true && !visible; visible = value === true; if (!visible || opening) greetedThisOpening = false; if (opening && options.greetingOnOpen !== false) triggerGreeting(); sync();}
     // Scene retry is explicit; fallback respects visibility and pause.
     function retry() {if (destroyed || loading || engine || !failed || !visible || !intersecting || doc.hidden) return false; failed = false; sync(); return loading;}
@@ -389,12 +412,12 @@
     function stopPointerFrame() {if (pointerFrame !== null) win.cancelAnimationFrame?.(pointerFrame); pointerFrame = null;}
     function queuePointerFrame() {
       if (pointerFrame !== null || !canDisplay() || paused || reducedMotion || !win.requestAnimationFrame) return;
-      if (!faceSettling && !['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) return;
+      if (!faceSettling && !signalSettling && !['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) return;
       pointerFrame = win.requestAnimationFrame(() => {
         pointerFrame = null;
         if (!canDisplay() || paused || reducedMotion) return;
         syncFallback();
-        if (faceSettling || ['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) queuePointerFrame();
+        if (faceSettling || signalSettling || ['x', 'y'].some(axis => Math.abs(gaze[axis] - gazeTarget[axis]) > .0005 || Math.abs(headGaze[axis] - gazeTarget[axis]) > .0005)) queuePointerFrame();
       });
     }
     function lookAt(x, y, soften = false) {
@@ -433,7 +456,9 @@
     }
     function clearFocus() {if (destroyed) return; if (productFocus && mannerism === 'explain') cancelMannerism(); productFocus = null; sync();}
     function cue(name) {if (destroyed || !canDisplay() || paused || reducedMotion) return false; const key = name === 'present' ? 'explain' : name; if (!Object.hasOwn(MANNERISMS, key)) return false; playMannerism(key); sync(); return mannerism === key;}
-    function setLevel(value) {if (destroyed || paused || reducedMotion || !canDisplay()) return; level = clamp(value, 0, 1); if (state === 'speaking' && !paused && canDisplay()) {if (level < .045) speechRested = true; else if (level > .1 && speechRested && (speechBeatAt === null || now() - speechBeatAt > .42)) {speechBeatAt = now(); speechRested = false;}} syncFallback(); if (reducedMotion && state === 'speaking') sync();}
+    function setSpeechSignal(value) {if (destroyed) return false; const next = value === null ? EMPTY_SPEECH_SIGNAL : validateSpeechSignal(value); if (!next || !next.valid || next.amplitude === 0 || state !== 'speaking' || paused || reducedMotion || !canDisplay()) {if (clearSpeechSignal()) sync(); return value === null || !!next && (!next.valid || next.amplitude === 0);}
+      speechSignal = next; level = next.amplitude; if (level < .045) speechRested = true; else if (level > .1 && speechRested && (speechBeatAt === null || now()-speechBeatAt > .42)) {speechBeatAt = now(); speechRested = false;} syncFallback(); return true;}
+    function setLevel(value) {if (destroyed) return; const amplitude = clamp(value, 0, 1); setSpeechSignal({amplitude, bands: [...EMPTY_SPEECH_SIGNAL.bands], brightness: 0, valid: amplitude > 0});}
     const visibility = () => sync(), motion = event => {systemReducedMotion = event.matches === true; reducedMotion = systemReducedMotion || manualReducedMotion; sync();};
     function currentGazeAnchor(box) {
       try {const projected = !failed && engine?.gazeAnchor?.(); if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y)) return projected;} catch {}
@@ -456,16 +481,16 @@
     doc.addEventListener('pointermove', pointer, {passive: true, capture: true}); doc.addEventListener('pointerout', leavePage, {passive: true}); win.addEventListener('blur', resetGaze);
     observer = win.IntersectionObserver ? new win.IntersectionObserver(entries => {intersecting = entries.some(entry => entry.isIntersecting); sync();}, {threshold: 0}) : null;
     observer?.observe(frame);
-    function destroy() {if (destroyed) return; destroyed = true; expression = null; stopPointerFrame(); stopBlink(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
+    function destroy() {if (destroyed) return; destroyed = true; expression = null; clearSpeechSignal(); stopPointerFrame(); stopBlink(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
     if (visible && options.greetingOnOpen !== false) triggerGreeting();
     sync(); if (options.emotion === 'appreciated') setEmotion('appreciated');
-    return {ready, triggerGreeting, setState, setVisible, setPaused, setReducedMotion, setEmotion, setExpression, retry, setLevel, lookAt, focusProduct, clearFocus, showProduct, clearProduct, setFloating, perform, cancelPerformance: () => {if (destroyed) return; cancelPerformance(); sync();}, cue, snapshot, destroy, element: frame};
+    return {ready, triggerGreeting, setState, setVisible, setPaused, setReducedMotion, setEmotion, setExpression, retry, setLevel, setSpeechSignal, lookAt, focusProduct, clearFocus, showProduct, clearProduct, setFloating, perform, cancelPerformance: () => {if (destroyed) return; cancelPerformance(); sync();}, cue, snapshot, destroy, element: frame};
     } catch (error) {
       try {constructionCleanup?.();} catch {} finally {frame.remove();}
       throw error;
     }
   }
-  const api = {create, MANNERISMS, BEHAVIOR_CUES, BLINK_EVENTS, BLINK_CYCLE, blinkFor, mannerismFor, FACE_EXPRESSIONS, faceFor, EXPRESSION_KINDS, validateExpression, pointerGaze, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor, productPhoto, validateAvatarPerformance, PERFORMANCE_GESTURES};
+  const api = {create, MANNERISMS, BEHAVIOR_CUES, BLINK_EVENTS, BLINK_CYCLE, blinkFor, mannerismFor, FACE_EXPRESSIONS, faceFor, EXPRESSION_KINDS, validateExpression, validateSpeechSignal, pointerGaze, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor, productPhoto, validateAvatarPerformance, PERFORMANCE_GESTURES};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (scope) scope.BritesConciergeAvatar = api;
 })(typeof window === 'undefined' ? null : window);

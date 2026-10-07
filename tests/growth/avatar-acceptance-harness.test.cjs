@@ -122,6 +122,20 @@ test('CPU pose audit confirms distinct bounded state contracts without certifyin
   assert.equal(report.claims.gestureAppearance,'unverified');
 });
 
+test('CPU audit rejects opening mouths or invented silent speech energy',()=>{
+  for(const failure of ['opening','silent-energy']){
+    const report=qa.auditCpuPoses({states:avatarFactory.STATES,poseFor:input=>{
+      const pose=avatarFactory.poseFor(input);
+      if(input.state==='speaking'&&failure==='opening')return{...pose,mouth:'open',mouthOpen:.4};
+      if(input.state==='speaking'&&input.level===0&&failure==='silent-energy')return{...pose,speechEnergy:.8};
+      return pose;
+    }});
+    assert.equal(report.status,'cpu_pose_contract_not_confirmed');
+    assert.equal(report.claims.expressionAppearance,'unverified');
+    assert.equal(report.claims.gestureAppearance,'unverified');
+  }
+});
+
 test('source declaration audit checks PBR, shadows, deformation and safe fallback controls without a GPU claim',()=>{
   const root=path.join(__dirname,'../..'),controllerSource=fs.readFileSync(path.join(root,'brites-concierge-avatar.js'),'utf8');
   for(const relative of ['brites-concierge-avatar-scene.mjs','assets/brites-concierge-avatar-scene.mjs']){

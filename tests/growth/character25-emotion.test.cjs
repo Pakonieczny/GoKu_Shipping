@@ -58,9 +58,10 @@ function meshFixture(t) {
   const start = source.indexOf('  const head = new THREE.Group();'), end = source.indexOf('  const decoration = mesh(', start), beginPose = source.indexOf('  const whiteColor = new THREE.Color('), endPose = source.indexOf('  function render(pose', beginPose);
   const names = ['ivory', 'gold', 'paleGold', 'face', 'lidMaterial', 'eyeMaterial', 'pupilMaterial', 'glint', 'gemMaterial', 'corneaMaterial', 'irisMaterial', 'mouthMaterial'];
   const materials = Object.fromEntries(names.map(name => [name, new THREE.MeshPhysicalMaterial()]));
-  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(beginPose, endPose) + '\nreturn {eyes,heartGlyphs,statusBars,pose:(value,time=1)=>{sampleTime=time;applyPose(value);},dispose:()=>geometries.forEach(value=>value.dispose())};})()';
-  const f = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width: 390}), ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors: {idle: '#4aa8ff', speaking: '#ffcb79', listening: '#49c9ff', thinking: '#ab87ff'}}});
-  t.after(() => {f.dispose(); Object.values(materials).forEach(value => value.dispose());}); return f;
+  const basicMaterials = new Set(), basic = options => {const value = new THREE.MeshBasicMaterial(options); basicMaterials.add(value); return value;};
+  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(beginPose, endPose) + '\nreturn {eyes,heartGlyphs,statusBars,speechMouth,speechRipples,smileGlyph,pose:(value,time=1)=>{sampleTime=time;applyPose(value);},dispose:()=>geometries.forEach(value=>value.dispose())};})()';
+  const f = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width: 390}), basic, ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors: {idle: '#4aa8ff', speaking: '#70d8f1', listening: '#49c9ff', thinking: '#ab87ff'}}});
+  t.after(() => {f.dispose(); Object.values(materials).forEach(value => value.dispose()); basicMaterials.forEach(value => value.dispose());}); return f;
 }
 test('paired production appreciation glyphs have real heart lobes/notches and finite geometry', t => {
   const f = meshFixture(t); f.pose(avatar.poseFor({emotion: 'appreciated', appreciationElapsed: .4}));
@@ -71,11 +72,13 @@ test('paired production appreciation glyphs have real heart lobes/notches and fi
   }
   assert.ok(f.eyes.every(eye=>eye.aperture.visible===false));f.pose(avatar.poseFor());assert.ok(f.eyes.every(eye=>eye.aperture.visible===true));assert.ok(f.heartGlyphs.every(heart=>heart.visible===false));
 });
-test('paired eyes and speech bars change only with measured output energy, keeping silence stable', t => {
+test('semantic eyes stay open while measured speech contours vary and silence stays stable', t => {
   const f = meshFixture(t),geometry=f.eyes[0].apertureGeometry,silent=avatar.poseFor({state:'speaking',time:1,level:0});
-  f.pose(silent,1);const quiet=geometry.attributes.position.array.slice();assert.ok(f.statusBars.every(bar=>bar.visible===false));
+  const measured=amplitude=>({amplitude,bands:[.2,.35,.55,.4,.25,.1],brightness:.4,valid:true});
+  f.pose(silent,1);const quiet=geometry.attributes.position.array.slice();assert.ok(f.statusBars.every(({mesh})=>mesh.visible===false));
   f.pose(silent,2);assert.deepEqual(geometry.attributes.position.array,quiet,'no invented vibration');
-  f.pose(avatar.poseFor({state:'speaking',time:1,level:.8}),1);const audio=geometry.attributes.position.array.slice(),bars=f.statusBars.map(bar=>bar.scale.y);assert.ok(f.statusBars.every(bar=>bar.visible===true));
-  f.pose(avatar.poseFor({state:'speaking',time:1,level:.8}),2);assert.deepEqual(geometry.attributes.position.array,audio);assert.deepEqual(f.statusBars.map(bar=>bar.scale.y),bars,'held energy has held shape');
-  f.pose(avatar.poseFor({state:'speaking',time:2,level:.25}),2);assert.notDeepEqual(geometry.attributes.position.array,audio);assert.notDeepEqual(f.statusBars.map(bar=>bar.scale.y),bars);
+  f.pose(avatar.poseFor({state:'speaking',time:1,speechSignal:measured(.8)}),1);const audio=geometry.attributes.position.array.slice(),bands=f.statusBars.map(({mesh})=>Array.from(mesh.geometry.attributes.position.array)),curve=f.smileGlyph.geometry.attributes.position.array.slice(),emission=f.speechMouth.material.opacity;assert.ok(f.statusBars.every(({mesh})=>mesh.visible===true));assert.equal(f.smileGlyph.visible,true);assert.equal(f.speechMouth.scale.y,1);
+  f.pose(avatar.poseFor({state:'speaking',time:1,speechSignal:measured(.8)}),2);assert.deepEqual(geometry.attributes.position.array,audio);assert.deepEqual(f.statusBars.map(({mesh})=>Array.from(mesh.geometry.attributes.position.array)),bands,'held measured spectrum has held actual geometry');
+  f.pose(avatar.poseFor({state:'speaking',time:2,speechSignal:measured(.25)}),2);assert.deepEqual(geometry.attributes.position.array,audio,'audio does not flatten the semantic eyes');assert.deepEqual(f.smileGlyph.geometry.attributes.position.array,curve,'the semantic mouth stays closed');assert.ok(f.speechMouth.material.opacity<emission);assert.notDeepEqual(f.statusBars.map(({mesh})=>Array.from(mesh.geometry.attributes.position.array)),bands);
+  f.pose(silent,2);assert.equal(f.speechMouth.visible,false);assert.ok(f.statusBars.every(({mesh})=>mesh.visible===false));assert.ok(f.speechRipples.every(({mesh})=>mesh.visible===false));
 });

@@ -99,7 +99,7 @@ test('actual production mesh construction stays finite and adaptive tessellation
     assert.equal(adaptiveResult.meshes, highResult.meshes);
     assert.ok(highResult.triangles > 100000 && highResult.triangles <= 455776);
     assert.ok(adaptiveResult.triangles > 100000 && adaptiveResult.triangles <= 313308);
-    assert.deepEqual(highResult.graphicFace, {brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3});
+    assert.deepEqual(highResult.graphicFace, {brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 0, speechBands: 6, speechRipples: 2, mouthClosed: true});
     assert.deepEqual(adaptiveResult.graphicFace, highResult.graphicFace);
     for (const model of [high, adaptive]) {
       assert.equal(model.eyes.length, 2);
@@ -117,9 +117,9 @@ test('actual production mesh construction stays finite and adaptive tessellation
 test('scene network and source budgets prevent accidental eager or oversized avatar regressions', () => {
   const controller = fs.readFileSync(path.join(root, 'brites-concierge-avatar.js'), 'utf8');
   assert.ok(fileBytes('assets/brites-concierge-avatar-scene.mjs') <= 640 * 1024);
-  // Allow the semantic facial rig, measured speech aperture and bounded expression easing while
-  // retaining the same on-demand compiled-scene download limit.
-  assert.ok(fileBytes('brites-concierge-avatar.js') <= 56 * 1024);
+  // Explicit 64 KiB source ceiling allows the single signal envelope, closed
+  // expressive curve and measured spectral contours. Scene download stays bounded.
+  assert.ok(fileBytes('brites-concierge-avatar.js') <= 64 * 1024);
   assert.ok(fileBytes('brites-concierge-avatar.css') <= 12 * 1024);
   assert.doesNotMatch(controller, /avatar-concept\.png/);
   assert.match(controller, /await import\(moduleUrl\)/);

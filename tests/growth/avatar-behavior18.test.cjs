@@ -18,7 +18,8 @@ test('conversation transitions have explicit original-robot behavior cues', () =
     explain: 'speaking', confirm: 'celebrate', reassure: 'reassure'
   });
   assert.match(sceneSource, /identity: 'original pearlfin porcelain guide'/);
-  assert.match(sceneSource, /no human iris or anatomical mouth/);
+  assert.match(sceneSource, /continuously closed expressive mouth curve/);
+  assert.match(sceneSource, /no human iris, opening aperture or phoneme claim/);
 });
 
 test('each cue anticipates, expresses and settles on its finite deadline', () => {
@@ -141,21 +142,22 @@ function meshFixture() {
   assert.ok(start > 0 && end > start && poseStart > end && poseEnd > poseStart);
   const materialNames = ['ivory','gold','paleGold','face','lidMaterial','eyeMaterial','pupilMaterial','glint','gemMaterial','corneaMaterial','irisMaterial','mouthMaterial'];
   const materials = Object.fromEntries(materialNames.map(name => [name, ['irisMaterial', 'mouthMaterial', 'glint'].includes(name) ? new THREE.MeshBasicMaterial({toneMapped: false}) : new THREE.MeshPhysicalMaterial()]));
+  const basicMaterials = new Set(), basic = options => {const value = new THREE.MeshBasicMaterial(options); basicMaterials.add(value); return value;};
   const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + sceneSource.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=.42,reducedMotion=false;' + sceneSource.slice(poseStart, poseEnd) + '\nreturn {avatar,arms,eyes,statusBars,orbit,geometries,pose:value=>applyPose(value),dispose:()=>geometries.forEach(value=>value.dispose())};})()';
-  const model = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width: 390}), ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors: {idle:'#4aa8ff',listening:'#49c9ff',thinking:'#ab87ff',speaking:'#ffcb79',success:'#72ddd1',error:'#ffc28e'}}});
-  return {...model, destroy() {model.dispose(); Object.values(materials).forEach(value => value.dispose());}};
+  const model = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width: 390}), basic, ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors: {idle:'#4aa8ff',listening:'#49c9ff',thinking:'#ab87ff',speaking:'#70d8f1',success:'#72ddd1',error:'#ffc28e'}}});
+  return {...model, destroy() {model.dispose(); Object.values(materials).forEach(value => value.dispose()); basicMaterials.forEach(value => value.dispose());}};
 }
 
 test('production mesh consumes cue accents without adding geometry or unsafe values', () => {
   const f = meshFixture();
   try {
     f.pose(avatar.poseFor({state: 'idle', time: .42}));
-    const neutralBars = f.statusBars.map(bar => bar.scale.y), neutralEyes = f.eyes.map(eye => eye.apertureGeometry.attributes.position.array.slice()), geometryCount = f.geometries.size;
+    const neutralBands = f.statusBars.map(({mesh}) => Array.from(mesh.geometry.attributes.position.array)), neutralEyes = f.eyes.map(eye => eye.apertureGeometry.attributes.position.array.slice()), geometryCount = f.geometries.size;
     f.pose(avatar.poseFor({state: 'listening', time: .42, mannerism: 'acknowledge', mannerismElapsed: .42}));
     assert.equal(f.eyes.length, 2);
     f.eyes.forEach((eye, index) => assert.notDeepEqual(eye.apertureGeometry.attributes.position.array, neutralEyes[index], 'listening changes each ribbon silhouette'));
-    assert.deepEqual(f.statusBars.map(bar => bar.scale.y), neutralBars, 'listening does not invent a speech waveform');
-    assert.ok(f.statusBars.every(bar => !bar.visible));
+    assert.deepEqual(f.statusBars.map(({mesh}) => Array.from(mesh.geometry.attributes.position.array)), neutralBands, 'listening does not invent a speech spectrum');
+    assert.ok(f.statusBars.every(({mesh}) => mesh.visible === false));
     const left = f.arms.find(item => item.side === -1).group, right = f.arms.find(item => item.side === 1).group;
     assert.ok(Math.abs(right.rotation.z) > Math.abs(left.rotation.z));
     f.pose(avatar.poseFor({state: 'success', emotion: 'celebrate', time: .42, elapsed: .42, mannerism: 'confirm', mannerismElapsed: .42}));

@@ -60,7 +60,8 @@ test('production finish preserves the dark visor and removes the broad reflectiv
   const visor = [...materials].find(material => material.color?.getHexString() === '061322');
   assert.ok(visor.roughness >= .45);
   assert.ok(visor.envMapIntensity <= .35);
-  const cover = [...materials].find(material => material.transparent && material.opacity < .05);
+  const cover = h.renderer.scene.getObjectByName('original-satin-visor-cover').material;
+  assert.equal(cover.isMeshPhysicalMaterial, true);
   assert.equal(cover.transmission, 0);
   assert.ok(cover.envMapIntensity <= .2);
   assert.equal(cover.depthWrite, false);
@@ -127,7 +128,9 @@ test('idle support stays still and speech gestures require measured output and a
   assert.equal(first.bob, 0); assert.equal(later.bob, 0);
   const silent = avatar.poseFor({state: 'speaking', time: 14, elapsed: 14, level: 0});
   const audible = avatar.poseFor({state: 'speaking', time: 14, elapsed: 14, level: 1, speechBeatElapsed: .25});
-  assert.ok(audible.mouthOpen > silent.mouthOpen * 5);
+  assert.equal(silent.mouthOpen, 0); assert.equal(audible.mouthOpen, 0);
+  assert.equal(audible.mouthCurve, silent.mouthCurve, 'phrase audio does not open or distort the semantic curve');
+  assert.ok(audible.speechEnergy > silent.speechEnergy);
   assert.ok(audible.armLiftRight > silent.armLiftRight);
   assert.ok(audible.phraseGesture > 0);
   assert.equal(silent.phraseGesture, 0);

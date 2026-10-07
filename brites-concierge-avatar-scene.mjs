@@ -10,10 +10,10 @@ import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
   schema: 5,
   identity: 'original pearlfin porcelain guide',
-  expressionRig: 'two deformable geometric light ribbons, raised brow arcs, faceted cheek lights, smile glyph and sound-driven graphic mouth; no human iris or anatomical mouth',
+  expressionRig: 'two open deformable light ribbons, raised brow arcs, faceted cheek lights, continuously closed expressive mouth curve and measured sound emission ripples; no human iris, opening aperture or phoneme claim',
   interactionProfile: Object.freeze({authorship: 'original authored choreography', blink: 'rare irregular 0.19-0.21 second closure', transitionMs: 320, signal: 'brow silhouette, eye shape, smile glyph and faceted cheek signals; colour is supplementary', grounded: true, loopingBodyMotion: false}),
   expressions: Object.freeze(['neutral', 'attentive', 'curious', 'explaining', 'delighted', 'reassuring', 'warm']),
-  stateColors: Object.freeze({idle: '#4aa8ff', listening: '#49c9ff', thinking: '#ab87ff', speaking: '#ffcb79', success: '#72ddd1', error: '#ffc28e'}),
+  stateColors: Object.freeze({idle: '#4aa8ff', listening: '#49c9ff', thinking: '#ab87ff', speaking: '#70d8f1', success: '#72ddd1', error: '#ffc28e'}),
   textures: Object.freeze([
     Object.freeze({name: 'Ivory ceramic micro-surface', kind: 'porcelain'}),
     Object.freeze({name: 'Champagne brushed metal grain', kind: 'brush'}),
@@ -122,7 +122,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     const group = new THREE.Group(); group.position.set(side * .315, .09, 0); eye.add(group);
     // Each ribbon is a filled, bevelled mesh. A blink changes its actual
     // silhouette, rather than adding a shutter across the old ring identity.
-    const ribbonGeometry = roundedGeometry(.43, .22, .018, .105, .009, true), ribbon = mesh(ribbonGeometry, irisMaterial, group);
+    const ribbonGeometry = roundedGeometry(.43, .29, .018, .13, .009, true), ribbon = mesh(ribbonGeometry, irisMaterial, group);
     ribbon.castShadow = false; ribbon.receiveShadow = false; ribbon.name = side < 0 ? 'expression-eye-left' : 'expression-eye-right';
     const ribbonRest = ribbonGeometry.attributes.position.array.slice();
     eyes.push({group, aperture: ribbon, apertureGeometry: ribbonGeometry, apertureRest: ribbonRest, digital: true, side});
@@ -143,21 +143,25 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   for (const side of [-1, 1]) {
     const cheek = mesh(geometry(new THREE.OctahedronGeometry(.053, 0)), mouthMaterial, head, side * .58, -.153, .718); cheek.scale.z = .22; cheek.castShadow = false; cheek.receiveShadow = false; cheek.name = side < 0 ? 'expression-cheek-left' : 'expression-cheek-right'; cheekLights.push(cheek);
   }
-  const smilePath = new THREE.QuadraticBezierCurve3(new THREE.Vector3(-.23, 0, 0), new THREE.Vector3(0, -.11, 0), new THREE.Vector3(.23, 0, 0));
-  const smileGlyph = mesh(geometry(new THREE.TubeGeometry(smilePath, segments(64, 40), .017, 12, false)), mouthMaterial, head, 0, -.235, .718); smileGlyph.castShadow = false; smileGlyph.receiveShadow = false; smileGlyph.name = 'expression-smile-glyph';
-  // A luminous speech aperture visibly opens from measured output energy.
-  // It is a graphic robot mouth; silence closes it rather than running a loop.
-  const speechMouth = mesh(geometry(new THREE.TorusGeometry(.105, .015, 16, segments(96,64))), mouthMaterial, head, 0, -.235, .722); speechMouth.castShadow = false; speechMouth.receiveShadow = false; speechMouth.visible = false; speechMouth.name = 'expression-speech-mouth';
-  const speechMouthRest = speechMouth.geometry.attributes.position.array.slice(); let speechMouthShape = null;
+  const closedCurve = (halfWidth, radius, steps = 48) => geometry(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(new THREE.Vector3(-halfWidth,0,0), new THREE.Vector3(0,0,0), new THREE.Vector3(halfWidth,0,0)), segments(steps,32), radius, 8, false));
+  const smileGlyph = mesh(closedCurve(.23,.013,64), mouthMaterial, head, 0, -.235, .718); smileGlyph.castShadow = false; smileGlyph.receiveShadow = false; smileGlyph.name = 'expression-smile-glyph';
+  // Sound changes emission and adjacent restrained contours. The expressive
+  // mouth remains a single closed-lip curve; energy never opens an area.
+  const voiceMaterial = basic({color:'#b0f3ff',toneMapped:false,transparent:true,opacity:0,depthWrite:false});
+  const speechMouth = mesh(closedCurve(.23,.014,64), voiceMaterial, head, 0, -.235, .722); speechMouth.castShadow = false; speechMouth.receiveShadow = false; speechMouth.visible = false; speechMouth.name = 'expression-speech-mouth';
+  const mouthCurves = [smileGlyph,speechMouth].map(value => ({mesh:value,rest:value.geometry.attributes.position.array.slice()}));
+  const speechRipples = [];
+  for (let index=0; index<2; index++) {const material=basic({color:'#86e8fa',toneMapped:false,transparent:true,opacity:0,depthWrite:false}), ripple=mesh(closedCurve(.25+index*.02,.006),material,head,0,-.27-index*.025,.721); ripple.castShadow=false;ripple.receiveShadow=false;ripple.visible=false;ripple.name='expression-speech-ripple-'+index;speechRipples.push({mesh:ripple,rest:ripple.geometry.attributes.position.array.slice()});}
+  let speechMouthShape = null;
   const faceSignals = [];
   for (let index = 0; index < 3; index++) {
-    const signal = mesh(smallSphere, mouthMaterial, head, (index - 1) * .065, -.385, .712); signal.scale.set(.011, .011, .006); signal.castShadow = false; signal.receiveShadow = false; signal.name = 'expression-signal-' + index; faceSignals.push(signal);
+    const signal = mesh(smallSphere, mouthMaterial, head, (index - 1) * .065, -.385, .712); signal.scale.set(.011, .011, .006); signal.castShadow = false; signal.receiveShadow = false; signal.visible = false; signal.name = 'expression-signal-' + index; faceSignals.push(signal);
   }
   const lens = mesh(roundedGeometry(1.56, 1.04, .006, .455, .006), corneaMaterial, head, 0, .012, .683); lens.castShadow = false; lens.receiveShadow = false; lens.name = 'original-satin-visor-cover';
   const orbit = new THREE.Group(); orbit.visible = false; orbit.name = 'retired-aperture-ornament'; eye.add(orbit);
-  const statusBars = [], statusBarGeometry = geometry(new THREE.CapsuleGeometry(.01, .017, 4, 16));
-  for (let i = 0; i < 5; i++) {
-    const bar = mesh(statusBarGeometry, mouthMaterial, head, (i - 2) * .064, -.37, .718); bar.castShadow = false; bar.receiveShadow = false; bar.scale.z = .35; bar.visible = false; bar.name = 'expression-speech-bar-' + i; statusBars.push(bar);
+  const statusBars = [];
+  for (let i = 0; i < 6; i++) {
+    const material=basic({color:'#8de6f7',toneMapped:false,transparent:true,opacity:0,depthWrite:false}), bar=mesh(closedCurve(.023,.0065,40),material,head,(i-2.5)*.075,-.365,.718); bar.castShadow=false;bar.receiveShadow=false;bar.visible=false;bar.name='expression-speech-bar-'+i;bar.userData.spectralBand=i;statusBars.push({mesh:bar,rest:bar.geometry.attributes.position.array.slice()});
   }
   // The sculpted body replaces the sphere, brass neck, ball joints, mittens
   // and separate boots. Its flat contact edge stays fixed under every gesture.
@@ -266,7 +270,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     if (disposed) return; const box = container.getBoundingClientRect(); width = Math.max(1, Math.round(box.width)); height = Math.max(1, Math.round(box.height));
     renderer.setSize(width, height, false); camera.aspect = width / height; camera.position.z = Math.max(6.65, 2.85 / (camera.aspect * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))); camera.lookAt(0, .03, 0); camera.updateProjectionMatrix(); composer?.setSize(width, height); if (lastPose) render(lastPose, true);
   }
-  const whiteColor = new THREE.Color('#ffffff'), targetColor = new THREE.Color(), displayedColor = new THREE.Color(AVATAR_SCENE_DECLARATIONS.stateColors.idle), transitionColor = displayedColor.clone();
+  const whiteColor = new THREE.Color('#ffffff'), targetColor = new THREE.Color(), voiceColor = new THREE.Color('#b0f3ff'), displayedColor = new THREE.Color(AVATAR_SCENE_DECLARATIONS.stateColors.idle), transitionColor = displayedColor.clone();
   let previousState = 'idle', transitionAt = 0;
   function applyPose(pose) {
     const state = Object.hasOwn(AVATAR_SCENE_DECLARATIONS.stateColors, pose.state) ? pose.state : 'idle';
@@ -286,30 +290,28 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     eye.position.x = finiteCue(pose.gazeX, 0, -.12, .12); eye.position.y = .022 + finiteCue(pose.gazeY, 0, -.08, .08);
     const browLift = finiteCue(pose.faceBrowLift ?? pose.browLift, 0, -1, 1), browTilt = finiteCue(pose.faceBrowTilt ?? pose.browAngle, 0, -1, 1), eyeSmile = finiteCue(pose.eyeSmile), cheekGlow = finiteCue(pose.cheekGlow), smileCurve = finiteCue(pose.smileCurve), signalLevel = finiteCue(pose.faceSignal);
     faceBrows.forEach(({mesh: brow, side}) => {brow.position.y = .355 + browLift * .057 + side * browTilt * .038; brow.rotation.z = side * -.08 + browTilt * .18;});
-    const smileClosure = finiteCue(pose.lidClosure, eyeSmile * .14), speechEnergy = speaking && !reducedMotion ? finiteCue(pose.speechEnergy) : 0, warmth = speaking ? 0 : finiteCue(pose.heart);
+    const smileClosure = finiteCue(pose.lidClosure, eyeSmile * .08), speechEnergy = speaking && !reducedMotion && pose.reducedMotion !== true && pose.speechSignalValid !== false ? finiteCue(pose.speechEnergy) : 0, warmth = speaking ? 0 : finiteCue(pose.heart);
+    const speechActive = speaking && speechEnergy > .015, speechBrightness=finiteCue(pose.speechBrightness), speechBands=Array.from({length:6},(_,index) => speechActive && Array.isArray(pose.speechBands) ? finiteCue(pose.speechBands[index]) : 0), mouthCurve=finiteCue(pose.mouthCurve,(smileCurve-.28)*.11,-.031,.08);
     cheekLights.forEach(cheek => {const scale = .62 + cheekGlow * .48 + speechEnergy * .12; cheek.scale.set(scale, scale, .22);});
-    smileGlyph.scale.set(.9 + smileCurve * .16, .18 + smileCurve * .82, 1);
-    smileGlyph.position.y = -.235 + speechEnergy * .008;
-    speechMouth.visible = speaking && speechEnergy > .015; speechMouth.scale.set((1.28 + speechEnergy * .25) * (1 + smileCurve * .14 - browTilt * .025), .20 + speechEnergy * .85, .8); smileGlyph.visible = !speechMouth.visible;
-    // Context can soften or gently incline this graphic aperture. Actual
-    // opening still comes only from output energy; these are not visemes.
-    const mouthShape = smileCurve.toFixed(4) + ',' + browTilt.toFixed(4);
+    smileGlyph.scale.set(.92+smileCurve*.24,1,1);speechMouth.scale.copy(smileGlyph.scale);smileGlyph.visible=true;speechMouth.visible=speechActive;
+    voiceMaterial.opacity=speechActive ? .18+speechEnergy*.52 : 0;
+    const mouthShape = mouthCurve.toFixed(4);
     if (mouthShape !== speechMouthShape) {
-      speechMouthShape = mouthShape; const attribute = speechMouth.geometry.attributes.position;
-      for (let i = 0; i < attribute.count; i++) {const offset = i * 3, x = speechMouthRest[offset], y = speechMouthRest[offset + 1], z = speechMouthRest[offset + 2], horizontal = THREE.MathUtils.clamp(x / .12, -1, 1); attribute.setXYZ(i, x, y + (horizontal * horizontal - .45) * smileCurve * .07 + horizontal * browTilt * .014, z);}
-      attribute.needsUpdate = true; speechMouth.geometry.computeVertexNormals(); speechMouth.geometry.computeBoundingBox(); speechMouth.geometry.computeBoundingSphere();
+      speechMouthShape=mouthShape;
+      for (const {mesh:value,rest} of mouthCurves) {const attribute=value.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],horizontal=THREE.MathUtils.clamp(x/.23,-1,1);attribute.setXYZ(i,x,rest[offset+1]-(1-horizontal*horizontal)*mouthCurve,rest[offset+2]);}attribute.needsUpdate=true;value.geometry.computeVertexNormals();value.geometry.computeBoundingBox();value.geometry.computeBoundingSphere();}
     }
-    faceSignals.forEach((signal, index) => {const energy = speechEnergy, emphasis = state === 'listening' ? index === 1 ? .7 : .25 : thinking ? index === 2 ? .7 : .2 : signalLevel; const radius = .010 + emphasis * .005 + energy * (index === 1 ? .008 : .005); signal.scale.set(radius, radius, .006);});
-    const shapeSignature = [eyeOpen, eyeScaleX, eyeScaleY, deformation, eyeSmile, browTilt, smileClosure, reducedMotion ? 0 : speechEnergy].join(','), shapeChanged = shapeSignature !== eyeShapeSignature; eyeShapeSignature = shapeSignature;
+    faceSignals.forEach(signal => {signal.visible=false;});
+    for (const [index,{mesh:ripple,rest}] of speechRipples.entries()) {ripple.visible=speechActive;ripple.material.opacity=speechActive ? speechEnergy*(index ? .1 : .22) : 0;ripple.position.y=-.27-index*.025-speechEnergy*(.012+index*.006);ripple.scale.x=1+speechEnergy*.04;const attribute=ripple.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],h=THREE.MathUtils.clamp(x/(.25+index*.02),-1,1);attribute.setXYZ(i,x,rest[offset+1]-(1-h*h)*mouthCurve,rest[offset+2]);}attribute.needsUpdate=true;ripple.geometry.computeBoundingSphere();}
+    const shapeSignature = [eyeOpen, eyeScaleX, eyeScaleY, deformation, eyeSmile, browTilt, smileClosure].join(','), shapeChanged = shapeSignature !== eyeShapeSignature; eyeShapeSignature = shapeSignature;
     for (const {aperture: ribbon, apertureGeometry, apertureRest, side} of eyes) {
       if (shapeChanged) {
-        const attribute = apertureGeometry.attributes.position, openness = eyeScaleY * (1 - smileClosure * .18) * (1 - eyeSmile * .38), asymmetry = 1 + side * browTilt * .13;
+        const attribute = apertureGeometry.attributes.position, openness = eyeScaleY * (1 - smileClosure * .12) * (1 - eyeSmile * .12), asymmetry = 1 + side * browTilt * .1;
         for (let i = 0; i < attribute.count; i++) {
           const offset = i * 3, x = apertureRest[offset], y = apertureRest[offset + 1], z = apertureRest[offset + 2], horizontal = x / .224;
-          // Blink/expression and measured speech alter the actual silhouette.
+          // Blink and semantic expression alter the actual silhouette.
           // Gaze translates the pair; there is no idle geometric wave.
-          const arch = (horizontal * horizontal - .35) * eyeSmile * .105, inquisitiveSlope = horizontal * side * browTilt * .018, speechShape = reducedMotion ? 0 : (1 - horizontal * horizontal) * speechEnergy * .024;
-          attribute.setXYZ(i, x * eyeScaleX * (1 + (1 - eyeOpen) * .035), (y * openness * asymmetry + arch + inquisitiveSlope + Math.abs(x) * deformation * .14 + speechShape) * eyeOpen, z);
+          const arch = (horizontal * horizontal - .35) * eyeSmile * .052, inquisitiveSlope = horizontal * side * browTilt * .018;
+          attribute.setXYZ(i, x * eyeScaleX * (1 + (1 - eyeOpen) * .035), (y * openness * asymmetry + arch + inquisitiveSlope + Math.abs(x) * deformation * .14) * eyeOpen, z);
         }
         attribute.needsUpdate = true; apertureGeometry.computeVertexNormals(); apertureGeometry.computeBoundingBox(); apertureGeometry.computeBoundingSphere();
       }
@@ -319,11 +321,12 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     const heartColor = new THREE.Color('#ed93aa');
     displayedColor.lerp(heartColor, warmth);
     irisMaterial.color.copy(displayedColor); mouthMaterial.color.copy(displayedColor); glint.color.copy(displayedColor).lerp(whiteColor, .6);
+    voiceColor.setHSL((183+speechBrightness*23)/360,.85,.72+speechBrightness*.08);voiceMaterial.color.copy(voiceColor);for(const {mesh:ripple} of speechRipples)ripple.material.color.copy(voiceColor);
     eyeLight.color.copy(displayedColor); eyeLight.intensity = 0; // Face graphics must not project a distracting blue spot onto the visor.
-    const statusAccent = [.4, .72, 1, .72, .4];
-    // Silent and listening states show no invented waveform. A held measured
-    // output level has a held shape, with no clock-driven bar or arm loop.
-    statusBars.forEach((bar, index) => {bar.visible = speaking && speechEnergy > .015 && warmth <= .05; bar.scale.y = .45 + speechEnergy * statusAccent[index] * 1.7;});
+    // Six actual spectral bands drive restrained curved light segments. An
+    // amplitude-only legacy caller gets no fabricated spectrum. A held signal
+    // has a held shape: there is no wall-clock oscillator or phoneme mapping.
+    statusBars.forEach(({mesh:bar,rest},index) => {const band=speechBands[index];bar.visible=speechActive && band>.002;bar.material.opacity=bar.visible ? .18+Math.min(.5,band*.45+speechEnergy*.12) : 0;bar.material.color.copy(voiceColor).lerp(whiteColor,band*.12);const attribute=bar.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],h=THREE.MathUtils.clamp(x/.023,-1,1);attribute.setXYZ(i,x,rest[offset+1]+(1-h*h)*band*speechEnergy*.045,rest[offset+2]);}attribute.needsUpdate=true;bar.geometry.computeBoundingSphere();});
     arms.forEach(({group, side, palm}) => {const invitation = state === 'listening' ? .035 : reassuring ? .015 : 0, pointsThisSide = pose.productFocused && Math.sign(pose.targetX || 1) === side, offer = (pointsThisSide || !pose.productFocused && side === 1) && Number.isFinite(pose.offer) ? THREE.MathUtils.clamp(pose.offer, 0, 1) : 0, wave = side === 1 && Number.isFinite(pose.helloWave) ? THREE.MathUtils.clamp(pose.helloWave, -1, 1) : 0, armLift = finiteCue(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, 0, .22); group.rotation.z = -side * THREE.MathUtils.clamp(armLift + invitation + offer * .24 + wave * .075, -.09, .32); group.rotation.x = -armLift * .22 - offer * .06; group.rotation.y = side * offer * .09; group.position.z = -.005 + (pointsThisSide ? finiteCue(pose.armReach, 0, 0, .11) : 0); palm.rotation.z = wave * .06;});
     // The studio softbox stays fixed: articulation moves, specular lighting does not.
     key.position.x = 3.2;
@@ -341,7 +344,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   resize();
   function setFloating(value) {const floats = value === true; scene.background = floats ? null : studioBackground; renderer.setClearColor('#e6edf2', floats ? 0 : 1); for (const surface of [floor, pedestal]) surface.visible = !floats; studioSweep.visible = false; contactCue.visible = floats; if (lastPose) render(lastPose, true);}
   function gazeAnchor() {scene.updateMatrixWorld(true); camera.updateMatrixWorld(true); const center = head.localToWorld(new THREE.Vector3(0, .112, .71)).project(camera); return {x: THREE.MathUtils.clamp((center.x + 1) / 2, 0, 1), y: THREE.MathUtils.clamp((1 - center.y) / 2, 0, 1)};}
-  function snapshot() {return {revision: THREE.REVISION, animated: !disposed && !lost && loopRunning && lastAnimationFrameMs !== null && win.performance.now() - lastAnimationFrameMs < 800, animation: {loopRequested: loopRunning, sampledFrames: frames, lastFrameMs: lastAnimationFrameMs}, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true, contactCue: contactCue.visible}, grounding: {bodyFixed: true, contactY: -1.52, platformTopY: -1.52, upperBodyPivot: 'head and fins', separateFeet: false}, gazeAnchor: gazeAnchor(), mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: eyes.length, humanFeatures: false, meshDeformation: true, faceExpression: AVATAR_SCENE_DECLARATIONS.expressions.includes(lastPose?.faceExpression) ? lastPose.faceExpression : 'neutral', faceGeometry: {lightRibbons: eyes.length, brows: faceBrows.length, shutters: visorShutters.length, cheekFacets: cheekLights.length, smileGlyph: true, signalMarkers: faceSignals.length, appreciationGlyphs: heartGlyphs.length, speechBars: statusBars.length, speechMouth: true}, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdr: true, hdri: false, radiance: {width: hdrWidth, height: hdrHeight, format: 'linear float RGBA'}}, finish: {...AVATAR_SCENE_DECLARATIONS.finish}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer && bloom?.enabled !== false, showcase: showcaseProduct ? {...showcaseProduct} : null, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
+  function snapshot() {return {revision: THREE.REVISION, animated: !disposed && !lost && loopRunning && lastAnimationFrameMs !== null && win.performance.now() - lastAnimationFrameMs < 800, animation: {loopRequested: loopRunning, sampledFrames: frames, lastFrameMs: lastAnimationFrameMs}, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true, contactCue: contactCue.visible}, grounding: {bodyFixed: true, contactY: -1.52, platformTopY: -1.52, upperBodyPivot: 'head and fins', separateFeet: false}, gazeAnchor: gazeAnchor(), mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: eyes.length, humanFeatures: false, meshDeformation: true, faceExpression: AVATAR_SCENE_DECLARATIONS.expressions.includes(lastPose?.faceExpression) ? lastPose.faceExpression : 'neutral', faceGeometry: {lightRibbons: eyes.length, brows: faceBrows.length, shutters: visorShutters.length, cheekFacets: cheekLights.length, smileGlyph: true, signalMarkers: 0, appreciationGlyphs: heartGlyphs.length, speechBars: 0, speechBands: statusBars.length, speechRipples: speechRipples.length, speechMouth: true, mouthClosed: true}, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdr: true, hdri: false, radiance: {width: hdrWidth, height: hdrHeight, format: 'linear float RGBA'}}, finish: {...AVATAR_SCENE_DECLARATIONS.finish}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer && bloom?.enabled !== false, showcase: showcaseProduct ? {...showcaseProduct} : null, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
   function destroy() {if (disposed) return; disposed = true; clearProduct(); renderer.setAnimationLoop(null); resizeObserver?.disconnect(); win.removeEventListener('resize', resize); renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored); composer?.passes.forEach(pass => pass.dispose?.()); composer?.dispose(); geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose()); textures.forEach(value => value.dispose()); environmentTarget.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
   return {setMotion, invalidate, render, snapshot, gazeAnchor, showProduct, clearProduct, setFloating, destroy};
 }

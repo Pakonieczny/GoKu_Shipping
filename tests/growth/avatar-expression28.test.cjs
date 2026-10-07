@@ -6,6 +6,7 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm');
 const {JSDOM} = require('jsdom'), THREE = require('three');
 const avatar = require('../../brites-concierge-avatar.js');
+const measured = amplitude => ({amplitude, bands: [.2, .35, .55, .4, .25, .1], brightness: .4, valid: true});
 
 async function fallback(t) {
   const dom = new JSDOM('<main></main>', {url: 'https://sandbox.example/', pretendToBeVisual: true}), win = dom.window;
@@ -45,17 +46,19 @@ test('expression cues have a closed presentation contract without authority or t
 
 test('a mixed spoken reply continuously changes real face paths without replaying gestures or inventing audio', async t => {
   const h = await fallback(t), {guide} = h; guide.setEmotion('warm'); guide.setState('speaking'); guide.setLevel(.6); h.advance(1000);
-  const gestureId = guide.snapshot().mannerism.id, paths = [], widths = [], poses = [];
+  const gestureId = guide.snapshot().mannerism.id, paths = [], curves = [], poses = [];
   for (const kind of ['explain', 'reflect', 'inquiry', 'appreciate', 'resolve']) {
     const before = guide.snapshot().facePose; guide.setExpression({kind, intensity: .9});
     assert.equal(guide.snapshot().facePose.faceBrowTilt, before.faceBrowTilt, 'no instantaneous geometry jump');
-    h.advance(800); paths.push(signature(guide)); widths.push(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('rx')); poses.push(guide.snapshot().facePose);
+    h.advance(800); paths.push(signature(guide)); curves.push(guide.element.querySelector('.brites-avatar__smile-signal').getAttribute('d')); poses.push(guide.snapshot().facePose);
     assert.equal(guide.snapshot().mannerism.id, gestureId, 'phrase changes do not re-trigger a body gesture');
-    assert.equal(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'), '1');
+    assert.equal(Number(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity')), .18 + .6 * .52, 'closed-curve emission follows the held RMS level');
+    assert.equal(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('rx'), null);
+    assert.equal(guide.element.querySelector('.brites-avatar__smile-signal').getAttribute('opacity'), '1');
   }
-  assert.equal(new Set(paths).size, 5); assert.ok(new Set(widths).size >= 4);
+  assert.equal(new Set(paths).size, 5); assert.ok(new Set(curves).size >= 4);
   assert.ok(poses[2].faceBrowTilt > poses[0].faceBrowTilt + .4, 'question visibly differs from explanation');
-  assert.ok(poses[3].eyeSmile > poses[2].eyeSmile + .3, 'appreciation softens the eye geometry');
+  assert.ok(poses[3].eyeSmile > poses[2].eyeSmile + .2, 'appreciation softens the open eye geometry');
   for (const pose of poses) {assert.equal(pose.speechEnergy, .6); for (const value of Object.values(pose)) assert.ok(Number.isFinite(value)); assert.ok(Math.abs(pose.headRoll) < .09);}
   guide.setLevel(0); assert.equal(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'), '0');
 });
@@ -69,34 +72,35 @@ test('listening preserves attention and quietly supports known context without s
   assert.equal(restricted.expressionKind, 'support'); assert.ok(restricted.eyeSmile <= .22); assert.equal(restricted.bob, 0);
 });
 
-test('restrained repair expressions remain visibly differentiated and leave measured mouth aperture independent', t => {
+test('restrained repair expressions remain differentiated while measured emission leaves the mouth closed', t => {
   const g = scene(t);
   for (const intensity of [.35, .38]) {
-    const faceShapes = [], browShapes = [], heights = [];
+    const faceShapes = [], browShapes = [], curves = [], heights = [];
     for (const kind of ['support', 'reflect', 'explain', 'inquiry']) {
-      const pose = avatar.poseFor({state: 'speaking', emotion: 'reassuring', expression: {kind, intensity}, level: .7, time: 4});
+      const pose = avatar.poseFor({state: 'speaking', emotion: 'reassuring', expression: {kind, intensity}, speechSignal: measured(.7), time: 4});
       g.pose(pose); const eye = g.get('expression-eye-left'), brow = g.get('expression-brow-left'), mouth = g.get('expression-speech-mouth');
-      faceShapes.push(Array.from(eye.geometry.attributes.position.array).join(',')); browShapes.push([brow.position.y, brow.rotation.z].join(',')); heights.push(mouth.scale.y);
-      assert.equal(mouth.visible, true); assert.ok(Math.abs(pose.expressionHeadRoll) < .01); assert.ok(pose.eyeSmile < .25, 'quiet context never opens celebratory eye smiles');
+      faceShapes.push(Array.from(eye.geometry.attributes.position.array).join(',')); browShapes.push([brow.position.y, brow.rotation.z].join(',')); curves.push(Array.from(g.get('expression-smile-glyph').geometry.attributes.position.array).join(',')); heights.push(mouth.scale.y);
+      assert.equal(mouth.visible, true); assert.equal(g.get('expression-smile-glyph').visible, true); assert.equal(pose.mouthOpen, 0); assert.ok(Math.abs(pose.expressionHeadRoll) < .01); assert.ok(pose.eyeSmile < .25, 'quiet context avoids celebratory eye smiles');
       assert.ok([...eye.geometry.attributes.position.array, ...mouth.geometry.attributes.position.array].every(Number.isFinite));
       g.pose({...pose, speechEnergy: 0}); assert.equal(mouth.visible, false); assert.equal(g.get('expression-speech-bar-2').visible, false, 'the conversational act cannot manufacture speaking movement');
     }
     assert.equal(new Set(faceShapes).size, 4, 'support, reflection, explanation and question deform the actual ribbon differently even at low gain');
     assert.equal(new Set(browShapes).size, 4, 'restrained brow geometry preserves the conversational distinction');
-    assert.equal(new Set(heights).size, 1, 'same measured output energy produces the same mouth opening for every conversational act');
+    assert.equal(new Set(curves).size, 4, 'each restrained act has its own actual closed mouth curvature');
+    assert.equal(new Set(heights).size, 1, 'audio does not scale an opening in the expressive curve');
   }
 });
 
 test('gratitude keeps measured speaking movement visible in fallback and real CPU geometry', async t => {
   const h = await fallback(t), {guide} = h; guide.setEmotion('appreciated'); assert.equal(guide.element.dataset.heart, 'true', 'idle acknowledgement begins immediately'); guide.setState('speaking'); assert.equal(guide.element.dataset.heart, 'false', 'speaking suppresses the decorative overlay immediately'); guide.setExpression({kind: 'appreciate', intensity: .8}); guide.setLevel(.8); h.advance(300);
-  assert.equal(guide.element.dataset.heart, 'false'); assert.equal(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'), '1');
-  const g = scene(t); g.pose({state: 'speaking', emotion: 'appreciated', heart: 1, speechEnergy: .8});
+  assert.equal(guide.element.dataset.heart, 'false'); assert.equal(Number(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity')), .18 + .8 * .52); assert.equal(guide.snapshot().facePose.mouthOpen, 0);
+  const g = scene(t); g.pose({state: 'speaking', emotion: 'appreciated', heart: 1, speechSignal: measured(.8)});
   assert.equal(g.get('expression-speech-mouth').visible, true); assert.equal(g.get('expression-speech-bar-2').visible, true); assert.equal(g.get('expression-eye-left').visible, true); assert.equal(g.get('expression-heart-left').visible, false);
   const shapes = [];
-  for (const kind of ['inquiry', 'support', 'appreciate']) {g.pose({state: 'speaking', emotion: 'warm', expression: {kind, intensity: 1}, speechEnergy: .5}); shapes.push(Array.from(g.get('expression-speech-mouth').geometry.attributes.position.array).join(','));}
-  assert.equal(new Set(shapes).size, 3, 'semantic shapes alter actual aperture vertices, not only labels');
-  for (const kind of avatar.EXPRESSION_KINDS) {g.pose({state: 'speaking', expression: {kind, intensity: 1}, speechEnergy: .5}); assert.ok([...g.get('expression-speech-mouth').geometry.attributes.position.array].every(Number.isFinite)); assert.equal(g.get('sculpted-porcelain-torso').parent.rotation.z, 0);}
-  g.pose({state: 'speaking', emotion: 'appreciated', heart: 1, speechEnergy: 0}); assert.equal(g.get('expression-speech-mouth').visible, false);
+  for (const kind of ['inquiry', 'support', 'appreciate']) {g.pose({state: 'speaking', emotion: 'warm', expression: {kind, intensity: 1}, speechSignal: measured(.5)}); shapes.push(Array.from(g.get('expression-speech-mouth').geometry.attributes.position.array).join(','));}
+  assert.equal(new Set(shapes).size, 3, 'semantic shapes alter actual curve vertices, not only labels');
+  for (const kind of avatar.EXPRESSION_KINDS) {g.pose({state: 'speaking', expression: {kind, intensity: 1}, speechSignal: measured(.5)}); assert.ok([...g.get('expression-speech-mouth').geometry.attributes.position.array].every(Number.isFinite)); assert.equal(g.get('sculpted-porcelain-torso').parent.rotation.z, 0);}
+  g.pose({state: 'speaking', emotion: 'appreciated', heart: 1, speechSignal: {...measured(0), valid: false}}); assert.equal(g.get('expression-speech-mouth').visible, false); assert.equal(g.get('expression-smile-glyph').visible, true);
 });
 
 test('pause, hide, state changes and reduced motion clear stale expression targets and output energy', async t => {

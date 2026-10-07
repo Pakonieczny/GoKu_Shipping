@@ -95,7 +95,10 @@ test('animation-only pause preserves ongoing source audio but clears old semanti
   h.advance(scenario.resumeAt-50);
   const during=h.runner.snapshot();assert.equal(during.face.paused,true);assert.equal(during.face.mouthEnergy,0);assert.ok(during.sourcePlaybackSamples>paused.sourcePlaybackSamples,'native source timeline must continue while only the animation is paused');
   h.advance(scenario.resumeAt);
-  const resumed=h.runner.snapshot();assert.equal(resumed.face.paused,false);assert.equal(resumed.face.state,'speaking');assert.ok(resumed.outputRms>0);assert.ok(resumed.face.mouthEnergy>0);assert.equal(resumed.controller.cue,null);assert.equal(resumed.face.expression,null);assert.equal(resumed.controller.currentPhrase,-1);
+  const resumed=h.runner.snapshot();assert.equal(resumed.face.paused,false);assert.equal(resumed.face.state,'speaking');assert.ok(resumed.outputRms>0);assert.equal(resumed.face.speechSignal.valid,true);assert.equal(resumed.face.speechSignal.amplitude,resumed.outputRms);assert.equal(resumed.controller.cue,null);assert.equal(resumed.face.expression,null);assert.equal(resumed.controller.currentPhrase,-1);
+  // The first real source sample starts a 40 ms visual attack; inspect the
+  // displayed rig after time has advanced instead of asserting a fake instant.
+  h.advance(scenario.resumeAt+50);assert.ok(h.runner.snapshot().face.speechEnergy>0);assert.equal(h.runner.snapshot().face.speechVisual.rippleActive,true);
   h.advance(scenario.resumeAt+1000);
   assert.equal(h.runner.snapshot().controller.cue,null,'resume must not reconstruct semantic cues from the canceled answer');
   h.advance(scenario.duration);assert.equal(h.completed.at(-1).invariants.finalInquiryCueReached,null);

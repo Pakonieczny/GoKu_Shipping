@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <title>Brites · Native voice connection check</title>
+  <link rel="stylesheet" href="/brites-concierge-avatar.css">
   <style>
     *{box-sizing:border-box}body{margin:0;background:#f5f2ed;color:#203d42;font:16px/1.6 system-ui,sans-serif}main{max-width:680px;margin:8vh auto;padding:30px}h1{font:500 32px/1.2 Georgia,serif}p{max-width:62ch}button{border:0;border-radius:100px;padding:13px 22px;background:#244f58;color:#fff;font:inherit;cursor:pointer;margin:0 8px 10px 0}button:disabled{opacity:.45;cursor:default}output{display:block;white-space:pre-wrap;background:#fff;border-radius:18px;padding:22px;margin:18px 0;overflow-wrap:anywhere}meter{width:100%;height:20px}a{color:inherit}small{display:block;color:#637478}
   </style>
@@ -14,14 +15,21 @@
     <a href="/concierge-sandbox.html">← Gift guide demo</a>
     <h1>OpenAI native voice connection check</h1>
     <p>This optional check receives one short spoken greeting directly from OpenAI over WebRTC. It requests no microphone access and stops after 20 seconds. It uses the same isolated voice allocation as the demo.</p>
+    <div id="avatar-mount" style="max-width:360px;margin:0 auto" aria-label="Production avatar with received voice feedback"></div>
+    <p id="renderer" role="status">The avatar loads on demand when this check starts.</p>
+    <label><input id="focus-during-speech" type="checkbox" checked> Show a fixture options tray during received speech</label>
+    <div id="fixture-tray" hidden><strong>Fixture options tray</strong><p>Presentation target only. No catalogue facts, navigation or cart actions.</p></div>
     <button id="start" type="button">Receive a native voice greeting</button>
     <button id="stop" type="button" disabled>End check</button>
     <output id="status" role="status">Ready. No voice session has started.</output>
     <meter id="level" min="0" max="1" value="0" aria-label="Received audio level"></meter>
     <output id="transcript" aria-label="OpenAI audio transcript" aria-live="polite">The spoken greeting’s transcript will appear here.</output>
     <small id="evidence">This checks the provider connection and received audio, not microphone capture or shopper conversation quality.</small>
+    <output id="signal-evidence" aria-label="Native voice avatar evidence">No received speech signal has been observed.</output>
     <audio id="audio" autoplay></audio>
   </main>
+  <script src="/brites-concierge-expression.js" defer></script>
+  <script src="/brites-concierge-voice.js" defer></script>
   <script src="/concierge-voice-qa.js" defer></script>
 </body>
 </html>

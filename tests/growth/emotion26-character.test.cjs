@@ -13,7 +13,11 @@ async function fixture(t, reduced = false) {
   win.IntersectionObserver = class {constructor(callback) {observer = callback;} observe() {} disconnect() {}};
   const guide = avatar.create({container: win.document.getElementById('mount'), visible: true, greetingOnOpen: false, loadScene: async () => ({createAvatarScene(config) {frames = config.onFrame; return {setMotion() {}, render() {}, invalidate() {}, snapshot() {return {};}, destroy() {}};}})});
   await guide.ready; t.after(() => {guide.destroy(); win.close();});
-  return {guide, jobs, pose: () => frames(clock / 1000), hide(value) {hidden = value; win.document.dispatchEvent(new win.Event('visibilitychange'));}, intersect(value) {observer([{isIntersecting: value}]);}, advance(ms) {clock += ms; for (const [key, job] of [...jobs]) if (job.due <= clock) {jobs.delete(key); job.callback();}}};
+  function advance(ms) {clock += ms; for (const [key, job] of [...jobs]) if (job.due <= clock) {jobs.delete(key); job.callback();}}
+  return {guide, jobs, pose: () => frames(clock / 1000), hide(value) {hidden = value; win.document.dispatchEvent(new win.Event('visibilitychange'));}, intersect(value) {observer([{isIntersecting: value}]);}, advance,
+    // Actual production onFrame calls consume the deterministic clock. One
+    // large clock jump is not evidence of intervening displayed animation.
+    advanceFrames(ms) {for (let elapsed=0;elapsed<ms;elapsed+=16) {advance(Math.min(16,ms-elapsed));frames(clock / 1000);}}};
 }
 test('avatar independently accepts only immutable closed finite four-field envelopes', () => {
   const clean = avatar.validateAvatarPerformance(plan); assert.deepEqual(clean, plan); assert.ok(Object.isFrozen(clean)); assert.notEqual(clean, plan);
@@ -33,8 +37,9 @@ test('intensity scales distinct original warm and curious poses without changing
   const quiet = sample(0), expressive = sample(1);
   assert.ok(expressive.headRoll > quiet.headRoll); assert.ok(Math.abs(expressive.headRoll) < .09);
   assert.ok(expressive.faceBrowTilt > quiet.faceBrowTilt + .5); assert.ok(expressive.faceBrowLift > quiet.faceBrowLift + .3); assert.ok(expressive.eyeScaleX < quiet.eyeScaleX);
-  assert.equal(quiet.speechEnergy, expressive.speechEnergy); assert.equal(quiet.mouthOpen, expressive.mouthOpen);
-  const warm = avatar.poseFor({emotion: 'warm', performance: {...plan, mood: 'warm'}}); assert.ok(warm.eyeScaleY < 1); assert.ok(warm.eyeDeformation > 0);
+  assert.equal(quiet.speechEnergy, expressive.speechEnergy); assert.equal(quiet.mouthOpen, 0); assert.equal(expressive.mouthOpen, 0);
+  const warm = avatar.poseFor({emotion: 'warm', performance: {...plan, mood: 'warm'}}), neutral = avatar.poseFor();
+  assert.ok(warm.eyeScaleY > neutral.eyeScaleY && warm.eyeScaleY <= 1.06, 'warmth retains a bounded open eye'); assert.ok(warm.eyeDeformation > 0); assert.ok(warm.smileCurve > neutral.smileCurve); assert.ok(warm.faceBrowTilt < expressive.faceBrowTilt);
 });
 test('controller expires once, restores previous mood and ignores overwritten completion', async t => {
   const f = await fixture(t); f.guide.setEmotion('warm'); assert.equal(f.guide.perform(plan), true);
@@ -45,10 +50,13 @@ test('controller expires once, restores previous mood and ignores overwritten co
 });
 test('voice state and genuine energy blend with current model-selected performance without replay', async t => {
   const f = await fixture(t); f.guide.perform({...plan, gesture: 'present', mood: 'warm'}); const id = f.guide.snapshot().mannerism.id;
-  f.guide.setState('speaking'); f.guide.setLevel(.8); f.advance(700);
-  assert.equal(f.guide.snapshot().mannerism.id, id); assert.equal(f.pose().speechEnergy, .8);
+  f.guide.setState('speaking'); f.guide.setLevel(.8);
+  assert.equal(f.guide.snapshot().speechSignal.amplitude, .8, 'current source target is accepted immediately'); assert.equal(f.pose().speechEnergy, 0, 'first displayed frame precedes the attack envelope');
+  f.advanceFrames(48); const attack = f.pose(); assert.ok(attack.speechEnergy > .5 && attack.speechEnergy < .8, 'one bounded 40 ms attack separates target from displayed amplitude'); assert.equal(attack.mouthOpen, 0);
+  f.advanceFrames(272); assert.equal(f.pose().speechEnergy, .8); f.advanceFrames(380);
+  assert.equal(f.guide.snapshot().mannerism.id, id); assert.equal(f.pose().speechEnergy, .8); assert.deepEqual(f.pose().speechBands, [0,0,0,0,0,0]); assert.equal(f.pose().mouthOpen, 0); assert.equal(f.pose().eyeColor, '#70d8f1');
   assert.equal(f.pose().stanceScale, 1); assert.equal(f.pose().bodyDepth, 0); assert.ok(f.pose().offer > 0);
-  f.guide.setLevel(0); assert.equal(f.pose().phraseGesture, 0);
+  f.guide.setLevel(0); assert.equal(f.pose().phraseGesture, 0); assert.equal(f.pose().speechEnergy, 0); assert.equal(f.guide.snapshot().speechSignal.valid, false); assert.equal(f.guide.snapshot().speechVisual.rippleActive, false); assert.equal(f.guide.snapshot().mannerism.id, id, 'silence does not replay the selected gesture');
 });
 test('quiet reassurance suppresses joy and has a bounded slow nod rather than a dance', async t => {
   const f = await fixture(t); f.guide.perform({mood: 'reassuring', gesture: 'confirm', intensity: 1, durationMs: 2000}); f.advance(700);

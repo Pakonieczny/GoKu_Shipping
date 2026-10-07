@@ -32,11 +32,11 @@ test('conversation modes retain distinct graphic expression controls and restrai
   const speaking = avatar.poseFor({state: 'speaking', time: 5, level: 1, mannerism: 'explain', mannerismElapsed: .42});
   assert.equal(listening.eyeColor, '#49c9ff');
   assert.equal(thinking.eyeColor, '#ab87ff');
-  assert.equal(speaking.eyeColor, '#ffcb79');
+  assert.equal(speaking.eyeColor, '#70d8f1');
   assert.equal(listening.faceExpression, 'attentive');
   assert.equal(thinking.faceExpression, 'curious');
   assert.equal(speaking.faceExpression, 'explaining');
-  assert.ok(listening.faceBrowLift > thinking.faceBrowLift);
+  assert.ok(thinking.faceBrowLift > listening.faceBrowLift, 'curiosity raises the brow above quiet attention');
   assert.notEqual(thinking.faceBrowTilt, speaking.faceBrowTilt);
   assert.ok(speaking.eyeSmile > thinking.eyeSmile);
   assert.equal(listening.speechEnergy, 0); assert.equal(thinking.speechEnergy, 0); assert.equal(speaking.speechEnergy, 1);
@@ -48,16 +48,22 @@ test('state transition easing and filled ribbon identity stay original and bound
   assert.match(scene, /authorship: 'original authored choreography'/);
   assert.match(scene, /transitionMs: 320/);
   assert.match(scene, /colorEase = colorProgress \* colorProgress \* \(3 - 2 \* colorProgress\)/);
-  assert.match(scene, /speechShape = reducedMotion \? 0/);
+  const soft = avatar.poseFor({state: 'speaking', time: 5, level: .1}), loud = avatar.poseFor({state: 'speaking', time: 5, level: .9});
+  assert.equal(soft.mouthOpen, 0); assert.equal(loud.mouthOpen, 0);
+  assert.equal(soft.eyeDeformation, loud.eyeDeformation, 'audio does not compress the speaking eyes');
+  assert.equal(soft.mouthCurve, loud.mouthCurve, 'sound does not replace the semantic mouth curve');
+  assert.ok(loud.eyeOpen >= 1 && loud.eyeScaleY >= 1, 'speaking does not hold a half-closed aperture');
   assert.match(scene, /identity: 'original pearlfin porcelain guide'/);
-  assert.match(scene, /two deformable geometric light ribbons/);
+  assert.match(scene, /two open deformable light ribbons/);
   assert.doesNotMatch(scene, /const halo =|const innerHalo =/);
-  assert.match(scene, /no human iris or anatomical mouth/);
+  assert.match(scene, /continuously closed expressive mouth curve/);
+  assert.match(scene, /no human iris, opening aperture or phoneme claim/);
   assert.match(bundledScene, /original authored choreography/);
   assert.match(bundledScene, /original pearlfin porcelain guide/);
   assert.match(bundledScene, /rare irregular 0\.19-0\.21 second closure/);
   assert.doesNotMatch((scene + controller).toLowerCase(), /wall[- ]?e|disney/);
 });
+
 
 test('reduced motion preserves state meaning while eliminating timed choreography', () => {
   for (const state of avatar.STATES) {

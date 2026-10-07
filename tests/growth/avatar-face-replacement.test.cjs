@@ -8,6 +8,7 @@ const fs = require('node:fs'), vm = require('node:vm');
 const {JSDOM} = require('jsdom'), THREE = require('three');
 const avatar = require('../../brites-concierge-avatar.js');
 const source = fs.readFileSync(require.resolve('../../brites-concierge-avatar-scene.mjs'), 'utf8');
+const measured = amplitude => ({amplitude, bands: [.2, .35, .55, .4, .25, .1], brightness: .4, valid: amplitude > 0});
 
 function harness(t) {
   const dom = new JSDOM('<div id="stage"></div>', {pretendToBeVisual: true}), win = dom.window, stage = win.document.getElementById('stage');
@@ -64,7 +65,7 @@ test('the new face contains two filled light ribbons and no old ring or foregrou
   for (const part of visibleMeshes) {assert.equal(part.geometry.type, 'ExtrudeGeometry'); validGeometry(part); assert.ok(geometrySize(part).x > .4); assert.ok(geometrySize(part).z > .03);}
   assert.equal(h.get('retired-aperture-ornament').children.length, 0, 'retired ring contains no mesh');
   assert.equal(h.engine.snapshot().character.digitalEyes, 2);
-  assert.deepEqual({...h.engine.snapshot().character.faceGeometry}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5, speechMouth: true});
+  assert.deepEqual({...h.engine.snapshot().character.faceGeometry}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 0, appreciationGlyphs: 2, speechBars: 0, speechBands: 6, speechRipples: 2, speechMouth: true, mouthClosed: true});
 });
 
 test('opaque old geometry cannot cover either replacement eye along the viewing ray', t => {
@@ -119,17 +120,21 @@ test('gaze moves the paired eyes together and negative head pitch projects upwar
   }
 });
 
-test('speech marks respond only to measured output and a held level keeps a held silhouette', t => {
-  const h = harness(t), barNames = Array.from({length: 5}, (_, index) => 'expression-speech-bar-' + index);
-  h.pose({state: 'speaking', speechEnergy: 0}); for (const name of barNames) assert.equal(h.get(name).visible, false);
-  h.pose({state: 'listening', speechEnergy: 1}); for (const name of barNames) assert.equal(h.get(name).visible, false);
-  h.pose({state: 'speaking', speechEnergy: .2}); const quietHeight = h.get(barNames[2]).scale.y;
-  h.pose({state: 'speaking', speechEnergy: .8}); assert.ok(h.get(barNames[2]).scale.y > quietHeight);
-  for (const name of barNames) assert.equal(h.get(name).visible, true);
-  const capture = () => JSON.stringify([eyeNames.map(name => Array.from(h.get(name).geometry.attributes.position.array)), barNames.map(name => h.get(name).scale.toArray())]);
-  const fields = {state: 'speaking', speechEnergy: .8, eyeOpen: 1, eyeSmile: .15, eyeDeformation: .075, eyeScaleX: 1, eyeScaleY: 1, lidClosure: .02, heart: 0};
+test('speech contours use measured spectra, keep the mouth closed and hold their actual vertices', t => {
+  const h = harness(t), bandNames = Array.from({length: 6}, (_, index) => 'expression-speech-bar-' + index);
+  h.pose({state: 'speaking', speechSignal: measured(0)}); for (const name of bandNames) assert.equal(h.get(name).visible, false);
+  h.pose({state: 'listening', speechSignal: measured(1)}); for (const name of bandNames) assert.equal(h.get(name).visible, false);
+  h.pose({state: 'speaking', level: .8}); for (const name of bandNames) assert.equal(h.get(name).visible, false, 'amplitude-only callers have no measured spectrum');
+  h.pose({state: 'speaking', speechSignal: measured(.2)}); const quiet = Array.from(h.get(bandNames[2]).geometry.attributes.position.array), mouth = Array.from(h.get('expression-smile-glyph').geometry.attributes.position.array);
+  h.pose({state: 'speaking', speechSignal: measured(.8)}); assert.notDeepEqual(Array.from(h.get(bandNames[2]).geometry.attributes.position.array), quiet);
+  assert.deepEqual(Array.from(h.get('expression-smile-glyph').geometry.attributes.position.array), mouth, 'RMS does not distort the semantic curve');
+  for (const name of bandNames) {assert.equal(h.get(name).visible, true); assert.equal(h.get(name).geometry.type, 'TubeGeometry'); validGeometry(h.get(name));}
+  assert.equal(h.get('expression-smile-glyph').visible, true); assert.equal(h.get('expression-speech-mouth').scale.y, 1);
+  const capture = () => JSON.stringify([eyeNames.map(name => Array.from(h.get(name).geometry.attributes.position.array)), bandNames.map(name => Array.from(h.get(name).geometry.attributes.position.array)), h.get('expression-speech-ripple-0').position.toArray()]);
+  const fields = {state: 'speaking', speechSignal: measured(.8), eyeOpen: 1, eyeSmile: .15, eyeDeformation: .075, eyeScaleX: 1, eyeScaleY: 1, lidClosure: .02, heart: 0};
   h.advance(1000); h.pose(fields); const first = capture(); h.advance(11000); h.pose(fields); assert.equal(capture(), first, 'time alone does not invent speech');
   h.motion({active: true, reducedMotion: true}); h.pose(fields); const reduced = capture(); h.advance(20000); h.pose(fields); assert.equal(capture(), reduced, 'reduced-motion geometry remains stable');
+  for (const name of bandNames) assert.equal(h.get(name).visible, false); assert.equal(h.get('expression-speech-mouth').visible, false); assert.equal(h.get('expression-smile-glyph').visible, true);
 });
 
 test('malformed expression and gaze numbers cannot poison geometry, lights or transforms', t => {

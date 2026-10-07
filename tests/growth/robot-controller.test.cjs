@@ -60,7 +60,7 @@ test('reduced motion preserves every mood without timed blinks, breathing or rin
   }
 });
 test('WebGL failure gives an explicitly animated 2-D vector robot, with no portrait fetch', async t => {
-  const h = harness(t), result = await h.api.ready;
+  const h = harness(t, {syntheticClock: true}), result = await h.api.ready;
   assert.equal(result.mode, 'fallback'); assert.equal(result.fallback.format, 'animated_svg_2d'); assert.equal(result.fallback.animated, true);
   assert.equal(result.fallback.reason, 'WebGL rendering is unavailable'); assert.equal(h.api.element.querySelector('img'), null);
   assert.equal(h.api.element.dataset.fallbackFormat, 'animated-svg-2d');
@@ -70,8 +70,20 @@ test('WebGL failure gives an explicitly animated 2-D vector robot, with no portr
   h.api.setState('thinking'); assert.match(h.api.element.querySelector('.brites-avatar__caption').textContent, /Thinking/);
   assert.equal(h.api.element.style.getPropertyValue('--brites-eye-color'), '#ab87ff');
   h.api.setState('speaking'); h.api.setLevel(.8);
-  assert.equal(h.api.element.style.getPropertyValue('--brites-speech-level'), '0.8');
-  assert.equal(h.api.element.style.getPropertyValue('--brites-speech-scale'), '1.064');
+  const shownLevel=()=>Number(h.api.element.style.getPropertyValue('--brites-speech-level'));
+  assert.equal(shownLevel(),0,'a same-clock first positive waits for the measured attack');
+  h.advanceTo(40);h.api.setLevel(.8);const attack=shownLevel();
+  assert.ok(attack>.49&&attack<.52,'one 40ms attack reaches about 63% of the current target');
+  h.advanceTo(80);h.api.setLevel(.8);assert.ok(shownLevel()>.68&&shownLevel()<.71);
+  h.api.setLevel(.2);h.advanceTo(180);h.api.setLevel(.2);
+  assert.ok(shownLevel()>.37&&shownLevel()<.40,'one 100ms release approaches a lower positive target');
+  assert.equal(h.api.snapshot().facePose.mouthOpen,0);assert.equal(h.api.element.dataset.speechCurveClosed,'true');
+  assert.ok(Number(h.api.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'))>0);
+  assert.deepEqual(h.api.snapshot().speechSignal.bands,[0,0,0,0,0,0],'legacy RMS cannot fabricate a spectrum');
+  assert.equal(h.api.element.querySelectorAll('.brites-avatar__speech-band[opacity="0"]').length,6);
+  h.api.setLevel(0);assert.equal(shownLevel(),0,'real silence clears immediately instead of replaying a release tail');
+  assert.equal(h.api.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'),'0');
+  assert.equal(h.api.element.querySelector('.brites-avatar__smile-signal').getAttribute('fill'),null);
   h.api.setEmotion('calm'); h.api.setState('success'); assert.match(h.api.element.querySelector('.brites-avatar__caption').textContent, /Here with you/);
   assert.equal(h.api.snapshot().emotion, 'calm');
 });
@@ -94,9 +106,14 @@ test('user pause stops the WebGL scene and resumed rendering receives the explic
   const motions = [], poses = [];
   const engine = {setMotion: value => motions.push(value), render: pose => poses.push(pose), destroy() {}, invalidate() {}, snapshot: () => ({animated: true})};
   const h = harness(t, {loader: () => ({createAvatarScene: () => engine})}); await h.api.ready; await tick();
-  h.api.setPaused(true); assert.equal(motions.at(-1).active, false); assert.equal(h.api.snapshot().animated, false);
-  h.api.setEmotion('reassuring'); const before = poses.length; h.api.setState('success'); assert.equal(poses.length, before);
-  h.api.setPaused(false); assert.equal(motions.at(-1).active, true); assert.equal(poses.at(-1).emotion, 'reassuring');
+  h.api.setState('speaking');h.api.setLevel(.8);
+  const beforePause=poses.length;h.api.setPaused(true);assert.equal(motions.at(-1).active,false);assert.equal(h.api.snapshot().animated,false);
+  assert.equal(poses.length,beforePause+1,'pause submits one static zero pose to clear the last visible GPU frame');
+  assert.equal(poses.at(-1).speechEnergy,0);assert.equal(poses.at(-1).mouthOpen,0);assert.equal(poses.at(-1).speechSignalValid,false);
+  h.api.setEmotion('reassuring');const before=poses.length;h.api.setState('success');
+  assert.equal(poses.length,before+1,'an explicit paused state update may repaint its static semantic face');
+  assert.equal(motions.at(-1).active,false);assert.equal(poses.at(-1).speechEnergy,0);assert.equal(poses.at(-1).mouthOpen,0);
+  h.api.setPaused(false);assert.equal(motions.at(-1).active,true);assert.equal(poses.at(-1).emotion,'reassuring');assert.equal(poses.at(-1).speechEnergy,0,'resume never replays pre-pause measured speech');
 });
 test('vector stylesheet avoids an independent repeating blink clock and respects motion bounds', () => {
   const css = fs.readFileSync(require.resolve('../../brites-concierge-avatar.css'), 'utf8');
@@ -115,4 +132,17 @@ test('the actual fallback blinks once through the shared pose cadence and stays 
   h.advanceTo(3700);assert.equal(ribbon(),open,'one finite blink recovers to the preceding open eye');
   h.api.setPaused(true);const paused=ribbon();h.advanceTo(13000);assert.equal(ribbon(),paused,'paused fallback does not follow the next blink event');assert.equal(h.api.snapshot().fallback.animated,false);
   h.api.setPaused(false);h.api.setReducedMotion(true);const reduced=ribbon();h.advanceTo(25000);assert.equal(ribbon(),reduced,'reduced-motion fallback suppresses all timed blink movement');assert.equal(h.api.snapshot().reducedMotion,true);assert.equal(h.api.snapshot().facePose.eyeOpen,1);
+});
+
+// A visible static clearing frame is necessary; submitting that same frame
+// for every ongoing voice callback while paused is not animation suspension.
+test('already cleared paused signal callbacks do not submit repeated unchanged GPU frames',async t=>{
+  const motions=[],poses=[];const engine={setMotion:value=>motions.push(value),render:pose=>poses.push(pose),destroy(){},invalidate(){},snapshot:()=>({animated:true})};
+  const h=harness(t,{syntheticClock:true,loader:()=>({createAvatarScene:()=>engine})});await h.api.ready;
+  h.api.setState('speaking');h.api.setLevel(.8);h.advanceTo(40);h.api.setLevel(.8);h.api.setPaused(true);const settled=poses.length;
+  for(const value of[null,{amplitude:0,bands:[0,0,0,0,0,0],brightness:0,valid:false},{amplitude:.9,bands:[.1,.2,.3,.4,.5,.6],brightness:.6,valid:true}]){
+    h.advanceTo(80);h.api.setSpeechSignal(value);assert.equal(poses.length,settled,'an already zero paused face should not repaint for rejected/clear audio samples');assert.equal(h.api.snapshot().speechSignal.valid,false);
+  }
+  assert.equal(motions.at(-1).active,false);assert.equal(h.api.snapshot().animated,false);
+  h.api.setPaused(false);assert.equal(poses.at(-1).speechEnergy,0);h.api.setLevel(.6);h.advanceTo(120);h.api.setLevel(.6);assert.ok(h.api.snapshot().speechVisual.amplitude>0,'only new post-resume measurements can restore speech feedback');
 });
