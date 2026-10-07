@@ -16,7 +16,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 function world(metal, policy) {
   const dom = new JSDOM('<body></body>', { url: 'https://example.test', runScripts: 'outside-only' }), w = dom.window;
   w.IntersectionObserver = class { observe() { } unobserve() { } };
-  const log = { api: [], started: [], dirty: [], toasts: [] }, docs = new Map(), cuts = new Map();
+  const log = { api: [], started: [], dirty: [], toasts: [], stocks: [] }, docs = new Map(), cuts = new Map();
   const add = (id, cut, rev) => { const s = stockOf(id, cut, rev); docs.set(id, s); cuts.set(id, cut); return card({ ...s, cut }); };
   const page = n => ({ metal, page: n, charms: [], placements: [], rejects: [], status: 'idle', persisted: false, persistedDone: true });
   const sh = page(1), S = { sheets: { [metal]: { pages: [sh], active: 0 } }, settings: { maxFill: .8, clearancePt: -.5, insetPt: 1.5, stock: {} }, cloud: { ok: true } };
@@ -30,20 +30,24 @@ function world(metal, policy) {
     }
     if (b.op === 'roseClaim') {
       const held = [...docs.values()].find(x => x.owner === b.sheetId);
-      if (b.exact && held && held.id !== b.stockId) throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
-      let st = held || (b.stockId ? docs.get(b.stockId) : null);
+      if (b.exact && held && held.id !== b.stockId && !b.swap) throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
+      let st = b.exact ? docs.get(b.stockId) : held || (b.stockId ? docs.get(b.stockId) : null);
+      if (b.exact && !st) throw new Error('Partial sheet not found');
       if (!st && !b.fresh && !b.stockId) st = [...docs.values()].find(x => x.available && x.metal === b.metal && Math.abs(x.wPt - b.wPt) < .01 && Math.abs(x.hPt - b.hPt) < .01 && !x.owner);
       if (!st && b.onlyRemnant) return { stock: null, protectedJson: null };
       if (!st) { st = { id: 'rgs-new-' + docs.size, metal: b.metal, wPt: b.wPt, hPt: b.hPt, revision: 0, profileJson: null, owner: null, available: true }; docs.set(st.id, st); }
       if (st.owner && st.owner !== b.sheetId) throw new Error('This ' + b.metal + ' sheet is reserved for another layout');
       if (b.revision != null && st.revision !== b.revision) throw new Error('This remnant changed. Reload its history before nesting');
+      // swap: what the sheet holds goes back in the same call, after every check has passed (a refused claim loses nothing)
+      if (b.swap && held && held.id !== st.id) { if (!held.revision && !held.profileJson) docs.delete(held.id); else { held.owner = null; held.available = true; } }
       st.owner = b.sheetId; st.available = false; return { stock: { ...st }, protectedJson: null };
     }
     return {};
   };
   const pieces = (n, tag = 'p') => Array.from({ length: n }, (_, i) => block(tag + i));
   w.CharmNestRose = R; w.CharmNestSolver = Solver; w.Sets = { ofRun: () => [] };
-  w.PartialSheets = { list: async () => ({ items: cards.filter(c => c.status === 'available' && (x.stale || !docs.get(c.stockId).owner)) }), policy: () => pol, changed() { } };
+  w.PartialSheets = { list: async () => ({ items: cards.filter(c => c.status === 'available' && (x.stale || !docs.get(c.stockId).owner)) }), policy: () => pol, changed() { },
+    stocks: async ids => { log.stocks.push(ids.slice()); return Object.fromEntries(ids.map(id => { const m = /^(.+)-(\d+)$/.exec(id), d = m && docs.get(m[1]); return [id, d ? { stockId: d.id, revision: d.revision, wPt: d.wPt, hPt: d.hPt, profileJson: d.profileJson, metal: d.metal, current: d.revision === +m[2] } : { missing: true }]; })); } };
   const C = w.CN = {
     S, esc: s => String(s), uid: () => 'u', agent() { }, toast: (m, k) => log.toasts.push(m), inflatedArea: c => c.areaPt2, activeCharms: s => s.charms.filter(c => !c.excluded),
     stockFor: (m, s) => { const k = s && (s.roseStock || s.recalled && s.recalled.stock || s.keptStock || s.newStock); return k && k.wPt ? { wPt: k.wPt, hPt: k.hPt } : { wPt: W, hPt: H }; },
@@ -77,19 +81,19 @@ const ids = list => list.map(c => c.id).sort().join();
     assert(pv.ok && pv.fitsAll && pv.pieces === 8 && pv.links.length === 1 && pv.links[0].placed === 8 && pv.continues.n === 0, 'all 8 pieces fit on the big partial: ' + JSON.stringify({ ...pv, links: pv.links.map(l => ({ ...l, placements: undefined })) }));
     assert.match(pv.words, /^All 8 pieces fit on this partial sheet\.$/); assert.deepEqual(steps, ['check', 'trial', 'done']);
     assert.deepEqual(new Set(pv.links[0].pieceIds), new Set(sh.charms.map(c => c.id)), 'the trial placed every piece exactly once');
-    assert(log.api.every(b => b.op === 'roseGet' && b.noCuts === true), 'the preview reads only the partial\'s own document (no write, no claim, no cuts): ' + JSON.stringify(log.api.map(b => b.op)));
+    assert.equal(log.api.length, 0, 'the preview calls nothing of its own: the partial\'s stock comes from PartialSheets.stocks, once'); assert.equal(log.stocks.length, 1);
     assert.equal(log.started.length, 0, 'the preview nests nothing'); assert.equal(docs.get('rgs-big').owner, null, 'the preview claims nothing');
     // commit
     log.api.length = 0; const before = sh.charms.slice(), seen = [];
     const r = await PN.seat(sh, [big.id], { preview: pv, onStep: s => seen.push(s.key) });
     assert(r.ok && r.started && r.moved === 8, JSON.stringify(r));
-    assert.deepEqual(log.api.map(b => b.op), ['roseRelease', 'roseClaim', 'roseGet'], 'give back, claim, history: ' + JSON.stringify(log.api.map(b => b.op)));
-    const claim = log.api.find(b => b.op === 'roseClaim'); assert.equal(JSON.stringify([claim.stockId, claim.revision, claim.exact, claim.partialId, claim.nesting, claim.wPt, claim.hPt]), JSON.stringify(['rgs-big', 1, true, big.id, true, W, H]), 'one exact claim of the chosen partial, at its own size');
+    assert.equal(log.api.map(b => b.op).join(), 'roseClaim,roseGet', 'ONE claim that swaps (the old sheet goes back inside it), then the history: ' + JSON.stringify(log.api.map(b => b.op)));
+    const claim = log.api.find(b => b.op === 'roseClaim'); assert.equal(JSON.stringify([claim.stockId, claim.revision, claim.exact, claim.partialId, claim.nesting, claim.swap, claim.wPt, claim.hPt]), JSON.stringify(['rgs-big', 1, true, big.id, true, true, W, H]), 'one exact claim of the chosen partial, at its own size');
     assert.equal(docs.has('rgs-fresh'), false, 'the old, never-cut gold sheet was given back (the server deletes it)'); assert.equal(docs.get('rgs-big').owner, 'g14-s1');
     assert.equal(sh.roseStock.id, 'rgs-big'); assert.equal(sh.roseRevision, 1);
     assert(sh.charms.length === before.length && sh.charms.every((c, i) => c === before[i]), 'the same pieces, same order, none lost, none added'); assert(sh.charms.every(c => c.pinned == null));
     assert.equal(log.dirty.length, 1); assert.deepEqual(log.started.map(s => [s.sheet, s.byHand]), [[sh, true]], 're-nested once, by hand, as the Nest button does');
-    assert.deepEqual(seen, ['check', 'release', 'claim', 'nest', 'done']);
+    assert.equal(seen.join(), 'check,claim,nest,done');
     assert.equal(PN.partialOf(sh), big.id); assert.equal(PN.chain(sh).length, 1);
     // choosing the partial it already sits on does nothing
     const same = await PN.seat(sh, [big.id]); assert(!same.ok && same.code === 'same', JSON.stringify(same));
@@ -198,13 +202,14 @@ const ids = list => list.map(c => c.id).sort().join();
   }
   // ── 7. the face the panel reads (window.PartialEngine): the shapes PS1 asked for, the commit uses the chain that was previewed ──
   {
-    const x = world('gold14k'), { w, sh, log, docs } = x, E = w.PartialEngine;
+    const x = world('gold14k'), { w, sh, log, docs } = x, E = w.PartialEngine; delete w.PartialSheets.stocks;   // (the fallback: one roseGet with noCuts per partial)
     const a = x.add('rgs-a', 100), b = x.add('rgs-b', 100), c = x.add('rgs-c', 100); [a, b, c].forEach(k => { k.sourceSheet = '14K Sheet 1'; k.sourceSet = 'Set ' + k.id.slice(-3, -2); }); x.setCards([a, b, c]);
     sh.charms = x.pieces(9); sh.sheetId = 'g14-s1'; sh.status = 'complete';
     const fired = []; const off = E.on(e => fired.push(e.metal));
     const pv = await E.preview(sh, a.id);
     assert(pv.ok && pv.pieces === 9 && typeof pv.fitsAll === 'boolean' && pv.fits > 0 && pv.rest === 9 - pv.fits && pv.chain.length >= 2 && pv.chain[0].partialId === a.id, JSON.stringify(pv));
     assert.equal(pv.chain.map(r => r.fits).reduce((n, v) => n + v, 0) + (pv.then ? 1 : 0) > 0, true); assert.match(pv.chain[0].name, /14K Sheet 1 · Set/); assert(['new', 'wait', null].includes(pv.then));
+    assert(log.api.length >= 1 && log.api.every(q => q.op === 'roseGet' && q.noCuts === true), 'without the page cache the trial reads each stock document alone, without its cuts: ' + JSON.stringify(log.api.map(q => q.op)));
     const bad = await E.preview({ ...sh, roseCutAt: 5 }, a.id); assert(!bad.ok && /permanent/.test(bad.reason), JSON.stringify(bad));
     const steps = []; log.api.length = 0;
     const done = await E.useOn(sh, a.id, { onStep: s => steps.push(s.key) });

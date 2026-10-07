@@ -7,10 +7,10 @@
    - preview(sh, ids): a REAL trial pack, in a one-off worker running CharmNestSolver on each partial's profile (the same profile the nest packs
      against), quick (a few seconds at most per partial, it stops as soon as everything fits and settles), never writes or claims anything. A multi-piece
      order is never split (as the page's keepOrdersWhole): an order with a piece that does not fit moves on whole.
-   - seat(sh, ids): the sheet gives back the physical sheet it holds (roseRelease: a fresh uncut gold sheet is deleted, a leftover goes back to the
-     list), claims the first partial (roseClaim, one transaction; the answer is the stock the solver packs against), is marked changed and nested by hand
-     again, exactly as the Nest button does (the saved record, files, QR and label follow the rules of any re-nest). The partials still to come
-     are kept on the sheet (sh._partialChain).
+   - seat(sh, ids): ONE server transaction gives back the physical sheet the sheet holds (a fresh uncut gold sheet is deleted, a leftover goes back to the
+     list) and claims the first partial (roseClaim with swap + exact + partialId; the answer is the stock the solver packs against; a refused claim loses
+     nothing), then the sheet is marked changed and nested by hand again, exactly as the Nest button does (the saved record, files, QR and label follow the
+     rules of any re-nest). The partials still to come are kept on the sheet (sh._partialChain).
    - the chain: when that nest ends with pieces that did not fit, the page's own overflow (overflowToNextSheet) asks nextPage(sh): a new sheet page of the
      metal, made with the next partial as its stock (claimed at its nest start, nestClaim). When the listed partials run out the policy decides: automatic
      takes the best fit of the metal's other available partials, otherwise (and for 'new') a new sheet as the nester makes it today.
@@ -62,6 +62,12 @@
   async function stockOf(card){
     if(card.profileJson&&card.wPt&&card.hPt)return {id:card.stockId||card.id,metal:card.metal,wPt:card.wPt,hPt:card.hPt,revision:card.revision||0,profileJson:card.profileJson};
     const k=stockKey(card);if(stocks.has(k))return stocks.get(k);
+    // PS3's page cache of the physical sheets under partials (ONE op for several ids, a revision's profile never changes)
+    try{
+      const PS=window.PartialSheets;
+      if(PS&&PS.stocks){const r=(await PS.stocks([card.id]))[card.id];
+        if(r&&r.profileJson&&r.current!==false){const out={id:r.stockId,metal:card.metal||r.metal,wPt:r.wPt,hPt:r.hPt,revision:r.revision||0,profileJson:r.profileJson};stocks.set(k,out);return out;}}
+    }catch(_){}
     const r=await C.api('charmNestLibrary',{op:'roseGet',stockId:card.stockId||card.id,metal:card.metal,noCuts:true},{quiet:true});   // ONE document read: the physical sheet's size and profile, not its cuts
     const s=r&&r.stock;if(!s||!s.profileJson)throw new Error('This partial sheet could not be read');
     const out={id:s.id,metal:card.metal,wPt:s.wPt,hPt:s.hPt,revision:s.revision||0,profileJson:s.profileJson};stocks.set(k,out);return out;
@@ -225,19 +231,17 @@
       const first=order[0];
       if(partialOf(sh)===first.id)return fail('same','This sheet already sits on that partial sheet.');
       const chain=[];for(const c of order.slice(1))chain.push({id:c.id,stock:await stockOf(c)});
-      const stock={...await stockOf(first),partialId:first.id},held=sh.roseStock?{...sh.roseStock}:null,RS=window.RoseStock;
-      // 1. the old physical sheet goes back (a fresh uncut gold sheet is deleted, a leftover returns to the list)
-      if(held&&held.id){step('release','Giving the old sheet back…');try{await RS.giveBack(sh);}catch(e){return fail('refused',e.message);}}
-      // 2. the partial is claimed for this sheet, in one transaction on the server; another sheet may have taken it a moment ago
-      step('claim','Reserving the partial sheet…');
-      try{await RS.seatOn(sh,stock);}
+      const stock={...await stockOf(first),partialId:first.id},held=sh.roseStock&&sh.roseStock.id,RS=window.RoseStock;
+      // 1. ONE transaction on the server: the physical sheet this sheet holds goes back (a fresh uncut gold sheet is deleted, a leftover returns to the
+      // list) and the chosen partial is reserved for it. Another sheet may have taken it a moment ago: the claim is then refused and nothing changed.
+      step('claim',held?'Giving the old sheet back and reserving the partial sheet…':'Reserving the partial sheet…');
+      try{await RS.seatOn(sh,stock,{swap:!!held});}
       catch(e){
-        if(held&&held.id){try{await RS.seatOn(sh,held);}catch(_){}}   // best effort: the sheet goes back to what it held
         window.PartialSheets&&window.PartialSheets.changed&&window.PartialSheets.changed();
         return fail('taken','That partial sheet could not be reserved: '+e.message);
       }
       window.PartialSheets&&window.PartialSheets.changed&&window.PartialSheets.changed();
-      // 3. nest everything again, from scratch, on the leftover's outline (pins go, as with Apply size)
+      // 2. nest everything again, from scratch, on the leftover's outline (pins go, as with Apply size)
       step('nest','Nesting the pieces again…');
       for(const c of sh.charms){c.pinned=null;delete c.arrivalPin;}
       Object.assign(sh,{feedWait:null,best:null,bestKey:null,nestInitial:null,_beforeNest:null,_partialId:first.id,_partialChain:chain,_partialNext:null});

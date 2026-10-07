@@ -100,24 +100,17 @@
     if(isRose(sh)||sh.roseStock||sh.roseChoice||sh.roseProtected||sh.rosePlan)return prepare(sh,{nesting:true});
     return prepare(sh,{nesting:true,onlyRemnant:true});
   }
-  // Partial sheets (charm-nest-partial-nest.js): a sheet in use moves onto the leftover the person chose. It gives back the physical sheet it holds
-  // (a fresh uncut gold sheet is deleted by the server, a leftover goes back to the list), then reserves the chosen leftover in ONE transaction
-  // (roseClaim with the leftover's id and revision; nesting:true marks the saved record changed, as any re-nest does). A sheet with a recorded cut,
-  // a saved green line or in a set is refused by the server (roseRelease) and here; nothing is claimed after a refusal.
-  async function giveBack(sh){
-    if(!hasLine(sh)||!sh.roseStock?.id||!sh.sheetId)return false;
-    if(sh.roseCutAt)throw new Error('This sheet has a recorded cut: it keeps its metal');
-    if(!S.cloud.ok)throw new Error(`Reconnect to give the physical ${word(sh)} sheet back`);
-    await api('roseRelease',{stockId:sh.roseStock.id,sheetId:sh.sheetId,metal:sh.metal});
-    delete sh.roseStock;delete sh.roseRevision;delete sh.roseChoice;delete sh.rosePlanHash;delete sh.rosePlanKey;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
-    window.Session?.schedule();refresh(sh);return true;
-  }
-  async function seatOn(sh,stock){
+  // Partial sheets (charm-nest-partial-nest.js): a sheet in use moves onto the leftover the person chose. With swap the server gives back the physical
+  // sheet the sheet holds (a fresh uncut gold sheet is deleted, a leftover returns to the list) and reserves the chosen leftover in ONE transaction
+  // (roseClaim with the leftover's id and revision, exact + partialId: the chosen partial is checked itself; nesting:true marks the saved record changed,
+  // as any re-nest does). A refused claim loses nothing: the sheet still holds what it held. A sheet in a set, with a saved green line or a recorded
+  // cut is refused by the server.
+  async function seatOn(sh,stock,o={}){
     if(!hasLine(sh)||sh.roseCutAt)throw new Error('This sheet cannot take a partial sheet');
     if(!S.cloud.ok)throw new Error(`Reconnect to reserve the ${word(sh)} partial sheet`);
     sh.sheetId ||= (isRose(sh)?'rose':sh.metal)+'-'+Date.now().toString(36)+'-'+C.uid();
     // exact + partialId: the server checks the chosen partial sheet itself (available or this sheet's, same metal, same revision) and refuses to keep or create another
-    const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:stock.wPt,hPt:stock.hPt,stockId:stock.id,revision:stock.revision,nesting:true,...(stock.partialId?{exact:true,partialId:stock.partialId}:{})});
+    const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:stock.wPt,hPt:stock.hPt,stockId:stock.id,revision:stock.revision,nesting:true,...(stock.partialId?{exact:true,partialId:stock.partialId}:{}),...(o.swap?{swap:true}:{})});
     if(!r.stock)throw new Error('The partial sheet could not be reserved');
     sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;sh.roseChoice=null;sh.roseFresh=false;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
     if(r.protectedJson)sh.roseProtected=parse(r.protectedJson);   // (the saved record already held green lines: the sheet stays as it is; the caller sees roseProtected)
@@ -368,7 +361,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,giveBack,seatOn,approved,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 
