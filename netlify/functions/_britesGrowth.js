@@ -786,6 +786,48 @@ function displayedProductFromText(message,products){
   return titleMatches.length===1?titleMatches[0]:null;
 }
 
+function namedComparisonFromText(message,products=[]){
+  const original=explicitDestination(clean(message,2000)).plain.replace(/\bsafecomparisonref\d+\b/gi,'unmatched reference');
+  if(!/\b(?:compare|comparison|versus|vs)\b/i.test(original)||!fieldMentions(original.toLowerCase(),'compare|comparison|versus|vs').some(hit=>!hit.negative))return null;
+  const normalized=value=>clean(value,2000).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const aliases=new Map();
+  for(const product of Array.isArray(products)?products:[]){
+    for(const name of [product?.title,product?.handle]){const key=normalized(name);if(!key)continue;if(!aliases.has(key))aliases.set(key,[]);aliases.get(key).push(product);}
+  }
+  // Mask exact complete names before splitting, so a title containing "and"
+  // is one identity. Longer titles take precedence over contained short ones.
+  const references=[];let masked=original;
+  for(const [name,rows] of [...aliases].sort((a,b)=>b[0].length-a[0].length)){
+    const pattern=new RegExp('(^|[^a-z0-9])('+name.split(' ').join('[^a-z0-9]+')+')(?=$|[^a-z0-9])','gi');
+    masked=masked.replace(pattern,(_,prefix)=>{const index=references.length;references.push(rows);return prefix+'safecomparisonref'+index;});
+  }
+  const command=/\bcompare\b\s*(?:both\b\s*)?([\s\S]*)/i.exec(masked),noun=/\bcomparison\s+(?:of|between)\s+([\s\S]*)/i.exec(masked);
+  const scope=command?.[1]||noun?.[1]||(/\b(?:versus|vs)\b/i.test(masked)?masked:'');
+  if(!scope)return null;
+  const stripConstraints=value=>normalized(value)
+    .replace(/\b(?:under|below|less than|up to|at most|over|above|at least|between)\s+(?:(?:usd|cad|eur|gbp|us|ca|c)\s+)?\d+(?:\s+\d+)?(?:\s+(?:usd|cad|eur|gbp|dollars?))?\b/g,' ')
+    .replace(/\b(?:in|with)\s+(?:sterling silver|silver|gold|rose gold|gold filled)\b/g,' ')
+    .replace(/\b(?:please|side by side|for comparison|by (?:price|material|design)|the|both)\b/g,' ').replace(/\s+/g,' ').trim();
+  const parts=scope.split(/\s+(?:and|with|versus|vs\.?|to)\s+|\s*[,;&]\s*/i).map(stripConstraints).filter(Boolean);
+  const generic=value=>/^(?:(?:this|that|these|those|first|second|third|fourth|fifth|sixth|[1-6]|current|displayed|visible|selected|previous|all|exact)\s*)+(?:(?:exact|gift|pieces?|ones?|products?|items?|options?|choices?|styles?|earrings?|necklaces?)\s*)*$/.test(value)||/^(?:pieces?|options?|choices?|styles?|jewelry|jewellery)$/.test(value);
+  const explicit=references.length>0||parts.some(part=>!generic(part)&&/\b(?:necklaces?|earrings?|bracelets?|pendants?|studs?|huggies?|rings?|charms?)\b/.test(part)&&part.split(' ').length>1);
+  if(!explicit)return null;
+  const identities=[];let status='resolved';
+  for(const part of parts){
+    const ref=/^safecomparisonref(\d+)$/.exec(part),rows=ref?references[Number(ref[1])]:null;
+    if(!rows?.length){if(status==='resolved')status='missing';continue;}
+    const distinct=[...new Map(rows.map(row=>[row?.id+'|'+row?.handle,row])).values()];
+    if(distinct.length!==1){status='ambiguous';continue;}
+    const product=distinct[0],url=publicUrl(product?.url,true);
+    const path=url?new URL(url).pathname:null;
+    if(!validIdentity(product?.id)||!/^[a-z0-9_-]{1,180}$/.test(product?.handle||'')||!path?.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]{1,180})\/?$/i)||path.match(/products\/([^/]+)/)?.[1]!==product.handle||rows.some(row=>row.url!==product.url)){if(status!=='ambiguous')status='unconfirmed';continue;}
+    if(!identities.includes(product.id))identities.push(product.id);
+  }
+  if(status==='resolved'&&identities.length<2)status='needs_two';
+  if(parts.length>6)status='unconfirmed';
+  return {status,identities,queries:parts.filter(part=>!generic(part)).slice(0,6),preferenceText:masked.replace(/\bsafecomparisonref\d+\b/g,'piece')};
+}
+
 function shopperAction(message,products,displayedHandles=[]) {
   const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'"),destination=explicitDestination(text),command=shopperCommand(destination.plain);
   if(checkoutRequest(text))return null;
@@ -806,7 +848,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(boundary)return {schema:1,checkoutBoundary:true,reply:boundary==='destination'?'I can open an exact Brites product page when you select a piece. Complete payment yourself through the shop’s secure checkout; I can’t open an outside checkout or skip confirmation.':'Review your bag and complete payment yourself through the shop’s secure checkout. I can’t use saved cards, retrieve card details, place an order or confirm that a payment succeeded.',question:null,preferences:shopperPreferences(basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const conversation=conversationReply(text);
   if(conversation)return {schema:1,conversationOnly:true,preserveSelection:true,conversationKind:conversation.kind,needsModelConversation:conversation.needsModelConversation,reply:conversation.reply,question:null,preferences:intentFrom('',history,basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
-  const intent=intentFrom(text,history,basePreferences);
+  let intent=intentFrom(text,history,basePreferences);
   if(/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i.test(text))return {schema:1,reply:'I can help with publicly listed pieces, gift ideas and the shop’s published information.',question:'What kind of piece are you looking for?',preferences:intent,products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
@@ -816,20 +858,25 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   // do not authorize navigation or cart actions. Ignore URL path words when
   // checking inquiry language, negation and references to other cards.
   const destinationPlain=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
+  const namedComparisonHint=namedComparisonFromText(destinationPlain);
   const freshBrowse=!destination.handles.length&&!destination.unsafe?freshCatalogueRequest(destinationPlain,basePreferences):null;
   const command=freshBrowse?null:shopperCommand(destinationPlain),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destinationPlain);
   const destinationInquiry=!/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(destinationPlain)&&(semanticInquiry(destinationPlain)||fieldMentions(destinationPlain,'tell me(?: more)? about|describe|explain|details? (?:about|for|on)|what (?:is|are|does)').some(hit=>!hit.negative));
   const destinationHandle=((command&&!negatedCommand)||destinationInquiry)&&!destination.unsafe&&destination.handles.length===1?destination.handles[0]:'';
   const exactProductContext=exactCurrentContext||!!destinationHandle;
   const displayedReference=fieldMentions(text.toLowerCase().replace(/[’‘]/g,"'"),'this piece|that piece|this one|that one').some(hit=>!hit.negative);
-  const useContext=!freshBrowse&&(exactProductContext||displayedReference||semanticInquiry(text)||/\b(?:compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text));
+  const useContext=!freshBrowse&&(exactProductContext||displayedReference||semanticInquiry(text)||/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text));
   const handles=destinationHandle?[destinationHandle]:exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
   if(!handles.length&&currentHandle)handles.push(currentHandle);
-  const milestonePlan=!freshBrowse&&!command&&!(useContext&&handles.length)?milestoneDiscovery.discoveryIntent(intent):null;
+  const milestonePlan=!namedComparisonHint&&!freshBrowse&&!command&&!(useContext&&handles.length)?milestoneDiscovery.discoveryIntent(intent):null;
   const searchedMilestone=!!milestonePlan?.motifs.length;
   let milestoneHints=[],recalledVersions=new Map();
   let queried;
   if(useContext&&handles.length)queried={products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)};
+  else if(namedComparisonHint){
+    const reads=await Promise.all(namedComparisonHint.queries.map(query=>shopify.search(query)));
+    queried={products:reads.flatMap(read=>(Array.isArray(read?.products)?read.products:[]).slice(0,10)).slice(0,60)};
+  }
   else if(searchedMilestone){
     const bounds=milestoneDiscovery.recallBounds(),hintRead=typeof service.milestoneCandidateHandles==='function'?service.milestoneCandidateHandles(intent,bounds.liveHandles):typeof service.catalogueCandidateHandles==='function'?service.catalogueCandidateHandles({...intent,query:milestonePlan.motifs.join(' '),interests:milestonePlan.motifs},bounds.liveHandles):Promise.resolve([]);
     const [searches,hints]=await Promise.all([Promise.all(milestonePlan.motifs.map(motif=>shopify.search(motif))),hintRead]);
@@ -851,6 +898,10 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     queried={products:[...new Map([...searched,...recalled].map(product=>[product.id,product])).values()].slice(0,30+bounds.liveHandles)};
   } else queried=freshBrowse?.mode==='reset'&&!intent.query&&!intent.type?await shopify.products(''):milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
   let checkedProducts=queried.products;
+  const namedComparison=namedComparisonFromText(destinationPlain,checkedProducts);
+  // Product names select identities, not a new motif, type or metal preference.
+  // Keep explicit constraints outside those names and all saved item limits.
+  if(namedComparison)intent=intentFrom(namedComparison.preferenceText,history,basePreferences);
   // An ordinal or unique exact title among the already displayed, freshly
   // re-read cards is a selection command, not new discovery text. Resolve it
   // before ranking so stale saved preferences cannot filter the selected live
@@ -867,10 +918,18 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   // rather than letting stale discovery preferences filter it back out.
   const directProductContext=exactProductContext||!!displayedSelectedProduct;
   const exactCurrentType=directProductContext&&/\bcharms?\b/i.test((displayedSelectedProduct||checkedProducts[0])?.type||'')?'charm':null;
-  const rankingIntent=directProductContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):searchedMilestone?{...intent,query:'',interests:milestonePlan.motifs}:intent;
+  const rankingIntent=namedComparison?shopperPreferences({...intent,query:'',interests:[],type:null}):directProductContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):searchedMilestone?{...intent,query:'',interests:milestonePlan.motifs}:intent;
   let eligibleProducts=applyProductIssues(checkedProducts,issueRecords);
   let products;
-  if(searchedMilestone){
+  if(namedComparison){
+    // Separate name searches may return the same product. Deduplicate before
+    // the six-card rank cap, keeping the most recently checked live row.
+    const selected=new Map();
+    for(const product of eligibleProducts.filter(product=>namedComparison.identities.includes(product.id))){const prior=selected.get(product.id);if(!prior||product.checkedAt>prior.checkedAt)selected.set(product.id,product);}
+    products=namedComparison.status==='resolved'?rankProducts([...selected.values()],rankingIntent,at):[];
+    products=[...new Map(products.map(product=>[product.id,product])).values()];
+    if(namedComparison.status==='resolved'&&products.length!==namedComparison.identities.length){namedComparison.status='unconfirmed';products=[];}
+  }else if(searchedMilestone){
     const motifRanked=[...new Map(milestonePlan.motifs.flatMap(motif=>rankProducts(eligibleProducts,{...rankingIntent,interests:[motif]},at)).map(product=>[product.id,product])).values()];
     // Exact live products recalled from version-pinned reviewed meanings still
     // obey type, metal, price, stock, freshness and issue holds. They do not
@@ -880,7 +939,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     products=[...new Map([...recalledRanked,...motifRanked].map(product=>[product.id,product])).values()].slice(0,18);
   }else products=rankProducts(eligibleProducts,rankingIntent,at);
   const boundedRecall=plainList(intent.interests,4).length>0;
-  if(!useContext&&boundedRecall&&!products.length&&typeof service.catalogueCandidateHandles==='function'){
+  if(!namedComparison&&!useContext&&boundedRecall&&!products.length&&typeof service.catalogueCandidateHandles==='function'){
     const seen=new Set(checkedProducts.map(p=>p.handle)),candidateHandles=(await service.catalogueCandidateHandles(intent,15)).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h)&&!seen.has(h)).slice(0,15);
     const attempts=await Promise.allSettled(candidateHandles.map(handle=>shopify.byHandle(handle)));
     const refreshed=attempts.filter(x=>x.status==='fulfilled'&&x.value).map(x=>x.value);
@@ -940,11 +999,16 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(mismatchedCurrency){result.reply+=' Catalogue prices are shown in '+products[0].currency+'. I haven’t applied your '+intent.budgetCurrency+' budget to those prices.';result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';result.currencyMismatch=true;}
   if(semanticInquiry(text)){result.reply=meanings.length?'Here are reviewed interpretations associated with the displayed pieces. Meanings vary by culture and by the person wearing them.':'I don’t yet have reviewed symbolism or history for these pieces. I can still help you choose by the person’s interests and the published product details.';result.question=null;}
   if(/\b(?:compare|comparison|versus)\b/i.test(text)){result.reply=products.length>=2?'Compare the live metal options, item prices and designs below. Each product page has the complete description.':'I need two available pieces to make a useful comparison.';result.question=products.length>=2?null:'Which other piece would you like to compare?';}
+  if(namedComparison&&namedComparison.status!=='resolved'){
+    result.reply=namedComparison.status==='needs_two'?'I need two distinct pieces to compare.':namedComparison.status==='ambiguous'?'I can’t identify a unique live match for each named piece.':'I couldn’t confirm every named piece with the current live options.';
+    result.question=namedComparison.status==='needs_two'?'Which other exact piece would you like to compare?':'Which two exact available pieces should I compare?';
+    result.comparisonClarification=true;result.preserveSelection=true;
+  }
   const policyTopics=require('./_britesConcierge').classify(text,history).topics;
   if(policyTopics.includes('shipping')||policyTopics.includes('refund')){result.reply='Shipping timing and returns depend on the order and destination. The current shop policies and checkout show the applicable details.';result.policyLinks=[{label:'Shipping policy',url:'https://britesjewelry.com/policies/shipping-policy'},{label:'Refund policy',url:'https://britesjewelry.com/policies/refund-policy'}];result.question=policyTopics.includes('shipping')?'Which country is the gift going to, and when is it needed?':null;}
   else if(intent.personalization&&/\b(?:engrave[ds]?|engraving|personali[sz](?:ed|ation|e)|handwriting|handwritten)\b/i.test(text)){result.reply='I can help find a piece with personalization options. The product page confirms the exact engraving limits and any design upload before adding it to your bag.';result.question=intent.personalization==='handwriting'?'Would you like to explore a handwriting piece or the custom design studio?':/\b(?:name|initials?|message)\b/i.test(text)?null:'Are you thinking of a name, initials, a short message or handwriting?';}
   if(/\b(?:hypoallergenic|nickel|allerg(?:y|ies|ic)|solid gold|waterproof|tarnish)\b/i.test(text)){result.reply='Materials and care requirements vary by piece. Please check the exact product description; I can’t infer allergy safety or material guarantees from its appearance.';result.question=null;}
-  const requestedAction=freshBrowse?null:shopperAction(text,products,useContext?handles:[]);
+  const requestedAction=freshBrowse||namedComparison?null:shopperAction(text,products,useContext?handles:[]);
   if(requestedAction){result.requestedAction=requestedAction;result.question=null;result.reply=requestedAction.type==='navigate'?'Opening the piece you selected.':'Choose the exact available option below, then confirm before it is added to your bag.';}
   // The current broad gold preference is not an exact material-form filter.
   // Disclose mixed/unclear forms rather than calling solid gold gold-filled.

@@ -6,10 +6,12 @@
   const HANDLE=/^[a-z0-9]+(?:-[a-z0-9]+)*$/,PRODUCT=/^gid:\/\/shopify\/Product\/[1-9][0-9]{0,19}$/,VARIANT=/^gid:\/\/shopify\/ProductVariant\/[1-9][0-9]{0,19}$/;
   const SORTS=new Set(['featured','price-asc','price-desc','title-asc','title-desc']);
   const FILTERS=new Set(['all','necklaces','earrings','bracelets','rings','charms','available']);
+  const CATEGORY_NAMES={necklaces:/\b(?:necklaces?|pendants?)\b/i,earrings:/\b(?:earrings?|studs?|huggies?|hoops?)\b/i,bracelets:/\bbracelets?\b/i,rings:/\brings?\b/i,charms:/\bcharms?\b/i};
+  const SEARCH_CONTEXT=new Set(searchWords('a an the for and or my me you your our of on in to with from at by is are be that this these those please show find search look looking want would like can could will give get pull up all any piece pieces jewelry jewellery gift gifts option options pair pairs set sets under below over above within around about budget price prices cost costs cheap cheapest cheaper affordable expensive less more than between maximum minimum max min dollars dollar usd cad eur gbp silver sterling gold filled plated rose solid white yellow metal metals 14k 18k 24k themed'));
   const SECTIONS=new Set(['price','details','options','story','shipping','gifts','customize','catalogue','image','bag','checkout','offers']);
   const PAGE_SIZE=24,MAX_PIECES=1200;
   const state={pageKind:'catalogue',currentHandle:'',focusedHandle:'',search:'',checkedSearch:'',collectionSource:'browse',sort:'featured',filter:'all',contextRevision:0,discoveryRevision:0,activeSection:'catalogue',loading:false,products:[],browse:[],browsePageInfo:{hasNextPage:false,endCursor:null},browseVerifiedAt:0,limit:PAGE_SIZE,pageInfo:{hasNextPage:false,endCursor:null},current:null,services:null,servicesPending:null,selectedImage:0,verifiedAt:0};
-  let navigationVersion=0,request=null,noticeTimer=0,highlightTimer=0,focusTimer=0,storyVersion=0;
+  let navigationVersion=0,request=null,noticeTimer=0,highlightTimer=0,focusTimer=0,storyVersion=0,collectionControls=null;
   const known=new Map(),identities=new Map();
   const notice=document.querySelector('#storefront-status')||document.body.appendChild(node('aside','','storefront-notice'));
   notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');
@@ -46,17 +48,52 @@
   }
   function minimum(p){const available=p.variants.filter(v=>v.available);return available.length?Math.min(...available.map(v=>v.price)):null;}
   function projection(p){const available=p.variants.filter(v=>v.available);return {...p,minPrice:minimum(p),suggestedVariantId:available[0]?.id||null};}
+  function categoryMatches(p,category){
+    const title=clean(p.title,300),type=clean(p.type,100),pattern=CATEGORY_NAMES[category];if(!pattern)return false;
+    // Studio is a grouping used by services and physical custom pieces. Its
+    // letters are not "stud", and its charm label is not a piece definition.
+    const studio=/^(?:custom\s+charm\s+)?studio(?:\s+(?:services?|components?|add[ -]?ons?))?$/i.test(type);
+    const service=/^(?:custom\s+)?(?:design\s+fees?\b|engraving(?:\s+(?:on|for|services?)\b|$))/i.test(title);
+    const extender=/\bchain\s+extenders?\b/i.test(title)&&!/\b(?:earrings?|studs?|huggies?|hoops?|bracelets?|rings?)\b/i.test(title);
+    if(service||extender)return false;
+    // Only an explicit single-category tag can supplement title/type. Broad
+    // body copy and unstructured promotional tags never reclassify a piece.
+    const tags=(Array.isArray(p.tags)?p.tags:[]).slice(0,80).flatMap(tag=>{const match=clean(tag,100).match(/^(?:product[ _-]?type|category)\s*:\s*(necklaces?|pendants?|earrings?|studs?|huggies?|hoops?|bracelets?|rings?|charms?)$/i);return match?[match[1]]:[];});
+    return pattern.test(title+' '+(studio?'':type)+' '+tags.join(' '));
+  }
+  function searchWords(value){
+    return (clean(value,16000).toLowerCase().match(/[\p{L}\p{N}]+/gu)||[]).map(word=>{
+      if(/^(?:bunnies|rabbits?|bunny)$/.test(word))return 'bunny';
+      if(word==='leaves')return 'leaf';if(word==='wolves')return 'wolf';
+      if(word.length>4&&word.endsWith('ies'))return word.slice(0,-3)+'y';
+      return word.length>3&&word.endsWith('s')&&!word.endsWith('ss')?word.slice(0,-1):word;
+    });
+  }
+  function searchPlan(query){
+    // A shop search may OR every word. Keep ordinary category/price phrasing,
+    // but require substantive listing-name terms rather than just "necklace".
+    const raw=clean(query,250).toLowerCase(),categories=Object.keys(CATEGORY_NAMES).filter(category=>CATEGORY_NAMES[category].test(raw));
+    const withoutPrice=raw.replace(/\b(?:under|below|over|above|within|around|about|budget|max(?:imum)?|min(?:imum)?|up to|less than|more than|at most|at least|between)\s*(?:(?:is|of|to|:)\s*)?(?:(?:usd|cad|eur|gbp|dollars?)\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*(?:and|to|[-–])\s*(?:(?:usd|cad|eur|gbp|dollars?)\s*|[$£€]\s*)?\d+(?:\.\d+)?)?(?:\s*(?:usd|cad|eur|gbp|dollars?))?/gi,' ').replace(/(?:[$£€]\s*|\b(?:usd|cad|eur|gbp)\s+)\d+(?:\.\d+)?/gi,' ');
+    const terms=searchWords(withoutPrice).filter(word=>!SEARCH_CONTEXT.has(word)&&!Object.values(CATEGORY_NAMES).some(pattern=>pattern.test(word)));
+    return {categories,terms:[...new Set(terms)]};
+  }
+  function searchMatches(p,plan){
+    if(plan.categories.length&&!plan.categories.some(category=>categoryMatches(p,category)))return false;
+    // Body copy may cross-sell unrelated symbols. Only names, canonical
+    // handles, live type and literal/explicit motif tags establish this match.
+    const tags=(Array.isArray(p.tags)?p.tags:[]).slice(0,80).flatMap(tag=>{const value=clean(tag,100),match=value.match(/^(?:motif|symbol|theme)\s*:\s*([\p{L}\p{N}\s-]+)$/iu);return match?[match[1]]:/^[\p{L}\p{N}-]+$/u.test(value)?[value]:[];});
+    const words=new Set(searchWords(p.title+' '+p.handle+' '+(p.type||'')+' '+tags.join(' ')));
+    return plan.terms.every(term=>words.has(term));
+  }
   function filtered(){
+    const checked=state.search===state.checkedSearch,plan=checked&&state.search?searchPlan(state.search):null,words=state.search.toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];
     let pieces=state.products.filter(p=>{
-      const text=(p.title+' '+(p.type||'')+' '+p.description).toLowerCase(),words=state.search.toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];
-      // A checked live query may contain category plurals, price language or
-      // synonyms that are not verbatim in a title. Do not narrow its returned
-      // rows a second time. Local filtering remains useful while editing.
-      if(state.search!==state.checkedSearch&&words.length&&!words.every(word=>text.includes(word)))return false;
+      const text=(p.title+' '+(p.type||'')+' '+p.description).toLowerCase();
+      if(!checked&&words.length&&!words.every(word=>text.includes(word)))return false;
+      if(plan&&!searchMatches(p,plan))return false;
       if(state.filter==='available')return p.variants.some(v=>v.available);
       if(state.filter==='all')return true;
-      const names={necklaces:/necklace|pendant/i,earrings:/earrings?|stud|huggie/i,bracelets:/bracelet/i,rings:/\bring\b/i,charms:/\bcharm\b/i};
-      return names[state.filter].test((p.type||'')+' '+p.title.toLowerCase());
+      return categoryMatches(p,state.filter);
     });
     if(state.sort==='title-asc'||state.sort==='title-desc')pieces=pieces.slice().sort((a,b)=>(state.sort==='title-desc'?-1:1)*a.title.localeCompare(b.title));
     if(state.sort==='price-asc'||state.sort==='price-desc')pieces=pieces.slice().sort((a,b)=>{
@@ -115,6 +152,13 @@
   }
   function controls(){
     const box=main.querySelector('#collection-controls');if(!box)return;
+    // Replacing this form discards keyboard focus as soon as a search starts.
+    // Keep our live controls; update their values without moving user focus.
+    if(collectionControls?.box===box&&box.contains(collectionControls.input)&&box.contains(collectionControls.sort)){
+      if(collectionControls.input.value!==state.search)collectionControls.input.value=state.search;
+      if(collectionControls.sort.value!==state.sort)collectionControls.sort.value=state.sort;
+      return;
+    }
     box.replaceChildren();const form=node('form',null,'collection-tools'),wrap=node('div',null,'search-wrap');
     wrap.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m15.5 15.5 5 5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
     const input=document.createElement('input');input.id='store-search';input.type='search';input.maxLength=250;input.placeholder='Search a symbol, piece or material…';input.setAttribute('aria-label','Search the live jewelry collection');input.value=state.search;
@@ -125,6 +169,7 @@
     form.addEventListener('submit',e=>{e.preventDefault();void execute({type:'search',query:input.value});});
     const chips=node('div',null,'category-chips');chips.setAttribute('aria-label','Jewelry categories');
     [['all','All pieces'],['necklaces','Necklaces'],['earrings','Earrings'],['bracelets','Bracelets'],['rings','Rings'],['charms','Charms'],['available','Available now']].forEach(([value,label])=>{const b=button(label,'',()=>void execute({type:'filter',filter:value}));b.dataset.filter=value;b.setAttribute('aria-pressed',String(state.filter===value));chips.append(b);});box.append(chips);
+    collectionControls={box,input,sort};
   }
   function drawGrid(){
     const grid=main.querySelector('#demo-products');if(!grid)return;
@@ -160,7 +205,7 @@
       if(!current(record))return {ok:false,action:'search',message:'The earlier search was cancelled.'};
       const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.pageInfo=pageInfo;state.checkedSearch=nextSearch;state.verifiedAt=Date.now();
       if(!nextSearch){state.browse=state.products.slice();state.browsePageInfo={...pageInfo};state.browseVerifiedAt=state.verifiedAt;}if(newDiscovery)reviseDiscovery();state.loading=false;drawGrid();publish();focusSection('catalogue',false);status(filtered().length?'Your checked pieces are ready.':'No checked matches yet. Try another symbol or style.');
-      return {ok:true,action:'search',live:data.live!==false,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:filtered().length?'Your checked matches are ready on the page.':'I couldn’t find a checked match for that search. Try a different symbol or style.'};
+      return {ok:true,action:'search',live:data.live!==false,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:filtered().length?'Your checked search results are ready on the page.':'I couldn’t find a name or symbol match in these checked results. Try another symbol or show all pieces.'};
     }catch{if(current(record)){state.loading=false;drawGrid();publish();status('The live selection is temporarily unavailable. Your existing view is preserved.');}return {ok:false,action:'search',message:'The live selection could not be checked. Please try again.'};}
   }
   async function loadMore(){
@@ -169,21 +214,37 @@
     const cursor=state.pageInfo.endCursor,record=begin();status('Opening the next collection page…');
     try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const pageInfo=checkedPageInfo(data,cursor),additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.collectionSource='browse';state.checkedSearch='';state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo=pageInfo;state.browsePageInfo={...pageInfo};state.loading=false;state.verifiedAt=Date.now();state.browseVerifiedAt=state.verifiedAt;drawGrid();publish();status(additional.length?'More live pieces are ready.':pageInfo.hasNextPage?'This page has no additional matching pieces. Continue to the next public collection page.':'You have reached the end of the checked public collection.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
   }
-  async function openProduct(handle,{push=true,signal,section}={}){
+  async function openProduct(handle,{push=true,signal,section,focusFrom=null}={}){
     if(!validHandle(handle))return false;
+    let focusIntent=!!focusFrom&&focusFrom.isConnected&&document.activeElement===focusFrom;
+    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;};if(focusIntent)document.addEventListener('focusin',movedFocus);
     const record=begin({signal});status('Opening the checked product details…');
     try{
       const data=await get('/api/growth/product?handle='+encodeURIComponent(handle),record.controller.signal),p=data.product;
       if(!current(record)||data.live===false||!validProduct(p,handle)){if(current(record)){state.loading=false;publish();}return false;}
-      remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);status('Live options checked. Your guide stays with you.');return true;
+      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom;remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);
+      if(focusHeading){const heading=main.querySelector('.product-copy h1');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});try{heading.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}}
+      status('Live options checked. Your guide stays with you.');return true;
     }catch{if(current(record)){state.loading=false;publish();status('This piece could not be checked. Your current page is preserved.');}return false;}
+    finally{document.removeEventListener('focusin',movedFocus);}
   }
   function productImages(p){
     const images=(Array.isArray(p.images)?p.images:[]).slice(0,15).flatMap(i=>{const image=typeof i==='string'?i:i?.url,src=safeImage(image);return src?[{image:src,imageAlt:clean(typeof i==='object'?i.altText||p.title:p.title,300)}]:[];});
     const first=safeImage(p.image);if(first&&!images.some(i=>i.image===first))images.unshift({image:first,imageAlt:clean(p.imageAlt||p.title,300)});return images;
   }
+  async function returnToCollection(event){
+    const origin=event.currentTarget,keyboard=event.detail===0&&origin?.isConnected&&document.activeElement===origin&&!document.hidden;
+    let focusIntent=keyboard;const movedFocus=next=>{if(next.target!==origin)focusIntent=false;};if(keyboard)document.addEventListener('focusin',movedFocus);
+    try{
+      const pending=execute({type:'search',query:''}),version=navigationVersion,result=await pending;
+      // Back explicitly opens All pieces. Its completed collection heading
+      // is the new focus target; no previous card identity is guessed.
+      if(!focusIntent||document.hidden||!result.ok||version!==navigationVersion||state.loading||state.pageKind!=='catalogue'||state.search!==''||state.filter!=='all'||result.snapshot?.discoveryRevision!==state.discoveryRevision||document.activeElement!==document.body)return;
+      const heading=main.querySelector('.collection-heading h2');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});try{heading.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}
+    }finally{if(keyboard)document.removeEventListener('focusin',movedFocus);}
+  }
   function renderProduct(p){
-    main.replaceChildren();main.append(button('← Back to the collection','back-link',()=>void execute({type:'search',query:''})));
+    main.replaceChildren();main.append(button('← Back to the collection','back-link',returnToCollection));
     const layout=node('div',null,'product-layout view-enter'),gallery=node('section',null,'product-gallery'),images=productImages(p);gallery.dataset.storeSection='image';
     const enlarge=button('','product-image-button',()=>zoomImage(p));enlarge.setAttribute('aria-label','Enlarge image of '+p.title);const photo=images[0]?picture(images[0]):null;enlarge.append(photo||node('span','b.','piece-placeholder'));if(images.length)enlarge.append(node('span','Enlarge ↗','image-zoom-label'));else enlarge.disabled=true;gallery.append(enlarge);
     if(images.length>1){const thumbs=node('div',null,'image-thumbs');images.forEach((value,index)=>{const b=button('','',()=>{state.selectedImage=index;const img=picture(value);if(img){img.loading='eager';enlarge.replaceChildren(img,node('span','Enlarge ↗','image-zoom-label'));}thumbs.querySelectorAll('button').forEach((v,j)=>v.setAttribute('aria-pressed',String(index===j)));});b.setAttribute('aria-label','View product image '+(index+1));b.setAttribute('aria-pressed',String(index===0));const img=picture(value);if(img)b.append(img);thumbs.append(b);});gallery.append(thumbs);}
@@ -341,7 +402,7 @@
   document.addEventListener('click',event=>{
     const control=event.target.closest?.('[data-store-action]');if(control&&!event.defaultPrevented){const type=control.dataset.storeAction;event.preventDefault();if(type==='bag')void execute({type:'bag'});else if(type==='gifts')void execute({type:'gift'});else if(type==='customize')void execute({type:'customize'});else if(type==='browse')focusSection('catalogue',false);else if(type==='collection')void execute({type:'search',query:''});return;}
     const anchor=event.target.closest?.('a[href]');if(!anchor||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||anchor.target==='_blank')return;
-    const target=new URL(anchor.href,location.href);if(target.origin!==location.origin||target.pathname!=='/concierge-sandbox.html')return;const handle=target.searchParams.get('product');if(!handle)return;event.preventDefault();void openProduct(handle);
+    const target=new URL(anchor.href,location.href);if(target.origin!==location.origin||target.pathname!=='/concierge-sandbox.html')return;const handle=target.searchParams.get('product');if(!handle)return;event.preventDefault();void openProduct(handle,{focusFrom:event.detail===0&&document.activeElement===anchor?anchor:null});
   });
   function attended(target){const card=target?.closest?.('[data-product-handle]'),handle=card?.dataset.productHandle;return main.contains(card)&&validHandle(handle)&&known.has(handle)?handle:'';}
   function focus(handle){if(state.focusedHandle===handle)return;state.focusedHandle=handle;publish();}
