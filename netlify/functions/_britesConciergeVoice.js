@@ -321,7 +321,41 @@ function createBudgetReservation(service,{now=Date.now}={}){
     return granted?{allocatedUsd:usd,reconcile:'provider_evidence_required'}:null;
   };
 }
-function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=globalThis.fetch,now=Date.now,scheduleHangup,reserveBudget}={}){
+// Native voice uses the already configured provider account. This journal is
+// one-start/provenance storage only; it never reads or changes a money ledger.
+function createNativeSessionJournal(service,{now=Date.now,control}={}){
+  return async function begin(session){
+    const at=now();
+    if(service?.namespace!=='Brites_Growth_Sandbox'||typeof service.col!=='function'||!recordObject(session)||session.purpose!=='brites-sandbox-voice'||!/^[a-zA-Z0-9-]{16,100}$/.test(session.sessionId||'')||!positiveInteger(session.expiresAt)||session.expiresAt<at||session.expiresAt>at+10*60000)return {granted:false,reason:'INVALID_SESSION'};
+    const id='session-'+crypto.createHash('sha256').update(session.sessionId).digest('hex'),collection=service.col('VoiceSessions'),ref=collection.doc(id);
+    let startedAt=null;
+    try{
+      const reason=await collection.firestore.runTransaction(async tx=>{
+        const [used,savedControl]=await Promise.all([tx.get(ref),tx.get(service.col('State').doc('control'))]);
+        if(used.exists)return 'SESSION_ALREADY_USED';
+        const current=savedControl.exists?savedControl.data():control,at=now();
+        if(!recordObject(current))return 'JOURNAL_UNAVAILABLE';
+        if(current.enabled===false||at>=nativeStopAt(current))return 'RUNTIME_DISABLED';
+        if(session.expiresAt<at)return 'SESSION_EXPIRED';
+        if(!positiveInteger(at))return 'JOURNAL_UNAVAILABLE';
+        startedAt=at;
+        tx.set(ref,{schema:1,id,kind:'realtime_voice',provider:'openai',stage:'provider_requested',startedAt:at,tokenExpiresAt:session.expiresAt});
+        return null;
+      });
+      if(reason)return {granted:false,reason};
+    }catch{return {granted:false,reason:'JOURNAL_UNAVAILABLE'};}
+    async function recordOutcome(value){
+      const patch=attemptPatch(value);if(!patch||patch.stage==='reserved'||patch.stage==='provider_requested')return false;
+      try{return await collection.firestore.runTransaction(async tx=>{
+        const saved=await tx.get(ref),row=saved.exists?saved.data():null;
+        if(!recordObject(row)||row.schema!==1||row.id!==id||row.kind!=='realtime_voice'||row.provider!=='openai'||row.startedAt!==startedAt||row.tokenExpiresAt!==session.expiresAt||!ATTEMPT_STAGES.includes(row.stage))return false;
+        tx.set(ref,{...row,...patch,outcomeAt:now()});return true;
+      });}catch{return false;}
+    }
+    return {granted:true,recordOutcome};
+  };
+}
+function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=globalThis.fetch,now=Date.now,scheduleHangup}={}){
   const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin'}});
   async function diagnostic(record){try{if(service?.col)await service.col('VoiceDiagnostics').doc('last-start').set({at:now(),...record});}catch{/* Diagnostic storage cannot weaken the session guard. */}}
   async function lastDiagnostic(){try{const saved=await service?.col?.('VoiceDiagnostics').doc('last-start').get();return saved?.exists?diagnosticProjection(saved.data()):null;}catch{return null;}}
@@ -334,19 +368,17 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
     if(!body||typeof body!=='object'||Array.isArray(body)||!['capabilities','start','stop','readiness','allocation','authorize-test','authorize-voice'].includes(body.action))return json({error:'Unknown voice action.'},400);
     if(['authorize-test','authorize-voice'].includes(body.action)){
       if(!await authorize(req))return json({error:'Operator sign-in required.'},401);
-      if(Object.keys(body).some(key=>!['action','owner','token','expectedUpdatedAt',...(body.action==='authorize-voice'?['continueToConfiguredCeiling']:[])].includes(key))||Object.hasOwn(body,'continueToConfiguredCeiling')&&body.continueToConfiguredCeiling!==true||typeof body.owner!=='string'||!/^[a-zA-Z0-9:_-]{1,100}$/.test(body.owner)||typeof body.token!=='string'||!/^[a-f0-9]{64}$/.test(body.token)||!nonnegativeInteger(body.expectedUpdatedAt))return json({error:'An owned lease and current checkpoint revision are required.'},400);
       if(env.BRITES_GROWTH_SANDBOX!=='1'||env.BRITES_GROWTH_NAMESPACE!=='Brites_Growth_Sandbox'||service?.namespace!=='Brites_Growth_Sandbox')return json({error:'Use the exact isolated sandbox for voice authorization.'},403);
-      if(env.BRITES_CONCIERGE_REALTIME_ENABLED!=='1'||env.BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO!=='1'||!env.OPENAI_API_KEY)return json({error:'The native voice preview is not configured.',code:'VOICE_GUARD_UNAVAILABLE'},503);
-      try{const result=await (body.action==='authorize-voice'?authorizeNativeAllowance:authorizeContinuation)(service,env,body,now);return json(result,result.status||200);}catch{return json({error:'Voice authorization could not be recorded.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
+      return json({error:'Voice allocation authorization has been retired. Native voice uses the configured OpenAI API.',code:'VOICE_ALLOCATION_AUTHORIZATION_RETIRED'},410);
     }
     if(body.action==='allocation'){
       if(!await authorize(req))return json({error:'Operator sign-in required.'},401);
       if(Object.keys(body).some(key=>key!=='action'))return json({error:'Allocation inspection accepts only its fixed read action.'},400);
       if(env.BRITES_GROWTH_SANDBOX!=='1'||env.BRITES_GROWTH_NAMESPACE!=='Brites_Growth_Sandbox'||service?.namespace&&service.namespace!=='Brites_Growth_Sandbox')return json({error:'Use the exact isolated sandbox for allocation inspection.'},403);
       if(typeof service?.col!=='function')return json({error:'Voice allocation inspection is unavailable.',code:'VOICE_ALLOCATION_READ_UNAVAILABLE'},503);
-      try{return json(await allocationProjection(service,env,{now,lastStart:await lastDiagnostic()}));}catch{return json({error:'Voice allocation inspection is unavailable.',code:'VOICE_ALLOCATION_READ_UNAVAILABLE'},503);}
+      try{return json({...await allocationProjection(service,env,{now,lastStart:await lastDiagnostic()}),historical:true,nativeVoiceUsesAllocation:false});}catch{return json({error:'Voice allocation inspection is unavailable.',code:'VOICE_ALLOCATION_READ_UNAVAILABLE'},503);}
     }
-    const enabled=env.BRITES_CONCIERGE_REALTIME_ENABLED==='1'&&env.BRITES_GROWTH_SANDBOX==='1'&&(!env.BRITES_GROWTH_NAMESPACE||env.BRITES_GROWTH_NAMESPACE==='Brites_Growth_Sandbox');
+    const enabled=env.BRITES_CONCIERGE_REALTIME_ENABLED==='1'&&env.BRITES_GROWTH_SANDBOX==='1'&&env.BRITES_GROWTH_NAMESPACE==='Brites_Growth_Sandbox';
     if(!enabled)return json({enabled:false,code:'VOICE_DISABLED',message:'OpenAI voice is not enabled in this preview. You can still type.'},body.action==='capabilities'?200:503);
     const operator=await authorize(req),publicDemo=env.BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO==='1'&&env.BRITES_GROWTH_NAMESPACE==='Brites_Growth_Sandbox';
     // The guest path is deliberately limited to this isolated site's opt-in
@@ -373,51 +405,43 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
       const value=readStopToken(body.stopToken,env.OPENAI_API_KEY,now());if(!value)return json({error:'Invalid voice session.'},400);
       try{return json({stopped:await hangup(value.callId)});}catch{return json({stopped:false,code:'CLOSE_UNCONFIRMED'},503);}
     }
-    const reserveUsd=Number(env.BRITES_CONCIERGE_REALTIME_RESERVE_USD);
-    if(!service||typeof scheduleHangup!=='function'||!Number.isFinite(reserveUsd)||reserveUsd<=0||reserveUsd>10||publicDemo&&(!demoCap(env)||reserveUsd>demoCap(env)))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice needs an approved preview allocation and session deadline. You can still type.'},503);
-    const ctrl=await service.setup();if(ctrl.enabled===false||(!publicDemo&&(!ctrl.aiEnabled||Number(ctrl.aiDailyUsdCap)<=0)))return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'OpenAI voice is paused in this preview. You can still type.'},503);
+    if(service?.namespace!=='Brites_Growth_Sandbox'||typeof service.col!=='function'||typeof scheduleHangup!=='function')return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice is unavailable in this preview. You can still type.'},503);
+    const ctrl=await service.setup();if(ctrl.enabled===false)return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'OpenAI voice is paused in this preview. You can still type.'},503);
     if(now()>=Math.min(Number(ctrl.stopAt)||require('./_britesGrowth').STOP_AT,require('./_britesGrowth').STOP_AT))return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'Sandbox voice testing has ended. You can still type.'},503);
     if(body.action==='capabilities'){
       if(Object.keys(body).some(k=>k!=='action'))return json({error:'Invalid capability request.'},400);
-      if(publicDemo){
-        // Availability is checked before a browser requests microphone access.
-        // The later atomic reservation still protects simultaneous starts.
-        try{const snapshot=await service.col('VoiceUsage').doc('preview-budget').get(),ledger=ledgerValues(snapshot.exists?snapshot.data():{}),next=ledger.valid?ledger.reservedCents+ledger.spentCents+Math.ceil(reserveUsd*100):null;if(!ledger.valid||!Number.isSafeInteger(next))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);if(next>Math.floor(demoCap(env)*100)&&!await nativeAvailability(service,Math.ceil(reserveUsd*100),now(),ctrl,Math.floor(demoCap(env)*100)))return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}catch{return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);}
-      }
-      return json({enabled:true,optIn:true,maxDurationMs:MAX_DURATION_MS,provider:'OpenAI',speech:'native_speech_to_speech',providerReadiness:'verified_on_connection',usage:'allocation_reserved_until_provider_reconciliation',...(publicDemo?{demoToken:demoToken(env.OPENAI_API_KEY,now())}:{})});
+      // Capability checks never consume a start or consult historical holds.
+      return json({enabled:true,optIn:true,maxDurationMs:MAX_DURATION_MS,provider:'OpenAI',speech:'native_speech_to_speech',providerReadiness:'verified_on_connection',usage:'provider_account',demoToken:demoToken(env.OPENAI_API_KEY,now())});
     }
-    if(Object.keys(body).some(k=>!['action','sdp',...(publicDemo?['demoToken']:[])].includes(k))||typeof body.sdp!=='string'||body.sdp.length>64000||!/^v=0\r?\n/.test(body.sdp)||!body.sdp.includes('m=audio'))return json({error:'Send a valid audio SDP offer.'},400);
-    const demo=publicDemo?readDemoToken(body.demoToken,env.OPENAI_API_KEY,now()):null;
-    if(publicDemo&&!demo)return json({enabled:false,code:'VOICE_SESSION_EXPIRED',message:'Select Talk to me again to start a fresh voice session.'},401);
+    if(Object.keys(body).some(k=>!['action','sdp','demoToken'].includes(k))||typeof body.sdp!=='string'||body.sdp.length>64000||!/^v=0\r?\n/.test(body.sdp)||!body.sdp.includes('m=audio'))return json({error:'Send a valid audio SDP offer.'},400);
+    const demo=readDemoToken(body.demoToken,env.OPENAI_API_KEY,now());
+    if(!demo)return json({enabled:false,code:'VOICE_SESSION_EXPIRED',message:'Select Talk to me again to start a fresh voice session.'},401);
     let config;try{config=sessionConfig(env);}catch{return json({enabled:false,code:'VOICE_MODEL_UNAVAILABLE'},503);}
-    let reservationOutcome=null,observedProviderResponse=null;
-    async function markAttempt(value){return reservationOutcome?.recordOutcome?await reservationOutcome.recordOutcome(value):reservationOutcome===null;}
+    let sessionOutcome=null,observedProviderResponse=null;
+    async function markAttempt(value){return sessionOutcome?.recordOutcome?await sessionOutcome.recordOutcome(value):false;}
     try{
-      // Request preparation precedes a monetary hold. Provenance below records
-      // server-observed stages only and never releases an existing allocation.
+      // Prepare and rate-limit before the one-start journal. Native voice uses
+      // the provider account directly; no application balance is allocated.
       const fd=new FormData();fd.set('sdp',body.sdp);fd.set('session',JSON.stringify(config));
       if(service.rateLimit){const ip=req.headers.get('x-nf-client-connection-ip')||'unknown',caller=signature('voice-ip:'+ip,env.OPENAI_API_KEY);if(!await service.rateLimit('realtime-preview-start',3)||publicDemo&&!await service.rateLimit('realtime-preview-caller-'+caller,2))return json({error:'Please wait before starting another voice session.'},429);}
-      if(publicDemo&&!reserveBudget){
-        reservationOutcome=await createDemoBudgetReservationResult(service,{capUsd:demoCap(env),now,provenance:true,allowContinuation:true})(reserveUsd,demo.sessionId);
-        if(!reservationOutcome.granted){
-          if(reservationOutcome.reason==='SESSION_ALREADY_USED')return json({enabled:false,code:'VOICE_SESSION_REUSED',message:'Select Talk to me again to start a fresh voice session.'},401);
-          if(reservationOutcome.reason==='ALLOCATION_EXHAUSTED')return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);
-          return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);
-        }
-      }else{const reserve=reserveBudget||createBudgetReservation(service,{now}),allocated=await reserve(reserveUsd,demo?.sessionId);if(!allocated)return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}
-      // A native start needs durable dispatch provenance before paid work. A
-      // storage failure keeps its original hold; it never implies zero usage.
-      if(!await markAttempt({stage:'provider_requested'})){await diagnostic({stage:'verification',providerStatus:null,code:'PROVENANCE_UNAVAILABLE'});return json({error:'OpenAI voice could not connect. You can still type.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
+      sessionOutcome=await createNativeSessionJournal(service,{now,control:ctrl})(demo);
+      if(!sessionOutcome.granted){
+        if(sessionOutcome.reason==='SESSION_ALREADY_USED')return json({enabled:false,code:'VOICE_SESSION_REUSED',message:'Select Talk to me again to start a fresh voice session.'},401);
+        if(sessionOutcome.reason==='SESSION_EXPIRED')return json({enabled:false,code:'VOICE_SESSION_EXPIRED',message:'Select Talk to me again to start a fresh voice session.'},401);
+        if(sessionOutcome.reason==='RUNTIME_DISABLED')return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'OpenAI voice is paused in this preview. You can still type.'},503);
+        await diagnostic({stage:'verification',providerStatus:null,code:'PROVENANCE_UNAVAILABLE'});
+        return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice could not connect. You can still type.'},503);
+      }
       const r=await fetcher(ENDPOINT,{method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY,'OpenAI-Safety-Identifier':crypto.createHash('sha256').update('brites-isolated-voice-preview').digest('hex')},body:fd,signal:AbortSignal.timeout(12000)});
       const providerRequestId=r.headers.get('x-request-id')||'',location=r.headers.get('Location')||'',match=location.match(/\/realtime\/calls\/(rtc_[A-Za-z0-9_-]{1,180})$/);
       observedProviderResponse={providerStatus:r.status,providerRequestId,...(match?{callId:match[1]}:{})};
       if(!r.ok){const code=await rejectionCode(r);await Promise.all([markAttempt({stage:'provider_rejected',providerStatus:r.status,providerCode:code,providerRequestId}),diagnostic({stage:'provider',providerStatus:r.status,code})]);return json({error:'OpenAI voice could not connect. You can still type.',code:'VOICE_CONNECT_FAILED'},503);}
       const sdp=await r.text();
       if(!match||!/^v=0\r?\n/.test(sdp)){const hangupConfirmed=match?await hangup(match[1]).catch(()=>false):null;await Promise.all([markAttempt({stage:'call_unverified',providerStatus:r.status,providerCode:'CALL_UNVERIFIED',providerRequestId,...(match?{callId:match[1],hangupConfirmed}:{})}),diagnostic({stage:'verification',providerStatus:r.status,code:'CALL_UNVERIFIED'})]);return json({error:'Voice connection was not verifiable.',code:'VOICE_CONNECT_UNVERIFIED'},503);}
-      const callId=match[1],latestControl=await service.setup(),at=now(),maxDurationMs=Math.min(MAX_DURATION_MS,Math.min(nativeStopAt(ctrl),nativeStopAt(latestControl),reservationOutcome?.expiresAt||Infinity)-at),expiresAt=at+maxDurationMs;
+      const callId=match[1],latestControl=await service.setup(),at=now(),maxDurationMs=Math.min(MAX_DURATION_MS,Math.min(nativeStopAt(ctrl),nativeStopAt(latestControl))-at),expiresAt=at+maxDurationMs;
       if(latestControl.enabled===false||maxDurationMs<=0){const hangupConfirmed=await hangup(callId).catch(()=>false);await Promise.all([markAttempt({stage:'deadline_failed',providerStatus:r.status,providerCode:'SANDBOX_STOP_REACHED',providerRequestId,callId,hangupConfirmed}),diagnostic({stage:'deadline',providerStatus:r.status,code:'SANDBOX_STOP_REACHED'})]);return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'Sandbox voice testing has ended. You can still type.'},503);}
       try{const guarded=await scheduleHangup({callId,expiresAt});if(guarded!==true)throw Error('Deadline not durable.');}catch{const hangupConfirmed=await hangup(callId).catch(()=>false);await Promise.all([markAttempt({stage:'deadline_failed',providerStatus:r.status,providerCode:'DEADLINE_UNAVAILABLE',providerRequestId,callId,expiresAt,hangupConfirmed}),diagnostic({stage:'deadline',providerStatus:r.status,code:'DEADLINE_UNAVAILABLE'})]);return json({error:'Voice deadline was unavailable.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
-      // Do not release a live SDP without its durable reservation/call binding.
+      // Do not release a live SDP without its durable journal/call binding.
       // The exact recorded deadline remains a backup if immediate cleanup fails.
       if(!await markAttempt({stage:'call_verified',providerStatus:r.status,providerCode:'CALL_VERIFIED',providerRequestId,callId,expiresAt})){
         const hangupConfirmed=await hangup(callId).catch(()=>false);
@@ -429,4 +453,4 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
     }catch{const hangupConfirmed=observedProviderResponse?.callId?await hangup(observedProviderResponse.callId).catch(()=>false):null;await Promise.all([markAttempt({...observedProviderResponse,stage:'unknown',providerCode:'CALL_EXCEPTION',...(hangupConfirmed!==null?{hangupConfirmed}:{})}),diagnostic({stage:'exception',providerStatus:observedProviderResponse?.providerStatus??null,code:'CALL_EXCEPTION'})]);return json({error:'OpenAI voice could not connect. You can still type.',code:'VOICE_CONNECT_FAILED'},503);}
   };
 }
-module.exports={createHandler,createBudgetReservation,createDemoBudgetReservation,createDemoBudgetReservationResult,sessionConfig,validateToolArguments,stopToken,readStopToken,demoToken,readDemoToken,instructions,MAX_DURATION_MS};
+module.exports={createHandler,createNativeSessionJournal,createBudgetReservation,createDemoBudgetReservation,createDemoBudgetReservationResult,sessionConfig,validateToolArguments,stopToken,readStopToken,demoToken,readDemoToken,instructions,MAX_DURATION_MS};

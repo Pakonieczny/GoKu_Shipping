@@ -8,7 +8,7 @@ function fixture(changes={}){
   const rows=new Map(),requests=[],rates=[],deadlines=[];let at=1000000;const control={enabled:true,aiEnabled:false,aiDailyUsdCap:0};
   const col=suffix=>({firestore:db,doc(id){const key=suffix+'/'+id;return {key,get:async()=>({exists:rows.has(key),data:()=>rows.get(key)}),set:async data=>rows.set(key,data)};}});
   let serial=Promise.resolve();const db={runTransaction(task){const next=serial.then(()=>task({get:async ref=>ref.get(),set(ref,data){rows.set(ref.key,data);}}));serial=next.catch(()=>{});return next;}};
-  const service={setup:async()=>control,col,rateLimit:async(key,limit)=>{rates.push({key,limit});return true;}};
+  const service={namespace:'Brites_Growth_Sandbox',setup:async()=>control,col,rateLimit:async(key,limit)=>{rates.push({key,limit});return true;}};
   const fetch=async(url,init)=>{requests.push({url,init});if(url.includes('/v1/models/'))return Response.json({id:'gpt-realtime-2.1'});if(url.endsWith('/hangup'))return new Response(null,{status:200});return new Response(SDP,{status:201,headers:{Location:'/v1/realtime/calls/rtc_fixture'}});};
   const handler=server.createHandler({env,service,authorize:async req=>req.headers.get('X-Growth-Key')==='fixture-admin',fetch,scheduleHangup:async row=>{deadlines.push(row);return true;},now:()=>at,...changes});
   return {rows,requests,rates,deadlines,service,control,handler,advance(ms){at+=ms;},now:()=>at};
@@ -17,7 +17,7 @@ async function token(f){const r=await f.handler(request({action:'capabilities'})
 
 test('explicit isolated demo grants native opt-in without activating bulk inference',async()=>{
   const f=fixture();const demoToken=await token(f);assert.equal(f.control.aiEnabled,false);assert.equal(f.requests.length,0);assert.equal(f.rows.size,0);
-  const r=await f.handler(request({action:'start',sdp:SDP,demoToken})),result=await r.json();assert.equal(r.status,200);assert.equal(result.maxDurationMs,120000);assert.equal(f.control.aiEnabled,false);assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);assert.equal(f.rows.has('Usage/1970-01-01'),false);assert.equal(f.deadlines.length,1);assert.equal(JSON.stringify(result).includes(env.OPENAI_API_KEY),false);
+  const r=await f.handler(request({action:'start',sdp:SDP,demoToken})),result=await r.json();assert.equal(r.status,200);assert.equal(result.maxDurationMs,120000);assert.equal(f.control.aiEnabled,false);assert.equal(f.rows.has('VoiceUsage/preview-budget'),false);assert.equal([...f.rows.values()].find(row=>row.kind==='realtime_voice').stage,'call_verified');assert.equal(f.rows.has('Usage/1970-01-01'),false);assert.equal(f.deadlines.length,1);assert.equal(JSON.stringify(result).includes(env.OPENAI_API_KEY),false);
   const config=JSON.parse(f.requests[0].init.body.get('session'));assert.equal(config.tool_choice,'auto');assert.equal(config.output_modalities[0],'audio');assert.equal(config.audio.output.voice,'marin');assert.match(config.instructions,/Before naming or recommending/);
 });
 
@@ -26,12 +26,12 @@ test('same-origin guest capability is unusable on live namespace, cross-origin, 
   const f=fixture();for(const origin of ['https://other.test',null]){const response=await f.handler(request({action:'capabilities'},{origin}));assert.ok([401,403].includes(response.status));}assert.equal(f.requests.length,0);
 });
 
-test('guest token expires, cannot be forged or reused, and provider failures keep allocations held',async()=>{
+test('guest token expires, cannot be forged or reused, and provider failures retain one-start journal evidence',async()=>{
   const f=fixture({fetch:async()=>Response.json({error:{code:'insufficient_quota',message:'private provider detail'}},{status:429})});const first=await token(f);
   assert.equal((await f.handler(request({action:'start',sdp:SDP,demoToken:first+'x'}))).status,401);assert.equal(f.rows.size,0);
-  const failed=await f.handler(request({action:'start',sdp:SDP,demoToken:first}));assert.equal(failed.status,503);assert.doesNotMatch(await failed.text(),/quota|private provider detail|fixture-only/);assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);
-  const reused=await f.handler(request({action:'start',sdp:SDP,demoToken:first}));assert.equal(reused.status,401);assert.equal((await reused.json()).code,'VOICE_SESSION_REUSED');assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);
-  const second=await token(f);f.advance(600001);assert.equal((await f.handler(request({action:'start',sdp:SDP,demoToken:second}))).status,401);assert.equal(f.rows.get('VoiceUsage/preview-budget').calls,1);
+  const failed=await f.handler(request({action:'start',sdp:SDP,demoToken:first}));assert.equal(failed.status,503);assert.doesNotMatch(await failed.text(),/quota|private provider detail|fixture-only/);assert.equal(f.rows.has('VoiceUsage/preview-budget'),false);assert.equal([...f.rows.values()].find(row=>row.kind==='realtime_voice').stage,'provider_rejected');
+  const reused=await f.handler(request({action:'start',sdp:SDP,demoToken:first}));assert.equal(reused.status,401);assert.equal((await reused.json()).code,'VOICE_SESSION_REUSED');assert.equal(f.rows.has('VoiceUsage/preview-budget'),false);assert.equal([...f.rows.values()].find(row=>row.kind==='realtime_voice').stage,'provider_rejected');
+  const second=await token(f);f.advance(600001);assert.equal((await f.handler(request({action:'start',sdp:SDP,demoToken:second}))).status,401);assert.equal([...f.rows.keys()].filter(key=>key.startsWith('VoiceSessions/')).length,1);
   assert.deepEqual(f.rows.get('VoiceDiagnostics/last-start'),{at:1000000,stage:'provider',providerStatus:429,code:'insufficient_quota'});
 });
 
@@ -42,8 +42,8 @@ test('dedicated reservations serialize concurrent starts, never reset overnight,
   f.control.enabled=false;assert.equal(await server.createDemoBudgetReservation(f.service,{capUsd:10})(1,'another-session-unique'),null);
 });
 
-test('allocation and rate checks fail before provider or microphone can start',async()=>{
-  const f=fixture();f.rows.set('VoiceUsage/preview-budget',{reservedCents:1000,spentCents:0,calls:10});const r=await f.handler(request({action:'capabilities'}));assert.equal(r.status,429);assert.equal(f.requests.length,0);
+test('historical capacity cannot block native availability; rate checks still precede provider dispatch',async()=>{
+  const f=fixture();const historical={reservedCents:1000,spentCents:0,calls:10};f.rows.set('VoiceUsage/preview-budget',historical);const r=await f.handler(request({action:'capabilities'}));assert.equal(r.status,200);assert.equal((await r.json()).enabled,true);assert.equal(f.requests.length,0);assert.deepEqual(f.rows.get('VoiceUsage/preview-budget'),historical);
   const f2=fixture();const demoToken=await token(f2);f2.service.rateLimit=async()=>false;assert.equal((await f2.handler(request({action:'start',sdp:SDP,demoToken}))).status,429);assert.equal(f2.rows.size,0);assert.equal(f2.requests.length,0);
 });
 
@@ -54,7 +54,7 @@ test('operator readiness verifies account model access without inference and kee
 });
 
 test('invalid SDP answer hangs up a verifiable provider call and exposes no account diagnostics to guests',async()=>{
-  const calls=[],f=fixture({fetch:async(url,init)=>{calls.push(url);return url.endsWith('/hangup')?new Response(null,{status:200}):new Response('not an SDP',{status:201,headers:{Location:'/v1/realtime/calls/rtc_fixture'}});}});const demoToken=await token(f);const r=await f.handler(request({action:'start',sdp:SDP,demoToken}));assert.equal(r.status,503);assert.equal(calls.at(-1),'https://api.openai.com/v1/realtime/calls/rtc_fixture/hangup');assert.equal(f.deadlines.length,0);assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);assert.equal(f.rows.get('VoiceDiagnostics/last-start').stage,'verification');
+  const calls=[],f=fixture({fetch:async(url,init)=>{calls.push(url);return url.endsWith('/hangup')?new Response(null,{status:200}):new Response('not an SDP',{status:201,headers:{Location:'/v1/realtime/calls/rtc_fixture'}});}});const demoToken=await token(f);const r=await f.handler(request({action:'start',sdp:SDP,demoToken}));assert.equal(r.status,503);assert.equal(calls.at(-1),'https://api.openai.com/v1/realtime/calls/rtc_fixture/hangup');assert.equal(f.deadlines.length,0);assert.equal(f.rows.has('VoiceUsage/preview-budget'),false);assert.equal([...f.rows.values()].find(row=>row.kind==='realtime_voice').stage,'call_unverified');assert.equal(f.rows.get('VoiceDiagnostics/last-start').stage,'verification');
 });
 
 function nativeFixture({greeting=true,iceGathering='complete',onTool=async()=>({verified:true,products:[]})}={}){

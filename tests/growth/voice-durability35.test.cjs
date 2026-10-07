@@ -1,76 +1,38 @@
 'use strict';
 // Synthetic Firestore/provider fixtures only: no network, real usage or refunds.
 const test=require('node:test'),assert=require('node:assert/strict');
-const voice=require('../../netlify/functions/_britesConciergeVoice.js'),deadline=require('../../netlify/functions/_britesConciergeVoiceDeadline.js'),core=require('../../netlify/functions/_britesGrowth.js');
-const AT=Date.parse('2026-10-07T23:00:00Z'),SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n',NATIVE='VoiceAllowances/native-sandbox',LEGACY='VoiceUsage/preview-budget';
-const copy=value=>value===undefined?undefined:structuredClone(value);
-const env={BRITES_GROWTH_SANDBOX:'1',BRITES_GROWTH_NAMESPACE:'Brites_Growth_Sandbox',BRITES_CONCIERGE_REALTIME_ENABLED:'1',BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO:'1',BRITES_CONCIERGE_REALTIME_DEMO_USD_CAP:'10',BRITES_CONCIERGE_REALTIME_RESERVE_USD:'1',OPENAI_API_KEY:'synthetic-only-secret'};
-function fixture({funding='native',failStages=[],missingDispatchRecord=false,hangupStatus=200,hangupThrows=false}={}){
-  const rows=new Map([
-    [LEGACY,{reservedCents:funding==='native'?950:100,spentCents:0,calls:funding==='native'?10:1,allocationCapCents:1000,at:AT-1000}],
-    [NATIVE,{schema:2,id:'native-sandbox',kind:'realtime_voice',provider:'openai',allocatedCents:500,limitCents:1000,reservationCents:100,reservedCents:500,spentCents:0,calls:5,issuedAt:AT-600000,expiresAt:core.STOP_AT,lastStartedAt:AT-10000,continuationCents:500,continuationCount:1,continuationPolicy:'configured-preview-ceiling-once-v1',continuedAt:AT-5000,continuationAuthorizedBy:'synthetic-owner',continuationCheckpointUpdatedAt:AT-6000,accountingVersion:1,accountedCalls:0,accountedAllocationCents:0}],
-    ['VoiceUsage/session-'+'a'.repeat(64),{allocatedCents:100,startedAt:AT-10000,reconcile:'provider_evidence_required',originalHistory:'synthetic-preserve'}],
-    ['State/control',{enabled:true,stopAt:core.STOP_AT}]
-  ]),operations=[],calls=[],writes=[],failureStages=new Set(failStages);let serial=Promise.resolve(),transactions=0;
-  const db={runTransaction(task){const result=serial.then(async()=>{
-    const ordinal=++transactions,pending=[];
-    const result=await task({get:async ref=>{
-      assert.equal(pending.length,0,'all transaction reads precede writes');
-      if(missingDispatchRecord&&ordinal===2&&ref.key.startsWith('VoiceUsage/session-')&&!ref.key.endsWith('a'.repeat(64)))return {exists:false,data:()=>undefined};
-      return ref.get();
-    },set(ref,value){
-      if(ref.key.startsWith('VoiceUsage/session-')&&failureStages.has(value.stage))throw Error('synthetic private storage detail');
-      pending.push([ref,copy(value)]);
-    }});
-    for(const [ref,value]of pending){rows.set(ref.key,value);writes.push(ref.key);if(value.stage)operations.push('stored:'+value.stage);}
-    return result;
-  });serial=result.catch(()=>{});return result;}};
-  const service={namespace:'Brites_Growth_Sandbox',setup:async()=>copy(rows.get('State/control')),rateLimit:async()=>true,col(name){return {firestore:db,doc(id){const key=name+'/'+id;return {id,key,get:async()=>({exists:rows.has(key),data:()=>copy(rows.get(key))}),set:async(value,options)=>{rows.set(key,options?.merge?{...rows.get(key),...copy(value)}:copy(value));writes.push(key);}};}};}};
-  const fetch=async(url,init)=>{
-    calls.push({url,method:init.method});
-    if(url.endsWith('/hangup')){operations.push('provider:hangup');if(hangupThrows)throw Error('synthetic private hangup detail');return new Response(null,{status:hangupStatus});}
-    assert.equal(url,'https://api.openai.com/v1/realtime/calls');operations.push('provider:start');
-    return new Response(SDP,{status:201,headers:{Location:'/v1/realtime/calls/rtc_durable_synthetic','x-request-id':'req_durable_synthetic'}});
-  };
-  const handler=voice.createHandler({env,service,fetch,now:()=>AT,authorize:async()=>false,scheduleHangup:async row=>{operations.push('deadline');await service.col('VoiceDeadlines').doc(row.callId).set({...row,at:AT,state:'pending'});return true;}});
-  const request=body=>new Request('https://preview.test/api/concierge-voice',{method:'POST',headers:{Origin:'https://preview.test','Content-Type':'application/json'},body:JSON.stringify(body)});
-  const call=async body=>{const response=await handler(request(body));return {response,value:await response.json()};};
-  const start=async()=>{const capability=await call({action:'capabilities'});assert.equal(capability.response.status,200);return {token:capability.value.demoToken,...await call({action:'start',sdp:SDP,demoToken:capability.value.demoToken})};};
-  const attempt=()=>[...rows].find(([key])=>key.startsWith('VoiceUsage/session-')&&!key.endsWith('a'.repeat(64)))?.[1];
-  return {rows,operations,calls,writes,call,start,attempt};
-}
-function assertHeld(f,funding){
-  const native=f.rows.get(NATIVE),legacy=f.rows.get(LEGACY);
-  assert.equal(native.reservedCents,funding==='native'?600:500);assert.equal(native.calls,funding==='native'?6:5);assert.equal(native.spentCents,0);
-  assert.equal(native.allocatedCents,500);assert.equal(native.limitCents,1000);assert.equal(native.continuationCount,1);assert.equal(native.expiresAt,core.STOP_AT);assert.equal(native.accountedCalls,0);assert.equal(native.accountedAllocationCents,0);
-  assert.equal(legacy.reservedCents,funding==='legacy'?200:950);assert.equal(legacy.calls,funding==='legacy'?2:10);assert.equal(legacy.spentCents,0);assert.equal(legacy.allocationCapCents,1000);
-  assert.equal(f.rows.get('VoiceUsage/session-'+'a'.repeat(64)).originalHistory,'synthetic-preserve');
-}
-for(const funding of ['native','legacy']){
-  test(funding+' voice persists dispatch and accepted linkage before releasing SDP',async()=>{
-    const f=fixture({funding}),answer=await f.start();assert.equal(answer.response.status,200);assert.equal(answer.value.sdp,SDP);
-    assert.ok(f.operations.indexOf('stored:provider_requested')<f.operations.indexOf('provider:start'));
-    assert.ok(f.operations.indexOf('deadline')<f.operations.indexOf('stored:call_verified'));
-    assert.equal(f.attempt().stage,'call_verified');assert.equal(f.attempt().callId,'rtc_durable_synthetic');assert.equal(f.attempt().providerRequestId,'req_durable_synthetic');assert.equal(f.attempt().reconcile,'provider_evidence_required');assert.equal(f.calls.length,1);assertHeld(f,funding);
+const voice=require('../../netlify/functions/_britesConciergeVoice.js'),deadline=require('../../netlify/functions/_britesConciergeVoiceDeadline.js');
+const {fixture,AT,SDP,ENV:env,clone:copy}=require('./voice-fixture36.cjs');
+function durable(options={}){return fixture({callId:'rtc_durable_synthetic',requestId:'req_durable_synthetic',...options});}
+function attempt(f){return f.journal()[0];}
+function assertHistorical(f,before){assert.equal(f.moneyBytes(),before);assert.ok(f.db.writes.every(key=>! /^(VoiceUsage|VoiceAllowances|VoiceContinuations|Usage)\//.test(key)));}
+for(const reservedCents of [950,1000]){
+  test('native dispatch and accepted linkage are durable with '+reservedCents+' historical cents held',async()=>{
+    const f=durable({rows:[['VoiceUsage/preview-budget',{reservedCents,spentCents:0,calls:10,allocationCapCents:1000}]]}),before=f.moneyBytes(),answer=await f.start();assert.equal(answer.response.status,200);assert.equal(answer.value.sdp,SDP);
+    assert.ok(f.db.operations.indexOf('stored:provider_requested')<f.db.operations.indexOf('provider:start'));
+    assert.ok(f.db.operations.indexOf('deadline')<f.db.operations.indexOf('stored:call_verified'));
+    assert.equal(attempt(f).stage,'call_verified');assert.equal(attempt(f).callId,'rtc_durable_synthetic');assert.equal(attempt(f).providerRequestId,'req_durable_synthetic');assert.equal(f.calls.length,1);assertHistorical(f,before);
+    assert.doesNotMatch(JSON.stringify(attempt(f)),/allocated|reserved|spent|refund|funding|allowance|grant/i);
   });
-  test(funding+' dispatch-storage failure retains its reservation and cannot call the provider',async()=>{
-    const f=fixture({funding,failStages:['provider_requested']}),answer=await f.start();assert.equal(answer.response.status,503);assert.equal(answer.value.code,'VOICE_GUARD_UNAVAILABLE');assert.equal(answer.value.sdp,undefined);assert.equal(answer.value.stopToken,undefined);assert.equal(f.calls.length,0);assert.equal(f.attempt().stage,'reserved');assertHeld(f,funding);
-    assert.equal(f.rows.get('VoiceDiagnostics/last-start').code,'PROVENANCE_UNAVAILABLE');assert.doesNotMatch(JSON.stringify(answer.value),/storage|synthetic|secret|rtc_/);
-    const retry=await f.call({action:'start',sdp:SDP,demoToken:answer.token});assert.equal(retry.response.status,401);assert.equal(retry.value.code,'VOICE_SESSION_REUSED');assert.equal(f.calls.length,0);assertHeld(f,funding);
+  test('dispatch-journal failure cannot call the provider or change historical holds '+reservedCents,async()=>{
+    const f=durable({failStages:['provider_requested'],rows:[['VoiceUsage/preview-budget',{reservedCents,spentCents:0,calls:10}]]}),before=f.moneyBytes(),token=await f.token(),answer=await f.start(token);assert.equal(answer.response.status,503);assert.equal(answer.value.code,'VOICE_GUARD_UNAVAILABLE');assert.equal(answer.value.sdp,undefined);assert.equal(answer.value.stopToken,undefined);assert.equal(f.calls.length,0);assert.equal(attempt(f),undefined);assertHistorical(f,before);
+    assert.doesNotMatch(JSON.stringify(answer.value),/storage|PRIVATE_|secret|rtc_/);
+    const retry=await f.start(token);assert.equal(retry.response.status,503);assert.equal(f.calls.length,0);assertHistorical(f,before);
   });
-  for(const hangupStatus of [200,404,503])test(funding+' accepted-linkage storage failure with hangup'+hangupStatus+' withholds SDP and preserves its hold',async()=>{
-    const f=fixture({funding,failStages:['call_verified'],hangupStatus}),answer=await f.start();assert.equal(answer.response.status,503);assert.equal(answer.value.code,'VOICE_GUARD_UNAVAILABLE');assert.equal(answer.value.sdp,undefined);assert.equal(answer.value.stopToken,undefined);
+  for(const hangupStatus of [200,404,503])test('accepted-linkage storage failure with hangup'+hangupStatus+' withholds SDP and historical cents '+reservedCents,async()=>{
+    const f=durable({failStages:['call_verified'],hangupStatus,rows:[['VoiceUsage/preview-budget',{reservedCents,spentCents:0,calls:10}]]}),before=f.moneyBytes(),token=await f.token(),answer=await f.start(token);assert.equal(answer.response.status,503);assert.equal(answer.value.code,'VOICE_GUARD_UNAVAILABLE');assert.equal(answer.value.sdp,undefined);assert.equal(answer.value.stopToken,undefined);
     assert.deepEqual(f.calls.map(x=>x.url),['https://api.openai.com/v1/realtime/calls','https://api.openai.com/v1/realtime/calls/rtc_durable_synthetic/hangup']);
-    assert.equal(f.attempt().stage,'unknown');assert.equal(f.attempt().callId,'rtc_durable_synthetic');assert.equal(f.attempt().providerRequestId,'req_durable_synthetic');assert.equal(f.attempt().providerCode,'PROVENANCE_UNAVAILABLE');assert.equal(f.attempt().hangupConfirmed,hangupStatus!==503);
-    assert.equal(f.rows.get('VoiceDeadlines/rtc_durable_synthetic').state,hangupStatus===503?'pending':'closed');assertHeld(f,funding);assert.equal(f.rows.get('VoiceDiagnostics/last-start').stage,'verification');
+    assert.equal(attempt(f).stage,'unknown');assert.equal(attempt(f).callId,'rtc_durable_synthetic');assert.equal(attempt(f).providerRequestId,'req_durable_synthetic');assert.equal(attempt(f).providerCode,'PROVENANCE_UNAVAILABLE');assert.equal(attempt(f).hangupConfirmed,hangupStatus!==503);
+    assert.equal(f.rows.get('VoiceDeadlines/rtc_durable_synthetic').state,hangupStatus===503?'pending':'closed');assertHistorical(f,before);assert.equal(f.rows.get('VoiceDiagnostics/last-start').stage,'verification');
+    const retry=await f.start(token);assert.equal(retry.response.status,401);assert.equal(retry.value.code,'VOICE_SESSION_REUSED');assert.equal(f.counts.starts,1);assertHistorical(f,before);
   });
 }
-test('a missing reserved record prevents dispatch while preserving the independently held allocation',async()=>{
-  const f=fixture({missingDispatchRecord:true}),answer=await f.start();assert.equal(answer.response.status,503);assert.equal(f.calls.length,0);assert.equal(f.attempt().stage,'reserved');assertHeld(f,'native');
+test('missing journal outcome record closes an accepted call without releasing its SDP',async()=>{
+  const f=durable({missingOutcomeRecord:true}),before=f.moneyBytes(),answer=await f.start();assert.equal(answer.response.status,503);assert.equal(answer.value.sdp,undefined);assert.equal(f.counts.starts,1);assert.equal(f.counts.hangups,1);assert.equal(attempt(f).stage,'provider_requested');assert.equal(f.rows.get('VoiceDeadlines/rtc_durable_synthetic').state,'closed');assertHistorical(f,before);
 });
 for(const hangupThrows of [false,true])test('persistent accepted-provenance failure keeps exact deadline backup with '+(hangupThrows?'unknown transport':'503 cleanup'),async()=>{
-  const f=fixture({failStages:['call_verified','unknown'],hangupStatus:503,hangupThrows}),answer=await f.start();assert.equal(answer.response.status,503);assert.equal(answer.value.sdp,undefined);assert.equal(f.attempt().stage,'provider_requested');assert.equal(f.calls.length,2);
-  const row=f.rows.get('VoiceDeadlines/rtc_durable_synthetic');assert.equal(row.callId,'rtc_durable_synthetic');assert.equal(row.state,'pending');assert.equal(row.expiresAt,AT+voice.MAX_DURATION_MS);assertHeld(f,'native');assert.doesNotMatch(JSON.stringify(answer.value),/synthetic|private|rtc_|req_/);
+  const f=durable({failStages:['call_verified','unknown'],hangupStatus:503,hangupThrows}),before=f.moneyBytes(),answer=await f.start();assert.equal(answer.response.status,503);assert.equal(answer.value.sdp,undefined);assert.equal(attempt(f).stage,'provider_requested');assert.equal(f.calls.length,2);
+  const row=f.rows.get('VoiceDeadlines/rtc_durable_synthetic');assert.equal(row.callId,'rtc_durable_synthetic');assert.equal(row.state,'pending');assert.equal(row.expiresAt,AT+voice.MAX_DURATION_MS);assertHistorical(f,before);assert.doesNotMatch(JSON.stringify(answer.value),/synthetic|private|rtc_|req_/i);
 });
 
 function reaperFixture(){

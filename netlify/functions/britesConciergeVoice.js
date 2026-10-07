@@ -1,6 +1,6 @@
 import core from './_britesGrowth.js';
 import voice from './_britesConciergeVoice.js';
-const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY','OPENAI_API_KEY','BRITES_CONCIERGE_OPENAI_API_KEY','BRITES_CONCIERGE_REALTIME_ENABLED','BRITES_CONCIERGE_REALTIME_MODEL','BRITES_CONCIERGE_REALTIME_RESERVE_USD','BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO','BRITES_CONCIERGE_REALTIME_DEMO_USD_CAP'];
+const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY','OPENAI_API_KEY','BRITES_CONCIERGE_OPENAI_API_KEY','BRITES_CONCIERGE_REALTIME_ENABLED','BRITES_CONCIERGE_REALTIME_MODEL','BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO'];
 export default async(req)=>{
   const env=Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));
   env.OPENAI_API_KEY=env.BRITES_CONCIERGE_OPENAI_API_KEY||env.OPENAI_API_KEY;
@@ -18,7 +18,7 @@ export default async(req)=>{
       const ref=service.col('VoiceDeadlines').doc(callId);await ref.set({callId,expiresAt,state:'pending',at:Date.now()});
       const token=voice.stopToken(callId,expiresAt,env.OPENAI_API_KEY);
       const r=await fetch(new URL('/.netlify/functions/britesConciergeVoiceDeadline-background',req.url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token}),signal:AbortSignal.timeout(5000)});
-      // Provider allocation is made usable only after the recorded deadline and
+      // The provider connection is released only after the recorded deadline and
       // accepted background invocation. The independent minute reaper retries
       // pending deadlines if background delivery/execution later fails.
       return r.status===202;
