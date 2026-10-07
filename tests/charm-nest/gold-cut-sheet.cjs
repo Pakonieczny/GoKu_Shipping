@@ -2,6 +2,7 @@
 // list / release / take-off per metal, the leftover a cut saves (GC3's record, in the cut's own transaction), and readiness.
 //   node tests/charm-nest/gold-cut-sheet.cjs
 'use strict';
+const refuseNestedArrays = require('./_noNestedArrays.cjs');
 const assert = require('node:assert/strict'), vm = require('node:vm'), fs = require('node:fs');
 const Rose = require('../../charm-nest-rose'), Readiness = require('../../charm-nest-readiness');
 const Remnants = require('../../netlify/functions/_charmNestRemnants'), RoseStock = require('../../netlify/functions/_charmNestRoseStock');
@@ -41,7 +42,7 @@ const shape = (id, x, y, w, h) => ({ id, paths: [[[x, y], [x + w, y], [x + w, y 
   const snap = path => ({ id: path.split('/').at(-1), ref: ref(path), exists: store.has(path), data: () => clone(store.get(path)) });
   const query = (path, filters = [], order = null, limit = Infinity, after = null) => ({ doc: id => ref(path + '/' + id), where: (...f) => query(path, [...filters, f], order, limit, after), orderBy: (...o) => query(path, filters, o, limit, after), limit: n => query(path, filters, order, n, after), startAfter: n => query(path, filters, order, limit, n),
     get: async () => { let docs = [...store.keys()].filter(k => k.startsWith(path + '/') && !k.slice(path.length + 1).includes('/')).map(snap); docs = docs.filter(d => filters.every(([f, , v]) => d.data()[f] === v)); if (order) docs.sort((a, b) => (a.data()[order[0]] - b.data()[order[0]]) * (order[1] === 'desc' ? -1 : 1)); if (after !== null) docs = docs.filter(d => d.data()[order[0]] < after); docs = docs.slice(0, limit); return { docs, size: docs.length }; } });
-  const put = (r, v, merge) => { const old = merge ? store.get(r.path) || {} : {}; const out = { ...old }; for (const [k, x] of Object.entries(v)) out[k] = x && x.__inc ? (+old[k] || 0) + x.__inc : clone(x); store.set(r.path, out); };
+  const put = (r, v, merge) => { refuseNestedArrays(v, r.path); const old = merge ? store.get(r.path) || {} : {}; const out = { ...old }; for (const [k, x] of Object.entries(v)) out[k] = x && x.__inc ? (+old[k] || 0) + x.__inc : clone(x); store.set(r.path, out); };
   let serial = Promise.resolve(), writesMade = 0;
   const db = { runTransaction: fn => { const p = serial.then(async () => { const writes = []; let wrote = false; const r = await fn({ get: async x => { assert(!wrote, 'Firestore requires all reads before writes'); return x.get(); }, set: (x, v, o) => { wrote = true; writes.push(() => put(x, v, o && o.merge)); }, update: (x, v) => { wrote = true; writes.push(() => put(x, v, true)); }, delete: x => { wrote = true; writes.push(() => store.delete(x.path)); } }); writes.forEach(f => f()); writesMade += writes.length; return r; }); serial = p.catch(() => { }); return p; } };
   const FV = { serverTimestamp: () => 123456, increment: n => ({ __inc: n }) };

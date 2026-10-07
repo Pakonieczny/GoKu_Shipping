@@ -3,6 +3,7 @@
 // Offline: a fake Firestore that refuses a read after a write inside a transaction. No real data, no network.
 //   node tests/charm-nest/partial-sheets-data.cjs
 'use strict';
+const refuseNestedArrays = require('./_noNestedArrays.cjs');
 const assert = require('node:assert/strict');
 const Rose = require('../../charm-nest-rose'), Readiness = require('../../charm-nest-readiness'), P = require('../../charm-nest-partial');
 const Remnants = require('../../netlify/functions/_charmNestRemnants'), RoseStock = require('../../netlify/functions/_charmNestRoseStock');
@@ -55,7 +56,7 @@ const T = { areaMm2: 110, minMm: 9, maxMm: 14 }, SHEET = { sheetWMm: 100, sheetH
   const snap = path => ({ id: path.split('/').at(-1), ref: ref(path), exists: store.has(path), data: () => clone(store.get(path)) });
   const query = (path, filters = [], order = null, limit = Infinity) => ({ doc: id => ref(path + '/' + id), where: (...f) => query(path, [...filters, f], order, limit), orderBy: (...o) => query(path, filters, o, limit), limit: n => query(path, filters, order, n),
     get: async () => { let docs = [...store.keys()].filter(k => k.startsWith(path + '/') && !k.slice(path.length + 1).includes('/')).map(snap); docs = docs.filter(d => filters.every(([f, , v]) => d.data()[f] === v)); if (order) docs.sort((a, b) => (a.data()[order[0]] - b.data()[order[0]]) * (order[1] === 'desc' ? -1 : 1)); docs = docs.slice(0, limit); return { docs, size: docs.length }; } });
-  const put = (r, v, merge) => { const old = merge ? store.get(r.path) || {} : {}; const out = { ...old }; for (const [k, x] of Object.entries(v)) out[k] = x && x.__inc ? (+old[k] || 0) + x.__inc : clone(x); store.set(r.path, out); };
+  const put = (r, v, merge) => { refuseNestedArrays(v, r.path); const old = merge ? store.get(r.path) || {} : {}; const out = { ...old }; for (const [k, x] of Object.entries(v)) out[k] = x && x.__inc ? (+old[k] || 0) + x.__inc : clone(x); store.set(r.path, out); };
   let serial = Promise.resolve();
   const db = { runTransaction: fn => { const p = serial.then(async () => { const writes = []; let wrote = false; const r = await fn({ get: async x => { assert(!wrote, 'Firestore requires all reads before writes'); return x.get(); }, set: (x, v, o) => { wrote = true; writes.push(() => put(x, v, o && o.merge)); }, update: (x, v) => { wrote = true; writes.push(() => put(x, v, true)); }, delete: x => { wrote = true; writes.push(() => store.delete(x.path)); } }); writes.forEach(f => f()); return r; }); serial = p.catch(() => {}); return p; } };
   const FV = { serverTimestamp: () => 123456, increment: n => ({ __inc: n }) };

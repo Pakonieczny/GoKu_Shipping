@@ -1,6 +1,7 @@
 // GC3: the leftover sheet a green line makes is saved in the cut's own transaction, in its exact shape and real size, and listed.
 //   node tests/charm-nest/rose-leftover.cjs
 'use strict';
+const refuseNestedArrays = require('./_noNestedArrays.cjs');
 const assert = require('node:assert/strict');
 const Rose = require('../../charm-nest-rose'), Readiness = require('../../charm-nest-readiness');
 const Remnants = require('../../netlify/functions/_charmNestRemnants'), RoseStock = require('../../netlify/functions/_charmNestRoseStock');
@@ -40,7 +41,7 @@ const shoelace = rings => rings.reduce((s, ring) => s + Math.abs(ring.reduce((t,
   const snap = path => ({ id: path.split('/').at(-1), ref: ref(path), exists: store.has(path), data: () => clone(store.get(path)) });
   const query = (path, filters = [], order = null, limit = Infinity) => ({ doc: id => ref(path + '/' + id), where: (...f) => query(path, [...filters, f], order, limit), orderBy: (...o) => query(path, filters, o, limit), limit: n => query(path, filters, order, n),
     get: async () => { let docs = [...store.keys()].filter(k => k.startsWith(path + '/') && !k.slice(path.length + 1).includes('/')).map(snap); docs = docs.filter(d => filters.every(([f, , v]) => d.data()[f] === v)); if (order) docs.sort((a, b) => (a.data()[order[0]] - b.data()[order[0]]) * (order[1] === 'desc' ? -1 : 1)); docs = docs.slice(0, limit); return { docs, size: docs.length }; } });
-  const put = (r, v, merge) => { const old = merge ? store.get(r.path) || {} : {}; const out = { ...old }; for (const [k, x] of Object.entries(v)) out[k] = x && x.__inc ? (+old[k] || 0) + x.__inc : clone(x); store.set(r.path, out); };
+  const put = (r, v, merge) => { refuseNestedArrays(v, r.path); const old = merge ? store.get(r.path) || {} : {}; const out = { ...old }; for (const [k, x] of Object.entries(v)) out[k] = x && x.__inc ? (+old[k] || 0) + x.__inc : clone(x); store.set(r.path, out); };
   let serial = Promise.resolve();
   const db = { runTransaction: fn => { const p = serial.then(async () => { const writes = []; let wrote = false; const r = await fn({ get: async x => { assert(!wrote, 'Firestore requires all reads before writes'); return x.get(); }, set: (x, v, o) => { wrote = true; writes.push(() => put(x, v, o && o.merge)); }, update: (x, v) => { wrote = true; writes.push(() => put(x, v, true)); }, delete: x => { wrote = true; writes.push(() => store.delete(x.path)); } }); writes.forEach(f => f()); return r; }); serial = p.catch(() => {}); return p; } };
   const FV = { serverTimestamp: () => 123456, increment: n => ({ __inc: n }) };
@@ -61,7 +62,8 @@ const shoelace = rings => rings.reduce((s, ring) => s + Math.abs(ring.reduce((t,
   assert(r1, 'the cut saved its leftover sheet in the same transaction');
   assert.deepEqual([r1.metal, r1.code, r1.sheetId, r1.sheetName, r1.setId, r1.setName, r1.via, r1.by, r1.cutAt, r1.status, r1.revision], ['rose', 'RG', 'sheet-1', 'RG Sheet 1', 'set-2026-1', 'Set 1', 'nest', 'Pat Lee', one.cut.at, 'available', 1]);
   const g1 = leftover(JSON.parse(store.get(`Charm_Nest_Rose_Stock/${stockId}`).profileJson));
-  assert.deepEqual([r1.rings, r1.areaMm2, r1.bboxMm, r1.sheetWMm, r1.sheetHMm], [g1.rings, g1.areaMm2, g1.bboxMm, g1.sheetWMm, g1.sheetHMm], 'the record holds the outline of the stock the cut left');
+  assert.equal(typeof r1.ringsJson, 'string', 'the outline is stored as one string: Firestore refuses arrays inside arrays'); assert.equal(r1.rings, undefined);
+  assert.deepEqual([JSON.parse(r1.ringsJson), r1.areaMm2, r1.bboxMm, r1.sheetWMm, r1.sheetHMm], [g1.rings, g1.areaMm2, g1.bboxMm, g1.sheetWMm, g1.sheetHMm], 'the record holds the outline of the stock the cut left');
   assert.equal(store.get('Charm_Nest_Rev/remnants').n, 1, 'the counter moved with the record');
   const again = await api.roseRecordCut({ sheetId: 'sheet-1', stockId, revision: 0, planHash: one.cut.planHash }); assert(again.ok);
   assert.equal([...store.keys()].filter(k => k.startsWith('Charm_Nest_Remnants/')).length, 1, 'a repeated press saves one leftover, not two');
@@ -69,7 +71,7 @@ const shoelace = rings => rings.reduce((s, ring) => s + Math.abs(ring.reduce((t,
   const r1b = store.get(`Charm_Nest_Remnants/${stockId}-1`), r2 = store.get(`Charm_Nest_Remnants/${two.stock.id}-2`);
   assert.deepEqual([r1b.status, r1b.usedBySheetId, r1b.usedBySheetName, r1b.marked], ['used', 'sheet-2', 'RG Sheet 2', false], 'the leftover the second cut was made on is used');
   assert.deepEqual([r2.status, r2.via, r2.by], ['available', 'library', ''], 'the new one is available; nobody signed in is saved as none');
-  assert(r2.areaMm2 < r1.areaMm2 && r2.rings[0].length > r1.rings[0].length, 'the second leftover is smaller, with one more step in its edge');
+  assert(r2.areaMm2 < r1.areaMm2 && JSON.parse(r2.ringsJson)[0].length > JSON.parse(r1.ringsJson)[0].length, 'the second leftover is smaller, with one more step in its edge');
 
   // 3. the list: one query, newest first, available only by default; unchanged from the counter alone; a person's mark
   const list = await rem.ops.remnantList({});
@@ -95,7 +97,7 @@ const shoelace = rings => rings.reduce((s, ring) => s + Math.abs(ring.reduce((t,
   assert.deepEqual([bf.ok, bf.created], [true, 1], 'one stock needed it: the cut one with no saved leftover');
   const old2 = store.get('Charm_Nest_Remnants/rgs-old-1-2'), og = leftover(old);
   assert.deepEqual([old2.status, old2.backfilled, old2.sheetName, old2.setName, old2.by, old2.cutAt, old2.revision, old2.areaMm2], ['available', true, 'RG Sheet 1', 'Set 1', 'Ana', T, 2, og.areaMm2]);
-  assert.deepEqual(old2.rings, og.rings);
+  assert.deepEqual(JSON.parse(old2.ringsJson), og.rings);
   assert.equal(JSON.stringify(store.get(`Charm_Nest_Remnants/${stockId}-2`)), before, 'a leftover already saved is never touched');
   assert.equal(store.get('Charm_Nest_Remnants/rgs-fresh-1-0'), undefined, 'a sheet never cut has no leftover to save');
   assert.deepEqual(await rem.ops.remnantBackfill(), { ok: true, already: true, created: 0 }, 'done once, never again');

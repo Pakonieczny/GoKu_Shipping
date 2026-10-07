@@ -7,8 +7,8 @@
    the Nest tab's Cut Sheet or the Library's drag to Laser cutting): a cut can never exist without its leftover. The app never
    deletes one (the sandbox's reset clears only Sandbox_Charm_Nest_Remnants). The record holds what a card draws and says:
      metal, code ('RG'|'10K'|'14K'), sheetId, sheetName ('RG Sheet 1'), setId, setName ('Set 1'), fileBase, stockId, revision,
-     via ('nest'|'library'), cutAt, by (the signed-in person, '' = none), sheetWMm / sheetHMm (the real sheet), rings (the exact
-     outline, closed rings in real mm, top left origin, even-odd; the staircase of every green line included), areaMm2, bboxMm
+     via ('nest'|'library'), cutAt, by (the signed-in person, '' = none), sheetWMm / sheetHMm (the real sheet), ringsJson (the exact
+     outline as one JSON string, closed rings in real mm, top left origin, even-odd; the staircase of every green line included), areaMm2, bboxMm
      {x,y,w,h} (its real width and height), status 'available' | 'used' | 'discarded' (+ statusAt, statusBy; a leftover that a later
      cut was made on is 'used' with usedBySheetId / usedBySheetName / usedAt / usedBy; one too small to reuse starts 'discarded'
      with auto:true and a reason), marked:true when a person set the status, createdAt.
@@ -29,7 +29,7 @@ const Partial = require('../../charm-nest-partial');
 const COLL = 'Charm_Nest_Remnants';
 const MM = Rose.MM;
 const CODES = { rose: 'RG', gold10k: '10K', gold14k: '14K', gold: 'GF', silver: 'SS' };
-const FIELDS = ['v', 'metal', 'code', 'sheetId', 'sheetName', 'setId', 'setName', 'fileBase', 'stockId', 'revision', 'via', 'cutAt', 'by', 'sheetWMm', 'sheetHMm', 'rings', 'areaMm2', 'bboxMm',
+const FIELDS = ['v', 'metal', 'code', 'sheetId', 'sheetName', 'setId', 'setName', 'fileBase', 'stockId', 'revision', 'via', 'cutAt', 'by', 'sheetWMm', 'sheetHMm', 'ringsJson', 'areaMm2', 'bboxMm',
   'status', 'statusAt', 'statusBy', 'marked', 'auto', 'reason', 'usedBySheetId', 'usedBySheetName', 'usedAt', 'usedBy', 'createdAt',
   'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy'];
 const STATUSES = ['available', 'used', 'discarded'];   // what a person can mark; 'inUse' is only ever set by a claim (roseClaim / partialClaim) and cleared by a release or the next cut
@@ -38,6 +38,13 @@ const STOCKS = 'Charm_Nest_Rose_Stock', POLICY_DEFAULT = { mode: 'auto', wMm: 10
 const NOT_HELD = { inUseBySheetId: null, inUseBySheetName: null, inUseAt: null, inUseBy: null };   // what a record says when no sheet holds it
 const okId = s => typeof s === 'string' && /^[\w-]{4,100}$/.test(s);
 const person = s => { const t = String(s == null ? '' : s).trim().slice(0, 80); return /^operator$/i.test(t) ? '' : t; };
+/* Firestore refuses an array inside an array ("3 INVALID_ARGUMENT: Nested arrays are not allowed"), and an outline is rings of [x, y] points: it is stored as ONE string
+   (ringsJson) and every reader unpacks it (unpackRings). Older fixtures that carried `rings` as plain arrays still read. */
+const packRings = rings => JSON.stringify(Array.isArray(rings) ? rings : []);
+const unpackRings = d => {
+  if (d && typeof d.ringsJson === 'string') { try { const r = JSON.parse(d.ringsJson); return Array.isArray(r) ? r : []; } catch (_) { return []; } }
+  return d && Array.isArray(d.rings) ? d.rings : [];
+};
 
 // as charm-nest-rose.js compact: no repeated point, no middle point of three on one axis-parallel line
 function compact(points) {
@@ -85,7 +92,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
   // the counter's value, and whether the earlier cuts' leftovers were saved (remnantBackfill); null = the sandbox, which keeps no counter
   const revState = async () => { const ref = revDoc && revDoc(); if (!ref) return null; const s = await ref.get(), d = s.exists ? s.data() || {} : {}; return { rev: String(Number(d.n) || 0), backfilled: !!d.backfilledAt, reconciled: !!d.reconciledAt }; };
   const ms = t => (t && typeof t.toMillis === 'function' ? t.toMillis() : typeof t === 'number' ? t : null);
-  const clean = (id, d) => { const o = { id }; for (const k of FIELDS) if (d[k] !== undefined) o[k] = d[k]; o.createdAt = ms(d.createdAt); return o; };
+  const clean = (id, d) => { const o = { id }; for (const k of FIELDS) if (d[k] !== undefined) o[k] = d[k]; delete o.ringsJson; o.rings = unpackRings(d); o.createdAt = ms(d.createdAt); return o; };
 
   /* What a cut teaches about the metal's regular piece, from the sheet it was made on (already in the cut's transaction: no read): for every placed piece its
      footprint (silhouette, grown by half a POSITIVE clearance on every side: the page's inflatedArea) and the shorter / longer side of its box, in mm. Added
@@ -116,7 +123,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const rec = {
       v: 1, metal: metalKey, code: CODES[metalKey] || '', sheetId, sheetName, setId: sheet.setId || null, setName, fileBase: String(sheet.fileBase || sheet.folder || sheetId).slice(0, 120),
       stockId: stock.id, revision, via: via === 'library' ? 'library' : 'nest', cutAt: at, by,
-      sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, rings: g.rings, areaMm2: g.areaMm2, bboxMm: g.bboxMm,
+      sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, ringsJson: packRings(g.rings), areaMm2: g.areaMm2, bboxMm: g.bboxMm,
       status: usable ? 'available' : 'discarded', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp(),
       lastUsedAt: at, lastUsedBy: by, lastUsedSheet: sheetName, lastUsedSheetId: sheetId, ...NOT_HELD   // (the last use of a new leftover is the cut that made it)
     };
@@ -133,7 +140,8 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     // the metal's regular piece (production only; one small merge, increments only)
     const sr = statsRef && statsWrite && statsWrite() ? statsRef() : null, ps = sr ? pieceStats(sheet) : null;
     if (ps && ps.n > 0) tx.set(sr, { [`${metalKey}_n`]: FV.increment(ps.n), [`${metalKey}_areaMm2`]: FV.increment(r2(ps.areaMm2)), [`${metalKey}_minMm`]: FV.increment(r2(ps.minMm)), [`${metalKey}_maxMm`]: FV.increment(r2(ps.maxMm)), at: Date.now() }, { merge: true });
-    return { ...rec, id, createdAt: null };
+    const { ringsJson, ...rest } = rec;   // (the caller gets the outline as rings, the document keeps the string)
+    return { ...rest, rings: g.rings, id, createdAt: null };
   }
 
   /* remnantList { scope: 'available' (default) | 'all', limit (<= 150, default 100 / 60), before (scope all: the cutAt to read older than), ifRev }
@@ -200,7 +208,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       const rec = {
         v: 1, backfilled: true, metal: metalKey, code: CODES[metalKey] || '', sheetId, sheetName: String((sheetLabel && sheetLabel(sd.id || sd.metal ? sd : null, c.fileBase)) || c.fileBase || x.lastCutLabel || sheetId).slice(0, 80),
         setId: sd.setId || null, setName: sd.setId ? String((setLabel && setLabel(sd.setId)) || (sd.setSeq ? 'Set ' + sd.setSeq : '')).slice(0, 40) : '', fileBase: String(c.fileBase || sd.fileBase || sheetId).slice(0, 120),
-        stockId: x.id, revision: +x.revision, via: '', cutAt: at, by: person(c.by || x.lastCutBy), sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, rings: g.rings, areaMm2: g.areaMm2, bboxMm: g.bboxMm,
+        stockId: x.id, revision: +x.revision, via: '', cutAt: at, by: person(c.by || x.lastCutBy), sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, ringsJson: packRings(g.rings), areaMm2: g.areaMm2, bboxMm: g.bboxMm,
         status: !usable ? 'discarded' : x.owner ? 'inUse' : 'available', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp(),
         lastUsedAt: at, lastUsedBy: person(c.by || x.lastCutBy), lastUsedSheet: '', lastUsedSheetId: sheetId, ...NOT_HELD
       };
@@ -291,7 +299,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
   function card(id, d, typical) {
     const bb = d.bboxMm || { x: 0, y: 0, w: 0, h: 0 }, usedAt = d.lastUsedAt != null ? +d.lastUsedAt : (+d.cutAt || null);
     const out = {
-      id, metal: d.metal || 'rose', code: d.code || '', status: d.status || 'available', outline: d.rings || [], sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm, bboxMm: bb, wMm: bb.w, hMm: bb.h, areaMm2: d.areaMm2,
+      id, metal: d.metal || 'rose', code: d.code || '', status: d.status || 'available', outline: unpackRings(d), sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm, bboxMm: bb, wMm: bb.w, hMm: bb.h, areaMm2: d.areaMm2,
       sourceSheet: d.sheetName || '', sourceSet: d.setName || '', sourceSheetId: d.sheetId || '', cutAt: +d.cutAt || null, cutBy: d.by || '',
       lastUsedAt: usedAt, lastUsedBy: d.lastUsedBy != null ? d.lastUsedBy : (d.by || ''), lastUsedSheet: d.lastUsedSheet != null ? d.lastUsedSheet : (d.sheetName || ''), lastUsedSheetId: d.lastUsedSheetId != null ? d.lastUsedSheetId : (d.sheetId || ''),
       stockId: d.stockId, revision: d.revision, wPt: Number.isFinite(+d.sheetWMm) ? +(d.sheetWMm / MM).toFixed(3) : null, hPt: Number.isFinite(+d.sheetHMm) ? +(d.sheetHMm / MM).toFixed(3) : null, estimate: null
