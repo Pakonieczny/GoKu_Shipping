@@ -159,7 +159,10 @@ function fakeAdmin(st, base) {
      that another commit changed before then makes it run again (optimistic, up to five more times: st.txRetries counts them),
      and a read-only one sees the documents as they were when it began. */
   const isQuery = x => typeof x.orderBy === 'function';
-  const db = { collection, batch() { const ops = []; return { set: (ref, data, o) => ops.push(() => ref.set(data, o)), update: (ref, data) => ops.push(() => ref.update(data)), delete: ref => ops.push(() => ref.delete()), async commit() { if (st.tick) await tick('commit'); await Promise.all(ops.map(o => o())); } }; }, async getAll(...refs) { /* a trailing { fieldMask } is read options, not a document */ if (refs.length && typeof refs[refs.length - 1].get !== 'function') refs.pop(); return Promise.all(refs.map(r => r.get())); },
+  const db = { collection, batch() { const ops = []; return { set: (ref, data, o) => ops.push(() => ref.set(data, o)), update: (ref, data) => ops.push(() => ref.update(data)), delete: ref => ops.push(() => ref.delete()), async commit() { if (st.tick) await tick('commit'); await Promise.all(ops.map(o => o())); } }; }, async getAll(...refs) { /* a trailing { fieldMask } is read options, not a document */ let opts = null; if (refs.length && typeof refs[refs.length - 1].get !== 'function') opts = refs.pop(); const snaps = await Promise.all(refs.map(r => r.get())); if (!st.strictMasks) return snaps;
+      /* st.strictMasks (opt-in): a read with a fieldMask returns only those fields, as Firestore does, and st.readBytes counts the bytes of what came back */
+      const mask = opts && Array.isArray(opts.fieldMask) ? new Set(opts.fieldMask) : null; st.readBytes = st.readBytes || 0;
+      return snaps.map(sn => { if (!sn.exists) return sn; const whole = sn.data(), data = mask ? Object.fromEntries(Object.entries(whole).filter(([k]) => mask.has(k))) : whole; st.readBytes += JSON.stringify(data).length; return mask ? { ...sn, data: () => ({ ...data }), get: k => data[k] } : sn; }); },
     async runTransaction(fn, opts) {
       if (!st.atomic) { const t = { get: ref => ref.get(), getAll: (...refs) => db.getAll(...refs), set: (ref, data, o) => ref.set(data, o), update: (ref, data) => ref.update(data), delete: ref => ref.delete() }; return fn(t); }
       const readOnly = !!(opts && opts.readOnly);

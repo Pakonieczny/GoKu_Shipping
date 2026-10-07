@@ -366,8 +366,11 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
       // We only need the active ones — flipping already-inactive listings
       // again is wasted writes. Filter by active==true to keep the read
       // set bounded.
+      // Cost: only each listing's id and reference are used below, never its
+      // fields (a listing carries its whole description and image list).
       const allActiveSnap = await db.collection(LISTINGS_COLL)
         .where("active", "==", true)
+        .select()
         .get();
       const stale = [];
       allActiveSnap.forEach(doc => { if (!seenIds.has(doc.id)) stale.push(doc.ref); });

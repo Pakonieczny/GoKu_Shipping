@@ -60,8 +60,74 @@ let _token = null, _tokenExp = 0;
 /* Cache for the site-wide "global" feed so we don't re-read every approved
    review from Firestore on each modal open. Netlify keeps the function warm,
    so most calls hit this in-memory cache; it self-refreshes every 10 min. */
-let _globalCache = null, _globalCacheExp = 0;
+let _globalCache = null, _globalCacheExp = 0, _globalFlight = null;
 const GLOBAL_TTL_MS = 10 * 60 * 1000;
+
+/* Cost (Firebase emergency, FC18): the storefront asks for a product's reviews on EVERY product page view and the answer was never kept, so
+   every shopper, crawler or bot paid one read per approved review (up to 500) plus the summary, each time. The approved reviews of a product
+   change only when the owner moderates or imports, so a short per-instance copy changes nothing a shopper can see (a newly approved review
+   shows at most LIST_TTL_MS later; the instance that moderated forgets at once). One entry per product holds the reviews in the order
+   Firestore returned them (the first LIST_FETCH_LIMIT), so any ?limit= is a slice of it and the first 500 are exactly what limit=500 returned.
+   Concurrent misses for one product share one read. Products that do not exist (what a bot guessing handles asks for) live in their own small
+   map so they can never push real products out. */
+const LIST_TTL_MS = 120 * 1000, LIST_FETCH_LIMIT = 1000;
+const LIST_MAX_ENTRIES = 200, LIST_MAX_BYTES = 40 * 1024 * 1024, LIST_MAX_MISSING = 500;
+const _listCache = new Map(), _listMissing = new Map(), _listFlight = new Map();
+let _listBytes = 0;
+function listForget(handle) {
+  if (handle == null) { _listCache.clear(); _listMissing.clear(); _listBytes = 0; return; }
+  const e = _listCache.get(handle);
+  if (e) { _listBytes -= e.bytes; _listCache.delete(handle); }
+  _listMissing.delete(handle);
+}
+function listKeep(handle, entry) {
+  if (!entry.reviews.length && !entry.exists) {
+    _listMissing.set(handle, entry);
+    while (_listMissing.size > LIST_MAX_MISSING) _listMissing.delete(_listMissing.keys().next().value);
+    return;
+  }
+  listForget(handle);
+  _listCache.set(handle, entry); _listBytes += entry.bytes;
+  while (_listCache.size > LIST_MAX_ENTRIES || _listBytes > LIST_MAX_BYTES) {
+    const oldest = _listCache.keys().next().value;
+    if (oldest === handle) break;
+    listForget(oldest);
+  }
+}
+/* The approved reviews of one product as the shopper sees them, from the copy or from Firestore (only the fields the answer carries: the
+   reviewer's email and customer id stay out of the read as well as out of the answer). */
+async function loadList(F, handle) {
+  const now = Date.now();
+  const hit = _listCache.get(handle) || _listMissing.get(handle);
+  if (hit && now < hit.exp) return hit;
+  if (_listFlight.has(handle)) return _listFlight.get(handle);
+  const flight = (async () => {
+    const ref = F.db.collection("Brites_Reviews").doc(handle);
+    const [sumDoc, snap] = await Promise.all([
+      ref.get(),
+      ref.collection("items").where("s", "==", "approved").select("r", "n", "d", "b", "v", "badge", "pics").limit(LIST_FETCH_LIMIT).get()
+    ]);
+    const reviews = [];
+    snap.forEach(doc => {
+      const d = doc.data();
+      reviews.push({
+        id: doc.id, r: clampRating(d.r), n: d.n, d: d.d || "", b: d.b,
+        v: d.v ? 1 : 0, badge: d.badge || (d.v ? "Verified Buyer" : ""),
+        pics: d.pics || []
+      });
+    });
+    const entry = {
+      exp: Date.now() + LIST_TTL_MS, exists: sumDoc.exists, reviews,
+      summary: sumDoc.exists ? sumDoc.data() : { count: 0, avg: 0, dist: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 } },
+      bytes: 0
+    };
+    entry.bytes = JSON.stringify(reviews).length;
+    listKeep(handle, entry);
+    return entry;
+  })();
+  _listFlight.set(handle, flight);
+  try { return await flight; } finally { _listFlight.delete(handle); }
+}
 
 async function getToken() {
   if (_token && Date.now() < _tokenExp - 60000) return _token;
@@ -144,7 +210,7 @@ function escapeQ(s) { return String(s || "").replace(/["\\]/g, "\\$&"); }
 async function recomputeSummary(handle) {
   const F = fb(); if (!F) return null;
   const snap = await F.db.collection("Brites_Reviews").doc(handle).collection("items")
-    .where("s", "==", "approved").get();
+    .where("s", "==", "approved").select("r").get();
   let count = 0, sum = 0; const dist = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
   snap.forEach(doc => {
     const d = doc.data(); const r = clampRating(d.r);
@@ -154,6 +220,7 @@ async function recomputeSummary(handle) {
   const avg = count ? Math.round((sum / count) * 100) / 100 : 0;
   await F.db.collection("Brites_Reviews").doc(handle).set(
     { count, avg, dist, updated: F.FV.serverTimestamp() }, { merge: true });
+  listForget(handle); _globalCache = null; _globalCacheExp = 0;   // the reviews of this product just changed: this instance serves the new ones at once
   return { count, avg, dist };
 }
 
@@ -245,30 +312,22 @@ exports.handler = async function (event) {
       case "list": {
         const handle = clean(q.handle || body.handle);
         if (!handle) return reply(400, { error: "handle required" });
+        // A review handle is a Firestore document id: refuse what can never be one before any read is made.
+        if (handle.length > 300 || /[\/\u0000-\u001f]/.test(handle) || handle === "." || handle === ".." || /^__.*__$/.test(handle)) return reply(400, { error: "invalid handle" });
         // Default to returning ALL approved reviews for the product (max ~100 in
         // practice). Cap generously. The client paginates with "Show more".
         const limit = Math.min(parseInt(q.limit || body.limit || 500, 10) || 500, 1000);
         const sort = (q.sort || body.sort || "recent");
 
-        const sumDoc = await F.db.collection("Brites_Reviews").doc(handle).get();
-        const summary = sumDoc.exists ? sumDoc.data() : { count: 0, avg: 0, dist: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 } };
-
-        // IMPORTANT: query with a SINGLE equality filter only (no orderBy) so it
+        // IMPORTANT: the reviews come from a query with a SINGLE equality filter only (no orderBy) so it
         // uses the automatic single-field index — no composite index to create.
         // Sorting is done in memory below (a product has at most a few hundred
         // reviews, so this is cheap and avoids a Firestore index dependency).
-        const snap = await F.db.collection("Brites_Reviews").doc(handle).collection("items")
-          .where("s", "==", "approved").limit(limit).get();
+        // (loadList keeps the answer LIST_TTL_MS per instance: see the note above it.)
+        const entry = await loadList(F, handle);
+        const summary = entry.summary;
 
-        let reviews = [];
-        snap.forEach(doc => {
-          const d = doc.data();
-          reviews.push({
-            id: doc.id, r: clampRating(d.r), n: d.n, d: d.d || "", b: d.b,
-            v: d.v ? 1 : 0, badge: d.badge || (d.v ? "Verified Buyer" : ""),
-            pics: d.pics || []
-          });
-        });
+        const reviews = entry.reviews.slice(0, limit).map(r => Object.assign({}, r));
         // In-memory sort: recent = newest date first; rating = highest first, then newest.
         if (sort === "rating") reviews.sort((a, b) => (b.r - a.r) || (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
         else reviews.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
@@ -342,7 +401,7 @@ exports.handler = async function (event) {
 
       /* ---------- ADMIN: list pending (moderation queue) ---------- */
       case "pending": {        const limit = Math.min(parseInt(q.limit || 100, 10) || 100, 500);
-        const snap = await F.db.collectionGroup("items").where("s", "==", "pending").limit(limit).get();
+        const snap = await F.db.collectionGroup("items").where("s", "==", "pending").select("r", "n", "d", "b", "badge").limit(limit).get();
         const out = [];
         snap.forEach(doc => {
           const d = doc.data();
@@ -408,35 +467,40 @@ exports.handler = async function (event) {
         const now = Date.now();
         if (_globalCache && now < _globalCacheExp) return reply(200, _globalCache);
 
-        // Unfiltered collection-group read so we DON'T need a custom
-        // collection-group index on the status field (a filtered
-        // collectionGroup(...).where("s","==",...) would require one). We
-        // filter to "approved" in memory; imported reviews are all approved,
-        // so this reads essentially the same volume.
-        const snap = await F.db.collectionGroup("items").get();
-        const reviews = [];
-        const dist = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
-        let sum = 0;
-        snap.forEach(doc => {
-          const d = doc.data();
-          if (d.s && d.s !== "approved") return;   // skip pending / rejected
-          const r = clampRating(d.r);
-          if (!r) return;
-          // parent path: Brites_Reviews/{handle}/items/{id}
-          const h = doc.ref.parent.parent ? doc.ref.parent.parent.id : "";
-          // email/PII never included — only public review fields go over the wire.
-          reviews.push({ r: r, n: d.n || "", d: d.d || "", b: d.b || "", v: d.v ? 1 : 0, h: h });
-          dist[String(r)]++; sum += r;
-        });
-        const count = reviews.length;
-        const avg = count ? Math.round((sum / count) * 100) / 100 : 0;
-        // newest first (in-memory; no composite index needed)
-        reviews.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+        // Concurrent misses share one read of the whole collection group (it was one read per caller).
+        if (!_globalFlight) _globalFlight = (async () => {
+          // Unfiltered collection-group read so we DON'T need a custom
+          // collection-group index on the status field (a filtered
+          // collectionGroup(...).where("s","==",...) would require one). We
+          // filter to "approved" in memory; imported reviews are all approved,
+          // so this reads essentially the same volume. Only the public fields are
+          // read (the field mask also keeps email / customerId off the wire from Firestore).
+          const snap = await F.db.collectionGroup("items").select("s", "r", "n", "d", "b", "v").get();
+          const reviews = [];
+          const dist = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
+          let sum = 0;
+          snap.forEach(doc => {
+            const d = doc.data();
+            if (d.s && d.s !== "approved") return;   // skip pending / rejected
+            const r = clampRating(d.r);
+            if (!r) return;
+            // parent path: Brites_Reviews/{handle}/items/{id}
+            const h = doc.ref.parent.parent ? doc.ref.parent.parent.id : "";
+            // email/PII never included — only public review fields go over the wire.
+            reviews.push({ r: r, n: d.n || "", d: d.d || "", b: d.b || "", v: d.v ? 1 : 0, h: h });
+            dist[String(r)]++; sum += r;
+          });
+          const count = reviews.length;
+          const avg = count ? Math.round((sum / count) * 100) / 100 : 0;
+          // newest first (in-memory; no composite index needed)
+          reviews.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
 
-        const payload = { summary: { count: count, avg: avg, dist: dist }, reviews: reviews };
-        _globalCache = payload;
-        _globalCacheExp = now + GLOBAL_TTL_MS;
-        return reply(200, payload);
+          const payload = { summary: { count: count, avg: avg, dist: dist }, reviews: reviews };
+          _globalCache = payload;
+          _globalCacheExp = Date.now() + GLOBAL_TTL_MS;
+          return payload;
+        })().finally(() => { _globalFlight = null; });
+        return reply(200, await _globalFlight);
       }
 
       default:

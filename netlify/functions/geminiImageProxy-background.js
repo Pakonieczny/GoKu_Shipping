@@ -14375,13 +14375,35 @@ async function _handlerImpl(event) {
       // A 250-document first page can be saturated by failed jobs forever,
       // hiding later live jobs from the scheduled collector. Page the whole
       // uncollected set, with a finite ceiling for a single sweep invocation.
+      //
+      // COST: a job's `sets` field holds its prompts and manifests (tens of KB), and finished-but-never-collected
+      // history (failed, cancelled, expired, or replaced by a retry) stays in this query for good, so reading `sets`
+      // for every one of them every ten minutes was the next biggest cost. The page asks for the small routing
+      // fields only; `sets` is then read, by field mask, for exactly the records that use it below: a job that is
+      // not finished, one with a saved result, repair or restart pending, one waiting for a retry, or a failure
+      // that may be marked for retry. A replaced job (retryBatchName) and a finished job nothing waits on never
+      // use it. A record that already carries `sets` is used as it comes.
+      const lightFields = sweepFields.filter((k) => k !== "sets");
+      const usesSets = (r) => !r.retryBatchName && !r.collected && (!isFinal(r.state) || r.collectionPending ||
+        r.repairPending || r.retryRequested || !!r.stallCancelRequestedAt ||
+        normState(r.state) === "JOB_STATE_FAILED" && quotaFailure(r.providerError));
       let cursor = null;
       while (open.length < 2000) {
         let query = db.collection(BATCHES_COLL).where("collected", "==", false)
-          .orderBy(admin.firestore.FieldPath.documentId()).limit(50).select(...sweepFields);
+          .orderBy(admin.firestore.FieldPath.documentId()).limit(50).select(...lightFields);
         if (cursor) query = query.startAfter(cursor);
         const page = await query.get();
-        page.forEach((d) => open.push(compact(d.data())));
+        const records = [], wanted = [];
+        page.forEach((d) => {
+          const rec = d.data();
+          records.push(rec);
+          if (rec.sets === undefined && d.ref && usesSets(rec)) wanted.push({ ref: d.ref, rec });
+        });
+        if (wanted.length) {
+          const snaps = await db.getAll(...wanted.map((w) => w.ref), { fieldMask: ["sets"] });
+          snaps.forEach((snap, i) => { wanted[i].rec.sets = snap.exists ? (snap.data() || {}).sets : undefined; });
+        }
+        records.forEach((rec) => open.push(compact(rec)));
         if (page.size < 50) break;
         cursor = page.docs[page.docs.length - 1].id;
       }
