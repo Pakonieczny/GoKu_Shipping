@@ -38,6 +38,18 @@
   }
   function validateToolArguments(value,name='find_jewellery'){
     if(!value||typeof value!=='object'||Array.isArray(value))return null;
+    if(name==='read_storefront_services')return Object.keys(value).length===0?{}:null;
+    if(name==='control_storefront'){
+      const types=['search','sort','filter','open','highlight','zoom','scroll','bag','checkout','gift','customize'];
+      if(Object.keys(value).some(k=>!['type','query','sort','filter','handle','section'].includes(k))||!types.includes(value.type))return null;
+      if(Object.hasOwn(value,'query')&&(typeof value.query!=='string'||!value.query.trim()||value.query.length>180||/[\u0000-\u001f\u007f]/.test(value.query)))return null;
+      if(Object.hasOwn(value,'handle')&&(typeof value.handle!=='string'||value.handle.length>180||!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.handle)))return null;
+      if(Object.hasOwn(value,'sort')&&!['featured','price-asc','price-desc','title-asc','title-desc'].includes(value.sort))return null;
+      if(Object.hasOwn(value,'filter')&&!['all','necklaces','earrings','bracelets','rings','charms','available'].includes(value.filter))return null;
+      if(Object.hasOwn(value,'section')&&!['price','details','options','story','shipping','gifts','customize','catalogue','image','bag','checkout','offers'].includes(value.section))return null;
+      if(value.type==='search'&&!value.query||value.type==='sort'&&!value.sort||value.type==='filter'&&!value.filter||['open','zoom'].includes(value.type)&&!value.handle||['highlight','scroll'].includes(value.type)&&!value.section)return null;
+      return {...value,...(value.query?{query:value.query.trim()}:{})};
+    }
     if(name==='set_avatar_performance'){
       if(Object.keys(value).length!==4||Object.keys(value).some(k=>!['mood','gesture','intensity','durationMs'].includes(k))||!['calm','curious','warm','celebrate','reassuring','appreciated'].includes(value.mood)||!['none','greet','acknowledge','focus','explain','present','reassure','confirm'].includes(value.gesture)||!Number.isFinite(value.intensity)||value.intensity<0||value.intensity>1||!Number.isInteger(value.durationMs)||value.durationMs<400||value.durationMs>2500)return null;
       return {mood:value.mood,gesture:value.gesture,intensity:value.intensity,durationMs:value.durationMs};
@@ -57,7 +69,9 @@
     if(!value||typeof value!=='object'||Array.isArray(value))return null;
     const handle=v=>typeof v==='string'&&v.length<=180&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v)?v:'';
     const pieces=(Array.isArray(value.displayedPieces)?value.displayedPieces:[]).slice(0,6).filter(p=>p&&/^gid:\/\/shopify\/Product\/[1-9][0-9]{0,19}$/.test(p.id||'')&&handle(p.handle)).map(p=>({id:p.id,handle:handle(p.handle),title:String(p.title||'').replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,180)}));
-    return {pageKind:['home','product','collection','other'].includes(value.pageKind)?value.pageKind:'other',currentHandle:handle(value.currentHandle),focusedHandle:pieces.some(p=>p.handle===value.focusedHandle)?value.focusedHandle:'',selectedHandle:pieces.some(p=>p.handle===value.selectedHandle)?value.selectedHandle:'',displayedPieces:pieces,...(['none','selection-shown','options-shown','review-ready','cart-confirmed','needs-help'].includes(value.progress)?{progress:value.progress}:{})};
+    const visible=(Array.isArray(value.visiblePieces)?value.visiblePieces:[]).slice(0,24).filter(p=>p&&/^gid:\/\/shopify\/Product\/[1-9][0-9]{0,19}$/.test(p.id||'')&&handle(p.handle)).map(p=>({id:p.id,handle:handle(p.handle),title:String(p.title||'').replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,180)}));
+    const identities=[...pieces,...visible],safeText=v=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,180):'';
+    return {pageKind:['home','product','collection','bag','checkout','other'].includes(value.pageKind)?value.pageKind:'other',currentHandle:handle(value.currentHandle),focusedHandle:identities.some(p=>p.handle===value.focusedHandle)?value.focusedHandle:'',selectedHandle:identities.some(p=>p.handle===value.selectedHandle)?value.selectedHandle:'',displayedPieces:pieces,...(Array.isArray(value.visiblePieces)?{visiblePieces:visible}:{}),...(Number.isSafeInteger(value.contextRevision)&&value.contextRevision>=0?{contextRevision:value.contextRevision}:{}),...(typeof value.search==='string'?{search:safeText(value.search)}:{}),...(['featured','price-asc','price-desc','title-asc','title-desc'].includes(value.sort)?{sort:value.sort}:{}),...(['all','necklaces','earrings','bracelets','rings','charms','available'].includes(value.filter)?{filter:value.filter}:{}),...(typeof value.loading==='boolean'?{loading:value.loading}:{}),...(['price','details','options','story','shipping','gifts','customize','catalogue','image','bag','checkout','offers'].includes(value.activeSection)?{activeSection:value.activeSection}:{}),...(['none','selection-shown','options-shown','review-ready','cart-confirmed','needs-help'].includes(value.progress)?{progress:value.progress}:{})};
   }
   const MESSAGES=Object.freeze({
     unavailable:'OpenAI voice could not connect. You can still type.',
@@ -136,6 +150,10 @@
     }
     function requestResponse(response={},version=turnVersion,inputItemId=activeInputItemId){
       if(version!==turnVersion||inputSpeaking||state==='idle'||state==='closing')return false;
+      // Pointer awareness stays local. Send one fresh bounded page snapshot
+      // when an actual committed conversational response is requested, not for
+      // every card hover or mouse frame. Context still cannot create authority.
+      try{if(typeof options.getContext==='function')updateContext(options.getContext());}catch{}
       const requestId='voice-'+epoch+'-'+version+'-'+(++responseRequest),binding={turnVersion:version,inputItemId,responseId:'',toolsDisabled:response.tool_choice==='none'};
       remember(issuedResponses,requestId,binding);
       const sent=send({type:'response.create',response:{...response,metadata:{brites_voice_request:requestId,brites_input_item:inputItemId,brites_turn_version:String(version)}}});
@@ -313,26 +331,27 @@
       const performance=performanceResponses.get(responseId);if(performance)performance.otherTool=true;
       const version=responseId?(bound?.turnVersion??null):turnVersion,controller=new rt.AbortController();toolControllers.add(controller);settleState();let result,checkedRead=false;
       try{
-        if(version===turnVersion){turnTools++;if(event.name==='prepare_jewellery_action')turnChainClosed=true;if(turnTools>3)throw Error('Turn tool limit reached.');}
+        const actionTool=['prepare_jewellery_action','control_storefront'].includes(event.name);
+        if(version===turnVersion){turnTools++;if(actionTool)turnChainClosed=true;if(turnTools>3)throw Error('Turn tool limit reached.');}
         let args;try{args=validateToolArguments(JSON.parse(event.arguments||''),event.name);}catch{}
-        if(bound?.toolsDisabled||!['find_jewellery','inspect_jewellery','prepare_jewellery_action'].includes(event.name)||!args||typeof options.onTool!=='function'||version!==turnVersion||inputSpeaking)throw Error('Tool unavailable.');
+        if(bound?.toolsDisabled||!['find_jewellery','inspect_jewellery','prepare_jewellery_action','control_storefront','read_storefront_services'].includes(event.name)||!args||typeof options.onTool!=='function'||version!==turnVersion||inputSpeaking)throw Error('Tool unavailable.');
         // A prepared control must belong to our client-created response whose
         // exact per-turn metadata was echoed by the provider. Missing metadata
         // cannot gain authority from timing or a later transcription. The host
         // still checks the actual final shopper words before any preparation.
-        if(event.name==='prepare_jewellery_action'&&(!bound||bound.turnVersion!==turnVersion||!bound.inputItemId||bound.inputItemId!==activeInputItemId||!activeInputCommitted))throw Error('Action authority unavailable.');
+        if(actionTool&&(!bound||bound.turnVersion!==turnVersion||!bound.inputItemId||bound.inputItemId!==activeInputItemId||!activeInputCommitted))throw Error('Action authority unavailable.');
         result=await bounded(options.onTool(args,{name:event.name,signal:controller.signal,callId,responseId,turnVersion:version,inputItemId:bound?.inputItemId||activeInputItemId,currentTurn:version===turnVersion}),14000,'The catalogue check timed out.',controller.signal);
         if(controller.signal.aborted||version!==turnVersion||current!==epoch)throw Error('Tool interrupted.');
         // Only the existing public, current, checked catalogue projection is
         // supplied by the host. Operator dossiers and credentials stay private.
         if(!result||typeof result!=='object'||Array.isArray(result))throw Error('Catalogue answer unavailable.');
-        checkedRead=['find_jewellery','inspect_jewellery'].includes(event.name)&&!result.error&&(result.verified===true||result.live===true);
+        checkedRead=!result.error&&(event.name==='read_storefront_services'?result.readCompleted===true&&result.schema===1&&Number.isSafeInteger(result.checkedAt)&&result.checkedAt>0:['find_jewellery','inspect_jewellery'].includes(event.name)&&(result.verified===true||result.live===true));
         if(version===turnVersion&&!checkedRead)turnChainClosed=true;
         const text=JSON.stringify(result);if(new TextEncoder().encode(text).length>30000)throw Error('Catalogue result too large.');result=text;
       }catch{
         if(version===turnVersion)turnChainClosed=true;
         const cancelled=controller.signal.aborted||version!==turnVersion;
-        result=JSON.stringify(event.name==='prepare_jewellery_action'?{verified:false,prepared:false,cancelled,message:cancelled?'That preparation was interrupted. No website action was performed.':'That request could not be prepared. No website action was performed. Please use the visible controls or ask again.'}:{verified:false,cancelled,message:cancelled?'That catalogue check was interrupted. No product facts were verified.':'The current catalogue could not be checked. Please use the visible shop controls or try again. Do not recommend unverified products.'});
+        result=JSON.stringify(['prepare_jewellery_action','control_storefront'].includes(event.name)?{verified:false,prepared:false,cancelled,message:cancelled?'That preparation was interrupted. No website action was confirmed.':'That request could not be prepared. No website action was confirmed. Please use the visible controls or ask again.'}:{verified:false,cancelled,message:cancelled?'That catalogue check was interrupted. No product facts were verified.':'The current catalogue could not be checked. Please use the visible shop controls or try again. Do not recommend unverified products.'});
       }
       finally{controller.abort();toolControllers.delete(controller);}
       if(current!==epoch||disposed||state==='closing'||state==='idle')return;

@@ -16,10 +16,11 @@ export default async (req,context) => {
   try{
     const env=environment(),db=core.makeDb(env),shopify=core.createShopify({env}),service=core.createGrowthService({db,env,shopify});
     const url=new URL(req.url),op=context.params?.op||url.searchParams.get('op')||'status';
-    const publicOps=new Set(['catalogue','product','knowledge']);
+    const publicOps=new Set(['catalogue','product','knowledge','storefront-services']);
     publicRequest=publicOps.has(op);
     if(!publicOps.has(op)&&!await auth(req,env,db))return json({error:'Operator sign-in required.'},401);
     if(publicOps.has(op)&&!await service.rateLimit(context.ip||'public-api',60))return json({error:'Please wait a moment before trying again.'},429);
+    if(publicOps.has(op)&&req.method!=='GET')return json({error:'Use GET for public shop reads.'},405);
     if(req.method==='GET'){
       if(op==='status')return json(await service.status());
       if(op==='etsy-cache-state')return json(await etsyCacheReadOnly.read({db}));
@@ -32,7 +33,18 @@ export default async (req,context) => {
       if(op==='story-supplement')return json({error:'Use POST for story supplements.'},405);
       if(op==='milestone-index')return json({error:'Use POST to rebuild the private milestone index.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
-      if(op==='catalogue'){const r=await shopify.search(url.searchParams.get('q')||'necklace');await service.saveProducts(r.products);const issues=await service.productIssues(r.products.map(p=>p.id));return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,live:true});}
+      if(op==='catalogue'){
+        const browse=url.searchParams.get('browse')==='1',cursor=url.searchParams.get('cursor')||null;
+        if(browse&&cursor&&(!/^storefront:[1-9]\d{0,3}$/.test(cursor)||Number(cursor.slice(11))>200))return json({error:'Invalid storefront catalogue cursor.'},400);
+        if(!browse&&cursor)return json({error:'Use catalogue browsing with a cursor.'},400);
+        const r=browse?await shopify.browse(cursor):await shopify.search(url.searchParams.get('q')||'necklace');
+        // Broad browsing is an observed public read, not a mirror sync or an
+        // authoring action. Holds are still read before any piece is shown.
+        if(!browse)await service.saveProducts(r.products);
+        const issues=await service.productIssues(r.products.map(p=>p.id));
+        return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,checkedAt:r.checkedAt||Date.now(),live:true});
+      }
+      if(op==='storefront-services')return json(await core.readStorefrontServices());
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}
       if(op==='research'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,productIssues]=await Promise.all([service.research(ids),service.productIssues(ids)]);return json({dossiers,productIssues});}
       if(op==='issues')return json({products:await service.productIssues((url.searchParams.get('ids')||'').split(','))});

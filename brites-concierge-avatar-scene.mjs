@@ -11,7 +11,7 @@ export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
   schema: 5,
   identity: 'original pearlfin porcelain guide',
   expressionRig: 'two open deformable light ribbons, raised brow arcs, faceted cheek lights, continuously closed expressive mouth curve and measured sound emission ripples; no human iris, opening aperture or phoneme claim',
-  interactionProfile: Object.freeze({authorship: 'original authored choreography', blink: 'rare irregular 0.19-0.21 second closure', transitionMs: 320, signal: 'brow silhouette, eye shape, smile glyph and faceted cheek signals; colour is supplementary', grounded: true, loopingBodyMotion: false}),
+  interactionProfile: Object.freeze({authorship: 'original authored choreography', blink: 'rare irregular 0.19-0.21 second closure', transitionMs: 320, signal: 'brow silhouette, eye shape, smile glyph and faceted cheek signals; colour is supplementary', grounded: true, loopingBodyMotion: false, gaze: 'one continuous acceleration and velocity bounded cursor and product trajectory'}),
   expressions: Object.freeze(['neutral', 'attentive', 'curious', 'explaining', 'delighted', 'reassuring', 'warm']),
   stateColors: Object.freeze({idle: '#4aa8ff', listening: '#49c9ff', thinking: '#ab87ff', speaking: '#70d8f1', success: '#72ddd1', error: '#ffc28e'}),
   textures: Object.freeze([
@@ -285,7 +285,9 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     avatar.position.set(0, 0, 0); avatar.scale.setScalar(1); avatar.rotation.set(0, 0, 0);
     const finiteCue = (value, fallback = 0, min = 0, max = 1) => THREE.MathUtils.clamp(Number.isFinite(value) ? value : fallback, min, max);
     bodyRig.rotation.set(0, 0, 0);
-    head.rotation.set(Number.isFinite(pose.headPitch) ? pose.headPitch : 0, Number.isFinite(pose.headYaw) ? pose.headYaw : 0, finiteCue(finiteCue(pose.headRoll, 0, -.09, .09) + finiteCue(pose.expressionHeadRoll, 0, -.025, .025) + (reassuring ? -.012 : pose.emotion === 'curious' ? .02 : 0), 0, -.09, .09));
+    // The shared controller has already smoothed gaze, emotional roll and
+    // gesture offsets. Do not introduce an independent emotion tilt here.
+    head.rotation.set(finiteCue(pose.headPitch, 0, -.09, .09), finiteCue(pose.headYaw, 0, -.1, .1), finiteCue(finiteCue(pose.headRoll, 0, -.09, .09) + finiteCue(pose.expressionHeadRoll, 0, -.025, .025), 0, -.09, .09));
     const eyeOpen = finiteCue(pose.eyeOpen, 1, .035, 1.08), eyeScaleX = finiteCue(pose.eyeScaleX, 1, .8, 1.2), eyeScaleY = finiteCue(pose.eyeScaleY, 1, .6, 1.2), deformation = finiteCue(pose.eyeDeformation, 0, -.3, .3);
     eye.position.x = finiteCue(pose.gazeX, 0, -.12, .12); eye.position.y = .022 + finiteCue(pose.gazeY, 0, -.08, .08);
     const browLift = finiteCue(pose.faceBrowLift ?? pose.browLift, 0, -1, 1), browTilt = finiteCue(pose.faceBrowTilt ?? pose.browAngle, 0, -1, 1), eyeSmile = finiteCue(pose.eyeSmile), cheekGlow = finiteCue(pose.cheekGlow), smileCurve = finiteCue(pose.smileCurve), signalLevel = finiteCue(pose.faceSignal);

@@ -165,5 +165,7 @@ test('touch scroll is ignored, page exit/blur recenters, destroy removes listene
 test('explicit product attention takes precedence, clears cleanly and leaves page gaze recoverable', async t => {
   const f = await fixture(t); f.pointer(650, 100); f.advance(700);
   f.guide.focusProduct({x: -.8, y: -.2}); f.advance(700); assert.ok(f.pose().gazeX < 0);
-  f.guide.clearFocus(); assert.ok(f.pose().gazeX > 0); assert.ok(f.pose().gazeY > 0);
+  const before = f.pose(); f.guide.clearFocus(); const sameClock = f.pose();
+  for (const key of ['gazeX', 'gazeY', 'headYaw', 'headPitch', 'headRoll']) assert.equal(sameClock[key], before[key], key + ' keeps its position on focus release');
+  f.advance(700); assert.ok(f.pose().gazeX > 0); assert.ok(f.pose().gazeY > 0);
 });

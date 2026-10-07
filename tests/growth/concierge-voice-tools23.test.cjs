@@ -73,9 +73,9 @@ test('only an exact ProductVariant GID on review is accepted, without guessing o
   }
 });
 
-test('native session exposes three bounded shop tools and one presentation-only tool',()=>{
+test('native session exposes bounded shop tools, read-only services, mock controls and presentation',()=>{
   const config=server.sessionConfig();
-  assert.deepEqual(config.tools.map(value=>value.name),['find_jewellery','inspect_jewellery','prepare_jewellery_action','set_avatar_performance']);
+  assert.deepEqual(config.tools.map(value=>value.name),['find_jewellery','inspect_jewellery','prepare_jewellery_action','read_storefront_services','control_storefront','set_avatar_performance']);
   for(const tool of config.tools){assert.equal(tool.parameters.additionalProperties,false);assert.equal(tool.type,'function');}
   assert.deepEqual(config.tools[1].parameters.required,['handle']);
   assert.deepEqual(config.tools[2].parameters.required,['handle','action']);
