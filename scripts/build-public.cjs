@@ -140,6 +140,7 @@ const assets = [
   "charm-nest-library-approval-ui.js",
   "charm-nest-library-fx.js",
   "charm-nest-library-dnd.js",
+  "charm-nest-library-cutline.js",
   "charm-nest-library-engraving.js",
   "charm-nest-library-issues.js",
   "charm-nest-piece-dots.js",
