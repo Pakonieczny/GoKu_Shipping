@@ -931,6 +931,43 @@ async function runIncremental({ invocationStartMs, mode, query, windowDays }) {
 const SWEEP_WINDOW_HOURS = 6;
 const SWEEP_MAX_PAGES = 5;
 
+// Gmail ids the sweep has seen in the link index. Links are permanent, so this
+// only ever saves lookups; losing it (new container, failed read) just means
+// those ids are looked up once more.
+const SWEEP_SEEN_DOC = "EtsyMail_Config/gmailSweepSeen";
+let _sweepSeen = null;
+
+async function loadSweepSeen() {
+  if (_sweepSeen) return _sweepSeen;
+  let ids = [];
+  try {
+    const snap = await db.doc(SWEEP_SEEN_DOC).get();
+    const d = snap.exists ? snap.data() : null;
+    if (d && Array.isArray(d.ids)) ids = d.ids.filter(x => typeof x === "string");
+  } catch (err) {
+    console.warn("[gmail-sweep] seen-ids read failed (will look every id up):", err.message);
+  }
+  _sweepSeen = new Set(ids);
+  return _sweepSeen;
+}
+
+// Add the ids the index just confirmed, drop the ones that have left the 6-hour
+// window (they can never be listed again), and write the document only when
+// something was added, so a tick with no new mail writes nothing.
+async function rememberSweepSeen(listedIds, newlyConfirmed) {
+  const seen = _sweepSeen || new Set();
+  const listed = new Set(listedIds);
+  for (const id of newlyConfirmed) seen.add(id);
+  for (const id of Array.from(seen)) if (!listed.has(id)) seen.delete(id);
+  _sweepSeen = seen;
+  if (!newlyConfirmed.length) return;
+  try {
+    await db.doc(SWEEP_SEEN_DOC).set({ ids: Array.from(seen), updatedAt: FV.serverTimestamp() });
+  } catch (err) {
+    console.warn("[gmail-sweep] seen-ids write failed (non-fatal):", err.message);
+  }
+}
+
 async function runSafetyNetSweep({ invocationStartMs }) {
   const result = {
     listed             : 0,
@@ -1018,15 +1055,27 @@ async function runSafetyNetSweep({ invocationStartMs }) {
   //
   // v1.7 — Firestore "in" filters take up to 30 values per query; chunk
   // accordingly. Same pattern as the prior implementation.
+  //
+  // Cost (Oct 2026): a link, once written, is permanent, so the ids this sweep
+  // has already found in the index are remembered (in this container's memory,
+  // and in one small document, EtsyMail_Config/gmailSweepSeen, so a fresh
+  // container does not start from nothing) and are not looked up again. The
+  // sweep used to read one index document per message of the last 6 hours on
+  // EVERY tick (a few dozen reads a minute, all day); now a tick with no new
+  // mail reads none. A remembered id is only ever one the index confirmed, so
+  // an orphan is still found and recovered exactly as before.
+  const seen = await loadSweepSeen();
   const linkedIds = new Set();
+  const newlyConfirmed = [];
+  const toCheck = gmailIds.filter(id => !seen.has(id));
   const CHUNK = 30;
-  for (let i = 0; i < gmailIds.length; i += CHUNK) {
-    const chunk = gmailIds.slice(i, i + CHUNK);
+  for (let i = 0; i < toCheck.length; i += CHUNK) {
+    const chunk = toCheck.slice(i, i + CHUNK);
     try {
       const snap = await db.collection(GMAIL_LINKS_COLL)
         .where(admin.firestore.FieldPath.documentId(), "in", chunk)
         .get();
-      snap.forEach(doc => { linkedIds.add(doc.id); });
+      snap.forEach(doc => { linkedIds.add(doc.id); newlyConfirmed.push(doc.id); });
     } catch (err) {
       console.warn("[gmail-sweep] gmail-link-index check chunk failed:", err.message);
       result.errors++;
@@ -1035,9 +1084,10 @@ async function runSafetyNetSweep({ invocationStartMs }) {
       // is idempotent so this is safe (just slower).
     }
   }
-  result.alreadyLinked = linkedIds.size;
+  result.alreadyLinked = linkedIds.size + (gmailIds.length - toCheck.length);
+  await rememberSweepSeen(gmailIds, newlyConfirmed);
 
-  const orphaned = gmailIds.filter(id => !linkedIds.has(id));
+  const orphaned = gmailIds.filter(id => !seen.has(id) && !linkedIds.has(id));
   if (orphaned.length === 0) {
     // Nothing to recover; this is the steady state — fast path.
     result.durationMs = Date.now() - t0;

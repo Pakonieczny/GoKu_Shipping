@@ -43,6 +43,20 @@
   // on this page; reads are never closer than POLL_GAP, fail with a back-off up to POLL_FAIL, and a seal this page stamped
   // is kept for LOCAL_TTL until the server's answer has it
   const POLL_OPEN = 2500, POLL_AGAIN = 1500, POLL_GAP = 600, POLL_FAIL = 30000, LOCAL_TTL = 180000;
+  /* Firebase cost (7 Oct 2026): a poll of an open order view read the whole timeline (dozens of documents and their bytes) every 2.5 s, 1,440 times an
+     hour, answered or not. Now the poll carries the revision of the answer the view holds (OrderTimeline.get ifRev: the server compares the update times of
+     the documents the answer is made of, no field read back) and gets { unchanged } when none moved, which is nearly always: the view is redrawn from a
+     whole answer only when something changed, and a whole answer is read at least every FULL_EVERY (a record rewritten in place leaves no trace in the
+     digest). The pace follows the person: 2.5 s while anyone touches the page or something moved in the last 3 minutes, then 5 s, after 10 minutes 10 s,
+     after an hour 30 s (a window left open overnight); a touch of the page, a change made on it, or the tab shown again is back at 2.5 s at once. */
+  const FULL_EVERY = 60000, IDLE_STEPS = [[3 * 60000, 1], [10 * 60000, 2], [60 * 60000, 4], [Infinity, 12]];
+  let lastTouch = Date.now(), touchAt = 0; const wakers = new Set();
+  const touch = () => {
+    const t = Date.now(); lastTouch = t;
+    if (t - touchAt < 1000) return; touchAt = t;
+    for (const w of [...wakers]) { try { w(); } catch (_) {} }
+  };
+  try { for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) doc.addEventListener(ev, touch, { capture: true, passive: true }); } catch (_) {}
   const reduced = () => { try { return !!root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
@@ -1382,21 +1396,26 @@
   function feed(orderId, o) {
     o = o || {};
     const id = digits(orderId), pollMs = Math.max(250, +o.pollMs || openPoll()), gap = Math.min(POLL_GAP, pollMs / 2), subs = new Set(), local = new Map();
-    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, began: 0, fails: 0, skips: 0, dirty: false, dead: false };
-    let pollT = 0, againT = 0, seq = 0, unrec = null;
+    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, began: 0, fails: 0, skips: 0, dirty: false, dead: false, rev: null, fullAt: 0, moved: Date.now(), fullNext: false };
+    let pollT = 0, againT = 0, seq = 0, unrec = null, slow = 1;
+    const fullEvery = () => { const v = +(root.OrderTimelineUI && root.OrderTimelineUI.fullEveryMs); return v >= 250 ? v : FULL_EVERY; };   // (fullEveryMs: tests only)
+    /** How many polls apart the next read is: 1 while the page is in use or something moved lately, more as it sits unused. */
+    const pace = () => { const idle = Date.now() - Math.max(lastTouch, F.moved); for (const [ms, k] of IDLE_STEPS) if (idle < ms) return k; return 1; };
     const emit = kind => { for (const fn of [...subs]) { try { fn(kind, F); } catch (err) { warn("feed", err); } } };
     const seen = () => doc.visibilityState !== "hidden";
     /** The next read in `ms` (by default pollMs after the last one began, and a longer wait after failures). */
     function arm(ms) {
       clearTimeout(pollT); pollT = 0;
       if (F.dead || !subs.size) return;
-      const wait = ms != null ? ms : F.fails ? Math.min(POLL_FAIL, pollMs * 2 ** Math.min(F.fails, 5)) : F.began ? Math.max(gap, pollMs - (Date.now() - F.began)) : pollMs;
-      pollT = setTimeout(() => { pollT = 0; if (!F.dead && seen()) { F.dirty = false; F.refresh({ force: true, quiet: true }); } }, wait);
+      slow = ms != null || F.fails ? 1 : pace();
+      const every = pollMs * slow, wait = ms != null ? ms : F.fails ? Math.min(POLL_FAIL, pollMs * 2 ** Math.min(F.fails, 5)) : F.began ? Math.max(gap, every - (Date.now() - F.began)) : every;
+      // (a poll asks the cheap question; one that follows a change on this page, or comes while this page holds events the server has not answered for, reads in full)
+      pollT = setTimeout(() => { pollT = 0; if (!F.dead && seen()) { if (F.dirty) F.fullNext = true; F.dirty = false; F.refresh({ force: true, quiet: true, probe: true }); } }, wait);
     }
     function done(my, fn) {
       if (F.dead || my !== seq) return F.answer;
       F.loading = null; F.tried = Date.now(); fn();
-      if (F.dirty && !F.dead && seen()) { F.dirty = false; arm(Math.max(0, F.began + gap - Date.now())); } else arm();   // (a change came while it was reading: the next read follows at once)
+      if (F.dirty && !F.dead && seen()) { F.dirty = false; F.fullNext = true; arm(Math.max(0, F.began + gap - Date.now())); } else arm();   // (a change came while it was reading: the next read follows at once, in full)
       return F.answer;
     }
     /** The answer with this page's own events the server has not answered for (a read can pass them in flight). */
@@ -1412,14 +1431,21 @@
       if (!(r && r.force) && F.answer && Date.now() - F.at < pollMs) return Promise.resolve(F.answer);
       const my = ++seq, api = root.OrderTimeline;
       F.began = Date.now();
+      // the cheap question: only for a poll, with a revision in hand, an answer drawn, nothing of this page's own waiting for the server's copy, and a whole read not due
+      const ask = r && r.probe && !F.fullNext && F.rev && F.answer && !local.size && F.began - F.fullAt < fullEvery() * Math.min(4, slow || 1) ? { ifRev: F.rev } : { wantRev: true };
+      F.fullNext = false;
       // (deferred: a throw before the read still reaches the subscribers after "wait", never before it)
       const p = F.loading = Promise.resolve().then(() => {
         if (!id) throw new Error("no order number");
         if (!api || typeof api.get !== "function") throw new Error("the timeline is not loaded on this page");
-        return api.get(id);
+        return api.get(id, ask);
       }).then(j => done(my, () => {
         F.fails = 0; F.error = "";
-        if (partial(j) && F.answer && F.skips < 2) { F.skips++; return; }   // (what is drawn keeps its seals; the next read tries again)
+        if (j && j.unchanged && ask.ifRev) { F.skips = 0; F.at = F.tried; return; }   // (nothing it was made of has moved: the view keeps what it draws, nothing is redrawn)
+        if (partial(j) && F.answer && F.skips < 2) { F.skips++; F.rev = null; return; }   // (what is drawn keeps its seals; the next read tries again)
+        const rev = !partial(j) && j && typeof j.rev === "string" ? j.rev : null;
+        if (rev !== F.rev || !F.rev) F.moved = Date.now();
+        F.rev = rev; F.fullAt = F.began;
         F.skips = 0; F.answer = withLocal(j || {}); F.at = F.tried; emit("data");
       }), e => done(my, () => { F.fails++; F.error = String((e && e.message) || e || "failed"); if (!F.answer || F.fails >= 3) emit("error"); }));
       if (!(r && r.quiet) || !F.answer) emit("wait");
@@ -1428,6 +1454,7 @@
     /** A read now, if the view is seen and none is on its way (one on its way is followed by another). */
     function want() {
       if (F.dead || !subs.size) return;
+      F.fullNext = true;   // (something changed on this page: the read that follows is a whole one, never the cheap question)
       if (!seen() || F.loading) { F.dirty = true; return; }
       const wait = F.began + gap - Date.now();
       if (wait > 0) { arm(wait); return; }
@@ -1436,6 +1463,7 @@
     /** Something changed on this page (an event recorded, a write to the cloud): read now, and again for the server's copy. */
     F.nudge = () => {
       if (F.dead || !subs.size) return;
+      F.moved = Date.now();
       want();
       clearTimeout(againT); againT = setTimeout(() => { againT = 0; want(); }, POLL_AGAIN);
     };
@@ -1443,9 +1471,15 @@
     const onVis = () => {
       if (F.dead || !subs.size) return;
       if (!seen()) { clearTimeout(pollT); pollT = 0; return; }
-      if (!F.loading && (F.dirty || Date.now() - F.tried >= pollMs)) { F.dirty = false; F.refresh({ force: true, quiet: true }); } else if (!F.loading && !pollT) arm();
+      if (!F.loading && (F.dirty || Date.now() - F.tried >= pollMs)) { if (F.dirty) F.fullNext = true; F.dirty = false; F.refresh({ force: true, quiet: true, probe: true }); } else if (!F.loading && !pollT) arm();   // (the tab shown again asks the cheap question: whatever moved while it was hidden moved the digest)
     };
     const onNet = () => { F.fails = 0; want(); };   // (the network is back: the poll waits no longer)
+    // the page is touched while the poll is slowed: the next read is due at the normal pace, not at the slow one
+    const wake = () => {
+      if (F.dead || !subs.size || slow <= 1 || F.loading || !pollT || !seen()) return;
+      arm();
+    };
+    wakers.add(wake);
     const onRec = x => {
       if (F.dead || !x || digits(x.orderId) !== id) return;
       const k = keyOfRaw(x); if (!k) return;
@@ -1456,7 +1490,7 @@
     doc.addEventListener("visibilitychange", onVis); root.addEventListener("online", onNet);
     try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unrec = root.OrderTimeline.onRecord(onRec); } catch (_) {}
     F.destroy = () => {
-      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear();
+      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear(); wakers.delete(wake);
       doc.removeEventListener("visibilitychange", onVis); root.removeEventListener("online", onNet);
       try { if (typeof unrec === "function") unrec(); } catch (_) {}
       unrec = null;

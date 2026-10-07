@@ -42,5 +42,23 @@ const request=(url=source,headers={})=>new Request('https://app.test/.netlify/fu
  await assert.rejects(A.bytes(source),/incomplete/,'truncated ranges are rejected');
  global.fetch=async()=>new Response('no',{status:403});
  await assert.rejects(A.bytes(source),/403/,'permission failures are never bypassed');
+ // a picture is one plain request the browser may keep; an address that names its version is kept a day, one that does not is asked about each time
+ {
+  const small=Buffer.from([137,80,78,71,13,10,26,10,1,2,3]);const keep=content;content=small;
+  const versioned=source+'&v=1790000000123',res=await serve(request(versioned),bucket);
+  assert.equal(res.status,200);assert.equal(res.headers.get('cache-control'),'private, max-age=86400','a versioned address is kept');await res.arrayBuffer();
+  assert.equal((await serve(request(source+'&v=0'),bucket)).headers.get('cache-control'),'private, no-cache','v=0 names no version');
+  assert.equal((await serve(request(source),bucket)).headers.get('cache-control'),'private, no-cache','no version: asked about each time');
+  assert.equal((await serve(request(versioned,{Range:'bytes=0-3'}),bucket)).headers.get('cache-control'),'private, no-cache','a part is never kept');
+  const tag=(await serve(request(versioned),bucket)).headers.get('etag');assert.equal((await serve(request(versioned,{'If-None-Match':tag}),bucket)).status,304);
+  const seen=[];global.fetch=async(target,options)=>{seen.push({range:options.headers&&options.headers.Range,cache:options.cache});return serve(new Request('https://app.test'+target,{headers:options.headers,signal:options.signal}),bucket);};
+  const img={decode:async()=>{}},once=await A.loadImage(img,versioned).then(()=>img.src);
+  assert(once.startsWith('data:image/png;base64,'));assert.deepEqual(seen,[{range:undefined,cache:'default'}],'one plain request, through the browser cache');
+  const two={decode:async()=>{}};await Promise.all([A.loadImage({decode:async()=>{}},versioned),A.loadImage(two,versioned)]);assert.equal(seen.length,2,'two cards asking at once share one request');
+  // too large for one request (413) or refused: read the way a file always was, in parts
+  content=keep;seen.length=0;global.fetch=async(target,options)=>{seen.push({range:options.headers&&options.headers.Range,cache:options.cache});if(!(options.headers&&options.headers.Range))return new Response('too large',{status:413});return serve(new Request('https://app.test'+target,{headers:options.headers,signal:options.signal}),bucket);};
+  const big={decode:async()=>{}};await A.loadImage(big,source).catch(()=>{});
+  assert.equal(seen[0].cache,'default');assert(seen.some(x=>x.range==='bytes=0-'+(CHUNK-1)&&x.cache==='no-store'),'a picture the plain request cannot give is read in parts');
+ }
  console.log('Assets OK: token scope, same-origin transport, retry, shared transfers, large files, exact bytes, and revision/truncation checks');
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -9,7 +9,10 @@ function identify(raw, bucket) {
   if(url.protocol !== 'https:' || url.hostname !== 'firebasestorage.googleapis.com' || url.port || url.username || url.password || !m || decodeURIComponent(m[1]) !== bucket) throw Error('Invalid storage URL');
   const path=decodeURIComponent(m[2]),token=url.searchParams.get('token');
   if(!path.startsWith('charmnest/') || path.split('/').some(s=>s==='..') || !token || token.length>500) throw Error('Invalid artwork token');
-  return {path,token};
+  // v: the version the page asked for (a sheet's picture is asked for with the time its picture was saved, 13 digits). An address that
+  // names its own version never changes what it answers, so a browser keeps the answer a day and asks nobody (v=0 or none: not versioned)
+  const v=url.searchParams.get('v');
+  return {path,token,versioned:/^\d{10,16}$/.test(v||'')};
 }
 async function serve(req, bucket) {
   if(!['GET','HEAD'].includes(req.method))return fail(405,'Method not allowed');
@@ -23,7 +26,7 @@ async function serve(req, bucket) {
     if(!Number.isSafeInteger(size)||size<=0)return fail(404,'Artwork is empty');
     if(req.headers.get('if-match') && req.headers.get('if-match')!==etag)return fail(412,'Artwork changed during download');
     const headers={'Content-Type':/^(image\/(png|jpeg|webp)|application\/(pdf|illustrator|postscript|json|zip))$/.test(meta.contentType)?meta.contentType:'application/octet-stream',
-      'Cache-Control':'private, no-cache','Cross-Origin-Resource-Policy':'same-origin','X-Content-Type-Options':'nosniff','Accept-Ranges':'bytes','ETag':etag};
+      'Cache-Control':identity.versioned && !req.headers.get('range')?'private, max-age=86400':'private, no-cache','Cross-Origin-Resource-Policy':'same-origin','X-Content-Type-Options':'nosniff','Accept-Ranges':'bytes','ETag':etag};
     let start=0,end=size-1,status=200;
     const range=req.headers.get('range');
     if(range){

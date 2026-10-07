@@ -2725,7 +2725,7 @@ async function manualApiUpdate(){
 document.addEventListener('DOMContentLoaded',()=>primeEtsyApiUsage());
 window.addEventListener('focus',()=>primeEtsyApiUsage());
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)primeEtsyApiUsage()});
-setInterval(refreshApiUsage,15000);
+setInterval(()=>{if(!document.hidden)refreshApiUsage()},15000);   // FC14: a hidden tab does not read the usage counters (a Firestore document) every 15 s; it reads at once when shown (above)
 setInterval(()=>{if(!document.hidden)primeEtsyApiUsage()},5*60*1000);
 function pushServerToken(){
   try{
