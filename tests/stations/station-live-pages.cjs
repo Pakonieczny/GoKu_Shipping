@@ -367,7 +367,9 @@ async function main() {
           assert.equal(await page.evaluate(() => CNLive.sheet('GF Sheet 1')), false);
           await wait(800);
           assert.equal(lives.length, 0);
-          assert.equal((await page.$$('.cnNameBar')).length, 0, 'no name field offered by this');
+          // (the Sorter never asks in a browser box now: with nobody signed in it may show its inline name bar, only as the quiet hint that takes no focus; the prompt check below still holds)
+          const bars = await page.$$eval('.cnNameBar', els => els.map(e => e.dataset.kind));
+          assert(bars.every(k => k === 'hint'), 'no name is demanded by this, at most the quiet inline hint: ' + JSON.stringify(bars));
           assert.deepEqual(await page.evaluate(() => window.__prompts), []);
           await page.evaluate(() => OrderWin.close());
           await page.waitForFunction(() => !OrderWin.isOpen(), null, { timeout: 15000 });
