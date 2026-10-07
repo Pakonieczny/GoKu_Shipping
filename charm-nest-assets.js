@@ -11,11 +11,11 @@
     try{const u=new URL(raw);if(u.protocol==='https:'&&u.hostname==='firebasestorage.googleapis.com'&&/^\/v0\/b\/[^/]+\/o\/charmnest%2f/i.test(u.pathname))return endpoint+'?url='+encodeURIComponent(raw);}catch{}
     return raw;
   }
-  async function request(target,headers){
+  async function request(target,headers,cache){
     for(let attempt=0;;attempt++){
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),25000);
       try{
-        const r=await fetch(target,{headers,cache:'no-store',signal:controller.signal});
+        const r=await fetch(target,{headers,cache:cache||'no-store',signal:controller.signal});
         if(!r.ok){const e=Error('Could not read artwork ('+r.status+').');e.status=r.status;throw e;}
         const data=new Uint8Array(await r.arrayBuffer());
         if(!data.length)throw Error('Artwork download was empty.');
@@ -53,12 +53,24 @@
     if(!requests.has(key))requests.set(key,read(value).finally(()=>requests.delete(key)));
     return requests.get(key);
   }
+  /* A picture (a sheet's preview, a label) is read once as one plain request that the browser keeps: the next page, the next
+     card, the next tab asks the cache first, and the answer is the same bytes or a 304 with no body. (Every card used to
+     fetch its picture again, in full, with no-store, through the function and out of Storage, on every page load.)
+     Anything the one request cannot give (too large, interrupted, refused) is read again the way a file always was. */
+  function imageBytes(value){
+    if(value instanceof Uint8Array)return Promise.resolve(value);
+    const key=typeof value==='string'?value:value?.url,target=url(key);
+    if(!target || !target.startsWith(endpoint+'?'))return bytes(value);
+    const k='image|'+key;
+    if(!requests.has(k))requests.set(k,request(target,{},'default').then(r=>r.status===200?r.data:bytes(value),()=>bytes(value)).finally(()=>requests.delete(k)));
+    return requests.get(k);
+  }
   const imageTasks=new WeakMap();
   function loadImage(img,source){
     const prior=imageTasks.get(img);if(prior?.source===source)return prior.promise;
     const state={source};imageTasks.set(img,state);
     state.promise=(async()=>{
-      const data=await bytes(source);
+      const data=await imageBytes(source);
       if(imageTasks.get(img)!==state)return;
       let binary='';for(let i=0;i<data.length;i+=8192)binary+=String.fromCharCode(...data.subarray(i,i+8192));
       const type=data[0]===255&&data[1]===216?'image/jpeg':String.fromCharCode(...data.subarray(0,4))==='RIFF'?'image/webp':'image/png';
