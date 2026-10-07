@@ -355,8 +355,24 @@ async function isStopped({ force = false } = {}) {
   return STOP_CACHE.active;
 }
 
+/** The same forced stop-switch read as isStopped({ force: true }), but it also hands back the control document that
+ *  very read returned. The API handler needs that document right after the gate, so it no longer reads it a second
+ *  time per request. `control` is null when the read failed (the caller then reads for itself). */
+async function stopGate() {
+  try {
+    const s = await col(COL.control).doc("control").get();
+    const data = s.exists ? s.data() : {};
+    STOP_CACHE.active = !!stopState(data);
+    STOP_CACHE.at = Date.now();
+    return { stopped: STOP_CACHE.active, control: data };
+  } catch (e) { /* a failed read never silently unstops: keep the last answer */
+    STOP_CACHE.at = Date.now();
+    return { stopped: STOP_CACHE.active, control: null };
+  }
+}
+
 module.exports = {
-  stopState, isStopped,
+  stopState, isStopped, stopGate,
   currentScope, withSimulationScope, now,
   firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,

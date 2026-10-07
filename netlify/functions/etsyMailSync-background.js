@@ -284,7 +284,8 @@ async function ensureReceiptMirroredById({ receiptId, expectedBuyerUserId, threa
   }
 
   const receiptDocRef = db.collection("EtsyMail_Receipts").doc(String(receiptId));
-  const existingSnap = await receiptDocRef.get();
+  // FC13 (Firebase cost): only buyer_user_id is used below; a mirrored receipt carries the whole Etsy receipt (`raw`, several KB).
+  const [existingSnap] = await db.getAll(receiptDocRef, { fieldMask: ["buyer_user_id"] });
   if (existingSnap.exists) {
     const existing = existingSnap.data() || {};
     if (existing.buyer_user_id) {
@@ -416,10 +417,14 @@ async function runBuyerSyncFromMirror({ buyerUserId, receiptId = null, threadId 
   // buyer — that's far more than RECENT_RECEIPTS_CAP, but we use the
   // full set to compute orderCount and totalSpent accurately. A buyer
   // with >1000 orders is implausible for our shop.
+  // FC13 (Firebase cost): mirrorToSummary reads ten fields; each receipt also carries the whole Etsy receipt (`raw`, several KB),
+  // which this read does not need. Same documents, same answer, a fraction of the bytes (see etsyMailReceiptsMirrorCron SUMMARY_FIELDS).
   const snap = await db.collection("EtsyMail_Receipts")
     .where("buyer_user_id", "==", String(effectiveBuyerUserId))
     .orderBy("created_timestamp", "desc")
     .limit(1000)
+    .select("receipt_id", "created_timestamp", "updated_timestamp", "grandtotal_amount", "grandtotal_currency",
+      "status", "is_paid", "is_shipped", "buyer_user_id", "buyer_name")
     .get();
 
   const summaries = [];

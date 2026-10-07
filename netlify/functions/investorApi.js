@@ -2574,9 +2574,15 @@ exports.handler = async (event) => {
     return AUTH.json(event, 413, { error: "request too large" });
   }
   /* The operator's Firebase stop switch: one small read, then nothing else touches the database. Only the resume action passes. */
+  /* Cost: the gate's read already returns the control document; v2 reuses it instead of reading it again (controlHint). */
+  let controlHint = null;
   try {
     let peek = null; try { peek = JSON.parse(event.body || "{}"); } catch { peek = null; }
-    if (!(peek && peek.action === "firebaseStop") && await A.isStopped({ force: true })) return AUTH.json(event, 503, { ok: false, error: { code: "FIREBASE_STOPPED", message: "Firebase is stopped by the operator. Nothing reads or writes the database until you press Resume." } });
+    if (!(peek && peek.action === "firebaseStop")) {
+      const gate = await A.stopGate();
+      if (gate.stopped) return AUTH.json(event, 503, { ok: false, error: { code: "FIREBASE_STOPPED", message: "Firebase is stopped by the operator. Nothing reads or writes the database until you press Resume." } });
+      controlHint = gate.control;
+    }
   } catch (e) { /* the gate never blocks the resume path */ }
   /* Resolve the operator secrets before the guard reads them. A failed read
      leaves requireOperator answering AUTH_NOT_CONFIGURED, never open. Nothing
@@ -2596,7 +2602,7 @@ exports.handler = async (event) => {
   /* ACTIONS_V2 only for exact investor.v2; ACTIONS_V1 only when apiVersion is absent or investor.v1; never a fallthrough */
   if (body.apiVersion === SCHEMAS_V2.API_VERSION) {
     const V2 = require("./_investorApiV2");
-    try { const r = await V2.dispatch({ body, event }); return AUTH.json(event, r.statusCode, r.body, r.headers || {}); }
+    try { const r = await V2.dispatch({ body, event, controlHint }); return AUTH.json(event, r.statusCode, r.body, r.headers || {}); }
     catch (e) { console.error("investorApiV2", AUTH.redact({ error: e.message, stack: (e.stack || "").slice(0, 300) })); return AUTH.json(event, 500, V2.envelope({ ok: false, requestId: body.requestId || null, nowMs: Date.now(), error: SCHEMAS_V2.errorShape("INTERNAL", String(e.message).slice(0, 200)) })); }
   }
   if (body.apiVersion !== undefined && body.apiVersion !== "investor.v1") return AUTH.json(event, 400, { ok: false, error: `unsupported apiVersion ${String(body.apiVersion).slice(0, 40)}`, errorCode: "UNSUPPORTED_API_VERSION" });

@@ -141,7 +141,8 @@ exports.handler = async (event) => {
 
   const qs = event.queryStringParameters || {};
   const q = String(qs.q || "").trim().toLowerCase();
-  const limit = Math.min(Math.max(parseInt(qs.limit || "500", 10), 1), 2000);
+  // FC13 (Firebase cost): capped at 500 like etsyMailThreads ?search=1 (the Inbox never asks for more; nothing calls this old URL).
+  const limit = Math.min(Math.max(parseInt(qs.limit || "500", 10), 1), 500);
 
   // v1.4: status can be a single value ("pending_human_review") OR a
   // comma-separated list ("auto_replied,queued_for_auto_send") for

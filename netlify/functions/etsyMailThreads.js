@@ -252,6 +252,12 @@ function normalizeSearchText(text = "") {
 const _searchCache = new Map();
 const SEARCH_CACHE_TTL_MS = 15 * 1000;
 const MAX_CACHE_ENTRIES = 100;
+// FC13: the fields the search matches on (the lazy-backfill and metadata-only tests below read these five and nothing else), and
+// the shortest query that reads in two steps (see runThreadSearch).
+const SEARCH_SCAN_FIELDS = ["searchableText", "customerName", "etsyUsername", "subject", "linkedOrderId"];
+const SEARCH_MASKED_MIN_Q = 3;
+// The Inbox always asks for 500; a larger request would read that many whole threads per search.
+const SEARCH_MAX_LIMIT = 500;
 
 /* Convert Firestore doc data to JSON-safe form, turning Timestamps into
  * {_ts: true, ms: <millis>} markers — same shape firestoreProxy uses, so
@@ -292,7 +298,8 @@ function gcSearchCache() {
  *  to it on `?search=1`. Returns the same response shape as the former
  *  etsyMailSearch endpoint. */
 async function runThreadSearch({ q, limit, statusList }) {
-  const cacheKey = q + "|" + limit + "|" + statusList.sort().join(",");
+  const statusKey = statusList.sort().join(",");
+  const cacheKey = q + "|" + limit + "|" + statusKey;
   const cached = _searchCache.get(cacheKey);
   if (cached && (Date.now() - cached.at) < SEARCH_CACHE_TTL_MS) {
     return {
@@ -302,6 +309,23 @@ async function runThreadSearch({ q, limit, statusList }) {
       scanned: cached.scanned,
       cached : true
     };
+  }
+
+  // FC13 (Firebase cost): typing "mu", "mug", "mugs" asks for the same newest threads three times. A longer query that starts with
+  // a shorter one can only match what the shorter one matched (a substring of the text is a substring of the text), so when that
+  // answer is still fresh (and every scanned thread had its search text, so no thread's match depends on a backfill) the longer
+  // query is answered from it with no read.
+  let base = null;
+  const now = Date.now();
+  for (const v of _searchCache.values()) {
+    if (v.clean && v.limit === limit && v.statusKey === statusKey && now - v.at < SEARCH_CACHE_TTL_MS &&
+        v.q.length >= 2 && v.q.length < q.length && q.startsWith(v.q) && (!base || v.q.length > base.q.length)) base = v;
+  }
+  if (base) {
+    const docs = base.docs.filter(d => String(d.searchableText || "").toLowerCase().includes(q));
+    _searchCache.set(cacheKey, { docs, at: base.at, scanned: base.scanned, q, limit, statusKey, clean: true, maxedOut: base.maxedOut });
+    gcSearchCache();
+    return { docs, q, count: docs.length, scanned: base.scanned, backfilled: 0, cached: true, maxedOut: base.maxedOut };
   }
 
   // Query strategy mirrors fetchThreadListNow's composite-index avoidance:
@@ -318,15 +342,34 @@ async function runThreadSearch({ q, limit, statusList }) {
     firestoreQuery = firestoreQuery.orderBy("updatedAt", "desc").limit(limit);
   }
 
-  const snap = await firestoreQuery.get();
+  // FC13 (Firebase cost): a thread document is about 12 KB, half of it the two search texts. For a query of three letters or more
+  // the scan reads only the fields that are searched (the same threads, about half the bytes), then reads whole just the threads
+  // that matched or have no search text yet (those take the backfill below). Shorter queries match most threads, so they read
+  // whole as before. Threads read and results are the same as the single whole read gave.
+  let snap;
+  if (q.length >= SEARCH_MASKED_MIN_Q) {
+    const scan = await firestoreQuery.select(...SEARCH_SCAN_FIELDS).get();
+    const wanted = [];
+    scan.forEach(doc => {
+      const hay = String((doc.data() || {}).searchableText || "").toLowerCase();
+      if (!hay || hay.includes(q)) wanted.push(doc.ref);
+    });
+    const whole = [];
+    for (let i = 0; i < wanted.length; i += 300) whole.push(...await db.getAll(...wanted.slice(i, i + 300)));
+    snap = { size: scan.size, forEach: fn => whole.forEach(d => { if (d.exists) fn(d); }) };
+  } else {
+    snap = await firestoreQuery.get();
+  }
 
   const matches = [];
   let backfilled = 0;
+  let noText = 0;
   const backfillPromises = [];
 
   snap.forEach(doc => {
     const data = doc.data() || {};
     const haystack = (data.searchableText || "").toLowerCase();
+    if (!haystack) noText++;
 
     if (haystack) {
       // Fast path: searchableText already populated.
@@ -389,7 +432,9 @@ async function runThreadSearch({ q, limit, statusList }) {
     await Promise.all(backfillPromises);
   }
 
-  _searchCache.set(cacheKey, { docs: matches, at: Date.now(), scanned: snap.size });
+  // `clean`: every scanned thread had its search text, so a longer query's matches can be taken from these (see above). (The
+  // masked scan reads whole every text-less thread, so `noText` is complete either way.)
+  _searchCache.set(cacheKey, { docs: matches, at: Date.now(), scanned: snap.size, q, limit, statusKey, clean: noText === 0, maxedOut: snap.size >= limit });
   gcSearchCache();
 
   return {
@@ -401,6 +446,118 @@ async function runThreadSearch({ q, limit, statusList }) {
     cached  : false,
     maxedOut: snap.size >= limit
   };
+}
+
+// ─── FC13 (Firebase cost): plain ?counts=1 without reading every thread ─────────────────────────────────────────
+// The legacy Inbox layout asks for these badge counts every 300 s per open tab. Its count() with `status != archived` plus an
+// orderBy on another field needs a composite index the project lacks, so every call fell to a scan of EVERY thread (N reads,
+// four fields each). The same numbers now come from single-field queries:
+//   * one count() per status in VALID_STATUSES (plus any other status seen before) and one count() of all threads. When they add
+//     up, every thread's status is accounted for. When they do not, the threads with some other status are read once to name
+//     them (they are few); if even that does not add up (a thread with no status field), the old full scan runs, so the answer
+//     is always the one the scan gives.
+//   * the three folder counts (not archived, timestamp set) use the count() with composite indexes (status, <field>) when the
+//     project has them, else read only the threads that carry the timestamp, two fields each (status, the timestamp).
+let _extraStatuses = [];                 // statuses outside VALID_STATUSES found on this warm instance ("" and null stand for "unknown")
+const SYNTH_COUNTS = [["_completedSales", "salesCompletedAt"], ["_refundFlagged", "refundFlaggedAt"], ["_orderLinkOpen", "orderLinkOpenAt"]];
+const SYNTH_RETRY_MS = 15 * 60 * 1000;
+const _synthNoIndexAt = {};
+let _cheapCountsFailedAt = 0;
+
+/** The previous implementation, kept as the exact fallback: every thread, the four fields that matter. */
+async function scanThreadCounts() {
+  const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt", "orderLinkOpenAt").get();
+  const counts = {};
+  let completedSalesCount = 0;
+  let refundFlaggedCount  = 0;
+  let orderLinkOpenCount  = 0;
+  snap.forEach(d => {
+    const data = d.data() || {};
+    const s = data.status || "unknown";
+    counts[s] = (counts[s] || 0) + 1;
+    if (s === "archived") return;  // exclude archived from orderByField folder counts
+    if (data.salesCompletedAt) completedSalesCount++;
+    if (data.refundFlaggedAt)  refundFlaggedCount++;
+    if (data.orderLinkOpenAt)  orderLinkOpenCount++;
+  });
+  counts._completedSales = completedSalesCount;
+  counts._refundFlagged  = refundFlaggedCount;
+  counts._orderLinkOpen  = orderLinkOpenCount;
+  return counts;
+}
+
+/** Threads whose status is not in VALID_STATUSES: the range between each pair of known names, below the first, above the last,
+ *  and status null. Each query reads only those threads (one field). Returns Map(raw status -> threads). */
+async function findOtherStatuses(base) {
+  const sorted = Array.from(VALID_STATUSES).sort();
+  const qs = [base.where("status", "<", sorted[0])];
+  for (let i = 0; i + 1 < sorted.length; i++) qs.push(base.where("status", ">", sorted[i]).where("status", "<", sorted[i + 1]));
+  qs.push(base.where("status", ">", sorted[sorted.length - 1]));
+  qs.push(base.where("status", "==", null));
+  const snaps = await Promise.all(qs.map(q => q.select("status").get()));
+  const seen = new Map();
+  snaps.forEach(s => s.forEach(d => { const v = (d.data() || {}).status; seen.set(v, (seen.get(v) || 0) + 1); }));
+  return seen;
+}
+
+/** { <status>: n } for every status present (the keys the scan gives), or null when the cheap way cannot account for every thread. */
+async function statusCountsCheap(base) {
+  const countOf = q => q.count().get().then(r => r.data().count);
+  const valid = Array.from(VALID_STATUSES);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const names = valid.concat(_extraStatuses);
+    const [total, ...per] = await Promise.all([countOf(base), ...names.map(s => countOf(base.where("status", "==", s)))]);
+    let sum = 0;
+    per.forEach(n => { sum += n; });
+    if (sum === total) {
+      const counts = {};
+      names.forEach((s, i) => { if (per[i]) counts[s || "unknown"] = (counts[s || "unknown"] || 0) + per[i]; });
+      return counts;
+    }
+    if (sum < total) {
+      // a status this instance has not met: name every thread outside VALID_STATUSES (replaces the remembered list)
+      const seen = await findOtherStatuses(base);
+      let other = 0;
+      seen.forEach(n => { other += n; });
+      let known = 0;
+      for (let i = 0; i < valid.length; i++) known += per[i];
+      if (known + other === total && seen.size <= 40) {
+        const counts = {};
+        valid.forEach((s, i) => { if (per[i]) counts[s] = per[i]; });
+        seen.forEach((n, v) => { counts[v || "unknown"] = (counts[v || "unknown"] || 0) + n; });
+        _extraStatuses = Array.from(seen.keys());
+        return counts;
+      }
+    }
+    // totals disagree (a thread arrived while counting, or a thread has no status field): count once more, then give up
+  }
+  return null;
+}
+
+/** One folder count (not archived, timestamp set). */
+async function folderCount(base, field) {
+  if (!_synthNoIndexAt[field] || Date.now() - _synthNoIndexAt[field] > SYNTH_RETRY_MS) {
+    try { return (await base.where("status", "!=", "archived").orderBy(field).count().get()).data().count; }
+    catch (e) { _synthNoIndexAt[field] = Date.now(); }     // no composite index (status, field): read the threads that carry it
+  }
+  const s = await base.orderBy(field).select("status", field).get();
+  let n = 0;
+  s.forEach(d => { const x = d.data() || {}; if ((x.status || "unknown") !== "archived" && x[field]) n++; });
+  return n;
+}
+
+async function countThreads() {
+  const base = db.collection(THREADS_COLL);
+  let counts = null;
+  if (Date.now() - _cheapCountsFailedAt > SYNTH_RETRY_MS / 3) {       // after a failure the scan answers for 5 minutes, then the cheap way is tried again
+    try { counts = await statusCountsCheap(base); }
+    catch (e) { console.warn("[etsyMailThreads:counts] status counts failed, scanning:", e.message); }
+    if (!counts) _cheapCountsFailedAt = Date.now();
+  }
+  if (!counts) return scanThreadCounts();
+  const folder = await Promise.all(SYNTH_COUNTS.map(([, f]) => folderCount(base, f)));
+  SYNTH_COUNTS.forEach(([k], i) => { counts[k] = folder[i]; });
+  return counts;
 }
 
 function json(statusCode, body) {
@@ -442,7 +599,7 @@ exports.handler = async (event) => {
        * handler — see etsyMailSearch.js. */
       if (qs.search === "1") {
         const q = String(qs.q || "").trim().toLowerCase();
-        const limit = Math.min(Math.max(parseInt(qs.limit || "500", 10), 1), 2000);
+        const limit = Math.min(Math.max(parseInt(qs.limit || "500", 10), 1), SEARCH_MAX_LIMIT);
         const statusRaw = qs.status ? String(qs.status).trim() : "";
         const statusList = statusRaw
           ? statusRaw.split(",").map(s => s.trim()).filter(Boolean).slice(0, 10)  // Firestore `in` cap
@@ -531,82 +688,9 @@ exports.handler = async (event) => {
         return ok({ counts: out, keys: true });
       }
       if (qs.counts === "1") {
-        try {
-          const baseQ = db.collection(THREADS_COLL);
-          const statusList = Array.from(VALID_STATUSES);
-
-          // Fire all aggregation queries in parallel.
-          //   - one count() per known status
-          //   - one count() filtered to docs where salesCompletedAt is set
-          //     (orderBy on a field excludes docs without that field —
-          //     this is the same trick used by the orderByField folder
-          //     path at ~line 510 below)
-          //   - one count() filtered to docs where refundFlaggedAt is set
-          //
-          // v0.9.35 — Both folder-count aggregations now also exclude
-          // archived threads. The orderByField folders (Completed Sales,
-          // Refunds) display threads where their respective timestamp
-          // field is set, MINUS threads the operator has archived. The
-          // frontend rail filters archived threads out of the visible
-          // list (see etsy-mail-1.html threadMatchesFilter); without
-          // this matching backend exclusion the rail badge would still
-          // include archived threads and disagree with the empty list.
-          //
-          // Firestore aggregation supports chained .where() clauses;
-          // status,!= is well-supported and doesn't require a composite
-          // index when combined with orderBy on the same/single field.
-          // The Charm Sorter's "Production questions" folder counts on its
-          // own: a failure there costs only that number, never the rest.
-          const orderLinkCount = baseQ.where("status", "!=", "archived").orderBy("orderLinkOpenAt").count().get()
-            .then(r => r.data().count)
-            .catch(e => { console.warn("[etsyMailThreads:counts] production questions count:", e.message); return null; });
-          const aggPromises = [
-            ...statusList.map(s => baseQ.where("status", "==", s).count().get()),
-            baseQ.where("status", "!=", "archived").orderBy("salesCompletedAt").count().get(),
-            baseQ.where("status", "!=", "archived").orderBy("refundFlaggedAt").count().get(),
-          ];
-
-          const aggResults = await Promise.all(aggPromises);
-
-          const counts = {};
-          statusList.forEach((s, i) => {
-            counts[s] = aggResults[i].data().count;
-          });
-          counts._completedSales = aggResults[statusList.length].data().count;
-          counts._refundFlagged  = aggResults[statusList.length + 1].data().count;
-          const linkOpen = await orderLinkCount;
-          if (linkOpen != null) counts._orderLinkOpen = linkOpen;
-          return ok({ counts });
-        } catch (aggErr) {
-          // Fallback to the legacy full-scan path on any aggregation
-          // failure. This preserves availability if the project's
-          // Firestore SDK version is older than aggregation support, or
-          // if a transient index-build failure happens. Logged so the
-          // operator can see why aggregation didn't take.
-          //
-          // v0.9.35 — Fallback path also excludes archived threads from
-          // the two synthetic counts so it stays consistent with the
-          // primary aggregation path above.
-          console.warn("[etsyMailThreads:counts] aggregation failed, falling back to scan:", aggErr.message);
-          const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt", "orderLinkOpenAt").get();
-          const counts = {};
-          let completedSalesCount = 0;
-          let refundFlaggedCount  = 0;
-          let orderLinkOpenCount  = 0;
-          snap.forEach(d => {
-            const data = d.data() || {};
-            const s = data.status || "unknown";
-            counts[s] = (counts[s] || 0) + 1;
-            if (s === "archived") return;  // exclude archived from orderByField folder counts
-            if (data.salesCompletedAt) completedSalesCount++;
-            if (data.refundFlaggedAt)  refundFlaggedCount++;
-            if (data.orderLinkOpenAt)  orderLinkOpenCount++;
-          });
-          counts._completedSales = completedSalesCount;
-          counts._refundFlagged  = refundFlaggedCount;
-          counts._orderLinkOpen  = orderLinkOpenCount;
-          return ok({ counts });
-        }
+        // The numbers are the full scan's numbers (every status present, plus the three folder counts that leave archived
+        // threads out); FC13 computes them without reading every thread — see countThreads above.
+        return ok({ counts: await countThreads() });
       }
 
       /* ?threadId=... → single thread + messages */
