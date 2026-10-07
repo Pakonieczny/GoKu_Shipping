@@ -145,9 +145,14 @@
       return ev;
     } catch (_) { return null; }
   }
-  async function get(orderId) {
+  /** o.ifRev: the revision of the answer the caller holds: { unchanged: true, rev } when nothing it was made of has moved (a few small reads, no
+      events); o.wantRev: the answer carries its revision (`rev`) for a caller that will ask that way next time. */
+  async function get(orderId, o) {
     const id = digits(orderId); if (!id) throw new Error("no order number");
-    const j = await post("charmNestLibrary", { op: "timelineGet", orderId: id, sandbox: cfg.sandbox });
+    const body = { op: "timelineGet", orderId: id, sandbox: cfg.sandbox };
+    if (o && o.ifRev) body.ifRev = String(o.ifRev); else if (o && o.wantRev) body.wantRev = true;
+    const j = await post("charmNestLibrary", body);
+    if (j && j.unchanged) return j;
     // events still in this page's outbox are part of the timeline too (they are on their way)
     // (by the server's own key, orderId~type~cleaned id: an id with a space or "/" is stored cleaned, and two types may share one)
     const known = new Set((j.events || []).map(x => x.id && x.id.split("~").slice(1).join("~")));

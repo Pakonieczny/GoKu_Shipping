@@ -13871,6 +13871,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
     }
 
     async function _checkBatchJobsNow(manual = false) {
+      if (manual) _batchPollWake();
       if (_batchPollInFlight) {
         if (manual) _showBatchCheck("Checking OpenAI…");
         return;
@@ -13968,7 +13969,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           !!checkErrors || sweepNote.startsWith("Collector error"));
         const charmPanel = document.getElementById("charmBatchJobsPanel");
         if (charmPanel && charmPanel.style.display !== "none" && typeof refreshCharmBatchPanel === "function")
-          await refreshCharmBatchPanel();
+          await refreshCharmBatchPanel({ reuse: true });
       } catch (err) {
         _showBatchCheck(`Check failed at ${new Date().toLocaleTimeString()}: ${err?.message || err}. Click Refresh to try again.`, true);
       } finally {
@@ -13977,10 +13978,27 @@ Click the button again to permanently delete eligible temporary files, or cancel
       }
     }
 
+    // COST: each pass of the poll below reads up to 1,500 job records (twice with the Charm Maker panel open, before
+    // this change). Jobs take hours, so after passes that find nothing changed the next pass waits longer (one, one,
+    // two, two, then three ticks of BATCH_POLL_MS: at most three minutes); any change, a manual check or coming back
+    // to the tab starts again at one tick. The server's collector saves and refreshes jobs with no tab open.
+    const _BATCH_QUIET_STEPS = [1, 1, 2, 2, 3];
+    let _batchQuietPolls = 0, _batchTickSkips = 0, _batchLastDigest = "";
+    const _batchPollWake = () => { _batchQuietPolls = 0; _batchTickSkips = 0; };
+    const _batchDigest = (list) => (list || []).map((b) => [b.batchName, b.state, b.collected ? 1 : 0, b.retryBatchName || "",
+      b.setComplete ? 1 : 0, b.collectionPending ? 1 : 0, b.repairPending ? 1 : 0, b.recoveryStatus || "", b.stallRestart || "",
+      b.retryStatus || "", b.batchStats?.successfulRequestCount ?? "", b.batchStats?.failedRequestCount ?? ""].join("|")).join(";");
+
     function _startBatchAutoPoll() {
       if (_batchPollTimer) return;
       _batchPollTimer = setInterval(() => {
         if (_batchPollInFlight) return;
+        // COST: a hidden tab shows nothing, and the server's own collector (every ten minutes) refreshes and
+        // saves jobs without any tab. Each pass reads up to 1,500 job records, so skip it while hidden;
+        // visibilitychange (below) checks at once when the tab comes back.
+        if (document.hidden) return;
+        if (++_batchTickSkips < _BATCH_QUIET_STEPS[Math.min(_batchQuietPolls, _BATCH_QUIET_STEPS.length - 1)]) return;
+        _batchTickSkips = 0;
         // Stop polling once every visible batch is final (collected,
         // failed, cancelled, expired). Auto-collect-pending batches
         // remain "open" until the collect call updates their record.
@@ -14006,11 +14024,24 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const genVisible = !!(panel && panel.style.display !== "none");
         const charmVisible = !!(charmPanel && charmPanel.style.display !== "none");
         if (!genVisible && !charmVisible) return;
-        _checkBatchJobsNow(false);
+        Promise.resolve(_checkBatchJobsNow(false)).finally(() => {
+          const digest = _batchDigest(_lastBatchList);
+          _batchQuietPolls = digest === _batchLastDigest ? _batchQuietPolls + 1 : 0;
+          _batchLastDigest = digest;
+        });
       }, BATCH_POLL_MS);
     }
 
     document.getElementById("batchJobsRefreshBtn")?.addEventListener("click", () => _checkBatchJobsNow(true));
+
+    // Back on the tab after a hidden spell: one immediate check instead of waiting out the next minute.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden || !_batchPollTimer || _batchPollInFlight) return;
+      _batchPollWake();
+      const panel = document.getElementById("batchJobsPanel");
+      const charmPanel = document.getElementById("charmBatchJobsPanel");
+      if ((panel && panel.style.display !== "none") || (charmPanel && charmPanel.style.display !== "none")) _checkBatchJobsNow(false);
+    });
 
     // Auto-load batches list when entering batch mode for the first time.
     if (_isBatchModeActive()) {
@@ -14141,6 +14172,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
     let _cmCollectedSeen = -1;
 
     async function refreshCharmBatchPanel() {
+      const opts = arguments[0];
       const listEl = document.getElementById("charmBatchJobsList");
       if (!listEl) return;
       try {
@@ -14177,7 +14209,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
         } catch (_) { /* orchestration listing is optional */ }
 
         const listSeq = ++_batchListSeq;
-        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
+        // COST: called straight after the poll's own list (same 1,500 records), it uses that answer instead of asking again.
+        const resp = opts && opts.reuse === true && Date.now() - _batchListLoadedAt < 20000
+          ? { batches: _lastBatchList }
+          : await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         // Feed the shared auto-poll loop (same list the Generate tab uses —
         // it polls status and auto-collects EVERY open batch, charm or not),

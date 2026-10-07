@@ -553,7 +553,7 @@ exports.handler = async (event) => {
         const groups=[];
         for(let i=0;i<ids.length;i+=10)groups.push(ids.slice(i,i+10));
         const found=new Array(groups.length);let next=0;
-        const worker=async()=>{while(next<groups.length){const g=next++;const snap=await col(COMPLETED_COLL).where(admin.firestore.FieldPath.documentId(),"in",groups[g]).get();found[g]=snap.docs.map(d=>d.id);}};
+        const worker=async()=>{while(next<groups.length){const g=next++;const snap=await col(COMPLETED_COLL).where(admin.firestore.FieldPath.documentId(),"in",groups[g]).select().get();found[g]=snap.docs.map(d=>d.id);}};
         await Promise.all(Array.from({length:Math.min(5,groups.length)},worker));
         const present=[].concat(...found);
         return {
@@ -577,7 +577,7 @@ exports.handler = async (event) => {
         const worker = async () => {
           while (next < groups.length) {
             const g = groups[next++];
-            const snap = await db.collection(PREFIX + "Brites_Orders").where(admin.firestore.FieldPath.documentId(), "in", g).get();
+            const snap = await db.collection(PREFIX + "Brites_Orders").where(admin.firestore.FieldPath.documentId(), "in", g).select("Staff Note").get();   // (only the note comes over the wire, not the order's whole record)
             snap.docs.forEach(d => { const note = ((d.data() || {})["Staff Note"] ?? "").toString().trim(); if (note) noted.add(d.id); });
           }
         };
