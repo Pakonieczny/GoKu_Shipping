@@ -12,6 +12,8 @@ const meter = require('./meter.cjs');
 
 const m = meter.create();
 m.install({ app: () => ({}) });
+process.env.OPENAI_API_KEY = 'test-key';                                       // the provider check below runs against this stub, never the network
+globalThis.fetch = async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ status: 'in_progress', request_counts: { total: 5, completed: 0, failed: 0 } }) });
 const target = process.env.BEFORE ? path.resolve(process.env.BEFORE) : path.join(__dirname, '..', '..', 'netlify', 'functions', 'geminiImageProxy-background.js');
 const impl = require(target);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -81,7 +83,37 @@ const FULL = { kind: 'batch_list', limit: 1000, includeCollected: true };
   assert.equal(a.res.statusCode, 200);
   console.log('batch_list full:', JSON.stringify({ batches: a.body.batches.length, sessions: a.body.sessions.length, truncated: a.body.truncated, token: !!a.body.token }),
     '\n  reads', a.d.reads, ' bytes', a.d.bytes, ' ->  per hour at 60 s: reads', a.d.reads * 60, ' MB', (a.d.bytes * 60 / 1e6).toFixed(0));
+  // The page's own check of the 30 jobs that are with OpenAI (one batch_status each, every poll while a job is open). OpenAI is a stub.
+  const pass = m.snapshot();
+  for (let n = 971; n <= 1000; n++) await call('batch_status (one running job)', { kind: 'batch_status', batchName: 'batch_nnnnnnnn_' + n });
+  const status = m.since(pass);
+  console.log('30 batch_status calls (one poll\'s provider checks): reads', status.reads, ' bytes', status.bytes, ' writes', status.writes);
+  // Then the small question (an older handler ignores `since` and answers the whole list again).
+  await sleep(3);
+  const small = await call('batch_list (changes since the last read)', { ...FULL, since: a.body.token, sessionIds: a.body.sessionIds });
+  console.log('batch_list after those 30 checks:', JSON.stringify({ delta: !!small.body.delta, changed: small.body.changed && small.body.changed.length, batches: small.body.batches && small.body.batches.length }),
+    '\n  reads', small.d.reads, ' bytes', small.d.bytes);
+  await sleep(3);
+  const idle = await call('batch_list (changes, nothing changed)', { ...FULL, since: small.body.token || a.body.token, sessionIds: a.body.sessionIds });
+  console.log('batch_list, nothing changed:', JSON.stringify({ delta: !!idle.body.delta, changed: idle.body.changed && idle.body.changed.length }), '\n  reads', idle.d.reads, ' bytes', idle.d.bytes);
+  // One visible tab with a job open: a poll every 3 minutes once nothing changes (20 an hour); each poll = the 30 checks + one list.
+  // Before: every poll reads the whole list. After: the whole list every 10 minutes (5 an hour), small questions otherwise (15 an hour).
+  const hour = (whole, smallList, nWhole) => ({ reads: nWhole * whole.reads + (20 - nWhole) * smallList.reads + 20 * status.reads, MB: ((nWhole * whole.bytes + (20 - nWhole) * smallList.bytes + 20 * status.bytes) / 1e6).toFixed(1) });
+  console.log('one visible tab, one job open, per hour:  every poll whole:', JSON.stringify(hour(a.d, a.d, 20)), '  with small answers:', JSON.stringify(hour(a.d, small.d, 5)));
   if (process.env.BEFORE) { m.print(); return; }
+
+  // (1) the small answers carry just what changed, and a delta read is the same list as a whole read once merged
+  assert.equal(small.body.delta, true);
+  assert.equal(small.body.changed.length, 30, 'exactly the 30 checked jobs');
+  assert(small.d.reads <= 30 + 15, '30 records plus the fixed few (got ' + small.d.reads + ')');
+  assert.equal(idle.body.delta, true);
+  assert.equal(idle.body.changed.length, 0);
+  assert(idle.d.reads <= 15 && idle.d.bytes < 30000, 'an idle small answer is the empty query, two small documents and the summaries (got ' + idle.d.reads + ' reads, ' + idle.d.bytes + ' bytes)');
+  const whole2 = await call('batch_list (full, after)', FULL);
+  const merged = new Map(a.body.batches.map((x) => [x.batchName, x]));
+  for (const x of small.body.changed) merged.set(x.batchName, x);
+  const byName = (list) => JSON.stringify([...list].sort((p, q) => String(p.batchName).localeCompare(q.batchName)));
+  assert.equal(byName([...merged.values()]), byName(whole2.body.batches), 'first read + changes = a whole read');
 
   // (2) session summaries: every field but `sets`; the panel's issue list rides in `issueSets`
   assert.equal(a.body.sessions.length, 10);

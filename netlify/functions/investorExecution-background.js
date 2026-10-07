@@ -36,7 +36,9 @@ if (Object.keys(require.cache).some((k) => !preloadedModules.has(k) && /_investo
 async function controlDoc() { const s = await A.col(A.COL.control).doc("control").get(); return s.exists ? s.data() : {}; }
 
 async function barsForOpenSymbols(accountId) {
-  const [pointers,positions,sets]=await Promise.all([A.col(A.COL.activeMandates).where('accountId','==',accountId).get(),A.col(A.COL.positions).where('accountId','==',accountId).where('open','==',true).get(),A.col(A.COL.orderSets).where('accountId','==',accountId).get()]);
+  /* Cost (every minute): only the fields used below are read (the symbol, the status and the flags that decide which sets are live). */
+  const narrow=(q,...f)=>typeof q.select==='function'?q.select(...f):q;
+  const [pointers,positions,sets]=await Promise.all([narrow(A.col(A.COL.activeMandates).where('accountId','==',accountId),'status','symbol').get(),narrow(A.col(A.COL.positions).where('accountId','==',accountId).where('open','==',true),'symbol').get(),narrow(A.col(A.COL.orderSets).where('accountId','==',accountId),'coreVersion','closed','entryExpired','status','symbol').get()]);
   const rows=s=>s.docs.map(d=>d.data());
   const active=rows(sets).filter(x=>x.coreVersion&&!x.closed&&!x.entryExpired);
   const symbols=[...new Set([...rows(pointers).filter(p=>!['CLOSED','CANCELLED','SUPERSEDED'].includes(p.status)),...rows(positions),...active].map(p=>p.symbol))];

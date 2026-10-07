@@ -81,6 +81,7 @@ function make(K) {
   const KIND = K.KIND || { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", echoScans: () => new Set() };      // (the Welding station is not counted in throughput: see _activityKinds.js)
   const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
     nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS } = K;
+  const revDep = typeof K.revDep === "function" ? K.revDep : () => undefined;     // the employee data revision (FC5): a read kept while nothing was written; without it the short lifetimes alone
   const DAY = 86400000;
 
   /* ── days ── */
@@ -113,16 +114,18 @@ function make(K) {
 
   /* ── the loader: rollups + sessions of everybody, joined per person per day ──────────────────────────────────────────── */
   /** Sessions that started in [aMs, zMs): the server's times are ms or Firestore times, and a range matches only one kind, so both are read. */
-  function readSessionSeg(ctx, aMs, zMs, ttl) {
-    return cached(ctx, `psess|${ctx.prefix}|${aMs}|${zMs}`, ttl, async () => {
+  async function readSessionSeg(ctx, aMs, zMs, ttl) {
+    const raw = await cached(ctx, `psess|${ctx.prefix}|${aMs}|${zMs}`, ttl, async () => {
       const TS = ctx.admin.firestore.Timestamp, ranges = [[aMs, zMs]];
       if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(aMs), TS.fromMillis(zMs)]);
       const snaps = await Promise.all(ranges.map(([a, z]) => col(ctx, COL.sessions).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(LIM.sessions + 1).get()));
       const seen = new Set(), rows = []; let truncated = false;
       for (const s of snaps) { if (s.docs.length > LIM.sessions) truncated = true; for (const d of s.docs.slice(0, LIM.sessions)) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); } }
-      await require("./_stationAutoSignout").settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, rows);       // the auto sign-out rules (idle, 5:00 pm Toronto, a page that died): the session ends at the person's last input
       return { rows, truncated };
-    });
+    }, ttl === TTL.sessLive ? revDep(ctx, "ses") : undefined);
+    // the auto sign-out rules (idle, 5:00 pm Toronto, a page that died): the session ends at the person's last input. They run on the clock, so they are applied on every call to the rows kept (no read; a write only when a session now ends)
+    await require("./_stationAutoSignout").settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, raw.rows);
+    return raw;
   }
   /** The session reads of the days from..to: aligned blocks (8 days for a short window, 32 for a long one) so the cache is reused by every
       window and every viewer; the block that holds yesterday and today is split so only its live part is read often. */
@@ -232,7 +235,7 @@ function make(K) {
       const all = []; for (const d of snap.docs.slice(0, CAP.eventsPerDay)) { const e = eventRow(d.id, d.data() || {}, ctx); if (e) all.push(e); }
       const echo = KIND.echoScans(all), rows = echo.size ? all.filter(e => !echo.has(e)) : all;       // (a phone scan is the matched event: the desk page's own scan of it is not a second one)
       return { rows, capped: snap.docs.length > CAP.eventsPerDay };
-    });
+    }, day === ctx.today ? revDep(ctx, "act") : undefined);      // (today's events: kept up to 2 minutes while no event was written)
   }
 
   /** The single events of one person (key) for the days fromDay..toDay, oldest first, spellings merged. Only days that have a rollup are queried.
@@ -262,7 +265,7 @@ function make(K) {
       daysOf, dowOf, mondayOf, spanLen, nyMidnight, nyDay, addDays, cleanName, okName, scrub, digits, safe, rules: RULES, stationLabel: STATION_LABEL, eventDays: EVENT_DAYS,
       col: name => col(ctx, name),                              // a collection of THIS mode (the Sandbox_ copy in the sandbox): never use db.collection(name) directly
       nameKey: n => nameKeyOf(ctx, n),                          // any spelling → the key of `people` (aliases applied)
-      cached: (key, ttl, fn) => cached(ctx, key, ttl, fn),      // the shared in-memory cache (sandbox: 5 s at most)
+      cached: (key, ttl, fn, dep) => cached(ctx, key, ttl, fn, dep),      // the shared in-memory cache (sandbox: 5 s at most); dep: see revDep
       /** The single events of ONE person (default: the one asked for; `key` = another person's name key) for the days fromDay..toDay,
           oldest first, spellings merged: [{id, at, k, day, person, station, device, action, orderId, parts, detail, sincePrevMs}].
           Only days that have a rollup are queried. A read that fails or is cut at its cap is noted in prof.errors / prof.capped. */

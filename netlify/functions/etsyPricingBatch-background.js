@@ -159,7 +159,8 @@ exports.handler = async (event) => {
   const lastSystemic = [];
   for (let i = run.done; i < ids.length; i++) {
     // Stop flag + time budget, checked per listing.
-    const fresh = (await runRef.get()).data();
+    // COST: only the two control flags are read here (the run document also holds every queued id and the error lines).
+    const fresh = (await db.getAll(runRef, { fieldMask: ["stop", "paused"] }))[0].data();
     if (fresh.stop) { await runRef.set({ status: "stopped", current: "", updated_at: Date.now() }, { merge: true }); return { statusCode: 200, body: "stopped" }; }
     if (fresh.paused) { await runRef.set({ status: "paused", current: "Paused \u2014 " + run.done + " of " + ids.length + " completed", updated_at: Date.now() }, { merge: true }); return { statusCode: 200, body: "paused" }; }
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -170,7 +171,9 @@ exports.handler = async (event) => {
     }
 
     const id = String(ids[i]);
-    const prepSnap = await db.collection("EtsyPricing_Listings").doc(id).get();
+    // COST: the seven fields used below; a batched listing also holds its ~21 KB original_inventory, which is not needed here.
+    const [prepSnap] = await db.getAll(db.collection("EtsyPricing_Listings").doc(id),
+      { fieldMask: ["title", "listing_kind", "queue_id", "category", "chain_type", "engraving", "original_saved"] });
     const d = prepSnap.exists ? prepSnap.data() : {};
     await runRef.set({ current: "#" + id + (d.title ? " \u00b7 " + d.title : ""), updated_at: Date.now() }, { merge: true });
 
@@ -265,12 +268,14 @@ exports.handler = async (event) => {
       await db.collection("EtsyPricing_Listings").doc(id).set(patch, { merge: true });
 
       const line = (blocking ? "\u26a0 NEEDS ATTENTION " : "\u2717 ") + "#" + id + (d.title ? " \u00b7 " + d.title : "") + ": " + msg;
-      const prevErrs = Array.isArray(fresh.errors) ? fresh.errors : [];
+      // The error lines are read only when there is a failure to add (they used to come with every listing's control read).
+      const errNow = (await db.getAll(runRef, { fieldMask: ["errors", "errors_dropped"] }))[0].data() || {};
+      const prevErrs = Array.isArray(errNow.errors) ? errNow.errors : [];
       if (prevErrs.length >= RUN_ERR_CAP) {
         // At the cap: rewrite a trimmed tail instead of appending forever.
         const kept = prevErrs.slice(-(RUN_ERR_CAP - 1)).concat([line]);
         await runRef.set({ errors: kept,
-                           errors_dropped: (Number(fresh.errors_dropped) || 0) + (prevErrs.length - (RUN_ERR_CAP - 1)),
+                           errors_dropped: (Number(errNow.errors_dropped) || 0) + (prevErrs.length - (RUN_ERR_CAP - 1)),
                            blocked: run.blocked || 0, updated_at: Date.now() }, { merge: true });
       } else {
         await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion(line),

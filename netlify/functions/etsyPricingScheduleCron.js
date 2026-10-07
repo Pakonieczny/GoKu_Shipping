@@ -44,7 +44,8 @@ exports.handler = async () => {
   // Auto-resume a run that paused on budget exhaustion, once the Toronto day
   // rolled over and budget is available again.
   try {
-    const pausedQ = await db.collection("EtsyPricing_Runs").where("status", "==", "paused").limit(3).get();
+    // COST: only budget_paused is looked at (a run document also carries every queued listing id).
+    const pausedQ = await db.collection("EtsyPricing_Runs").where("status", "==", "paused").limit(3).select("budget_paused").get();
     for (const doc of pausedQ.docs) {
       const r = doc.data();
       if (!r.budget_paused) continue;

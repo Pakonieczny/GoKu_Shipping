@@ -55,6 +55,15 @@ function minorOf(qty, priceMicros, mode = M.ROUNDING.HALF_EVEN) { return M.divRo
 function db(admin) { return admin || A; }
 function lazy(m) { try { return require(m); } catch { return null; } }
 function rows(snap) { const out = []; if (snap && typeof snap.forEach === "function") snap.forEach((d) => out.push(d.data())); return out; }
+/* Document data in document-id order: what a plain equality query returns, and so what the code was written against. An `in`
+   query is not promised to come back in that order, so the order is fixed here. */
+function dataById(docs) {
+  return docs.map((d, i) => [String(d.id == null ? "" : d.id), i, d]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1])).map((x) => x[2].data());
+}
+function rowsById(snap) { const docs = []; if (snap && typeof snap.forEach === "function") snap.forEach((d) => docs.push(d)); return dataById(docs); }
+const LIVE_LEG_STATUSES = Object.freeze(["WORKING", "ARMED", "PARTIALLY_FILLED"]);
+/* A field mask: only the named fields cross the wire. Backends without select() (the self-test fakes) answer whole documents. */
+function narrow(q, ...fields) { return typeof q.select === "function" ? q.select(...fields) : q; }
 function typed(code, message, extra = {}) { return Object.assign(new Error(message || code), { code, ...extra }); }
 
 /* ── the simulator (PURE) ──────────────────────────────────────────────── */
@@ -162,16 +171,37 @@ async function postJournal({ admin = null, accountId, kind, idParts, legs, meta 
   });
 }
 /** Conservation: the account projection equals the sum of its journal. */
+/* Cost (this runs 2-3 times a minute, all day): the journal is append-only and never rewritten, so its per-account leg sums
+   only change when the number of its documents changes. The sums are kept in memory together with that number; each check
+   asks Firestore for the NUMBER (an aggregation: 1 read per 1,000 documents instead of 1 read per document) and re-reads the
+   whole journal only when the number moved, when the cache is older than LEDGER_REVERIFY_MS, or when the count is not
+   available (any other backend, a replay scope, an error). The account projection is still read and compared on every call. */
+const LEDGER_SUMS = new Map();
+const LEDGER_REVERIFY_MS = 10 * 60 * 1000;
 async function assertConservation(accountId, { admin = null } = {}) {
   const D = db(admin);
-  const journal = rows(await D.col(D.COL.ledger).where("accountId", "==", accountId).get());
-  const rebuilt = {};
-  for (const t of journal) for (const leg of t.legs || []) rebuilt[leg.account] = (rebuilt[leg.account] || 0) + Number(leg.amountCents);
+  const q = D.col(D.COL.ledger).where("accountId", "==", accountId);
+  const cacheable = D === A && !A.currentScope() && typeof q.count === "function";
+  let rebuilt = null, transactions = 0;
+  if (cacheable) {
+    try {
+      const n = (await q.count().get()).data().count;
+      const c = LEDGER_SUMS.get(accountId);
+      if (c && c.count === n && Date.now() - c.verifiedAtMs < LEDGER_REVERIFY_MS) { rebuilt = c.rebuilt; transactions = c.count; }
+    } catch (e) { rebuilt = null; }
+  }
+  if (!rebuilt) {
+    const journal = rows(await q.get());
+    rebuilt = {};
+    for (const t of journal) for (const leg of t.legs || []) rebuilt[leg.account] = (rebuilt[leg.account] || 0) + Number(leg.amountCents);
+    transactions = journal.length;
+    if (cacheable) LEDGER_SUMS.set(accountId, { count: journal.length, rebuilt, verifiedAtMs: Date.now() });
+  }
   const a = await D.col(D.COL.accounts).doc(accountId).get();
   const projected = (a.exists && a.data().balanceCents) || {};
   const keys = [...new Set([...Object.keys(rebuilt), ...Object.keys(projected)])];
   const discrepancies = keys.filter((k) => (rebuilt[k] || 0) !== (projected[k] || 0)).map((k) => ({ account: k, rebuiltCents: rebuilt[k] || 0, projectedCents: projected[k] || 0 }));
-  return { pass: discrepancies.length === 0, discrepancies, transactions: journal.length };
+  return { pass: discrepancies.length === 0, discrepancies, transactions };
 }
 
 /* ── fills → legs → positions → ledger ─────────────────────────────────── */
@@ -434,7 +464,13 @@ async function applyOutbox({ admin = null, adapter, accountId, control = {}, now
 /* ── paper fills over stored bars ──────────────────────────────────────── */
 async function simulatePaperFills({ admin = null, adapter, accountId, barsBySymbol = {}, nowMs = A.now(), provenanceBySymbol = {} } = {}) {
   const D = db(admin);
-  const legs = rows(await D.col(D.COL.orderLegs).where("accountId", "==", accountId).get()).filter((l) => ["WORKING", "ARMED", "PARTIALLY_FILLED"].includes(l.status));
+  /* Cost (runs every minute): only legs that are still live are used, so ask for those. A finished leg is never looked at, yet the
+     whole account history of legs (3 per trade, for ever) used to be read and thrown away. Same documents, same order (by id, as
+     before), same filter below; if the backend refuses the combined query the old whole-account read is the fallback. */
+  let legSnap;
+  try { legSnap = await D.col(D.COL.orderLegs).where("accountId", "==", accountId).where("status", "in", LIVE_LEG_STATUSES).get(); }
+  catch (e) { legSnap = await D.col(D.COL.orderLegs).where("accountId", "==", accountId).get(); }
+  const legs = rowsById(legSnap).filter((l) => LIVE_LEG_STATUSES.includes(l.status));
   const bySet = new Map();
   for (const l of legs) bySet.set(l.orderSetId, [...(bySet.get(l.orderSetId) || []), l]);
   const out = { fills: [], protectionAttached: [], closed: [], ambiguous: 0, cancelledRemainders: [] };
@@ -530,7 +566,8 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
   const D = db(admin);
   const R = lazy("./_investorRisk"), ER = lazy("./_investorEmergencyRisk"), MD = lazy("./_investorMandate"), DOSSIER = lazy("./_investorDossier"), P = lazy("./_investorPortfolio");
   const summary = { accountId, nowMs, expired: [], paused: [], operational: null, emergency: null, outbox: null, fills: null, conservation: null };
-  const pointers = rows(await D.col(D.COL.activeMandates).where("accountId", "==", accountId).get());
+  /* Cost: the loop below reads five fields of each pointer; the rest of a pointer (applied terms, hashes) stays in Firestore. */
+  const pointers = rows(await narrow(D.col(D.COL.activeMandates).where("accountId", "==", accountId), "decision", "status", "expiresAtMs", "desiredVersionId", "symbol").get());
   for (const p of pointers) {
     /* an unfilled entry past its last authorized session is cancelled; protection is untouched */
     if (p.decision === "BUY" && ["DESIRED", "WORKING", "BROKER_SYNC_PENDING", "PAUSED_EVIDENCE", "PAUSED_OPERATIONAL"].includes(p.status) && Number(p.expiresAtMs) && nowMs > Number(p.expiresAtMs)) {
@@ -559,7 +596,7 @@ async function tick({ admin = null, adapter, accountId, control = {}, barsBySymb
     });if(recovered)control=recovered;
   }
   /* operational revalidation: safety and exposure, never company attractiveness */
-  const portfolio = P ? await P.snapshot({ accountId, asOfMs: nowMs, admin: D }) : null;
+  const portfolio = P ? await P.snapshot({ accountId, asOfMs: nowMs, admin: D, liveMandatesOnly: true }) : null;
   if (R && portfolio) {
     summary.operational = R.revalidateOperationalLimits({ portfolio, control, riskMandate: POLICY.loadActiveSync(control).riskMandate, brokerTruthAgeSeconds: metrics.brokerTruthAgeSeconds, reconciliationUnresolved: metrics.reconciliationUnresolved === true, dayLossBps: metrics.dayLossBps, drawdownFromPeakBps: metrics.drawdownFromPeakBps, nowMs });
     if (!summary.operational.allowExpansion && control.buyState !== "FROZEN") await D.col(D.COL.control).doc("control").set({ buyState: "FROZEN", freezeNewBuys: true, freezeReason: summary.operational.reason, frozenAtMs: nowMs }, { merge: true });
@@ -766,8 +803,23 @@ async function saveSharedPaperPlan({plan,admin=null,accountId,managerRunId,nowMs
     tx.set(ref,{...plan,accountId,managerRunId,createdAtMs:nowMs});
   });return {planId};
 }
+/* The saved plans tickSharedPaper can use, in document-id order: those whose planHash makes 'shared_'+planHash the planId of an active
+   order set (`ids`). Reads one query per ten hashes; falls back to the whole-account read if the backend refuses the combined query. */
+async function readSharedPlans(D, accountId, ids) {
+  const hashes = [...new Set([...ids].filter((id) => typeof id === "string" && id.startsWith("shared_")).map((id) => id.slice("shared_".length)))];
+  if (!hashes.length) return [];
+  try {
+    const docs = [];
+    for (let i = 0; i < hashes.length; i += 10) (await D.col(D.COL.portfolioPlans).where("accountId", "==", accountId).where("planHash", "in", hashes.slice(i, i + 10)).get()).forEach((d) => docs.push(d));
+    return dataById(docs);
+  } catch (e) { return rowsById(await D.col(D.COL.portfolioPlans).where("accountId", "==", accountId).get()); }
+}
 async function tickSharedPaper({admin=null,accountId,control={},barsBySymbol={},provenanceBySymbol={},nowMs=A.now()}={}){
- const D=db(admin),active=rows(await D.col(D.COL.orderSets).where('accountId','==',accountId).get()).filter(x=>x.coreVersion&&!x.closed&&(!x.entryExpired||big(x.reservedMinor)>0n)),ids=new Set(active.map(x=>x.planId)),plans=rows(await D.col(D.COL.portfolioPlans).where('accountId','==',accountId).get()).filter(p=>p.policy?.coreVersion&&ids.has('shared_'+p.planHash));
+ /* Cost (every minute): the order sets are read for six fields only, and the saved plans (20 KB or more each, one per plan ever made) are read
+    only for the plans an active order set belongs to. Nothing else is looked at: the filter below keeps a plan only when
+    'shared_'+planHash is the planId of an active order set, so with no active set there is nothing to read, and otherwise the
+    plans whose planHash is in that list are exactly the ones the filter keeps. */
+ const D=db(admin),active=rows(await narrow(D.col(D.COL.orderSets).where('accountId','==',accountId),'coreVersion','closed','entryExpired','reservedMinor','planId','symbol','entered').get()).filter(x=>x.coreVersion&&!x.closed&&(!x.entryExpired||big(x.reservedMinor)>0n)),ids=new Set(active.map(x=>x.planId)),plans=(await readSharedPlans(D,accountId,ids)).filter(p=>p.policy?.coreVersion&&ids.has('shared_'+p.planHash));
  if((control.accountMode||control.mode)!=='PAPER_AI')return {plans:0};
  let fills=0;const unavailable=[],missingPrices=[];
  const failed=[];

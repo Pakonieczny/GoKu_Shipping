@@ -56,7 +56,7 @@ function preparationFailurePatch(record, message, now, timestamp) {
     ...(stopped ? { state: 'JOB_STATE_FAILED', locallyQueued: false,
       retryStatus: 'preparation_failed', recoveryStatus: 'blocked',
       recoveryReason: `Listing preparation failed ${failures} times. ${String(message).slice(0, 300)}` } : {}),
-    updatedAt: timestamp() };
+    updatedAt: timestamp(), rev: timestamp() };
 }
 // A person can ask the collector to restart stalled jobs sooner than
 // STALL_RESTART_MS (Paul, 2026-09-29: "please restart"), never sooner than
@@ -197,9 +197,9 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       if (gs.data()?.owner !== claim.token) throw new Error('Submission reservation changed; reconciliation required');
       tx.set(batches.doc(batchName), { ...prepared, batchName, docId: batchName,
         state: 'JOB_STATE_PENDING', rawCreate: raw || null,
-        createdAt: timestamp(), updatedAt: timestamp() }, { merge: true });
+        createdAt: timestamp(), updatedAt: timestamp(), rev: timestamp() }, { merge: true });
       tx.set(batches.doc(claim.sourceName), { retryBatchName: batchName, retryStatus: 'submitted',
-        preparedSubmission: null, updatedAt: timestamp() }, { merge: true });
+        preparedSubmission: null, updatedAt: timestamp(), rev: timestamp() }, { merge: true });
       tx.set(gate, { owner: null, phase: 'idle', sourceName: null, inputFileName: null,
         probeName: batchName, lastError: null }, { merge: true });
     });

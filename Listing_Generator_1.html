@@ -13214,16 +13214,36 @@ Click the button again to permanently delete eligible temporary files, or cancel
         ? `<details class="batch-history" data-batch-detail="history"><summary>Batch history (${history.length})${latestFinished ? " · ✓ Latest batch completed" : ""}</summary>${history.map(_renderSessionBlock).join("")}</details>` : "");
     }
 
+    // refreshBatchJobsPanel({ delta: true }) (the automatic poll only): ask for the job records written since the list on
+    // screen was read and merge them in, instead of reading the newest 1,500 records again. Every other caller (Refresh,
+    // an action, the first load) passes nothing and gets the whole list, which also restarts the delta.
     async function refreshBatchJobsPanel() {
+      const opts = arguments[0];
       const listEl = document.getElementById("batchJobsList");
       if (!listEl) return;
       const seq = ++_batchListSeq;
       try {
-        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
+        const whole = { kind: "batch_list", limit: 1000, includeCollected: true };
+        let resp = await postJson("geminiImageProxy", opts?.delta && _batchDeltaReady()
+          ? { ...whole, since: _batchToken, sessionIds: _batchSessionIds } : whole);
         if (seq < _batchPanelSeq) return { ok: true, stale: true, batches: _lastBatchList };
+        let merged = false;
+        if (resp?.delta) {
+          const next = _batchMergeDelta(resp);
+          if (next) { resp = { ...resp, batches: next, truncated: _batchTruncated, delta: false }; merged = true; }
+          else {
+            // A change that cannot be merged (a new job, a restart): read the whole list.
+            resp = await postJson("geminiImageProxy", whole);
+            if (seq < _batchPanelSeq) return { ok: true, stale: true, batches: _lastBatchList };
+          }
+        }
         _batchPanelSeq = seq;
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
-        if (seq >= _batchListDataSeq) { _batchListDataSeq = seq; _lastBatchList = batches; }
+        if (seq >= _batchListDataSeq) {
+          _batchListDataSeq = seq; _lastBatchList = batches;
+          _batchToken = resp?.token || null; _batchTokenFor = batches;
+          if (!merged) { _batchFullAt = Date.now(); _batchSessionIds = Array.isArray(resp?.sessionIds) ? resp.sessionIds : null; _batchTruncated = resp?.truncated === true; }
+        }
         _batchSweepInfo = resp?.sweep || null;
         if (resp?.admissionError) _batchSweepInfo = { ...(_batchSweepInfo || {}), lastError: resp.admissionError };
         _batchNextSweepAt = Number(resp?.nextSweepAt || 0) || null;
@@ -13305,6 +13325,41 @@ Click the button again to permanently delete eligible temporary files, or cancel
         if (checkStatus) checkStatus.textContent = `Could not load saved jobs: ${err?.message || err}`;
         return { ok: false, error: err };
       }
+    }
+
+    // COST: the poll above read the newest 1,500 job records (0.7 MB) on every pass, about 30 thousand reads an hour for
+    // one open tab even when nothing happened. The server marks every job record it writes (`rev`), and the poll now
+    // asks only for the records written since the list it holds: the token of that read, the session summaries it
+    // showed, and nothing else. The list is kept exactly as a whole read would give it:
+    //   - a changed record that is on screen and is neither a restart pointer nor a replaced job is swapped in place;
+    //   - a changed record older than the oldest one shown, while older records were left out, is not in a whole read
+    //     either; a record without a creation time is not in one at all;
+    //   - any other change (a new job, a restart pointer, a replaced job) reads the whole list at once.
+    // The whole list is also read when the list on screen was set by another reader (the Charm Maker panel), after a
+    // manual Refresh or action, and at least every BATCH_RECONCILE_MS, so a write that did not mark its record is seen
+    // within that time at the latest.
+    const BATCH_RECONCILE_MS = 10 * 60 * 1000;
+    let _batchToken = null, _batchTokenFor = null, _batchSessionIds = null, _batchTruncated = false, _batchFullAt = 0;
+    function _batchDeltaReady() {
+      return !!_batchToken && Array.isArray(_batchSessionIds) && _batchTokenFor === _lastBatchList && _lastBatchList.length > 0 &&
+        Date.now() - _batchFullAt < BATCH_RECONCILE_MS;
+    }
+    function _batchMergeDelta(resp) {
+      const next = _lastBatchList.slice();
+      const at = new Map(next.map((b, i) => [b.docId, i]));
+      const oldest = next.length ? next[next.length - 1].createdAt : null;
+      for (const c of Array.isArray(resp?.changed) ? resp.changed : []) {
+        const i = at.get(c.docId);
+        if (i === undefined) {
+          if (c.createdAt == null) continue;
+          if (_batchTruncated && !(c.locallyQueued && c.retryBatchName) && oldest != null && c.createdAt < oldest) continue;
+          return null;
+        }
+        const was = next[i];
+        if ((c.locallyQueued && c.retryBatchName) || c.retryBatchName || was.retryBatchName || c.createdAt !== was.createdAt) return null;
+        next[i] = c;
+      }
+      return next;
     }
 
     // Normalize state for both legacy BATCH_STATE_* and current JOB_STATE_*.
@@ -13914,7 +13969,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         // A manual refresh already loaded the snapshot. Avoid reading the
         // same completed history twice when no provider job needed checking.
         if (!manual || pendingChecks.length) {
-          const loaded = await refreshBatchJobsPanel();
+          const loaded = await refreshBatchJobsPanel({ delta: !manual });
           if (!loaded?.ok) throw loaded?.error || new Error("Could not refresh saved jobs");
         }
 

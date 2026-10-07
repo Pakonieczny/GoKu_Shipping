@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Un8c3IZHdwd/zoBWSpFtqniOIivLYrZxbuFu2PDAJfg='; style-src 'self' 'sha256-4dNgC357AKHF26BDhTWRMDIWQUirG590ttMxJpaIKlw='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-VrJlwZYXZZNEOG2YikU1AyTjKilSrqVeD+zOHQeOVgo='; style-src 'self' 'sha256-4dNgC357AKHF26BDhTWRMDIWQUirG590ttMxJpaIKlw='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -1699,7 +1699,7 @@ function startPolling() {
   bindFbStop();
   if (FBSTOP.active) return;
   stopPolling();
-  POLL.simulation = setInterval(loadSimulation, 3000);
+  POLL.simulation = setInterval(function () { loadSimulation(true); }, 3000);
   POLL.dash = setInterval(pollDashboard, 30000);
   /* Display quotes every 5 s while the market is open (the server answers
      from a 3 s cache), every 15 s otherwise; holdings and their charts refresh
@@ -1708,7 +1708,8 @@ function startPolling() {
   POLL.portfolio = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "portfolio") return; loadPortfolio(); }, 10000);
   POLL.charts = setInterval(holdChartsTick, 5000);
   POLL.dipsim = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "simulation") return; var active = DIPSIM.items.some(function (x) { return x.status === "running" || x.status === "queued"; }); if (active || Date.now() - DIPSIM.at > 30000) loadDipSims(); var lib = BARLIB.data, building = lib && (lib.status === "running" || lib.status === "queued"); if (building || Date.now() - BARLIB.at > 60000) loadBarLibrary(); var tr = TUNERUI.data && TUNERUI.data.runner, tuning = tr && tr.online; if (tuning ? Date.now() - TUNERUI.at > 10000 : Date.now() - TUNERUI.at > 60000) loadTuner(); }, 5000);
-  POLL.dip = setInterval(function () { if (document.hidden || $("app").hidden) return; var d = getRes("dip"), on = !!(d && d.settings && d.settings.enabled); if ((route.view === "manager" && (on || Date.now() - (DIPUI.at || 0) > 30000)) || (route.view === "system" && Date.now() - (DIPUI.at || 0) > 30000)) loadDip(); }, 5000);
+  /* Cost: the dip watcher only runs while the exchange is open, so a closed market is checked every 30 s, an open one every 5 s. */
+  POLL.dip = setInterval(function () { if (document.hidden || $("app").hidden) return; var d = getRes("dip"), on = !!(d && d.settings && d.settings.enabled && marketOpen()); if ((route.view === "manager" && (on || Date.now() - (DIPUI.at || 0) > 30000)) || (route.view === "system" && Date.now() - (DIPUI.at || 0) > 30000)) loadDip(); }, 5000);
   POLL.session = setInterval(sessionRefreshTick, 20 * 60 * 1000);
 }
 function stopPolling() { Object.keys(POLL).forEach(function (k) { if (POLL[k]) { clearInterval(POLL[k]); POLL[k] = null; } }); }
@@ -1726,8 +1727,19 @@ async function pollDashboard() {
 function liveView() { return route.view === "manager" || route.view === "portfolio"; }
 function jobsActive() { var j = getRes("jobs"); return !!(j && j.items && j.items.some(isActiveJob)); }
 function isActiveJob(j) { var s = String(j.state || "").toUpperCase(); return !(s === "COMPLETE" || s === "COMPLETED" || s === "FAILED" || s === "DEAD" || s === "CANCELLED" || s === "SUCCEEDED" || s === "DONE" || s === "EXPIRED"); }
+/* Cost: the jobs list is up to 320 saved job records per request. While a review or a job is actually running the page
+   still asks every 5 s; with nothing running it asks at most every 30 s (the overview poll's own pace). */
+var JOBPOLL = { at: 0 };
+function jobsBusyNow() {
+  var recent = function (j) { var t = Date.parse(j.heartbeatAt || j.createdAt || j.dueAt || 0); return !(t > 0) || Date.now() - t < 20 * 60000; };
+  var j = getRes("jobs");
+  if (j && j.items && j.items.some(function (x) { return isActiveJob(x) && recent(x); })) return true;
+  var d = getRes("dash"); return !!(d && d.latestRun && (d.latestRun.state === "RUNNING" || d.latestRun.state === "QUEUED"));
+}
 async function pollJobs() {
   if (document.hidden) return;
+  if (!jobsBusyNow() && JOBPOLL.at && Date.now() - JOBPOLL.at < 30000) return;
+  JOBPOLL.at = Date.now();
   try { await loadRes("jobs", "jobs", { pageSize: 100 }); } catch (e) { return; }
   if (liveView()) renderLiveActivity();
   if (route.view === "manager") renderManagerRunDetail();
@@ -3773,10 +3785,21 @@ async function simMutation(action,params){
  }catch(e){setText('simError',e.message||'Could not save this change.');}
  finally{simUI.busy=false;$('simStart').disabled=false;$('simReset').disabled=false;setText('simStart','Start simulations');setText('simReset','Reset simulator');}
 }
-async function loadSimulation(){
- loadSimulationLearning(false);
+/* Cost: every call below reads saved Firebase records (batches, runs, the shared library, saved analyses). While anything is
+   running the page keeps its 3 s pace; while nothing is, the timer asks again only every 30 s. Opening the page and every button
+   (start, pause, reset, open a run) still load immediately: only the 3 s timer is slowed, and only when nothing can be changing. */
+function simRunsIdle(){var d=simUI.data;if(!d||simUI.pollError||simUI.loading)return false;var runs=d.runs||[];
+ if(!runs.length)return !d.batch;
+ return runs.every(function(r){return r.paused||(['complete','incomplete','unavailable','cancelled'].indexOf(r.status)>=0&&!r.pendingAiCount);})&&!(d.cleanup&&d.cleanup.pendingBatches>0);}
+function simLearningIdle(){var d=learningUI.data,c=d&&d.current;if(!d||learningUI.busy||learningUI.loading)return false;
+ if(c&&(['collecting','researching','synthesizing'].indexOf(c.status)>=0||c.cleanupRequested||c.status==='needs_attention'))return false;return Date.now()-learningUI.lastAt<30000;}
+function simDetailSettled(){var d=simUI.detail,sel=simUI.selected;if(!d||!d.run||d.run.runId!==sel||d.collection!==simUI.detailCollection||Date.now()-(simUI.detailAt||0)>=30000)return false;
+ var r=(simUI.data&&simUI.data.runs||[]).filter(function(x){return x.runId===sel;})[0];return !!r&&['complete','incomplete','unavailable','cancelled'].indexOf(r.status)>=0&&!r.pendingAiCount;}
+async function loadSimulation(fromTimer){
+ if(!(fromTimer&&simLearningIdle()))loadSimulationLearning(false);
  if($('app').hidden||route.view!=='simulation'||document.hidden)return;
  if(simUI.loading){if(simUI.data)renderSimulation();return;}
+ if(fromTimer&&simRunsIdle()&&Date.now()-(simUI.lastLoadedAt||0)<30000)return;
  simUI.loading=true;var generation=simUI.generation||0,ctl=new AbortController();simUI.pollController=ctl;var timer=setTimeout(function(){ctl.abort();},12000),requestedBatch=route.params.batch||simUI.batchId||null;
  try{var params={};if(requestedBatch)params.batchId=requestedBatch;if(simUI.historyCursor)params.cursor=simUI.historyCursor;
   var r=await api('simulationOverview',params,{signal:ctl.signal});
@@ -3786,8 +3809,11 @@ async function loadSimulation(){
  }catch(e){if(generation!==(simUI.generation||0))return;simUI.pollError=true;simUI.pollErrorDetail=e.name==='AbortError'?'The progress request exceeded 12 seconds.':[(e.status?'HTTP '+e.status:null),e.code,e.message].filter(Boolean).join(' · ').slice(0,400);if(simUI.data)renderSimulation();setText('simError','Progress refresh delayed — retrying automatically. '+simUI.pollErrorDetail+' Last update: '+(simUI.lastLoadedAt?new Date(simUI.lastLoadedAt).toLocaleTimeString():'not received yet')+'.');}
  finally{clearTimeout(timer);if(generation===(simUI.generation||0)){simUI.loading=false;simUI.pollController=null;}}
  // A slow detail request must not block updates to the other simulation cards.
- if(simUI.selected)loadSimDetail();
- loadDipSims(); dipSimSourceOptions(); loadBarLibrary(); loadTuner();
+ if(simUI.selected)loadSimDetail(fromTimer);
+ /* The dip runs, price library and tuner have their own paced timer (the 5 s one started with the page). The 3 s tick keeps them
+    at 3 s only while a dip run is running or the library is building; otherwise it loads them once and the paced timer takes over. */
+ var dipRun=DIPSIM.items.some(function(x){return x.status==='running'||x.status==='queued';}),libRun=BARLIB.data&&(BARLIB.data.status==='running'||BARLIB.data.status==='queued');
+ if(!fromTimer||!DIPSIM.at||dipRun)loadDipSims(); dipSimSourceOptions(); if(!fromTimer||!BARLIB.at||libRun)loadBarLibrary(); if(!fromTimer||!TUNERUI.at)loadTuner();
 }
 function simPreparationItem(item){
  var stateNames={complete:'Complete',working:'Working',waiting:'Waiting for source',queued:'Queued',starting:'Starting worker',pending:'Not started',failed:'Needs attention',paused:'Paused — saved'};
@@ -3961,7 +3987,7 @@ function renderSimulation(){var d=simUI.data;if(!d)return;var runs=d.runs||[],t=
 }
 function drawSimDistribution(values){var c=$('simDistribution');if(!c)return;var wrap=simChartWrap(c),tip=wrap.querySelector('.tip');var w=c.clientWidth||600;c.width=w*2;c.height=240;var ctx=c.getContext('2d');ctx.scale(2,2);c._bins=null;
   if(!c._distBound){c._distBound=true;c.addEventListener('pointermove',function(e){var b=c._bins;if(!b){tip.hidden=true;return;}var r=c.getBoundingClientRect(),i=Math.max(0,Math.min(11,Math.floor((e.clientX-r.left-8)/((r.width-16)/12))));tip.textContent=b.counts[i]+(b.counts[i]===1?' simulation':' simulations')+'\n'+simReturn(b.lo+(b.hi-b.lo)*i/12)+' to '+simReturn(b.lo+(b.hi-b.lo)*(i+1)/12);tip.hidden=false;var tw=tip.offsetWidth,left=e.clientX-r.left+12;if(left+tw>r.width-4)left=e.clientX-r.left-tw-12;tip.style.left=Math.max(4,left)+'px';tip.style.top='8px';});c.addEventListener('pointerleave',function(){tip.hidden=true;});}if(!values.length){ctx.fillStyle=chartColors().ink45;ctx.font='12px sans-serif';ctx.fillText('The distribution will appear as simulations finish.',10,50);return;}var lo=Math.min(...values),hi=Math.max(...values),bins=Array(12).fill(0);values.forEach(function(v){bins[Math.min(11,Math.floor((v-lo)/(hi-lo||1)*12))]++;});c._bins={lo:lo,hi:hi,counts:bins};var max=Math.max(...bins);bins.forEach(function(n,i){ctx.fillStyle=chartColors().gold;ctx.fillRect(8+i*(w-16)/12,94-n/max*75,(w-16)/12-3,n/max*75);});ctx.fillStyle=chartColors().ink45;ctx.font='11px sans-serif';ctx.fillText(simReturn(lo),8,112);ctx.textAlign='right';ctx.fillText(simReturn(hi),w-8,112);}
-async function loadSimDetail(){if(!simUI.selected||simUI.detailLoading)return;simUI.detailLoading=true;var selectedRun=simUI.selected,ctl=new AbortController(),timer=setTimeout(function(){ctl.abort();},12000);try{var params={runId:simUI.selected,collection:simUI.detailCollection};if(simUI.detailCursor)params.after=simUI.detailCursor;var r=await api('simulationDetail',params,{signal:ctl.signal});if(simUI.selected!==selectedRun)return;simUI.detail=r.data;renderSimDetail();}catch(e){setText('simError',e.name==='AbortError'?'Details are taking longer to load. Retrying shortly.':e.message);}finally{clearTimeout(timer);simUI.detailLoading=false;}}
+async function loadSimDetail(fromTimer){if(!simUI.selected||simUI.detailLoading)return;if(fromTimer&&simDetailSettled())return;simUI.detailLoading=true;var selectedRun=simUI.selected,ctl=new AbortController(),timer=setTimeout(function(){ctl.abort();},12000);try{var params={runId:simUI.selected,collection:simUI.detailCollection};if(simUI.detailCursor)params.after=simUI.detailCursor;var r=await api('simulationDetail',params,{signal:ctl.signal});if(simUI.selected!==selectedRun)return;simUI.detail=r.data;simUI.detailAt=Date.now();renderSimDetail();}catch(e){setText('simError',e.name==='AbortError'?'Details are taking longer to load. Retrying shortly.':e.message);}finally{clearTimeout(timer);simUI.detailLoading=false;}}
 function renderSimDetail(){var d=simUI.detail;if(!d)return;var r=d.run;$('simDetail').hidden=false;setText('simDetailTitle',r.date+' · simulation details');setText('simDetailClock',r.clockMs?'Historical clock '+new Date(r.clockMs).toLocaleString('en-US',{timeZone:'America/New_York'})+' ET':'Preparing historical data');
  setChildren($('simDetailCosts'),[el('span',{text:'Charged '+simMoney(r.spentNano)}),el('span',{text:'Reserved '+simMoney(r.reservedNano)+' (not charged)'}),el('span',{text:r.budgetMode==='measure_actual_cost'?'No AI spending limit':'Ceiling '+simBudgetMoney(r.ceilingNano||1889850000)+' USD'}),el('span',{text:(r.reportedInputTokens||0)+' input · '+(r.reportedOutputTokens||0)+' output tokens (includes reasoning)'})]);
  var pts=d.collection==='curve'?d.items:[];if(pts.length){simUI.chartPoints=pts;drawSimChart();}
