@@ -10,7 +10,7 @@
  *   LibraryFlow.plan({kind,id,to,by})    Promise<Plan>: reads, never writes
  *   LibraryFlow.commit(plan,{confirmed,by,onStep})   Promise<{ok,applied:[{key,label}],error}>
  *   LibraryFlow.approve({kind,id,by,confirmed})      Promise<Plan>: runs every safe automatic step now, lists what is still missing
- *   LibraryFlow.cutLine({kind,id,by,onStep})         Promise<{ok,error,lines,cut,sheets}>: the person's yes in the green dash line window: the Cut Sheet press (line drawn and dated, cut recorded) for each partial sheet of the item; never moves it
+ *   LibraryFlow.cutLine({kind,id,sheetIds?,by,onStep}) Promise<{ok,error,lines,cut,sheets}>: the person's yes in the green dash line window: the Cut Sheet press (line drawn and dated, cut recorded) for each partial sheet of the item; never moves it
  *
  *   Plan = { ok, from:{area,setId}, to:{area,setId}, auto:[{key,label,detail}], needs:[{key,label,detail,items}],
  *            confirm:[{key,label,detail}], notes:[string], kind, id, move:{kind,id,to}, noop?:true }
@@ -70,7 +70,11 @@
   /* The ONE test for "this metal gets a green dash line": charm-nest-rose.js CharmNestRose.cuts (Rose Gold, 10K, 14K once that
      file says so; Rose Gold alone before it). A partial sheet of such a metal that is not cut and has no line yet needs one. */
   const cuts = m => { try { if (hooks.cuts) return !!hooks.cuts(m); const R = root.CharmNestRose; return R && typeof R.cuts === 'function' ? !!R.cuts(m) : m === 'rose'; } catch (_) { return m === 'rose'; } };
-  const needsCutLine = s => !!s && cuts(s.metal) && !s.roseCutAt && !s.rosePlanHash;
+  /* The ONE test for "this sheet still owes its line" and "readiness holds it for its line" is charm-nest-rose.js owesLine / holdsLine, the same two
+     CharmNestReadiness asks (GF1, Paul 7 Oct); the written-out copy is only for a page or a test where that file is not loaded (or `cuts` is set by hand). */
+  const shared = name => { try { if (hooks.cuts) return null; const R = root.CharmNestRose; return R && typeof R[name] === 'function' ? R[name] : null; } catch (_) { return null; } };
+  const needsCutLine = s => { const f = shared('owesLine'); return f ? !!f(s) : !!s && cuts(s.metal) && !s.roseCutAt && !s.rosePlanHash; };
+  const lineHeld = s => { const f = shared('holdsLine'); return f ? !!f(s) : needsCutLine(s) && !!s.roseStockId; };
   const needsRoseLine = needsCutLine;       // (the old name: the rest of this file and its tests use it)
 
   /* ── reading the records ────────────────────────────────────────────────────────────────────────────────────────
@@ -123,7 +127,7 @@
     if (!joined(rec)) need('membership', () => `${label} is not in a set yet`, rec.draft ? 'It joins a set when it is full, or when you drop it on a set.' : 'It is not included in its set. Include it in a set first.');
     // layout: a verified layout the page is not changing, and (Rose Gold) a calculated green dash line
     if (!st.layout) {
-      const lineOnly = needsRoseLine(rec) && !!rec.roseStockId && rec.verification?.ok === true && L.total > 0;
+      const lineOnly = lineHeld(rec) && rec.verification?.ok === true && L.total > 0;     // (held for its line and nothing else: roseConfirm asks for it, or says why it cannot)
       if (!lineOnly) {
         const working = !!(rec.saving || ['nesting', 'finishing', 'queued'].includes(rec.status));
         const why = L.total === 0 ? 'No charms are placed on it.' : rec.status === 'error' ? 'Nesting stopped with an error: nest this sheet again.' : working ? 'The sheet is still being nested or saved. Try again when it is done.' : rec.verification?.ok === false ? 'The layout check found a problem: open the sheet and nest it again.' : rec.verification?.ok !== true ? 'The layout has not been checked yet.' : 'The sheet is being changed.';
@@ -280,14 +284,39 @@
     const who = { count: want.length, sheetIds: want.map(sid), ...(sheets.length ? { sheets } : {}) };
     return c ? { key: 'roseLine', label: c.label, detail: c.detail, ...who } : { key: 'roseLine', label: `Add the green dash line to ${names.length === 1 ? names[0] : count(names.length, 'sheet')}?`, detail: `This calculates the cut contour for ${names.length === 1 ? 'these charms' : 'the charms on ' + names.join(', ')}. Nothing is added until you press the button.`, ...who };
   }
+  /* The safety net (GF1, Paul 7 Oct: a 14K sheet moved to Laser cutting with no question about its green line, then blocked on it). A sheet the move
+     carries that still owes its line must never go on silently. When the line check lists it (a line can be made) the one yes is asked (below).
+     When the check says there is nothing to add, or cannot say (the sheet could not be read, it is not in the answer), the sheet goes on only if
+     readiness itself does not hold it for its line (lineHeld, the very test readiness asks: it holds no physical sheet, so it is a full sheet that
+     takes the rest of the metal whole). Otherwise the move is refused with ONE plain reason that names the sheet and the one place to fix it, and
+     writes nothing (a need, so commit and approve stop before any step). Returns true when it added that need. */
+  function lineStuck(plan, want, R) {
+    const said = new Map(((R && R.sheets) || []).filter(x => x && x.sheetId).map(x => [x.sheetId, x]));
+    const stuck = want.filter(s => { const e = said.get(sid(s)); return !(e && e.needsLine) && (!e || !!e.unknown || lineHeld(s)); });
+    if (!stuck.length) return false;
+    const one = stuck.length === 1, names = stuck.map(sheetName), why = s => { const e = said.get(sid(s)); return (e && e.why) || 'Open it on the Nest tab'; };
+    const full = stuck.every(s => { const e = said.get(sid(s)); return !!(e && !e.unknown && e.full); });
+    plan.needs.push({ key: 'roseLineStuck', label: `${joinNames(names)} still ${one ? 'needs' : 'need'} the green dash line`,
+      detail: full ? `${one ? 'It looks' : 'They look'} full, so no line is to be added, but the plan that says so is not saved yet, and a sheet waiting for its line is not ready. Open ${one ? 'it' : 'them'} on the Nest tab: ${one ? 'it is' : 'they are'} saved there by itself. Nothing was changed.`
+        : `The line check could not make ${one ? 'it' : 'them'} from here, so nothing was moved or written. Open ${one ? 'it' : 'them'} on the Nest tab and press Cut Sheet there.`,
+      items: stuck.slice(0, LISTED).map(s => ({ kind: 'sheet', id: sid(s), label: sheetName(s), why: why(s) })) });
+    return true;
+  }
+  const joinNames = l => l.length <= 1 ? l[0] || '' : l.slice(0, -1).join(', ') + ' and ' + l[l.length - 1];
   function roseConfirm(plan, mine, env) {
     const want = mine.filter(needsRoseLine);
     if (!want.length) return;
     const R = roseAnswer(env);
-    if (R && R.needsLine === false) return;
-    if (roseBlocked(plan, want, env)) return;             // (pressing could only be refused: no yes is asked for)
-    plan.confirm.push(roseLineConfirm(want, env));
-    plan.steps.push({ type: 'roseLine', item: plan.move ? { kind: plan.move.kind, id: plan.move.id } : null, sheetIds: want.map(sid), key: 'roseLine', label: 'Green dash line calculated' });
+    let ask = want;
+    if (R) {
+      if (lineStuck(plan, want, R)) return;                // (a sheet readiness holds for its line, or one that cannot be read: refused, no yes)
+      const listed = new Set((R.sheets || []).filter(x => x && x.needsLine).map(x => x.sheetId));
+      ask = want.filter(s => listed.has(sid(s)));          // (the sheets a line can be made for: a full or lined one in the same move is left out)
+      if (!ask.length) return;
+    }
+    if (roseBlocked(plan, ask, env)) return;               // (pressing could only be refused: no yes is asked for)
+    plan.confirm.push(roseLineConfirm(ask, env));
+    plan.steps.push({ type: 'roseLine', item: plan.move ? { kind: plan.move.kind, id: plan.move.id } : null, sheetIds: ask.map(sid), key: 'roseLine', label: 'Green dash line calculated' });
   }
   /* A Rose Gold sheet into a set (Paul: "dragging and dropping a rose gold sheet between sets"). Joining a set IS the Cut Sheet
      press for it (RoseStock.record: the sheet joins the set, its green dash line is drawn and dated when it has none, and the
@@ -668,7 +697,12 @@
     let p = planMove(state, { ...item, to, ...(together ? { together: true } : {}) }, env);
     const M = hooks.rose();
     if (p.steps.some(x => x.type === 'roseLine' || x.type === 'roseJoin') && M && typeof M.check === 'function') {
-      try { const c = await M.check(item); if (c && typeof c === 'object') { env = { ...env, rose: c }; p = planMove(state, { ...item, to, ...(together ? { together: true } : {}) }, env); } } catch (_) { /* the fallback confirm stands */ }
+      // The check reads EVERY sheet the move carries that owes a line, not only the one dragged: a sheet of a set moves with its set (GF1).
+      // (one sheet and nothing else: the item itself, as before)
+      const ids = [...new Set(p.steps.filter(x => x.type === 'roseLine').flatMap(x => x.sheetIds || []))];
+      const ask = item.kind === 'set' ? (ids.length ? [item, ...ids.map(id => ({ kind: 'sheet', id }))] : item)
+        : ids.length === 1 && ids[0] === item.id || !ids.length ? item : ids.map(id => ({ kind: 'sheet', id }));
+      try { const c = await M.check(ask); if (c && typeof c === 'object') { env = { ...env, rose: c }; p = planMove(state, { ...item, to, ...(together ? { together: true } : {}) }, env); } } catch (_) { /* the fallback confirm stands */ }
     }
     return p;
   }
@@ -724,7 +758,9 @@
         } else if (s.type === 'roseLine') {
           // LibraryFlowRose.calculate on the item the move is about (never recordCut: the Cut Sheet button alone records a cut).
           // It re-checks every sheet right before acting and refuses before writing when one cannot be given a line.
-          const r = await hooks.rose().calculate(s.item || { kind: 'sheet', id: s.sheetIds[0] }, { by, onStep: x => { try { o.onStep && o.onStep({ ...x, key: x.key || 'roseLine' }); } catch (_) { /* never stops it */ } } });
+          // (every sheet the plan listed: a sheet of a set moves with its set. A set item is calculated as the set, one sheet as that sheet)
+          const ids = s.sheetIds || [], what = s.item && s.item.kind === 'set' ? s.item : ids.length === 1 && (!s.item || s.item.id === ids[0]) ? (s.item || { kind: 'sheet', id: ids[0] }) : ids.length ? ids.map(id => ({ kind: 'sheet', id })) : s.item;
+          const r = await hooks.rose().calculate(what, { by, onStep: x => { try { o.onStep && o.onStep({ ...x, key: x.key || 'roseLine' }); } catch (_) { /* never stops it */ } } });
           if (!r || r.ok === false) throw new Error((r && r.error) || 'The green dash line could not be calculated: open the sheet on the Nest tab and press Cut Sheet there');
           const got = (r.sheets || []).filter(x => x && x.lineAdded && !x.skipped).map(x => x.label).filter(Boolean);
           label = got.length ? `Green dash line added to ${got.join(', ')}` : 'Green dash line already there';
@@ -881,8 +917,10 @@
     if (!item.id) return { ok: false, error: 'There is nothing to make the green dash line for', sheets: [] };
     if (!by) return { ok: false, error: 'Sign in first: the cut is recorded with your name', sheets: [] };
     if (!M || typeof M.calculate !== 'function') return { ok: false, error: 'The green dash line cannot be calculated from here: open the sheet on the Nest tab and press Cut Sheet there', sheets: [] };
+    // (the sheets the window listed, when the caller says them: a sheet of a set moves with its set, so every one that needs a line gets it; else the item)
+    const ids = [...new Set((Array.isArray(req.sheetIds) ? req.sheetIds : []).map(String).filter(Boolean))], what = item.kind === 'sheet' && ids.length && !(ids.length === 1 && ids[0] === item.id) ? ids.map(id => ({ kind: 'sheet', id })) : item;
     try {
-      const r = await M.calculate(item, { by, recordCut: true, onStep: x => { try { req.onStep && req.onStep(x); } catch (_) { /* a listener never stops it */ } } });
+      const r = await M.calculate(what, { by, recordCut: true, onStep: x => { try { req.onStep && req.onStep(x); } catch (_) { /* a listener never stops it */ } } });
       if (!r || typeof r !== 'object') return { ok: false, error: 'No answer came back, nothing was changed', sheets: [] };
       // a line that is saved but whose cut could not be recorded is not the whole press: the move waits, and the sheet says why
       if (r.ok !== false && (r.warnings || []).length) return { ...r, ok: false, error: `${r.warnings.join('. ')}. Press Cut Sheet on the Nest tab to record it` };

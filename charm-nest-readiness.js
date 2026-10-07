@@ -4,8 +4,9 @@
   'use strict';
   const idsOf=s=>[...new Set((s.poolIds || []).filter(Boolean))];
   /* A sheet of a metal that has a green line (Rose Gold, 10K, 14K: charm-nest-rose.js cuts(), the one list) that holds a physical sheet but has no
-   * calculated line yet waits for it. Looked up when asked, so the page's script order does not matter; a page without that module asks for nothing. */
-  const lineMissing=s=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestRose;if(!R&&typeof require==='function'){try{R=require('./charm-nest-rose');}catch(_){R=null;}}return !!(R&&R.cuts(s.metal)&&s.roseStockId&&!s.rosePlanHash);};
+   * calculated line yet waits for it. Looked up when asked, so the page's script order does not matter; a page without that module asks for nothing.
+   * The test is charm-nest-rose.js holdsLine, the one the Library flow asks too (GF1): readiness and a move can never read a record differently. */
+  const lineMissing=s=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestRose;if(!R&&typeof require==='function'){try{R=require('./charm-nest-rose');}catch(_){R=null;}}return !!(R&&(typeof R.holdsLine==='function'?R.holdsLine(s):R.cuts(s.metal)&&s.roseStockId&&!s.rosePlanHash));};
   const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
   const url=x=>typeof x==='string'?x:x?.url;
   /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders: EITHER button, or both, in any order and

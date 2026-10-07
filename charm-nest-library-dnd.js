@@ -636,7 +636,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (yes === null) return { o: again(Object.assign({}, o, { plan0: raw })) };         // (no window here: the bar of the move asks, as before)
     if (!yes) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, cancelled: true } }; }
     const ids = c.sheetIds && c.sheetIds.length ? c.sheetIds : hit.hits;
-    const res = await CL.make({ ids, el: elOf(item) || home, run: onStep => f.cutLine({ kind: item.kind, id: item.id, by: who(), onStep }) });
+    const res = await CL.make({ ids, el: elOf(item) || home, run: onStep => f.cutLine({ kind: item.kind, id: item.id, sheetIds: c.sheetIds, by: who(), onStep }) });   // (the sheets the window listed: a sheet of a set moves with its set)
     if (!res || res.ok === false) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, error: res && res.error } }; }
     return { o: again(o) };
   }
