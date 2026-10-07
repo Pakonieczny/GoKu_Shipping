@@ -3033,6 +3033,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-progress.js?v=20260924-topline"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1"></script>
+<script src="charm-nest-partial.js?v=20261007-ps3"></script>
 <script src="charm-nest-solver.js?v=20260925-fill-holes"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
@@ -3264,7 +3265,7 @@ const TL_WRITE = /^(pool|back|laser|rose|custom|arrival|cancel|set|putSheet|dele
 const PLACEMENT_WRITE = /^(pool|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|set|run|custom|cancel|laserDone|sandboxCancel|flowApply)/;   // (the writes that can move a piece: on a sheet, off it, held, cancelled, done by hand)
 // the writes that change where a sheet or a set stands in the Library, or what it still waits for (its backs, label, set, green
 // line, cut mark, hold and seals, and the orders' own answers): the Library's cards read the cloud again at once after any of them
-const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
+const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|partialClaim|partialRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
@@ -3297,6 +3298,7 @@ async function api(fn, body, opts = {}) {
     if (fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
     // ... and the Library's cards (a sheet's or a set's place and readiness) read the cloud again now and 1.5 s after the last write
     // (Paul, 3 Oct 04:47: real time). The slow check that records seals (laserStatus) is not a write and never lands here.
+    if (fn === "charmNestLibrary" && /^(roseRecordCut|roseClaim|roseRelease|roseTakeOff|remnantMark|partialClaim|partialRelease|partialUse|partialPolicySet)$/.test(String((body && body.op) || ""))) { try { window.PartialSheets?.changed?.(); } catch (_) {} }   // (PS3: the partial sheet lists ask again, with their revision: one tiny read when nothing else moved)
     if (fn === "charmNestLibrary" && LIBRARY_WRITE.test(String((body && body.op) || ""))) { try { if (window.LaserReview?.written) window.LaserReview.written(body.op); else window.LaserReview?.nudge?.(); } catch (_) {} }   // (written: the other tabs of this computer hear it too, and read now)
     // ... and the Review tab's changes feed reads now and 1.5 s later after a completion, a print or a reopen written from here
     // (Paul, 5 Oct: whatever is done from any view is the same everywhere within seconds, another computer's too)
@@ -6909,6 +6911,7 @@ try {
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1"></script>
+<script src="charm-nest-partial-data.js?v=20261007-ps3"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1"></script>
