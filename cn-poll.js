@@ -26,11 +26,14 @@
  *      parse: (text, response) => value     default JSON.parse(text) (null for an empty body)
  *      onData: (data, info) => {}      the answer when it is NEW (first answer, or changed). Runs in every tab (leader and followers).
  *      onUnchanged: (info) => {}       leader only: the server said unchanged (304, same ETag, same body).
- *      onError: (error, info) => {}    leader only: network error, timeout, HTTP error (error.status). The next try is backed off.
+ *      onError: (error, info) => {}    network error, timeout, HTTP error (error.status). The next try is backed off. Runs in the leader and,
+ *                                      relayed (error.relayed === true, message + status + plain properties), in every follower.
  *      enabled: () => bool             false = signed out / not wanted: no polling, no leading. Re-checked every enabledCheckMs.
  *      intervalMs: 3000                base interval while things change.
  *      maxIntervalMs: 0                0 = no backoff (a "live" page). N = unchanged answers stretch the interval up to N ms.
  *      factor: 2, idleAfter: 2         growth factor and how many unchanged answers keep the base interval before growing.
+ *      steps: [100, 200, 400, 800]     (instead of the three above) an explicit wait after 0, 1, 2 ... unchanged answers, the last one
+ *                                      stays; for a page that already has such a schedule and must keep its cadence exactly.
  *      jitter: 0.1                     +-10 % on every wait, so a shop of computers does not hit the server in the same instant.
  *      minGapMs: 250                   two requests of one poller are never closer than this (poke storms are coalesced; a poke
  *                                      during a request runs ONE more request right after it, so the answer is never older than the poke).
@@ -42,6 +45,8 @@
  *    }).start();
  *    p.poke(reason?)    something happened on this computer: refresh now (any tab; a follower asks the leader), backoff reset.
  *    p.refresh(reason?) same as poke without the backoff reset (a plain "look again").
+ *    p.wake()           the page knows someone is working here (its own idea of activity, with options.activity false): back to the
+ *                       base interval and the next look pulled forward, no request now.
  *    p.stop()           release leadership, stop timers, close the channel (the answer last received stays in p.data()).
  *    p.data()           the last answer received (leader or follower), null before the first.
  *    p.state()          { started, active, leader, shared, intervalMs, nextInMs, etag, seq, unchanged, hasData, stats:{requests,
@@ -102,8 +107,11 @@
     if (!o.url && typeof o.fetch !== "function") throw new Error("CnPoll: options.url or options.fetch is required");
     const env = makeEnv(o.env);
     const id = rid();
-    const base = num(o.intervalMs, 250, 3600000, 3000);
-    const cap = o.maxIntervalMs ? Math.max(base, num(o.maxIntervalMs, base, 3600000, base)) : base;
+    // steps: an explicit schedule [100, 200, 400 ...] of waits after 0, 1, 2 ... unchanged answers (for a page that already has one);
+    // intervalMs / maxIntervalMs / factor / idleAfter are then ignored. Without steps: base * factor^n up to maxIntervalMs.
+    const steps = Array.isArray(o.steps) && o.steps.length ? o.steps.map(v => num(v, 50, 3600000, 3000)) : null;
+    const base = steps ? steps[0] : num(o.intervalMs, 250, 3600000, 3000);
+    const cap = steps ? Math.max.apply(null, steps) : (o.maxIntervalMs ? Math.max(base, num(o.maxIntervalMs, base, 3600000, base)) : base);
     const factor = num(o.factor, 1, 10, 2), idleAfter = num(o.idleAfter, 0, 1000, 2), jit = num(o.jitter, 0, 0.5, 0.1);
     const minGap = num(o.minGapMs, 0, 60000, 250), softGap = num(o.softGapMs, 0, 600000, 1000);
     const timeoutMs = num(o.timeoutMs, 1000, 300000, 20000), errorMax = num(o.errorMaxMs, 1000, 3600000, 60000);
@@ -124,6 +132,12 @@
     const sharing = () => !!(o.share && env.BroadcastChannel && ((env.navigator && env.navigator.locks) || env.localStorage));
     const mkInfo = (reason, changed) => ({ key: o.key, seq, etag, at: env.now(), reason: reason || "", leader, changed: !!changed, hidden: !visible(), intervalMs: interval });
 
+    // what a follower is told of a failure: the message and every plain own property (status, timeout, flags a page put on it)
+    function errData(e) {
+      const d = { message: String((e && e.message) || e || "error") };
+      try { for (const k of Object.keys(e || {})) { const v = e[k]; if (v == null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") d[k] = v; } } catch (_) {}
+      return d;
+    }
     function post(m) { if (!ch) return; try { m.v = PROTOCOL; m.from = id; ch.postMessage(m); } catch (_) {} }
 
     /* ── the answer: new data goes to this page and (from the leader) to the other tabs ── */
@@ -205,6 +219,7 @@
         if (err.status === 401 || err.status === 403) wait = Math.max(wait, errorMax);
         if (err.retryAfterMs) wait = Math.min(120000, Math.max(wait, err.retryAfterMs));
         safe(o.onError, err, mkInfo(reason, false));
+        post({ t: "error", err: errData(err), reason: reason || "" });
         wait = jittered(wait);
       } else {
         errStreak = 0;
@@ -219,7 +234,8 @@
         }
         if (same) {
           unchanged++; stats.notModified++;
-          if (unchanged > idleAfter) interval = Math.min(cap, Math.round(interval * factor));
+          if (steps) interval = steps[Math.min(unchanged, steps.length - 1)];
+          else if (unchanged > idleAfter) interval = Math.min(cap, Math.round(interval * factor));
           safe(o.onUnchanged, mkInfo(reason, false));
         } else {
           hasData = true; etag = ne; body = nb; text = nt; seq++; resetBackoff(); stats.changed++;
@@ -312,6 +328,9 @@
       const m = ev && ev.data;
       if (!m || m.v !== PROTOCOL || m.from === id || !started) return;
       if (m.t === "data") { if (m.to && m.to !== id) return; adopt(m); }
+      else if (m.t === "error") {
+        if (!leader && m.err) { const e = Object.assign(new Error(m.err.message), m.err, { relayed: true }); safe(o.onError, e, Object.assign(mkInfo(m.reason, false), { leader: false })); }
+      }
       else if (m.t === "hello") { if (leader && hasData && (m.etag || null) !== etag) sendData(m.from, "hello"); }
       else if (m.t === "poke") { if (leader) poke(m.reason || "remote-poke", true); }
       else if (m.t === "active") { if (leader) bump(); }
@@ -370,6 +389,12 @@
       else if (!remote) { post({ t: "poke", reason: reason || "poke" }); evaluate(); }
       return true;
     }
+    /** The page decided "someone is working here": back to the base interval and the next look pulled forward, no request now. */
+    function wake() {
+      if (!started) return false;
+      if (leader) bump(); else post({ t: "active" });
+      return true;
+    }
     function refresh(reason) {
       if (!started) return false;
       if (leader) cycle(reason || "refresh");
@@ -406,7 +431,7 @@
         nextInMs: nextAt ? Math.max(0, nextAt - env.now()) : null, etag, seq, unchanged, hasData, stats: Object.assign({}, stats)
       };
     }
-    const api = { start, stop, poke, refresh, state, data: () => body, key: o.key, id };
+    const api = { start, stop, poke, refresh, wake, state, data: () => body, key: o.key, id };
     return api;
   }
 

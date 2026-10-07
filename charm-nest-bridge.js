@@ -1221,9 +1221,9 @@ const Views = window.Views = (() => {
 const Orders = window.Orders = (() => {
   const rowsOf = () => B.orders.rows;
   function markStale() { B.orders.stale = true; render(); }
-  async function loadMaps(force) {
+  async function loadMaps(force, ttl) {
     if (!S.cloud.ok) return;
-    if (!force && Date.now() - B.maps.loadedAt < 60000) return;
+    if (!force && Date.now() - B.maps.loadedAt < (ttl > 0 ? ttl : 60000)) return;
     // the Custom Orders a person finished by hand (their QR label printed) come with the maps: the lines pulled that may
     // have one are read by their keys, and the list of recent ones (for orders that have left the pull) once a session and
     // every 30 minutes, neither with its sticker; a failed read keeps what was read before and never holds the maps
@@ -2031,7 +2031,7 @@ const Master = window.Master = (() => {
   async function load(opts) {
     const o = opts && typeof opts === "object" ? opts : { force: !!opts }, quiet = { quiet: !!o.quiet };
     if (!S.cloud.ok) return;
-    if (!o.force && Date.now() - B.master.loadedAt < 120000) return B.master.loading || null;
+    if (!o.force && Date.now() - B.master.loadedAt < (o.ttl > 0 ? o.ttl : 120000)) return B.master.loading || null;
     if (B.master.loading) return B.master.loading;
     // a background reload redraws the tab only when it brought something new: a redraw rebuilds every tile, so an angle
     // being typed, a ticked label or an open file row was lost every ten minutes to a check that found nothing
@@ -10360,9 +10360,9 @@ const Sandbox = window.Sandbox = (() => {
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
   function label() { return !on() ? "" : held() ? "Sandbox · paused" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
   function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
-  async function refresh() {
+  async function refresh(light) {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
-    refreshTask=(async()=>{try {status=await api("charmNestLibrary",{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
+    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
     try{return await refreshTask;}finally{refreshTask=null;}
   }
   /** One real read of the open orders through the station (production mode), stored as JSON under charmnest/sandbox/. */
@@ -10592,7 +10592,7 @@ const Sandbox = window.Sandbox = (() => {
   }
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
      and Reset and the switch live in Settings. */
-  function mountPanel(v) { void v; const old = document.getElementById("sandboxBar"); if (old) old.remove(); const pill = document.getElementById("sandboxPill"); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => { if (window.CN && CN.openSettings) CN.openSettings(); else { const b = document.getElementById("btnSettings"); if (b) b.click(); } }; } if (!status) refresh(); }
+  function mountPanel(v) { void v; const old = document.getElementById("sandboxBar"); if (old) old.remove(); const pill = document.getElementById("sandboxPill"); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => { if (window.CN && CN.openSettings) CN.openSettings(); else { const b = document.getElementById("btnSettings"); if (b) b.click(); } }; } if (!status) refresh(!on()); }   // (a production page only needs to know whether a snapshot was taken: it does not count the sandbox's records)
   function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
   function render() {
     const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title;
@@ -10620,7 +10620,7 @@ const Sandbox = window.Sandbox = (() => {
     return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
   }
   function nowText() {
-    if (!status) return "";
+    if (!status || status.light) return "";
     if (status.error) return `In the sandbox now: could not be read (${status.error})`;
     const parts = Object.entries(status.records || {}).filter(([, n]) => n > 0).map(([k, n]) => `${nf(n)} ${FRIENDLY[k] || k.replace(/^(Charm_)?(Nest_)?/, "").replace(/_/g, " ").toLowerCase()}`);
     return parts.length ? `In the sandbox now: ${parts.join(", ")}.` : "In the sandbox now: nothing.";
@@ -14731,7 +14731,14 @@ const Arrivals = window.Arrivals = (() => {
   window.addEventListener("online", () => { if (state.error) state.nextCheck = Math.min(state.nextCheck || Infinity, Date.now() + 3000); });
   window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
   // the sandbox order stream checks every simulated ten minutes (12 s at 50x)
-  const interval = () => (WORKSPACE_SANDBOX && S.settings.sandboxStream === "on" ? 600000 / Math.max(1, Math.min(1000, +S.settings.sandboxSpeed || 50)) : Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000);
+  /* Every order of the stream has come (or the snapshot holds none to bring): nothing more can arrive, and the only change left
+     is an order the station finished, which the emulator ships ten real minutes later. The check then looks once a minute and
+     reads the learned maps and the library once in ten, however fast the stream played: at 1000x it asked again every 0.6 s for
+     hours, each time reading the whole open list, the locks and the maps again (Firebase cost, 7 Oct 2026). The speed of the
+     stream itself, and every check until the last order has come, are unchanged. */
+  const QUIET_MS = 60000, QUIET_MAPS_MS = 600000;
+  const quiet = () => { try { if (!streaming()) return false; const sv = Sandbox.stream?.(); return !!(Sandbox.done?.() || (sv && sv.total === 0)); } catch (_) { return false; } };
+  const interval = () => (WORKSPACE_SANDBOX && S.settings.sandboxStream === "on" ? Math.max(600000 / Math.max(1, Math.min(1000, +S.settings.sandboxSpeed || 50)), quiet() ? QUIET_MS : 0) : Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000);
   const streaming = () => !!Sandbox.streaming?.();
   /* In Auto the stream's next step starts as soon as the sorter has taken in the last one: the charms come one after
      another with no time spent waiting between them (Paul, 24 Sep). Manual keeps a step every simulated ten minutes, and
@@ -14775,7 +14782,7 @@ const Arrivals = window.Arrivals = (() => {
     const sim = streaming(), real = Date.now(), now = sim ? SimClock.now() : real, times = Object.values(state.seen);
     // Use server aggregate counts; their timestamp is shown in the tooltip.
     const n24 = state.count24 ?? times.filter(t => t > now - 86400000).length, n1 = state.count1 ?? times.filter(t => t > now - 3600000).length;
-    const left = Math.max(0, (state.nextCheck || real + interval()) - real) * (sim ? Sandbox.speed() : 1), wait = sim && !busy && !left ? held() : "";
+    const left = Math.max(0, (state.nextCheck || real + interval()) - real) * (sim && !quiet() ? Sandbox.speed() : 1), wait = sim && !busy && !left ? held() : "";
     const inbox = Recall.on() && state.inbox?.length ? `${state.inbox.length} orders available · click to open · ` : "";
     const unread = !state.error && state.unread?.length ? `${state.unread.length} order${state.unread.length === 1 ? "" : "s"} unreadable, tried again next check · ` : "";
     const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : wait ? `${unread}waiting for the sorter: ${wait}` : `${unread}next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
@@ -14872,7 +14879,7 @@ const Arrivals = window.Arrivals = (() => {
       // when its index changed, without a progress bar)
       // (the newest cancel records too, AutoCancel: an order cancelled since stays out of this check's arrivals, and one
       // this sorter holds comes off its sheets in the background; a failed read never holds the check)
-      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load({ quiet: true }), window.Cancelled && Cancelled.load(), window.AutoCancel && AutoCancel.poll().catch(() => null)]);
+      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(false, quiet() ? QUIET_MAPS_MS : 0), Master.load({ quiet: true, ttl: quiet() ? QUIET_MAPS_MS : 0 }), window.Cancelled && Cancelled.load(), window.AutoCancel && AutoCancel.poll().catch(() => null)]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
       // (the snapshot of a check that failed after it, on the cloud's side, is taken again for 2 minutes: the Etsy calls it
       // cost are not made a second time)

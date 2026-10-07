@@ -13203,7 +13203,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         !response.sweep.lastError && !response.admissionError && !response.admission?.busy &&
         !(response.admission?.cooldownUntil > Date.now());
       const ready = latestFinished && !pending && healthy && !_batchInFlight;
-      const issues = latestFinished?.summary?.sets?.filter(s => s.status === "blocked" || s.status === "cancelled") || [];
+      const issues = (latestFinished?.summary?.issueSets ?? latestFinished?.summary?.sets)?.filter(s => s.status === "blocked" || s.status === "cancelled") || [];
       const notice = ready ? `<div id="batchReadiness" class="batch-ready" role="status" aria-live="polite">
         <strong>✓ Ready for another batch</strong>
         <p>All batch processing is finished. Choose your set count above, then select <b>Queue sets</b>.</p>
@@ -13607,7 +13607,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (retryable.length > 0) {
         buttons.push(`<button class="btn btnSmall" data-session-retry="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Queue missing images (${retryable.length})</button>`);
       }
-      const unresolved = (audit?.sets || []).filter(set => ["blocked", "saving", "cancelled"].includes(set.status));
+      const unresolved = (audit?.issueSets ?? audit?.sets ?? []).filter(set => ["blocked", "saving", "cancelled"].includes(set.status));
       const unresolvedHtml = unresolved.length ? `<div class="batch-alert">${unresolved.map(set =>
         `<div><strong>Set_${set.setN}</strong> · ${_batchSafeText(set.category.replace(/_/g, " "))} · ${set.status === "blocked" ? "needs attention" : _batchSafeText(set.status)} · missing slots ${set.missingSlots.join(", ")}${set.note ? ` · ${_batchSafeText(set.note)}` : ""}</div>`).join("")}</div>` : "";
       const buttonsHtml = buttons.length
