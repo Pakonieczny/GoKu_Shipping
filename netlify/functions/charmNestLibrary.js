@@ -145,6 +145,8 @@ function slim(d) {
     charmCount: num(d.charmCount), placedCount: num(d.placedCount), rejectCount: num(d.rejectCount), density: num(d.density), freePt2: num(d.freePt2),
     verification: d.verification ? { ok: !!d.verification.ok } : null,
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
+    // when the picture itself was last saved (op_putSheet): the page keeps a picture by it, so a seal or a step on the record no longer makes every open page load the picture again
+    ...(d.previewAt ? { previewAt: num(d.previewAt) } : {}),
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
@@ -162,7 +164,9 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
+/** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
+const LASER_SHEET = SLIM_SHEET.concat(["seq"]);
 /** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
 async function withPlacements(rows) {
   const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
@@ -361,6 +365,28 @@ function mergeParts(parts, orders) {
   }
   return lines;
 }
+/* A part of a run's lines (Charm_Nest_Run_Live, Charm_Nest_Run_Lines) is named by its content (…~sha256 of its JSON text): the text of a part
+   of one name never changes, and it is most of a run's bytes (a part holds up to 900 KB). A function instance keeps the text it has read
+   (48 MB at most, the least used first out), so the Library's full read of a run — made again whenever anything it watches changed, by every
+   open page — reads a part once per instance and not once per call. What can change (an archive part's at and seq) is always read. */
+const PART_KEEP_BYTES = process.env.CHARM_NEST_PARTS_KEEP === "0" ? 0 : 48e6, partKeep = new Map();
+let partKeepBytes = 0;
+const partKey = (coll, id) => PREFIX + coll + "|" + id;
+function partKept(coll, id) { const k = partKey(coll, id), v = partKeep.get(k); if (v !== undefined) { partKeep.delete(k); partKeep.set(k, v); } return v; }
+function keepPart(coll, id, json) {
+  const k = partKey(coll, id); if (typeof json !== "string" || !json || json.length > PART_KEEP_BYTES / 4 || partKeep.has(k)) return;
+  partKeep.set(k, json); partKeepBytes += json.length;
+  while (partKeepBytes > PART_KEEP_BYTES && partKeep.size) { const [first, v] = partKeep.entries().next().value; partKeep.delete(first); partKeepBytes -= v.length; }
+}
+/** The archive parts at refs, as { id, …fields of mask }: a part whose text this instance holds is read without it. */
+async function readRunParts(refs, mask) {
+  const wantJson = mask.includes("json"), rest = mask.filter(f => f !== "json"), kept = new Map(), out = [];
+  const cheap = [], whole = [];
+  for (const r of refs) { const j = wantJson ? partKept(RUN_LINES, r.id) : undefined; if (j !== undefined) { kept.set(r.id, j); cheap.push(r); } else whole.push(r); }
+  for (let i = 0; i < whole.length; i += 100) for (const d of await db.getAll(...whole.slice(i, i + 100), { fieldMask: mask })) if (d.exists) { const x = d.data(); if (wantJson) keepPart(RUN_LINES, d.id, x.json); out.push({ id: d.id, ...x }); }
+  for (let i = 0; i < cheap.length; i += 100) for (const d of await db.getAll(...cheap.slice(i, i + 100), { fieldMask: rest })) if (d.exists) out.push({ id: d.id, ...d.data(), json: kept.get(d.id) });
+  return out;
+}
 /** A run's archive parts with the fields named (and at, seq), oldest first: every part, or — given [field, values] —
     those whose list (keys or orders) names a value, found 30 values to a query (50 queries at a time) and each part
     then read once. */
@@ -373,8 +399,7 @@ async function partsOfRun(runId, fields, want = null) {
     const snaps = await Promise.all(groups.slice(i, i + 50).map(g => col(RUN_LINES).where(field, "array-contains-any", g).select("runId").get()));
     for (const s of snaps) for (const d of s.docs) if (d.data().runId === runId) refs.set(d.id, d.ref);
   }
-  const list = [...refs.values()];
-  for (let i = 0; i < list.length; i += 100) for (const d of await db.getAll(...list.slice(i, i + 100), { fieldMask: mask })) if (d.exists) parts.push({ id: d.id, ...d.data() });
+  parts.push(...await readRunParts([...refs.values()], mask));
   return parts.sort(partOrder);
 }
 /** Archived lines for a reader that shows them: those of the orders named, or the newest maxBytes of them (always the
@@ -384,8 +409,7 @@ async function archivedLines(runId, { orders = null, maxBytes = 1000000 } = {}) 
   const all = await partsOfRun(runId, ["bytes"]);
   let total = 0, from = all.length;
   while (from > 0 && (from === all.length || total + num(all[from - 1].bytes) <= maxBytes)) total += num(all[--from].bytes);
-  const newest = all.slice(from).map(p => col(RUN_LINES).doc(p.id)), parts = [];
-  for (let i = 0; i < newest.length; i += 100) for (const d of await db.getAll(...newest.slice(i, i + 100), { fieldMask: ["json", "at", "seq"] })) if (d.exists) parts.push({ id: d.id, ...d.data() });
+  const parts = await readRunParts(all.slice(from).map(p => col(RUN_LINES).doc(p.id)), ["json", "at", "seq"]);
   return { lines: mergeParts(parts), truncated: from > 0 };
 }
 /* A run's orders still in progress were kept in its record as fields, some sixty index entries a line, and one document
@@ -412,10 +436,13 @@ function liveParts(runId, lines) {
     record is read then, with its parts. */
 async function withLiveLines(runId, run) {
   for (let tries = 0; run && run.liveLines && Array.isArray(run.liveLines.ids) && isId(runId); tries++) {
-    const ids = run.liveLines.ids, docs = ids.length ? await db.getAll(...ids.map(x => col(RUN_LIVE).doc(x))) : [];
+    const ids = run.liveLines.ids, texts = new Map(), need = [];
+    for (const x of ids) { const j = partKept(RUN_LIVE, x); if (j !== undefined) texts.set(x, j); else need.push(x); }   // (a part of one name never changes: see keepPart)
+    const docs = need.length ? await db.getAll(...need.map(x => col(RUN_LIVE).doc(x))) : [];
     if (tries < 3 && docs.some(d => !d.exists)) { const s = await col(RUNS).doc(runId).get(); run = s.exists ? s.data() : null; continue; }
+    for (const d of docs) if (d.exists) { const j = d.data().json; keepPart(RUN_LIVE, d.id, j); texts.set(d.id, j); }
     const lines = {};
-    for (const d of docs) if (d.exists) { try { Object.assign(lines, JSON.parse(d.data().json || "{}")); } catch (_) { /* unreadable: its lines are left out */ } }
+    for (const x of ids) if (texts.has(x)) { try { Object.assign(lines, JSON.parse(texts.get(x) || "{}")); } catch (_) { /* unreadable: its lines are left out */ } }
     return Object.assign({}, run, { lines });
   }
   return run;
@@ -476,13 +503,16 @@ async function op_laserStatus(b) {
   const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[];
   if(b.recordSeals!==true && b.ifRevs && typeof b.ifRevs==='object'){const probed=await laserUnchanged(ids,b.setIds,b.ifRevs);if(probed)return {unchanged:true,probed,checkedAt:Date.now()};}
   const revs=b.wantRevs===true && b.recordSeals!==true?{}:null;
-  for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
+  // a sheet is read for the fields its entry and its readiness are made of (SLIM_SHEET, as the list reads it), not whole: the rest of a record
+  // (its charms with their links, its placements) is most of its bytes and none of the answer; the placements only for a record with no placedCount
+  for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:LASER_SHEET});for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
   const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
   for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs){if(revs)revs['t:'+d.id]=revOf(d);const s=d.exists?d.data():{};sets.push({setId:d.id,sheetIds:s.sheetIds || [],laserDoneAt:num(s.laserDoneAt) || null,laserDoneBy:s.laserDoneBy || null,processSeals:Readiness.processStamps(s),processReady:!!s.processReady});}}
   // The Sheets view may show only one metal or one member in the viewport. Read its
   // siblings too, so it follows the same complete-set gate as the Sets view.
   const have=new Set(records.map(s=>s.id)),missing=[...new Set(sets.flatMap(s=>s.sheetIds))].filter(id=>isId(id)&&!have.has(id)).slice(0,Math.max(0,500-records.length));
-  for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
+  for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:LASER_SHEET});for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
+  await withPlacements(records.map(r=>[r.id,r]));
   const added=[];
   // Only the active production view asks to record transitions. Ordinary status reads stay read-only.
   if(b.recordSeals===true){
@@ -671,6 +701,8 @@ async function op_putSheet(b) {
   delete doc.stepStamps; delete doc.stepState;
   // a hold back from Laser cutting and the Library's move history are server-owned too (op_flowApply): a stale page cannot clear them
   delete doc.laserHold; delete doc.flowHistory;
+  // the time the picture was saved is the server's: a record that carries a picture (the save after its upload) stamps it, nothing else does
+  delete doc.previewAt; if (s.outputs && s.outputs.preview && s.outputs.preview.url) doc.previewAt = Date.now();
   // the listings its pieces were bought from, as the Library's listing search reads them (array-contains)
   if (Object.prototype.hasOwnProperty.call(s, "listings")) doc.listings = [...new Set((Array.isArray(s.listings) ? s.listings : []).map(v => String(v)).filter(v => /^\d{1,24}$/.test(v)))].slice(0, 500);
   // Physical stock and immutable cuts are only changed through transactional stock operations.
@@ -1322,10 +1354,39 @@ async function op_getOrderPieces(b) {
   const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(x => /^\d{4,20}$/.test(x)))].slice(0, 40);
   if (!ids.length && !sheetIds.length) return { error: "orderId required" };
   const ifRev = /^[0-9a-f]{12}$/.test(String(b.ifRev || "")) ? String(b.ifRev) : "";
+  /* FC3 (cost): the page asks every 2.5 s, and the answer used to be made from every pool row and sheet of up to 30 orders (about
+     150 documents, 70 KB) only to find it was the same: `unchanged` saved the answer's size on the wire, not one read. The cloud now
+     keeps ONE small counter (placementGen) that every op that may write a pool row or a sheet raises when it is done; the page sends
+     back the gen of its last answer (ifGen) with that answer's rev (ifRev), and a gen that has not moved is `unchanged` for the price
+     of one read of that counter. The gen is read BEFORE the documents, so a write landing in between only makes the next ask read
+     again, never the reverse. No gen (the sandbox, a failed read) is the old full read, and the page still asks in full once a minute. */
+  const gen = sheetIds.length ? null : await placementGen();
+  if (gen != null && ifRev && b.ifGen != null && Number(b.ifGen) === gen) return { ok: true, unchanged: true, rev: ifRev, gen };
   let answer;
   try { answer = await db.runTransaction(tx => readOrderPieces({ get: q => tx.get(q), getAll: (...a) => (typeof a[a.length - 1].get === "function" ? txGetAll(tx, a) : txGetAll(tx, a.slice(0, -1), a[a.length - 1].fieldMask)) }, ids, sheetIds), { readOnly: true }); }
   catch (e) { console.warn("[charmNestLibrary] getOrderPieces: snapshot read failed, reading without one:", (e && e.message) || e); answer = await readOrderPieces({ get: q => q.get(), getAll: (...a) => db.getAll(...a) }, ids, sheetIds); }
-  return ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : answer;
+  const out = ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : answer;
+  if (gen != null) out.gen = gen;
+  return out;
+}
+/* The placement gen (FC3): Charm_Nest_Rev/placement { n }, raised by the handler after any op that may have written a pool row or a
+   sheet (everything except the ops listed below, which only read, or write records no placement answer is made from). Production
+   only: the sandbox keeps no counter (it would be a leftover of every reset) and answers in full, as before. A read or a raise that
+   fails is never an error of the op: the reader then has no gen and reads in full. */
+const REV_COLL = "Charm_Nest_Rev";
+const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
+  "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
+  "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
+  "runPut", "runArchive", "releasePut", "arrivalRecord"]);
+async function placementGen() {
+  if (PREFIX) return null;
+  try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
+  catch (e) { console.warn("[charmNestLibrary] placement gen not read:", (e && e.message) || e); return null; }
+}
+async function bumpPlacementGen(op) {
+  if (PREFIX || NO_GEN_BUMP.has(op)) return;
+  try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); }
+  catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); }
 }
 const msRow = r => { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; return r; };
 async function readOrderPieces(rd, ids, sheetIds) {
@@ -1605,7 +1666,7 @@ async function op_restoreSheet(b) {
   const doc = { id, metal: rep.metal, metalLabel: rep.metalLabel || null, day, folder: name, fileBase: name, seq, runId, setId, setSeq: seq, sheetIndex: +((/_Sheet-(\d+)$/.exec(name) || [])[1]) || null,
     status: "complete", endedBy: rep.endedBy || null, trials: rep.trials || 0, elapsedMs: rep.elapsedMs || 0, stock: rep.stock || null, params: rep.params || null, density: rep.density || 0, freePt2: Math.round(rep.freePt2 || 0), usablePt2: Math.round(rep.usablePt2 || 0), pocket: rep.pocket || null,
     charmCount: charms.length || placements.length, placedCount: placements.length, rejectCount: (rep.rejects || []).length, page: 1, verification: rep.verification ? { ok: !!rep.verification.ok, minGapPt: rep.verification.minGapPt, minEdgePt: rep.verification.minEdgePt } : null,
-    outputs: out, sources: [], orders, poolIds: charms.map(c => c.poolId).filter(Boolean), backPool: [], backOutputs: null, label: null, charms, placements, rejects: rep.rejects || [], names: charms.map(c => c.name).filter(Boolean).join(" "), restored: true, archived: false, updatedAt: FV.serverTimestamp() };
+    outputs: out, sources: [], orders, poolIds: charms.map(c => c.poolId).filter(Boolean), backPool: [], backOutputs: null, label: null, charms, placements, rejects: rep.rejects || [], names: charms.map(c => c.name).filter(Boolean).join(" "), restored: true, archived: false, updatedAt: FV.serverTimestamp(), ...(out.preview ? { previewAt: Date.now() } : {}) };
   const ref = col(SHEETS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
   await ref.set(doc, { merge: true });
   if (setId) { const st = col(SETS).doc(setId); const sd = await st.get(); if (sd.exists) { const ids = new Set(sd.data().sheetIds || []); ids.add(id); await st.set({ sheetIds: [...ids] }, { merge: true }); } }
@@ -3292,8 +3353,10 @@ exports.handler = async (event) => {
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   try {
     const out = await fn(body);
+    await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
+    await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
     console.error("[charmNestLibrary]", body.op, e);
     return json(500, { error: e.message || String(e) });
   }
