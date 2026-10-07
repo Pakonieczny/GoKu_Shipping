@@ -67,8 +67,10 @@ class World {
        fell where depended on the machine's speed (LS2: this was the "intermittent" Laser / idle failures, a test artifact, not a product defect: a real browser's
        worker runs on real time, which IS the page's time). charm-nest-clock.js itself says "If the worker cannot start, the page keeps the browser's own timers":
        the clock worker alone is refused here, so the page's timers are the fake clock's, like every other page's. Any other Worker is untouched.
-       KEEP_CLOCK_WORKER=1 puts the old behaviour back (tests/stations/laser-resignin.cjs uses it to show the difference). */
-    if (!process.env.KEEP_CLOCK_WORKER) await ctx.addInitScript(() => {
+       OFF unless NO_CLOCK_WORKER=1: in the full end-to-end test it made every Sorter page run all its (many) timers inside each 8-second clock piece, which slowed the
+       steps and widened the measured clock lag of those pages (a first run then showed Laser / Design hours 31-37 s off); the end-to-end test wakes the Laser page by a
+       focus event instead (stepTo), as the page's own wake handler does. tests/stations/laser-resignin.cjs sets NO_CLOCK_WORKER=1 (KEEP_CLOCK_WORKER=1 there shows the old behaviour). */
+    if (process.env.NO_CLOCK_WORKER === '1') await ctx.addInitScript(() => {
       try {
         const Real = window.Worker;
         if (typeof Real === 'function') window.Worker = new Proxy(Real, { construct(target, args, nt) { if (/charm-nest-clock/.test(String(args[0]))) throw new Error('no clock worker in the test (its timers would not follow the fake clock)'); return Reflect.construct(target, args, nt); } });

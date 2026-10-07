@@ -28,6 +28,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || '';
 const pwCore = (() => { for (const d of [pwDir, path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules']) { if (!d) continue; try { return require(path.join(d, 'playwright-core')); } catch (_) {} } return require('playwright-core'); })();
 const CHROME = process.env.CHROMIUM || (() => { try { const d = '/opt/pw-browsers'; const c = fs.readdirSync(d).filter(x => /^chromium-/.test(x)).sort().pop(); return c ? path.join(d, c, 'chrome-linux/chrome') : undefined; } catch (_) { return undefined; } })();
+process.env.NO_CLOCK_WORKER = process.env.KEEP_CLOCK_WORKER ? '' : '1';      // (the test world refuses the Sorter's clock worker unless KEEP_CLOCK_WORKER=1: see world.cjs)
 const { World, sleep } = require('./all-stations/world.cjs');
 const { Apps } = require('./all-stations/apps.cjs');
 const { makeCast } = require('./all-stations/cast.cjs');
