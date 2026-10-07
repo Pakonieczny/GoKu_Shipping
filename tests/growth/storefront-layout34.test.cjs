@@ -44,6 +44,11 @@ function fixture(t,{width=1363,reduced=false,docked=false}={}){
       <div class="demo-shipping"><button type="button" aria-pressed="true">Demo standard</button><button type="button" aria-pressed="false">Demo express</button></div>
       <label class="checkout-check"><input type="checkbox">I understand this is only a simulation.</label>
     </section>
+    <div class="service-form">
+      <label id="gift-wrapping-label"><input id="gift-wrapping-choice" type="checkbox">Ask for gift wrapping</label>
+      <label id="gift-package-label"><input id="gift-package-choice" type="checkbox">Ask about a gift package</label>
+      <label id="gift-note-label">Your test gift note<textarea></textarea></label>
+    </div>
     <div class="collection-tools"><div class="search-wrap"><input type="search"><button type="button">Search</button></div><label class="tool-select tool-sort">Sort<select><option>Shop order</option></select></label></div>
     <div class="catalogue-coverage"></div>
     <div class="product-price store-highlight">$54</div>`;
@@ -94,6 +99,23 @@ test('checkout navigation identifies its current stage independently of content 
   assert.notEqual(h.style('.checkout-steps>button[aria-current]').backgroundColor,h.style('.checkout-steps>button:not([aria-current])').backgroundColor);
   assert.ok(parseFloat(h.style('.checkout-steps>button').minHeight)>=44);
   assert.notEqual(h.style('[data-checkout-step="review"]').counterIncrement,'checkout','content sections do not invent numbered steps');
+});
+
+test('gift checkbox labels provide a 44-pixel target in flow without changing note labels or native semantics',t=>{
+  for(const width of [390,760,1363]){
+    const h=fixture(t,{width,docked:width===1363});
+    for(const id of ['gift-wrapping-label','gift-package-label']){
+      const label=h.d.querySelector('#'+id),input=label.querySelector('input'),style=h.style(label);
+      assert.ok(parseFloat(style.minHeight)>=44,width+' '+id+' retains a full clickable label target');
+      assert.equal(style.display,'flex');assert.equal(style.alignItems,'center');
+      assert.ok(!['fixed','absolute'].includes(style.position),'gift choices remain in normal service flow');
+      assert.equal(input.type,'checkbox');assert.equal(input.labels.length,1);assert.equal(input.labels[0],label);
+      assert.equal(h.style(input).margin,'0px','native checkbox does not consume the enlarged label gap');
+      assert.equal(h.style(input).flex,'0 0 auto','native checkbox remains visible when copy wraps');
+    }
+    assert.equal(h.style('#gift-note-label').display,'block','text-note label keeps its existing field layout');
+    assert.equal(h.d.querySelectorAll('#gift-wrapping-choice,#gift-package-choice').length,2,'both literal preferences remain separately selectable');
+  }
 });
 
 for(const width of [390,760])test('mobile '+width+' keeps all shop actions visible and avoids zoom-prone editing text',t=>{

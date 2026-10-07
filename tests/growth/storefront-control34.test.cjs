@@ -14,6 +14,42 @@ function fixture(t,options={}){
   w.eval(source);t.after(()=>w.close());return {w,d,p,requests,scrolls,errors,get store(){return w.BritesSandboxStorefront;},ready:settle,lookup:fn=>lookup=fn,cart:()=>JSON.parse(w.sessionStorage.getItem('brites-sandbox-cart')||'[]'),async open(){assert.equal((await this.store.execute({type:'open',handle:p.handle})).ok,true);},async choose(id=p.variants[0].id){return this.store.execute({type:'select-option',handle:p.handle,variantId:id});},async add(){await this.open();assert.equal((await this.choose()).ok,true);assert.equal((await this.store.execute({type:'review-add',handle:p.handle})).ok,true);d.querySelector('.product-review .primary').click();await settle();}};
 }
 
+function composerFocus34(h){const host=h.d.body.appendChild(h.d.createElement('brites-concierge')),shadow=host.attachShadow({mode:'open'}),composer=h.d.createElement('input'),newer=h.d.createElement('button');composer.setAttribute('aria-label','Synthetic shopper request');newer.textContent='A newer deliberate choice';shadow.append(composer,newer);composer.focus();return {host,shadow,composer,newer};}
+// JSDOM retains a disabled input's focus; Chromium's observed transition is BODY.
+// Model that native self blur without focusing a different shopper control.
+function disableComposer34(h,focus){focus.composer.disabled=true;h.d.body.tabIndex=-1;h.d.body.focus();}
+
+for(const timing of ['before','during'])test('requested product arrival survives only the application-disabled composer self blur '+timing+' its read',async t=>{
+  const h=fixture(t);await h.ready();const focus=composerFocus34(h),gate=deferred();h.lookup(()=>gate.promise);
+  if(timing==='before')disableComposer34(h,focus);
+  const pending=h.store.execute({type:'open',handle:h.p.handle});
+  if(timing==='during')disableComposer34(h,focus);
+  assert.equal(h.d.activeElement,h.d.body);gate.resolve(response({live:true,product:h.p}));const result=await pending,layout=h.d.querySelector('.product-layout');
+  assert.equal(result.ok,true);assert.equal(result.snapshot.currentHandle,h.p.handle);assert.equal(h.d.activeElement,h.d.body);assert.ok(h.scrolls.some(s=>s.node===layout&&s.value.block==='start'&&s.value.behavior==='instant'),'a requested checked piece must arrive independently of throttled smooth frames');assert.deepEqual(h.cart(),[]);
+});
+
+test('a deliberate newer deep focus cancels requested product arrival even after disabled self blur and a return',async t=>{
+  const h=fixture(t);await h.ready();const focus=composerFocus34(h),gate=deferred();h.lookup(()=>gate.promise);const pending=h.store.execute({type:'open',handle:h.p.handle});disableComposer34(h,focus);focus.newer.focus();focus.composer.disabled=false;focus.composer.focus();gate.resolve(response({live:true,product:h.p}));assert.equal((await pending).ok,true);assert.equal(focus.shadow.activeElement,focus.composer);assert.equal(h.scrolls.length,0,'self blur cannot revive a reveal withdrawn by an actual new focus choice');
+});
+
+test('requested current price highlight arrives without waiting for smooth scroll animation or moving focus',async t=>{
+  const h=fixture(t);await h.ready();await h.open();h.scrolls.length=0;const focus=composerFocus34(h);disableComposer34(h,focus);const r=await h.store.execute({type:'highlight',handle:h.p.handle,section:'price'}),price=h.d.querySelector('[data-store-section=price]');assert.equal(r.ok,true);assert.equal(price.classList.contains('store-highlight'),true);assert.ok(h.scrolls.some(s=>s.node===price&&s.value.behavior==='instant'&&s.value.block==='center'));assert.equal(h.d.activeElement,h.d.body);assert.deepEqual(h.cart(),[]);
+});
+
+for(const mode of ['pointer','keyboard'])test(mode+' product opening arrives immediately after its own collection link is replaced',async t=>{
+  const h=fixture(t);await h.ready();const anchor=h.d.querySelector('.piece-card a');anchor.focus();anchor.dispatchEvent(new h.w.MouseEvent('click',{bubbles:true,cancelable:true,button:0,detail:mode==='pointer'?1:0}));await settle();const heading=h.d.querySelector('.product-copy h1'),target=mode==='pointer'?h.d.querySelector('.product-layout'):heading;assert.equal(anchor.isConnected,false);assert.equal(heading.textContent,h.p.title);assert.ok(h.scrolls.some(s=>s.node===target&&s.value.block==='start'&&s.value.behavior==='instant'),'own view replacement cannot revoke the requested exact product arrival');assert.equal(h.d.activeElement===heading,mode==='keyboard');assert.deepEqual(h.cart(),[]);
+});
+
+test('moving the current test checkout step removes its preceding visual highlight',async t=>{
+  const h=fixture(t);await h.ready();await h.add();await h.store.execute({type:'checkout'});await h.store.execute({type:'checkout-step',step:'shipping'});const shipping=h.d.querySelector('[data-checkout-step=shipping]'),confirm=h.d.querySelector('[data-checkout-step=confirm]');assert.equal(shipping.classList.contains('store-highlight'),true);await h.store.execute({type:'checkout-step',step:'confirm'});assert.equal(shipping.classList.contains('store-highlight'),false);assert.equal(confirm.classList.contains('store-highlight'),true);assert.equal(h.d.querySelectorAll('.checkout-step.store-highlight').length,1);assert.equal(h.d.querySelector('[data-checkout-step-button=confirm]').getAttribute('aria-current'),'step');assert.equal(h.d.querySelector('.receipt'),null);assert.equal(h.cart().length,1);
+});
+
+for(const interruption of ['focus','hidden','superseded'])test('a delayed exact price reveal respects '+interruption+' during its product read',async t=>{
+  const h=fixture(t);await h.ready();const focus=composerFocus34(h),gate=deferred();h.lookup(()=>gate.promise);const pending=h.store.execute({type:'highlight',handle:h.p.handle,section:'price'});
+  if(interruption==='focus'){focus.newer.focus();focus.composer.focus();}else if(interruption==='hidden')Object.defineProperty(h.d,'hidden',{get:()=>true});else await h.store.execute({type:'filter',filter:'all'});
+  const before=h.scrolls.length;gate.resolve(response({live:true,product:h.p}));const r=await pending;assert.equal(r.ok,false);assert.equal(h.scrolls.length,before,'a cancelled section reveal must not displace the newer or hidden viewport');assert.equal(h.d.querySelector('.product-price')?.classList.contains('store-highlight')||false,false);assert.deepEqual(h.cart(),[]);
+});
+
 test('versioned reusable controls expose only concrete capabilities and no arbitrary evaluator',async t=>{const h=fixture(t);await h.ready();assert.equal(h.store.capabilities.controlVersion,1);assert.equal(h.store.capabilities.mode,'sandbox');assert.equal(h.store.capabilities.finalOrder,false);assert.ok(h.store.capabilities.actions.includes('select-option'));const before=h.requests.length;assert.equal((await h.store.execute({type:'javascript',code:'window.anything=true'})).ok,false);assert.equal(h.w.anything,undefined);assert.equal(h.requests.length,before);});
 
 test('opening a named published option menu is visible and makes no implicit exact selection or cart change',async t=>{const h=fixture(t);await h.ready();await h.open();const r=await h.store.execute({type:'options',handle:h.p.handle,optionName:'Chain Length'}),menu=h.d.querySelector('.option-menu');assert.equal(r.ok,true);assert.equal(menu.hidden,false);assert.equal(menu.querySelector('[data-option-name="Chain Length"]').hidden,false);assert.equal(menu.querySelector('[data-option-name="Metal Choice"]').hidden,true);assert.equal(h.store.snapshot().productControls.variantId,null);assert.deepEqual(h.cart(),[]);assert.ok(h.scrolls.some(s=>s.node===h.d.querySelector('[data-store-section=options]')));});

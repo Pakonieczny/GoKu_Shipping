@@ -38,6 +38,10 @@ export default async (req,context) => {
     const history=Array.isArray(body.history)?body.history.filter(x=>x&&['user','assistant'].includes(x.role)).slice(-12).map(x=>({role:x.role,content:core.clean(x.content,2000)})):[];
     const preferences=body.preferences&&typeof body.preferences==='object'&&!Array.isArray(body.preferences)?core.shopperPreferences(body.preferences):{};
     const shopperContext=body.context&&typeof body.context==='object'&&!Array.isArray(body.context)?{currentHandle:core.clean(body.context.currentHandle,180),productHandles:Array.isArray(body.context.productHandles)?body.context.productHandles.slice(0,6).map(h=>core.clean(h,180)):[],currency:/^[A-Z]{3}$/.test(body.context.currency||'')?body.context.currency:null}:{};
+    const productControls=body.context?.productControls;
+    // Public identities only. Fresh catalogue variants supply the actual
+    // option tuple; custom text, notes and caller-authored choices stay out.
+    if(productControls&&typeof productControls==='object'&&!Array.isArray(productControls)&&typeof productControls.handle==='string'&&/^[a-z0-9_-]{1,180}$/.test(productControls.handle)&&productControls.handle===shopperContext.currentHandle&&typeof productControls.productId==='string'&&/^gid:\/\/shopify\/Product\/\d+$/.test(productControls.productId)&&typeof productControls.variantId==='string'&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(productControls.variantId))shopperContext.productControls={handle:productControls.handle,productId:productControls.productId,variantId:productControls.variantId};
     // Social dialogue never waits for catalogue, knowledge, policy or model
     // work. Keep the same request validation, origin and public rate limiter.
     if(core.conversationReply(body.message)){const answer=await recorder.run('conversation',()=>core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env}));await messageEvent();return await respond(answer);}

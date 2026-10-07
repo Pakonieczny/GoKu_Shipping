@@ -87,6 +87,8 @@
 .demo-shipping input[type=radio]{accent-color:var(--teal);flex:0 0 auto;margin:0;width:17px;height:17px}
 .checkout-page>.primary,.checkout-page .checkout-next{min-height:46px;white-space:normal;text-align:center}
 .checkout-check{min-height:44px;align-items:center}.checkout-check input{flex:0 0 auto;width:18px;height:18px;margin:0}
+.service-form label:has(>input[type=checkbox]){display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 8px;border-radius:4px;cursor:pointer}
+.service-form label>input[type=checkbox]{flex:0 0 auto;width:18px;height:18px;margin:0}
 .catalogue-coverage{margin:12px 0 16px;padding:14px 17px;border:1px solid #d6ddce;border-radius:7px;background:#f0f3e9;color:#566d51;font-size:12px;line-height:1.7}
 .catalogue-coverage:empty{display:none}.catalogue-coverage strong{color:#36583b;font-weight:600}
 .coverage-counts{display:flex;flex-wrap:wrap;gap:7px 17px;margin-top:5px;font-size:11px;color:#64745b}

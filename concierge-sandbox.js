@@ -138,8 +138,15 @@
   function focusedElement(){
     let active=document.activeElement;for(let depth=0;depth<8&&active?.shadowRoot?.activeElement;depth++)active=active.shadowRoot.activeElement;return active;
   }
+  function sameRevealFocus(initialFocus){
+    const active=focusedElement();
+    // Chromium blurs a busy disabled composer to BODY. That application-owned
+    // transition is not a new shopper focus choice; an actual new control still
+    // permanently withdraws the pending reveal through its focus listener.
+    return active===initialFocus||active===document.body&&(!initialFocus?.isConnected||initialFocus.matches?.(':disabled')===true);
+  }
   function trackRevealFocus(initialFocus){
-    let allowed=true;const root=initialFocus?.getRootNode(),changed=()=>{const active=focusedElement();if(active!==initialFocus&&!(active===document.body&&!initialFocus?.isConnected))allowed=false;};document.addEventListener('focusin',changed);if(root!==document){root?.addEventListener('focusin',changed);root?.addEventListener('focusout',changed);}return {allowed:()=>allowed,dispose:()=>{document.removeEventListener('focusin',changed);if(root!==document){root?.removeEventListener('focusin',changed);root?.removeEventListener('focusout',changed);}}};
+    let allowed=true;const root=initialFocus?.getRootNode(),changed=()=>{if(!sameRevealFocus(initialFocus))allowed=false;};document.addEventListener('focusin',changed);if(root!==document){root?.addEventListener('focusin',changed);root?.addEventListener('focusout',changed);}return {allowed:()=>allowed,dispose:()=>{document.removeEventListener('focusin',changed);if(root!==document){root?.removeEventListener('focusin',changed);root?.removeEventListener('focusout',changed);}}};
   }
   function mayRevealCollection(initialFocus){
     if(document.hidden)return false;const active=focusedElement();
@@ -149,12 +156,12 @@
     // still initiate the ordinary website reveal.
     return !collectionControls?.box?.contains(active)&&active===initialFocus;
   }
-  function focusSection(section,highlight=true){
+  function focusSection(section,highlight=true,{immediate=false}={}){
     if(!SECTIONS.has(section))return false;
     const target=main.querySelector('[data-store-section="'+section+'"]');if(!target)return false;
     clearTimeout(highlightTimer);main.querySelectorAll('.store-highlight').forEach(e=>e.classList.remove('store-highlight'));
     if(highlight){target.classList.add('store-highlight');highlightTimer=setTimeout(()=>target.classList.remove('store-highlight'),2600);}
-    try{target.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'center'});}catch{}
+    try{target.scrollIntoView?.({behavior:immediate?'instant':reduced()?'auto':'smooth',block:'center'});}catch{}
     state.activeSection=section;publish();return true;
   }
   function cancelPending(){navigationVersion++;request?.abort();request=null;checkoutUI?.completionController?.abort();clearTimeout(highlightTimer);clearTimeout(focusTimer);focusTimer=0;main.querySelectorAll('.store-highlight').forEach(e=>e.classList.remove('store-highlight'));state.loading=false;}
@@ -270,16 +277,18 @@
   async function openProduct(handle,{push=true,signal,section,focusFrom=null,revealFrom=null,revealRequested=false}={}){
     if(!validHandle(handle))return false;
     const initialFocus=focusedElement(),focusRoot=initialFocus?.getRootNode();let focusIntent=!!focusFrom&&focusFrom.isConnected&&document.activeElement===focusFrom,revealIntent=revealRequested===true||!!revealFrom&&revealFrom.isConnected&&main.contains(revealFrom);
-    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;const active=focusedElement();if(active!==initialFocus&&!(active===document.body&&!initialFocus?.isConnected))revealIntent=false;};if(focusIntent||revealIntent){document.addEventListener('focusin',movedFocus);if(focusRoot!==document){focusRoot?.addEventListener('focusin',movedFocus);focusRoot?.addEventListener('focusout',movedFocus);}}
+    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;if(!sameRevealFocus(initialFocus))revealIntent=false;};if(focusIntent||revealIntent){document.addEventListener('focusin',movedFocus);if(focusRoot!==document){focusRoot?.addEventListener('focusin',movedFocus);focusRoot?.addEventListener('focusout',movedFocus);}}
     const record=begin({signal});status('Opening the checked product details…');
     try{
       const data=await get('/api/growth/product?handle='+encodeURIComponent(handle),record.controller.signal),p=data.product;
       if(!current(record)||data.live===false||!validProduct(p,handle)){if(current(record)){state.loading=false;publish();}return false;}
-      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom,revealProduct=revealIntent&&!section&&!document.hidden&&(revealRequested===true||revealFrom?.isConnected)&&focusedElement()===initialFocus;remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);
-      if(focusHeading){const heading=main.querySelector('.product-copy h1');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});try{heading.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}}
+      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom,revealProduct=revealIntent&&!section&&!document.hidden&&(revealRequested===true||revealFrom?.isConnected)&&sameRevealFocus(initialFocus);remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section&&!document.hidden&&revealIntent&&sameRevealFocus(initialFocus))focusSection(section,true,{immediate:true});
+      if(focusHeading){const heading=main.querySelector('.product-copy h1');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});try{heading.scrollIntoView?.({behavior:reduced()?'auto':'instant',block:'start'});}catch{}}}
       // A pointer or explicitly requested piece starts at its checked image and title. Reveal
       // the layout without giving it keyboard focus or overriding a section.
-      if(revealProduct&&revealIntent&&!document.hidden&&current(record)&&state.pageKind==='product'&&state.currentHandle===handle&&state.current?.id===p.id&&[initialFocus,document.body].includes(focusedElement())){const layout=main.querySelector('.product-layout');try{layout?.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}
+      // Complete a requested arrival before returning success. Smooth scrolling
+      // can still be mid-transition when the guide reports that details are open.
+      if(revealProduct&&revealIntent&&!document.hidden&&current(record)&&state.pageKind==='product'&&state.currentHandle===handle&&state.current?.id===p.id&&sameRevealFocus(initialFocus)){const layout=main.querySelector('.product-layout');try{layout?.scrollIntoView?.({behavior:reduced()?'auto':'instant',block:'start'});}catch{}}
       status('Live options checked. Your guide stays with you.');return true;
     }catch{if(current(record)){state.loading=false;publish();status('This piece could not be checked. Your current page is preserved.');}return false;}
     finally{document.removeEventListener('focusin',movedFocus);if(focusRoot!==document){focusRoot?.removeEventListener('focusin',movedFocus);focusRoot?.removeEventListener('focusout',movedFocus);}}
@@ -468,7 +477,7 @@
   function runCheckoutControl(action){
     const ui=checkoutUI;if(!ui?.page?.isConnected||state.pageKind!=='checkout'||ui.completed)return controlResult(action.type,false,'Open the current checked test checkout first.');
     if(action.type==='checkout-option'){if(action.option!=='shipping'||!['standard','express'].includes(action.value))return controlResult(action.type,false,'Choose only the labelled demo standard or express interface option.');ui.shipping=action.value;ui.page.querySelectorAll('[data-demo-shipping]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.demoShipping===action.value)));status('Demo '+action.value+' is selected. The shop still confirms real shipping availability, rates and timing.');publish();return controlResult(action.type,true,notice.textContent);}
-    const step=action.type==='checkout-complete'?'confirm':action.step;if(!['review','shipping','confirm'].includes(step))return controlResult(action.type,false,'Choose a current test-checkout step.');ui.step=step;ui.page.querySelectorAll('[data-checkout-step-button]').forEach(b=>b.setAttribute('aria-current',b.dataset.checkoutStepButton===step?'step':'false'));const target=ui.page.querySelector('[data-checkout-step="'+step+'"]');if(target&&!document.hidden){target.classList.add('store-highlight');try{target.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'center'});}catch{}}publish();const message=action.type==='checkout-complete'?'Review the simulation, tick its acknowledgement and click Complete test checkout yourself. No order or payment is possible.':'The '+step+' step of the test checkout is in view.';status(message);return controlResult(action.type,true,message,action.type==='checkout-complete'?{requiredCustomerClick:'Complete test checkout',completed:false,orderPlaced:false}:{});
+    const step=action.type==='checkout-complete'?'confirm':action.step;if(!['review','shipping','confirm'].includes(step))return controlResult(action.type,false,'Choose a current test-checkout step.');ui.step=step;ui.page.querySelectorAll('[data-checkout-step-button]').forEach(b=>b.setAttribute('aria-current',b.dataset.checkoutStepButton===step?'step':'false'));ui.page.querySelectorAll('.checkout-step.store-highlight').forEach(n=>n.classList.remove('store-highlight'));const target=ui.page.querySelector('[data-checkout-step="'+step+'"]');if(target&&!document.hidden){target.classList.add('store-highlight');try{target.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'center'});}catch{}}publish();const message=action.type==='checkout-complete'?'Review the simulation, tick its acknowledgement and click Complete test checkout yourself. No order or payment is possible.':'The '+step+' step of the test checkout is in view.';status(message);return controlResult(action.type,true,message,action.type==='checkout-complete'?{requiredCustomerClick:'Complete test checkout',completed:false,orderPlaced:false}:{});
   }
   async function execute(action,options={}){
     if(!action||typeof action!=='object'||Array.isArray(action)||options.signal?.aborted)return {ok:false,action:'',message:'That action was cancelled or unavailable.'};
@@ -489,10 +498,13 @@
     if(type==='open'){const opened=await openProduct(action.handle,{signal:options.signal,section:SECTIONS.has(action.section)?action.section:undefined,revealRequested:true}),ok=opened&&state.current?.handle===action.handle;return {ok,action:type,...(ok?{live:true,checkedAt:state.verifiedAt,products:[projection(state.current)],snapshot:snapshot()}:{}),message:ok?'The checked product details are open.':'That piece could not be checked.'};}
     if(type==='highlight'||type==='scroll'||type==='zoom'){
       const section=type==='zoom'?'image':action.section;if(!SECTIONS.has(section))return {ok:false,action:type,message:'That page section is unavailable.'};
+      const revealFocus=trackRevealFocus(focusedElement());try{
       if(action.handle&&(action.handle!==state.currentHandle||!state.current)){if(!await openProduct(action.handle,{signal:options.signal}))return {ok:false,action:type,message:'That piece could not be checked.'};}
+      if(options.signal?.aborted||document.hidden||!revealFocus.allowed())return {ok:false,action:type,message:'The earlier page reveal was cancelled. Your newer view is preserved.'};
       if(section==='shipping'||section==='gifts'||section==='customize'||section==='offers'){await showService(section);return {ok:true,action:type,snapshot:snapshot(),message:'The '+section+' section is open.'};}
       if(type==='zoom'){const ok=state.current?zoomImage(state.current):false;return {ok,action:type,snapshot:snapshot(),message:ok?'The live product image is enlarged.':'Open a piece with a published image first.'};}
-      const ok=focusSection(section,type==='highlight');return {ok,action:type,snapshot:snapshot(),message:ok?'The '+section+' section is highlighted and in view.':'That section is not on the current page.'};
+      const ok=focusSection(section,type==='highlight',{immediate:true});return {ok,action:type,snapshot:snapshot(),message:ok?'The '+section+' section is highlighted and in view.':'That section is not on the current page.'};
+      }finally{revealFocus.dispose();}
     }
     if(type==='bag'){renderBag();return {ok:true,action:type,message:'Your session-only test bag is open.',snapshot:snapshot()};}
     if(type==='checkout')return renderCheckout({signal:options.signal});

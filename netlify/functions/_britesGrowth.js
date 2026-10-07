@@ -780,6 +780,68 @@ function exactCurrentPageRequest(text,currentHandle){
   return fieldMentions(normalized,reference).some(hit=>!hit.negative);
 }
 
+function currentMaterialComparisonRequest(message,currentHandle){
+  const destination=explicitDestination(clean(message,2000)),text=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
+  if(!fieldMentions(text,'compare|comparison|versus|vs|differences? between').some(hit=>!hit.negative))return null;
+  const materialPattern='sterling[ -]silver|(?:\\d{1,2}\\s*k\\s+)?(?:rose\\s+)?gold[ -]filled|(?:\\d{1,2}\\s*k\\s+)?solid[ -]gold';
+  const materials=[...new Set(fieldMentions(text,materialPattern).filter(hit=>!hit.negative).map(hit=>hit.raw.replace(/[^a-z0-9]+/g,' ').trim()))];
+  if(materials.length!==2)return null;
+  const reference='(?:this|current|selected) (?:exact )?(?:product|piece|item|one|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?)|on this (?:product )?page';
+  const references=fieldMentions(text,reference).filter(hit=>!hit.negative);
+  if(!references.length&&!destination.handles.length)return null;
+  // This lane compares materials on one current page. Another named piece,
+  // foreign URL or competing page reference must not become a substitute.
+  const remainder=text.replace(new RegExp('\\b(?:'+reference+')\\b','g'),' ').replace(new RegExp('\\b(?:'+materialPattern+')\\b','g'),' ');
+  const otherPiece=/\b(?:products?|pieces?|items?|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?)\b/.test(remainder);
+  return {materials,contextConfirmed:/^[a-z0-9_-]{1,180}$/.test(currentHandle||'')&&!destination.unsafe&&destination.handles.every(handle=>handle===currentHandle)&&destination.handles.length<=1&&references.length<=1&&!otherPiece};
+}
+
+async function currentMaterialComparison({request,service,shopify,currentHandle,context,preferences,at}){
+  const result={schema:1,preserveSelection:true,reply:'I couldn’t confirm the published material options for this exact piece. Please check its product page or try again.',question:null,preferences:shopperPreferences(preferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false,materialComparison:{status:'unconfirmed'}};
+  if(!request.contextConfirmed){result.reply='I can compare the published metals for one current Brites piece. Please choose one exact product page.';return result;}
+  let product;
+  try{
+    product=await shopify.byHandle(currentHandle);
+    const url=publicUrl(product?.url,true),u=url?new URL(url):null;
+    if(!product||product.handle!==currentHandle||!validIdentity(product.id)||!u||u.search||u.hash||u.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]{1,180})\/?$/i)?.[1]!==currentHandle||!currencyCode(product.currency)||!Number.isFinite(product.checkedAt)||at-product.checkedAt>5*60000||product.checkedAt>at+60000||!shopperCatalogueField(product.title,300)||!shopperCatalogueField(product.type,100)||!isStorefrontDiscoveryProduct(product))return result;
+    const [,issues]=await Promise.all([service.saveProducts([product]),service.productIssues?service.productIssues([product.id]):[]]);
+    product=applyProductIssues([product],issues)[0];
+    if(product.cartHold||product.recommendationHold)return result;
+  }catch{return result;}
+  const groups=Array.isArray(product.options)?product.options:[],normal=value=>String(value).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  if(!groups.length||groups.length>3||groups.some(group=>!shopperCatalogueField(group?.name,100)||!Array.isArray(group.values)||!group.values.length||group.values.some(value=>!shopperCatalogueField(value,100))||new Set(group.values.map(normal)).size!==group.values.length)||new Set(groups.map(group=>group.name)).size!==groups.length)return result;
+  const materialGroups=groups.filter(group=>/\b(?:metal|material|finish)\b/i.test(group.name));
+  if(materialGroups.length!==1)return result;
+  const materialGroup=materialGroups[0],materials=request.materials.map(requested=>materialGroup.values.filter(value=>normal(value)===requested));
+  if(materials.some(values=>values.length!==1))return result;
+  const safeVariant=variant=>/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(variant?.id||'')&&typeof variant.available==='boolean'&&Number.isFinite(variant.price)&&variant.price>=0&&shopperCatalogueField(variant.title,200)&&Array.isArray(variant.options)&&variant.options.length===groups.length&&groups.every(group=>variant.options.filter(option=>option?.name===group.name&&group.values.includes(option.value)&&shopperCatalogueField(option.value,100)).length===1);
+  const rawVariants=Array.isArray(product.variants)?product.variants:[],variants=rawVariants.filter(safeVariant);
+  const controls=context.productControls,identityConfirmed=controls&&typeof controls==='object'&&!Array.isArray(controls)&&controls.handle===currentHandle&&controls.productId===product.id&&typeof controls.variantId==='string'&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(controls.variantId);
+  const selectedMatches=identityConfirmed?rawVariants.filter(variant=>variant?.id===controls.variantId):[];
+  // Only fresh published variant options can provide length or engraving.
+  // Caller-supplied option strings, notes and custom text are never read.
+  const selected=selectedMatches.length===1&&safeVariant(selectedMatches[0])&&selectedMatches[0].available?selectedMatches[0]:null;
+  const otherOptions=selected?selected.options.filter(option=>option.name!==materialGroup.name).map(option=>({name:option.name,value:option.value})):[];
+  const options=materials.map(([material])=>{
+    const available=variants.filter(variant=>variant.available&&variant.options.some(option=>option.name===materialGroup.name&&option.value===material)&&(!selected||otherOptions.every(option=>variant.options.some(actual=>actual.name===option.name&&actual.value===option.value))));
+    return {material,available:available.length>0,minPrice:available.length?Math.min(...available.map(variant=>variant.price)):null,maxPrice:available.length?Math.max(...available.map(variant=>variant.price)):null,currency:product.currency};
+  });
+  const prices=options.map(option=>option.material+': '+(option.available?option.currency+' '+option.minPrice.toFixed(2)+(option.maxPrice!==option.minPrice?'–'+option.maxPrice.toFixed(2):''):'no available '+(selected?'matching option':'checked option'))).join('; ')+'.';
+  const prefix=selected?'For '+product.title+(otherOptions.length?' with '+otherOptions.map(option=>option.name+': '+option.value).join(' · '):'')+': ':'For '+product.title+', available price ranges across the checked length, engraving or other options: ';
+  result.reply=prefix+prices;
+  if(!selected)result.reply+=' No length or engraving choice has been assumed.';
+  if(product.variantsComplete!==true)result.reply+=' These are the checked available options; the complete range could not be confirmed.';
+  result.materialComparison={status:'verified',productId:product.id,handle:currentHandle,optionName:materialGroup.name,sameOtherOptions:!!selected,selectedVariantVerified:!!selected,otherOptions,options,variantsComplete:product.variantsComplete===true,sources:[{title:'Published product options',url:product.url}]};
+  result.live=true;
+  if(result.preferences.budget!=null){
+    if(result.preferences.budgetCurrency&&result.preferences.budgetCurrency!==product.currency){result.currencyMismatch=true;result.reply+=' I haven’t applied your '+result.preferences.budgetCurrency+' budget to these '+product.currency+' prices.';}
+    else result.reply+=' This informational comparison has not filtered options by your item budget.';
+  }
+  if(currencyCode(context.currency)&&context.currency!==product.currency){result.currencyMismatch=true;result.reply+=' Catalogue prices are in '+product.currency+'; check the current local price on the product page.';}
+  result.reply+=' Source: '+product.url;
+  return result;
+}
+
 function displayedProductFromText(message,products){
   const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'"),list=Array.isArray(products)?products:[];
   const handleMatches=list.filter(product=>/^[a-z0-9_-]{1,180}$/.test(product?.handle||'')&&text.includes(product.handle));
@@ -857,6 +919,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
   const exactCurrentContext=exactCurrentPageRequest(text,currentHandle);
   const destination=explicitDestination(text);
+  const materialComparison=currentMaterialComparisonRequest(text,currentHandle);
+  if(materialComparison)return currentMaterialComparison({request:materialComparison,service,shopify,currentHandle,context,preferences:basePreferences,at});
   // Positive inquiries about one safe Brites URL select its knowledge, but
   // do not authorize navigation or cart actions. Ignore URL path words when
   // checking inquiry language, negation and references to other cards.

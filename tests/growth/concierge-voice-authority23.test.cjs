@@ -55,7 +55,11 @@ test('identity, owned URL, native currency, unavailable stock and malformed vari
   for(const change of [{id:'gid://shopify/Product/99'},{handle:'other'},{url:'https://evil.example/products/compass-1'},{currency:'usd'},{variants:[{...variant(101),available:false}]},{variants:[{...variant(101),numericId:'102'}]},{variants:[{...variant(101),price:-1}]},{variants:[variant(101),variant(101)]},{variants:[{...variant(101),available:'true'}]}])assert.equal(projectProduct({...product(),...change},product()),null);
 });
 test('bounded options cannot pretend to be the complete live set',()=>{
-  const p=product();p.variants=Array.from({length:61},(_,i)=>variant(1000+i));const result=projectProduct(p,product());assert.equal(result.variants.length,60);assert.equal(result.variantsComplete,false);
+  const p=product();p.variants=Array.from({length:251},(_,i)=>variant(1000+i,'Fixture Length '+i));const result=projectProduct(p,product());assert.equal(result.variants.length,250);assert.equal(result.variantsComplete,false);
+  const exact={action:'review',handle:p.handle,variantId:result.variants[249].id,products:[result],message:'Add '+p.title+' '+result.variants[249].title+' to my bag.'};
+  assert.deepEqual(resolveRequest(exact),{ok:false,reason:'EXACT_OPTIONS_REQUIRED'});
+  p.variants=p.variants.slice(0,250);const complete=projectProduct(p,product());assert.equal(complete.variants.length,250);assert.equal(complete.variantsComplete,true);assert.equal(resolveRequest({...exact,products:[complete]}).ok,true);
+  p.variantsComplete=false;const incomplete=projectProduct(p,product());assert.equal(incomplete.variants.length,250);assert.equal(incomplete.variantsComplete,false);assert.deepEqual(resolveRequest({...exact,products:[incomplete]}),{ok:false,reason:'EXACT_OPTIONS_REQUIRED'});
 });
 test('hostile object access yields fixed refusal without surfacing an exception or private value',()=>{
   const bad=new Proxy({}, {get(){throw Error('PRIVATE ACCOUNT DETAIL');}});assert.deepEqual(resolveRequest(bad),{ok:false,reason:'INVALID_REQUEST'});assert.equal(projectProduct(bad,product()),null);
