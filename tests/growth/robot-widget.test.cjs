@@ -89,7 +89,7 @@ test('bereavement conversation stays calm and avoids celebration even when produ
   const h=harness(t);h.open();await settle();h.avatarCalls.states.length=0;
   await h.ask('My mother passed away. I want a memorial necklace.');
   assert.equal(h.avatarCalls.emotions.at(-1),'calm');assert.equal(h.avatarCalls.states.at(-1),'idle');assert.ok(!h.avatarCalls.states.includes('success'));assert.equal(h.root.querySelectorAll('.card').length,1);
-  const birthdayStart=h.avatarCalls.emotions.length;await h.ask('A birthday gift with a bunny');const birthday=h.avatarCalls.emotions.slice(birthdayStart);assert.ok(birthday.includes('celebrate'),'the corrected birthday is acknowledged');assert.equal(birthday.at(-1),'warm','the neutral assistant reply supplies the following tone');assert.equal(h.avatarCalls.states.at(-1),'success');
+  const birthdayStart=h.avatarCalls.emotions.length;await h.ask('Another gift: A birthday gift with a bunny');const birthday=h.avatarCalls.emotions.slice(birthdayStart);assert.ok(birthday.includes('celebrate'),'the explicitly independent birthday gift is acknowledged');assert.equal(birthday.at(-1),'warm','the neutral assistant reply supplies the following tone');assert.equal(h.avatarCalls.states.at(-1),'success');
 });
 test('final voice transcripts update contextual emotion and conversation but do not issue a catalogue or cart request by themselves', async t => {
   const h=harness(t,{started:true});h.open();await h.activate();const before=h.network.length;

@@ -98,8 +98,11 @@ test('late resume result after End voice cannot resurrect connected UI',async t=
 test('immediate restart waits for prior cleanup and old stopped callback cannot reset the new attempt',async t=>{
   const gate=deferred(),opts={stop:()=>gate.promise},h=fixture(t,opts);h.open();await h.activate();h.button('End voice').click();h.button('Talk to me').click();await settle();assert.equal(h.calls.start,1);assert.match(h.root.querySelector('.voice-state').textContent,/Finishing the previous/);h.config.onStopped('user',{error:null});gate.resolve();await settle();assert.equal(h.calls.start,2);assert.ok(h.button('End voice'));assert.equal(h.root.querySelector('.panel').dataset.voice,'connecting');
 });
-test('missing script has a bounded failure and removes the obsolete loader',async t=>{
-  const h=fixture(t,{captureTimers:true});h.open();h.button('Talk to me').click();await settle();const timer=h.timers.find(t=>t.fn);assert.ok(timer);timer.fn();await settle();assert.match(h.root.querySelector('.status').textContent,/Voice is unavailable/);assert.equal(h.root.querySelector('script[src$="brites-concierge-voice.js"]'),null);assert.equal(h.button('Talk to me').disabled,false);assert.equal(h.calls.start,0);
+test('missing native voice script has a bounded failure and removes its obsolete loader',async t=>{
+  const h=fixture(t,{captureTimers:true});h.open();
+  // Opening starts an independent optional expression asset. Its timeout must
+  // not be mistaken for the native voice loader created by the Talk request.
+  const openingTimers=new Set(h.timers);h.button('Talk to me').click();await settle();const loader=h.root.querySelector('script[src$="brites-concierge-voice.js"]'),timer=h.timers.find(value=>!openingTimers.has(value));assert.ok(loader);assert.ok(timer);timer.fn();await settle();assert.match(h.root.querySelector('.status').textContent,/Voice is unavailable/);assert.equal(loader.isConnected,false);assert.equal(h.root.querySelector('script[src$="brites-concierge-voice.js"]'),null);assert.equal(h.button('Talk to me').disabled,false);assert.equal(h.calls.start,0);
 });
 test('exact isolated voice preview uses the explicit existing operator sign-in without caching or displaying it',async t=>{
   const h=fixture(t,{url:'https://brites-growth-sandbox.netlify.app/concierge-sandbox.html'});h.w.sessionStorage.setItem('brites-growth-key','synthetic-operator-a');h.open();await h.activate();

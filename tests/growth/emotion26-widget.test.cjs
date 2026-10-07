@@ -68,17 +68,23 @@ test('hover attention moves toward a product without starting model conversation
   const h=fixture(t);await h.open();await h.ask('Find a compass necklace');h.reset();const before=h.calls.length,href=h.w.location.href,card=h.root.querySelector('.card');card.dispatchEvent(new h.w.Event('pointerenter'));h.d.querySelector('#page-piece').dispatchEvent(new h.w.Event('pointerover',{bubbles:true}));await settle();assert.ok(h.avatar.focus.length>0);assert.equal(h.calls.length,before);assert.equal(h.w.location.href,href);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);assert.deepEqual(h.avatar.performances,[]);
 });
 
-test('native expressive cues are accepted while connected but ignored after End voice',async t=>{
-  const h=fixture(t);await h.open();await h.voice();assert.equal(typeof h.config.onAvatarPerformance,'function');const metadata=h.nativeInput();h.reset();h.config.onAvatarPerformance(performance,metadata);assert.deepEqual(h.avatar.performances,[performance]);h.button('End voice').click();await settle();h.reset();h.config.onAvatarPerformance({...performance,mood:'celebrate'},metadata);assert.deepEqual(h.avatar.performances,[]);
+test('native expressive cues wait for speaking while connected and are ignored after End voice',async t=>{
+  const h=fixture(t);await h.open();await h.voice();assert.equal(typeof h.config.onAvatarPerformance,'function');const metadata=h.nativeInput();h.config.onState('thinking');h.reset();h.config.onAvatarPerformance(performance,metadata);assert.deepEqual(h.avatar.performances,[]);h.config.onPlaybackState({...metadata,itemId:'spoken-output',playing:true,cleared:false});assert.deepEqual(h.avatar.performances,[]);h.config.onState('speaking');assert.deepEqual(h.avatar.performances,[performance]);h.button('End voice').click();await settle();h.reset();h.config.onAvatarPerformance({...performance,mood:'celebrate'},metadata);assert.deepEqual(h.avatar.performances,[]);
 });
 
 for(const boundary of ['speech','interrupt','state','cancel-callback'])test('native '+boundary+' cancels an expressive cue without performing a shop action',async t=>{
-  const h=fixture(t);await h.open();await h.voice();const metadata=h.nativeInput();h.config.onAvatarPerformance(performance,metadata);h.reset();
+  const h=fixture(t);await h.open();await h.voice();const metadata=h.nativeInput();h.config.onPlaybackState({...metadata,itemId:'spoken-output',playing:true,cleared:false});h.config.onState('speaking');h.config.onAvatarPerformance(performance,metadata);assert.deepEqual(h.avatar.performances,[performance]);h.reset();
   if(boundary==='speech')h.config.onSpeechStarted({itemId:'new-input',turnVersion:2});
   else if(boundary==='interrupt'){h.config.onState('speaking');h.button('Let me speak').click();}
   else if(boundary==='state')h.config.onState('listening');
   else {assert.equal(typeof h.config.onAvatarPerformanceCancelled,'function');h.config.onAvatarPerformanceCancelled({reason:'speech',turnVersion:2});}
   assert.ok(h.avatar.cancels.length>0);assert.deepEqual(h.avatar.performances,[]);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);
+});
+
+for(const boundary of ['speech','interrupt','state','cancel-callback'])test('native '+boundary+' discards a queued cue before a later speaking transition',async t=>{
+  const h=fixture(t);await h.open();await h.voice();const metadata=h.nativeInput();h.config.onState('thinking');h.reset();h.config.onAvatarPerformance(performance,metadata);assert.deepEqual(h.avatar.performances,[]);
+  if(boundary==='speech')h.config.onSpeechStarted({itemId:'new-input',turnVersion:2});else if(boundary==='interrupt'){h.config.onState('speaking');h.button('Let me speak').click();h.reset();}else if(boundary==='state')h.config.onState('listening');else h.config.onAvatarPerformanceCancelled({reason:'speech',turnVersion:2});
+  h.config.onState('speaking');assert.deepEqual(h.avatar.performances,[]);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);
 });
 
 test('a general reply without actual AI use cannot install model-controlled expression',async t=>{
@@ -90,7 +96,7 @@ test('pending and recently verified bag actions take priority over model express
 });
 
 for(const [name,mutate] of [['wrong input',m=>({...m,inputItemId:'other-input'})],['wrong turn',m=>({...m,turnVersion:m.turnVersion+1})],['not current',m=>({...m,currentTurn:false})],['missing metadata',()=>undefined]])test('widget rejects a native expression with '+name+' attribution',async t=>{
-  const h=fixture(t);await h.open();await h.voice();const metadata=h.nativeInput();h.reset();h.config.onAvatarPerformance(performance,mutate(metadata));assert.deepEqual(h.avatar.performances,[]);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);
+  const h=fixture(t);await h.open();await h.voice();const metadata=h.nativeInput();h.config.onPlaybackState({...metadata,itemId:'spoken-output',playing:true,cleared:false});h.config.onState('speaking');h.reset();h.config.onAvatarPerformance(performance,mutate(metadata));assert.deepEqual(h.avatar.performances,[]);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);
 });
 
 for(const [name,message] of [['bereavement','My mother passed away and I am grieving.'],['frustration','Thanks, but I am frustrated and this is not helpful.']])test(name+' context prevents an overshooting model celebration or heart expression',async t=>{

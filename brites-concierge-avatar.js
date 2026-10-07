@@ -73,10 +73,31 @@
     reassuring: Object.freeze({faceBrowLift: .15, faceBrowTilt: -.3, eyeSmile: .24, cheekGlow: .32, smileCurve: .42, faceSignal: .18}),
     warm: Object.freeze({faceBrowLift: .22, faceBrowTilt: 0, eyeSmile: .52, cheekGlow: .62, smileCurve: .72, faceSignal: .3})
   });
+  // Conversational acts are presentation cues, never classifications of a
+  // shopper's feelings. The caller supplies one bounded target and envelope.
+  const EXPRESSION_KINDS = Object.freeze(['neutral', 'attentive', 'inquiry', 'explain', 'emphasize', 'reflect', 'support', 'celebrate', 'appreciate', 'resolve']);
+  const EXPRESSION_FACES = Object.freeze({neutral: 'neutral', attentive: 'attentive', inquiry: 'curious', explain: 'explaining', emphasize: 'explaining', reflect: 'curious', support: 'reassuring', celebrate: 'delighted', appreciate: 'warm', resolve: 'warm'});
+  function validateExpression(value) {
+    try {if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 2 || !Object.keys(value).every(key => key === 'kind' || key === 'intensity') || !EXPRESSION_KINDS.includes(value.kind) || !Number.isFinite(value.intensity) || value.intensity < 0 || value.intensity > 1) return null;
+      return Object.freeze({kind: value.kind, intensity: value.intensity});} catch {return null;}
+  }
   function faceFor(state, emotion, intensity = 1) {
-    const name = emotion === 'calm' || emotion === 'reassuring' ? 'reassuring' : emotion === 'warm' || emotion === 'appreciated' ? 'warm' : emotion === 'curious' ? 'curious' : emotion === 'celebrate' ? 'delighted' : ({listening: 'attentive', thinking: 'curious', speaking: 'explaining', success: 'delighted', error: 'reassuring'}[state] || 'neutral');
+    const quiet = emotion === 'calm' || emotion === 'reassuring';
+    const name = state === 'listening' ? 'attentive' : quiet ? 'reassuring' : emotion === 'warm' || emotion === 'appreciated' ? 'warm' : emotion === 'curious' ? 'curious' : emotion === 'celebrate' ? 'delighted' : ({thinking: 'curious', speaking: 'explaining', success: 'delighted', error: 'reassuring'}[state] || 'neutral');
     const neutral = FACE_EXPRESSIONS.neutral, chosen = FACE_EXPRESSIONS[name], amount = clamp(intensity, 0, 1);
-    return {faceExpression: name, ...Object.fromEntries(Object.keys(neutral).map(key => [key, neutral[key] + (chosen[key] - neutral[key]) * amount]))};
+    return {faceExpression: name, ...Object.fromEntries(Object.keys(neutral).map(key => {const target = state === 'listening' && quiet ? chosen[key] + (FACE_EXPRESSIONS.reassuring[key] - chosen[key]) * .4 : chosen[key]; return [key, neutral[key] + (target - neutral[key]) * amount];}))};
+  }
+  function expressionFace(base, value, quiet = false, listening = false) {
+    const cue = validateExpression(value); if (!cue || cue.intensity === 0) return {...base, expressionKind: null, expressionHeadRoll: 0};
+    const kind = quiet && cue.kind === 'celebrate' ? 'support' : cue.kind, name = EXPRESSION_FACES[kind];
+    const target = {...FACE_EXPRESSIONS[name]};
+    if (kind === 'emphasize') {target.faceBrowLift = .66; target.faceBrowTilt = .08; target.eyeSmile = .1; target.smileCurve = .36;}
+    if (kind === 'reflect') {target.faceBrowLift = .24; target.faceBrowTilt = .3; target.eyeSmile = .06; target.smileCurve = .22;}
+    if (kind === 'resolve') {target.faceBrowLift = .32; target.eyeSmile = .34; target.smileCurve = .58;}
+    const amount = cue.intensity * (quiet ? .65 : 1), face = {...base, faceExpression: name, expressionKind: kind, expressionHeadRoll: ({inquiry: .017, reflect: -.012, support: -.01, appreciate: -.008, resolve: .006}[kind] || 0) * amount};
+    for (const key of Object.keys(FACE_EXPRESSIONS.neutral)) face[key] += (target[key] - face[key]) * amount;
+    if (listening) {face.eyeSmile = Math.min(face.eyeSmile, .22); face.cheekGlow = Math.min(face.cheekGlow, .4); face.smileCurve = Math.min(face.smileCurve, .45);}
+    return face;
   }
   function pointerGaze(clientX, clientY, box, anchor = {x: .5, y: .5}) {
     if (!Number.isFinite(clientX) || !Number.isFinite(clientY) || !box || !Number.isFinite(box.width) || !Number.isFinite(box.height) || !(box.width > 0) || !(box.height > 0) || !Number.isFinite(box.left) || !Number.isFinite(box.top)) return null;
@@ -98,7 +119,7 @@
     const mobile = hints.mobile === true || (hints.width > 0 && hints.width < 600) || (hints.memory > 0 && hints.memory <= 4);
     return {name: mobile ? 'adaptive' : 'high', pixelRatio: Math.min(mobile ? 1.5 : 2, Math.max(1, hints.pixelRatio || 1)), shadowSize: mobile ? 1024 : 2048, textureSize: mobile ? 1024 : 2048, fps: mobile ? 30 : 60, geometryScale: mobile ? .8 : 1, bloom: !mobile && hints.bloom !== false};
   }
-  function poseFor({state = 'idle', time = 0, elapsed = 0, level = 0, gaze = {x: 0, y: 0}, headGaze = null, reducedMotion = false, emotion = null, mannerism = null, mannerismElapsed = 0, productFocus = null, speechBeatElapsed = null, appreciationElapsed = 0, performance = null, mannerismDurationMs = null} = {}) {
+  function poseFor({state = 'idle', time = 0, elapsed = 0, level = 0, gaze = {x: 0, y: 0}, headGaze = null, reducedMotion = false, emotion = null, expression = null, mannerism = null, mannerismElapsed = 0, productFocus = null, speechBeatElapsed = null, appreciationElapsed = 0, performance = null, mannerismDurationMs = null} = {}) {
     state = validState(state); time = reducedMotion ? 0 : Number.isFinite(time) ? time : 0; elapsed = Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0;
     gaze = gaze && typeof gaze === 'object' ? gaze : {}; const gazeX = Number.isFinite(gaze.x) ? gaze.x : 0, gazeY = Number.isFinite(gaze.y) ? gaze.y : 0;
     const plan = validateAvatarPerformance(performance), emotionalGain = plan ? plan.intensity : 1;
@@ -106,9 +127,9 @@
     const motion = reducedMotion ? 0 : calm ? .4 : 1, talking = state === 'speaking', thoughtful = state === 'thinking', listening = state === 'listening', happy = state === 'success' && !calm, concerned = state === 'error';
     const blink = motion ? blinkFor(time) : 0;
     const audioEnergy = talking && !reducedMotion ? clamp(level, 0, 1) : 0, speech = talking ? (reducedMotion ? .3 : .88 * audioEnergy) : 0;
-    const face = faceFor(state, emotion, emotionalGain);
+    const face = expressionFace(faceFor(state, emotion, emotionalGain), reducedMotion ? null : expression, calm, listening);
     const expressive = mannerismFor({name: mannerism, elapsed: mannerismElapsed, reducedMotion, emotion: emotion === 'appreciated' ? 'reassuring' : emotion, intensity: emotionalGain, durationMs: mannerismDurationMs});
-    const heart = emotion === 'appreciated' ? reducedMotion ? 1 : smooth(appreciationElapsed / .18) * (1 - smooth((appreciationElapsed - 1.17) / .28)) : 0;
+    const heart = emotion === 'appreciated' && !talking ? reducedMotion ? 1 : smooth(appreciationElapsed / .18) * (1 - smooth((appreciationElapsed - 1.17) / .28)) : 0;
     const lift = expressive.active ? expressive.lift * .06 : happy && motion && elapsed < 1.2 ? Math.sin(elapsed / 1.2 * Math.PI) * .006 : 0;
     const greeting = expressive.name === 'greet', acknowledgement = expressive.name === 'acknowledge', focus = expressive.name === 'focus';
     const apertureAccent = expressive.listen * .035 - expressive.think * .055 + expressive.speak * .025 - expressive.comfort * .018 + expressive.celebrate * .06;
@@ -197,9 +218,9 @@
     let constructionCleanup = null;
     try {
     let state = validState(options.initialState), visible = options.visible === true, intersecting = true, destroyed = false, loading = false, engine = null, declarations = null, failed = false, paused = options.paused === true, emotion = options.emotion === 'appreciated' ? null : validEmotion(options.emotion), failureReason = null, level = 0, gaze = {x: 0, y: 0}, headGaze = {x: 0, y: 0}, gazeTarget = {x: 0, y: 0}, gazeAt = 0, pointerFrame = null, stateAt = 0, mannerism = null, mannerismAt = 0, mannerismId = 0, mannerismTimer = null, greetedThisOpening = false, productFocus = null, speechBeatAt = null, speechRested = true, appreciationAt = 0, appreciationTimer = null, appreciationEpoch = 0, previousEmotion = null, shownProduct = null, productEpoch = 0, floating = false, performance = null, performanceTimer = null, performanceEpoch = 0, performancePreviousEmotion = null, mannerismDurationMs = null;
-    let frameReady = false, pendingReadyType = null, fallbackPresented = false;
+    let frameReady = false, pendingReadyType = null, fallbackPresented = false, expression = null, blinkTimer = null, lastFacePose = null;
     const media = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
-    let reducedMotion = !!media?.matches, readyResolve;
+    let systemReducedMotion = !!media?.matches, manualReducedMotion = false, reducedMotion = systemReducedMotion, readyResolve;
     const ready = new Promise(resolve => {readyResolve = resolve;});
     const quality = qualityFor({width: win.innerWidth, mobile: options.mobile, memory: win.navigator?.deviceMemory, pixelRatio: win.devicePixelRatio, bloom: options.bloom});
     const now = () => {const stamp = win.performance?.now?.(); return (Number.isFinite(stamp) ? stamp : Date.now()) / 1000;};
@@ -226,13 +247,15 @@
       }
     }
     let displayedFace = null, faceAt = null, faceSettling = false;
-    function poseAt(time, fallbackTarget = false) {advanceGaze(time); const pose = poseFor({state, time, elapsed: time - stateAt, level, gaze, headGaze, productFocus: productFocus ? {...productFocus, elapsed: fallbackTarget ? Math.max(.44, time - productFocus.at) : time - productFocus.at} : null, reducedMotion, emotion, mannerism, mannerismElapsed: fallbackTarget && productFocus && mannerism === 'explain' ? Math.max(.44, time - mannerismAt) : time - mannerismAt, speechBeatElapsed: speechBeatAt === null ? -1 : time - speechBeatAt, appreciationElapsed: time - appreciationAt, performance, mannerismDurationMs});
-      const keys = [...Object.keys(FACE_EXPRESSIONS.neutral), 'eyeScaleX', 'eyeScaleY', 'eyeDeformation'];
+    function poseAt(time, fallbackTarget = false) {advanceGaze(time); const pose = poseFor({state, time, elapsed: time - stateAt, level, gaze, headGaze, productFocus: productFocus ? {...productFocus, elapsed: fallbackTarget ? Math.max(.44, time - productFocus.at) : time - productFocus.at} : null, reducedMotion, emotion, expression, mannerism, mannerismElapsed: fallbackTarget && productFocus && mannerism === 'explain' ? Math.max(.44, time - mannerismAt) : time - mannerismAt, speechBeatElapsed: speechBeatAt === null ? -1 : time - speechBeatAt, appreciationElapsed: time - appreciationAt, performance, mannerismDurationMs});
+      const keys = [...Object.keys(FACE_EXPRESSIONS.neutral), 'eyeScaleX', 'eyeScaleY', 'eyeDeformation', 'expressionHeadRoll'];
       const delta = faceAt === null ? 0 : clamp(time - faceAt, 0, .12); faceAt = time;
       if (!displayedFace || reducedMotion || paused || !canDisplay()) displayedFace = Object.fromEntries(keys.map(key => [key, pose[key]]));
       else {const blend = 1 - Math.exp(-delta / .12); for (const key of keys) {displayedFace[key] += (pose[key] - displayedFace[key]) * blend; if(Math.abs(pose[key]-displayedFace[key])<.0005)displayedFace[key]=pose[key];}}
       faceSettling = !reducedMotion && !paused && keys.some(key => Math.abs(pose[key]-displayedFace[key]) >= .0005);
-      return {...pose, ...displayedFace};
+      const shown = {...pose, ...displayedFace};
+      lastFacePose = Object.fromEntries(['faceBrowLift', 'faceBrowTilt', 'eyeSmile', 'eyeOpen', 'smileCurve', 'cheekGlow', 'mouthOpen', 'speechEnergy'].map(key => [key, shown[key]])); lastFacePose.headRoll = shown.headRoll + shown.expressionHeadRoll;
+      return shown;
     }
     function emit(type, detail) {frame.dispatchEvent(new win.CustomEvent('brites-avatar:' + type, {detail, bubbles: true, composed: true})); try {options.onStatus?.(type, detail);} catch {}}
     function canDisplay() {return visible && intersecting && !doc.hidden && !destroyed;}
@@ -241,7 +264,7 @@
     function fallbackMoving() {return fallbackPresented && canDisplay() && !paused && !reducedMotion && !hasWebglFrame();}
     function snapshot() {
       const scene = engine?.snapshot?.() || {};
-      return {...scene, state, emotion, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, mode: hasWebglFrame() ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
+      return {...scene, state, emotion, expression: expression ? {...expression} : null, facePose: lastFacePose ? {...lastFacePose} : null, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, motionPreferences: {system: systemReducedMotion, manual: manualReducedMotion}, mode: hasWebglFrame() ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
         mannerism: {name: mannerism, cue: BEHAVIOR_CUES[mannerism] || null, id: mannerismId, duration: mannerismDurationMs ? mannerismDurationMs / 1000 : MANNERISMS[mannerism] || 0, active: !!mannerism && canDisplay() && !paused && !reducedMotion, elapsed: mannerism ? Math.max(0, now() - mannerismAt) : 0},
         animated: hasWebglFrame() ? active() && !reducedMotion && scene.animated === true : fallbackMoving(),
         fallback: {format: 'animated_svg_2d', active: fallbackPresented && canDisplay() && !hasWebglFrame(), animated: fallbackMoving(), reason: failureReason},
@@ -269,12 +292,12 @@
       frame.style.setProperty('--brites-gaze-y', (-pose.gazeY * 180).toFixed(2) + 'px');
       frame.style.setProperty('--brites-speech-level', String(pose.speechEnergy));
       frame.style.setProperty('--brites-speech-scale', String(1 + pose.speechEnergy * .08));
-      frame.style.setProperty('--brites-talk-head', (pose.headRoll * 57.3).toFixed(2) + 'deg');
+      frame.style.setProperty('--brites-talk-head', ((pose.headRoll + pose.expressionHeadRoll) * 57.3).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-head-gaze-x', (pose.headYaw * 22).toFixed(2) + 'px');
       frame.style.setProperty('--brites-head-gaze-y', (pose.headPitch * 22).toFixed(2) + 'px');
       frame.style.setProperty('--brites-face-cheek', String(pose.cheekGlow));
       frame.style.setProperty('--brites-face-smile', String(pose.smileCurve));
-      const mouthActive = pose.state === 'speaking' && pose.speechEnergy > .015 && pose.heart <= .05; speechMouthNode.setAttribute('opacity', mouthActive ? '1' : '0'); speechMouthNode.setAttribute('ry', (2 + pose.speechEnergy * 9).toFixed(2)); speechMouthNode.setAttribute('rx', (12 + pose.speechEnergy * 3).toFixed(2));
+      const mouthActive = pose.state === 'speaking' && pose.speechEnergy > .015; speechMouthNode.setAttribute('opacity', mouthActive ? '1' : '0'); speechMouthNode.setAttribute('ry', (2 + pose.speechEnergy * 9).toFixed(2)); speechMouthNode.setAttribute('rx', ((12 + pose.speechEnergy * 3) * (1 + pose.smileCurve * .14 - pose.faceBrowTilt * .025)).toFixed(2)); speechMouthNode.setAttribute('cy', (145 + pose.smileCurve * .8).toFixed(2));
       frame.style.setProperty('--brites-focus-head', (pose.productFocused ? pose.targetX * 8 : 0).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-talk-arm', (-pose.armLiftRight * 75).toFixed(2) + 'deg');
       frame.style.setProperty('--brites-point-left', (pose.armLiftLeft * 75).toFixed(2) + 'deg');
@@ -283,7 +306,10 @@
       frame.style.setProperty('--brites-performance-duration', (performance?.durationMs || 1050) + 'ms');
       frame.style.setProperty('--brites-performance-intensity', String(performance?.intensity ?? 1));
       frame.dataset.performanceMuted = String(performance?.intensity === 0);
-      frame.dataset.heart = String(emotion === 'appreciated');
+      // Idle acknowledgement starts its CSS fade immediately; appreciation
+      // never replaces the speaking eyes or covers measured mouth movement.
+      frame.dataset.heart = String(emotion === 'appreciated' && state !== 'speaking');
+      frame.dataset.expressionKind = pose.expressionKind || '';
       frame.dataset.faceExpression = pose.faceExpression;
       const browY = 94 - pose.faceBrowLift * 5, browArc = browY - 3 - pose.faceBrowLift * 3, browTilt = pose.faceBrowTilt * 5;
       faceNodes['brow--left'].setAttribute('d', `M115 ${(browY + browTilt * 1.2).toFixed(2)}Q130 ${(browArc + browTilt * .8).toFixed(2)} 145 ${(browY + browTilt * .4).toFixed(2)}`);
@@ -308,12 +334,13 @@
       const pending = !hasWebglFrame() && !fallbackPresented;
       caption.textContent = pending ? '' : statusLabel + (fallbackPresented ? ' \u00b7 2-D companion' : '');
       if(faceSettling) queuePointerFrame();
+      scheduleBlink();
       frame.setAttribute('aria-label', 'Brites jewellery gift guide. ' + (pending ? 'Preparing your guide.' : statusLabel) + (fallbackPresented ? '. Animated 2-D companion; 3-D unavailable.' : '') + (paused ? '. Animation paused.' : ''));
     }
     function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; frameReady = false; pendingReadyType = null; fallbackPresented = true; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} finally {surface.replaceChildren();} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
     function sync() {
-      if (!canDisplay() || paused) {stopPointerFrame(); gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; level = 0; speechBeatAt = null; speechRested = true;}
-      else if (reducedMotion) {stopPointerFrame(); cancelMannerism();}
+      if (!canDisplay() || paused) {stopPointerFrame(); stopBlink(); expression = null; gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; level = 0; speechBeatAt = null; speechRested = true;}
+      else if (reducedMotion) {stopPointerFrame(); stopBlink(); expression = null; level = 0; cancelMannerism();}
       frame.hidden = !visible; syncFallback();
       if (engine) {
         try {
@@ -344,12 +371,21 @@
         renderingFailure();
       } finally {loading = false;}
     }
-    function setState(value) {if (destroyed) return; const next = validState(value); if (next === state) return; state = next; stateAt = now(); if (next !== 'speaking') level = 0; speechBeatAt = null; speechRested = true; if (!performance) playMannerism({listening: 'acknowledge', thinking: 'focus', speaking: 'explain', success: 'confirm', error: 'reassure'}[state]); frame.dataset.state = state; try {engine?.invalidate();} catch {renderingFailure();} emit('state', {state}); sync();}
+    function setState(value) {if (destroyed) return; const next = validState(value); if (next === state) return; state = next; expression = null; stateAt = now(); if (next !== 'speaking') level = 0; speechBeatAt = null; speechRested = true; if (!performance) playMannerism({listening: 'acknowledge', thinking: 'focus', speaking: 'explain', success: 'confirm', error: 'reassure'}[state]); frame.dataset.state = state; try {engine?.invalidate();} catch {renderingFailure();} emit('state', {state}); sync();}
     function setVisible(value) {if (destroyed) return; const opening = value === true && !visible; visible = value === true; if (!visible || opening) greetedThisOpening = false; if (opening && options.greetingOnOpen !== false) triggerGreeting(); sync();}
     // Scene retry is explicit; fallback respects visibility and pause.
     function retry() {if (destroyed || loading || engine || !failed || !visible || !intersecting || doc.hidden) return false; failed = false; sync(); return loading;}
     function setEmotion(value, fromPerformance = false) {if (destroyed) return; if (performance && !fromPerformance) cancelPerformance(false); const next = validEmotion(value); if (next === 'appreciated' && (!canDisplay() || paused)) return; const prior = emotion === 'appreciated' ? previousEmotion : emotion; cancelAppreciation(false); emotion = next; if (next === 'appreciated') {previousEmotion = prior; appreciationAt = now(); const epoch = appreciationEpoch; appreciationTimer = win.setTimeout(() => {if (destroyed || epoch !== appreciationEpoch) return; appreciationTimer = null; emotion = previousEmotion; previousEmotion = null; sync();}, 1450); playMannerism('reassure');} if ((emotion === 'calm' || emotion === 'reassuring') && mannerism === 'confirm') playMannerism('reassure'); sync(); emit('emotion', {emotion});}
     function setPaused(value) {if (destroyed) return; paused = value === true; sync(); emit('pause', {paused});}
+    function setReducedMotion(value) {if (destroyed) return false; manualReducedMotion = value === true; reducedMotion = systemReducedMotion || manualReducedMotion; sync(); emit('motion-preference', {reducedMotion}); return reducedMotion;}
+    function setExpression(value) {if (destroyed) return false; const next = value === null ? null : validateExpression(value); if (value !== null && (!next || !canDisplay() || paused || reducedMotion)) return false; expression = next; sync(); emit('expression', next ? {...next} : null); return true;}
+    function stopBlink() {if (blinkTimer !== null) win.clearTimeout(blinkTimer); blinkTimer = null;}
+    function scheduleBlink() {
+      if (!fallbackMoving()) {stopBlink(); return;} if (blinkTimer !== null) return;
+      const phase = ((now() % BLINK_CYCLE) + BLINK_CYCLE) % BLINK_CYCLE, within = BLINK_EVENTS.some(event => phase >= event.at && phase < event.at + event.duration), next = BLINK_EVENTS.find(event => event.at > phase);
+      const delay = within ? 16 : Math.max(16, ((next ? next.at : BLINK_CYCLE + BLINK_EVENTS[0].at) - phase) * 1000);
+      blinkTimer = win.setTimeout(() => {blinkTimer = null; if (fallbackMoving()) syncFallback();}, delay);
+    }
     function stopPointerFrame() {if (pointerFrame !== null) win.cancelAnimationFrame?.(pointerFrame); pointerFrame = null;}
     function queuePointerFrame() {
       if (pointerFrame !== null || !canDisplay() || paused || reducedMotion || !win.requestAnimationFrame) return;
@@ -398,7 +434,7 @@
     function clearFocus() {if (destroyed) return; if (productFocus && mannerism === 'explain') cancelMannerism(); productFocus = null; sync();}
     function cue(name) {if (destroyed || !canDisplay() || paused || reducedMotion) return false; const key = name === 'present' ? 'explain' : name; if (!Object.hasOwn(MANNERISMS, key)) return false; playMannerism(key); sync(); return mannerism === key;}
     function setLevel(value) {if (destroyed || paused || reducedMotion || !canDisplay()) return; level = clamp(value, 0, 1); if (state === 'speaking' && !paused && canDisplay()) {if (level < .045) speechRested = true; else if (level > .1 && speechRested && (speechBeatAt === null || now() - speechBeatAt > .42)) {speechBeatAt = now(); speechRested = false;}} syncFallback(); if (reducedMotion && state === 'speaking') sync();}
-    const visibility = () => sync(), motion = event => {reducedMotion = event.matches; sync();};
+    const visibility = () => sync(), motion = event => {systemReducedMotion = event.matches === true; reducedMotion = systemReducedMotion || manualReducedMotion; sync();};
     function currentGazeAnchor(box) {
       try {const projected = !failed && engine?.gazeAnchor?.(); if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y)) return projected;} catch {}
       const svgBox = fallback.querySelector('svg').getBoundingClientRect();
@@ -420,16 +456,16 @@
     doc.addEventListener('pointermove', pointer, {passive: true, capture: true}); doc.addEventListener('pointerout', leavePage, {passive: true}); win.addEventListener('blur', resetGaze);
     observer = win.IntersectionObserver ? new win.IntersectionObserver(entries => {intersecting = entries.some(entry => entry.isIntersecting); sync();}, {threshold: 0}) : null;
     observer?.observe(frame);
-    function destroy() {if (destroyed) return; destroyed = true; stopPointerFrame(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
+    function destroy() {if (destroyed) return; destroyed = true; expression = null; stopPointerFrame(); stopBlink(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
     if (visible && options.greetingOnOpen !== false) triggerGreeting();
     sync(); if (options.emotion === 'appreciated') setEmotion('appreciated');
-    return {ready, triggerGreeting, setState, setVisible, setPaused, setEmotion, retry, setLevel, lookAt, focusProduct, clearFocus, showProduct, clearProduct, setFloating, perform, cancelPerformance: () => {if (destroyed) return; cancelPerformance(); sync();}, cue, snapshot, destroy, element: frame};
+    return {ready, triggerGreeting, setState, setVisible, setPaused, setReducedMotion, setEmotion, setExpression, retry, setLevel, lookAt, focusProduct, clearFocus, showProduct, clearProduct, setFloating, perform, cancelPerformance: () => {if (destroyed) return; cancelPerformance(); sync();}, cue, snapshot, destroy, element: frame};
     } catch (error) {
       try {constructionCleanup?.();} catch {} finally {frame.remove();}
       throw error;
     }
   }
-  const api = {create, MANNERISMS, BEHAVIOR_CUES, BLINK_EVENTS, BLINK_CYCLE, blinkFor, mannerismFor, FACE_EXPRESSIONS, faceFor, pointerGaze, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor, productPhoto, validateAvatarPerformance, PERFORMANCE_GESTURES};
+  const api = {create, MANNERISMS, BEHAVIOR_CUES, BLINK_EVENTS, BLINK_CYCLE, blinkFor, mannerismFor, FACE_EXPRESSIONS, faceFor, EXPRESSION_KINDS, validateExpression, pointerGaze, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor, productPhoto, validateAvatarPerformance, PERFORMANCE_GESTURES};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (scope) scope.BritesConciergeAvatar = api;
 })(typeof window === 'undefined' ? null : window);

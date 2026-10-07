@@ -164,7 +164,7 @@ test('idle, silent speech and held output levels keep scene orientation and stat
 test('2-D fallback removes float, automatic look, orbit and speech gesture loops', () => {
   assert.doesNotMatch(css, /britesRobot(Float|Look|Orbit|Calm|SpeechGesture)/);
   const loopingAnimations = css.match(/animation:[^;}]*infinite/g) || [];
-  assert.equal(loopingAnimations.length, 1); assert.match(loopingAnimations[0], /britesRobotBlink/);
+  assert.equal(loopingAnimations.length, 0, 'shared authored blink cadence owns both renderers');
   assert.match(css, /\.brites-avatar__robot\{animation:none;transform:none\}/);
   assert.match(css, /\.brites-avatar\[data-motion=reduced\] \*\{animation:none!important/);
 });

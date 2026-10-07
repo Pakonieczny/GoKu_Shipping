@@ -119,7 +119,7 @@ test('scene network and source budgets prevent accidental eager or oversized ava
   assert.ok(fileBytes('assets/brites-concierge-avatar-scene.mjs') <= 640 * 1024);
   // Allow the semantic facial rig, measured speech aperture and bounded expression easing while
   // retaining the same on-demand compiled-scene download limit.
-  assert.ok(fileBytes('brites-concierge-avatar.js') <= 50 * 1024);
+  assert.ok(fileBytes('brites-concierge-avatar.js') <= 56 * 1024);
   assert.ok(fileBytes('brites-concierge-avatar.css') <= 12 * 1024);
   assert.doesNotMatch(controller, /avatar-concept\.png/);
   assert.match(controller, /await import\(moduleUrl\)/);

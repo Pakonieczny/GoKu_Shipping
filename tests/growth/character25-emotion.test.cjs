@@ -28,7 +28,10 @@ test('brief appreciation restores the previous quiet emotion and removes SVG hea
   const f = await fixture(t); f.guide.setEmotion('calm'); f.guide.setEmotion('appreciated');
   assert.equal(f.guide.element.dataset.heart, 'true'); assert.equal(f.guide.snapshot().mannerism.name, 'reassure');
   assert.equal(f.guide.element.querySelectorAll('.brites-avatar__heart path').length,2);
-  f.advance(1500); assert.equal(f.guide.snapshot().emotion, 'calm'); assert.equal(f.guide.element.dataset.heart, 'false'); assert.equal(f.jobs.size, 0);
+  f.advance(1500); assert.equal(f.guide.snapshot().emotion, 'calm'); assert.equal(f.guide.element.dataset.heart, 'false'); assert.equal(f.guide.snapshot().mannerism.name, null);
+  const remaining = [...f.jobs.values()]; assert.ok(remaining.length <= 1, 'appreciation and mannerism timers were removed; at most the sparse authored blink remains');
+  for (const job of remaining) {assert.equal(job.due, avatar.BLINK_EVENTS[0].at * 1000, 'the only permitted timer is the next authored blink at 3.3 seconds'); assert.ok(job.due > 2500, 'the remaining blink is in the future, not an overdue appreciation callback');}
+  f.guide.destroy(); assert.equal(f.jobs.size, 0, 'destroy cancels the remaining sparse blink timer too');
 });
 test('obsolete appreciation callback cannot override a newer frustration expression', async t => {
   const f = await fixture(t); f.guide.setEmotion('appreciated');

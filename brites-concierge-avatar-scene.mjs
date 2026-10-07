@@ -148,6 +148,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   // A luminous speech aperture visibly opens from measured output energy.
   // It is a graphic robot mouth; silence closes it rather than running a loop.
   const speechMouth = mesh(geometry(new THREE.TorusGeometry(.105, .015, 16, segments(96,64))), mouthMaterial, head, 0, -.235, .722); speechMouth.castShadow = false; speechMouth.receiveShadow = false; speechMouth.visible = false; speechMouth.name = 'expression-speech-mouth';
+  const speechMouthRest = speechMouth.geometry.attributes.position.array.slice(); let speechMouthShape = null;
   const faceSignals = [];
   for (let index = 0; index < 3; index++) {
     const signal = mesh(smallSphere, mouthMaterial, head, (index - 1) * .065, -.385, .712); signal.scale.set(.011, .011, .006); signal.castShadow = false; signal.receiveShadow = false; signal.name = 'expression-signal-' + index; faceSignals.push(signal);
@@ -280,16 +281,24 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     avatar.position.set(0, 0, 0); avatar.scale.setScalar(1); avatar.rotation.set(0, 0, 0);
     const finiteCue = (value, fallback = 0, min = 0, max = 1) => THREE.MathUtils.clamp(Number.isFinite(value) ? value : fallback, min, max);
     bodyRig.rotation.set(0, 0, 0);
-    head.rotation.set(Number.isFinite(pose.headPitch) ? pose.headPitch : 0, Number.isFinite(pose.headYaw) ? pose.headYaw : 0, finiteCue(finiteCue(pose.headRoll, 0, -.09, .09) + (reassuring ? -.012 : pose.emotion === 'curious' ? .02 : 0), 0, -.09, .09));
+    head.rotation.set(Number.isFinite(pose.headPitch) ? pose.headPitch : 0, Number.isFinite(pose.headYaw) ? pose.headYaw : 0, finiteCue(finiteCue(pose.headRoll, 0, -.09, .09) + finiteCue(pose.expressionHeadRoll, 0, -.025, .025) + (reassuring ? -.012 : pose.emotion === 'curious' ? .02 : 0), 0, -.09, .09));
     const eyeOpen = finiteCue(pose.eyeOpen, 1, .035, 1.08), eyeScaleX = finiteCue(pose.eyeScaleX, 1, .8, 1.2), eyeScaleY = finiteCue(pose.eyeScaleY, 1, .6, 1.2), deformation = finiteCue(pose.eyeDeformation, 0, -.3, .3);
     eye.position.x = finiteCue(pose.gazeX, 0, -.12, .12); eye.position.y = .022 + finiteCue(pose.gazeY, 0, -.08, .08);
     const browLift = finiteCue(pose.faceBrowLift ?? pose.browLift, 0, -1, 1), browTilt = finiteCue(pose.faceBrowTilt ?? pose.browAngle, 0, -1, 1), eyeSmile = finiteCue(pose.eyeSmile), cheekGlow = finiteCue(pose.cheekGlow), smileCurve = finiteCue(pose.smileCurve), signalLevel = finiteCue(pose.faceSignal);
     faceBrows.forEach(({mesh: brow, side}) => {brow.position.y = .355 + browLift * .057 + side * browTilt * .038; brow.rotation.z = side * -.08 + browTilt * .18;});
-    const smileClosure = finiteCue(pose.lidClosure, eyeSmile * .14), speechEnergy = speaking && !reducedMotion ? finiteCue(pose.speechEnergy) : 0, warmth = finiteCue(pose.heart);
+    const smileClosure = finiteCue(pose.lidClosure, eyeSmile * .14), speechEnergy = speaking && !reducedMotion ? finiteCue(pose.speechEnergy) : 0, warmth = speaking ? 0 : finiteCue(pose.heart);
     cheekLights.forEach(cheek => {const scale = .62 + cheekGlow * .48 + speechEnergy * .12; cheek.scale.set(scale, scale, .22);});
     smileGlyph.scale.set(.9 + smileCurve * .16, .18 + smileCurve * .82, 1);
     smileGlyph.position.y = -.235 + speechEnergy * .008;
-    speechMouth.visible = speaking && speechEnergy > .015 && warmth <= .05; speechMouth.scale.set(1.28 + speechEnergy * .25, .20 + speechEnergy * .85, .8); smileGlyph.visible = !speechMouth.visible;
+    speechMouth.visible = speaking && speechEnergy > .015; speechMouth.scale.set((1.28 + speechEnergy * .25) * (1 + smileCurve * .14 - browTilt * .025), .20 + speechEnergy * .85, .8); smileGlyph.visible = !speechMouth.visible;
+    // Context can soften or gently incline this graphic aperture. Actual
+    // opening still comes only from output energy; these are not visemes.
+    const mouthShape = smileCurve.toFixed(4) + ',' + browTilt.toFixed(4);
+    if (mouthShape !== speechMouthShape) {
+      speechMouthShape = mouthShape; const attribute = speechMouth.geometry.attributes.position;
+      for (let i = 0; i < attribute.count; i++) {const offset = i * 3, x = speechMouthRest[offset], y = speechMouthRest[offset + 1], z = speechMouthRest[offset + 2], horizontal = THREE.MathUtils.clamp(x / .12, -1, 1); attribute.setXYZ(i, x, y + (horizontal * horizontal - .45) * smileCurve * .07 + horizontal * browTilt * .014, z);}
+      attribute.needsUpdate = true; speechMouth.geometry.computeVertexNormals(); speechMouth.geometry.computeBoundingBox(); speechMouth.geometry.computeBoundingSphere();
+    }
     faceSignals.forEach((signal, index) => {const energy = speechEnergy, emphasis = state === 'listening' ? index === 1 ? .7 : .25 : thinking ? index === 2 ? .7 : .2 : signalLevel; const radius = .010 + emphasis * .005 + energy * (index === 1 ? .008 : .005); signal.scale.set(radius, radius, .006);});
     const shapeSignature = [eyeOpen, eyeScaleX, eyeScaleY, deformation, eyeSmile, browTilt, smileClosure, reducedMotion ? 0 : speechEnergy].join(','), shapeChanged = shapeSignature !== eyeShapeSignature; eyeShapeSignature = shapeSignature;
     for (const {aperture: ribbon, apertureGeometry, apertureRest, side} of eyes) {

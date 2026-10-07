@@ -7,9 +7,10 @@ const fs = require('node:fs');
 const {JSDOM} = require('jsdom');
 const avatar = require('../../brites-concierge-avatar.js');
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function harness(t, {reducedMotion = false, loader} = {}) {
+function harness(t, {reducedMotion = false, loader, syntheticClock = false} = {}) {
   const dom = new JSDOM('<div id="avatar"></div>', {url: 'https://sandbox.example/', pretendToBeVisual: true});
-  const win = dom.window; let hidden = false, intersect;
+  const win = dom.window; let hidden = false, intersect, clock=0,serial=0;const jobs=new Map();
+  if(syntheticClock){Object.defineProperty(win.performance,'now',{value:()=>clock});win.setTimeout=(callback,delay)=>{jobs.set(++serial,{callback,at:clock+delay});return serial;};win.clearTimeout=id=>jobs.delete(id);}
   Object.defineProperty(win.document, 'hidden', {get: () => hidden});
   const listeners = new Set();
   win.matchMedia = () => ({matches: reducedMotion, addEventListener: (name, cb) => listeners.add(cb), removeEventListener: (name, cb) => listeners.delete(cb)});
@@ -21,7 +22,8 @@ function harness(t, {reducedMotion = false, loader} = {}) {
   return {api, win, loads: () => loads,
     hide: value => {hidden = value; win.document.dispatchEvent(new win.Event('visibilitychange'));},
     intersect: value => intersect([{isIntersecting: value}]),
-    motion: value => {for (const cb of listeners) cb({matches: value});}};
+    motion: value => {for (const cb of listeners) cb({matches: value});},
+    advanceTo(value){if(!syntheticClock)throw Error('Clock fixture is required');let guard=0;while(++guard<10000){const next=[...jobs.entries()].filter(([,job])=>job.at<=value).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;clock=next[1].at;jobs.delete(next[0]);next[1].callback();}clock=value;},jobs};
 }
 test('original digital eye uses bounded deformations, state colors and non-color expression cues', () => {
   const colors = new Set(), emotions = new Set();
@@ -96,12 +98,21 @@ test('user pause stops the WebGL scene and resumed rendering receives the explic
   h.api.setEmotion('reassuring'); const before = poses.length; h.api.setState('success'); assert.equal(poses.length, before);
   h.api.setPaused(false); assert.equal(motions.at(-1).active, true); assert.equal(poses.at(-1).emotion, 'reassuring');
 });
-test('vector animation stylesheet has explicit pause/reduced-motion bounds and no raster fallback', () => {
+test('vector stylesheet avoids an independent repeating blink clock and respects motion bounds', () => {
   const css = fs.readFileSync(require.resolve('../../brites-concierge-avatar.css'), 'utf8');
-  assert.match(css, /@keyframes britesRobotBlink/); assert.match(css, /@keyframes britesRobotOffer/);
+  assert.doesNotMatch(css, /@keyframes britesRobotBlink/); assert.doesNotMatch(css, /animation:[^;}]*\binfinite\b/);assert.match(css, /@keyframes britesRobotOffer/);
   assert.doesNotMatch(css, /@keyframes britesRobot(?:Speak|Float|Look)/);
   assert.match(css, /data-motion=paused.*animation-play-state:paused/);
   assert.match(css, /prefers-reduced-motion:reduce.*animation:none/);
   assert.doesNotMatch(css, /data-image=ready/);
   assert.doesNotMatch(fs.readFileSync(require.resolve('../../brites-concierge-avatar.js'), 'utf8'), /avatar-concept\.png/);
+});
+
+test('the actual fallback blinks once through the shared pose cadence and stays still while paused or reduced',async t=>{
+  const h=harness(t,{syntheticClock:true});await h.api.ready;h.advanceTo(2500);
+  const ribbon=()=>h.api.element.querySelector('.brites-avatar__ribbon--left').getAttribute('d'),open=ribbon(),openPose=h.api.snapshot().facePose.eyeOpen;
+  h.advanceTo(3400);assert.notEqual(ribbon(),open,'the real SVG eye ribbon closes without a CSS blink animation');assert.ok(h.api.snapshot().facePose.eyeOpen<openPose*.25,'the authored blink visibly reduces eye aperture');
+  h.advanceTo(3700);assert.equal(ribbon(),open,'one finite blink recovers to the preceding open eye');
+  h.api.setPaused(true);const paused=ribbon();h.advanceTo(13000);assert.equal(ribbon(),paused,'paused fallback does not follow the next blink event');assert.equal(h.api.snapshot().fallback.animated,false);
+  h.api.setPaused(false);h.api.setReducedMotion(true);const reduced=ribbon();h.advanceTo(25000);assert.equal(ribbon(),reduced,'reduced-motion fallback suppresses all timed blink movement');assert.equal(h.api.snapshot().reducedMotion,true);assert.equal(h.api.snapshot().facePose.eyeOpen,1);
 });

@@ -9,6 +9,7 @@ const path = require('node:path');
 const {JSDOM, VirtualConsole} = require('jsdom');
 const avatarFactory = require('../../brites-concierge-avatar.js');
 const widgetSource = fs.readFileSync(path.join(__dirname, '../../brites-concierge.js'), 'utf8');
+const avatarLoaderSelector = 'script[src$="/brites-concierge-avatar.js"]';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function settle() { await tick(); await tick(); }
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => {resolve = a; reject = b;}); return {promise, resolve, reject}; }
@@ -486,7 +487,7 @@ test('avatar still loading does not block search, variant review, or sandbox car
 for (const mode of ['constructor failure', 'static fallback', 'script failure']) test(mode + ' leaves search and confirmed sandbox cart functional', async t => {
   const h = makeWidget(t, {createThrows: mode === 'constructor failure', fallback: mode === 'static fallback', noAvatarGlobal: mode === 'script failure'});
   h.open();
-  if (mode === 'script failure') h.root.querySelector('script').dispatchEvent(new h.window.Event('error'));
+  if (mode === 'script failure') h.root.querySelector(avatarLoaderSelector).dispatchEvent(new h.window.Event('error'));
   await h.ask(); await h.add();
   assert.equal(h.errors.length, 0); assert.equal(h.root.querySelectorAll('.card').length, 1);
   assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
@@ -494,7 +495,7 @@ for (const mode of ['constructor failure', 'static fallback', 'script failure'])
 });
 
 test('delayed avatar script completion after dismissal initializes hidden', async t => {
-  const h = makeWidget(t, {noAvatarGlobal: true}); h.open(); const loader = h.root.querySelector('script'); h.window.BritesConcierge.close();
+  const h = makeWidget(t, {noAvatarGlobal: true}); h.open(); const loader = h.root.querySelector(avatarLoaderSelector); h.window.BritesConcierge.close();
   let config;
   h.window.BritesConciergeAvatar = {create(value) {config = value; return {setState() {}, setVisible() {}, setLevel() {}, ready: Promise.resolve({mode: 'fallback'})};}};
   loader.dispatchEvent(new h.window.Event('load')); await settle();
@@ -503,13 +504,13 @@ test('delayed avatar script completion after dismissal initializes hidden', asyn
 
 test('failed avatar script is cleaned up and a fresh explicit reopen loads it once', async t => {
   const h = makeWidget(t, {noAvatarGlobal: true}); h.open();
-  const failedLoader = h.root.querySelector('script'); failedLoader.dispatchEvent(new h.window.Event('error')); await settle();
+  const failedLoader = h.root.querySelector(avatarLoaderSelector), expressionLoader = h.root.querySelector('script[src$="/brites-concierge-expression.js"]'); assert.ok(expressionLoader, 'independent expression asset is also loading'); failedLoader.dispatchEvent(new h.window.Event('error')); await settle();
   assert.equal(failedLoader.isConnected, false); assert.equal(failedLoader.onload, null); assert.equal(failedLoader.onerror, null);
-  await h.ask(); assert.equal(h.root.querySelector('script'), null, 'conversation does not retry optional loading');
+  await h.ask(); assert.equal(h.root.querySelector(avatarLoaderSelector), null, 'conversation does not retry the failed avatar asset'); assert.equal(expressionLoader.isConnected, true, 'avatar failure does not remove the independent expression loader');
   h.window.BritesConcierge.close(); h.window.BritesConcierge.open();
-  const nextLoader = h.root.querySelector('script'); assert.ok(nextLoader); assert.notEqual(nextLoader, failedLoader);
+  const nextLoader = h.root.querySelector(avatarLoaderSelector); assert.ok(nextLoader); assert.notEqual(nextLoader, failedLoader);
   h.window.BritesConcierge.open(); h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true}));
-  assert.equal(h.root.querySelectorAll('script').length, 1, 'one in-flight load serves concurrent reopen/restoration');
+  assert.equal(h.root.querySelectorAll(avatarLoaderSelector).length, 1, 'one in-flight avatar load serves concurrent reopen/restoration'); assert.equal(h.root.querySelectorAll('script[src$="/brites-concierge-expression.js"]').length, 1, 'expression loading is independently deduplicated');
   let creates = 0;
   h.window.BritesConciergeAvatar = {create(config) {creates++; return {setState() {}, setVisible() {}, setLevel() {}, destroy() {}};}};
   nextLoader.dispatchEvent(new h.window.Event('load')); await settle();

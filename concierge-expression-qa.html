@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Brites · Conversational expression studio</title>
+  <link rel="stylesheet" href="/brites-growth.css">
+  <link rel="stylesheet" href="/brites-concierge-avatar.css">
+  <script src="/brites-concierge-expression.js" defer></script>
+  <script src="/brites-concierge-avatar.js" defer></script>
+  <script src="/concierge-expression-qa.js" defer></script>
+</head>
+<body class="shop-demo">
+  <main class="workspace">
+    <header>
+      <div>
+        <span class="eyebrow">BRITES · CONVERSATIONAL EXPRESSION STUDIO</span>
+        <h1>Expressions through a conversation.</h1>
+        <p class="sub"><strong>Synthetic transcript and audio-envelope events, actual production face rig.</strong> This studio requests no microphone, sends no OpenAI calls and changes no cart or product selection. It tests facial transitions and cancellation. Native spoken timing, physical audio and GPU appearance require separate hardware checks.</p>
+      </div>
+      <a class="btn" href="/concierge-sandbox.html">Open shopper demo</a>
+    </header>
+    <section class="box" aria-label="Expression scenario controls">
+      <label for="scenario">Conversation to simulate</label>
+      <select id="scenario"></select>
+      <div class="controls">
+        <button id="run-scenario" type="button" class="btn primary">Run selected scenario</button>
+        <button id="run-suite" type="button" class="btn">Run all scenarios</button>
+        <button id="pause-sequence" type="button" class="btn" aria-pressed="false">Pause sequence</button>
+        <button id="interrupt-sequence" type="button" class="btn">Interrupt</button>
+        <button id="reset-sequence" type="button" class="btn">Reset</button>
+        <button id="reduce-motion" type="button" class="btn" aria-pressed="false">Reduced-motion fixture</button>
+      </div>
+      <p id="scenario-status" class="status" role="status" aria-live="polite">Preparing the production rig.</p>
+    </section>
+    <section class="layout">
+      <div class="box">
+        <div id="avatar" aria-label="Actual avatar rig"></div>
+        <p id="renderer-state" class="status">Renderer capability is pending.</p>
+        <p id="current-text">Choose a scenario to start.</p>
+        <p id="phase-state">Phase: idle.</p>
+      </div>
+      <div class="box">
+        <h2>What is actually changing</h2>
+        <p>Watch brows, eye shape, cheeks and mouth separately. The sampled face values come from the actual rig. RMS below is an authored fixture envelope; it is not captured audio or phoneme lip sync.</p>
+        <pre id="pose-metrics" aria-label="Current expression pose"></pre>
+        <h2>Scenario results</h2>
+        <pre id="scenario-results" aria-label="Expression scenario results"></pre>
+        <details>
+          <summary>Bounded transition log</summary>
+          <pre id="transition-log" aria-label="Expression transition log"></pre>
+        </details>
+        <p class="sub">A changing rig is a behavior check. It does not establish increased trust, sales, or superiority over other systems.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -129,7 +129,7 @@ test('fallback face paths and visible graphic details change with real emotion/s
   const brow = f.guide.element.querySelector('.brites-avatar__brow--left'), smile = f.guide.element.querySelector('.brites-avatar__smile-signal');
   const neutral = {brow: brow.getAttribute('d'), smile: smile.getAttribute('d')};
   f.guide.setState('listening'); f.advance(500); assert.equal(f.guide.element.dataset.faceExpression, 'attentive'); assert.notEqual(brow.getAttribute('d'), neutral.brow);
-  f.guide.setEmotion('warm'); f.advance(500); assert.equal(f.guide.element.dataset.faceExpression, 'warm'); assert.notEqual(smile.getAttribute('d'), neutral.smile);
+  f.guide.setState('idle'); f.guide.setEmotion('warm'); f.advance(500); assert.equal(f.guide.element.dataset.faceExpression, 'warm'); assert.notEqual(smile.getAttribute('d'), neutral.smile);
   assert.equal(f.guide.element.querySelectorAll('.brites-avatar__eye path').length, 2);
   const left=f.guide.element.querySelector('.brites-avatar__ribbon--left'),ribbon=left.getAttribute('d');f.guide.setEmotion('curious');f.advance(500);assert.notEqual(left.getAttribute('d'),ribbon);
   assert.equal(f.guide.element.querySelector('.brites-avatar__halo'),null);

@@ -20,11 +20,11 @@ function fixture(t){
   return {w,root,calls,errors,client,button,advance:ms=>{clock+=ms;},get config(){return config;},async start(){w.BritesConcierge.open();button('Talk to me').click();await settle();root.querySelector('script[src$="brites-concierge-voice.js"]')?.dispatchEvent(new w.Event('load'));await settle();},state(value){client.state=value;config.onState(value);},meter(value){client.outputMeterState=value;config.onOutputMeterState(value);},speak(text,id='input-1',version=1){config.onSpeechStarted({itemId:id,turnVersion:version});config.onTranscript({role:'user',itemId:id,turnVersion:version,currentTurn:true,text,final:true});}};
 }
 
-test('outgoing words transition from celebration to curiosity while real remote energy alone drives speech',async t=>{
+test('generated outgoing words preserve the conversation baseline while only real remote energy drives speech',async t=>{
   const h=fixture(t);await h.start();h.speak('A gift for my graduation.');h.state('speaking');h.meter('ready');
   h.config.onTranscript({role:'assistant',itemId:'reply-1',delta:'Congratulations on your graduation.',final:false});assert.equal(h.calls.emotions.at(-1),'celebrate');
   h.config.onLevel({input:.95,output:.21});assert.equal(h.calls.levels.at(-1),.21);
-  h.config.onTranscript({role:'assistant',itemId:'reply-1',delta:' Which design feels most personal to you?',final:false});assert.equal(h.calls.emotions.at(-1),'curious');
+  h.config.onTranscript({role:'assistant',itemId:'reply-1',delta:' Which design feels most personal to you?',final:false});assert.equal(h.calls.emotions.at(-1),'celebrate','generation must not jump the face ahead of audible phrase delivery');
   const changes=h.calls.emotions.length;for(let i=0;i<20;i++)h.config.onTranscript({role:'assistant',itemId:'reply-1',delta:' ',final:false});assert.equal(h.calls.emotions.length,changes,'token arrival does not repeatedly trigger an expression');
   h.config.onLevel({input:1,output:0});assert.equal(h.calls.levels.at(-1),0,'microphone energy never makes the guide talk');
   h.state('listening');h.config.onLevel({input:1,output:.8});assert.equal(h.calls.levels.at(-1),0,'late output samples cannot keep an interrupted mouth moving');
@@ -34,7 +34,8 @@ test('outgoing words transition from celebration to curiosity while real remote 
 test('explicit grief or frustration keeps a gentle face through unrelated cheerful wording',async t=>{
   const h=fixture(t);await h.start();h.speak('A memorial for someone who died.');h.state('speaking');h.calls.emotions.length=0;h.config.onTranscript({role:'assistant',itemId:'reply-1',text:'Congratulations on your wedding!',final:true});assert.equal(h.calls.emotions.includes('celebrate'),false);assert.equal(h.calls.states.at(-1),'speaking');
   h.speak('Thanks, but this is not helpful and I am frustrated.','input-2',2);assert.equal(h.calls.emotions.at(-1),'reassuring');h.config.onTranscript({role:'assistant',itemId:'reply-2',text:'Which piece would you like to try?',final:true});assert.equal(h.calls.emotions.at(-1),'reassuring');
-  h.speak('What is the meaning of the design?','input-3',3);assert.equal(h.calls.emotions.at(-1),'curious');
+  h.speak('What is the meaning of the design?','input-3',3);assert.equal(h.calls.emotions.at(-1),'reassuring','a follow-up keeps the repair context');
+  h.speak('All resolved. What is the meaning of the design?','input-4',4);assert.equal(h.calls.emotions.at(-1),'curious','an explicit resolution releases the repair context');
 });
 
 test('a suspended audio analyser has its own recoverable control while native voice stays connected',async t=>{
@@ -57,6 +58,6 @@ test('end voice ignores late RMS, meter and semantic events and allows the safe 
   await h.start();h.config.onError('This browser could not prepare a voice network connection. Try another browser, or type here.');assert.match(h.root.querySelector('.status').textContent,/could not prepare a voice network connection/);assert.match(h.root.querySelector('.status').textContent,/choose Type instead/);
 });
 
-test('a bounded model gesture yields to the newer spoken tone on expiry and a cancelled timer cannot revive it',async t=>{
-  const h=fixture(t);await h.start();h.speak('A birthday gift.');h.state('speaking');const performance={mood:'curious',gesture:'explain',intensity:.35,durationMs:1250},metadata={inputItemId:'input-1',turnVersion:1,currentTurn:true};h.config.onAvatarPerformance(performance,metadata);assert.equal(h.calls.performances.length,1);h.config.onTranscript({role:'assistant',itemId:'reply-1',text:'That could be a personal reminder.',final:true});assert.equal(h.calls.emotions.at(-1),'celebrate','the active finite gesture remains in charge until it finishes');h.advance(1250);h.calls.timers[0].fn();assert.equal(h.calls.emotions.at(-1),'warm','the newest actual words supply the following tone');h.config.onAvatarPerformance(performance,metadata);const stale=h.calls.timers[1];h.button('End voice').click();const count=h.calls.emotions.length;h.advance(1250);stale.fn();assert.equal(h.calls.emotions.length,count);
+test('a bounded model gesture restores the baseline on expiry without a generated-text jump or stale revival',async t=>{
+  const h=fixture(t);await h.start();h.speak('A birthday gift.');h.state('speaking');const performance={mood:'curious',gesture:'explain',intensity:.35,durationMs:1250},metadata={inputItemId:'input-1',turnVersion:1,currentTurn:true};h.config.onAvatarPerformance(performance,metadata);assert.equal(h.calls.performances.length,1);h.config.onTranscript({role:'assistant',itemId:'reply-1',text:'That could be a personal reminder.',final:true});assert.equal(h.calls.emotions.at(-1),'celebrate','the active finite gesture remains in charge until it finishes');h.advance(1250);h.calls.timers[0].fn();assert.equal(h.calls.emotions.at(-1),'celebrate','the baseline remains stable; audible clause expressions have their own layer');h.config.onAvatarPerformance(performance,metadata);const stale=h.calls.timers[1];h.button('End voice').click();const count=h.calls.emotions.length;h.advance(1250);stale.fn();assert.equal(h.calls.emotions.length,count);
 });
