@@ -522,7 +522,7 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    the documents themselves: the safety net for a write that did not move the revision. The slow check that records seals asks the
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
 const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; production only, as that one is: the sandbox keeps no counter, a leftover of every reset, and its readers ask in full)
-const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "sandboxCancel", "sandboxPut", "sandboxReset", "purgeHistory"]);
+const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "sandboxCancel", "sandboxPut", "sandboxReset", "purgeHistory"]);
 /** The Library's revision now (its update time), "0" before the first write, null when it cannot be read (the reader then asks in full). */
 async function readRev() {
   if (PREFIX) return null;
@@ -1474,7 +1474,7 @@ async function op_getOrderPieces(b) {
 const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
-  "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
+  "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
@@ -3126,8 +3126,11 @@ async function op_customReadGet(b) { return require("./_charmNestCustomRead").lo
 async function op_customDecide(b) { return require("./_charmNestCustomRead").decide(db, FV, b, !!PREFIX); }
 
 // the leftover sheets (GC3): recordRemnant is the cut's own writer (inside roseRecordCut's transaction, not an op); remnantList / remnantMark are the repository's two ops
-const Remnants = require("./_charmNestRemnants")({db,col,FV,sheetLabel,setLabel,revDoc:()=>PREFIX?null:db.collection("Charm_Nest_Rev").doc("remnants")});
-const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant:Remnants.recordRemnant});
+// partial sheets (PS3): the setting (config/charmNestPartials, the sandbox has its own) and the metal's regular piece (Charm_Nest_Rev/partialStats: running sums, read by both, written by production cuts only)
+const Remnants = require("./_charmNestRemnants")({db,col,FV,sheetLabel,setLabel,revDoc:()=>PREFIX?null:db.collection("Charm_Nest_Rev").doc("remnants"),
+  configRef:()=>db.collection("config").doc(PREFIX?"charmNestPartialsSandbox":"charmNestPartials"),statsRef:()=>db.collection("Charm_Nest_Rev").doc("partialStats"),statsWrite:()=>!PREFIX});
+const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant:Remnants.recordRemnant,remnantSync:Remnants.sync});
+Remnants.bind(RoseStock);   // (partialClaim / partialRelease go through the stock's own roseClaim / roseRelease: one source of truth for who holds a partial sheet)
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
    record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull.
    Since 28 Sep (A1 · A6) Etsy's own cancels land in the same record (by "Etsy", source "etsy", etsyStatus), written by

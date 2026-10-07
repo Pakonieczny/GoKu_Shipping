@@ -87,7 +87,9 @@ function withoutPieces(guard, gone, ctx = {}) {
   for (const i of keepIdx) { const own = slice(i); list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); }
   return { guard: build(guard.profile, lines, list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: false, changed: true };
 }
-module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant}){
+/* remnantSync (PS3, _charmNestRemnants.js `sync`): the partial sheet's record (Charm_Nest_Remnants/{stockId}-{revision}) follows the stock's owner INSIDE roseClaim's
+   and roseRelease's own transactions: claimed -> 'inUse' (+ lastUsedAt), released -> 'available' again. The stock stays the one source of truth for who holds it. */
+module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant,remnantSync}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   // Rose Gold, 10K and 14K solid gold share these operations (charm-nest-rose.js: cuts(metal)); a physical sheet belongs to one metal.
   // Stock saved before the metal was kept is Rose Gold's.
@@ -108,6 +110,12 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     // Resume a reservation after browser recovery before assigning another sheet.
     const held=await stocks().where('owner','==',b.sheetId).limit(1).get();
     let stockId=held.docs[0]?.id||b.stockId;
+    // exact (a chosen partial sheet, partialClaim): never quietly keep another physical sheet this layout holds, never create one
+    if(b.exact){
+      if(!id(b.stockId))throw new Error('Choose a partial sheet');
+      if(held.docs[0]&&held.docs[0].id!==b.stockId)throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
+      stockId=b.stockId;
+    }
     if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks;stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01)?.id;}
     // onlyRemnant (10K and 14K nest on a leftover when one fits, and otherwise claim nothing): no leftover, nothing is created or written
     if(b.onlyRemnant&&!stockId)return {stock:null,protectedJson:null};
@@ -115,6 +123,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     const ref=stockId?stocks().doc(stockId):stocks().doc('rgs-'+crypto.randomUUID());
     const stock=await db.runTransaction(async tx=>{
       const d=await tx.get(ref),old=d.exists?d.data():null;
+      if(b.exact&&!old)throw new Error('Partial sheet not found');
       if(old&&metalOf(old)!==metal)throw new Error('This physical sheet is '+metalWord(metalOf(old))+', not '+metalWord(metal));
       if(old&&(Math.abs(old.wPt-b.wPt)>.01||Math.abs(old.hPt-b.hPt)>.01))throw new Error('The physical sheet size cannot change');
       if(old?.owner&&old.owner!==b.sheetId)throw new Error('This '+metalWord(metal)+' sheet is reserved for another layout');
@@ -122,11 +131,15 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const sd=await tx.get(sheets().doc(b.sheetId));
       if(sd.exists&&sd.data().roseCutAt)throw new Error("This layout was already cut; start a new sheet");
       if(sd.exists&&sd.data().metal&&sd.data().metal!==metal)throw new Error('This sheet is '+metalWord(sd.data().metal)+', not '+metalWord(metal));
+      // the partial sheet's record (a read, before the first write); a chosen partial (partialId) must be available or already this sheet's
+      const rem=remnantSync&&old?await remnantSync.read(tx,ref.id,old.revision,b.partialId):null;
+      if(b.partialId)remnantSync.check(rem,{metal,sheetId:b.sheetId,stockId:ref.id,revision:old.revision});
       const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),metal,owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
       const guard=sd.exists?protectedLayout(sd.data()):null,protectedJson=guard?JSON.stringify(guard):null;
       tx.set(ref,next);
       if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{})});
-      return {stock:{...next,updatedAt:null},protectedJson};
+      const partial=remnantSync?remnantSync.claimed(tx,rem,{sheetId:b.sheetId,sheetName:b.sheetName||(sd.exists&&sheetLabel?sheetLabel(sd.data()):''),by:b.by,at:Date.now()}):null;
+      return {stock:{...next,updatedAt:null},protectedJson,...(partial?{partial}:{})};
     });return stock;
   }
   async function roseRelease(b){
@@ -134,9 +147,12 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     await db.runTransaction(async tx=>{const ref=stocks().doc(b.stockId),d=await tx.get(ref);if(!d.exists||d.data().owner!==b.sheetId)throw new Error('This stock reservation changed');
       const sheet=await tx.get(sheets().doc(b.sheetId));if(sheet.exists&&sheet.data().setId&&!sheet.data().draft)throw new Error('Remove the sheet from its current set before releasing its stock');
       if(sheet.exists&&(sheet.data().rosePlanJson||sheet.data().roseProtectedJson))throw new Error('A planned or protected Rose Gold contour cannot be released');
+      // the partial sheet's record (a read, before the first write): it is available again when the stock is
+      const rem=remnantSync?await remnantSync.read(tx,b.stockId,d.data().revision):null;
       // a 10K or 14K sheet nobody has cut lets go of its fresh physical sheet by deleting it: an uncut sheet is no leftover (Rose Gold's stays as it was)
       const fresh=metalOf(d.data())!=='rose'&&!d.data().revision&&!d.data().profileJson;
-      if(fresh)tx.delete(ref);else tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});});return {ok:true};
+      if(fresh)tx.delete(ref);else tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});
+      if(remnantSync&&!fresh)remnantSync.released(tx,rem,{sheetId:b.sheetId,at:Date.now()});});return {ok:true};
   }
   async function rosePlan(b){
     if(!id(b.sheetId)||!id(b.stockId))throw new Error('Choose a sheet');

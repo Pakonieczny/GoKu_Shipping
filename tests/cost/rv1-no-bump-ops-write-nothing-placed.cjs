@@ -56,7 +56,7 @@ const same = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.strin
     setGet: [{ setId: 'set-1' }], setList: [{}, { excludeDone: true }], runGet: [{ runId: 'run-1' }], runList: [{}], cancelList: [{}, { idsOnly: true, after: { s: 1, n: 0, id: '1' } }], cancelCheck: [{ orderIds: ['4190000001'] }],
     getOrderPieces: [{ orderIds: ['4190000001', '4190000003'] }], sessionsList: [{}], laserSheetLast: [{ by: 'Ana' }], customGet: [{ items: [] }], customSheetGet: [{ keys: [] }],
     sheetPdf: [{ ids: ['sh-3'] }], backPreview: [{ poolIds: ['4190000001_41900000011_1'] }], ping: [{}], getCalibration: [{}], getJob: [{ id: 'x' }], jobList: [{}], masterList: [{}], masterGet: [{ sku: 'x' }],
-    remnantList: [{}, { scope: 'all' }], sandboxStatus: [{ light: true }], releaseGet: [{}], timelineGet: [{ orderId: '4190000001' }], aliasGet: [{}], noDesignGet: [{}], optionMapGet: [{}], lookupCharms: [{ hashes: [] }], listCharms: [{}]
+    remnantList: [{}, { scope: 'all' }], partialList: [{ metal: 'rose' }, { metal: 'gold10k', inUse: true, used: true }], partialPolicyGet: [{}], partialPolicySet: [{ metal: 'rose', mode: 'auto', by: 'Ana' }], partialPlan: [{ metal: 'rose', pieces: { areaMm2: 500, count: 5 } }], partialBackfill: [{}], sandboxStatus: [{ light: true }], releaseGet: [{}], timelineGet: [{ orderId: '4190000001' }], aliasGet: [{}], noDesignGet: [{}], optionMapGet: [{}], lookupCharms: [{ hashes: [] }], listCharms: [{}]
   };
   const ran = [], skipped = [];
   for (const op of listed) {
