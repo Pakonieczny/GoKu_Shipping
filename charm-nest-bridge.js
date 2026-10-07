@@ -7921,7 +7921,12 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /** What the cloud record of one line says about it. */
   const targetOf = (r, rec, it) => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || (it && it.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" });
-  function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
+  function settle() {
+    Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke();
+    // (LB2, 7 Oct: a piece completed by hand is told to everything that listens to where pieces are: the order window's Sheet tab, the search box, the Orders list and the Hold buttons
+    // read OrderPieces, which a completion by hand did not tell; they said "on a sheet / open" until the next placement read. No read: it only has them draw again from what is held)
+    try { if (window.OrderPieces && OrderPieces.notify) OrderPieces.notify(); } catch (_) {}
+  }
   /* A cancelled order is never printed or completed silently (Paul, 28 Sep): the first press turns the button clay,
      "Cancelled order: print anyway?", for 4 s, with no pop-up; a second press meanwhile goes ahead, and the order's
      timeline says so. Returns null (not cancelled), false (asked now) or the order's number (go ahead anyway). */
@@ -8062,7 +8067,14 @@ const CustomPrint = window.CustomPrint = (() => {
     return !it ? "Review" : "Review · " + (it.kind === "customOrder" ? "Custom Orders" : it.category || "a card");
   }
   /** The open order window's timeline reads the new point now (its feed otherwise reads again within 2.5 s), and again 1.5 s later. */
-  function tlFresh() { try { if (OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
+  function tlFresh() { try { if (OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} actSoon(); }
+  /** The efficiency record of a completion or a print (humanAct, already queued) goes to the cloud in 0.8 s, not at the next 10 s beat of station-activity.js (LB2, 7 Oct: the
+   *  Employee efficiency board shows it at once): the same events in the same one batch, so the number of requests is the same (the beat then finds nothing queued). */
+  let actT = 0;
+  function actSoon() {
+    if (actT) return;
+    actT = setTimeout(() => { actT = 0; try { const A = window.StationActivity; if (A && A.pending && A.pending() > 0) A.flush(); } catch (_) {} }, 800);
+  }
   function completeAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
     const from = pressedIn(it);

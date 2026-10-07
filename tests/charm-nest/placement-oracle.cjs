@@ -204,9 +204,12 @@ async function backend() {
   srv.call = async body => { const out = await st.handlers.charmNestLibrary.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body), queryStringParameters: {} }); return JSON.parse(out.body || '{}'); };
   return srv;
 }
-async function openPage(browser, srv, { owner, name }) {
-  const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 }, reducedMotion: 'reduce' });
-  await ctx.route(url => !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url.href), r => {
+// opts.ctx: a browser context already made here (a second tab of the same computer: shared storage and BroadcastChannel; its routes and init script are set once)
+// opts.motion: true keeps the app's real motion (stamps and flights delay the page's own redraws, as they do for a person); the default is reduced motion
+// opts.employee: the name the context signs in with (the owner's is Paul, a viewer's is Viewer)   opts.latency: ms added to every call to a Netlify function (a real call is never instant)
+async function openPage(browser, srv, { owner, name, ctx: shared, motion, employee, latency }) {
+  const fresh = !shared, ctx = shared || await browser.newContext({ viewport: { width: 1500, height: 950 }, reducedMotion: motion ? 'no-preference' : 'reduce' });
+  if (fresh) await ctx.route(url => !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url.href), r => {
     const u = r.request().url();
     if (/gstatic\.com\/firebasejs/.test(u)) return r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(u) ? '' : "const nope = () => { throw new Error('firebase stub'); }; export const initializeApp = nope, getApp = nope, getStorage = nope, ref = nope, uploadBytesResumable = nope, getDownloadURL = nope, uploadBytes = nope;" });
     if (/qrcodejs/.test(u)) return r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) });
@@ -214,9 +217,9 @@ async function openPage(browser, srv, { owner, name }) {
     srv.outside.push(u); return r.abort();
   });
   // a page that asks Claude to read a custom order (Review does, for a piece made by hand) is answered "nothing" here, before the fake sees it: the oracle never reaches an AI, paid or not (counted: srv.agentAsked)
-  await ctx.route(/\/\.netlify\/functions\/(charmNestAgent|charmEngrave|charmMaster|callClaude)/, route => { srv.agentAsked = (srv.agentAsked || 0) + 1; return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, body: JSON.stringify({ ok: true, skipped: 'the placement oracle makes no AI call' }) }); });
+  if (fresh) await ctx.route(/\/\.netlify\/functions\/(charmNestAgent|charmEngrave|charmMaster|callClaude)/, route => { srv.agentAsked = (srv.agentAsked || 0) + 1; return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, body: JSON.stringify({ ok: true, skipped: 'the placement oracle makes no AI call' }) }); });
   // the order timeline as the cloud answers it: the recorded events plus the ones DERIVED from the pool, the sheets and the sets (the fake's own timelineGet answers recorded events alone)
-  await ctx.route(/\/\.netlify\/functions\/charmNestLibrary/, async route => {
+  if (fresh) await ctx.route(/\/\.netlify\/functions\/charmNestLibrary/, async route => {
     const req = route.request(); let body = {}; try { body = JSON.parse(req.postData() || '{}'); } catch (_) {}
     // a page's own ask for a reading by the model (startAgent: Review's customRead of a piece made by hand) is turned back here: no job is parked, no model is reached, not even the fake one (counted: srv.agentAsked)
     if (req.method() === 'POST' && body.op === 'startAgent') { srv.agentAsked = (srv.agentAsked || 0) + 1; return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, body: JSON.stringify({ error: 'the placement oracle makes no AI call' }) }); }
@@ -224,9 +227,10 @@ async function openPage(browser, srv, { owner, name }) {
     try { const out = await srv.st.handlers.charmNestLibrary.handler({ httpMethod: 'POST', headers: {}, body: req.postData(), queryStringParameters: {} }); await route.fulfill({ status: out.statusCode || 200, headers: Object.assign({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, out.headers || {}), body: out.body || '{}' }); }
     catch (e) { await route.fulfill({ status: 500, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: String(e.message) }) }); }
   });
-  await ctx.addInitScript(({ owner }) => {
+  if (fresh && latency) await ctx.route(/\/\.netlify\/functions\//, async r => { await sleep(latency); return r.fallback(); });   // (registered last, so it answers first: every call takes `latency` ms more)
+  if (fresh) await ctx.addInitScript(({ owner, employee }) => {
     try {
-      if (!localStorage.getItem('cn.employee')) localStorage.setItem('cn.employee', owner ? 'Paul' : 'Viewer');
+      if (!localStorage.getItem('cn.employee')) localStorage.setItem('cn.employee', employee || (owner ? 'Paul' : 'Viewer'));
       const s = JSON.parse(localStorage.getItem('cn.settings') || '{}'); s.pollOrders = 'off'; s.runMode = 'manual'; s.sound = 'off'; s.notify = 'off'; s.review = 'on'; s.dsOrigin = 'http://127.0.0.1:9'; localStorage.setItem('cn.settings', JSON.stringify(s));
     } catch (_) { /* about:blank */ }
     window.confirm = () => false; window.prompt = () => 'Paul'; window.alert = () => {};   // (false: a viewer never takes up the run offered on the banner)
@@ -253,7 +257,7 @@ async function openPage(browser, srv, { owner, name }) {
       };
       stubNest.__stub = true; window.startNest = stubNest; clearInterval(iv);
     }, 0);
-  }, { owner });
+  }, { owner, employee });
   const page = await ctx.newPage(), errors = [];
   page.setDefaultTimeout(20000);
   page.on('pageerror', e => errors.push('page: ' + e.message));

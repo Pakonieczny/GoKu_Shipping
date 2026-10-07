@@ -29,7 +29,7 @@
   "use strict";
   const doc = root.document;
   const EVERY = 2000, GAP = 600, SECOND = 1500, OVERLAP = 15000, FAIL_MAX = 30000, FRESH = 20000, AWAY = 10000, OTHER_TAB = 5000, MAX_LOUD = 3, PAGES = 5;
-  const st = { timer: 0, second: 0, busy: false, again: false, hint: false, quietNext: true, fails: 0, cursor: 0, lastOk: 0, lastAny: 0, start: 0, end: 0, polls: 0, applied: 0, dead: false, loud: 0, error: "" };
+  const st = { timer: 0, second: 0, busy: false, again: false, hint: false, quietNext: true, fails: 0, cursor: 0, lastOk: 0, lastAny: 0, start: 0, end: 0, polls: 0, applied: 0, dead: false, loud: 0, error: "", heard: 0 };
   const modeOf = () => { try { return S.mode; } catch (_) { return ""; } };
   const cloudOk = () => { try { return !!(S.cloud && S.cloud.ok); } catch (_) { return false; } };
   const onReview = () => modeOf() === "review" && !doc.hidden;
@@ -173,6 +173,32 @@
     clearTimeout(st.second);
     st.second = setTimeout(() => { st.second = 0; if (!st.dead && cloudOk() && (hint || watching())) { if (hint) st.hint = true; if (st.busy) st.again = true; else arm(0); } }, SECOND);
   }
+  /* ── the other tabs of this computer (LB2, 7 Oct 2026; Paul 6 Oct 23:58: once an order is Completed or its QR label printed, all effects in real time) ──
+     A completion, a print or a reopen written here is told, with the very record the cloud answered, to every other tab of this browser (one BroadcastChannel; the sandbox has its
+     own, so it never mixes with the real shop). A tab takes the record as a read of the feed would (Orders.takeCustom, then everything that follows a press: apply) at once, whatever
+     tab or window it shows: no read of the database, no call to the server, no Etsy call. The tabs' own 2 s read finds the same record later and has nothing new to apply. */
+  const chName = () => { let sb = false; try { sb = typeof WORKSPACE_SANDBOX !== "undefined" && !!WORKSPACE_SANDBOX; } catch (_) {} return sb ? "cn-custom-sandbox" : "cn-custom"; };
+  let ch = null, chMade = false;
+  const channel = () => {
+    if (chMade) return ch; chMade = true;
+    try { if (typeof root.BroadcastChannel === "function") { ch = new root.BroadcastChannel(chName()); ch.onmessage = ev => { try { heard(ev && ev.data); } catch (e) { console.warn("Review feed", e); } }; } } catch (_) { ch = null; }
+    return ch;
+  };
+  /** The records a write of this page just got back (customPut, customReopen, customDelete), told to the other tabs. */
+  function announce(op, data) {
+    if (!/^custom(Put|Reopen|Delete)$/.test(String(op || "")) || !data || !data.record || typeof data.record !== "object" || !data.record.key) return false;
+    const c = channel(); if (!c) return false;
+    try { c.postMessage({ v: 1, records: { [data.record.key]: data.record } }); return true; } catch (_) { return false; }
+  }
+  /** What another tab of this browser wrote: joins what this page holds, at once (quiet unless the Review tab is on screen). */
+  function heard(msg) {
+    if (!msg || msg.v !== 1 || !msg.records || typeof msg.records !== "object" || st.dead || !root.Orders || !root.Orders.takeCustom) return 0;
+    const recs = {}; let at = 0;
+    for (const [k, v] of Object.entries(msg.records)) if (k && v && typeof v === "object" && v.key === k) { recs[k] = v; at = Math.max(at, +v.updatedAtMs || 0); }
+    if (!at) return 0;
+    st.heard++;
+    return apply(recs, Date.now(), !onReview(), at);
+  }
   /** A tab was shown (Views.onShow). */
   function shown(mode) {
     clearTimeout(st.timer); st.timer = 0; clearTimeout(st.second); st.second = 0;
@@ -191,5 +217,6 @@
 
   /** Start the loop when a surface that needs it has come on screen since it last stopped (the search box or the order window opened over a tab that does not follow); the placement feed asks every few seconds. */
   const ensure = () => { if (!st.dead && !st.timer && !st.busy && live()) schedule(); };
-  root.ReviewLive = { nudge, shown, poll, ensure, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: EVERY }) };
+  channel();   // (listening for the other tabs of this computer from the start)
+  root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: EVERY }) };
 })(typeof window !== "undefined" ? window : globalThis);
