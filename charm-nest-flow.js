@@ -4,6 +4,9 @@
  *
  *   LibraryFlow.targets(item)            where a sheet or set may be dropped: [{area}|{set}|{newSet:true}]  (sync, from the page)
  *   LibraryFlow.explainTargets(item)     the same, every zone with {name, ok, reason}: a dimmed zone says why on hover
+ *   LibraryFlow.sheetZone(item, otherId, {self, name})   the place a draft sheet makes when another draft sheet is dropped on it: {sheet, name, sub, ok, reason}
+ *                                        (Paul, 7 Oct: "I can not drag/drop these to combine them"); plan({kind:'sheet', id, to:{sheet:otherId}}) puts both
+ *                                        into the run's open set, or into a new set when none is open (the other sheet is a companion `include` step)
  *   LibraryFlow.plan({kind,id,to,by})    Promise<Plan>: reads, never writes
  *   LibraryFlow.commit(plan,{confirmed,by,onStep})   Promise<{ok,applied:[{key,label}],error}>
  *   LibraryFlow.approve({kind,id,by,confirmed})      Promise<Plan>: runs every safe automatic step now, lists what is still missing
@@ -196,6 +199,8 @@
     const from = areaOf(v);
     plan.from = { area: from, setId: v.set ? v.set.setId : null, label: AREA[from] };
     if (to.set || to.newSet) return planMembership(state, v, to, plan, env);
+    // dropped on another sheet (Paul, 7 Oct: "I can not drag/drop these to combine them"): both go into the open set, or into a new one when none is open
+    if (to.sheet) return planMembership(state, v, env.dest || combineDest(state, v), plan, { ...env, also: [String(to.sheet)] });
     if (!AREAS.includes(to.area)) { plan.needs.push({ key: 'target', label: 'That is not a place a sheet can go', detail: 'Drop it on In progress, Laser cutting, Completed or a set.', items: [] }); return finish(plan); }
     plan.to = { area: to.area, setId: plan.from.setId, label: AREA[to.area] };
     if (from === to.area) { plan.noop = true; plan.notes.push(`${v.label} is already in ${AREA[from]}.`); return finish(plan); }
@@ -331,6 +336,10 @@
     else if (live.can && live.can.ok === false) need('include', 'Not ready to join a set', live.can.reason || 'Nest and verify it first.');
     else if (s.metal === 'rose' ? env.canRose === false : env.canJoin === false) need('join', 'Joining a set is not available here', s.metal === 'rose' ? 'Open the sheet on the Nest tab and press Cut Sheet there.' : 'Open the sheet and use Include or Make QR label.');
     if (plan.needs.length) return finish(plan);
+    // a sheet dropped on another sheet (env.also): the other one must be able to join the same set, or nothing is done at all
+    if ((env.also || []).length && s.metal === 'rose') { need('roseCombine', `${v.label} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press and its own yes: drop it on the set, then add the other sheet.'); return finish(plan); }
+    const mates = alsoCheck(state, v, T, plan, env, need);
+    if (plan.needs.length) return finish(plan);
     if (s.metal === 'rose') { roseJoin(plan, v, s, T, to, live, env); return finish(plan); }
     const target = to.newSet ? 'a new set' : setName(T);
     plan.auto.push({ key: 'membership', label: `${v.label} added to ${target}`, detail: live.can && live.can.byHand ? 'Released as it stands, with the QR label of its orders.' : 'Included in the set by its own Include switch.' });
@@ -339,9 +348,43 @@
     plan.steps.push({ type: 'include', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
     // (the sheets that share an order with this one come with it: withCardinal, below, says so and asks for the one yes; a page
     //  that cannot say who they are still never offers "only this sheet")
-    for (const sp of live.split || []) plan.confirm.push({ key: 'splitOrders', label: `${count(sp.orders.length, 'order')} also on ${sp.label}`, detail: `${sp.orders.slice(0, 4).map(o => 'Order ' + o).join(', ')}${sp.orders.length > 4 ? ' and more' : ''} ${sp.orders.length === 1 ? 'is' : 'are'} on both sheets, so ${sp.label} joins ${target} with ${v.label}.` });
+    const dropped = new Set(mates.map(c => c.label));       // (a sheet dropped on is named by the drop itself: no yes is asked about it)
+    for (const sp of live.split || []) if (!dropped.has(sp.label)) plan.confirm.push({ key: 'splitOrders', label: `${count(sp.orders.length, 'order')} also on ${sp.label}`, detail: `${sp.orders.slice(0, 4).map(o => 'Order ' + o).join(', ')}${sp.orders.length > 4 ? ' and more' : ''} ${sp.orders.length === 1 ? 'is' : 'are'} on both sheets, so ${sp.label} joins ${target} with ${v.label}.` });
+    for (const c of mates) {          // (the sheets dropped on: each joins the same set right after this one, by its own Include / release)
+      plan.auto.push({ key: 'membership:' + c.sheetId, label: `${c.label} added to ${target}`, detail: c.live.can && c.live.can.byHand ? 'Released as it stands, with the QR label of its orders.' : 'Included in the set by its own Include switch.' });
+      plan.steps.push({ type: 'include', sheetId: c.sheetId, setId: T ? T.setId : null, newSet: false, also: true, key: 'membership:' + c.sheetId });
+      for (const sp of c.live.split || []) if (sp.label !== v.label && !dropped.has(sp.label) && !plan.confirm.some(x => x.key === 'splitOrders')) plan.confirm.push({ key: 'splitOrders', label: `${count(sp.orders.length, 'order')} also on ${sp.label}`, detail: `${sp.orders.slice(0, 4).map(o => 'Order ' + o).join(', ')}${sp.orders.length > 4 ? ' and more' : ''} ${sp.orders.length === 1 ? 'is' : 'are'} on both sheets, so ${sp.label} joins ${target} with ${c.label}.` });
+    }
     return finish(plan);
   }
+  /* The sheets dropped on (Paul, 7 Oct: combine two sheets that are not in Laser cutting). Each must be a sheet of the open run, not cut,
+     not completed, not in a set, not Rose Gold (it joins by its own Cut Sheet press) and ready to join, exactly as the sheet moved: a need
+     here means the whole move is refused and nothing is written. Answers [{sheetId, label, live}] for the ones that still have to join. */
+  function alsoCheck(state, v, T, plan, env, need) {
+    const out = [];
+    for (const bid of env.also || []) {
+      const bv = view(state, 'sheet', String(bid));
+      if (bv.error) { need('noSheet', 'That sheet could not be found', 'Refresh the Library and try again.'); continue; }
+      if (bv.id === v.id) continue;
+      const b = bv.sheet, B = bv.label, bl = (state.live || {})[bv.id] || null, brun = (state.runs || {})[b.runId] || null;
+      if (b.roseCutAt) { need('sheetCut', `${B} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); continue; }
+      if (+b.laserDoneAt > 0) { need('sheetCompleted', `${B} is completed`, 'It keeps its cut record and set until it is moved back to Laser cutting.'); continue; }
+      if (inSet(b)) {
+        if (T && b.setId === T.setId) continue;               // (already in the set: nothing to add)
+        const bs = state.sets[b.setId] ? setName(state.sets[b.setId]) : 'a set';
+        need('alsoInSet', `${B} is already in ${bs}`, `A sheet in a set cannot be moved to another one: drop ${v.label} on ${bs} instead.`); continue;
+      }
+      if (b.metal === 'rose' || (bl && bl.rose)) { need('roseCombine', `${B} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press and its own yes: drop it on the set, not the other way round.'); continue; }
+      if (brun && brun.open && !(bl && bl.runHere)) { need('runElsewhere', `${B}: its run is open on another screen`, 'Move it from that screen, so the two do not undo each other.'); continue; }
+      if (!bl) { need('fixedSet', `${B} is closed`, 'Its run is finished, so it stays as it is.'); continue; }
+      if (bl.can && bl.can.ok === false) { need('include', `${B} is not ready to join a set`, bl.can.reason || 'Nest and verify it first.'); continue; }
+      if (env.canJoin === false) { need('join', 'Joining a set is not available here', 'Open the sheet and use Include or Make QR label.'); continue; }
+      out.push({ sheetId: bv.id, label: B, live: bl });
+    }
+    return out;
+  }
+  /* where a drop on another sheet puts both: the open set when the run has one, else a new set (the one open set of the run is how it works) */
+  function combineDest(state, v) { return destOf((state.live || {})[v.id] || null); }
 
   /* ── the cardinal rule of a Set of Sheets ───────────────────────────────────────────────────────────────────────
      What the records say (state.shared / state.group, op flowState with `move`) and what the page holds (SharedOrders.between /
@@ -360,15 +403,32 @@
     return { sharedItems: items, group };
   }
   const joinableNow = id => { let l = null; try { l = hooks.live ? hooks.live(id) : null; } catch (_) { /* not live */ } return l; };
+  const destOf = lv => lv && lv.dispatchSetId ? { set: lv.dispatchSetId } : { newSet: true };
+  /* The sheets dropped on bring their own shared orders (what the page holds: the records twin answers for the sheet moved): both lists are
+     merged, so a sheet that shares an order with the one dropped on is asked for too, with the one yes. */
+  function alsoEnv(env, also, dest, together) {
+    const by = new Map((env.sharedItems || []).map(i => [i.orderId, i])), mem = new Map();
+    const take = g => { for (const m of g && Array.isArray(g.members) ? g.members : (g && Array.isArray(g.ids) ? g.ids.map((x, i) => ({ id: x, label: (g.labels || [])[i] || x, setId: null })) : [])) if (!mem.has(m.id)) mem.set(m.id, m); };
+    take(env.group);
+    for (const b of also) {
+      const e = sharedEnv({ kind: 'sheet', id: b }, dest, { shared: [], group: null }, together);
+      for (const i of e.sharedItems) if (!by.has(i.orderId)) by.set(i.orderId, i);
+      take(e.group);
+    }
+    return { ...env, sharedItems: [...by.values()].sort(byOrderId), group: mem.size ? { members: [...mem.values()] } : env.group };
+  }
   function withCardinal(state, v, to, plan, env) {
     if (v.kind !== 'sheet' || plan.noop) return plan;
     const items = env.sharedItems || [], group = env.group || null, id = v.id, dest = to.set ? String(to.set) : 'new', T = to.set ? state.sets[to.set] : null;
     const members = group && Array.isArray(group.members) ? group.members : (group && Array.isArray(group.ids) ? group.ids.map((x, i) => ({ id: x, label: (group.labels || [])[i] || x, setId: null })) : []);
-    const partners = members.filter(m => m.id !== id && (m.setId || null) !== dest);
+    const explicit = new Set((env.also || []).map(String));     // (the sheets dropped on: they travel by the drop itself, they are not "mates" to ask a yes about)
+    const partners = members.filter(m => m.id !== id && !explicit.has(m.id) && (m.setId || null) !== dest);
     if (!items.length && !(env.together && partners.length)) return plan;
     // the sheets that would stay on the other side, from the items when the group is not known
-    const from = items.length ? [...new Map(items.flatMap(i => (i.thereIds || []).map((x, k) => [x, { id: x, label: (i.there || [])[k] || x, setId: null }]))).values()] : [];
+    const from = items.length ? [...new Map(items.flatMap(i => (i.thereIds || []).map((x, k) => [x, { id: x, label: (i.there || [])[k] || x, setId: null }]))).values()].filter(m => !explicit.has(m.id)) : [];
     const mates = partners.length ? partners : from;
+    if (explicit.size && !mates.length) return plan;             // (the orders only tie the sheet to the one it was dropped on: both go in, no yes)
+    const together = [v.label].concat((env.also || []).map(i => state.sheets[i] ? sheetName(state.sheets[i]) : '').filter(Boolean)).join(' and ');
     const target = to.newSet ? 'a new set' : setName(T);
     const orderWords = items.length ? `${items.slice(0, 4).map(i => 'Order ' + i.orderId).join(', ')}${items.length > 4 ? ' and more' : ''}` : 'Orders they share';
     const leaving = inSet(v.sheet), names = [v.label].concat(mates.map(m => m.label));
@@ -378,7 +438,7 @@
     plan.shared = items; plan.group = names;
     if (joining && !stuck.length) {
       plan.confirm = plan.confirm.filter(c => c.key !== 'splitOrders');
-      plan.confirm.push({ key: 'together', label: mates.length === 1 ? `${mates[0].label} joins ${target} with ${v.label}` : mates.length <= 3 ? `${mates.slice(0, -1).map(m => m.label).join(', ')} and ${mates[mates.length - 1].label} join ${target} with ${v.label}` : `${count(mates.length, 'sheet')} join ${target} with ${v.label}`,
+      plan.confirm.push({ key: 'together', label: mates.length === 1 ? `${mates[0].label} joins ${target} with ${together}` : mates.length <= 3 ? `${mates.slice(0, -1).map(m => m.label).join(', ')} and ${mates[mates.length - 1].label} join ${target} with ${together}` : `${count(mates.length, 'sheet')} join ${target} with ${together}`,
         detail: `${orderWords} ${items.length === 1 ? 'has' : 'have'} pieces on ${mates.length === 1 ? 'both sheets' : 'these sheets'}, so they go in together.` });
       for (const m of mates) plan.auto.push({ key: 'membership:' + m.id, label: `${m.label} added to ${target}`, detail: `It shares ${items.length === 1 ? 'an order' : 'orders'} with ${v.label}, so it joins with it, with its QR label.` });
       const st = plan.steps.find(x => x.type === 'include'); if (st) st.with = mates.map(m => m.id);
@@ -406,9 +466,41 @@
         out.push({ set: st.setId, name: setName(st), ok: !why, reason: why });
       }
       const live = page.live ? page.live(it.id) : null;
-      out.push({ newSet: true, name: 'New set', ok: !done && !!(live && live.draft && !live.dispatchSetId), reason: done ? 'Move it back to Laser cutting first.' : !live ? 'Only a sheet of the open run can start a new set.' : !live.draft ? 'It is already in a set.' : live.dispatchSetId ? 'The open set takes it: drop it there.' : '' });
+      // a draft sheet joins the run's ONE open set (or starts it): a set that is open but not that one is dimmed here, in plain words, before any plan is asked for
+      if (live && live.draft && !done) {
+        const all = page.sets ? page.sets() : [], open = live.dispatchSetId ? all.find(x => x && x.setId === live.dispatchSetId) : null;
+        for (const z of out) {
+          const st = z.set && z.ok ? all.find(x => x && x.setId === z.set) : null;
+          if (st && !committedSet(st) && !(+st.laserDoneAt > 0) && !/superseded/.test(String(st.status || '')) && st.setId !== live.dispatchSetId) { z.ok = false; z.reason = `${setName(st)} is not the open set. ${live.dispatchSetId ? `Drop it on ${open ? setName(open) : 'the open set'}.` : 'Drop it on New set.'}`; }
+        }
+      }
+      const blocked = !!(live && live.can && live.can.ok === false);
+      out.push({ newSet: true, name: 'New set', ok: !done && !!(live && live.draft && !live.dispatchSetId) && !blocked, reason: done ? 'Move it back to Laser cutting first.' : !live ? 'Only a sheet of the open run can start a new set.' : !live.draft ? 'It is already in a set.' : live.dispatchSetId ? 'The open set takes it: drop it there.' : blocked ? `Not ready to join a set. ${live.can.reason || 'Nest and verify it first.'}` : '' });
     }
     return out;
+  }
+  /* A draft sheet dropped on another draft sheet (Paul, 7 Oct: "I can not drag/drop these to combine them. Neither of them are in Laser
+     cutting so there should be nothing preventing them from being combined"): both join the open set, or a new one when none is open.
+     Answers the one place the pointer is over: { sheet, name, sub, ok, reason }. o: { self, name } the two sheets' names for the words. */
+  function sheetZone(item, otherId, page, o = {}) {
+    const it = { kind: item && item.kind === 'set' ? 'set' : 'sheet', id: String(item && item.id || '') }, oid = String(otherId || '');
+    if (it.kind !== 'sheet' || !it.id || !oid || it.id === oid) return null;
+    const a = o.self || 'This sheet', b = o.name || 'That sheet', no = reason => ({ sheet: oid, name: `Combine with ${b}`, ok: false, reason });
+    const cur = (item && (item.area || item.from)) || (page.area ? page.area(it) : null);
+    if (cur === 'completed') return no('Move it back to Laser cutting first.');
+    const la = page.live ? page.live(it.id) : null, lb = page.live ? page.live(oid) : null;
+    if (!la) return no(`Only sheets of the open run can be combined: ${a} is not on this page.`);
+    if (!la.draft) return no(`${a} is already in a set: drop ${b} on that set to add it.`);
+    if (!lb) return no(`Only sheets of the open run can be combined: ${b} is not on this page.`);
+    if (!lb.draft) return no(`${b} is already in a set: drop ${a} on that set to add it.`);
+    if (la.rose) return no(`${a} is Rose Gold: it joins a set by its own Cut Sheet press, so drop it on the set.`);
+    if (lb.rose) return no(`${b} is Rose Gold: it joins a set by its own Cut Sheet press, so drop it on the set.`);
+    if (la.runHere === false) return no(`${a} is not on a page of the open run.`);
+    if (lb.runHere === false) return no(`${b} is not on a page of the open run.`);
+    if (la.can && la.can.ok === false) return no(`${a} is not ready to join a set. ${la.can.reason || 'Nest and verify it first.'}`);
+    if (lb.can && lb.can.ok === false) return no(`${b} is not ready to join a set. ${lb.can.reason || 'Nest and verify it first.'}`);
+    const open = la.dispatchSetId ? (page.sets ? page.sets() : []).find(x => x && x.setId === la.dispatchSetId) : null;
+    return { sheet: oid, name: `Combine with ${b}`, sub: la.dispatchSetId ? `both join ${open ? setName(open) : 'the open set'}` : 'both start a new set', ok: true, reason: '' };
   }
   const keyOfZone = z => z.area ? { area: z.area } : z.set ? { set: z.set } : { newSet: true };
 
@@ -436,8 +528,8 @@
     return Promise.reject(new Error('The Library is not connected to the cloud'));
   };
   const answer = r => { if (r && r.error) throw Object.assign(new Error(r.error), { status: r.status }); return r; };
-  async function readState(item, extraSets, move) {
-    const r = answer(await cloud({ op: 'flowState', sheetIds: item.kind === 'sheet' ? [item.id] : [], setIds: [...(item.kind === 'set' ? [item.id] : []), ...(extraSets || [])], ...(move ? { move } : {}) }));
+  async function readState(item, extraSets, move, extraSheets) {
+    const r = answer(await cloud({ op: 'flowState', sheetIds: item.kind === 'sheet' ? [item.id, ...(extraSheets || [])] : [], setIds: [...(item.kind === 'set' ? [item.id] : []), ...(extraSets || [])], ...(move ? { move } : {}) }));
     const state = { sheets: {}, sets: {}, runs: r.runs || {}, live: {}, shared: Array.isArray(r.shared) ? r.shared : null, group: r.group || null };
     for (const s of r.sheets || []) state.sheets[sid(s)] = s;
     for (const x of r.sets || []) state.sets[x.setId] = x;
@@ -449,10 +541,14 @@
   async function plan(req) {
     req = req || {};
     if (typeof document !== 'undefined' && !hooks.remakeLabel) { try { wirePage(); } catch (_) { /* as it was */ } }   // (the sheet window loads after this file)
-    const item = itemOf(req), to = normTo(req.to), joining = item.kind === 'sheet' && !!(to.set || to.newSet), together = !!req.together;
-    const state = await readState(item, to.set ? [to.set] : [], joining ? { kind: item.kind, id: item.id, to: to.set ? { set: to.set } : { newSet: true }, together } : null);
-    let env = { by: req.by || hooks.employee(), rows: hooks.rows(), canRelabel: typeof hooks.remakeLabel === 'function', canJoin: typeof hooks.include === 'function', canRose: typeof hooks.roseJoin === 'function', together };
-    if (joining) env = { ...env, ...sharedEnv(item, to, state, together) };
+    const item = itemOf(req), to = normTo(req.to), together = !!req.together;
+    // dropped on another sheet: both go where the open run takes a sheet (its open set, else a new one); the other sheet is read with it
+    const also = item.kind === 'sheet' && to.sheet && String(to.sheet) !== item.id ? [String(to.sheet)] : [];
+    const dest = also.length ? destOf(joinableNow(item.id)) : to, joining = item.kind === 'sheet' && !!(dest.set || dest.newSet);
+    const state = await readState(item, dest.set ? [dest.set] : [], joining ? { kind: item.kind, id: item.id, to: dest.set ? { set: dest.set } : { newSet: true }, together } : null, also);
+    let env = { by: req.by || hooks.employee(), rows: hooks.rows(), canRelabel: typeof hooks.remakeLabel === 'function', canJoin: typeof hooks.include === 'function', canRose: typeof hooks.roseJoin === 'function', together, ...(also.length ? { dest } : {}) };
+    if (joining) env = { ...env, ...sharedEnv(item, dest, state, together) };
+    if (also.length) env = alsoEnv(env, also, dest, together);
     let p = planMove(state, { ...item, to, ...(together ? { together: true } : {}) }, env);
     const M = hooks.rose();
     if (p.steps.some(x => x.type === 'roseLine' || x.type === 'roseJoin') && M && typeof M.check === 'function') {
@@ -532,7 +628,9 @@
         } else if (s.type === 'include') {
           if (typeof hooks.include !== 'function') throw new Error('Joining a set is not available here: open the sheet and use Include');
           const all = s.with && s.with.length ? s.with : null;
-          await hooks.include(s.sheetId, { setId: s.setId, newSet: s.newSet, split: all || (o.confirmed || []).includes('splitOrders') ? 'all' : null, ...(all ? { with: all } : {}) });
+          // a sheet dropped on: it may already have come along with the first one (the sheets that share an order join together); then there is nothing to do
+          const there = s.also ? joinableNow(s.sheetId) : null;
+          if (!(there && there.draft === false)) await hooks.include(s.sheetId, { setId: s.setId, newSet: s.newSet, split: all || (o.confirmed || []).includes('splitOrders') || (s.also && (o.confirmed || []).includes('together')) ? 'all' : null, ...(all ? { with: all } : {}) });
         }
         applied.push(doneLine(s.key, label)); kept.push(s);
         if (s.type === 'include' && s.with && s.with.length) for (const a of p.auto.filter(x => /^membership:/.test(x.key))) applied.push(doneLine(a.key, a.label));
@@ -544,7 +642,9 @@
         const left = [], undone = new Set();
         for (const u of undo.reverse()) { try { await u.fn(); undone.add(u.key); } catch (x) { left.push(x.message); } }
         if (o.acts) o.acts.push(...kept.filter(k => !undone.has(k.key)));
-        throw Object.assign(new Error(e.message || String(e)), { quiet: e.quiet, applied: applied.filter(a => !undone.has(a.key)), left });
+        // (a sheet dropped on that could not join after the first one did: the first is in the set, and it is said)
+        const first = s.also ? kept.find(k => k.type === 'include' && !k.also) : null, said = first ? `${(p.auto.find(a => a.key === first.key) || {}).label || 'The first sheet was added'}, but ${((p.auto.find(a => a.key === s.key) || {}).label || 'the other sheet').replace(/ added to .*$/, '')} could not join: ${e.message || e}` : null;
+        throw Object.assign(new Error(said || e.message || String(e)), { quiet: e.quiet, applied: applied.filter(a => !undone.has(a.key)), left });
       }
     }
     if (o.acts) o.acts.push(...kept);
@@ -638,6 +738,7 @@
 
   function targets(item) { return zones(item, pageAdapter()).filter(z => z.ok).map(keyOfZone); }
   function explainTargets(item) { return zones(item, pageAdapter()); }
+  function onSheet(item, otherId, o) { return sheetZone(item, otherId, pageAdapter(), o); }
   function pageAdapter() { return { area: hooks.areaOf, sets: hooks.sets, setOf: hooks.setOf, live: hooks.live }; }
 
   /* ── the page: how the code that owns each thing is reached. Each falls back to nothing, and a move that needs one
@@ -715,6 +816,6 @@
   }
   if (typeof document !== 'undefined') { try { wirePage(); document.addEventListener('DOMContentLoaded', () => { try { wirePage(); } catch (_) { /* hooks stay as they were */ } }, { once: true }); } catch (_) { /* a page without these parts */ } }
   const configure = o => { Object.assign(hooks, o || {}); Object.assign(mine, o || {}); return api; };
-  const api = { targets, explainTargets, plan, commit, approve, configure, hooks, core: { planMove, view, areaOf, groupReady, sheetGaps, zones, sheetName, setName, makeRoseJoin }, AREAS, AREA_NAMES: AREA };
+  const api = { targets, explainTargets, sheetZone: onSheet, plan, commit, approve, configure, hooks, core: { planMove, view, areaOf, groupReady, sheetGaps, zones, sheetZone, sheetName, setName, makeRoseJoin }, AREAS, AREA_NAMES: AREA };
   return api;
 });

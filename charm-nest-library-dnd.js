@@ -18,7 +18,8 @@
  *  While a card is held, a dock opens under the top of the Library (never under the top bar, never at the bottom) with a
  *  place for each target: In progress, Laser cutting, Completed, New set and each set, labelled. The same places light up
  *  where they stand on the page (the Laser cutting and In progress sections, each set card). A place that is not allowed
- *  is dimmed and says why while the card is over it. The card under the hand is a lifted copy of the real one (preview,
+ *  is dimmed and says why while the card is over it. A draft sheet card is a place too, while the hand is over it
+ *  ("Combine with GF Sheet 2": both sheets join the open set, or a new one; LibraryFlow.sheetZone, charm-nest-flow.js). The card under the hand is a lifted copy of the real one (preview,
  *  parts, seals, counters); the real one stays where it is as a faint outline.
  *
  *  On the drop the copy flies to the place (window.LibraryFx.fly, else a plain flight here), while at once the plan is
@@ -52,8 +53,8 @@
   /** A card is held, flying home or being moved (the Library's live read leaves its lists alone meanwhile). */
   const busy = () => !!(D.pending || D.drag || D.move || D.menu || D.settling > 0);
   const sync = () => { try { html.toggleAttribute('data-library-drag', busy()); } catch (_) { /* no attribute */ } };
-  const specKey = s => s.area ? 'area:' + s.area : s.set ? 'set:' + s.set : 'newSet';
-  const cleanSpec = s => s.area ? { area: s.area } : s.set ? { set: s.set } : { newSet: true };
+  const specKey = s => s.area ? 'area:' + s.area : s.set ? 'set:' + s.set : s.sheet ? 'sheet:' + s.sheet : 'newSet';
+  const cleanSpec = s => s.area ? { area: s.area } : s.set ? { set: s.set } : s.sheet ? { sheet: s.sheet } : { newSet: true };
   const visible = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const dayShort = d => { try { return d ? new Date(d + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''; } catch (_) { return ''; } };
   const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + 's'}`;
@@ -292,9 +293,11 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (spec.set) { for (const c of doc.querySelectorAll('#libBody .setCard, #libDone .setCard')) if (c._laserSet && c._laserSet.setId === spec.set && visible(c)) return c; }
     return null;
   }
+  const labelOfCard = c => { const nm = c.querySelector('.h .nm'), m = c.dataset.m; return `${CODE[m] ? CODE[m] + ' ' : ''}${nm ? nm.textContent.trim() : 'Sheet'}`; };
   function targetName(spec, plan) {
     if (spec.area) return AREA[spec.area].name;
     if (spec.newSet) return 'a new set';
+    if (spec.sheet) { const c = [...doc.querySelectorAll('#libBody .libCard[data-id]')].find(x => x.dataset.id === spec.sheet); return `a set with ${c ? labelOfCard(c) : 'that sheet'}`; }
     return setName(knownSets().get(spec.set) || (plan && plan.to && plan.to.setId === spec.set ? { id: spec.set } : null));
   }
 
@@ -420,6 +423,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const row = el.querySelector('.dndRow');
     let prev = '';
     for (const z of zones || []) {
+      if (z.spec.sheet) continue;                  // (a sheet card is a place on the page, never a chip)
       const grp = z.spec.area ? 'a' : z.spec.newSet ? 'n' : 's';
       if (prev && prev !== grp) row.appendChild(Object.assign(doc.createElement('i'), { className: 'dndSep' }));
       prev = grp;
@@ -452,16 +456,47 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       if (z.chip) { z.chip.removeAttribute('data-hot'); }
     }
   }
-  function zoneAt(x, y) {
-    for (const e of doc.elementsFromPoint(x, y)) { const h = e.closest && e.closest('.dndChip, [data-dnd-state]'); if (h && h._z) { h._z.via = h.classList.contains('dndChip') ? 'chip' : 'place'; return h._z; } }
+  function zoneAt(x, y, d) {
+    let onDock = false;
+    for (const e of doc.elementsFromPoint(x, y)) {
+      if (!e.closest) continue;
+      const chip = e.closest('.dndChip');
+      if (chip && chip._z) { chip._z.via = 'chip'; return chip._z; }
+      if (e.closest('.dndDock')) onDock = true;
+      const art = d && !onDock ? e.closest('.librarySheet') : null, sz = art ? sheetZoneOf(d, art) : null;
+      if (sz) { sz.via = 'place'; return sz; }
+      const h = e.closest('[data-dnd-state]'); if (h && h._z) { h._z.via = 'place'; return h._z; }
+    }
     return null;
   }
   function setHot(d, z) {
-    const off = o => { if (!o) return; if (o.chip) { o.chip.removeAttribute('data-hot'); o.chip.querySelector('.dndChipSub').textContent = o.sub || ''; } if (o.place) { o.place.removeAttribute('data-dnd-hot'); o.place.setAttribute('data-dnd-label', o.legal ? `Move to ${o.name}` : o.reason); } };
+    const off = o => { if (!o) return; if (o.chip) { o.chip.removeAttribute('data-hot'); o.chip.querySelector('.dndChipSub').textContent = o.sub || ''; } if (o.place) { o.place.removeAttribute('data-dnd-hot'); o.place.setAttribute('data-dnd-label', o.legal ? `Move to ${o.name}` : o.reason); if (o.spec.sheet) unmarkSheet(o); } };
     off(d.hot); d.hot = z;
     if (!z) return;
     if (z.chip) { z.chip.setAttribute('data-hot', ''); z.chip.querySelector('.dndChipSub').textContent = z.legal ? 'drop to move here' : z.reason; }
-    if (z.place) { z.place.setAttribute('data-dnd-hot', ''); z.place.setAttribute('data-dnd-label', z.legal ? `Drop to move to ${z.name}` : z.reason); }
+    if (z.place) { z.place.setAttribute('data-dnd-hot', ''); z.place.setAttribute('data-dnd-label', z.legal ? (z.spec.sheet ? `Drop to ${z.name.charAt(0).toLowerCase()}${z.name.slice(1)}` : `Drop to move to ${z.name}`) : z.reason); }
+  }
+  /* A draft sheet card under the hand is a place of its own ("Combine with GF Sheet 2": LibraryFlow.sheetZone). It is made when the hand
+     first reaches the card, framed only while the hand is over it, never for every card at once. A card inside a real set card is that
+     set's place instead (the set answers for its sheets). */
+  const markSheet = z => { const a = z.place; if (!a || !a.isConnected) return; a._z = z; a.setAttribute('data-dnd-state', z.legal ? 'armed' : 'dim'); a.setAttribute('data-dnd-label', z.legal ? z.name : z.reason); };
+  const unmarkSheet = z => { const a = z.place; if (!a) return; a.removeAttribute('data-dnd-state'); a.removeAttribute('data-dnd-hot'); a.removeAttribute('data-dnd-label'); delete a._z; };
+  function sheetZoneOf(d, art) {
+    const f = flow(); if (!f || typeof f.sheetZone !== 'function' || d.item.kind !== 'sheet') return null;
+    const card = sheetCard(art), id = card && card.dataset.id;
+    if (!id || id === d.item.id || !art.closest('#libBody')) return null;
+    const sc = art.closest('.setCard'), st = sc && sc._laserSet; if (st && st.setId && !st.standalone && !st.working) return null;
+    if (!d.sheetZones) d.sheetZones = new Map();
+    let z = d.sheetZones.get(id);
+    if (z === undefined) {
+      let r = null;
+      try { r = f.sheetZone({ kind: 'sheet', id: d.item.id }, id, { self: labelOf(d.item), name: labelOfCard(card) }); } catch (e) { console.warn('LibraryFlow.sheetZone', e); }
+      z = r ? { key: 'sheet:' + id, spec: { sheet: id }, name: r.name, sub: r.sub || '', legal: !!r.ok, reason: r.reason || '', never: false, place: art } : null;
+      if (z) d.zones.push(z);
+      d.sheetZones.set(id, z);
+    }
+    if (z) { z.place = art; if (!art.hasAttribute('data-dnd-state')) markSheet(z); }
+    return z;
   }
 
   /* ═══ the "Moving" bar: where the plan is shown ═══ */
@@ -573,13 +608,14 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const seen = e => { if (!visible(e)) return false; const r = e.getBoundingClientRect(), s = stage().getBoundingClientRect(); return r.bottom > s.top && r.top < s.bottom; };
     // (let go on a chip of the dock: the card, the plan and the bar all stay with the dock; let go on the place itself: they go there)
     const onChip = !!(zone && zone.via === 'chip' && zone.chip && zone.chip.isConnected);
-    let place = onChip ? null : zone && zone.place && zone.place.isConnected ? zone.place : (!zone || !zone.chip) && (o.via !== 'menu' || seen(placeEl(m.to))) ? placeEl(m.to) : null;
+    const onSheet = !!(zone && zone.spec && zone.spec.sheet), sheetEl = onSheet && zone.place && zone.place.isConnected ? zone.place : null;   // (dropped on another sheet: the copy flies to it, the bar stays with the dock)
+    let place = onChip || onSheet ? null : zone && zone.place && zone.place.isConnected ? zone.place : (!zone || !zone.chip) && (o.via !== 'menu' || seen(placeEl(m.to))) ? placeEl(m.to) : null;
     const chip = onChip ? zone.chip : null;
     const inDock = () => { if (!dk || !dk.el.isConnected) { dk = openDock([], item, 'bar'); dk.toBar(`Moving ${label} to ${name}`); } return dk; };
     if (!place && !dk) inDock();
     const first = chip || place || (dk && dk.el) || null;
     // (the copy leaves for the place before anything on the page changes shape: a chip it is dropped on still stands where it was)
-    const flight = flyTo(m, first);
+    const flight = flyTo(m, sheetEl || first);
     if (zone) clearMarks(o.zones);
     if (place && dk) { dk.close(); dk = null; }
     const slot = { mount(wrap) {
@@ -637,7 +673,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
         let h = null;
         try {
           h = SOM.open({ kind, id: item.id, orders: need && Array.isArray(need.items) ? need.items : undefined, sheetLabel: kind === 'sheet' ? label : '', setLabel: kind === 'set' ? label : '',
-            targetLabel: name, targetSetId: m.to.set || (m.to.newSet ? 'new' : null), from: from || elOf(item) || undefined, others: (others || []).map(n => n && (n.label || n.key)).filter(Boolean),
+            targetLabel: name, targetSetId: m.to.set || (m.to.newSet ? 'new' : m.to.sheet ? ((raw && raw.to && raw.to.setId) || 'new') : null), from: from || elOf(item) || undefined, others: (others || []).map(n => n && (n.label || n.key)).filter(Boolean),
             onRetry: () => { again = true; }, onClose: () => { m.hold = false; if (again && m.skip) m.skip(); res(true); } });
         } catch (e) { console.warn('SharedOrdersModal', e); }
         if (!h) { m.hold = false; res(false); }
@@ -800,11 +836,11 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
         if (over !== !!d.lift.thin) { d.lift.thin = over; d.lift.el.style.opacity = over ? '.46' : ''; }
       }
       scrollNear(d);
-      const z = zoneAt(d.x, d.y); if (z !== d.hot) setHot(d, z);
+      const z = zoneAt(d.x, d.y, d); if (z !== d.hot) setHot(d, z);
     });
     const ts = await targetsOf(item);
     if (D.drag !== d) return;
-    d.zones = buildZones(item, ts); d.dock = openDock(d.zones, item); markInPlace(d.zones, item);
+    d.zones = buildZones(item, ts).concat(d.zones.filter(z => z.spec && z.spec.sheet)); d.dock = openDock(d.zones, item); markInPlace(d.zones, item);   // (a sheet card the hand reached before the places were known keeps its place)
   }
   /** Near the stage's edges the page scrolls under the hand; near the dock's ends the dock does. */
   function scrollNear(d) {
@@ -828,7 +864,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (z && z.legal) { setHot(d, null); return move(d.item, z.spec, { lift: d.lift, zone: z, dock: d.dock, zones: d.zones }); }
     if (z) {
       // not allowed: the reason is told on the place itself, and the card settles back
-      setHot(d, null); const place = z.via !== 'chip' && z.place && z.place.isConnected ? z.place : null; clearMarks(d.zones);
+      setHot(d, null); const place = z.via !== 'chip' && !z.spec.sheet && z.place && z.place.isConnected ? z.place : null; clearMarks(d.zones);
       const dk = place ? null : d.dock; if (place && d.dock) d.dock.close();
       if (dk) dk.toBar(`${labelOf(d.item)} cannot go to ${z.name}`);
       const slot = { mount(wrap) { if (place && place.matches('[data-laser-area]')) { const h = place.querySelector(':scope > h2'); (h || place).after(wrap); } else if (place && place.matches('.setCard')) { const h = place.querySelector(':scope > .sh'); if (h) h.after(wrap); else place.prepend(wrap); } else if (dk) dk.slot.appendChild(wrap); } };
