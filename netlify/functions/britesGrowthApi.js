@@ -44,15 +44,19 @@ export default async (req,context) => {
       if(op==='milestone-index')return json({error:'Use POST to rebuild the private milestone index.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
       if(op==='catalogue'){
-        const browse=url.searchParams.get('browse')==='1',cursor=url.searchParams.get('cursor')||null;
+        const seed=url.searchParams.get('seed')==='1',browse=url.searchParams.get('browse')==='1',cursor=url.searchParams.get('cursor')||null;
+        if(seed&&(url.searchParams.has('browse')||url.searchParams.has('cursor')||url.searchParams.has('q')))return json({error:'Use the starter collection without search or browse parameters.'},400);
         if(browse&&cursor&&(!/^storefront:[1-9]\d{0,3}$/.test(cursor)||Number(cursor.slice(11))>200))return json({error:'Invalid storefront catalogue cursor.'},400);
         if(!browse&&cursor)return json({error:'Use catalogue browsing with a cursor.'},400);
-        const r=browse?await shopify.browse(cursor):await shopify.search(url.searchParams.get('q')||'necklace');
+        const r=seed?await shopify.seed():browse?await shopify.browse(cursor):await shopify.search(url.searchParams.get('q')||'necklace');
         // Broad browsing is an observed public read, not a mirror sync or an
         // authoring action. Holds are still read before any piece is shown.
-        if(!browse)await service.saveProducts(r.products);
-        const issues=await service.productIssues(r.products.map(p=>p.id));
-        return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,checkedAt:r.checkedAt||Date.now(),live:true});
+        if(!browse&&!seed)await service.saveProducts(r.products);
+        // The shared hold reader has a 100-ID limit. Check every seed product
+        // in bounded chunks, including those beyond that first hundred.
+        const issues=[];for(let i=0;i<r.products.length;i+=100)issues.push(...await service.productIssues(r.products.slice(i,i+100).map(p=>p.id)));
+        const products=core.applyProductIssues(r.products,issues).map(p=>({...core.productProjection(p),...(seed?{storeCategories:p.storeCategories}:{})}));
+        return json({products,pageInfo:r.pageInfo,checkedAt:r.checkedAt||Date.now(),live:true,...(seed?{seed:r.seed}:{})});
       }
       if(op==='storefront-services')return json(await core.readStorefrontServices());
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}

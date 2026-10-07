@@ -5,6 +5,8 @@
 const crypto = require('node:crypto');
 const milestoneDiscovery = require('./_britesMilestoneDiscovery');
 const storefront = require('./_britesStorefront');
+const storefrontSeed = require('./_britesStorefrontSeed');
+const publicSeedCache = {};
 const CATALOG_QUERY = `query GrowthProducts($query:String!, $after:String){products(first:50,query:$query,after:$after){nodes{id handle title status onlineStoreUrl descriptionHtml productType tags updatedAt featuredImage{url altText} images(first:16){nodes{url altText}} options{name values} variants(first:100){nodes{id title sku price availableForSale selectedOptions{name value}} pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}shop{name currencyCode}}`;
 const STOP_AT = Date.parse('2026-10-11T02:00:00Z');
 const clean = (v,n=500) => String(v==null?'':v).replace(/\u0000/g,'').trim().slice(0,n);
@@ -121,8 +123,8 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
   let access=null,expires=0,publicCurrency=null,publicCurrencyAt=0,publicCurrencyPending=null;
   const publicBase='https://britesjewelry.com';
   const adminConfigured=()=>/^[a-z0-9-]+\.myshopify\.com$/.test(env.SHOPIFY_STORE||'')&&!!env.SHOPIFY_CLIENT_ID&&typeof env.SHOPIFY_CLIENT_SECRET==='string'&&env.SHOPIFY_CLIENT_SECRET.length>=16&&!/redact|\*{2,}|^[-x•●]+$/i.test(env.SHOPIFY_CLIENT_SECRET);
-  async function publicJson(path){const r=await fetch(publicBase+path,{headers:{Accept:'application/json','Cache-Control':'no-cache'},signal:AbortSignal.timeout(18000),redirect:'error'});if(r.status===404)return null;if(!r.ok)throw Error('The published storefront could not be checked.');const data=await r.json();if(!data||typeof data!=='object')throw Error('The published storefront response is invalid.');return data;}
-  async function storefrontCurrency(){if(publicCurrency&&now()-publicCurrencyAt<60000)return publicCurrency;if(publicCurrencyPending)return publicCurrencyPending;publicCurrencyPending=(async()=>{const cart=await publicJson('/cart.js');if(!/^[A-Z]{3}$/.test(cart?.currency||''))throw Error('Current storefront currency could not be verified.');publicCurrency=cart.currency;publicCurrencyAt=now();return publicCurrency;})();try{return await publicCurrencyPending;}finally{publicCurrencyPending=null;}}
+  async function publicJson(path,timeoutMs=18000){const r=await fetch(publicBase+path,{headers:{Accept:'application/json','Cache-Control':'no-cache'},signal:AbortSignal.timeout(timeoutMs),redirect:'error'});if(r.status===404)return null;if(!r.ok)throw Error('The published storefront could not be checked.');const data=await r.json();if(!data||typeof data!=='object')throw Error('The published storefront response is invalid.');return data;}
+  async function storefrontCurrency(timeoutMs=18000){if(publicCurrency&&now()-publicCurrencyAt<60000)return publicCurrency;if(publicCurrencyPending)return publicCurrencyPending;publicCurrencyPending=(async()=>{const cart=await publicJson('/cart.js',timeoutMs);if(!/^[A-Z]{3}$/.test(cart?.currency||''))throw Error('Current storefront currency could not be verified.');publicCurrency=cart.currency;publicCurrencyAt=now();return publicCurrency;})();try{return await publicCurrencyPending;}finally{publicCurrencyPending=null;}}
   function fromPublic(p,currency,priceInCents){
     if(!p||!/^\d+$/.test(String(p.id))||!/^[-_a-z0-9]{1,180}$/.test(p.handle||''))throw Error('The published product identity could not be verified.');
     const optionNames=(p.options||[]).map((o,i)=>typeof o==='string'?o:o.name||'Option '+(i+1));
@@ -131,24 +133,24 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
     const result=normalizeProduct({id:'gid://shopify/Product/'+p.id,handle:p.handle,title:p.title,status:'ACTIVE',onlineStoreUrl:publicBase+'/products/'+p.handle,descriptionHtml:p.description||p.body_html,productType:p.type||p.product_type,tags:Array.isArray(p.tags)?p.tags:String(p.tags||'').split(',').map(x=>x.trim()),updatedAt:p.updated_at,featuredImage:images[0],images:{nodes:images},options:optionNames.map((name,i)=>({name,values:[...new Set(variants.map(v=>v.selectedOptions[i]?.value).filter(Boolean))]})),variants:{nodes:variants,pageInfo:{hasNextPage:variants.length>=250}}},currency,now());
     result.source=priceInCents?'published_product_ajax':'published_catalogue_json';return result;
   }
-  async function publicByHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const [p,currency]=await Promise.all([publicJson('/products/'+handle+'.js'),storefrontCurrency()]);if(!p)return null;if(p.handle!==handle)throw Error('Published product does not match the requested handle.');return fromPublic(p,currency,true);}
-  async function publicSearch(terms){
+  async function publicByHandle(handle,timeoutMs=18000){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const [p,currency]=await Promise.all([publicJson('/products/'+handle+'.js',timeoutMs),storefrontCurrency(timeoutMs)]);if(!p)return null;if(p.handle!==handle)throw Error('Published product does not match the requested handle.');return fromPublic(p,currency,true);}
+  async function publicSearch(terms,timeoutMs=18000){
     const tokens=[...new Set((clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[]).filter(t=>!['or','and'].includes(t)).slice(0,8))];if(!tokens.length)return {products:[],pageInfo:{hasNextPage:false,endCursor:null},access:'public_storefront'};
-    async function suggestions(q){const params=new URLSearchParams({q,'resources[type]':'product','resources[limit]':'10','resources[options][unavailable_products]':'hide'}),d=await publicJson('/search/suggest.json?'+params);return d?.resources?.results?.products||[];}
+    async function suggestions(q){const params=new URLSearchParams({q,'resources[type]':'product','resources[limit]':'10','resources[options][unavailable_products]':'hide'}),d=await publicJson('/search/suggest.json?'+params,timeoutMs);return d?.resources?.results?.products||[];}
     let found=await suggestions(tokens.join(' '));if(!found.length&&tokens.length>1)found=(await Promise.all(tokens.slice(0,3).map(suggestions))).flat();
     const handles=[...new Set(found.flatMap(p=>{if(/^[a-z0-9_-]{1,180}$/.test(p.handle||''))return [p.handle];try{const u=new URL(p.url,publicBase),m=u.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]+)\/?$/i);return publicUrl(u.href,true)&&m?[m[1]]:[];}catch{return [];}}))].slice(0,15);
-    const checks=await Promise.allSettled(handles.map(publicByHandle)),verified=checks.filter(x=>x.status==='fulfilled'&&x.value).map(x=>x.value);
+    const checks=await Promise.allSettled(handles.map(handle=>publicByHandle(handle,timeoutMs))),verified=checks.filter(x=>x.status==='fulfilled'&&x.value).map(x=>x.value);
     if(handles.length&&!verified.length&&checks.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
     return {products:verified,pageInfo:{hasNextPage:false,endCursor:null},access:'public_storefront',unverifiedCount:checks.filter(x=>x.status==='rejected').length};
   }
-  async function publicProducts(query,after){
+  async function publicProducts(query,after,timeoutMs=18000){
     if(query){const h=/^handle:([a-z0-9_-]{1,180})$/.exec(query);if(h)return {products:[await publicByHandle(h[1])].filter(Boolean),pageInfo:{hasNextPage:false,endCursor:null},access:'public_storefront'};return publicSearch(query.replace(/\b(?:title|tag|sku|product_type):/g,''));}
     const page=/^public:\d+$/.test(after||'')?Number(after.slice(7)):1;if(page<1||page>10000)throw Error('Invalid public catalogue page.');
     // The public product list is an observed, read-only Shopify shop route,
     // rather than the authenticated Admin API. Mirror only public records and
     // refresh individual product.js before any shopper action.
-    const d=await publicJson('/products.json?limit=250&page='+page);if(!Array.isArray(d?.products))throw Error('Published catalogue pagination is unavailable.');
-    const currency=await storefrontCurrency();
+    const d=await publicJson('/products.json?limit=250&page='+page,timeoutMs);if(!Array.isArray(d?.products)||d.products.length>250)throw Error('Published catalogue pagination is unavailable.');
+    const currency=await storefrontCurrency(timeoutMs);
     return {products:d.products.map(p=>fromPublic(p,currency,false)),pageInfo:{hasNextPage:d.products.length===250,endCursor:d.products.length===250?'public:'+(page+1):null},access:'public_catalogue'};
   }
   async function browse(cursor=null){
@@ -165,7 +167,8 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
   async function products(query,after=null){if(!adminConfigured()||String(after||'').startsWith('public:'))return publicProducts(query,after);try{const r=await fetch('https://'+env.SHOPIFY_STORE+'/admin/api/2026-07/graphql.json',{method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':await token()},body:JSON.stringify({query:CATALOG_QUERY,variables:{query:'status:active AND published_status:published'+(query?' AND ('+query+')':''),after}}),signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok||d.errors?.length)throw Error('Live catalogue query failed.');return {products:d.data.products.nodes.map(p=>normalizeProduct(p,d.data.shop.currencyCode,now())),pageInfo:d.data.products.pageInfo,access:'admin'};}catch{return publicProducts(query,null);}}
   async function search(terms){let result;if(!adminConfigured())result=await publicSearch(terms);else{const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');result=await products(query);}return {...result,products:result.products.filter(isStorefrontDiscoveryProduct)};}
   async function byHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const r=await products('handle:'+handle);return r.products.find(p=>p.handle===handle)||null;}
-  return {products,search,byHandle,browse};
+  const seedReader=storefrontSeed.createSeedReader({readPage:page=>publicProducts('', 'public:'+page,8000),readSearch:query=>publicSearch(query,8000),isDiscovery:isStorefrontDiscoveryProduct,project:productProjection,now,cache:fetch===globalThis.fetch?publicSeedCache:{}});
+  return {products,search,byHandle,browse,seed:seedReader.read};
 }
 function createGrowthService({db,env={},shopify,now=Date.now}){
   const ns=namespace(env), col=suffix=>db.collection(ns+'_'+suffix), state=()=>col('State').doc('control'), pid=id=>hash(id).slice(0,40);

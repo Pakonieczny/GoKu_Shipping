@@ -69,5 +69,6 @@
     if(customizer(selected,candidates[0]))return refused('PERSONALIZATION_REQUIRES_PRODUCT_PAGE');
     return {ok:true,action:'review',productId:selected.id,handle:selected.handle,variantId:candidates[0].id};
   }catch{return refused('INVALID_REQUEST');}}
-  return {resolveRequest:resolveRequest,projectProduct:projectProduct};
+  function resolveStorefrontRequest(args,bridge){if(!args||args.currentTurn!==true||typeof args.message!=='string'||!bridge||typeof bridge.resolve!=='function')return refused('NO_ACTION_AUTHORITY');var result=bridge.resolve(args.message,args.context);return result&&result.ok?result:refused('NO_ACTION_AUTHORITY');}
+  return {resolveRequest:resolveRequest,projectProduct:projectProduct,resolveStorefrontRequest:resolveStorefrontRequest};
 });

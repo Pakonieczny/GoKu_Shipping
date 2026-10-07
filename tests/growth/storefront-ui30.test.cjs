@@ -16,6 +16,9 @@ const services={schema:1,checkedAt:Date.now(),guidance:{production:{summary:'The
 function fixture(t,options={}){
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e));
   const dom=new JSDOM(html,{url:'https://sandbox.example/concierge-sandbox.html'+(options.query||''),runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc}),w=dom.window,d=w.document,network=[],contexts=[];
+  // This suite verifies the original browse/cursor contract. Balanced opt-in
+  // bootstrap and fallback are exercised by storefront-control34 separately.
+  delete d.body.dataset.catalogueSeed;
   const pieces=options.products||Array.from({length:60},(_,i)=>product(i+1));
   d.addEventListener('brites-storefront:context',e=>contexts.push(copy(e.detail)));
   w.fetch=async(raw,init={})=>{const url=new URL(raw,w.location.href);network.push({url,init});

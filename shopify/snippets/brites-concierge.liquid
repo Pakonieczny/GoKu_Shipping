@@ -1,6 +1,27 @@
 {% doc %}
   Loads the optional Brites concierge for an unpublished storefront test.
+  @param {boolean} [enable_storefront_adapter] - Enables verified Brites theme controls in an unpublished theme.
   @example
   {% render 'brites-concierge' %}
+  @example
+  {% render 'brites-concierge', enable_storefront_adapter: true %}
 {% enddoc %}
+{% if enable_storefront_adapter %}
+  {% assign brites_root = routes.root_url %}
+  {% assign brites_root_last = brites_root | slice: -1, 1 %}
+  {% unless brites_root_last == '/' %}
+    {% assign brites_root = brites_root | append: '/' %}
+  {% endunless %}
+  <script type="application/json" data-brites-shopify-config>
+    {
+      "theme": "brites-v1",
+      "root": {{ brites_root | json | replace: '<', '\u003c' }},
+      "currency": {{ cart.currency.iso_code | json | replace: '<', '\u003c' }},
+      "variantCount": {{ product.variants_count | default: 0 | json }},
+      "product": {{ product | json | replace: '<', '\u003c' }}
+    }
+  </script>
+  <script src="{{ 'brites-storefront-bridge.js' | asset_url }}" defer></script>
+  <script src="{{ 'brites-shopify-storefront-adapter.js' | asset_url }}" defer></script>
+{% endif %}
 <script src="{{ 'brites-concierge.js' | asset_url }}" data-api="https://brites-growth-sandbox.netlify.app" defer></script>

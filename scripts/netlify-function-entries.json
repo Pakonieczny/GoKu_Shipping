@@ -183,6 +183,7 @@
     "_beadyCharmCapFlat.js",
     "_britesGrowth.js",
     "_britesStorefront.js",
+    "_britesStorefrontSeed.js",
     "_britesGrowthAdsReadOnly.js",
     "_britesGrowthDemand.js",
     "_britesGrowthDemandStore.js",
