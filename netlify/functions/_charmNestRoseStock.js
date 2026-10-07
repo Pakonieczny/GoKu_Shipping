@@ -212,14 +212,14 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),createdAt:FV.serverTimestamp()};
       // the stock is the saved leftover: its shape (profileJson), its real size (wPt, hPt), its metal, and who cut it from which sheet and when
       const next={...stock,metal:sheet.metal,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,lastCutBy:cut.by,lastCutSheetId:b.sheetId,lastCutLabel:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),updatedAt:FV.serverTimestamp()};
+      // GC3: the leftover sheet this cut makes (its exact outline, real size, who, when) is saved in THIS transaction: a cut never exists without it.
+      // It reads (the stock's previous leftover) before it writes, so it comes before the first write below. Rose Gold, 10K and 14K all end here.
+      if(recordRemnant)await recordRemnant(tx,{stock:{...next,id:ref.id},cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via});
       tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
-      return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet,cutPlan:plan,fresh:true};
+      return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
     });
     // every order on the sheet gets the cut on its timeline (charmNestLibrary's stamp never throws); the revision is its id
-    const sheet=out.cutSheet,cutPlan=out.cutPlan,justCut=out.fresh===true;delete out.cutSheet;delete out.cutPlan;delete out.fresh;
-    // GC3 HOOK: the one place every cut ends (Nest tab Cut Sheet and the Library's calculate with recordCut, Rose Gold, 10K and 14K).
-    // recordRemnant({stock, cut, sheet, plan, metal, device}) saves the leftover for the repository; a failure never fails the cut.
-    if(justCut&&typeof recordRemnant==='function'){try{await recordRemnant({stock:out.stock,cut:out.cut,sheet,plan:cutPlan,metal:sheet&&sheet.metal||metalOf(out.stock),device:String(b.device||'').replace(/[^\w.-]/g,'').slice(0,40)});}catch(e){console.warn('[roseRecordCut] remnant not saved:',e&&e.message);}}
+    const sheet=out.cutSheet;delete out.cutSheet;
     // who cut it, as the sorter's sign-in names them: none is "" and signedIn false, never the ledger's 'operator'
     // (station tracking B); the page it was pressed on is the device. Orders from the pieces' pool ids when unlisted.
     if(sheet&&stamp)await stamp(()=>{const c=out.cut,label=sheetLabel?sheetLabel(sheet):String(sheet.fileBase||c.sheetId).slice(0,80);
