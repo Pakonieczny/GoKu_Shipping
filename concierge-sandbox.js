@@ -225,16 +225,19 @@
     const cursor=state.pageInfo.endCursor,record=begin();status('Opening the next collection page…');
     try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const pageInfo=checkedPageInfo(data,cursor),additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.collectionSource='browse';state.checkedSearch='';state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo=pageInfo;state.browsePageInfo={...pageInfo};state.loading=false;state.verifiedAt=Date.now();state.browseVerifiedAt=state.verifiedAt;drawGrid();publish();status(additional.length?'More live pieces are ready.':pageInfo.hasNextPage?'This page has no additional matching pieces. Continue to the next public collection page.':'You have reached the end of the checked public collection.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
   }
-  async function openProduct(handle,{push=true,signal,section,focusFrom=null}={}){
+  async function openProduct(handle,{push=true,signal,section,focusFrom=null,revealFrom=null}={}){
     if(!validHandle(handle))return false;
-    let focusIntent=!!focusFrom&&focusFrom.isConnected&&document.activeElement===focusFrom;
-    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;};if(focusIntent)document.addEventListener('focusin',movedFocus);
+    const initialFocus=focusedElement();let focusIntent=!!focusFrom&&focusFrom.isConnected&&document.activeElement===focusFrom,revealIntent=!!revealFrom&&revealFrom.isConnected&&main.contains(revealFrom);
+    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;const active=focusedElement();if(active!==initialFocus&&!(active===document.body&&!revealFrom?.isConnected))revealIntent=false;};if(focusIntent||revealIntent)document.addEventListener('focusin',movedFocus);
     const record=begin({signal});status('Opening the checked product details…');
     try{
       const data=await get('/api/growth/product?handle='+encodeURIComponent(handle),record.controller.signal),p=data.product;
       if(!current(record)||data.live===false||!validProduct(p,handle)){if(current(record)){state.loading=false;publish();}return false;}
-      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom;remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);
+      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom,revealProduct=revealIntent&&!section&&!document.hidden&&revealFrom.isConnected&&focusedElement()===initialFocus;remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);
       if(focusHeading){const heading=main.querySelector('.product-copy h1');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});try{heading.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}}
+      // A pointer-opened piece starts at its checked image and title. Reveal
+      // the layout without giving it keyboard focus or overriding a section.
+      if(revealProduct&&revealIntent&&!document.hidden&&current(record)&&state.pageKind==='product'&&state.currentHandle===handle&&state.current?.id===p.id&&[initialFocus,document.body].includes(focusedElement())){const layout=main.querySelector('.product-layout');try{layout?.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}
       status('Live options checked. Your guide stays with you.');return true;
     }catch{if(current(record)){state.loading=false;publish();status('This piece could not be checked. Your current page is preserved.');}return false;}
     finally{document.removeEventListener('focusin',movedFocus);}
@@ -413,7 +416,7 @@
   document.addEventListener('click',event=>{
     const control=event.target.closest?.('[data-store-action]');if(control&&!event.defaultPrevented){const type=control.dataset.storeAction;event.preventDefault();if(type==='bag')void execute({type:'bag'});else if(type==='gifts')void execute({type:'gift'});else if(type==='customize')void execute({type:'customize'});else if(type==='browse')focusSection('catalogue',false);else if(type==='collection')void execute({type:'search',query:''});return;}
     const anchor=event.target.closest?.('a[href]');if(!anchor||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||anchor.target==='_blank')return;
-    const target=new URL(anchor.href,location.href);if(target.origin!==location.origin||target.pathname!=='/concierge-sandbox.html')return;const handle=target.searchParams.get('product');if(!handle)return;event.preventDefault();void openProduct(handle,{focusFrom:event.detail===0&&document.activeElement===anchor?anchor:null});
+    const target=new URL(anchor.href,location.href);if(target.origin!==location.origin||target.pathname!=='/concierge-sandbox.html')return;const handle=target.searchParams.get('product');if(!handle)return;event.preventDefault();void openProduct(handle,{focusFrom:event.detail===0&&document.activeElement===anchor?anchor:null,revealFrom:event.detail>0&&main.contains(anchor)?anchor:null});
   });
   function attended(target){const card=target?.closest?.('[data-product-handle]'),handle=card?.dataset.productHandle;return main.contains(card)&&validHandle(handle)&&known.has(handle)?handle:'';}
   function focus(handle){if(state.focusedHandle===handle)return;state.focusedHandle=handle;publish();}

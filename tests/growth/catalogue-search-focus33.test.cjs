@@ -118,3 +118,31 @@ test('a newer guide control focused inside the same shadow host prevents a delay
 test('a native read completing in a hidden page does not queue a collection viewport jump',async t=>{
   const h=fixture(t);await h.ready();let hidden=false;Object.defineProperty(h.d,'hidden',{get:()=>hidden});const gate=deferred();h.gates.set('daisy',gate);const result=h.store.execute({type:'search',query:'daisy'});assert.equal(h.d.activeElement,h.d.body);hidden=true;gate.resolve(h.response());assert.equal((await result).ok,true);assert.equal(h.scrolls.length,0);assert.equal(h.d.activeElement,h.d.body);
 });
+
+test('ordinary mouse product opening reveals the checked image-and-heading layout without moving keyboard focus',async t=>{
+  const h=fixture(t);await h.ready();h.activateLink({mouse:true});await settle();const layout=h.d.querySelector('.product-layout'),heading=h.d.querySelector('.product-copy h1');assert.equal(h.store.snapshot().currentHandle,initial[0].handle);assert.equal(heading.textContent,initial[0].title);assert.equal(h.scrolls.some(s=>s.node===layout&&s.value.block==='start'),true,'completed pointer navigation reveals the exact product layout');assert.equal(h.d.activeElement===heading,false);assert.equal(h.scrolls.some(s=>s.node===heading),false);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);assert.deepEqual(h.errors,[]);
+});
+
+test('a newer focus choice during ordinary mouse product loading prevents its delayed layout reveal',async t=>{
+  const h=fixture(t);await h.ready();const gate=deferred();h.lookup(gate);h.activateLink({mouse:true});const outside=h.outside();outside.focus();gate.resolve({ok:true,json:async()=>({live:true,product:clone(initial[0])})});await settle();assert.equal(h.d.activeElement,outside);assert.equal(h.store.snapshot().currentHandle,initial[0].handle);assert.equal(h.scrolls.length,0);
+});
+
+test('ordinary mouse product loading cannot reveal a layout after the page becomes hidden',async t=>{
+  const h=fixture(t);await h.ready();let hidden=false;Object.defineProperty(h.d,'hidden',{get:()=>hidden});const gate=deferred();h.lookup(gate);h.activateLink({mouse:true});hidden=true;gate.resolve({ok:true,json:async()=>({live:true,product:clone(initial[0])})});await settle();assert.equal(h.store.snapshot().currentHandle,initial[0].handle);assert.equal(h.scrolls.length,0);assert.equal(h.d.activeElement===h.d.querySelector('.product-copy h1'),false);
+});
+
+test('a superseded mouse product response cannot reveal over a newer completed catalogue view',async t=>{
+  const h=fixture(t);await h.ready();const gate=deferred();h.lookup(gate);h.activateLink({mouse:true});await h.store.execute({type:'filter',filter:'earrings'});const view=h.store.snapshot(),scrolls=h.scrolls.length;gate.resolve({ok:true,json:async()=>({live:true,product:clone(initial[0])})});await settle();assert.equal(h.store.snapshot().pageKind,'collection');assert.equal(h.store.snapshot().discoveryRevision,view.discoveryRevision);assert.equal(h.d.querySelector('.product-layout'),null);assert.equal(h.scrolls.length,scrolls);
+});
+
+for(const mode of ['unverified','foreign'])test('a '+mode+' mouse product read cannot create or reveal a checked detail view',async t=>{
+  const h=fixture(t);await h.ready();const gate=deferred();h.lookup(gate);h.activateLink({mouse:true});const invalid=clone(initial[0]);if(mode==='foreign')invalid.url='https://foreign.example/products/'+invalid.handle;gate.resolve({ok:true,json:async()=>({live:mode!=='unverified',product:invalid})});await settle();assert.equal(h.store.snapshot().pageKind,'collection');assert.equal(h.store.snapshot().loading,false);assert.equal(h.d.querySelector('.product-layout'),null);assert.equal(h.scrolls.length,0);
+});
+
+test('an explicit product section keeps its own reveal target instead of a default mouse layout target',async t=>{
+  const h=fixture(t);await h.ready();const result=await h.store.execute({type:'open',handle:initial[0].handle,section:'price'}),price=h.d.querySelector('[data-store-section=price]'),layout=h.d.querySelector('.product-layout');assert.equal(result.ok,true);assert.equal(result.snapshot.activeSection,'price');assert.equal(h.scrolls.some(s=>s.node===price&&s.value.block==='center'),true);assert.equal(h.scrolls.some(s=>s.node===layout),false);assert.equal(h.d.activeElement===h.d.querySelector('.product-copy h1'),false);
+});
+
+test('ordinary mouse product reveal respects reduced motion without enabling a keyboard focus transfer',async t=>{
+  const h=fixture(t);await h.ready();h.w.matchMedia=()=>({matches:true});h.activateLink({mouse:true});await settle();const layout=h.d.querySelector('.product-layout');assert.equal(h.scrolls.some(s=>s.node===layout&&s.value.block==='start'&&s.value.behavior==='auto'),true);assert.equal(h.d.activeElement===h.d.querySelector('.product-copy h1'),false);
+});
