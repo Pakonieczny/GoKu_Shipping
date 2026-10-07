@@ -520,25 +520,43 @@
   }
   /** The check at each card's corner, and the set's own at its head: Mark completed in Current, Move back in Completed. */
   function addedSeals(events){for(const e of events || [])L.pendingSeals.add(e.kind+':'+e.id+':'+e.eventId);}
-  function processHtml(r,owner,extra=''){
-    if(!window.Seal)return '';
-    const st=CharmNestReadiness.processStamps(r),scope=owner.startsWith('set:')?'set':'sheet';
-    return st.length?`<span class="sealRow processSealRow ${extra}" data-seal-group data-seal-count="${st.length}" role="group" aria-label="${st.length} historical process seals">${st.map(s=>Seal.html({...s,scope,owner},Seal.BASE_SIZE,'sheetProcessSeal '+(s.how==='laserDone'?'cut':'ready'))).join('')}</span>`:'';
+  /* ── The Library's seals (Paul, 7 Oct 2026 00:01 UTC: "there are too many seals visible here. There should only be one seal per each sheet and
+     only visible when a given sheet has completed the laser cutting process, no interim seals no duplicates"). A DISPLAY rule only: every
+     stamp (laserReady, laserDone, the legacy ones) stays in the sheet's and the set's record, nothing here writes or deletes one, and the
+     order timeline keeps drawing them all. A sheet shows ONE seal, its LASER CUT (the latest, when Undo and a second completion left
+     several), and only while it is completed. Never LASER READY (an approval), never a seal on a set (its header, its row), never one on a
+     sheet that is not completed (a reopened one, a Rose Gold sheet with only a partial Cut Sheet press: roseCutAt writes no completion).
+     One component draws it everywhere, Seal.sheetCut (charm-nest-motion.js: 72 px, zoom x1.8). Only data already on the page is read. */
+  /** The stamp the sheet `r` shows: its latest laser completion while the sheet is completed (marked on this page, or by its record), else null.
+   *  `completed`: the caller knows already that it is (a row of the Completed list). */
+  function cutStamp(r,completed){
+    if(!r || !(completed || isDone(r)))return null;
+    let lead=null;
+    for(const s of CharmNestReadiness.processStamps(r))if(s.how==='laserDone' && +s.at>1e9 && (!lead || +s.at>=+lead.at))lead=s;   // (a time before 2001 is the page's own "marked, time not read yet" placeholder, never a completion)
+    return lead;
   }
-  function processSeals(host,r,owner,extra=''){
+  /** The one seal of the sheet `r` as HTML (a Completed row, the sheet window): "" when it shows none. */
+  function processHtml(r,owner,completed){
+    if(!window.Seal || !Seal.sheetCut || !String(owner || '').startsWith('sheet:'))return '';
+    return Seal.sheetCut(cutStamp(r,completed),{owner});
+  }
+  /** Puts the sheet card's one seal in its footer, beside its counts (never over them), takes away what is no longer to be shown. */
+  function processSeals(host,r,owner){
     if(!window.Seal || !host)return;
-    const st=CharmNestReadiness.processStamps(r);if(!st.length)return;
-    let row=host.querySelector(':scope > .processSealRow');
-    if(!row){row=doc.createElement('span');row.className='sealRow processSealRow '+extra;row.setAttribute('role','group');host.appendChild(row);}
-    row.setAttribute('aria-label',st.length+' historical process seals');
-    for(const stamp of st){
-      let seal=[...row.children].find(s=>s.dataset.processSeal===stamp.id);
-      const key=owner+':'+stamp.id,fresh=L.pendingSeals.has(key);
-      if(!seal){row.insertAdjacentHTML('beforeend',Seal.html({...stamp,scope:owner.startsWith('set:')?'set':'sheet'},Seal.BASE_SIZE,'sheetProcessSeal '+(stamp.how==='laserDone'?'cut':'ready')+(fresh?' pending':'')));seal=row.lastElementChild;seal.dataset.sealOwner=owner;}
-      if(fresh){
-        L.pendingSeals.delete(key);
-        const p=Seal.press(seal).catch(()=>seal.classList.remove('pending'));L.presses.add(p);p.finally(()=>L.presses.delete(p));
-      }
+    const foot=host.querySelector(':scope > .m') || host,stamp=cutStamp(r);
+    for(const old of host.querySelectorAll(':scope > .processSealRow, :scope > .m > .processSealRow'))old.remove();   // (the earlier drawing: every stamp in a row hung under the card)
+    let row=foot.querySelector(':scope > .sheetCutRow'),shown=row && row.querySelector('.seal');
+    if(!stamp){if(row)row.remove();return;}
+    if(shown && shown.dataset.processSeal!==stamp.id){row.remove();row=shown=null;}   // (a newer completion: the older one is not kept beside it)
+    const key=owner+':'+stamp.id,fresh=L.pendingSeals.has(key);
+    if(!row){
+      foot.insertAdjacentHTML('beforeend',Seal.sheetCut(stamp,{owner,pending:fresh}));
+      row=foot.lastElementChild;shown=row.querySelector('.seal');
+      const status=foot.querySelector(':scope > .sheetBackStatus');if(status)foot.insertBefore(row,status);   // (before the counter, so the counter keeps the card's right edge)
+    }
+    if(fresh){
+      L.pendingSeals.delete(key);
+      const p=Seal.press(shown).catch(()=>shown.classList.remove('pending'));L.presses.add(p);p.finally(()=>L.presses.delete(p));
     }
     Seal.fitGroups(row);
   }
@@ -546,8 +564,8 @@
     if (!root) return;
     const at = cardIndex(byId('libBody') || root);   // (canComplete looks a card up in the Library's list, whatever root is drawn)
     for (const c of root.querySelectorAll('.libCard[data-id]')) {
-      const r=LaserReview.projected(recordOf(c.dataset.id) || {}), done=isDone(r);
-      processSeals(c,r,'sheet:'+c.dataset.id);
+      const rec=recordOf(c.dataset.id) || {}, r=LaserReview.projected(rec), done=isDone(r);
+      processSeals(c,rec,'sheet:'+c.dataset.id);   // (the sheet's own record: its stamps as stored, not the projection's placeholder time)
       let b=c.querySelector(':scope > .ldMark');
       const allowed=done || canComplete('sheet',c.dataset.id,at);
       if (!allowed) { if(b)b.remove(); continue; }
@@ -557,7 +575,7 @@
     }
     for (const card of root.querySelectorAll('.setCard')) {
       const st=card._laserSet,head=card.querySelector(':scope > .sh');if(!head)continue;
-      if(st?.setId && !st.standalone && !st.working)processSeals(head,st,'set:'+st.setId,'setProcessSeals');
+      for(const old of card.querySelectorAll(':scope > .sh > .setProcessSeals, :scope > .sh > .processSealRow'))old.remove();   // (a set shows no seal: its sheets do)
       let b=head.querySelector(':scope > .ldMarkSet');
       const done=isDone(st),allowed=st?.setId && !st.standalone && !st.working && (done || canComplete('set',st.setId,at));
       if(!allowed){if(b)b.remove();continue;}
@@ -937,7 +955,7 @@
         + `<span class="ldThumbs">${(sheets.length ? sheets.slice(0, 3) : [{}]).map(s => thumb(s.preview)).join('')}</span>`
         + `<span class="ldName"><b>Set ${esc(r.seq || '—')}</b><span class="sws">${mats.map(k => swatch(metalOf({ metal: k }), per.get(k) || 0)).join('')}</span><span class="ldDate" title="Set day">${esc(dayShort(r.day))}</span></span>`
         + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Return the set and its sheets to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'set:'+r.setId,'ldProcessSeals')+'</div>'
+        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Return the set and its sheets to Laser cutting">Reopen</button>${ICON.chev}`+'</div>'
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
     const sn = !r.draft && r.setSeq ? r.setSeq : 0;
@@ -945,7 +963,7 @@
       + thumb(r.preview)
       + `<span class="ldName">${swatch(metalOf(r), 0)}<b>Sheet ${esc(r.sheetIndex || 1)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,'ldProcessSeals')+'</div></div>';
+      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';
   }
   function dayHead(day, kind) {
     const t = realDay(Date.now()), y = realDay(Date.now() - 86400000), d = new Date(day + 'T12:00:00');
@@ -1105,7 +1123,7 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, cutStamp, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
   window.LibraryDone.reload = reload;
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();

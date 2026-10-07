@@ -804,10 +804,11 @@
     const ZOOM_CAP = 96, ZOOM_CAP_TIGHT = 72, ZOOM_TIGHT = ".tlUI, #orderWin, .owNowCard";
     /** The zoom of a seal as drawn `size` px across: 1.08 for a large one up to 1.8 for a tiny one, by one smooth curve. With a `cap`
      *  (the widest the grown seal may be, px) it is held to that, but never below 1. */
-    function zoomScale(size, cap) {
-      const n = +size, A = ZOOM_ANCHORS, c = +cap;
+    function zoomScale(size, cap, grow) {
+      const n = +size, A = ZOOM_ANCHORS, c = +cap, g = +grow;
       let k;
-      if (!(n > 0) || n >= A[A.length - 1][0]) k = A[A.length - 1][1];
+      if (g > 1 && g <= 3) k = g;   // (a seal that asks for its own growth, the sheet's completion seal: data-seal-grow, held to the same cap)
+      else if (!(n > 0) || n >= A[A.length - 1][0]) k = A[A.length - 1][1];
       else if (n <= A[0][0]) k = A[0][1];
       else {
         let i = 0; while (n > A[i + 1][0]) i++;
@@ -821,6 +822,11 @@
     function zoomCap(el) {
       const own = el && el.closest ? el.closest("[data-seal-cap]") : null, n = own ? +own.getAttribute("data-seal-cap") : 0;
       return n > 0 ? n : el && el.closest && el.closest(ZOOM_TIGHT) ? ZOOM_CAP_TIGHT : ZOOM_CAP;
+    }
+    /** The growth a seal (or a row it sits in) asks for with data-seal-grow (more than 1, at most 3); 0 when it asks for none: the curve decides. */
+    function zoomGrow(el) {
+      const own = el && el.closest ? el.closest("[data-seal-grow]") : null, n = own ? parseFloat(own.getAttribute("data-seal-grow")) : 0;
+      return n > 1 && n <= 3 ? n : 0;
     }
     /* Small round markers that are not seals (the Library's step rail circles, Paul 5 Oct: "a slight expanding zoom for each of the timeline
        milestones similar to the Seals") ride the same engine: an element with data-zoom-dot waits ZOOM_DELAY under a resting pointer, grows at
@@ -912,7 +918,7 @@
       if (st) { st.anim && st.anim.cancel(); st.paper && st.paper.cancel(); if (st.undo) { st.undo(); st.undo = null; } } else st = { undo: null };
       // the place it rests in, measured with no zoom on it and nothing opened
       const bs = getComputedStyle(el), base = parseM(bs.transform), r = el.getBoundingClientRect();
-      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), dot = isDot(el), k = dot ? dotScale(el) : zoomScale(size, zoomCap(el));
+      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), dot = isDot(el), k = dot ? dotScale(el) : zoomScale(size, zoomGrow(el) ? Math.min(zoomCap(el), Math.max(size, Math.min(root.innerWidth || 1e4, root.innerHeight || 1e4) - 2 * ZOOM_M)) : zoomCap(el), zoomGrow(el));
       const p = zoomPlan(el, k, r, W, H);
       st.undo = zoomLift(el, p.open, k);
       const to = { transform: `matrix(${k},0,0,${k},${base[4] + p.dx},${base[5] + p.dy})`, filter: dot ? "none" : zoomShadow(size), opacity: "1" };
@@ -1029,13 +1035,34 @@
     doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "hidden") zoomAway(); });
     doc.addEventListener("close", e => { if (e.target && e.target.contains && (e.target.contains(Zm.cur && Zm.cur.el) || e.target.contains(Zm.want))) zoomAway(); }, true);
     const zoom = {
-      DELAY: ZOOM_DELAY, DOT: DOT_SCALE, scale: zoomScale, cap: zoomCap, show: zoomShow, hide: zoomHide, away: zoomAway,
+      DELAY: ZOOM_DELAY, DOT: DOT_SCALE, scale: zoomScale, cap: zoomCap, grow: zoomGrow, show: zoomShow, hide: zoomHide, away: zoomAway,
       get current() { return Zm.cur ? Zm.cur.el : null; },
       /** Where the seal is, or will be once zoomed (the page rectangle that tooltips and cards stay clear of). */
       rectOf(el) { const st = ZS.get(el); return st && st.on ? Object.assign({}, st.rect) : null; },
       check() { if (Zm.want && !Zm.want.isConnected) cancelWant(); for (const st of [...ACT]) if (!st.el.isConnected) zoomHide(true, st.el); }
     };
-    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
+    /* ── The sheet's one completion seal (Paul, 7 Oct 2026 00:01 UTC: "there are too many seals visible here. There should only be one seal per
+       each sheet and only visible when a given sheet has completed the laser cutting process, no interim seals no duplicates ... make the
+       seals a bit bigger and zoom a bit bigger so they are easily legible."). ONE component for every place the Library shows it (a sheet
+       card in Laser cutting, a Completed row, the sheet window's header): the very same seal face (html above), at SHEET_SIZE px at rest, and a
+       zoom of SHEET_GROW times its resting size (data-seal-grow), held to SHEET_CAP px and to the window (zoomShow), in place, after the same
+       ZOOM_DELAY, at once for a click, a tap or Enter. Which stamp it is, and whether the sheet shows one at all, is the Library's rule
+       (LibraryDone.cutStamp, charm-nest-library.js); this only draws it. The earlier sizes (44 px on a card, 22 px in the window header) are gone. ── */
+    const SHEET_SIZE = 72, SHEET_GROW = 1.8, SHEET_CAP = 132;
+    if (!doc.getElementById("sealCutCss")) {
+      const st = doc.createElement("style"); st.id = "sealCutCss";
+      st.textContent = `.sealRow.sheetCutRow{--cut-seal:${SHEET_SIZE}px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;gap:0;margin:0;max-width:100%;pointer-events:none}` +
+        `.sealRow.sheetCutRow .seal{flex:0 0 var(--cut-seal);width:var(--cut-seal);height:var(--cut-seal);max-width:100%;background:transparent;border-radius:0;cursor:zoom-in;mix-blend-mode:normal;opacity:1}`;
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+    /** sheetCut(stamp, { owner, pending, cls }) → the HTML of the one seal: a row of one, a stamp { how: "laserDone", at, by, id } as the sheet's
+     *  record holds it. "" without a stamp. pending: it waits unseen for its wooden press (pressPending / press). */
+    function sheetCut(stamp, o = {}) {
+      if (!stamp) return "";
+      return `<span class="sealRow sheetCutRow${o.cls ? " " + o.cls : ""}" data-seal-group data-seal-count="1" data-seal-max="${SHEET_SIZE}" data-seal-grow="${SHEET_GROW}" data-seal-cap="${SHEET_CAP}" role="group" aria-label="Sheet completed">` +
+        html(Object.assign({}, stamp, { scope: "sheet", owner: o.owner || stamp.owner || "" }), BASE_SIZE, "sheetProcessSeal cut" + (o.pending ? " pending" : "")) + `</span>`;
+    }
+    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, SHEET_SIZE, SHEET_GROW, SHEET_CAP, sheetCut, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════

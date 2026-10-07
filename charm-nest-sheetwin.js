@@ -136,6 +136,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swState.ready{background:var(--sageSoft);color:#3f5b3c}
 .swState.done{background:var(--velvet);color:#f3ead7}
 .swStateSeal{display:inline-flex;align-items:center;flex:0 0 auto;min-width:0}.swStateSeal:empty{display:none}
+.swStateSeal .sealRow.sheetCutRow{margin:-6px 0}
 .swIcon{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--ink70);cursor:pointer}
 .swIcon svg{width:16px;height:16px}
 .swIcon:hover{background:var(--paper2);color:var(--ink)}
@@ -1187,13 +1188,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     if (!prelim || !W.setSheets.length) renderSheetChips();
   }
-  /** The sheet's own completion seal in the header, beside "Completed" (the Library's card draws the same one, LASER CUT): the latest, small, and "+N" for
-   *  the others it holds. A seal is permanent, so it stays when the sheet is taken back to Current. A sheet nobody cut has none, and none is made up. */
+  /** The sheet's own completion seal in the header, beside "Completed" (the Library's card and Completed row draw the same one, LASER CUT): the very
+   *  same component (Seal.sheetCut, 72 px, zoom x1.8) and the very same rule (LibraryDone.cutStamp): ONE seal, the latest completion, only while the sheet
+   *  is completed (Paul, 7 Oct 2026: "one seal per each sheet ... no interim seals no duplicates"). A reopened sheet shows none here (every stamp stays in its
+   *  record and on its order timelines); a sheet nobody cut has none, and none is made up. */
   function sheetSeal(r) {
     try {
-      if (!window.Seal || !Seal.compactRow || !window.CharmNestReadiness || !r) return "";
-      const cuts = CharmNestReadiness.processStamps(r).filter(s => s.how === "laserDone" && +s.at > 0).sort((a, b) => a.at - b.at), lead = cuts[cuts.length - 1];
-      return lead ? Seal.compactRow(Object.assign({ scope: "sheet", owner: "sheet:" + (r.id || r.sheetId || "") }, lead), cuts.length - 1, 22) : "";
+      if (!window.Seal || !Seal.sheetCut || !window.LibraryDone || !LibraryDone.cutStamp || !r) return "";
+      return Seal.sheetCut(LibraryDone.cutStamp(r), { owner: "sheet:" + (r.id || r.sheetId || "") });
     } catch (e) { console.warn("sheet window: completed seal", e); return ""; }
   }
   async function markDone(done) {

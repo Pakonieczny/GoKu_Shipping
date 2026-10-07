@@ -228,7 +228,8 @@ const ORDERS = [
     }
 
     // the press itself, in the sheet window (the page's own LibraryDone.mark answers as the server does, nothing is sent): Mark completed brings the header seal,
-    // Move back to current takes the status back and the seal stays (a seal is permanent)
+    // Move back to current takes the status back AND the seal off the header (7 Oct 2026, Paul: a sheet shows its one seal only while it is completed; the stamp
+    // stays in the record and on the timelines)
     await closeAll();
     await page.evaluate(pool => {
       window.__marks = 0; LibraryDone.canComplete = () => true;   // (a sheet the Library lets be completed)
@@ -251,18 +252,18 @@ const ORDERS = [
     await page.waitForFunction(() => window.__marks >= 2 && !/completed$/i.test((document.querySelector('.swState') || {}).textContent.trim()), null, { timeout: 8000 }).catch(() => {});
     await settle(900);
     const h2 = await hdr();
-    check(h2.seals === 1 && !/^completed$/i.test(h2.state), 'Move back to current: the status goes back and the seal stays, one (a seal is permanent): ' + JSON.stringify(h2));
+    check(h2.seals === 0 && !/^completed$/i.test(h2.state), 'Move back to current: the status goes back and the header shows no seal (the sheet is not completed; the stamp stays in its record): ' + JSON.stringify(h2));
     await closeAll();
 
     // mutants, at 900px: the same checks must fail on each surface
     await page.setViewportSize({ width: 900, height: 820 }); await settle(300);
-    const mutate = (name, fn) => page.evaluate(`(() => { const S = window.Seal; if (!S.__orig) S.__orig = { compact: S.compact, compactRow: S.compactRow }; S.compact = S.__orig.compact; S.compactRow = S.__orig.compactRow; ${fn} })()`).then(() => name);
+    const mutate = (name, fn) => page.evaluate(`(() => { const S = window.Seal; if (!S.__orig) S.__orig = { compact: S.compact, compactRow: S.compactRow, sheetCut: S.sheetCut }; S.compact = S.__orig.compact; S.compactRow = S.__orig.compactRow; S.sheetCut = S.__orig.sheetCut; ${fn} })()`).then(() => name);
     const surfacesOf = bad => ['sheet window (cut sheet)', 'sheet window (sheet not cut)', 'order window, Sheet tab,', 'order window, Sheet tab, completed by hand', 'order search card'].filter(p => bad.some(b => b.startsWith(p)));
-    const drop = await mutate('seal dropped', 'S.compact = () => ""; S.compactRow = () => "";');
+    const drop = await mutate('seal dropped', 'S.compact = () => ""; S.compactRow = () => ""; S.sheetCut = () => "";');
     let bad = await everything(900, 'mutant-drop');
     const caughtDrop = surfacesOf(bad);
     check(bad.length > 0 && ['sheet window (cut sheet)', 'order window, Sheet tab,', 'order window, Sheet tab, completed by hand', 'order search card'].every(p => caughtDrop.includes(p)), `mutant caught (${drop}): the checks fail on the sheet window, the Sheet tab list, its completed-by-hand place and the search card (${caughtDrop.length} surfaces: ${caughtDrop.join(' ; ')})`);
-    const twice = await mutate('seal drawn twice', 'const c = S.compact, r = S.compactRow; S.compact = function () { const h = c.apply(this, arguments); return h + h; }; S.compactRow = function () { const h = r.apply(this, arguments); return h + h; };');
+    const twice = await mutate('seal drawn twice', 'const c = S.compact, r = S.compactRow, q = S.sheetCut; S.compact = function () { const h = c.apply(this, arguments); return h + h; }; S.compactRow = function () { const h = r.apply(this, arguments); return h + h; }; S.sheetCut = function () { const h = q.apply(this, arguments); return h + h; };');
     bad = await everything(900, 'mutant-twice');
     const caughtTwice = surfacesOf(bad);
     check(bad.length > 0 && ['sheet window (cut sheet)', 'order window, Sheet tab,', 'order window, Sheet tab, completed by hand', 'order search card'].every(p => caughtTwice.includes(p)), `mutant caught (${twice}): drawn twice is seen on every surface (${caughtTwice.length} surfaces)`);

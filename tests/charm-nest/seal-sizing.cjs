@@ -142,12 +142,17 @@ function fitted(f,label){
 
     // These real stylesheet caps previously defeated parseFloat(maxWidth): min(), calc() and row padding matter.
     const engraving=fixture(12,600,'engravingSeals');assert(fitted(engraving,'engraving capped history')<20);assert(engraving.row.clientWidth<=240);engraving.parent.remove();
-    const process=fixture(4,300,'processSealRow');process.parent.classList.add('libCard');
-    // Apply the matching production cap directly because JSDOM does not rank selector specificity.
-    process.row.style.maxWidth=rule(main,'.libCard>.processSealRow').style.getPropertyValue('max-width');
-    assert(fitted(process,'compact Library process history')<=CAP);assert(process.row.clientWidth<=260,'process history uses the card width without reserving an unearned badge');process.parent.remove();
-    const single=fixture(1,300,'processSealRow');single.parent.classList.add('libCard');
-    assert.equal(fitted(single,'single Library process seal'),CAP,'Library cards use the requested compact seal cap');single.parent.remove();
+    // The Library's sheet seal (Paul, 7 Oct 2026: one seal per completed sheet, bigger): Seal.sheetCut draws it at 72 px whatever is around it, the card's old
+    // 44 px cap for other seals stays what it was, and the stylesheet keeps no row of stamps hanging under the card
+    {
+      const host=d.createElement('div');host.className='libCard';host.innerHTML='<div class="m"><span>5/5</span>'+Seal.sheetCut({id:'cut-1',how:'laserDone',at,by},{owner:'sheet:x'})+'</div>';d.body.appendChild(host);
+      const seal=host.querySelector('.sheetCutRow .seal');assert(seal,'the sheet seal is drawn');
+      assert.equal(Seal.SHEET_SIZE,72);assert.equal(length(seal,'width'),72,'the Library sheet seal is 72 px');assert.equal(length(seal,'height'),72);
+      assert.equal(host.querySelectorAll('.seal').length,1,'one seal');assert.equal(Seal.sheetCut(null),'','no stamp, no seal');
+      const other=d.createElement('div');other.className='libCard';other.innerHTML='<div class="sealRow">'+Seal.html({how:'print',at,by})+'</div>';d.body.appendChild(other);
+      assert.equal(length(other.querySelector('.seal'),'width'),44,'any other seal in a card keeps the 44 px cap');other.remove();host.remove();
+      assert(!rule(main,'.libCard>.processSealRow'),'no row of stamps hangs under the card any more');
+    }
 
     // The existing Approved control keeps its footprint and label. Its seal and the workspace approval overlay stay out of flow.
     const panel=d.createElement('section');panel.innerHTML=w.CNEngravingSeals.panel({kind:'approved',at,by,job:{key:'test',state:'approved',approvedAt:at,approvedBy:by}});d.body.appendChild(panel);
