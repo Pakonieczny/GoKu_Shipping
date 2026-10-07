@@ -129,7 +129,12 @@ async function probeRev(db, id, opts = {}) {
   const forms = [id].concat(Number.isSafeInteger(+id) ? [+id] : []);
   const one = (ref, mask) => db.getAll(ref, { fieldMask: mask || NONE }).then(r => r[0]);
   const none = q => q.select(...NONE);
-  const [can, arr, pools, sheets, customs, reads, evN, msgN, done, arch, rc] = await Promise.all([
+  // (RV2, 7 Oct 2026: a cancel's step on a sheet is rewritten IN PLACE under the same key as it goes from "still on" to "set aside" to "removed" (cancelSteps,
+  //  charmNestLibrary), so the count of the order's events stays and the digest was blind to it. The cancel record is written just BEFORE its steps: a poll between
+  //  the two writes held a whole read with the old step, and nothing moved the digest again until the page's minute-long full read. The steps are therefore read here
+  //  for their update times: an equality on two fields (no composite index, the shape designSent's query in charmNestLibrary already uses), one read when the order
+  //  has none, one each otherwise. Other in-place rewrites (backPut's stamp adding the sheet to an approval's event) stay with the page's full read.)
+  const [can, arr, pools, sheets, customs, reads, evN, msgN, done, arch, rc, steps] = await Promise.all([
     one(db.collection(P + CANCELLED).doc(id)),
     one(col("Charm_Nest_Arrivals").doc(id)),
     col("Charm_Pool").where("orderId", "in", forms).limit(CAP.pools).select("poolId", "setId", "lineKey", "transactionId").get(),
@@ -140,11 +145,12 @@ async function probeRev(db, id, opts = {}) {
     col("Brites_Orders").doc(id).collection("messages").count().get(),
     one(col("Design_Completed Orders").doc(id)),
     one(col("Design_Order_Archive").doc(id), ["setId"]),
-    sandbox ? null : one(db.collection("EtsyMail_Receipts").doc(id))
+    sandbox ? null : one(db.collection("EtsyMail_Receipts").doc(id)),
+    none(colOf(db, P).where("orderId", "==", id).where("type", "==", "cancelStep").limit(CAP.steps)).get()
   ]);
   const parts = [`e:${evN.data().count}`, `m:${msgN.data().count}`, `x:${Placement.revOf(can)}`, `a:${Placement.revOf(arr)}`, `d:${Placement.revOf(done)}`, `v:${Placement.revOf(arch)}`, `r:${rc ? Placement.revOf(rc) : "-"}`];
   const put = (kind, d) => parts.push(`${kind}:${d.id}:${Placement.revOf(d)}`);
-  pools.docs.forEach(d => put("p", d)); sheets.docs.forEach(d => put("s", d)); customs.docs.forEach(d => put("c", d)); reads.docs.forEach(d => put("g", d));
+  steps.docs.forEach(d => put("k", d)); pools.docs.forEach(d => put("p", d)); sheets.docs.forEach(d => put("s", d)); customs.docs.forEach(d => put("c", d)); reads.docs.forEach(d => put("g", d));
   // round 2: what those name (as deriveEvents does: the backs of its pieces, its sets, the cuts of its Rose Gold sheets, the readings of lines the first query missed)
   const poolDocs = pools.docs.map(d => ({ id: d.id, ...d.data() })), sheetDocs = sheets.docs.map(d => ({ id: d.id, ...d.data() })), customDocs = customs.docs.map(d => ({ id: d.id, ...d.data() }));
   const poolIds = [...new Set(poolDocs.map(p => String(p.poolId || p.id).slice(0, 120)))].filter(Boolean).slice(0, CAP.backs);
@@ -232,7 +238,7 @@ const DERIVE_MS = 2500, DEDUPE_MS = 3 * 60 * 1000;
 // charmNestLibrary's SANDBOXED (with Charm_Custom_Orders, which it adds), for a caller that does not pass its own
 const SANDBOXED_DEFAULT = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Design_Bridge", "Charm_Custom_Orders"]);
 const STATION_SANDBOXED = new Set(["Brites_Orders", "Design_Completed Orders", "Design_Order_Archive"]);
-const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6 };
+const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6, steps: 60 };
 const SHEET_FIELDS = ["id", "metal", "metalLabel", "sheetIndex", "page", "setId", "setSeq", "fileBase", "stock", "poolIds", "orders", "label", "archived", "draft", "laserDoneAt", "laserDoneBy", "roseCutAt", "roseStockId", "rosePlanHash", "createdAt", "cardStartedAt", "updatedAt", "runId"];
 const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt", "heldAt", "heldBy", "heldReason", "repooledAt"];
 const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "kind", "completedAt", "completedBy", "how", "printedAt", "printedBy", "lastPrintedAt", "lastPrintedBy", "prints", "stamps"];
