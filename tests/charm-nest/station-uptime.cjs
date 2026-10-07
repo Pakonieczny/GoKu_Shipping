@@ -205,7 +205,8 @@ section('the chat listener backs off to a minute and toasts once', async () => {
 /* ── 5 · the function answers per-order questions with bounded parallel "in" queries ── */
 section('firebaseOrders: dcFor and staffNotesFor run ten-id "in" queries five at a time', async () => {
   let inFlight = 0, most = 0, queries = 0, gets = 0;
-  const query = (ids, hit) => ({ get: async () => { queries++; inFlight++; most = Math.max(most, inFlight); await tick(); await tick(); inFlight--; return { docs: ids.filter(hit).map(id => ({ id, data: () => ({ 'Staff Note': 'call buyer' }) })) }; } });
+  const query = (ids, hit) => { const q = { get: async () => { queries++; inFlight++; most = Math.max(most, inFlight); await tick(); await tick(); inFlight--; return { docs: ids.filter(hit).map(id => ({ id, data: () => ({ 'Staff Note': 'call buyer' }) })) }; },
+    select: f => { assert.equal(f, 'Staff Note', 'staffNotesFor reads only the note (a field mask)'); return q; } }; return q; };
   const where = hit => (field, op, ids) => { assert.equal(field, '__name__'); assert.equal(op, 'in'); assert(ids.length <= 10); return query(ids, hit); };
   const admin = { firestore: { FieldPath: { documentId: () => '__name__' } } }, parseIds = s => s.split(',').map(x => x.trim()).filter(Boolean);
   const ids = Array.from({ length: 100 }, (_, i) => String(i));

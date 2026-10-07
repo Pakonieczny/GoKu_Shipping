@@ -577,7 +577,7 @@ exports.handler = async (event) => {
         const worker = async () => {
           while (next < groups.length) {
             const g = groups[next++];
-            const snap = await db.collection(PREFIX + "Brites_Orders").where(admin.firestore.FieldPath.documentId(), "in", g).get();
+            const snap = await db.collection(PREFIX + "Brites_Orders").where(admin.firestore.FieldPath.documentId(), "in", g).select("Staff Note").get();   // (a field mask: only the note leaves Firestore, not each order's whole record)
             snap.docs.forEach(d => { const note = ((d.data() || {})["Staff Note"] ?? "").toString().trim(); if (note) noted.add(d.id); });
           }
         };
