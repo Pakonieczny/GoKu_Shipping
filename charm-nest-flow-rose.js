@@ -91,7 +91,7 @@
     try { open = RS && RS.unlined ? RS.unlined(sh) : unlinedLocal(sh); adds = RS && RS.addsLine ? !!RS.addsLine(sh) : open.length > 0; } catch (_) { open = unlinedLocal(sh); adds = open.length > 0; }
     const lines = (sh.rosePlan && sh.rosePlan.lines && sh.rosePlan.lines.length) || (sh.roseProtected && sh.roseProtected.lines && sh.roseProtected.lines.length) || 0;
     if (!adds) {
-      if (open.length) return noPlan({ ...base, needs: 0 }, 'The sheet is full: it takes the rest of the metal whole, so there is no green dash line to add');
+      if (open.length) return noPlan({ ...base, needs: 0, full: true }, 'The sheet is full: it takes the rest of the metal whole, so there is no green dash line to add');   // (full: LibraryFlow says so when readiness still holds the sheet for its line)
       const at = lastLineAt(sh);
       return noPlan(base, lines ? 'Already has its green dash line' + (at ? ' (' + when(at) + ')' : '') : 'It is planned whole, so there is no green dash line to add');
     }
@@ -112,7 +112,8 @@
       const open = r.placements.filter(p => !lined.has(p.id));
       return open.length ? { ...base, needsLine: true, needs: open.length, why: `${plural(open.length, 'charm')} sit past its last green dash line` } : noPlan(base, 'Already has its green dash line');
     }
-    if (r.rosePlanHash || plan || guard) return noPlan(base, 'Already has its green dash line');
+    // the saved line is the plan hash (what readiness reads): a protected-line copy or a plan with no hash is no saved line (GF1: it said "already has its line" and let the move go on)
+    if (r.rosePlanHash) return noPlan(base, 'Already has its green dash line');
     return { ...base, needsLine: true, needs: placed, why: 'No green dash line yet' + (placed ? `: ${plural(placed, 'charm')} not inside a cut line` : '') };
   }
   const geometry = sh => !!sh && Array.isArray(sh.placements) && !(sh.recalled && !(sh.charms || []).length);
