@@ -158,8 +158,8 @@
   const whatOf = c => [c.sheetName, c.setName].filter(Boolean).join(', ');
 
   /* ── the labels: each cut line gets a badge on it and a card of date, time and person beside it, in a spot nothing else uses ── */
-  function placeTags(m, K, fw, fh, compact) {
-    const R = 11 * K, placed = [], samples = [], FS1 = compact ? 13.5 : 13, FS2 = 12, PADX = 9, PH = (compact ? 27 : 42) * K;
+  function placeTags(m, K, fw, fh, compact, small) {   // small: a thumbnail on a phone, the labels shrink so four of them still fit
+    const R = (small ? 9 : 11) * K, placed = [], samples = [], FS1 = compact ? (small ? 10.5 : 13.5) : 13, FS2 = 12, PADX = small ? 6 : 9, PH = (compact ? (small ? 21 : 27) : 42) * K;
     const box = (cx, cy, hw, hh) => ({ x0: cx - hw, y0: cy - hh, x1: cx + hw, y1: cy + hh });
     const ov = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
     const area = b => (b.x1 - b.x0) * (b.y1 - b.y0), fr = { x0: 0, y0: 0, x1: fw, y1: fh };
@@ -184,7 +184,7 @@
         }
       }
       placed.push(best.pill, best.badge);
-      tags.push({ c, l1, l2, FS1, FS2, PADX, pill: best.pill, ax: best.ax, ay: best.ay, R, compact });
+      tags.push({ c, l1, l2, FS1, FS2, PADX, pill: best.pill, ax: best.ax, ay: best.ay, R, compact, small });
     }
     return tags.sort((a, b) => a.c.k - b.c.k);
   }
@@ -205,7 +205,7 @@
       + `<path class="ohDash" d="${c.lineD}" fill="none" stroke="${GREEN}" stroke-width="2.6" stroke-dasharray="8 5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`
       + `<path class="ohHit" d="${c.lineD}" fill="none" stroke="transparent" stroke-width="20" vector-effect="non-scaling-stroke" pointer-events="stroke"/></g>`).join('');
     const compact = o.compact === true;   // the card's thumbnail: the whole drawing is ONE button, so nothing inside it is a control, and a label is just the short date
-    const tags = placeTags(m, K, fw, fh, compact).map(t => {
+    const tags = placeTags(m, K, fw, fh, compact, compact && px < 420).map(t => {
       const c = t.c, label = `Cut ${c.label}, ${c.when}, ${c.by || 'person not recorded'}`, x = t.pill.x0, y = t.pill.y0, pw = t.pill.x1 - t.pill.x0, ph = t.pill.y1 - t.pill.y0;
       const open = compact ? `<g class="ohTag" id="${pfx}-tag-${c.k}" data-cut="${c.k}" aria-hidden="true">`
         : `<g class="ohTag${on(c.k)}" id="${pfx}-tag-${c.k}" data-cut="${c.k}" role="button" tabindex="0" aria-pressed="${c.k === sel}" aria-label="${esc(label)}" ${dly(c.k - 1)}><title>${esc(label)}</title>`;
@@ -214,12 +214,12 @@
         + `<text class="ohT1${Number.isFinite(c.at) ? '' : ' ohMiss'}" x="${r3(x + t.PADX * K)}" y="${r3(ty1)}" font-size="${r3(t.FS1 * K)}">${esc(t.l1)}</text>`
         + (compact ? '' : `<text class="ohT2${c.by ? '' : ' ohMiss'}" x="${r3(x + t.PADX * K)}" y="${r3(y + 34 * K)}" font-size="${r3(t.FS2 * K)}">${esc(t.l2)}</text>`)
         + `<circle class="ohBadge" cx="${r3(t.ax)}" cy="${r3(t.ay)}" r="${r3(t.R)}"/>`
-        + `<text class="ohBadgeN" x="${r3(t.ax)}" y="${r3(t.ay + 12 * K * .36)}" font-size="${r3(12 * K)}" text-anchor="middle">${c.label}</text></g>`;
+        + `<text class="ohBadgeN" x="${r3(t.ax)}" y="${r3(t.ay + (t.small ? 10 : 12) * K * .36)}" font-size="${r3((t.small ? 10 : 12) * K)}" text-anchor="middle">${c.label}</text></g>`;
     }).join('');
     // a deleted sheet is stamped across, in red and quiet; a sheet that was made and never cut says it is new (no cut lines to draw)
     const sx = r3(W / 2), sy = r3(H / 2), SF = r3(Math.min(W * .095, H * .19));
     const stamp = m.deleted ? `<g class="ohcStamp" transform="rotate(-12 ${sx} ${sy})" pointer-events="none" aria-hidden="true"><rect class="ohcStampBox" x="${r3(W / 2 - SF * 3.1)}" y="${r3(H / 2 - SF * .85)}" width="${r3(SF * 6.2)}" height="${r3(SF * 1.7)}" rx="${r3(SF * .22)}"/><text class="ohcStampT" x="${sx}" y="${r3(H / 2 + SF * .36)}" font-size="${SF}" text-anchor="middle" letter-spacing="${r3(SF * .12)}">DELETED</text></g>`
-      : !n && (m.kind === 'new' || m.made) ? `<g class="ohcNew" pointer-events="none" aria-hidden="true"><rect class="ohcNewBox" x="${r3(W / 2 - SF * 2.6)}" y="${r3(H / 2 - SF * .62)}" width="${r3(SF * 5.2)}" height="${r3(SF * 1.24)}" rx="${r3(SF * .2)}"/><text class="ohcNewT" x="${sx}" y="${r3(H / 2 + SF * .27)}" font-size="${r3(SF * .72)}" text-anchor="middle" letter-spacing="${r3(SF * .1)}">NEW SHEET</text></g>` : '';
+      : !n && (m.kind === 'new' || m.made) ? `<g class="ohcNew" pointer-events="none" aria-hidden="true"><rect class="ohcNewBox" x="${r3(W / 2 - SF * 3.3)}" y="${r3(H / 2 - SF * .62)}" width="${r3(SF * 6.6)}" height="${r3(SF * 1.24)}" rx="${r3(SF * .2)}"/><text class="ohcNewT" x="${sx}" y="${r3(H / 2 + SF * .24)}" font-size="${r3(SF * .64)}" text-anchor="middle" letter-spacing="${r3(SF * .08)}">NEW SHEET</text></g>` : '';
     const label = `Sheet history at true scale: ${num(W)} by ${num(H)} millimetres, ${n ? plural(n, 'cut') : 'never cut'}${m.deleted ? ', deleted' : ''}`;
     return `<svg class="ohSvg${compact ? ' ohCompact' : ''}${o.reveal === false || (compact && o.reveal !== true) ? '' : ' ohReveal'}${reduced() ? ' ohStill' : ''}${sel ? ' ohHasSel' : ''}" viewBox="0 0 ${r3(fw)} ${r3(fh)}" style="aspect-ratio:${r3(fw)}/${r3(fh)}" ${compact ? 'aria-hidden="true"' : `role="group" aria-label="${esc(label)}"`}>`
       + (frame ? `<rect class="ohTray" x="0" y="0" width="${r3(fw)}" height="${r3(fh)}" fill="${TRAY}"/>` : '')
@@ -657,7 +657,7 @@ button.ohItem:hover .ohNum,button.ohItem.ohHot .ohNum,button.ohItem.ohOn .ohNum{
 .ohcNewT{fill:var(--oh-ink45);font-family:var(--sans,system-ui,sans-serif);font-weight:700}
 .ohSvg.ohCompact *{pointer-events:none}
 /* the cards */
-.ohcGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,500px),1fr));gap:18px;align-items:start;min-width:0}
+.ohcGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,500px),1fr));gap:18px;min-width:0}
 .ohc{--oh-ink:var(--ink,#1c1a17);--oh-ink70:var(--ink70,#5b554c);--oh-ink45:var(--ink45,#938c80);--oh-ink25:var(--ink25,#c4bdb0);--oh-line:var(--line,#e4ddd0);--oh-card:var(--card,#fffefb);--oh-card2:var(--card2,#faf7f1);--oh-gold:var(--gold,#a9823f);--oh-goldLine:var(--goldLine,#e3d3a6);--oh-green:${GREEN};--oh-clay:var(--clay,#b0563f);
   container:ohc/inline-size;position:relative;min-width:0;box-sizing:border-box;background:var(--oh-card);border:1px solid var(--oh-line);border-radius:16px;box-shadow:var(--sh,0 1px 2px rgba(30,26,20,.04),0 9px 28px rgba(30,26,20,.06));padding:20px;font-family:var(--sans,system-ui,sans-serif);color:var(--oh-ink);scroll-margin:12px;transition:border-color .14s,box-shadow .14s}
 .ohc.ohcBig{grid-column:1/-1;width:100%}
