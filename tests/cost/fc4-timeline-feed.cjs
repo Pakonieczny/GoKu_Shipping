@@ -79,7 +79,7 @@ const touch = () => { for (const f of listeners.pointermove || []) f({}); };
   await advance(70 * 60000);
   g = await gaps(300000); assert(g.length && g.every(x => x >= 29500 && x <= 30500), "after an hour 30 s: " + g);
   calls = []; touch(); await advance(2700);
-  assert(calls.some(c => c.ifRev), "a touch of the page reads within the normal beat, not at the slow one: " + JSON.stringify(calls.map(c => c.at)));
+  assert(calls.length >= 1, "a touch of the page reads within the normal beat, not at the slow one (a whole read when one is due, else the cheap question): " + JSON.stringify(calls.map(c => c.at)));
   g = await gaps(20000); assert(g.length && g.every(x => x >= 2400 && x <= 2700), "and the beat is 2.5 s again: " + g);
 
   // 7. a hidden tab reads nothing; seen again, one cheap question
