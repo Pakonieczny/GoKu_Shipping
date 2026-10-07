@@ -91,8 +91,11 @@ async function check(name, fn) { await fn(); passed++; realLog("ok  " + name); }
     const placed = [...store.keys()].filter(k => k.startsWith("Order_Timeline/") && k.includes("~placed~")).length;
     assert.equal(placed, 40, "one placed event per order");
     reset(); await post({ op: "poolUpdate", poolIds: ids, patch: { sheetId: "sheet-A", setId: "set-1", state: "written", sheetName: "GF_Sep.28.26_Set-1_Sheet-1" } });
-    assert.equal(cost.writes, 120, "the same save again writes the pieces and no event");
-    realLog(`    measured: a save of 120 pieces (40 orders) = ${plain.writes} piece writes + 120 reads + 40 events; saved again = 120 reads, 0 events`);
+    // (120 piece writes + ONE write of FC3's placement counter, Charm_Nest_Rev/placement, which the handler raises after any op that may have written a
+    //  pool row or a sheet so that the Sorter's feed can answer `unchanged` for one read: an intended write, one per op, not one per piece)
+    assert.equal(cost.writes, 120 + 1, "the same save again writes the pieces, the placement counter and no event");
+    assert(store.has("Charm_Nest_Rev/placement"), "the extra write is the placement counter");
+    realLog(`    measured: a save of 120 pieces (40 orders) = ${plain.writes - 1} piece writes + 1 counter write + 120 reads + 40 events; saved again = 120 reads, 0 events (+1 counter write per op)`);
   });
 
   await check("timelineGet: the derivation's cost for one order", async () => {

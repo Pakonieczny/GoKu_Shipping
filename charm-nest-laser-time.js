@@ -116,14 +116,18 @@
     } catch (e) { return null; }
     finally { busy.delete(key); }
   }
-  // while a Laser person is signed in, what another computer did is read now and then (one small read every few minutes), so the next press already knows it
+  // while a Laser person is signed in, what another computer did is read now and then (one small read every few minutes), so the next press already knows it.
+  // A tab nobody is looking at presses nothing (FC2): it reads nothing while hidden, and the first look at it reads at once when the figure has gone stale.
   let watching = null;
+  const hiddenTab = () => { try { return !!(root.document && root.document.hidden); } catch (_) { return false; } };
+  function tick() {
+    try { if (hiddenTab()) return; const s = session(); if (!s || s.role !== "laser") return; const key = keyOf(s.person), m = mem.get(key); if (!busy.has(key) && !(m && nowMs() - (m.fetched || 0) < STALE_MS)) prepare(s.person); } catch (_) {}
+  }
   function watch() {
     if (watching || typeof setInterval !== "function") return;
-    watching = setInterval(() => {
-      try { const s = session(); if (!s || s.role !== "laser") return; const key = keyOf(s.person), m = mem.get(key); if (!busy.has(key) && !(m && nowMs() - (m.fetched || 0) < STALE_MS)) prepare(s.person); } catch (_) {}
-    }, WATCH_MS);
+    watching = setInterval(tick, WATCH_MS);
     if (watching && typeof watching.unref === "function") watching.unref();
+    try { if (root.document && typeof root.document.addEventListener === "function") root.document.addEventListener("visibilitychange", tick); } catch (_) {}
   }
   watch();
 

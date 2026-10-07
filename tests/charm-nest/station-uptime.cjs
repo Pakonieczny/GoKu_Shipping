@@ -45,7 +45,12 @@ section('sorter sweeps read completions and notes for the open orders only', asy
     this.api = { refreshOrders, restoreCompleted, completed: completedOrders, notes: () => staffNoteIDs, shown: () => currentReceipts.map(r => String(r.receipt_id)) };`, c);
   const { api } = c;
   await api.refreshOrders();                                    // the station's own Refresh button
-  assert(urls.some(u => /designCompleted=1/.test(u)) && urls.some(u => /staffNotes=1/.test(u)), "a person's Refresh still reads every completion and note");
+  assert(urls.some(u => /designCompleted=1/.test(u)), "a person's Refresh still reads every completion (the first of the page session)");
+  assert(!urls.some(u => /staffNotes=1/.test(u)), "...but no longer every staff note on record (FC3b): it asks about the orders the page lists");
+  { const askedNotes = urls.filter(u => /staffNotesFor=/.test(u)).map(u => new URL(u, 'http://x').searchParams.get('staffNotesFor').split(','));
+    assert(askedNotes.every(ids => ids.length <= 100), 'notes are asked about in chunks of at most 100 ids');
+    assert.deepEqual(askedNotes.flat().sort(), [...open].sort(), "the Refresh asks about every open order's note, and only those");
+    assert(api.notes().has('O3') && !api.notes().has('H9'), "the highlight is the same as the whole read gave for every order shown"); }
   assert(!api.shown().includes('C1') && api.shown().includes('O7x') === false && api.shown().includes('O1'));
   // since that read: O7 is completed at another bench, C1 is undone at another bench, L1 stays completed in this browser's ledger
   done.add('O7'); done.delete('C1'); urls = [];
@@ -205,7 +210,8 @@ section('the chat listener backs off to a minute and toasts once', async () => {
 /* ── 5 · the function answers per-order questions with bounded parallel "in" queries ── */
 section('firebaseOrders: dcFor and staffNotesFor run ten-id "in" queries five at a time', async () => {
   let inFlight = 0, most = 0, queries = 0, gets = 0;
-  const query = (ids, hit) => ({ get: async () => { queries++; inFlight++; most = Math.max(most, inFlight); await tick(); await tick(); inFlight--; return { docs: ids.filter(hit).map(id => ({ id, data: () => ({ 'Staff Note': 'call buyer' }) })) }; } });
+  const query = (ids, hit) => { const q = { get: async () => { queries++; inFlight++; most = Math.max(most, inFlight); await tick(); await tick(); inFlight--; return { docs: ids.filter(hit).map(id => ({ id, data: () => ({ 'Staff Note': 'call buyer' }) })) }; },
+    select: (...f) => { assert.ok(!f.length || (f.length === 1 && f[0] === 'Staff Note'), 'a field mask: staffNotesFor reads only the note, dcFor only the ids'); return q; } }; return q; };
   const where = hit => (field, op, ids) => { assert.equal(field, '__name__'); assert.equal(op, 'in'); assert(ids.length <= 10); return query(ids, hit); };
   const admin = { firestore: { FieldPath: { documentId: () => '__name__' } } }, parseIds = s => s.split(',').map(x => x.trim()).filter(Boolean);
   const ids = Array.from({ length: 100 }, (_, i) => String(i));

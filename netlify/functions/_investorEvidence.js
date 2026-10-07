@@ -419,7 +419,7 @@ async function sourceSpans({ documentVersionIds = [] } = {}) {
 
 /** Point-in-time company dossier. Unknown publication time never becomes
  *  backdated knowledge: such a document is eligible only from firstSeenAtMs. */
-async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, limit = 240, { admin = null } = {}) {
+async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, limit = 240, { admin = null, light = false } = {}) {
   const D=admin || A;
   const snap = await D.col(D.COL.documents).where("symbol", "==", symbol).get();
   const max = Number(decisionAtMs) || A.now();
@@ -442,7 +442,11 @@ async function documentsForCompany(symbol, decisionAtMs, lookbackDays = 180, lim
   const wanted = new Set(boundedRows.map((x) => x.documentId));
   /* One symbol query replaces one version query per document while retaining
      the newest version that was actually known by the decision timestamp. */
-  const versionSnap = await D.col(D.COL.versions).where("symbol", "==", symbol).get();
+  /* `light` (cost): the caller does not read the document text, only the ids, the accession numbers and when each version became known.
+     Every version of the symbol is read to find the newest known one, and each carries the whole canonical text (up to 120 KB), so a light
+     caller asks Firestore for the four small fields only; `canonicalText` then falls back to the document summary, which such a caller ignores. */
+  const versionQuery = D.col(D.COL.versions).where("symbol", "==", symbol);
+  const versionSnap = await (light && typeof versionQuery.select === "function" ? versionQuery.select("documentId", "versionId", "fetchedAtMs", "canonical_content_sha256") : versionQuery).get();
   const latest = new Map();
   versionSnap.forEach((v) => {
     const x = v.data(), seen = Number(x.fetchedAtMs);

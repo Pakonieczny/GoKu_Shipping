@@ -1196,7 +1196,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="charm-nest-progress.js"></script>
-<script src="order-timeline.js?v=20260929-cx-a"></script>
+<script src="order-timeline.js?v=20261007-fc4"></script>
 <script src="station-seals.js?v=20261005-s4a"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2939,6 +2939,7 @@ function purgeLedger() {
     a complete answer; a failed read keeps the orders already known to be done (clearing first used to leave only the
     local ledger's last 60 days, so older completed orders came back as open work). An order completed or undone here
     while the answer was on its way keeps its state here. */
+let __ledgerFullAt = 0;   // when this page last read the whole completion ledger (0: never). One whole read per page session at most; later Refreshes ask only about the open orders (syncCompletedFor), as the sorter's sweeps do
 async function restoreCompleted() {
   const touched = new Set();
   completedOrders.watchers.add(touched);
@@ -2951,6 +2952,7 @@ async function restoreCompleted() {
     completedOrders.watchers.delete(touched);
     [...completedOrders].forEach(id => { if (!next.has(id) && !touched.has(id)) completedOrders.delete(id); });
     next.forEach(id => { if (!touched.has(id)) completedOrders.add(id); });
+    __ledgerFullAt = Date.now();
     return true;
   } catch (e) {
     console.warn("restoreCompleted failed; keeping the completions already known:", e);
@@ -3092,20 +3094,15 @@ function wakeCompletionPolling() { __completeIdle = 0; }
    scopes writing to two different bindings, which is why the highlight never
    reflected server data. */
 
-/* mode "all" reads every note on record and is kept for a person's own Refresh. Sweeps ask only about the open orders
-   ({ ids }), in chunks; { merge: true } updates just those ids and keeps the rest (a search result). A failed read keeps
-   the notes already known. */
+/* mode "all" is for a person's own Refresh. It used to read every note on record (staffNotes=1: a billed read for each order that ever had a note, 3,372 on 7 Oct
+   2026 and growing; FC3b, Firebase cost). The highlight is only ever looked up for an order this page lists, so "all" now asks (staffNotesFor, in chunks) about every
+   order the page lists (the open orders, the current list, the search result) and every order it already flags: the same answer for everything shown, a read per
+   order listed. Sweeps ask only about the open orders ({ ids }), in chunks; { merge: true } updates just those ids and keeps the rest (a search result). A failed
+   read keeps the notes already known. */
 async function refreshStaffNoteIDs(opts = {}) {
   const mode = opts.mode || "visible";
   try {
-    if (mode === "all") {
-      const r = await fetch(`${FN}/firebaseOrders?staffNotes=1`);
-      const j = await r.json();
-      if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error((j && j.error) || "HTTP " + r.status);
-      staffNoteIDs = new Set(j.orderNumbers.map(String));
-      return;
-    }
-    const list = [...new Set((Array.isArray(opts.ids) ? opts.ids : visibleReceiptIds()).map(String))];
+    const list = [...new Set((mode === "all" ? staffNoteAskIds() : Array.isArray(opts.ids) ? opts.ids : visibleReceiptIds()).map(String))];
     if (!list.length) { if (!opts.merge) staffNoteIDs = new Set(); return; }
     const found = await askFirebaseOrders("staffNotesFor", list);
     if (opts.merge) { list.forEach(id => { if (found.has(id)) staffNoteIDs.add(id); else staffNoteIDs.delete(id); }); }
@@ -3114,6 +3111,7 @@ async function refreshStaffNoteIDs(opts = {}) {
     console.warn("refreshStaffNoteIDs error", e);
   }
 }
+const staffNoteAskIds = () => [...new Set([...allOpenReceipts, ...currentReceipts, ...((searchSnapshot && searchSnapshot.receipts) || [])].map(r => String(r.receipt_id)).concat([...staffNoteIDs]))];
 
 /* === 10b · INTERNAL MESSAGE FLAGS ======================================
    Which orders carry at least one message in Brites_Orders/{rid}/messages.
@@ -3871,13 +3869,50 @@ let __sweepInFlight = 0;   // an Etsy sweep in progress: the bridge refuses a co
 /* syncCompleted: the sorter's sweeps ask which of the fetched open orders are completed (syncCompletedFor) before any
    row is built, in place of the full read of every completion (restoreCompleted), which a person's own Refresh and the
    boot keep. allNotes: that same Refresh still reads every staff note; everything else asks about the open orders. */
-async function buildNewOrderList({ syncCompleted = false, allNotes = false } = {}) {
+/* SANDBOX ORDER STREAM (cost). The stream sweeps once per step: 0.6 s apart at 1000x. Each sweep asked the server again about
+   EVERY open order (finished? staff note?) and read every lock and claim again, so each step cost reads in proportion to the
+   whole open list (hundreds of orders) for nothing new. A stream sweep now asks only about the orders it has not asked
+   about yet, reads the locks as the delta its own poll reads (fetchLocksOnce), and does the full asks once every five
+   minutes. Between them the answers are the ones this page keeps itself: a completion or an undo made here, the completion
+   poll's delta, the lock poll's delta. Production's sweeps (every ten minutes) and a person's Refresh are unchanged. */
+const SB_FULL_MS = 5 * 60000;
+const sbSweep = { fullAt: 0, asked: new Set(), inc: false, since: 0 };
+function sbSweepBegin(stream) {
+  sbSweep.inc = false;
+  if (!(typeof SANDBOX !== "undefined" && SANDBOX && stream)) return false;
+  const now = Date.now();
+  if (!sbSweep.fullAt || now - sbSweep.fullAt >= SB_FULL_MS) { sbSweep.fullAt = now; sbSweep.asked.clear(); sbSweep.since = 0; return false; }
+  return sbSweep.inc = true;
+}
+/** The orders completed on record since the last stream sweep, whoever completed them (completedAt after the watermark, which
+    is the server's own clock at the last answer less two seconds): document ids only, no bytes, one read when nothing changed.
+    A completion made by another page of the sandbox is on this page the next step, as when every sweep asked about everyone.
+    first: only to learn the server's clock, before a full sweep. A failed read answers false (the next sweep is a full one). */
+async function sbCompletedDelta(first) {
+  try {
+    const r = await fetch(`${FN}/firebaseOrders?dcSince=${first || !sbSweep.since ? Date.now() - 10000 : sbSweep.since}`);
+    const j = await r.json();
+    if (!r.ok || !j || !j.success || !Array.isArray(j.orderNumbers)) return false;
+    j.orderNumbers.forEach(id => completedOrders.add(String(id)));
+    sbSweep.since = (Number(j.now) || Date.now()) - 2000;
+    return true;
+  } catch (_) { return false; }
+}
+async function buildNewOrderList({ syncCompleted = false, allNotes = false, stream = false } = {}) {
+  const inc = sbSweepBegin(stream); let fresh = null;
   if (allOpenReceipts.length === 0) {
     __sweepInFlight++;
     Activity.show("Loading open Etsy orders…");
     try {
       const raw = await fetchOpenOrdersSequential(n => Activity.msg(`Loading open Etsy orders… ${n}`));
-      if (syncCompleted) { Activity.msg("Checking which open orders are already done…"); await syncCompletedFor(raw.map(r => String(r.receipt_id))); }
+      if (inc) fresh = raw.map(r => String(r.receipt_id)).filter(id => !sbSweep.asked.has(id));
+      if (syncCompleted) {
+        Activity.msg("Checking which open orders are already done…");
+        if (stream && SANDBOX && !inc) await sbCompletedDelta(true);   // (a full stream sweep: the server's clock first, so the deltas after it miss nothing)
+        let ok = await syncCompletedFor(fresh || raw.map(r => String(r.receipt_id)));
+        if (ok && inc) ok = await sbCompletedDelta(false);
+        if (stream && SANDBOX && !ok) sbSweep.fullAt = 0;   // a failed read: the next stream sweep asks about everything again
+      }
       let fromCache = 0, needFetch = 0;
       raw.forEach(r => {
         const rid = String(r.receipt_id);
@@ -3903,7 +3938,8 @@ async function buildNewOrderList({ syncCompleted = false, allNotes = false } = {
 
   pruneStaleSelection();
   applyFilters({ rerender:true });
-  await refreshStaffNoteIDs(allNotes ? { mode:"all" } : { ids: allOpenReceipts.map(r => String(r.receipt_id)) });
+  if (inc && fresh) { await refreshStaffNoteIDs({ ids: fresh, merge: true }); fresh.forEach(id => sbSweep.asked.add(id)); }
+  else await refreshStaffNoteIDs(allNotes ? { mode:"all" } : { ids: allOpenReceipts.map(r => String(r.receipt_id)) });
   markStaffNoteOrders();
   refreshMessageFlags();
   Bridge.hooks.orders();
@@ -7504,21 +7540,24 @@ function wireQueueScroll() {
 /** The Refresh button's sequence: one sweep of Etsy's open list, then locks, heals and the selected previews. A person's
     own Refresh reads every completion and staff note on record; the sorter's sweeps (targeted) ask only about the open
     orders they fetched, so their cost does not grow with the shop's history. */
-async function refreshOrders({ heal = true, targeted = false } = {}) {
+async function refreshOrders({ heal = true, targeted = false, stream = false } = {}) {
   const bar = window.CNProgress ? CNProgress.start("Reading the open orders", { note: "asking Etsy" }) : null;
   try {
   abortAllUpdateWork();
   updateRunId++;
   allOpenReceipts = [];
   resetMessageFlags();          // a manual Refresh re-reads message flags
-  if (!targeted) {
+  // A person's own Refresh reads the whole completion ledger the FIRST time in this page session (as it always did); after that the set is
+  // already in memory and each Refresh only asks which of the open orders are completed on record (dcFor, exact for every order shown).
+  const wholeLedger = !targeted && !__ledgerFullAt;
+  if (wholeLedger) {
     if (bar) bar.note("orders already finished");
     await restoreCompleted();
   }
   if (bar) bar.note("the open orders");
-  await buildNewOrderList({ syncCompleted: targeted, allNotes: !targeted });
+  await buildNewOrderList({ syncCompleted: targeted || !wholeLedger, allNotes: !targeted, stream });
   if (bar) bar.note("who is working on what");
-  await fetchAllLocksOnce();
+  await (sbSweep.inc ? fetchLocksOnce() : fetchAllLocksOnce());   // (a stream sweep between two full ones reads the locks' delta)
   if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
     if (bar) bar.note("filling in what Etsy left out");
     await repairMissingReceiptData({ passes:1, concurrency:4 });
@@ -7689,10 +7728,8 @@ async function boot() {
   beginDeltaPolling();
   askPersistentStorage();
 
-  // Staff notes are read with the open orders (buildNewOrderList): nothing is listed before then.
-  try {
-    await restoreCompleted();
-  } catch (e) { console.warn("Boot index seed failed", e); }
+  // Staff notes and completions are read with the open orders (refreshOrders / buildNewOrderList): nothing is listed before then, so the
+  // boot no longer downloads the whole completion ledger (every completed order on record, one read each) for a list that is empty (Firebase cost, FC6).
 
   scheduleHealMissingLocks();
   applyFilters({ rerender:true });
@@ -8038,7 +8075,7 @@ const Bridge = (() => {
       if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       const calls0 = etsyMeter.total; let refreshSkipped = false;
       // the sandbox order stream checks every simulated ten minutes (12 s at 50x) and each check must see its step's orders
-      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); Cursor.glide("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false, targeted: true }); }
+      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); Cursor.glide("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false, targeted: true, stream: SANDBOX && !!a.stream }); }
       else { refreshSkipped = !!a.refresh; Cursor.glide("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));

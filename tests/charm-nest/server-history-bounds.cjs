@@ -186,9 +186,9 @@ function seedDay(i, extra = {}) {
 
   /* ── F8: the Library's set list reads the newest saved sets only ── */
   const sets = await readsOf(() => post({ op: 'setList', limit: 5 }));
-  assert.strictEqual(sets.r.body.sets.length, 5); assert(sets.reads.get('Charm_Nest_Sets') <= 15, 'setList reads ' + sets.reads.get('Charm_Nest_Sets'));
+  assert.strictEqual(sets.r.body.sets.length, 5); assert(sets.reads.get('Charm_Nest_Sets') <= 20, 'setList reads ' + sets.reads.get('Charm_Nest_Sets'));   // (3 x limit read for the fields that choose, then the 5 chosen read whole: FC2)
   const since = await readsOf(() => post({ op: 'setList', from: day(2), to: day(0) }));
-  assert.deepStrictEqual(since.r.body.sets.map(s => s.day).sort(), [day(2), day(1), day(0)].sort()); assert(since.reads.get('Charm_Nest_Sets') <= 10, 'bounded by date too');
+  assert.deepStrictEqual(since.r.body.sets.map(s => s.day).sort(), [day(2), day(1), day(0)].sort()); assert(since.reads.get('Charm_Nest_Sets') <= 15, 'bounded by date too');   // (the sets in the window, then the chosen ones whole: FC2)
 
   /* ── F11/F16: every append-only row carries its expiry ── */
   const now = Date.now();

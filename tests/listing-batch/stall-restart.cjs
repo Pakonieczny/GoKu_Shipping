@@ -47,6 +47,10 @@ const job = (batchName, n, extra = {}) => ({ batchName, docId: batchName, sessio
   sets: [set(n)], ...extra });
 const openai = (status, completed = 0, failed = 0, extra = {}) =>
   ({ status, request_counts: { total: 6, completed, failed }, ...extra });
+// Every write the handler makes to a job record carries `rev`: batch_list's small answers (what changed since the last read)
+// depend on it. Only writes made by the code under test pass through here, not the test's own stand-ins for OpenAI.
+const unmarked = [];
+const needRev = (coll, id, value) => { if (coll === "batches" && !value?.rev) unmarked.push(`${id}: ${Object.keys(value || {}).join(",")}`); };
 
 // One project: Firestore, storage and OpenAI fakes, and the real handler
 // branches dispatched through module.exports.handler as in production.
@@ -61,7 +65,7 @@ function world({ records = [], jobs = {}, files = [], hangCollect = [] } = {}) {
   const docRef = (coll, id) => ({ coll, id, get: async () => {
     const d = store.get(`${coll}/${id}`);
     return { id, exists: !!d, data: () => (d ? { ...d } : undefined) };
-  }, set: async (value, opts) => write(`${coll}/${id}`, value, opts) });
+  }, set: async (value, opts) => { needRev(coll, id, value); return write(`${coll}/${id}`, value, opts); } });
   const query = (coll, filters = []) => {
     const q = { where: (f, op, v) => query(coll, [...filters, [f, op, v]]), orderBy: () => q, limit: () => q,
       startAfter: () => q, select: () => q, get: async () => {
@@ -74,7 +78,7 @@ function world({ records = [], jobs = {}, files = [], hangCollect = [] } = {}) {
     return q;
   };
   const db = { collection: (coll) => ({ doc: (id) => docRef(coll, id), orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ docs: [] }) }) }) }), where: (f, op, v) => query(coll, [[f, op, v]]) }),
-    runTransaction: async (fn) => fn({ get: (ref) => ref.get(), set: (ref, value, opts) => write(`${ref.coll}/${ref.id}`, value, opts) }) };
+    runTransaction: async (fn) => fn({ get: (ref) => ref.get(), set: (ref, value, opts) => { needRev(ref.coll, ref.id, value); return write(`${ref.coll}/${ref.id}`, value, opts); } }) };
   const bucket = {
     getFiles: async ({ prefix }) => [[...bucketFiles].filter((name) => name.startsWith(prefix)).map((name) => ({ name }))],
     file: (name) => ({ name, exists: async () => [bucketFiles.has(name)], copy: async (dest) => {
@@ -451,5 +455,6 @@ function world({ records = [], jobs = {}, files = [], hangCollect = [] } = {}) {
     files:['listing-generator-1/Generated_Listing_Sets/Approved_Listing_Sets/Beady_Necklace_Set_62/Slot_1.png']});
   assert.equal((await archived.call({kind:'batch_restart_stalled',batchName:'batch_archive'})).protected,true,
     'archived approvals are also protected from collected cancellation recovery');
+  assert.deepEqual(unmarked, [], 'every write to a job record in these flows sets rev');
   console.log('Listing batch: 45-minute wait for a job OpenAI never started, collected cancellation recovery, paid-output reuse, missing-only restart, explicit stops and approval protection passed');
 })().catch((err) => { console.error(err); process.exitCode = 1; });

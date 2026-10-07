@@ -449,6 +449,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
   </div>
 </div>
 
+<script src="cn-poll.js?v=20261007-fc15"></script>
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
    BRITES STATION — SHARED SIGN-IN GATE  (behaviour)
@@ -2137,12 +2138,26 @@ function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(
     toast((e&&e.__offline?'No connection \u2014 #'+id+' was not saved to the cloud yet. It will need re-saving.':'Cloud save failed for #'+id+': '+e.message),'bad');
   })}
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
-async function hydrateFromStore(skipResume){
+/*  COST (FC19). The first read of a console is the whole list; every later one while a batch runs asks only for the
+    listings written since the last answer ({since: asOf}), so a poll costs the server one small query instead of the
+    whole collection. One read at a time (a slow older answer must not overwrite a newer one); the end of a run asks
+    for the whole list again (forceFull), and so does a server that does not know `since` (it answers without delta:true). */
+let hydrateChain=Promise.resolve();
+function hydrateFromStore(skipResume,forceFull){
+  const p=hydrateChain.catch(()=>{}).then(()=>hydrateOnce(skipResume,forceFull));
+  hydrateChain=p;return p;
+}
+async function hydrateOnce(skipResume,forceFull){
   try{
-    const {docs}=await fbCall({action:'getAll'});
-    S.prep=new Map(Object.entries(docs||{}));
+    const incremental=!forceFull&&S.prepAsOf>0&&S.prep instanceof Map&&S.prep.size>0;
+    const r=await fbCall(incremental?{action:'getAll',since:S.prepAsOf}:{action:'getAll'});
+    const docs=r.docs||{};
+    let changed;
+    if(incremental&&r.delta===true){changed=Object.entries(docs);for(const [id,d] of changed)S.prep.set(id,d)}
+    else{S.prep=new Map(Object.entries(docs));changed=[...S.prep]}
+    S.prepAsOf=Number(r.asOf)||0;
     let touched=false;
-    for(const [id,d] of S.prep){
+    for(const [id,d] of changed){
       const l=S.listings.find(x=>String(x.listing_id)===id);
       if(l&&d.health){l._health=d.health;l._scanned=true;touched=true}
       if(d.approval&&(!S.approvals[id]||Number(d.approval.at||0)>Number(S.approvals[id].at||0))){S.approvals[id]=d.approval;touched=true}
@@ -2382,24 +2397,40 @@ async function requeueBlocked(){
   renderPrepUi();renderBlockedPanel();
   toast(list.length+' listing'+(list.length===1?'':'s')+' returned to the batch queue.','ok');
 }
+/*  COST (FC19). The run poll asks the server every 3.5 s while a run is moving. It rests while the tab is hidden (the
+    next look at the tab polls at once) and slows to 15 s when the run is paused or has shown no progress for 90 s, so a
+    forgotten tab on a paused or dead run no longer reads all day. A click on Pause/Resume/Re-launch polls at once. */
+let pollWake=null;
+function pollRunLater(runId,ms){
+  clearTimeout(pollTimer);
+  pollTimer=setTimeout(()=>{
+    if(!document.hidden)return pollRun(runId);
+    pollWake=()=>{if(document.hidden)return;document.removeEventListener('visibilitychange',pollWake);pollWake=null;pollRun(runId)};
+    document.addEventListener('visibilitychange',pollWake);
+  },ms);
+}
 async function pollRun(runId){
   clearTimeout(pollTimer);
+  if(pollWake){document.removeEventListener('visibilitychange',pollWake);pollWake=null}
   try{
     const {run}=await fbCall({action:'getRun',run_id:runId});
     applyRunToUi(run);
     S._pollN=(S._pollN||0)+1;
     if(S._pollN%4===0&&['queued','running'].includes(run.status))hydrateFromStore(true);
-    if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),3500)}
+    if(['queued','running','paused'].includes(run.status)){
+      const quiet=run.status==='paused'||(run.updated_at&&(Date.now()-Number(run.updated_at))>90000);
+      pollRunLater(runId,quiet?15000:3500);
+    }
     else{
       S.currentRunId=null;
-      await hydrateFromStore(true);applyFilter();
+      await hydrateFromStore(true,true);applyFilter();
       renderPrepUi();
       toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
       // renderPrepUi()/hydrateFromStore have already run, so blockedEntries()
       // is accurate by the time this decides whether there is anything to read.
       maybeAutoClose(run);
     }
-  }catch(e){pollTimer=setTimeout(()=>pollRun(runId),6000)}
+  }catch(e){pollRunLater(runId,6000)}
 }
 async function launchBatchWorker(runId){
   const r=await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId})});
@@ -2454,6 +2485,7 @@ const ApiUsage=(()=>{
   let probeInFlight=false;
   let lastProbeAt=0;
   let lastUsageSnapshot=null;
+  let usageBad=false;
   // Endpoint capability, resolved once from a real 404 (never from a
   // transient network error, which must stay an error rather than
   // silently downgrading the source).
@@ -2537,14 +2569,13 @@ const ApiUsage=(()=>{
     return data;
   }
 
-  async function refreshApiUsage(){
-    if(refreshInFlight)return lastUsageSnapshot;
-    refreshInFlight=true;
+  // The paint half of a refresh: the same code whether the reading came from this tab's own request or from the shared poller
+  // (another tab of this computer made it). `data.__fetchedAt` lets a repaint of an older reading advance the server's clock.
+  function paintUsage(data){
     const widget=byId('apiWidget');
-    try{
-      const data=await readUsage();
-      lastUsageSnapshot=data;
-
+    lastUsageSnapshot=data;
+    usageBad=false;
+    {
       const used=Number(data.count||0);
       const budget=Number(data.budget||2500);
       const appPercent=budget>0?Math.round((used/budget)*100):0;
@@ -2571,7 +2602,7 @@ const ApiUsage=(()=>{
         setBar('awKeyBar',0,'');
       }
 
-      const now=Number(data.server_time||Date.now());
+      const now=data.__fetchedAt&&data.server_time?Number(data.server_time)+(Date.now()-Number(data.__fetchedAt)):Number(data.server_time||Date.now());
       const counterAge=data.count_since?now-Number(data.count_since):null;
       const headerAge=data.etsy_reported_at?now-Number(data.etsy_reported_at):null;
       const counterIsPartial=counterAge!=null&&counterAge>=0&&counterAge<20*3600000;
@@ -2607,8 +2638,12 @@ const ApiUsage=(()=>{
       info.classList.toggle('warnDot',counterIsPartial||headerIsStale||!!data.__viaStore||!!data.__unverified||!probeAvailable);
       widget.classList.remove('awUnavailable');
       widget.title='';
-      return data;
-    }catch(error){
+    }
+  }
+  function paintUsageFailure(error){
+    const widget=byId('apiWidget');
+    usageBad=true;
+    {
       /*  Blanking the widget mid-batch for a two-second network drop threw away
           a perfectly good reading and made it look like something had broken.
           A TRANSIENT failure now leaves the numbers exactly where they are and
@@ -2635,10 +2670,49 @@ const ApiUsage=(()=>{
         setBar('awAppBar',0,'bad');
         setBar('awKeyBar',0,'');
       }
+    }
+  }
+  async function refreshApiUsage(){
+    if(refreshInFlight)return lastUsageSnapshot;
+    refreshInFlight=true;
+    try{
+      const data=await readUsage();
+      paintUsage(data);
+      return data;
+    }catch(error){
+      paintUsageFailure(error);
       throw error;
     }finally{
       refreshInFlight=false;
     }
+  }
+
+  /*  The 15 s timer, as ONE shared poller per computer (cn-poll.js, FC15): the leader tab asks, every other tab of this
+      browser is painted from its answer; a hidden tab asks nothing and refreshes the moment it is shown; an unchanged
+      reading stretches the wait 15 s, 30 s, 45 s and any change (or a click) brings it back to 15 s. A reading that
+      differs only in the server's clock is "unchanged" (the signature below leaves it out); the tooltips' ages are kept
+      current by a local repaint that makes no request. After a failed read the next good one always repaints, so the
+      warning of a dropout never outlives the dropout. Without the helper the old 15 s timer runs.                       */
+  let usagePoll=null,usageFailed=false,usageRecoveries=0;   // (usageBad, above: the widget is showing a failure, so the local repaint leaves it alone)
+  const usageSignature=d=>[d.count,d.max_qps,d.qps_cap,d.budget,d.count_since,d.etsy_limit_per_day,d.etsy_remaining_today,d.etsy_reported_at,d.verified,d.__unverified||'',d.__viaStore?1:0].join('|');
+  function startUsagePolling(){
+    if(usagePoll)return usagePoll;
+    if(!window.CnPoll){setInterval(()=>{if(!document.hidden)refreshApiUsage().catch(()=>null)},15000);return null;}
+    usagePoll=CnPoll.create({
+      key:'etsy-usage:pricing-console',intervalMs:15000,maxIntervalMs:45000,idleAfter:1,
+      fetch:async()=>{
+        let data;
+        try{data=await readUsage();}catch(error){usageFailed=true;throw error;}
+        data.__fetchedAt=Date.now();
+        const sig=usageSignature(data)+(usageFailed?'|recovered'+(++usageRecoveries):'');
+        usageFailed=false;
+        return {status:200,etag:sig,body:data};
+      },
+      onData:paintUsage,
+      onError:paintUsageFailure
+    }).start();
+    setInterval(()=>{if(!document.hidden&&lastUsageSnapshot&&!usageBad)paintUsage(lastUsageSnapshot);},15000);
+    return usagePoll;
   }
 
   async function primeEtsyApiUsage(force=false){
@@ -2693,7 +2767,7 @@ const ApiUsage=(()=>{
     }
   }
 
-  return {refreshApiUsage,primeEtsyApiUsage};
+  return {refreshApiUsage,primeEtsyApiUsage,startUsagePolling};
 })();
 
 // Silent variants for timers/init — a transient outage must not spam toasts.
@@ -2725,7 +2799,7 @@ async function manualApiUpdate(){
 document.addEventListener('DOMContentLoaded',()=>primeEtsyApiUsage());
 window.addEventListener('focus',()=>primeEtsyApiUsage());
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)primeEtsyApiUsage()});
-setInterval(refreshApiUsage,15000);
+ApiUsage.startUsagePolling();   // (FC15: one shared poller per computer; a hidden tab asks nothing and reads at once when shown, as FC14 intended)
 setInterval(()=>{if(!document.hidden)primeEtsyApiUsage()},5*60*1000);
 function pushServerToken(){
   try{

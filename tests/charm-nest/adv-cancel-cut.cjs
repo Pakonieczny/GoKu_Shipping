@@ -149,6 +149,8 @@ const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1], [F, 6, 1]];
     await settle();
     assert((await view()).notices.includes(E), 'a notice for E');
     st.docs.delete(`${CANCELLED}/${E}`);
+    // (FC3b: the sorter learns of a restore from the cancel counter, which cancelRestore raises in the same commit as its delete; a bare delete is found only at the page's next deep read, within a minute)
+    st.put('Charm_Nest_Rev', 'cancel', { n: ((st.doc('Charm_Nest_Rev', 'cancel') || {}).n || 0) + 1 });
     await settle();
     v = await view();
     assert(!v.notices.includes(E) && v.notices.includes(F), 'restored elsewhere: its notice goes at the next check: ' + JSON.stringify(v.notices));
