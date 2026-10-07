@@ -277,6 +277,7 @@
     function handleScannedCode(codeText) {
       if (codeText === lastScanned) return;  // ignore repeat
       lastScanned = codeText;
+      try { if (window.StationFresh) window.StationFresh.touch(); } catch (_) {}   // station-fresh.js: a scan is somebody using the station
 
       if (audioUnlocked) playBeep();
 
@@ -560,5 +561,6 @@
       });
     });
   </script>
+<script src="station-fresh.js?v=20261007-fr1" data-quiet-ms="4000"></script><!-- station-fresh.js: one quiet reload to the newest deploy after somebody uses the station (Paul, 7 Oct 2026) -->
 </body>
 </html>
