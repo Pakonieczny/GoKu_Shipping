@@ -21,6 +21,15 @@ const assert = require('node:assert/strict'), path = require('node:path');
     await new Promise(r => setTimeout(r, 15));
     await call({ op: 'putSheet', sheet: { ...base, outputs: { preview }, saving: false } });
     assert((await row()).previewAt > saved.previewAt, 'a picture saved again has a new time');
+    // the short list of sources (what the Library's live read takes instead of the sources with their download links)
+    const link = 'https://firebasestorage.googleapis.com/v0/b/b/o/charmnest%2Fm.ai?alt=media&token=t';
+    await call({ op: 'putSheet', sheet: { ...base, sources: [{ id: 'pool:A', name: 'A (master)', hash: 'h1', path: 'charmnest/m.ai', url: link }, { id: 'pool:B', name: 'B (master)', url: link }], saving: false } });
+    const doc = srv.st.doc('Charm_Nest_Sheets', 'prev-sheet-1');
+    assert.deepEqual(doc.sourcesLite, [{ name: 'A (master)', hash: 'h1' }, { name: 'B (master)', hash: null }], 'a name and a hash of each source, no links');
+    assert.equal(doc.sources.length, 2, 'the sources themselves are kept as they were');
+    assert.deepEqual((await row()).sources, [{ name: 'A (master)', hash: 'h1' }, { name: 'B (master)', hash: null }]);
+    await call({ op: 'putSheet', sheet: { id: 'prev-sheet-1', sourcesLite: [{ name: 'forged' }], releaseFull: true } });
+    assert.equal(srv.st.doc('Charm_Nest_Sheets', 'prev-sheet-1').sourcesLite[0].name, 'A (master)', 'a page cannot write the short list on its own');
     console.log('Preview version OK: previewAt is the server\'s, stamped by the save that carries the picture only');
   } finally { srv.close && srv.close(); }
   process.exit(0);

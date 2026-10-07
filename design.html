@@ -1138,7 +1138,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<script src="order-timeline.js?v=20260929-cx-a"></script>
+<script src="order-timeline.js?v=20261007-fc4"></script>
 <script src="station-seals.js?v=20261005-s4a"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2511,6 +2511,9 @@ function purgeLedger() {
   } catch (_) {}
 }
 
+/* The whole completion ledger (every completed order on record, one read each) is read at most ONCE per page session, by the first Refresh; the boot no
+   longer reads it (nothing is listed before a Refresh) and later Refreshes ask only about the open orders (syncCompletedFor). Firebase cost, FC6. */
+let __ledgerFullAt = 0;
 async function restoreCompleted() {
   try {
     const res  = await fetch(`${FN}/firebaseOrders?designCompleted=1`);
@@ -2518,10 +2521,39 @@ async function restoreCompleted() {
     completedOrders.clear();
     if (json.success && Array.isArray(json.orderNumbers)) {
       json.orderNumbers.forEach(id => completedOrders.add(String(id)));
+      __ledgerFullAt = Date.now();
     }
     loadLocalCompleted().forEach(id => completedOrders.add(String(id)));
   } catch (e) {
     console.warn("restoreCompleted failed:", e);
+  }
+}
+
+/** Which of these open orders are completed on record (dcFor, 100 ids a request, two at a time): exact for every order shown. An order completed or
+    undone here while the answer was on its way keeps its state; a failed read keeps the set as it was. */
+async function syncCompletedFor(ids) {
+  ids = [...new Set((ids || []).map(String))];
+  if (!ids.length) return true;
+  const was = new Map(ids.map(id => [id, completedOrders.has(id)]));
+  try {
+    const found = new Set(), parts = [];
+    for (let i = 0; i < ids.length; i += 100) parts.push(ids.slice(i, i + 100));
+    const run = makeQueue(2);
+    await Promise.all(parts.map(part => run(async () => {
+      const r = await fetch(`${FN}/firebaseOrders?dcFor=${encodeURIComponent(part.join(","))}`);
+      const j = await r.json();
+      if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error("firebaseOrders dcFor: " + ((j && j.error) || "HTTP " + r.status));
+      j.orderNumbers.forEach(id => found.add(String(id)));
+    })));
+    const ledger = loadLocalCompleted();
+    for (const id of ids) {
+      if (completedOrders.has(id) !== was.get(id)) continue;   // completed or undone here meanwhile
+      if (found.has(id) || ledger.has(id)) completedOrders.add(id); else completedOrders.delete(id);
+    }
+    return true;
+  } catch (e) {
+    console.warn("Completion check for the open orders failed; keeping the completions already known:", e);
+    return false;
   }
 }
 
@@ -3366,7 +3398,7 @@ function revealOrder(rid, { flash = true } = {}) {
  * Only receipts that are NEW, or that Etsy reports as CHANGED, cost a detail
  * call — and those happen lazily as the operator scrolls.
  */
-async function buildNewOrderList() {
+async function buildNewOrderList({ syncCompleted = false } = {}) {
   if (allOpenReceipts.length === 0) {
     Activity.show("Loading open Etsy orders…");
     try {
@@ -3387,6 +3419,7 @@ async function buildNewOrderList() {
         decorateReceipt(r);
       });
       allOpenReceipts = raw;
+      if (syncCompleted) await syncCompletedFor(raw.map(r => String(r.receipt_id)));   // (a later Refresh: only the open orders are asked about)
       console.log(`Open orders: ${raw.length} · ${fromCache} from cache · ${needFetch} need a detail call`);
       window.__lastLoadStats = { total: raw.length, fromCache, needFetch };
     } finally { Activity.hide(); }
@@ -6805,8 +6838,9 @@ function wireUI() {
       updateRunId++;
       allOpenReceipts = [];
       resetMessageFlags();          // a manual Refresh re-reads message flags
-      await restoreCompleted();
-      await buildNewOrderList();
+      const wholeLedger = !__ledgerFullAt;     // the first Refresh of this page session reads the whole ledger (as always); later ones ask only about the open orders
+      if (wholeLedger) await restoreCompleted();
+      await buildNewOrderList({ syncCompleted: !wholeLedger });
       await fetchAllLocksOnce();
       if (SETTINGS.autoHeal) {
         await repairMissingReceiptData({ passes:1, concurrency:4 });
@@ -6945,10 +6979,7 @@ async function boot() {
   startCompletionPolling();
   beginDeltaPolling();
 
-  try {
-    await restoreCompleted();
-    await refreshStaffNoteIDs({ mode:"all" });
-  } catch (e) { console.warn("Boot index seed failed", e); }
+  // (no list is shown before the first Refresh, which reads the completions and every staff note itself: the boot no longer downloads them for nothing — Firebase cost, FC6)
 
   scheduleHealMissingLocks();
   applyFilters({ rerender:true });

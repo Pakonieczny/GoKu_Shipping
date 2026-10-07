@@ -334,6 +334,23 @@ let groups = 0; const ok = n => { groups++; console.log("  ok  " + n); };
     ok("ETag-less server, custom fetch (revision first), throwing callback, stop()");
   }
 
+  // ── 12b. steps: an existing schedule is kept exactly; a change goes back to step 0; errors are relayed to followers ───────────
+  {
+    const w = makeWorld(), t = makeTab(w, "a"); t.poll({ steps: [1000, 2000, 4000] }).start();
+    await w.advance(20000);
+    const ts = w.calls.map(c => c.t), gaps = ts.slice(1).map((x, i) => Math.round((x - ts[i]) / 1000));
+    assert.deepEqual(gaps.slice(0, 6), [1, 2, 4, 4, 4, 4], "steps " + gaps);
+    w.rev = 9; await w.advance(4200); const after = w.calls.slice(-3).map(c => c.t), g2 = after.slice(1).map((x, i) => Math.round((x - after[i]) / 1000));
+    assert.equal(t.data[t.data.length - 1].rev, 9); assert.ok(g2.some(g => g <= 2), "a change goes back to the first steps: " + g2);
+    t.p.stop();
+    // errors reach the followers (relayed flag, status and plain properties) so every tab can show the failure
+    const w2 = makeWorld(), a = makeTab(w2, "a"), b = makeTab(w2, "b"); a.poll().start(); b.poll().start(); await w2.advance(4000);
+    w2.serverFn = () => new Response("nope", { status: 503 }); await w2.advance(7000);
+    const lead = a.p.state().leader ? a : b, fol = lead === a ? b : a;
+    assert.ok(lead.errors.length >= 1 && !lead.errors[0].relayed); assert.ok(fol.errors.length >= 1 && fol.errors[0].relayed === true && fol.errors[0].status === 503, "follower told of the failure");
+    a.p.stop(); b.p.stop(); ok("steps keep an existing cadence; failures are relayed to followers");
+  }
+
   // ── 13. numbers for the findings: ten tabs for an hour, today versus the helper ───────────────────────────────────────────────
   {
     const hour = 3600000, rows = [];
