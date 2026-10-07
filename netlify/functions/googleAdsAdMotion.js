@@ -590,7 +590,7 @@ function createMotionService(D){
   }return out;
  }
  async function status(input,reviewScope=null){
-  const loaded=await D.context(input.workspaceId),ref=loaded.ref,w=reviewScope?{...loaded.w,context:reviewScope.context,settings:{...loaded.w.settings,productId:reviewScope.productId,groupRef:reviewScope.groupRef}}:loaded.w;scope(w,input);let job,workspaceId=input.workspaceId;
+  const loaded=await D.context(input.workspaceId,{products:false}),ref=loaded.ref,w=reviewScope?{...loaded.w,context:reviewScope.context,settings:{...loaded.w.settings,productId:reviewScope.productId,groupRef:reviewScope.groupRef}}:loaded.w;scope(w,input);let job,workspaceId=input.workspaceId;
   if(input.jobId){const s=await jobs(ref).doc(input.jobId).get();job=s.exists?s.data():null;}
   else{const rows=await jobs(ref).get();job=rows.docs.map(d=>d.data()).filter(j=>j.productId===input.productId&&j.groupRef===input.groupRef&&!j.resetAt).sort((a,b)=>b.createdAt-a.createdAt)[0];}
   // A Google publication creates a new design version. Its existing paid films

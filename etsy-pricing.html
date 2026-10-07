@@ -2667,7 +2667,7 @@ const ApiUsage=(()=>{
   const usageSignature=d=>[d.count,d.max_qps,d.qps_cap,d.budget,d.count_since,d.etsy_limit_per_day,d.etsy_remaining_today,d.etsy_reported_at,d.verified,d.__unverified||'',d.__viaStore?1:0].join('|');
   function startUsagePolling(){
     if(usagePoll)return usagePoll;
-    if(!window.CnPoll){setInterval(()=>{refreshApiUsage().catch(()=>null)},15000);return null;}
+    if(!window.CnPoll){setInterval(()=>{if(!document.hidden)refreshApiUsage().catch(()=>null)},15000);return null;}
     usagePoll=CnPoll.create({
       key:'etsy-usage:pricing-console',intervalMs:15000,maxIntervalMs:45000,idleAfter:1,
       fetch:async()=>{
@@ -2769,7 +2769,7 @@ async function manualApiUpdate(){
 document.addEventListener('DOMContentLoaded',()=>primeEtsyApiUsage());
 window.addEventListener('focus',()=>primeEtsyApiUsage());
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)primeEtsyApiUsage()});
-ApiUsage.startUsagePolling();
+ApiUsage.startUsagePolling();   // (FC15: one shared poller per computer; a hidden tab asks nothing and reads at once when shown, as FC14 intended)
 setInterval(()=>{if(!document.hidden)primeEtsyApiUsage()},5*60*1000);
 function pushServerToken(){
   try{

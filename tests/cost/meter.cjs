@@ -310,6 +310,7 @@ function createDb(M) {
       endAt(...v) { return Query(colPath, group, Object.assign({}, st, { end: { v, incl: true } })); },
       endBefore(...v) { return Query(colPath, group, Object.assign({}, st, { end: { v, incl: false } })); },
       _run() {
+        if (M.queryGuard) M.queryGuard({ col: colPath, group, filters: st.filters, order: st.order });
         let list = [...docs.keys()].filter(p => group ? idOf(colOfPath(p)) === colPath && depth(p) % 2 === 0 : colOfPath(p) === colPath);
         const val = (p, f) => (f && f.__docId) ? idOf(p) : getPath(docs.get(p), f);
         for (const [f, op, v] of st.filters) list = list.filter(p => {
@@ -433,6 +434,24 @@ function wrapRoot(db, M) {
   return new Proxy(w, { get(t, p) { if (['seed', 'dump', 'has', 'size', 'docs'].includes(p)) return db[p]; return t[p]; } });
 }
 
+/* A production Firestore refuses a query that needs a composite index the project does not have; the fallback paths in the code
+   (catch, then scan the whole collection) are then what actually runs and what the invoice shows. Switch it on with
+   m.queryGuard = meter.missingCompositeIndex(['EtsyMail_Threads|status,salesCompletedAt']) : a filter plus an orderBy on another
+   field, or an inequality (!=, <, >, not-in) plus an orderBy on another field, throws 9 FAILED_PRECONDITION unless listed. */
+function missingCompositeIndex(allowed) {
+  const ok = new Set(allowed || []);
+  return q => {
+    const ofields = q.order.map(([f]) => String(f)).filter(f => f !== '[object Object]');
+    const ffields = q.filters.map(([f]) => String(f));
+    const ineq = q.filters.filter(([, op]) => ['!=', '<', '<=', '>', '>=', 'not-in'].includes(op)).map(([f]) => String(f));
+    const needs = (q.filters.length && ofields.some(f => !ffields.includes(f))) || ineq.some(f => ofields.length && ofields[0] !== f);
+    if (!needs) return;
+    const key = q.col + '|' + [...new Set(ffields.concat(ofields))].join(',');
+    if (ok.has(key)) return;
+    const e = new Error('9 FAILED_PRECONDITION: The query requires an index (' + key + ')'); e.code = 9; throw e;
+  };
+}
+
 /* ═════════════════════ in-memory Storage bucket (counts bytes in and out) ═════════════════════ */
 function createStorage(M) {
   const files = new Map();
@@ -472,4 +491,4 @@ function install(M, extra) {
   return admin;
 }
 
-module.exports = { create, wrap: (db, M, label) => { M._als = M._als || new AsyncLocalStorage(); return wrap(db, M, label); }, createDb, perHour, assertMax, cost, sizeOf, PRICES, Timestamp, FieldValue, FieldPath, GIB };
+module.exports = { create, missingCompositeIndex, wrap: (db, M, label) => { M._als = M._als || new AsyncLocalStorage(); return wrap(db, M, label); }, createDb, perHour, assertMax, cost, sizeOf, PRICES, Timestamp, FieldValue, FieldPath, GIB };
