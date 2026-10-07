@@ -1,4 +1,4 @@
-// PS1: the Partial Sheet button and panel in the Options menu of the Rose Gold, 14K Gold and 10K Gold sheet cards (charm-nest-partial-ui.js),
+// PS1: the Partial sheets card of the Options window (the Options Studio) of the Rose Gold, 14K Gold and 10K Gold sheet cards (charm-nest-partial-ui.js),
 // in jsdom, with the page's own Gate (charm-nest-bridge.js renderRelease) and a fake data layer (PartialSheets, PS3) and engine (PartialNest, PS2).
 // Needs jsdom (not installed everywhere): the test says so and passes nothing when it is missing.
 //   node tests/charm-nest/partial-panel.cjs
@@ -20,6 +20,7 @@ const card = (metal, id, o = {}) => ({ id, metal, status: 'available', outline: 
   sourceSheet: 'Sheet 2', sourceSet: 'Set 4', cutAt: Date.now() - 5 * 864e5, cutBy: 'Ana', lastUsedAt: Date.now() - 5 * 864e5, lastUsedBy: '', lastUsedSheet: '', estimate: { pieces: 7, low: 5, high: 9 }, ...o });
 
 async function run(metal, word) {
+  const doc = () => dom.window.document;
   const dom = new JSDOM('<section id="sheet"><div class="shHead"></div><div class="shGate" data-r="gate"></div><div class="shPreviewWrap"></div></section>', { url: 'https://example.test', runScripts: 'outside-only' }), w = dom.window;
   w.IntersectionObserver = class { observe() { } unobserve() { } };
   w.CharmNestRose = R; w.CharmNestOrders = O; w.confirm = () => true; w.Motion = { reduced: () => true };
@@ -53,19 +54,17 @@ async function run(metal, word) {
     async preview(s, ids, o) { calls.push(['preview', ids.join('+')]); if (o && o.onStep) o.onStep({ text: 'Trying the pieces on the partial sheet…' }); if (previewGate) await new Promise(r => { previewRelease = r; }); return ids.length === 2 ? answers.two : ids[0] === 'p-new' ? answers.one : answers.all; },
     async seat(s, ids, o) { calls.push(['seat', ids.join('+'), !!o.confirmed]); o.onStep({ key: 'claim' }); o.onStep({ key: 'nest' }); return { ok: true, moved: 3, continues: 0 }; } };
   let timers = 0; const setInt = w.setInterval; w.setInterval = (...a) => { timers++; return setInt.apply(w, a); };
-  w.eval(fs.readFileSync('charm-nest-partial-ui.js', 'utf8')); w.Gate.renderCard(sh);
+  w.eval(fs.readFileSync('charm-nest-partial-ui.js', 'utf8')); w.eval(fs.readFileSync('charm-nest-options-modal.js', 'utf8')); w.Gate.renderCard(sh);
+  const studioOpen = () => w.OptionsStudio.isOpen(metal), gate = sh.el.querySelector('.shGate'), opener = gate.querySelector('.sheetOptionsBtn');
 
-  // 1. the button is in this metal's Options; nothing is read until it is pressed
-  const menu = sh.el.querySelector('.solidOptions'), sec = menu.querySelector('[data-solid="partial"]');
-  assert(sec && sec.querySelector('[data-ps="open"]').textContent === 'Partial Sheet', word + ': a Partial Sheet button in Options');
-  assert.match(sec.querySelector('[data-ps="sum"]').textContent, /reused automatically/);
-  assert.equal(calls.length, 0, 'drawing Options reads nothing');
-  const details = sh.el.querySelector('.sheetOptions'), view = menu.querySelector('.psView'); details.open = true;
-  assert(view.hidden, 'the panel is closed until asked for');
+  // 1. the card is in this metal's controls box (the Options window mounts it); nothing is read until the window is opened
+  const menu = gate._optBox, view = menu.querySelector('.psView');
+  assert(view && view.classList.contains('osCard') && view.dataset.card === 'partial', word + ': the Partial sheets card is in Options');
+  assert.equal(calls.length, 0, 'drawing Options reads nothing'); assert(!studioOpen());
 
   // 2. open: ONE list call for this metal, a labelled spinner while it reads, then only this metal's available cards, newest used first
-  listGate = true; sec.querySelector('[data-ps="open"]').click();
-  assert(!view.hidden && menu.classList.contains('psOn'), 'opens inside the same Options popover (no second pop-up)');
+  listGate = true; opener.click();
+  assert(studioOpen() && doc().querySelector('dialog.osDlg').contains(view), 'one large window holds the card (no second pop-up, no sub view)');
   assert.deepEqual(calls.filter(c => c[0] === 'list'), [['list', metal, false]], 'one list call, for this metal');
   assert.match(view.querySelector('[data-ps="list"] .psBusy').textContent, new RegExp('Reading the ' + word + ' partial sheets'));
   release(); await until(() => view.querySelectorAll('.psCard').length);
@@ -89,7 +88,7 @@ async function run(metal, word) {
   const ask = view.querySelector('.psAsk').textContent;
   assert.match(ask, /2 of the 3 pieces on Sheet 1 fit on this partial sheet \(1 do not\)/); assert.match(ask, /continue on the next partial sheet/); assert.match(ask, /Next in line: Sheet 2 · Set 4/);
   assert(view.querySelector('[data-ps="add"]'), 'more partial sheets can take the rest, with no limit');
-  view.querySelector('[data-ps="cancel"]').click(); assert(!view.querySelector('.psAsk') && !calls.some(c => c[0] === 'seat' || c[0] === 'policy') && details.open, 'Cancel changes nothing and leaves Options as it was');
+  view.querySelector('[data-ps="cancel"]').click(); assert(!view.querySelector('.psAsk') && !calls.some(c => c[0] === 'seat' || c[0] === 'policy') && studioOpen(), 'Cancel changes nothing and leaves Options as it was');
 
   // 4. the chain: Add another partial sheet, the second pick asks about both together, Use these 2 hands over both, in order
   view.querySelector('.psCard[data-id="p-new"]').click(); await until(() => view.querySelector('[data-ps="add"]'));
@@ -101,26 +100,26 @@ async function run(metal, word) {
 
   // 5. Esc: the first cancels the answer, the second closes Options as it always does
   const esc = el => el.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  esc(view.querySelector('.psCard')); assert(!view.querySelector('.psAsk') && details.open, 'first Esc cancels the answer only');
-  esc(view.querySelector('.psCard')); assert(!details.open && !w.Gate.state().optionsOpen[metal], 'second Esc closes the Options panel');
-  await wait(10); assert(view.hidden, 'and the panel view with it');
+  esc(view.querySelector('.psCard')); assert(!view.querySelector('.psAsk') && studioOpen(), 'first Esc cancels the answer only');
+  esc(view.querySelector('.psCard')); await until(() => !studioOpen()); assert(!w.Gate.state().optionsOpen[metal], 'second Esc closes the Options window');
+  assert(menu.hidden && gate.contains(menu), 'and the card goes home with the controls');
 
   // 6. reopen (one more list call per open, never a timer), pick, Use this one: handed to the engine as confirmed, the panel closes, the person is told
-  listGate = false; details.open = true; sec.querySelector('[data-ps="open"]').click(); await until(() => view.querySelectorAll('.psCard').length === 2 && calls.filter(c => c[0] === 'list').length === 2);
+  listGate = false; opener.click(); await until(() => view.querySelectorAll('.psCard').length === 2 && calls.filter(c => c[0] === 'list').length === 2);
   view.querySelector('.psCard[data-id="p-old"]').click(); await until(() => view.querySelector('[data-ps="use"]'));
   view.querySelector('[data-ps="use"]').click(); await until(() => calls.some(c => c[0] === 'seat'));
-  assert.deepEqual(calls.find(c => c[0] === 'seat'), ['seat', 'p-old', true]); await until(() => !details.open);
-  assert(view.hidden, 'the panel closed on the work'); await until(() => calls.some(c => c[0] === 'changed')); // the data layer is told the partial sheet was used
+  assert.deepEqual(calls.find(c => c[0] === 'seat'), ['seat', 'p-old', true]); await until(() => !studioOpen());
+  assert(menu.hidden, 'the window closed on the work'); await until(() => calls.some(c => c[0] === 'changed')); // the data layer is told the partial sheet was used
   await until(() => toasts.some(t => /3 pieces seated/.test(t[0]))); assert.equal(toasts.find(t => /seated/.test(t[0]))[1], 'ok');
 
   // 7. a sheet the engine says cannot move (already cut) says why, in words, and asks the engine nothing
-  details.open = true; sec.querySelector('[data-ps="open"]').click(); await until(() => view.querySelectorAll('.psCard').length === 2);
+  opener.click(); await until(() => view.querySelectorAll('.psCard').length === 2);
   lock = 'Sheet 1 is already cut, so it stays on the sheet it was cut from.'; w.Gate.renderCard(sh); const before = calls.filter(c => c[0] === 'preview').length;
   view.querySelector('.psCard').click(); assert.equal(calls.filter(c => c[0] === 'preview').length, before); assert.equal(toasts.slice(-1)[0][1], 'bad'); assert.match(view.querySelector('[data-ps="list"]').textContent, /already cut/); lock = '';
 
   // 8. the rule: automatic reuse, or a brand new sheet at a size the person sets (5 to 500 mm, the Sheet dimensions conventions)
-  const radios = [...view.querySelectorAll('.psRadio input')]; assert.deepEqual(radios.map(r => r.value), ['auto', 'new']); assert(radios[0].checked);
-  assert.match(view.querySelector('.psPolicy').textContent, /Reuse partial sheets automatically/); assert.match(view.querySelector('.psPolicy').textContent, /Offer a brand new sheet and let me set its size/);
+  const radios = [...view.querySelectorAll('.psRadio input[type=radio]')]; assert.deepEqual(radios.map(r => r.value), ['auto', 'new']); assert(radios[0].checked);
+  assert.match(view.querySelector('.psPolicy').textContent, /Reuse automatically/); assert.match(view.querySelector('.psPolicy').textContent, /Offer a brand new sheet/);
   assert(view.querySelector('[data-ps="size"]').hidden, 'no size field while partial sheets are reused');
   radios[1].checked = true; radios[1].dispatchEvent(new w.Event('change', { bubbles: true })); await until(() => calls.some(c => c[0] === 'setPolicy'));
   assert.deepEqual(calls.find(c => c[0] === 'setPolicy'), ['setPolicy', metal, 'new', 100, 50]); assert(!view.querySelector('[data-ps="size"]').hidden, 'the size fields appear');
@@ -129,13 +128,13 @@ async function run(metal, word) {
   assert.equal(calls.length, n0, 'a size outside 5 to 500 is refused before anything is saved'); assert.equal(toasts.slice(-1)[0][0], 'Use a width and height between 5 and 500 mm');
   wIn.value = '120.5'; hIn.value = '60'; await until(() => !view.querySelector('[data-ps="polsave"]').disabled); view.querySelector('[data-ps="polsave"]').click(); await until(() => calls.filter(c => c[0] === 'setPolicy').length === 2);
   assert.deepEqual(calls.filter(c => c[0] === 'setPolicy')[1], ['setPolicy', metal, 'new', 120.5, 60]);
-  await until(() => /120\.5 × 60 mm/.test(sec.querySelector('[data-ps="sum"]').textContent)); assert.match(sec.querySelector('[data-ps="sum"]').textContent, /120\.5 × 60 mm/);
+  await until(() => view.querySelector('[data-ps="polsave"]') && !view.querySelector('[data-ps="polsave"]').disabled && +wIn.value === 120.5); assert.equal(+hIn.value, 60, 'the size is kept in the card');
 
   // 9. the chain strip on the sheet card: 1, 2, 3 ... with the sheets' names, no limit; hidden again when no sheet sits on a partial sheet
   chain = [1, 2, 3, 4, 5, 6].map(i => ({ sheetId: 's' + i, label: 'Sheet ' + i, partialId: 'p' + i, placed: i, state: i < 6 ? 'full' : 'open', page: i, wMm: 60, hMm: 50 }));
-  w.Gate.renderCard(sh); const strip = sh.el.querySelector('.psChain'); assert(strip && !strip.hidden, 'the chain strip shows on the card');
+  w.Gate.renderCard(sh); const cardStrip = () => [...sh.el.querySelectorAll('.psChain')].find(x => !x.dataset.ps), strip = cardStrip(); assert(strip && !strip.hidden, 'the chain strip shows on the card');
   assert.deepEqual([...strip.querySelectorAll('.psChip .n')].map(n => n.textContent), ['1', '2', '3', '4', '5', '6'], 'six partial sheets, no limit'); assert(!strip.classList.contains('few'), 'a long chain shows 1, 2, 3 ... only');
-  chain = []; w.Gate.renderCard(sh); assert(sh.el.querySelector('.psChain').hidden);
+  chain = []; w.Gate.renderCard(sh); assert(cardStrip().hidden);
 
   // 10. nothing ticked on a timer, no other metal's list was ever read
   assert.equal(timers, 0, 'no setInterval: the panel never polls'); assert(calls.filter(c => c[0] === 'list').every(c => c[1] === metal), 'only this metal was read');
@@ -145,5 +144,5 @@ async function run(metal, word) {
   await run('rose', 'Rose Gold');
   await run('gold14k', '14K Gold');
   await run('gold10k', '10K Gold');
-  console.log('partial-panel: ok (Partial Sheet button in Options for RG, 14K and 10K; one list call per open; cards: true-scale picture, size, estimate, last use, newest first, own metal only; answer in words with Use this one / Cancel; chain of partial sheets; Esc; rule and size; chain strip; no polling; Library Leftover view gone)');
+  console.log('partial-panel: ok (the Partial sheets card of the Options window for RG, 14K and 10K; one list call per open; cards: true-scale picture, size, estimate, last use, newest first, own metal only; answer in words with Use this one / Cancel; chain of partial sheets; Esc; rule and size; chain strip; no polling; Library Leftover view gone)');
 })().catch(e => { console.error(e); process.exit(1); });

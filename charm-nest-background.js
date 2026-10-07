@@ -4,7 +4,7 @@
   const pending=new Map();let pointer=false,until=0,timer=0;
   const active=()=>pointer||performance.now()<until||!!root.Seal?.busy?.();
   function flush(){clearTimeout(timer);timer=0;if(active()){timer=setTimeout(flush,80);return;}const work=[...pending.values()];pending.clear();for(const fn of work)fn();}
-  function touch(e){if(e.target?.closest?.('.placementThumb,canvas,input,textarea,select,.sheetOptions')){until=performance.now()+220;clearTimeout(timer);timer=setTimeout(flush,240);}}
+  function touch(e){if(e.target?.closest?.('.placementThumb,canvas,input,textarea,select,.sheetOptions,.osDlg')){until=performance.now()+220;clearTimeout(timer);timer=setTimeout(flush,240);}}
   document.addEventListener('pointerdown',e=>{touch(e);if(e.target?.closest?.('.placementThumb,canvas'))pointer=true;},true);
   for(const event of ['pointerup','pointercancel'])document.addEventListener(event,e=>{pointer=false;touch(e);clearTimeout(timer);timer=setTimeout(flush,240);},true);
   root.addEventListener('blur',()=>{pointer=false;until=0;flush();});

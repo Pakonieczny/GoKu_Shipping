@@ -285,9 +285,9 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
       return { ctx, page, errors, layout };
     };
     const press = async (page, kind) => {
-      await page.click(`${card} .sheetOptions > summary`);
-      await page.click(`${card} [data-solid="merge-${kind}"]`);
-      await page.click(`${card} [data-solid="merge-go"]`);
+      await page.click(`${card} .sheetOptionsBtn`);
+      await page.click(`dialog.osDlg [data-solid="merge-${kind}"]`);
+      await page.click(`dialog.osDlg [data-solid="merge-go"]`);
     };
     const leftovers = page => page.evaluate(() => ({ live: Gate.mergeFx().live, layer: document.querySelectorAll('.mergeFx, [class*="mergeFx"]').length,
       hiding: [...document.querySelectorAll('style')].some(s => s.textContent.includes('[data-r="queue"] img[data-cid')),
@@ -297,9 +297,9 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
       {
         const { ctx, page, errors, layout } = await open(false);
         await press(page, 'move');
-        const during = await page.evaluate(() => ({ open: !!document.querySelector('.sheetCard[data-m="gold14k"] .sheetOptions[open]'),
+        const during = await page.evaluate(() => ({ open: !!document.querySelector('dialog.osDlg[open]'),
           stage: document.querySelector('.sheetCard[data-m="gold14k"] [data-r="stage"]').textContent,
-          size: document.querySelector('.sheetCard[data-m="gold14k"] [data-solid="size-help"]').textContent }));
+          size: (document.querySelector('dialog.osDlg [data-solid="size-help"]') || document.querySelector('.sheetCard[data-m="gold14k"] [data-solid="size-help"]')).textContent }));
         assert.equal(during.open, false, 'the Options panel closes first: the sheet is in full view');
         assert.match(during.stage, /^Merge · /, "the card's own line says what the merge does");
         assert.equal(during.size, 'Wait until the merge finishes.', 'the size waits for the merge, and says so');

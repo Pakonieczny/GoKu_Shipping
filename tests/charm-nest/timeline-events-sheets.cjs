@@ -87,14 +87,14 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
 
     /* ── 1 · Include Sheet 1 in the current set, then take it out again ── */
     {
-      await page.click(`${card} .sheetOptions > summary`);
-      const inAction = await page.evaluate(() => { const before = window.__tl.length; document.querySelector('.sheetCard[data-m="gold14k"] [data-solid="include"]').click(); return window.__tl.length - before; });
+      await page.click(`${card} .sheetOptionsBtn`);
+      const inAction = await page.evaluate(() => { const before = window.__tl.length; document.querySelector('dialog.osDlg [data-solid="include"]').click(); return window.__tl.length - before; });
       assert.equal(inAction, 0, 'nothing is recorded inside the action itself: it waits for the page to be idle');
       await settle();
       const inc = await events('included');
       assert.deepEqual(ids(inc), sheet1, 'included: each order on Sheet 1'); onceEach(inc, e => e.orderId, 'included');
       assert(inc.every(e => e.by === 'Tester' && e.sheet === '14K Sheet 1' && e.sheetId === 'gold14k-t1' && e.data.metal === 'gold14k' && e.data.pieces === 1 && /^\d+_\d+$/.test(e.lineKey) && e.id), 'with who and where: ' + JSON.stringify(inc[0]));
-      await page.click(`${card} [data-solid="include"]`);
+      await page.click(`dialog.osDlg [data-solid="include"]`);
       await settle();
       const exc = await events('excluded');
       assert.deepEqual(ids(exc), sheet1, 'excluded: each order on Sheet 1'); onceEach(exc, e => e.orderId, 'excluded');
@@ -108,9 +108,9 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
 
     /* ── 2 · Merge sheets → Move all onto Sheet 1 ── */
     {
-      if (!(await page.isVisible(`${card} [data-solid="merge-move"]`))) await page.click(`${card} .sheetOptions > summary`);
-      await page.click(`${card} [data-solid="merge-move"]`);
-      await page.click(`${card} [data-solid="merge-go"]`);
+      if (!(await page.isVisible(`dialog.osDlg [data-solid="merge-move"]`))) await page.click(`${card} .sheetOptionsBtn`);
+      await page.click(`dialog.osDlg [data-solid="merge-move"]`);
+      await page.click(`dialog.osDlg [data-solid="merge-go"]`);
       await page.waitForFunction(() => CN.pagesOf('gold14k').length === 1 && CN.pagesOf('gold14k')[0].placements.length === 10 && CN.pagesOf('gold14k')[0].persistedDone && !Gate.mergeFx().live, null, { timeout: 15000 });
       await settle();
       const merged = await events('merged');
@@ -123,9 +123,9 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
 
     /* ── 3 · Apply size ── */
     {
-      if (!(await page.isVisible(`${card} [data-solid="w"]`))) await page.click(`${card} .sheetOptions > summary`);
-      await page.fill(`${card} [data-solid="w"]`, '120');
-      await page.click(`${card} [data-solid="size"]`);
+      if (!(await page.isVisible(`dialog.osDlg [data-solid="w"]`))) await page.click(`${card} .sheetOptionsBtn`);
+      await page.fill(`dialog.osDlg [data-solid="w"]`, '120');
+      await page.click(`dialog.osDlg [data-solid="size"]`);
       await page.waitForFunction(() => Math.abs(CN.S.settings.stock.gold14k[0] * 25.4 - 120) < 1e-6, null, { timeout: 5000 });
       await settle();
       const size = await events('sizeChanged');

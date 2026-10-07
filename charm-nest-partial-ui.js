@@ -11,19 +11,20 @@
    setting) is PartialSheets (charm-nest-partial-data.js, PS3); the work (nest the current pieces onto a chosen partial, fill the next
    partial with the rest) is PartialEngine (PS2). See /plans/partial-sheets/contract.md.
 
-   Where it lives: the sheet card's Options panel (charm-nest-bridge.js renderRelease calls PartialSheetsUI.paint(sh, node) on every
-   draw; the three metals with a green line have that panel). paint() adds ONE section to it ("Partial sheets": a summary line and the
-   Partial Sheet button) and the panel's second view inside the same popover (never a pop-up on a pop-up): "‹ Options · Rose Gold
-   partial sheets ×", the available partials as cards, the answer to a pick in words with Use this one / Cancel, and the policy
-   control. × and Esc close the Options panel as ever (Esc first cancels an answer that waits). Each metal has its OWN repository: the
-   list is asked for the sheet's own metal only.
+   Where it lives (Paul, 7 Oct 2026, the Options Studio: ONE large window, no sub menus): the PARTIAL SHEETS card of the sheet card's Options
+   window (charm-nest-options-modal.js, OptionsStudio). charm-nest-bridge.js renderRelease calls PartialSheetsUI.paint(sh, node) on every
+   draw; the three metals with a green line have it. paint() adds ONE card to the controls' box (the element the window mounts): the
+   available partials as large cards, the answer to a pick in words in place with Use this one / Cancel, the chain, and the policy as
+   two large selectable cards. Esc first cancels an answer that waits, then closes the window (OptionsStudio). Each metal has its OWN
+   repository: the list is asked for the sheet's own metal only. card() draws the very same card for the window's All partial sheets
+   search (any metal, any status).
 
    Cost (the Google bill): ONE list call (PartialSheets.list(metal): it sends the revision it already holds and a still-current answer
-   is one tiny read) when the panel opens, and again only on the Refresh press or when PartialSheets says the list changed. No timer,
-   no polling, nothing is read for the summary line (it uses what is cached).
+   is one tiny read) when the window opens, and again only on the Refresh press or when PartialSheets says the list changed. No timer,
+   no polling.
 
-   Motion: the panel's view and its cards come in the way the app's other lists do (a short rise, staggered); a pick opens its answer
-   in place; a press on Use this one closes the panel (as Merge sheets does) and the card shows the pieces re-seat: the sheet and the
+   Motion: the cards come in the way the app's other lists do (a short rise, staggered); a pick opens its answer
+   in place; a press on Use this one closes the window (as Merge sheets does) and the card shows the pieces re-seat: the sheet and the
    partial sheets side by side, each piece lifts and flies on an arc onto the partial, the partial's fill pulses, "+N", and the real
    card is there. Visual only: it starts after the work has been handed over and never waits for it; reduced motion shows none of it. */
 (function (root) {
@@ -115,76 +116,75 @@
   /* ── styles (the app's own tokens; the card is the Library card's look) ── */
   const css = doc.createElement('style');
   css.textContent = `
-.psSum,.psView,.sheetOptionSection[data-solid=partial]{white-space:normal}
-.psSum{margin:0;font-size:11px;line-height:1.5;color:var(--ink70)}
-.psSum b{font-weight:600;color:var(--ink)}
+.psView{white-space:normal}
 .psLink{border:0;background:none;padding:0;font:inherit;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .psLink:hover{color:var(--gold)}
 .psLink:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:3px}
-.psOpenRow{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.psOpenRow .help{flex:1;font-size:11px;line-height:1.5}
-.psOpenRow .btn{flex:none;margin-left:0}
-.solidOptions.psOn>:not(.psView){display:none!important}
-.shHead .sheetOptions[open] .solidOptions.psOn,.sheetOptions[open] .solidOptions.psOn{width:min(590px,calc(100% - 28px))}
-.psView{display:block}
 .psView[hidden]{display:none!important}
-.psHead{gap:10px}
-.psHead strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.psBack{border:1px solid var(--line);background:transparent;color:var(--ink70);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:650;white-space:nowrap}
-.psBack:hover{background:var(--card2);color:var(--ink)}
-.psBody{padding:14px 18px 6px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
-.psLead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:0;font-size:11px;line-height:1.5;color:var(--ink70)}
-.psLead .btn{flex:none;margin-left:0}
-.psList{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
-.psCard{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25)}
+.psView .osLead .psBusy{display:inline-flex;vertical-align:middle}
+.psList{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.psCard{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:14px;box-shadow:var(--sh);padding:14px 16px 16px;display:flex;flex-direction:column;gap:9px;min-width:0;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);transition:border-color .16s ease,box-shadow .2s ease}
 .psCard[data-m=rose]{--accent:var(--m-rose)}.psCard[data-m=gold10k]{--accent:var(--m-gold10k)}.psCard[data-m=gold14k]{--accent:var(--m-gold14k)}
+.psCard:hover{border-color:var(--goldLine)}
 .psCard:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .psCard.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--goldLine),var(--sh)}
 .psCard[aria-disabled=true]{cursor:default;opacity:.7}
-.psPvBox{position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--line2);background:var(--card2);line-height:0}
+.psPvBox{position:relative;overflow:hidden;border-radius:10px;border:1px solid var(--line2);background:var(--card2);line-height:0}
 .psSvg{display:block;width:100%;height:auto}
 .psPvBox .psSvg{transition:transform .22s cubic-bezier(.3,.1,.2,1);transform-origin:50% 50%}
 .psCard:hover .psPvBox .psSvg,.psCard:focus-visible .psPvBox .psSvg,.psCard.on .psPvBox .psSvg{transform:scale(1.035)}
-.psBadge{position:absolute;left:6px;top:6px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font:600 10.5px var(--mono);display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.25);animation:psBadgeIn .24s cubic-bezier(.3,.1,.2,1)}
+.psBadge{position:absolute;left:8px;top:8px;width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font:600 12px var(--mono);display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.25);animation:psBadgeIn .24s cubic-bezier(.3,.1,.2,1)}
 @keyframes psBadgeIn{from{transform:scale(.4);opacity:0}to{transform:none;opacity:1}}
-.psSize{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--ink70)}
-.psSize b{font:700 13px var(--mono);color:var(--ink)}
-.psFit{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--ink)}
+.psStat{position:absolute;right:8px;top:8px;line-height:1;padding:5px 9px;border-radius:999px;background:rgba(255,254,251,.94);border:1px solid var(--line);color:var(--ink70);font:700 10px var(--sans);letter-spacing:.05em;text-transform:uppercase;box-shadow:0 1px 3px rgba(30,24,16,.12)}
+.psStat[data-s=available]{color:#3c5a39;background:var(--sageSoft,#e7eddf)}.psStat[data-s=inUse]{color:#5c4210;background:var(--goldSoft,#f0e6cd)}.psStat[data-s=discarded]{color:var(--clay)}
+.psSize{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;font-size:12px;color:var(--ink70)}
+.psSize b{font:700 15px var(--mono);color:var(--ink)}
+.psSize .psMetal{font:700 10.5px var(--mono);letter-spacing:.05em;color:#fff;background:var(--accent);border-radius:6px;padding:2px 6px}
+.psFit{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:13.5px;color:var(--ink)}
 .psFit b{font-weight:650}
-.psFit small,.psUse small{font-size:11px;color:var(--ink45)}
-.psUse{display:grid;gap:1px;font-size:11px;line-height:1.45;color:var(--ink70)}
+.psFit small,.psUse small{font-size:11.5px;color:var(--ink45)}
+.psUse{display:grid;gap:2px;font-size:12px;line-height:1.5;color:var(--ink70)}
 .psUse b{font-weight:600;color:var(--ink)}
-.psAsk{grid-column:1/-1;display:grid;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card2)}
-.psAsk .psWords{margin:0;font-size:11.5px;line-height:1.5;color:var(--ink)}
+.psAsk{grid-column:1/-1;display:grid;gap:12px;padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--card2)}
+.psAsk .psWords{margin:0;font-size:14px;line-height:1.55;color:var(--ink)}
 .psAsk .psWords.bad{color:var(--clay)}
-.psAsk .psSub{margin:0;font-size:11px;line-height:1.5;color:var(--ink70)}
-.psChainList{list-style:none;margin:0;padding:0;display:grid;gap:5px;max-height:168px;overflow:auto;overscroll-behavior:contain}
-.psChainList li{display:grid;grid-template-columns:20px minmax(0,1fr) auto auto;align-items:center;gap:8px;font-size:11px;color:var(--ink70)}
-.psChainList .n{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font:600 10.5px var(--mono)}
+.psAsk .psSub{margin:0;font-size:12.5px;line-height:1.55;color:var(--ink70)}
+.psChainList{list-style:none;margin:0;padding:0;display:grid;gap:7px;max-height:220px;overflow:auto;overscroll-behavior:contain}
+.psChainList li{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;align-items:center;gap:10px;font-size:12.5px;color:var(--ink70)}
+.psChainList .n{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font:600 12px var(--mono)}
 .psChainList .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
-.psChainList .sz{font-family:var(--mono);font-size:10.5px}
+.psChainList .sz{font-family:var(--mono);font-size:11.5px}
 .psChainList .ft{font-weight:600;color:var(--ink);white-space:nowrap}
-.psAskBtns{display:flex;justify-content:flex-end;gap:8px}
+.psAskBtns{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
 .psAskBtns .btn{margin-left:0}
-.psBusy{display:flex;align-items:center;gap:8px;font-size:11px;line-height:1.5;color:var(--ink70)}
-.psSpin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;flex:0 0 11px}
-.psEmpty{padding:26px 16px;text-align:center;color:var(--ink45);font-size:12px;display:flex;flex-direction:column;align-items:center;gap:8px;grid-column:1/-1}
+.psBusy{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.5;color:var(--ink70)}
+.psSpin{width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;flex:0 0 13px}
+.psEmpty{padding:30px 16px;text-align:center;color:var(--ink45);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:8px;grid-column:1/-1}
 .psEmpty b{font-weight:600;color:var(--ink70);max-width:46ch;line-height:1.5}
-.psEmpty span{max-width:50ch;line-height:1.5}
+.psEmpty span{max-width:56ch;line-height:1.5}
 .psErr{color:var(--clay)}
-.psPolicy{border-top:1px solid var(--line);margin-top:8px}
-.psRadios{display:grid;gap:8px}
-.psRadio{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--card);cursor:pointer;transition:border-color .13s,background-color .13s}
+.psPolicy{display:grid;gap:12px;margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}
+.psPolicyHead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.psPolicyHead h4{margin:0;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45)}
+.psPolicyHead .help{font-size:12px}
+.psRadios{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.psRadio{display:grid;gap:14px;padding:18px 20px;border:1.5px solid var(--line);border-radius:14px;background:var(--card);cursor:pointer;transition:border-color .14s,background-color .14s,box-shadow .18s;position:relative}
 .psRadio:hover{border-color:var(--ink45)}
-.psRadio.on{border-color:var(--ink);background:var(--card2)}
-.psRadio input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--m-rose);flex:none}
-.psRadio b{display:block;font-size:12.5px;font-weight:600;color:var(--ink)}
-.psRadio small{display:block;margin-top:2px;font-size:11px;line-height:1.5;color:var(--ink70)}
+.psRadio.on{border-color:var(--ink);background:var(--card2);box-shadow:0 0 0 3px var(--goldLine)}
+.psRadioHead{display:flex;align-items:flex-start;gap:12px;cursor:pointer}
+.psRadio input[type=radio]{width:18px;height:18px;margin:3px 0 0;accent-color:var(--m-rose);flex:none}
+.psRadio b{display:block;font:500 17px/1.3 var(--serif);color:var(--ink)}
+.psRadio small{display:block;margin-top:5px;font-size:12.5px;line-height:1.55;color:var(--ink70)}
+.psNewSize{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end}
+.psNewSize[hidden]{display:none}
+.psNewActions{display:flex;justify-content:flex-end}
+.psNewActions[hidden]{display:none}
 .psChain{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 14px 10px;font-size:11px;color:var(--ink70)}
+.psView .psChain{margin:0 0 14px}
 .psChain[hidden]{display:none}
 .psChain .lbl{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin-right:2px}
 .psChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);border-radius:999px;padding:3px 10px 3px 4px;font:inherit;font-size:11px;font-weight:600;max-width:100%;transition:border-color .13s,background-color .13s}
-.psChip:hover{border-color:var(--ink45);background:var(--card)}
+button.psChip:hover{border-color:var(--ink45);background:var(--card)}
 .psChip:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .psChip .n{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--ink);color:#fff;font:600 10px var(--mono)}
 .psChip .nm{display:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:15ch}
@@ -197,51 +197,47 @@
 .psFx>.psFxTag b{display:inline-block;margin-left:6px;font-weight:500;opacity:.7;font-variant-numeric:tabular-nums}
 .psFx>.psFxSlot{background:#fffefb;box-shadow:0 1px 2px rgba(30,24,16,.1),0 10px 26px rgba(30,24,16,.13)}
 .psFx>.psFxSlot .psSvg{width:100%;height:100%}
+@media (max-width:760px){.psRadios{grid-template-columns:minmax(0,1fr)}.psList{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}}
 @media (prefers-reduced-motion:reduce){.psBadge{animation:none}.psSpin{animation-duration:1.6s}.psPvBox .psSvg{transition:none}.psCard:hover .psPvBox .psSvg,.psCard.on .psPvBox .psSvg{transform:none}}
 `;
   doc.head.appendChild(css);
 
-  /* ── the Options section ── */
-  function ensureSection(menu) {
-    let sec = menu.querySelector(':scope>[data-solid="partial"]');
-    if (sec) return sec;
-    sec = doc.createElement('section'); sec.className = 'sheetOptionSection'; sec.dataset.solid = 'partial';
-    sec.innerHTML = `<h4>Partial sheets</h4><p class="psSum" data-ps="sum" role="status"></p><div class="psOpenRow"><span class="help">Metal left over from a green-line cut, saved in its exact shape and size.</span><button type="button" class="btn ghost xs" data-ps="open" aria-haspopup="true">Partial Sheet</button></div>`;
-    const merge = menu.querySelector(':scope>[data-solid="merge"]');
-    if (merge) menu.insertBefore(sec, merge); else menu.appendChild(sec);
-    return sec;
-  }
-  function paintSection(sec, m) {
-    const p = policyOf(m), cached = PS() && PS().cached ? PS().cached(m) : null, n = cached ? availableOf(cached.items, m).length : null, chain = chainOf(m);
-    const rule = p.mode === 'new' ? `A <b>brand new sheet</b> is offered, ${mmWord(p.wMm, p.hMm)}` : 'Partial sheets are <b>reused automatically</b>';
-    const sum = rule + (n != null ? ` · ${n} available` : '') + (chain.length ? ` · ${plural(chain.length, 'partial sheet')} in use` : '');
-    const el = sec.querySelector('[data-ps="sum"]'); if (el._h !== sum) { el._h = sum; el.innerHTML = sum + ' · <button type="button" class="psLink" data-ps="rule" title="Choose how partial sheets are reused">Change</button>'; }
-  }
-
-  /* ── the panel's view ── */
+  /* ── the card: the controls' box (what the Options window mounts) holds it after the This sheet card ── */
+  const boxOf = node => (node && (node._optBox || node.querySelector('.solidOptions'))) || null;
+  const viewOf = m => { const s = stOf(m), box = boxOf(s.node); return box ? box.querySelector(':scope>.psView') : null; };
   function ensureView(menu, m) {
     let view = menu.querySelector(':scope>.psView');
     if (view) return view;
-    view = doc.createElement('div'); view.className = 'psView'; view.hidden = true; view.setAttribute('role', 'group'); view.setAttribute('aria-label', `${wordOf(m)} partial sheets`);
-    view.innerHTML = `<div class="sheetOptionsHead psHead"><button type="button" class="psBack" data-ps="back" aria-label="Back to ${esc(wordOf(m))} options">‹ Options</button><strong>${esc(wordOf(m))} partial sheets</strong><button type="button" class="sheetOptionsClose" data-ps="close" aria-label="Close sheet options">×</button></div>`
-      + `<div class="psBody"><p class="psLead"><span data-ps="lead">Newest used first. The number of pieces is an estimate from a typical piece; the nester decides the real fit.</span><button type="button" class="btn ghost xs" data-ps="refresh" title="Read the partial sheets again">Refresh</button></p><div class="psList" data-ps="list" aria-live="polite"></div></div>`
-      + `<section class="sheetOptionSection psPolicy" data-ps="policy"><h4>When a sheet needs more metal</h4>`
+    view = doc.createElement('section'); view.className = 'osCard psView'; view.dataset.card = 'partial'; view.setAttribute('role', 'group'); view.setAttribute('aria-label', `${wordOf(m)} partial sheets`);
+    view.innerHTML = `<header class="osCardHead"><div><h3 class="osCardTitle">Partial sheets</h3><p class="osLead" data-ps="lead">Metal left over from a green-line cut, saved in its exact shape and size. Newest used first. The number of pieces is an estimate from a typical piece; the nester decides the real fit.</p></div><button type="button" class="btn ghost xs" data-ps="refresh" title="Read the partial sheets again">Refresh</button></header>`
+      + `<div class="psChain" data-ps="chain" hidden></div><div class="psList" data-ps="list" aria-live="polite"></div>`
+      + `<section class="psPolicy" data-ps="policy"><div class="psPolicyHead"><h4>When a sheet needs more metal</h4><span class="help" data-ps="polhelp" role="status"></span></div>`
       + `<div class="psRadios" role="radiogroup" aria-label="Partial sheet rule">`
-      + `<label class="psRadio" data-v="auto"><input type="radio" name="psMode-${esc(m)}" value="auto"><span><b>Reuse partial sheets automatically</b><small>The nester takes a partial sheet by itself, fills it, then takes the next one, with no limit on how many.</small></span></label>`
-      + `<label class="psRadio" data-v="new"><input type="radio" name="psMode-${esc(m)}" value="new"><span><b>Offer a brand new sheet and let me set its size</b><small>No partial sheet is reused; a new sheet is offered at the size below.</small></span></label></div>`
+      + `<div class="psRadio" data-v="auto"><label class="psRadioHead"><input type="radio" name="psMode-${esc(m)}" value="auto"><span><b>Reuse automatically</b><small>The nester takes a partial sheet by itself, fills it, then takes the next one, with no limit on how many.</small></span></label></div>`
+      + `<div class="psRadio" data-v="new"><label class="psRadioHead"><input type="radio" name="psMode-${esc(m)}" value="new"><span><b>Offer a brand new sheet</b><small>No partial sheet is reused; a new sheet is offered at the size you set here.</small></span></label>`
       + `<div class="solidSize psNewSize" data-ps="size" hidden><label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-ps="w"></label><label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-ps="h"></label></div>`
-      + `<div class="sheetSizeAction"><span class="help" data-ps="polhelp" role="status"></span><button type="button" class="btn ghost xs" data-ps="polsave" hidden>Save size</button></div></section>`;
+      + `<div class="psNewActions" hidden><button type="button" class="btn ghost xs" data-ps="polsave" hidden>Save size</button></div></div></div></section>`;
     menu.appendChild(view);
     return view;
   }
   const q = (view, k) => view.querySelector(`[data-ps="${k}"]`);
 
-  function cardHtml(m, c, s, locked, i) {
-    const f = fitWords(c), use = lastUseWords(c), at = s.chain.indexOf(c.id), on = at >= 0;
-    return `<button type="button" class="psCard hoverItem${on ? ' on' : ''}" data-m="${esc(m)}" data-id="${esc(c.id)}" data-i="${i}" aria-pressed="${on}"${locked ? ' aria-disabled="true"' : ''} aria-label="${esc(cardLabel(m, c) + (on ? `, number ${at + 1} in the chain` : ''))}">`
-      + `<span class="psPvBox">${sheetSvg(c)}${on ? `<span class="psBadge" aria-hidden="true">${at + 1}</span>` : ''}</span>`
-      + `<span class="psSize"><b>${esc(mmWord(c.wMm, c.hMm))}</b><span>${Math.round(+c.areaMm2 || 0).toLocaleString()} mm²</span></span>`
-      + `<span class="psFit"><b>${esc(f.main)}</b>${f.sub ? `<small>${esc(f.sub)}</small>` : ''}</span>`
+  const STATUS_WORD = { available: 'Available', inUse: 'In use', used: 'Used', discarded: 'Discarded' };
+  const statusWords = c => {
+    const st = c.status || 'available', who = x => (x ? ' by ' + x : '');
+    if (st === 'inUse') return `In use${c.inUseBySheetName ? ' by ' + c.inUseBySheetName : ''}`;
+    if (st === 'used') return `Used${c.usedBySheetName ? ' on ' + c.usedBySheetName : ''}${c.usedAt ? ', ' + friendly(+c.usedAt) : ''}`;
+    if (st === 'discarded') return `Discarded${who(c.statusBy)}`;
+    return 'Available';
+  };
+  /** One partial sheet as a card. o.meta: the card of the window's All partial sheets search (it says its metal and its status, whatever it is; o.selected: its history shows). */
+  function cardHtml(m, c, s, locked, i, o = {}) {
+    const f = fitWords(c), use = lastUseWords(c), at = s.chain.indexOf(c.id), on = o.meta ? !!o.selected : at >= 0, st = c.status || 'available';
+    const fit = !o.meta || st === 'available' || st === 'inUse' ? `<span class="psFit"><b>${esc(f.main)}</b>${f.sub ? `<small>${esc(f.sub)}</small>` : ''}</span>` : `<span class="psFit"><b>${esc(statusWords(c))}</b></span>`;
+    return `<button type="button" class="psCard hoverItem${on ? ' on' : ''}" data-m="${esc(m)}" data-id="${esc(c.id)}" data-i="${i}" aria-pressed="${on}"${locked ? ' aria-disabled="true"' : ''} aria-label="${esc(cardLabel(m, c) + (o.meta ? ', ' + statusWords(c) : '') + (on && !o.meta ? `, number ${at + 1} in the chain` : ''))}">`
+      + `<span class="psPvBox">${sheetSvg(c)}${at >= 0 && !o.meta ? `<span class="psBadge" aria-hidden="true">${at + 1}</span>` : ''}${o.meta ? `<span class="psStat" data-s="${esc(st)}">${esc(STATUS_WORD[st] || st)}</span>` : ''}</span>`
+      + `<span class="psSize">${o.meta ? `<span class="psMetal">${esc((METAL[c.metal] && METAL[c.metal].code) || c.code || '')}</span>` : ''}<b>${esc(mmWord(c.wMm, c.hMm))}</b><span>${Math.round(+c.areaMm2 || 0).toLocaleString()} mm²</span></span>`
+      + fit
       + `<span class="psUse"><span>Last used <b title="${esc(fullDate(+c.lastUsedAt))}">${esc(friendly(+c.lastUsedAt))}</b></span>${use ? `<small>${esc(use)}</small>` : ''}</span></button>`;
   }
   // (a name that tells one partial sheet from another: the sheet it was cut from, and when; two leftovers of one sheet differ by their date)
@@ -296,7 +292,9 @@
       return;
     }
     const lead = q(view, 'lead'), word = wordOf(m);
-    lead.textContent = s.loading ? 'Reading the partial sheets again…' : items.length ? `${plural(items.length, 'partial sheet')} available, newest used first. The number of pieces is an estimate from a typical piece; the nester decides the real fit.` : '';
+    const LEAD = 'Metal left over from a green-line cut, saved in its exact shape and size.';
+    if (s.loading) lead.innerHTML = '<span class="psBusy"><span class="psSpin" aria-hidden="true"></span>Reading the partial sheets again…</span>';
+    else lead.textContent = items.length ? `${plural(items.length, 'partial sheet')} available, newest used first. The number of pieces is an estimate from a typical piece; the nester decides the real fit.` : LEAD;
     if (!items.length) {
       list.innerHTML = `<div class="psEmpty"><b>No ${esc(word)} partial sheets are saved yet.</b><span>When a green line is cut on a ${esc(word)} sheet (Cut Sheet in the Nest tab, or a partial sheet dragged to Laser cutting in the Library), the metal that is left is saved here in its exact shape and size, ready to use again.</span></div>`;
       return;
@@ -317,36 +315,27 @@
   }
   function paintPolicy(view, m, s) {
     const p = policyOf(m), mode = s.polDraft || p.mode;
-    for (const r of view.querySelectorAll('.psRadio')) { const on = r.dataset.v === mode; r.classList.toggle('on', on); const inp = r.querySelector('input'); if (inp.checked !== on) inp.checked = on; inp.disabled = !!s.polBusy; }
+    for (const r of view.querySelectorAll('.psRadio')) { const on = r.dataset.v === mode; r.classList.toggle('on', on); const inp = r.querySelector('input[type=radio]'); if (inp.checked !== on) inp.checked = on; inp.disabled = !!s.polBusy; }
     const size = q(view, 'size'), w = q(view, 'w'), h = q(view, 'h'), save = q(view, 'polsave'), help = q(view, 'polhelp');
-    size.hidden = mode !== 'new'; save.hidden = mode !== 'new';
+    size.hidden = mode !== 'new'; save.hidden = mode !== 'new'; save.parentNode.hidden = mode !== 'new';
     for (const [inp, v] of [[w, p.wMm], [h, p.hMm]]) { inp.disabled = !!s.polBusy; if (!inp._draft && inp !== doc.activeElement) inp.value = +(+v).toFixed(2); }
     save.disabled = !!s.polBusy; save.textContent = s.polBusy ? 'Saving…' : 'Save size';
     const msg = s.polBusy ? '<span class="psBusy"><span class="psSpin" aria-hidden="true"></span>Saving…</span>' : esc(s.polMsg || (mode === 'new' ? '5–500 mm per side' : ''));
     if (help._h !== msg) { help._h = msg; help.innerHTML = msg; }
   }
   function paintView(m) {
-    const s = stOf(m), node = s.node, sh = s.sh; if (!node || !node.isConnected) return;
-    const menu = node.querySelector('.solidOptions'), view = menu && menu.querySelector(':scope>.psView'); if (!view) return;
+    const s = stOf(m), sh = s.sh; if (!s.node) return;
+    const view = viewOf(m); if (!view || !view.isConnected) return;
     paintList(view, m, sh, s); paintPolicy(view, m, s);
     const rf = q(view, 'refresh'); if (rf) rf.disabled = !!s.loading;
   }
 
-  /* ── opening and closing: the popover's own second view ── */
-  function setOpen(m, on, opt = {}) {
-    const s = stOf(m), node = s.node; s.open = !!on;
-    const menu = node && node.querySelector('.solidOptions'), view = menu && menu.querySelector(':scope>.psView'); if (!menu || !view) return;
-    menu.classList.toggle('psOn', !!on); view.hidden = !on;
-    if (on) {
-      s.chain = []; s.adding = false; s.ask = null; s.entered++; s.polDraft = null; s.polMsg = ''; s.items = null;
-      menu.scrollTop = 0; load(m); paintView(m);
-      if (!reduced()) try { view.animate([{ opacity: 0, transform: 'translateX(10px)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: 'cubic-bezier(.3,.1,.2,1)' }); } catch (_) {}
-      if (opt.rule) { const pol = view.querySelector('[data-ps="policy"]'), r = pol && pol.querySelector('.psRadio.on input, input'); if (pol) menu.scrollTop = Math.max(0, pol.offsetTop - 70); if (r) r.focus({ preventScroll: true }); }
-      else { const first = view.querySelector('.psCard') || q(view, 'back'); if (first) first.focus({ preventScroll: true }); }
-    } else {
-      s.chain = []; s.adding = false; s.ask = null; s.seq++;
-      const opener = menu.querySelector('[data-solid="partial"] [data-ps="open"]'); if (opener && opt.focus !== false) opener.focus({ preventScroll: true });
-    }
+  /* ── opening and closing: the Options window opens the card (OptionsStudio calls open(m) / close(m)); one list call when it opens ── */
+  function setOpen(m, on) {
+    const s = stOf(m); s.open = !!on;
+    if (!viewOf(m)) return;
+    if (on) { s.chain = []; s.adding = false; s.ask = null; s.entered++; s.polDraft = null; s.polMsg = ''; s.items = null; load(m); paintView(m); }
+    else { s.chain = []; s.adding = false; s.ask = null; s.seq++; }
   }
 
   /* ── reading: one list call; the data layer answers from its cache or a one-document probe ── */
@@ -358,16 +347,11 @@
     s.loading = (async () => {
       try { const r = await P.list(m, { force: !!o.force }); s.items = (r && r.items) || []; s.error = ''; }
       catch (e) { s.error = e && e.message ? e.message : String(e); }
-      finally { s.loading = null; paintView(m); refreshSections(m); }
+      finally { s.loading = null; paintView(m); }
     })();
     paintView(m);
     return s.loading;
   }
-  function refreshSections(m) {
-    const s = stOf(m); if (!s.node || !s.node.isConnected) return;
-    const sec = s.node.querySelector('[data-solid="partial"]'); if (sec) paintSection(sec, m);
-  }
-
   /* ── a pick: the answer in words first, then Use this one or Cancel ── */
   async function fallbackPreview(sh, ids) {   // (the engine is not on the page: PartialSheets.plan's estimate, so the panel is never empty; nothing can be used then)
     const P = PS(), m = sh.metal, C = root.CN;
@@ -390,7 +374,7 @@
     if (s.seq !== seq || !s.ask) return;   // another pick or Cancel came meanwhile
     s.ask = ans && ans.ok ? { phase: 'answer', seq, answer: ans, noEngine: !!ans.noEngine } : { phase: 'bad', seq, text: (ans && ans.reason) || 'This partial sheet cannot be used now.' };
     paintView(m);
-    const go = s.node && s.node.querySelector('.psView [data-ps="use"]:not([disabled])'); if (go) go.focus({ preventScroll: true }); else { const c = s.node && s.node.querySelector('.psView [data-ps="cancel"],.psView [data-ps="back-ask"]'); if (c) c.focus({ preventScroll: true }); }
+    const pv = viewOf(m), go = pv && pv.querySelector('[data-ps="use"]:not([disabled])'); if (go) go.focus({ preventScroll: true }); else { const c = pv && pv.querySelector('[data-ps="cancel"],[data-ps="back-ask"]'); if (c) c.focus({ preventScroll: true }); }
   }
   /** A press on a card: it is the chain's first (the answer comes first, nothing is claimed); while "Add another partial sheet" waits it is the next one. */
   function pick(m, id) {
@@ -405,12 +389,14 @@
     const s = stOf(m); if (!s.ask && !s.chain.length) return false; if (s.ask && s.ask.phase === 'seating') return false;
     if (s.adding) { s.adding = false; paintView(m); return true; }
     const id = s.chain[0]; s.seq++; s.ask = null; s.chain = []; paintView(m);
-    const c = s.node && [...s.node.querySelectorAll('.psView .psCard')].find(x => x.dataset.id === id); if (c) c.focus({ preventScroll: true });
+    const pv = viewOf(m), c = pv && [...pv.querySelectorAll('.psCard')].find(x => x.dataset.id === id); if (c) c.focus({ preventScroll: true });
     return true;
   }
+  /** The window closes on the work (as Merge sheets does): a promise that settles once it is gone (the re-seat plays after that). */
   function closeOptions(m) {
-    const s = stOf(m), R = root.Gate && root.Gate.state ? root.Gate.state() : null; if (R) (R.optionsOpen || (R.optionsOpen = {}))[m] = false;
-    const d = s.node && s.node.querySelector('.sheetOptions'); if (d && d.open) { d.open = false; try { d.querySelector(':scope > summary').focus({ preventScroll: true }); } catch (_) {} }
+    const R = root.Gate && root.Gate.state ? root.Gate.state() : null; if (R) (R.optionsOpen || (R.optionsOpen = {}))[m] = false;
+    try { if (root.OptionsStudio && root.OptionsStudio.close) return root.OptionsStudio.close(m, { focus: false }); } catch (_) {}
+    return Promise.resolve();
   }
   const STEP_WORDS = { check: 'Checking the sheet…', release: "Giving the sheet's old metal back…", claim: 'Reserving the partial sheet…', nest: 'Nesting the pieces on the partial sheet…', continue: 'Moving the rest to the next partial sheet…', save: 'Saving the layout…' };
   async function commit(m) {
@@ -420,7 +406,7 @@
     let cap = null; try { cap = capture(sh, answer); } catch (e) { cap = null; }   // (the card as it is now: the scene is made of it, and plays at once, whatever the work then takes)
     let started = false;
     // the work has begun on the sheet: the panel closes (as Merge sheets does) so the sheet is in full view, and the re-seat plays
-    const go = () => { if (started) return; started = true; closeOptions(m); setOpen(m, false, { focus: false }); if (cap) playScene(cap, answer); };
+    const go = () => { if (started) return; started = true; setOpen(m, false); Promise.resolve(closeOptions(m)).then(() => { if (cap) playScene(cap, answer); }); };   // (the window is gone first: the re-seat plays over the card)
     const onStep = st => {
       const k = st && st.key; if (!k) return;
       if (s.ask === a) { a.text = (st && st.text) || STEP_WORDS[k] || a.text; paintView(m); }
@@ -433,12 +419,12 @@
       go();   // (an engine that never said it was nesting: the panel closes and the scene plays now)
       const moved = r.moved != null ? r.moved | 0 : answer.links.reduce((t, l) => t + l.placed, 0), left = r.continues != null ? r.continues | 0 : answer.rest;
       root.CN && root.CN.toast && root.CN.toast(left ? `${plural(moved, 'piece')} seated on the partial sheet; ${left} continue on the next one` : `${plural(moved || answer.pieces, 'piece')} seated on the partial sheet`, 'ok');
-      refreshSections(m); paintChain(m);   // (the list is read again the next time the panel opens: one call then, none now)
+      paintChain(m);   // (the list is read again the next time the window opens: one call then, none now)
     } catch (e) {
       const text = e && e.message ? e.message : String(e);
       if (s.ask === a) { s.ask = { phase: 'bad', seq: s.seq, text }; paintView(m); }
       root.CN && root.CN.toast && root.CN.toast('Partial sheet not used: ' + text, 'bad');
-      refreshSections(m); paintChain(m);
+      paintChain(m);
     }
   }
 
@@ -446,9 +432,9 @@
   async function savePolicy(m, mode, wMm, hMm) {
     const s = stOf(m), P = PS(); if (!P || !P.setPolicy) return;
     s.polBusy = true; s.polMsg = ''; paintView(m);
-    try { await P.setPolicy(m, { mode, wMm, hMm }); s.polDraft = null; s.polMsg = mode === 'new' ? 'Saved' : 'Saved'; for (const i of ['w', 'h']) { const inp = s.node && s.node.querySelector(`.psView [data-ps="${i}"]`); if (inp) inp._draft = false; } }
+    try { await P.setPolicy(m, { mode, wMm, hMm }); s.polDraft = null; s.polMsg = 'Saved'; for (const i of ['w', 'h']) { const pv = viewOf(m), inp = pv && pv.querySelector(`[data-ps="${i}"]`); if (inp) inp._draft = false; } }
     catch (e) { s.polDraft = null; s.polMsg = (e && e.message) || 'Not saved'; root.CN && root.CN.toast && root.CN.toast('Rule not saved: ' + s.polMsg, 'bad'); }
-    finally { s.polBusy = false; paintView(m); refreshSections(m); setTimeout(() => { if (s.polMsg === 'Saved') { s.polMsg = ''; paintView(m); } }, 2500); }
+    finally { s.polBusy = false; paintView(m); setTimeout(() => { if (s.polMsg === 'Saved') { s.polMsg = ''; paintView(m); } }, 2500); }
   }
   function sizeValues(view) {
     const w = +q(view, 'w').value, h = +q(view, 'h').value;
@@ -461,8 +447,8 @@
     const s = stOf(m);
     view.addEventListener('click', e => {
       const t = e.target;
-      if (t.closest('[data-ps="back"]')) { setOpen(m, false); return; }
-      if (t.closest('[data-ps="close"]')) { const real = s.node && s.node.querySelector('.sheetOptionsClose'); if (real) real.click(); return; }
+      const rc = t.closest('.psRadio');   // (a policy card is one big target: a press anywhere on it but its own fields chooses it)
+      if (rc && !t.closest('input,button,label,a')) { const r = rc.querySelector('input[type=radio]'); if (r && !r.disabled && !r.checked) r.click(); return; }
       if (t.closest('[data-ps="refresh"]')) { load(m, { force: true }); return; }
       if (t.closest('[data-ps="cancel"]')) { cancelAsk(m); return; }   // (Close on a refusal and Cancel on an answer: nothing was claimed, nothing moved)
       if (t.closest('[data-ps="back-ask"]')) { s.adding = false; paintView(m); return; }
@@ -483,7 +469,7 @@
     });
     view.addEventListener('input', e => { const i = e.target; if (i && i.matches && i.matches('[data-ps="w"],[data-ps="h"]')) { i._draft = true; if (s.polMsg) { s.polMsg = ''; paintView(m); } } });
     view.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { if ((s.ask && s.ask.phase === 'seating') || cancelAsk(m)) { e.preventDefault(); e.stopPropagation(); } return; }   // (an answer, or the choosing of another partial sheet, is cancelled first; with none, Esc closes the Options panel as ever)
+      if (e.key === 'Escape') { if ((s.ask && s.ask.phase === 'seating') || cancelAsk(m)) { e.preventDefault(); e.stopPropagation(); } return; }   // (an answer, or the choosing of another partial sheet, is cancelled first; with none, Esc closes the Options window: OptionsStudio)
       if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-ps="w"],[data-ps="h"]')) { e.preventDefault(); const sv = q(view, 'polsave'); if (sv && !sv.hidden) sv.click(); return; }
       const card = e.target.closest && e.target.closest('.psCard');
       if (card && ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
@@ -500,20 +486,28 @@
       return E && E.chain && sh ? (E.chain(sh) || []) : [];
     } catch (_) { return []; }
   }
+  const CHAIN_WORD = { open: 'taking pieces', full: 'full', cut: 'cut' };
+  const chipsHtml = (chain, tag) => chain.map((c, i) => {
+    const st = CHAIN_WORD[c.state] ? c.state : 'open', size = Number.isFinite(+c.wMm) && Number.isFinite(+c.hMm) ? mmWord(c.wMm, c.hMm) : '';
+    return (i ? '<span class="arr" aria-hidden="true">›</span>' : '') + `<${tag}${tag === 'button' ? ' type="button"' : ''} class="psChip ${st}" data-n="${i + 1}" data-page="${esc(c.page == null ? '' : c.page)}" title="${esc(`${c.label || 'Sheet'} · on a ${size} partial sheet · ${plural(+c.placed || 0, 'piece')} placed${c.waiting ? `, ${c.waiting} waiting` : ''} · ${CHAIN_WORD[st]}`)}"><span class="n">${i + 1}</span><span class="nm">${esc(c.label || 'Partial sheet')}</span><i class="dot" aria-hidden="true"></i></${tag}>`;
+  }).join('');
   function paintChain(m) {
-    const C = root.CN, card = C && C.S && C.S.sheets && C.S.sheets[m] && C.S.sheets[m].cardEl; if (!card) return;
-    const chain = chainOf(m); let host = card.querySelector(':scope .psChain');
+    const chain = chainOf(m), C = root.CN;
     const sig = JSON.stringify(chain.map(c => [c.sheetId, c.label, c.partialId, c.placed, c.waiting, c.state, c.page, c.wMm, c.hMm]));
+    // the window's own copy of the strip (the sheets on partial sheets, read only: a press there would turn the page behind the window)
+    const view = viewOf(m), inner = view && view.querySelector('[data-ps="chain"]');
+    if (inner) {
+      if (!chain.length) inner.hidden = true;
+      else { inner.hidden = false; if (inner._sig !== sig) { inner._sig = sig; inner.classList.toggle('few', chain.length <= 4); inner.setAttribute('role', 'group'); inner.setAttribute('aria-label', `Sheets on partial sheets: ${chain.map(c => c.label).join(', then ')}`); inner.innerHTML = '<span class="lbl">Sheets on partial sheets</span>' + chipsHtml(chain, 'span'); } }
+    }
+    const card = C && C.S && C.S.sheets && C.S.sheets[m] && C.S.sheets[m].cardEl; if (!card) return;
+    let host = [...card.querySelectorAll('.psChain')].find(x => !x.hasAttribute('data-ps'));
     if (!chain.length) { if (host) host.hidden = true; return; }
     if (!host) { host = doc.createElement('div'); host.className = 'psChain'; host.setAttribute('role', 'group'); const before = card.querySelector('.roseHistory') || card.querySelector('.shPreviewWrap'); if (!before) return; before.before(host); }
     const wasHidden = host.hidden; host.hidden = false; if (host._sig === sig) return; host._sig = sig;
     host.classList.toggle('few', chain.length <= 4);   // (up to four show their sheet's name; a longer chain, which has no limit, shows 1, 2, 3 ... and the name in its tooltip)
     host.setAttribute('aria-label', `Sheets on partial sheets: ${chain.map(c => c.label).join(', then ')}`);
-    const stateWord = { open: 'taking pieces', full: 'full', cut: 'cut' };
-    host.innerHTML = '<span class="lbl">Partial sheets</span>' + chain.map((c, i) => {
-      const st = stateWord[c.state] ? c.state : 'open', size = Number.isFinite(+c.wMm) && Number.isFinite(+c.hMm) ? mmWord(c.wMm, c.hMm) : '';
-      return (i ? '<span class="arr" aria-hidden="true">›</span>' : '') + `<button type="button" class="psChip ${st}" data-n="${i + 1}" data-page="${esc(c.page == null ? '' : c.page)}" title="${esc(`${c.label || 'Sheet'} · on a ${size} partial sheet · ${plural(+c.placed || 0, 'piece')} placed${c.waiting ? `, ${c.waiting} waiting` : ''} · ${stateWord[st]}`)}"><span class="n">${i + 1}</span><span class="nm">${esc(c.label || 'Partial sheet')}</span><i class="dot" aria-hidden="true"></i></button>`;
-    }).join('');
+    host.innerHTML = '<span class="lbl">Partial sheets</span>' + chipsHtml(chain, 'button');
     if (!reduced() && (wasHidden || !host._shown)) { host._shown = true; try { host.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' }); } catch (_) {} }
     if (!host._wired) { host._wired = true; host.addEventListener('click', e => { const b = e.target.closest('.psChip'); if (!b || b.dataset.page === '') return; try { C.showPage(m, Math.max(0, +b.dataset.page - 1)); } catch (_) {} }); }
   }
@@ -527,30 +521,23 @@
         P.on(ev => {   // (PartialSheets says '*' for every metal: something this page changed, or the tab looked at again after a minute)
           for (const m of ev && ev.metal === '*' ? Object.keys(ST) : ev && ev.metal ? [ev.metal] : []) {
             const s = stOf(m), c = P.cached ? P.cached(m) : null; if (c && c.at > 0 && c.items) s.items = c.items;
-            paintView(m); refreshSections(m);
+            paintView(m);
             if (ev.reason === 'visible' && s.open) load(m);
           }
         });
       }
     } catch (_) {}
-    try { const E = ENG(); if (E && E.on && !subs.eng) { subs.eng = true; E.on(ev => { if (ev && ev.metal) { paintChain(ev.metal); refreshSections(ev.metal); } }); } } catch (_) {}
+    try { const E = ENG(); if (E && E.on && !subs.eng) { subs.eng = true; E.on(ev => { if (ev && ev.metal) paintChain(ev.metal); }); } } catch (_) {}
   }
 
-  /* ── what renderRelease calls on every draw of the Options panel ── */
+  /* ── what renderRelease calls on every draw of the Options controls ── */
   function paint(sh, node) {
     const m = sh && sh.metal; if (!m || !METAL[m] || !node) return;
-    const menu = node.querySelector('.solidOptions'); if (!menu) return;
-    if (!PS()) { const old = menu.querySelector(':scope>[data-solid="partial"]'); if (old) old.hidden = true; return; }   // (without the data layer there is nothing to show: no half-working panel)
+    const menu = boxOf(node); if (!menu) return;
+    if (!PS()) { const old = menu.querySelector(':scope>.psView'); if (old) old.hidden = true; return; }   // (without the data layer there is nothing to show: no half-working card)
     subscribe();
     const s = stOf(m); s.sh = sh; s.node = node;
-    const sec = ensureSection(menu); sec.hidden = false; const view = ensureView(menu, m);
-    if (!sec._wired) { sec._wired = true; sec.addEventListener('click', e => { if (e.target.closest('[data-ps="open"]')) setOpen(m, true); else if (e.target.closest('[data-ps="rule"]')) setOpen(m, true, { rule: true }); }); }
-    wire(view, m);
-    const details = node.querySelector('.sheetOptions');
-    if (details && !details._psToggle) { details._psToggle = true; details.addEventListener('toggle', () => { if (!details.open) { const st = stOf(m); if (st.open) setOpen(m, false, { focus: false }); st.pick = null; st.ask = null; } }); }
-    // (the Options panel was drawn anew while the view was open: it comes back open on the same view)
-    if (s.open && details && details.open) { menu.classList.add('psOn'); view.hidden = false; } else if (s.open) { s.open = false; menu.classList.remove('psOn'); view.hidden = true; }
-    paintSection(sec, m);
+    const view = ensureView(menu, m); view.hidden = false; wire(view, m);
     if (s.open) paintView(m);
     paintChain(m);
   }
@@ -724,5 +711,9 @@
     done.onfinish = () => { if (live) stop(true); }; done.play();
   }
 
-  root.PartialSheetsUI = { paint, changed, open: m => setOpen(m, true), close: m => setOpen(m, false), sheetSvg, edgesOf, friendly, fitWords, lastUseWords, fx: () => ({ live: FX.size }), state: ST, _scene: capture };
+  /** Esc inside the window: an answer that waits (or the choosing of another partial sheet) is cancelled first; true when that took the key. */
+  const escape = m => { const s = stOf(m); return !!((s.ask && s.ask.phase === 'seating') || cancelAsk(m)); };
+  /** One partial sheet as the very same card, for the window's All partial sheets search: o = { selected }. */
+  const card = (c, o = {}, i = 0) => cardHtml(c.metal, c, { chain: [] }, false, i, { meta: true, selected: !!o.selected });
+  root.PartialSheetsUI = { paint, changed, open: m => setOpen(m, true), close: m => setOpen(m, false), escape, card, sheetSvg, edgesOf, friendly, fitWords, lastUseWords, fx: () => ({ live: FX.size }), state: ST, _scene: capture };
 })(window);

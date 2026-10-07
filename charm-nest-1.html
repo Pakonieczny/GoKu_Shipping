@@ -193,16 +193,15 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shControls .engTogHost{flex:0 0 auto;order:4;display:inline-flex;align-items:center}.shControls .engTogHost[hidden]{display:none}
 .shFace .spin{width:9px;height:9px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite;margin:0 5px 0 4px;flex:0 0 auto}.shFace .spin[hidden]{display:none}
 .sheetOptions{position:relative;font-size:11px}
-.sheetOptions>summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--ink70)}
-.sheetOptions[open] .solidOptions{position:absolute;right:0;top:calc(100% + 7px);z-index:30;width:min(390px,calc(100vw - 40px));padding:0;max-height:min(650px,75vh);overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:13px;background:var(--card);box-shadow:0 12px 32px #0002}
+.sheetOptions>.sheetOptionsBtn{cursor:pointer;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--ink70);background:transparent;font:inherit;transition:background-color .13s ease,border-color .13s ease}
+.sheetOptions>.sheetOptionsBtn:hover{background:var(--card2);border-color:var(--ink45)}
 /* Options stands on the title line, at its far right end, after the date (Paul, 5 Oct); the title text gives way (an ellipsis) before it does.
-   The panel opens just under the title line and hangs from the card's right edge, never wider than the card, so it covers neither the
-   title nor the card's edge. The button keeps the title line's own height (so a card with Options and one without line up) */
+   It opens the Options window (OptionsStudio, charm-nest-options-modal.js: one large window, 7 Oct). The button keeps the title line's own
+   height (so a card with Options and one without line up) */
 .shHead{position:relative}
 .shHead .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto;min-width:0}
 .shHead .sheetOptions{position:static;white-space:nowrap}
-.shHead .sheetOptions>summary{line-height:16px;padding:1px 9px}
-.shHead .sheetOptions[open] .solidOptions{right:14px;top:calc(100% + 2px);width:min(390px,calc(100% - 28px))}
+.shHead .sheetOptions>.sheetOptionsBtn{line-height:16px;padding:1px 9px}
 .shHead .prov{flex:1}
 .shHead .pill{font-size:10px;flex:0 0 auto;padding:2px 6px}
 .shHead .prov{font-size:11px;color:var(--ink45);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -407,7 +406,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .toast{cursor:pointer}
 /* an open menu is never under a toast: "2 new orders arrived" covered Design Station and Master files in Workspace, and the
    run menu (audit, 25 Sep). While a header menu or a sheet's Options is open the toasts step aside. */
-body:has(.topbar details[open],.sheetOptions[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}
+body:has(.topbar details[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}
 /* Orders and the Library end their first row with controls (sort, Cards | List, the metal chips), and a notice there
    covered them (audit, 25 Sep): on those two tabs notices start under that row. */
 body:has(#ordersView:not(.hidden)) .toasts,body:has(#libView:not(.hidden)) .toasts{top:calc(var(--chromeH,96px) + 56px)}
@@ -1225,8 +1224,7 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 .runMode.auto .sw{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.25);animation:bbPulse 1.6s ease-in-out infinite}
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
 .setPicker{grid-column:1/-1;position:relative;justify-self:end;font-size:12px}.setPicker summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:18px;padding:6px 16px;background:var(--card)}.setMenu{position:absolute;right:0;top:34px;width:330px;max-height:55vh;overflow:auto;z-index:20;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.setMenu button{display:block;text-align:left;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}.setMenu button:hover{background:var(--goldSoft)}.setMenu small,.setPreviewGrid small{display:block;color:var(--ink45);font-size:11px}.setPreviewGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.setPreviewGrid figure{margin:0;overflow:hidden}.setPreviewGrid img{width:100%;border:1px solid var(--line);border-radius:10px}.setPreviewGrid figcaption{padding:8px 0;overflow-wrap:anywhere}
-.solidOptions{display:flex;flex-direction:column;align-items:stretch;width:100%;font-size:12px;color:var(--ink70)}
-.sheetCard:has(.sheetOptions[open]){z-index:35}.sheetOptionsHead{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid var(--line)}.sheetOptionsHead strong{font-size:14px;color:var(--ink);font-weight:600}.sheetOptionsClose{border:0;background:none;color:var(--ink45);font-size:22px;line-height:1;width:28px;height:28px;cursor:pointer;border-radius:6px}.sheetOptionsClose:hover{background:var(--paper);color:var(--ink)}
+.solidOptions{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:22px;align-items:start;width:100%;font-size:13.5px;color:var(--ink70)}
 .sheetOptionSection,.solidOptions .roseStockOptions{padding:17px 18px;display:grid;gap:12px;border:0}.sheetOptionSection+.sheetOptionSection,.solidOptions .roseStockOptions{border-top:1px solid var(--line)}.sheetOptionSection h4,.solidOptions .roseStockOptions h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin:0}.sheetInclude{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:13px}.sheetInclude input{width:17px;height:17px;margin:0;accent-color:var(--m-rose)}.sheetOptionStatus:empty{display:none}.sheetSizeAction{display:flex;align-items:center;justify-content:space-between;gap:12px}.sheetSizeAction .help{font-size:11px;line-height:1.5;flex:1}.sheetSizeAction button{flex:none}
 .sheetMergeHelp{margin:0;font-size:11px;line-height:1.5}.sheetMergeHelp.bad{color:var(--clay)}.sheetMergeActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.sheetMergeActions .btn,.sheetMergeAskBtns .btn{margin-left:0}.sheetMergeAsk{display:grid;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card2)}.sheetMergeAsk .help{font-size:11.5px;line-height:1.5;color:var(--ink)}.sheetMergeAskBtns{display:flex;justify-content:flex-end;gap:8px}.sheetMergeBusy{display:flex;align-items:center;gap:8px;font-size:11px;line-height:1.5;color:var(--ink70)}.sheetMergeBusy .spin{width:11px;height:11px;flex:0 0 11px;border-width:2px}
 /* a 10K/14K merge, as it is seen on the card (Gate: playMerge): the sheets side by side, the charms flying, then one */
@@ -1236,6 +1234,86 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 .mergeFxTag{font:600 10.5px var(--sans);letter-spacing:.02em;line-height:1;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink70);white-space:nowrap;box-shadow:0 2px 6px rgba(30,24,16,.08)}.mergeFxTag.on{background:var(--ink);color:#fff;border-color:var(--ink)}.mergeFxTag b{display:inline-block;margin-left:6px;font-weight:500;opacity:.7;font-variant-numeric:tabular-nums;text-align:left;transform-origin:30% 60%}.mergeFxShade{border-radius:50%;background:radial-gradient(closest-side,rgba(30,24,16,.3),rgba(30,24,16,0))}
 .mergeFx>.mergeFxRing,.mergeFx>.mergeFxGlow{transform-origin:50% 50%}.mergeFxRing{border-radius:50%;border:1.5px solid var(--gold2);box-shadow:0 0 10px rgba(202,168,97,.45)}.mergeFxGlow{border-radius:10px;box-shadow:0 0 0 2px rgba(202,168,97,.55),0 0 28px 6px rgba(202,168,97,.3)}.mergeFx>.mPlus{position:absolute;font-size:13px;padding:2px 11px;transform-origin:50% 50%}
 .solidSize{display:grid;grid-template-columns:1fr 1fr;gap:14px}.solidSize label{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:12px}.solidSize label span,.roseAllowance>span{color:var(--ink45);font-size:11px}.solidSize input{grid-column:1/-1;width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono);color:var(--ink)}.solidOptions input:focus-visible,.solidOptions select:focus-visible{outline:2px solid #c08578;outline-offset:2px}.solidOptions input:disabled{background:var(--paper);color:var(--ink45)}.solidOptions [hidden]{display:none!important}.solidOptions .roseAllowance{display:grid;grid-template-columns:1fr auto 88px;gap:10px;align-items:center}.solidOptions .roseAllowance input{width:88px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono)}.solidOptions .roseStockOptions p{margin:0;font-size:11px;line-height:1.5}.solidOptions [data-rose-stock-choice]{display:grid;gap:10px}.solidOptions [data-rose-picker] select{width:100%;min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:12px}
+
+/* ── Options (Paul, 7 Oct 2026): ONE large window for a sheet card's Options, in the look of the Sheet window and the shared-orders window
+      (OptionsStudio, charm-nest-options-modal.js). The controls the Gate draws (.solidOptions, the box) are mounted in it while it is open:
+      its cards are This sheet, Partial sheets (charm-nest-partial-ui.js), Sheet history and All partial sheets. ── */
+.solidOptions[hidden]{display:none!important}
+dialog.osDlg{width:min(1400px,92vw);height:min(90vh,1000px);max-height:none;border:0;padding:0;border-radius:16px;overflow:hidden;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+dialog.osDlg::backdrop{background:rgba(20,18,15,.5);animation:osFade .22s ease both}
+dialog.osDlg[open]{display:block;animation:osIn .18s cubic-bezier(.2,.8,.2,1) backwards}
+dialog.osDlg.closing{animation:osOut .15s ease both}
+dialog.osDlg.closing::backdrop{animation:osFadeOut .15s ease both}
+dialog.osDlg:focus,dialog.osDlg:focus-visible{outline:none}
+@keyframes osIn{from{opacity:0;transform:translateY(10px) scale(.985)}}
+@keyframes osOut{to{opacity:0;transform:translateY(6px) scale(.99)}}
+@keyframes osFade{from{opacity:0}}
+@keyframes osFadeOut{to{opacity:0}}
+.osBox{display:grid;grid-template-rows:auto minmax(0,1fr);height:100%;position:relative}
+.osHead{display:flex;align-items:center;gap:14px;padding:12px 14px 12px 22px;border-bottom:1px solid var(--line);background:var(--card);min-width:0}
+.osId{display:flex;align-items:center;gap:12px;min-width:0;flex:1 1 auto}
+.osMetal{display:inline-grid;place-items:center;min-width:40px;height:26px;padding:0 8px;border-radius:8px;background:var(--c);color:#fff;font:700 12px var(--mono);letter-spacing:.04em;text-shadow:0 1px 0 rgba(0,0,0,.18);flex:0 0 auto}
+.osTitle{display:flex;flex-direction:column;min-width:0;line-height:1.2}
+.osTitle h2{margin:0;font:500 24px var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.osTitle span{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.osX{width:36px;height:36px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--ink45);display:grid;place-items:center;padding:0;cursor:pointer;flex:0 0 auto;transition:background-color .15s ease,color .15s ease}
+.osX svg{width:17px;height:17px;display:block}
+.osX:hover{background:var(--paper2);color:var(--ink)}
+.osX:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.osBody{position:relative;overflow:auto;overscroll-behavior:contain;background:var(--card2);padding:22px 24px 30px;scroll-padding:20px}
+.osCard{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);padding:24px 26px 26px;min-width:0;display:flex;flex-direction:column;gap:18px}
+.osCard[data-card=history],.osCard[data-card=all]{grid-column:1/-1}
+.solidOptions:not(:has(.psView)) .osCard[data-card=sheet]{grid-column:1/-1}
+.osCardHead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.osCardTitle{margin:0;font:500 26px/1.2 var(--serif);color:var(--ink);letter-spacing:.005em}
+.osLead{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--ink70);max-width:64ch;text-wrap:pretty}
+.osSheetGrid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.solidOptions .osSheetGrid>.sheetOptionSection,.solidOptions .osSheetGrid>.roseStockOptions{padding:18px 20px;border:1px solid var(--line2);border-radius:12px;background:var(--card2);display:grid;gap:12px;align-content:start}
+.solidOptions .osSheetGrid .sheetOptionSection h4,.solidOptions .osSheetGrid .roseStockOptions h4{font-size:10.5px}
+.solidOptions .osSheetGrid .sheetInclude{font-size:15px}
+.solidOptions .osSheetGrid .sheetInclude input{width:20px;height:20px}
+.solidOptions .osSheetGrid .help{font-size:12.5px;line-height:1.55}
+.solidOptions .osSheetGrid .solidSize input{padding:11px 12px;font-size:15px}
+.solidOptions .osSheetGrid .roseAllowance input{width:96px;padding:10px;font-size:15px}
+.solidOptions .osSheetGrid .roseStockOptions p{font-size:12.5px}
+.solidOptions .osSheetGrid .btn.xs,.solidOptions .psView .btn.xs,.osCard .btn.xs{padding:8px 15px;font-size:12.5px}
+.osBusy{display:flex;align-items:center;gap:9px;font-size:12.5px;line-height:1.5;color:var(--ink70)}
+.osBusy.center{justify-content:center;padding:34px 0}
+.psList>.osBusy{grid-column:1/-1}
+.osSpin{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;flex:0 0 14px}
+.osEmpty{padding:34px 16px;text-align:center;color:var(--ink45);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:10px;grid-column:1/-1}
+.osEmpty b{font-weight:600;color:var(--ink70);max-width:52ch;line-height:1.5}
+.osEmpty span{max-width:58ch;line-height:1.55}
+.osEmpty.bad b{color:var(--clay)}
+.osHist{display:grid;grid-template-columns:minmax(0,7fr) minmax(280px,5fr);gap:28px;align-items:start}
+.osHistDraw{min-width:0}
+.osHistSide{min-width:0;max-height:min(520px,58vh);overflow:auto;overscroll-behavior:contain;padding-right:4px}
+.osHistWho{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;font-size:12.5px;color:var(--ink70)}
+.osHistWho b{font-weight:600;color:var(--ink)}
+.osLinkBtn{border:0;background:none;padding:0;font:inherit;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.osLinkBtn:hover{color:var(--gold)}
+.osLinkBtn:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:3px}
+.osSearch{display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;border:1px solid var(--line);border-radius:13px;background:var(--card);transition:border-color .14s ease,box-shadow .18s ease}
+.osSearch:focus-within{border-color:var(--ink45);box-shadow:0 0 0 3px var(--goldLine)}
+.osSearch svg{width:17px;height:17px;flex:0 0 auto;color:var(--ink45)}
+.osSearch input{flex:1 1 auto;min-width:0;border:0;outline:0;background:transparent;font:15px var(--sans);color:var(--ink);padding:0;height:100%}
+.osSearch input::placeholder{color:var(--ink45)}
+.osChips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.osChips .lbl{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin-right:4px;min-width:48px}
+.osChip{border:1px solid var(--line);background:var(--card);color:var(--ink70);border-radius:999px;padding:6px 15px;font:600 12.5px var(--sans);cursor:pointer;transition:background-color .14s ease,border-color .14s ease,color .14s ease}
+.osChip:hover{background:var(--paper2);border-color:var(--ink45)}
+.osChip[aria-pressed=true]{background:var(--velvet);border-color:var(--velvet);color:#fff}
+.osChip:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.osFilters{display:grid;gap:12px}
+.osCount{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;font-size:12.5px;color:var(--ink70)}
+.osMore{justify-self:center}
+.osNote{position:absolute;left:50%;bottom:20px;transform:translate(-50%,8px);max-width:min(560px,88%);padding:10px 16px;border-radius:12px;background:var(--velvet);color:#fff;font-size:13px;line-height:1.45;box-shadow:0 10px 30px rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .2s ease;z-index:5}
+.osNote.on{opacity:1;transform:translate(-50%,0)}
+.osNote[data-kind=bad]{background:var(--clay)}
+.osNote[data-kind=ok]{background:var(--sage)}
+@media (max-width:1000px){.solidOptions{grid-template-columns:minmax(0,1fr)}.osHist{grid-template-columns:minmax(0,1fr)}.osHistSide{max-height:none}}
+@media (max-width:760px){dialog.osDlg{width:100vw;height:100dvh;max-height:100dvh;border-radius:0}.osBody{padding:14px 12px 24px}.osCard{padding:18px 16px 20px;border-radius:14px}.osCardTitle{font-size:22px}.osTitle h2{font-size:19px}.osHead{padding-left:14px}}
+@media (prefers-reduced-motion:reduce){dialog.osDlg[open],dialog.osDlg::backdrop{animation:osFade .16s ease backwards}dialog.osDlg.closing,dialog.osDlg.closing::backdrop{animation:osFadeOut .12s ease both}.osNote,.osSearch,.osChip{transition:none}.osSpin{animation-duration:1.6s}}
 
 /* the door back into every run that ever ran (dialog.hist is the Sets menu's read-only preview, SetPicker.preview) */
 dialog.hist{border:0;border-radius:var(--r);box-shadow:0 24px 70px rgba(0,0,0,.26);padding:0;width:min(980px,94vw);max-height:88vh;background:var(--card);color:var(--ink)}
@@ -2516,7 +2594,7 @@ button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:
 .shControls{padding-bottom:5px;min-height:28px}
 .shTabs button{padding:3px 9px;font-size:10.5px}
 .shTabs select{padding:2px 7px;font-size:10.5px}
-.sheetOptions>summary{padding:3px 8px}
+.sheetOptions>.sheetOptionsBtn{padding:3px 8px}
 .shStage{padding-top:4px}
 .shSat{margin-top:5px;padding-block:5px}
 .shActions{padding-top:6px;padding-bottom:8px;gap:6px}
@@ -3060,7 +3138,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a"></script>
-<script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
+<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -6857,7 +6935,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-os1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -6914,7 +6992,7 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-ps3b"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2b"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1"></script>
@@ -6925,8 +7003,10 @@ try {
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1"></script>
 <script src="charm-nest-library-cutline.js?v=20261007-gc2"></script>
-<!-- the Partial Sheet panel: the button in a sheet card's Options, the list of partial sheets, the policy, the chain strip and the re-seat animation (PartialSheetsUI; its data is PartialSheets, its work PartialEngine) -->
-<script src="charm-nest-partial-ui.js?v=20261007-ps1"></script>
+<!-- the Partial sheets card of the Options window: the list of partial sheets, the policy, the chain strip and the re-seat animation (PartialSheetsUI; its data is PartialSheets, its work PartialEngine) -->
+<script src="charm-nest-partial-ui.js?v=20261007-ps1-os1"></script>
+<!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
+<script src="charm-nest-options-modal.js?v=20261007-os1"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1"></script>

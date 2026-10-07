@@ -13,16 +13,16 @@ w.eval(`var C=window.CN,S=C.S,CN=C,B=window.B={run:{runId:'run-test',releasePoli
  var sheetDirty=()=>{},saveSettings=()=>{},startNest=()=>{};
 `);
 const code=fs.readFileSync('charm-nest-bridge.js','utf8');w.eval(code.slice(code.indexOf('const Gate ='),code.indexOf('/* ═══ 21',code.indexOf('const Gate ='))));w.Gate.renderCard(sh);
-w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));
+w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));w.eval(fs.readFileSync('charm-nest-options-modal.js','utf8'));
 (async()=>{
- assert.match(sh.el.textContent,/Include in current set/);assert.match(sh.el.textContent,/Sheet dimensions/);assert(!sh.el.querySelector('[data-solid="nest"]'));assert.equal(sh.el.querySelectorAll('.solidOptions details').length,0);assert.match(sh.el.textContent,/Choose remnant or new sheet/);
+ assert.match(sh.el.textContent,/in current set/);assert.match(sh.el.textContent,/Sheet dimensions/);assert(!sh.el.querySelector('[data-solid="nest"]'));assert.equal(sh.el.querySelectorAll('.solidOptions details').length,0);assert.match(sh.el.textContent,/Choose remnant or new sheet/);
  assert.equal(calls.length,0,'rendering never eagerly loads physical stock');
- const menu=sh.el.querySelector('.sheetOptions'),width=sh.el.querySelector('[data-solid="w"]'),allowance=sh.el.querySelector('[data-rose-allowance]');menu.open=true;
+ const opener=sh.el.querySelector('.sheetOptionsBtn'),width=sh.el.querySelector('[data-solid="w"]'),allowance=sh.el.querySelector('[data-rose-allowance]'),box=width.closest('.solidOptions');opener.click();   // (Options is one large window now: the same controls, mounted in it while it is open)
  width.focus();width.value='125.5';width.dispatchEvent(new w.Event('input'));allowance.value='0.35';allowance.dispatchEvent(new w.Event('input'));
  for(let n=0;n<10;n++)w.CN.renderCard(sh);
- assert.equal(sh.el.querySelector('.sheetOptions'),menu);assert(menu.open);assert.equal(w.document.activeElement,width);assert.equal(width.value,'125.5');assert.equal(allowance.value,'0.35');
+ assert.equal(sh.el.querySelector('.sheetOptionsBtn'),opener);assert(w.OptionsStudio.isOpen('rose'));assert.equal(w.document.activeElement,width);assert.equal(width.value,'125.5');assert.equal(allowance.value,'0.35');
  width.blur();w.CN.renderCard(sh);assert.equal(width.value,'125.5','draft survives blur and background refresh');
- sh.status='nesting';w.CN.renderCard(sh);assert(!width.disabled,'background work does not prevent editing a draft');assert(sh.el.querySelector('[data-solid="size"]').disabled);sh.status='complete';
+ sh.status='nesting';w.CN.renderCard(sh);assert(!width.disabled,'background work does not prevent editing a draft');assert(box.querySelector('[data-solid="size"]').disabled);sh.status='complete';
  assert(!sh.el.textContent.includes('Physical sheet'));assert(!sh.el.querySelector('[data-rose-release]'));
 
  // only a Cut Sheet press adds a green line (Paul, 29 Sep): any other contour request for these uncut charms asks nothing
@@ -51,7 +51,7 @@ w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));
  for(let n=0;n<50&&!sh._roseError;n++)await new Promise(r=>setTimeout(r,5));
  assert.deepEqual(included,[['rose',true],['rose',true]],'pressing Cut Sheet on a held sheet includes Rose Gold in the set');assert(sh.setId&&!sh.draft);w.Gate.changeMembership=realInclude;
  assert.equal(sh._roseError,'The sheet changed elsewhere');assert.match(sh.el.querySelector('.roseError[role="alert"]').textContent,/changed elsewhere/);assert.equal(toasts.length,shown,'no pop-up repeats the alert');assert(!sh.roseCutAt);sh._roseError=null;
- await w.RoseStock.record(sh);assert(sh.roseCutAt);assert.equal(sh.roseHistory.length,1);assert(!sh.el.querySelector('.roseHistory button, .roseCut button'),'a cut sheet offers no more buttons');assert.equal(sh.el.querySelectorAll('.roseLineTimeline time').length,1);assert(sh.el.querySelector('[data-solid="size"]').disabled);assert(allowance.disabled);assert(!sh.el.textContent.includes('Using sheet'));assert(!sh.el.querySelector('.roseStockHead'));ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'lines');assert.equal(ctx.lineWidth,2,'historical cut line is twice its previous display width');
+ await w.RoseStock.record(sh);assert(sh.roseCutAt);assert.equal(sh.roseHistory.length,1);assert(!sh.el.querySelector('.roseHistory button, .roseCut button'),'a cut sheet offers no more buttons');assert.equal(sh.el.querySelectorAll('.roseLineTimeline time').length,1);assert(box.querySelector('[data-solid="size"]').disabled);assert(allowance.disabled);assert(!sh.el.textContent.includes('Using sheet'));assert(!sh.el.querySelector('.roseStockHead'));ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'lines');assert.equal(ctx.lineWidth,2,'historical cut line is twice its previous display width');
  ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'history');assert(ctx.calls.some(c=>c[0]==='fillRect'),'removed region is shaded');assert.equal(ctx.fillStyle,'#d8d5d0','cut silhouettes use neutral grey');
  // A recalled sheet starts its history request only when scrolled into view.
  sh.recalled={roseStockId:stock.id};sh.roseStock=null;sh._roseLoaded=false;sh.roseHistory=[];w.RoseStock.render(sh);const reads=calls.filter(x=>x==='roseGet').length;assert.equal(calls.filter(x=>x==='roseGet').length,reads);assert(observers[0].el);
