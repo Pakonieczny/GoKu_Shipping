@@ -208,6 +208,7 @@
       + `<div class="osFilters"><label class="osSearch">${ICON.search}<input type="search" autocomplete="off" spellcheck="false" placeholder="Search partial sheets" aria-label="Search all partial sheets"></label>`
       + chips('metal', METAL_CHIPS, 'Metal') + chips('status', STATUS_CHIPS, 'Status') + `</div>`
       + `<p class="osCount" data-os="count" role="status"></p><div class="psList osResults" data-os="results" aria-live="polite"></div><button type="button" class="btn ghost osMore" data-os="more" hidden>Show more</button><button type="button" class="btn ghost osMore" data-os="older" hidden>Load older partial sheets</button>`;
+    c.querySelector('input[type=search]').value = ALL.q;   // (the words typed last time are still the filter: the box shows them)
     return c;
   }
   function fallbackFilter(items, query, o = {}) {   // (OptionsHistory.filter is the real one; this keeps the card working until that file is on the page)
