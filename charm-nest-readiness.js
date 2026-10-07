@@ -3,6 +3,9 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CharmNestReadiness=api;})(typeof self!=='undefined'?self:this,function(){
   'use strict';
   const idsOf=s=>[...new Set((s.poolIds || []).filter(Boolean))];
+  /* A sheet of a metal that has a green line (Rose Gold, 10K, 14K: charm-nest-rose.js cuts(), the one list) that holds a physical sheet but has no
+   * calculated line yet waits for it. Looked up when asked, so the page's script order does not matter; a page without that module asks for nothing. */
+  const lineMissing=s=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestRose;if(!R&&typeof require==='function'){try{R=require('./charm-nest-rose');}catch(_){R=null;}}return !!(R&&R.cuts(s.metal)&&s.roseStockId&&!s.rosePlanHash);};
   const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
   const url=x=>typeof x==='string'?x:x?.url;
   /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders: EITHER button, or both, in any order and
@@ -48,7 +51,7 @@
     const total=ids.length+unidentified,required=total-plain;
     const labels=s.label?.files || [],covered=new Set(labels.flatMap(f=>f.orders || []).map(String)),orders=s.orders || s.label?.orders || [];
     const stages={
-      layout:total>0 && !(s.metal==='rose' && s.roseStockId && !s.rosePlanHash) && s.verification?.ok===true && !s.dirty && !s.saving && !['nesting','finishing','queued','error'].includes(s.status),
+      layout:total>0 && !lineMissing(s) && s.verification?.ok===true && !s.dirty && !s.saving && !['nesting','finishing','queued','error'].includes(s.status),
       front:!!url(s.outputs?.ai) && !!(s.preview || url(s.outputs?.preview)),
       approval:total>0 && waiting===0,
       backs:total>0 && saved===required,
@@ -383,7 +386,7 @@
       return {id,label,r,again,ok,hard,items,detail,short};
     }
     if(r.total===0)own('nesting','No charms are placed on it yet');
-    if(s.metal==='rose' && s.roseStockId && !s.rosePlanHash)own('nesting','The green dash line has not been calculated: press Cut Sheet',true);
+    if(lineMissing(s))own('nesting','The green dash line has not been calculated: press Cut Sheet',true);
     if(s.status==='error')own('nesting','Nesting stopped with an error: nest this sheet again',true);
     else if(working)own('nesting',s.saving?'The sheet is still being saved':'The sheet is still being nested or changed');
     if(s.verification?.ok===false)own('nesting','The layout check found a problem: open the sheet and nest it again',true);
@@ -488,7 +491,7 @@
     if(s.draft)return mk('nesting','notInSet','Not in a set yet');
     if(s.solidIncluded===false)return mk('nesting','notInSet','Not included yet');
     if(completedBefore(s))return null;                      // cut once before: reopening keeps that approval, only a place in a set is asked
-    if(s.metal==='rose' && s.roseStockId && !s.rosePlanHash)return mk('nesting','roseLine','Green line needed');
+    if(lineMissing(s))return mk('nesting','roseLine','Green line needed');
     if(!(st.layout && st.front))return mk('nesting','layout',st.layout && !st.front?'Cutting files missing':'Layout not ready');
     if(!st.approval)return mk('engraving','approvalsNeeded','Approvals needed');
     if(!st.backs)return mk('engraving','backFilesMissing','Saving back files');   // (the Engraving step since round 13: the saved files are part of it)

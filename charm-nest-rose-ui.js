@@ -1,9 +1,15 @@
-/* Rose Gold: physical stock, vector-derived cut plans and immutable cut history. */
+/* Cut Sheet for the metals that have a green line (charm-nest-rose.js cuts(): Rose Gold, 10K Gold, 14K Gold): physical stock,
+   vector-derived cut plans and immutable cut history. The three metals share every rule here; only these differ:
+   - Rose Gold takes a physical sheet at the start of every nest and joins a set only by its own Cut Sheet press;
+   - 10K and 14K take one only when a leftover of their metal and size fits at nest (nestClaim), or when the sheet is in the set and still
+     needs a line (claimLate), or at Cut Sheet; they join a set by their own Include switch, and Cut Sheet on a held sheet includes it first
+     (Gate.cutInclude). So a gold sheet keeps its size editable (Options, Merge sheets) until it holds a physical sheet. */
 (function init(){
   'use strict';
   if(!window.CN){setTimeout(init,150);return;}
   const R=window.CharmNestRose,C=window.CN,S=C.S,esc=C.esc;
-  const api=(op,data={})=>C.api('charmNestLibrary',{op,...data},{label:'Rose Gold stock'});
+  const cuts=sh=>!!sh&&R.cuts(sh.metal),word=sh=>R.cutWord(sh&&sh.metal),isRose=sh=>!!sh&&sh.metal==='rose';
+  const api=(op,data={})=>C.api('charmNestLibrary',{op,...data},{label:R.cutWord(data.metal||'rose')+' stock'});
   const fingerprint=s=>JSON.stringify((s.placements||[]).map(p=>[p.id,+p.cxPt.toFixed(3),+p.cyPt.toFixed(3),p.angle,p.scale||1,p.hash||s.charms?.find(c=>c.id===p.id)?.hash||null]));
   const refresh=sh=>{window.Session?.schedule();if(sh.el){C.renderCard(sh);C.drawPreview(sh);}};
   const parse=s=>s?JSON.parse(s):null;
@@ -13,7 +19,7 @@
   const count=list=>{const n=list?.length||0;return n+' charm'+(n===1?'':'s');};
   async function load(sh,older=false){
     const stockId=sh.roseStock?.id||sh.recalled?.roseStockId;if(!stockId)return;
-    const result=await api('roseGet',{stockId,...(older?{before:Math.min(...sh.roseHistory.map(c=>c.revision))}:{})});
+    const result=await api('roseGet',{stockId,metal:sh.metal,...(older?{before:Math.min(...sh.roseHistory.map(c=>c.revision))}:{})});
     // An already cut layout can display the full physical history. An active
     // reservation must keep its original revision until prepare checks it.
     if(!sh.roseStock||sh.roseCutAt)sh.roseStock=result.stock;
@@ -24,19 +30,19 @@
     refresh(sh);
   }
   async function restore(sh,rec){
-    const result=await api('roseGet',{stockId:rec.roseStockId});
+    const result=await api('roseGet',{stockId:rec.roseStockId,metal:sh.metal});
     sh.roseStock=result.stock;sh.roseHistory=decode(result.cuts);sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
   }
   function protect(sh){
-    if(sh.metal!=='rose'||sh.roseCutAt)return;
+    if(!cuts(sh)||sh.roseCutAt)return;
     if(sh.roseProtected)for(const p of sh.roseProtected.placements||[]){
       const rows=sh.placements.filter(x=>x.id===p.id),q=rows[0];
-      if(rows.length!==1||!sh.charms.some(c=>c.id===p.id)||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error('Reload the saved Rose Gold layout before adding charms');
+      if(rows.length!==1||!sh.charms.some(c=>c.id===p.id)||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error(`Reload the saved ${word(sh)} layout before adding charms`);
     }
     if(sh.rosePlan?.profile){
       const ids=new Set(sh.rosePlan.shapes.map(s=>s.id));
       const placements=sh.placements.filter(p=>ids.has(p.id));
-      if(placements.length!==ids.size)throw new Error('Reload the saved Rose Gold layout before adding charms');
+      if(placements.length!==ids.size)throw new Error(`Reload the saved ${word(sh)} layout before adding charms`);
       sh.roseProtected={profile:sh.rosePlan.profile,lines:sh.rosePlan.lines,placements:placements.map(p=>({...p})),shapes:sh.rosePlan.shapes,stages:sh.rosePlan.stages};
     }
   }
@@ -48,8 +54,8 @@
      or null when the sheet has no saved record or is cut; rejects when the cloud could not be asked (nothing is changed then).
      o: by, at (when), cancel (it is a cancel's). */
   async function takeOff(sh,ids,o={}){
-    if(sh.metal!=='rose'||sh.roseCutAt||!sh.sheetId||!ids||!ids.length)return null;
-    if(!S.cloud.ok)throw new Error('Reconnect to take the pieces off the Rose Gold sheet');
+    if(!cuts(sh)||sh.roseCutAt||!sh.sheetId||!ids||!ids.length)return null;
+    if(!S.cloud.ok)throw new Error(`Reconnect to take the pieces off the ${word(sh)} sheet`);
     const r=await C.api('charmNestLibrary',{op:'roseTakeOff',sheetId:sh.sheetId,ids:[...ids],by:o.by||undefined,at:o.at||undefined,cancel:!!o.cancel,allowanceMm:sh.roseAllowanceMm||undefined},{quiet:true});
     if(r&&r.changed){
       if(r.protectedJson)sh.roseProtected=parse(r.protectedJson);else delete sh.roseProtected;
@@ -59,27 +65,54 @@
     return r||null;
   }
   async function prepare(sh,opts={}){
-    if(sh.metal!=='rose')return;
+    if(!cuts(sh))return;
     if(sh.roseCutAt)throw new Error('This layout has already been cut');
-    if(!S.cloud.ok)throw new Error('Reconnect to load the physical Rose Gold sheet before nesting');
-    sh.sheetId ||= 'rose-'+Date.now().toString(36)+'-'+C.uid();
+    if(!S.cloud.ok)throw new Error(`Reconnect to load the physical ${word(sh)} sheet before nesting`);
+    sh.sheetId ||= (isRose(sh)?'rose':sh.metal)+'-'+Date.now().toString(36)+'-'+C.uid();
     protect(sh);
-    const st=C.stockFor('rose',sh);
-    const r=await api('roseClaim',{sheetId:sh.sheetId,wPt:st.wPt,hPt:st.hPt,stockId:sh.roseStock?.id||sh.roseChoice,revision:sh.roseStock?.revision,fresh:!!sh.roseFresh,...opts});
+    const st=C.stockFor(sh.metal,sh);
+    const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:st.wPt,hPt:st.hPt,stockId:sh.roseStock?.id||sh.roseChoice,revision:sh.roseStock?.revision,fresh:!!sh.roseFresh,...opts});
+    if(!r.stock)return;   // (onlyRemnant: no leftover fits, so nothing was claimed or written)
     sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;
     if(r.protectedJson){
       const guard=parse(r.protectedJson);
-      for(const p of guard.placements){const q=sh.placements.find(x=>x.id===p.id);if(!q||['cxPt','cyPt','angle'].some(k=>Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error('Reload the saved Rose Gold layout before adding charms');}
+      for(const p of guard.placements){const q=sh.placements.find(x=>x.id===p.id);if(!q||['cxPt','cyPt','angle'].some(k=>Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error(`Reload the saved ${word(sh)} layout before adding charms`);}
       sh.roseProtected=guard;
       if(opts.nesting){delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;}
     }
     await load(sh);window.Session?.schedule();
   }
+  // The start of a nest. Rose Gold takes its physical sheet here, always. 10K and 14K take one only when a leftover of their metal and
+  // size fits (it was cut before: the layout must go around what is gone) or when the sheet already holds one; otherwise nothing is
+  // claimed or written, and the size stays the person's to change.
+  async function nestClaim(sh){
+    if(!cuts(sh)||sh.roseCutAt)return;
+    if(isRose(sh)||sh.roseStock||sh.roseChoice||sh.roseProtected||sh.rosePlan)return prepare(sh,{nesting:true});
+    return prepare(sh,{nesting:true,onlyRemnant:true});
+  }
+  // A 10K or 14K sheet that is in the set, has charms outside any line and room for one holds a physical sheet from then on, so the set
+  // waits for its Cut Sheet exactly as a Rose Gold set does (the saved record then names its stock: CharmNestReadiness). A full sheet
+  // takes the rest of the metal whole and claims nothing. Never adds a line.
+  async function claimLate(sh){
+    if(isRose(sh)||!cuts(sh)||sh.roseStock||sh.roseCutAt||sh.recalled||!inSet(sh)||sh._roseClaiming||!sh.sheetId||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status)||!S.cloud.ok)return;
+    sh._roseClaiming=true;sh._roseStep='claim';sh._roseError=null;refresh(sh);
+    try{await prepare(sh,{fresh:true});}catch(e){sh._roseError=e.message;}
+    finally{sh._roseClaiming=false;sh._roseStep=null;refresh(sh);}
+  }
+  // Taken out of the set before any line was drawn: a 10K or 14K sheet nobody cut lets go of its fresh physical sheet (the server deletes
+  // a stock with no cut), so its size can be changed again. A leftover it was nested on, a planned or protected sheet and a cut one stay.
+  async function letGo(sh){
+    if(isRose(sh)||!cuts(sh)||!sh.roseStock?.id||sh.roseCutAt||sh.recalled||sh.rosePlan||sh.roseProtected||sh.roseStock.revision||sh.roseStock.profileJson||!sh.sheetId||inSet(sh)||sh._roseAction||sh._rosePlanning||!S.cloud.ok)return false;
+    try{await api('roseRelease',{stockId:sh.roseStock.id,sheetId:sh.sheetId,metal:sh.metal});}catch(_){return false;}
+    delete sh.roseStock;delete sh.roseRevision;delete sh.roseChoice;delete sh.rosePlanHash;delete sh.rosePlanKey;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
+    window.Session?.schedule();refresh(sh);return true;
+  }
   // Only a Cut Sheet press adds a green line (Paul, 29 Sep: Send to Sheet drew line 2 by itself). The contour is also
   // made again when a sheet joins a set, is saved, is nested or its allowance changes: that may redraw the lines it has
   // or take a full sheet whole, never add one. Charms past the last line stay uncut until the next press.
   async function plan(sh,opts={}){
-    if(!opts.cut&&addsLine(sh))return;
+    if(!opts.cut&&addsLine(sh))return claimLate(sh);
+    if(!opts.cut&&!isRose(sh)&&!sh.roseStock)return;   // (10K, 14K: a sheet nobody asked a line for holds no physical sheet and saves no contour)
     if(sh._rosePlanning)return sh._rosePlanning;
     const task=(async()=>{
       if(sh.roseCutAt)return;
@@ -88,13 +121,13 @@
       sh._roseError=null;
       if(!sh.roseStock)await prepare(sh,{fresh:true});
       const shapes=window.CharmNestBackground ? await CharmNestBackground.run('roseShapes',{charms:sh.charms.map(c=>({id:c.id,outline:c.outline,members:c.members,centerPt:c.centerPt,bbox:c.bbox})),placements:sh.placements}) : R.shapes(sh.charms,sh.placements);
-      const result=await api('rosePlan',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseStock.revision,fingerprint:key,shapesJson:JSON.stringify(shapes),allowanceMm:sh.roseAllowanceMm||.2,...(opts.cut?{cut:true}:{})});
+      const result=await api('rosePlan',{sheetId:sh.sheetId,metal:sh.metal,stockId:sh.roseStock.id,revision:sh.roseStock.revision,fingerprint:key,shapesJson:JSON.stringify(shapes),allowanceMm:sh.roseAllowanceMm||.2,...(opts.cut?{cut:true}:{})});
       if(fingerprint(sh)!==key||sh.dirty)throw new Error('Layout changed while saving its contour');
       sh.rosePlan=parse(result.planJson);sh.rosePlanHash=result.planHash;sh.rosePlanKey=key;sh.roseRevision=sh.roseStock.revision;
       window.SheetEvents?.roseLines(sh);   // a new green line: on the timelines of the orders it covers (idle time)
     })();
     sh._rosePlanning=task;refresh(sh);
-    try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);C.flushManualIntake?.('rose');}
+    try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);C.flushManualIntake?.(sh.metal);}
   }
   // Cut Sheet: one press draws this layout's green line with today's date and
   // records the cut. Its charms turn grey, and the next charms nest past the
@@ -106,7 +139,8 @@
     if(!inSet(sh)){
       const G=window.Gate;if(!G?.changeMembership)throw new Error('Sets are not loaded yet · try again in a moment');
       sh._roseStep='include';refresh(sh);
-      try{await G.changeMembership('rose',true);}finally{sh._roseStep=null;}
+      // (Rose Gold joins by its metal's tick; a 10K or 14K sheet by its own Include, which keeps the rule of orders that span two sheets)
+      try{if(isRose(sh))await G.changeMembership('rose',true);else if(G.cutInclude)await G.cutInclude(sh);else await G.changeMembership(sh.metal,true,sh);}finally{sh._roseStep=null;}
       if(!inSet(sh))throw new Error('Not cut: '+(G.policy?.(sh)?.reason||'this sheet is not in a set yet'));
       refresh(sh);
     }
@@ -114,9 +148,9 @@
     // who cut it: the sorter's signed-in person (its own name, or the Design Station's sign-in); nobody is sent as ""
     // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
     let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||window.B?.employee||'').trim();}
-    const r=await api('roseRecordCut',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1'});
+    const r=await api('roseRecordCut',{sheetId:sh.sheetId,metal:sh.metal,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1'});
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
-    refresh(sh);C.toast('Sheet cut · the next Rose Gold charms nest past this green line','ok');
+    refresh(sh);C.toast(`Sheet cut · the next ${word(sh)} charms nest past this green line`,'ok');
     // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the person pressed Cut Sheet and the cut is recorded;
     // the pieces are the sheet's charms, one event for each order on it. Cutting is the Laser station's work, not the sorter's.
     try{window.CNLaserAct&&window.CNLaserAct.rose(sh);}catch(_){}
@@ -125,7 +159,7 @@
   const observed=new WeakMap();
   const observer=window.IntersectionObserver?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);const sh=observed.get(e.target);if(sh&&!sh._roseLoaded&&!sh._roseLoading){sh._roseLoading=true;load(sh).catch(error=>{sh._roseError=error.message;}).finally(()=>{sh._roseLoading=false;refresh(sh);});}}},{rootMargin:'120px'}):null;
   function render(sh){
-    if(sh.metal!=='rose'||!sh.el)return;
+    if(!cuts(sh)||!sh.el)return;
     let host=sh.el.querySelector('.roseHistory');if(!host){host=document.createElement('div');host.className='roseHistory';sh.el.querySelector('.shPreviewWrap').before(host);}
     const stock=sh.roseStock,history=(sh.roseHistory||[]).slice().sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction);
     const stockId=stock?.id||sh.recalled?.roseStockId;
@@ -142,7 +176,7 @@
     host.classList.toggle('roseHasTimeline',!!marks);
     // The timeline comes last so it sits directly on the sheet's ruler.
     // the busy line names the step under way (it read "Loading sheet geometry…" while a cut was being recorded)
-    const busyWord=sh._roseStep==='include'?'Adding the sheet to the set…':sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
+    const busyWord=sh._roseStep==='include'?'Adding the sheet to the set…':sh._roseStep==='claim'?'Reserving the physical sheet…':sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
     // Cut Sheet sits in the card's control row, beside the sheet tabs and Options: on a line of its own it pushed the
     // Rose Gold sheet a row below the sheets beside it (audit, 25 Sep). This panel keeps the step under way, a failure
     // and the dated green lines, and takes no room when it has none of them.
@@ -153,7 +187,7 @@
     host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;
     host.classList.toggle('roseEmpty',!host.innerHTML);
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
-    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
+    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.(sh.metal);}};
     slot.querySelector('[data-rose="cut"]')?.addEventListener('click',invoke(()=>record(sh)));
     const menu=sh.el.querySelector('.solidOptions');
     if(menu&&!menu.querySelector('[data-rose-options]')){
@@ -161,9 +195,9 @@
       options.innerHTML=`<h4>Cut contour</h4><label class="roseAllowance">Contour allowance <span>mm</span><input type="number" min="0.05" max="2" step="0.05" value="${sh.roseAllowanceMm||.2}" data-rose-allowance></label><p class="help">Space around the combined charm outline.</p><div data-rose-stock-choice><button type="button" class="btn ghost xs" data-rose-choose>Choose remnant or new sheet</button><span data-rose-picker></span></div>`;
       menu.append(options);
       options.querySelector('[data-rose-choose]')?.addEventListener('click',async e=>{
-        e.target.disabled=true;try{const result=await api('roseList'),st=C.stockFor('rose'),pick=options.querySelector('[data-rose-picker]');
+        e.target.disabled=true;try{const result=await api('roseList',{metal:sh.metal}),st=C.stockFor(sh.metal),pick=options.querySelector('[data-rose-picker]');
           const stocks=result.stocks.filter(s=>Math.abs(s.wPt-st.wPt)<.01&&Math.abs(s.hPt-st.hPt)<.01);
-          pick.innerHTML='<select aria-label="Physical Rose Gold sheet"><option value="">Use available remnant first</option><option value="new">New uncut sheet</option>'+stocks.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.id.slice(-8).toUpperCase())+' · '+s.revision+' cuts · '+Math.round((s.wPt*s.hPt-(s.profileJson?R.area(parse(s.profileJson)):0))*R.MM*R.MM)+' mm² left</option>').join('')+'</select>';
+          pick.innerHTML=`<select aria-label="Physical ${esc(word(sh))} sheet">`+'<option value="">Use available remnant first</option><option value="new">New uncut sheet</option>'+stocks.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.id.slice(-8).toUpperCase())+' · '+s.revision+' cuts · '+Math.round((s.wPt*s.hPt-(s.profileJson?R.area(parse(s.profileJson)):0))*R.MM*R.MM)+' mm² left</option>').join('')+'</select>';
           const select=pick.querySelector('select');select.value=sh.roseFresh?'new':sh.roseChoice||'';select.onchange=()=>{sh.roseFresh=select.value==='new';sh.roseChoice=sh.roseFresh?null:select.value||null;window.Session?.schedule();};
         }catch(error){C.toast(error.message,'bad');}finally{e.target.disabled=false;}
       });
@@ -191,7 +225,7 @@
   const views=new WeakMap();
   function shown(plan,sh){
     let view=views.get(plan);
-    if(!view){const st=plan.profile||C.stockFor('rose',sh);view=R.tidy(plan.lines||[],stagesOf(plan),st.wPt,st.hPt,plan.shapes,Math.max(.2,sh.roseAllowanceMm||.2)/R.MM);views.set(plan,view);}
+    if(!view){const st=plan.profile||C.stockFor(sh.metal,sh);view=R.tidy(plan.lines||[],stagesOf(plan),st.wPt,st.hPt,plan.shapes,Math.max(.2,sh.roseAllowanceMm||.2)/R.MM);views.set(plan,view);}
     return view;
   }
   // Whether this layout leaves no room for another charm. Until its contour is
@@ -203,7 +237,7 @@
     const key=[fingerprint(sh),sh.roseStock?.id,sh.roseStock?.revision,fixed.size,sh.roseAllowanceMm||.2].join('|');
     if(sh._roseFullKey!==key){
       sh._roseFullKey=key;
-      try{const st=C.stockFor('rose',sh);sh._roseFull=!!R.plan(R.shapes(sh.charms.map(c=>({...c,members:[]})),fresh),st.wPt,st.hPt,sh.roseProtected?.profile||parse(sh.roseStock?.profileJson),sh.roseAllowanceMm||.2).full;}
+      try{const st=C.stockFor(sh.metal,sh);sh._roseFull=!!R.plan(R.shapes(sh.charms.map(c=>({...c,members:[]})),fresh),st.wPt,st.hPt,sh.roseProtected?.profile||parse(sh.roseStock?.profileJson),sh.roseAllowanceMm||.2).full;}
       catch(_){sh._roseFull=false;}
     }
     return sh._roseFull;
@@ -218,13 +252,13 @@
   // CharmNestReadiness reads it), and says so by name; it read only "…layout checks…". How many charms wait; 0 while it
   // nests, or when it is full and plans by itself.
   function waiting(sh){
-    if(sh.metal!=='rose'||!inSet(sh)||sh.roseCutAt||sh.recalled||!sh.roseStock?.id||sh.rosePlanHash||!sh.persistedDone||!sh.verification?.ok||sh.dirty||['nesting','finishing','queued'].includes(sh.status)||!addsLine(sh))return 0;
+    if(!cuts(sh)||!inSet(sh)||sh.roseCutAt||sh.recalled||!sh.roseStock?.id||sh.rosePlanHash||!sh.persistedDone||!sh.verification?.ok||sh.dirty||['nesting','finishing','queued'].includes(sh.status)||!addsLine(sh))return 0;
     return unlined(sh).length;
   }
-  const waitWords=sh=>{const n=waiting(sh);return n?`Rose Gold Sheet ${sh.page||1} has ${n} charm${n===1?'':'s'} not cut yet: press Cut Sheet`:'';};
+  const waitWords=sh=>{const n=waiting(sh);return n?`${word(sh)} Sheet ${sh.page||1} has ${n} charm${n===1?'':'s'} not cut yet: press Cut Sheet`:'';};
   // The words lead to the button: the sheet on its card, the card rung, Cut Sheet focused.
   function showCut(sh){
-    C.setMode('nest');const i=C.pagesOf('rose').indexOf(sh);if(i>=0&&!sh.el)C.showPage('rose',i);
+    C.setMode('nest');const i=C.pagesOf(sh.metal).indexOf(sh);if(i>=0&&!sh.el)C.showPage(sh.metal,i);
     requestAnimationFrame(()=>{const card=sh.el;if(!card)return;card.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});window.ringCard?.(card);card.querySelector('[data-rose="cut"]')?.focus({preventScroll:true});});
   }
   const length=path=>path.slice(1).reduce((n,p,i)=>n+Math.hypot(p[0]-path[i][0],p[1]-path[i][1]),0);
@@ -250,7 +284,7 @@
   // a row move to the next row; each keeps a tick on the ruler at its line.
   const ROW=20;
   function timeline(sh,history){
-    const st=C.stockFor('rose',sh),marks=[];
+    const st=C.stockFor(sh.metal,sh),marks=[];
     const add=(kind,n,at,x,about)=>{if(Number.isFinite(x))marks.push({kind,n,at,x,about});};
     for(const c of history){
       const plan=c.plan;if(!plan)continue;
@@ -280,7 +314,7 @@
   function badge(ctx,x,y,text,fill,ink){const d=window.devicePixelRatio||1;ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,y,7*d,0,Math.PI*2);ctx.fill();ctx.fillStyle=ink;ctx.font=`${10*d}px sans-serif`;ctx.textAlign='center';ctx.fillText(text,x,y+3*d);}
   function stroke(ctx,paths,k,color,width,dashed=false){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[4,3]:[]);for(const path of paths||[]){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.stroke();}ctx.setLineDash([]);}
   function paint(ctx,sh,k,phase){
-    if(sh.metal!=='rose')return;
+    if(!cuts(sh))return;
     ctx.save();const cuts=sh.roseHistory||[];
     if(phase==='history'){
       const p=parse(sh.roseStock?.profileJson);
@@ -292,7 +326,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock={protect,prepare,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 

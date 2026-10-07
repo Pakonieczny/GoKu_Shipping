@@ -3032,7 +3032,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="brites-progress.js"></script>
 <script src="charm-nest-progress.js?v=20260924-topline"></script>
 <script src="charm-nest-operations.js"></script>
-<script src="charm-nest-rose.js?v=20260923-edges"></script>
+<script src="charm-nest-rose.js?v=20261007-edges-gc1"></script>
 <script src="charm-nest-solver.js?v=20260925-fill-holes"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
@@ -3049,7 +3049,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
@@ -3217,6 +3217,8 @@ function loadSettings() {
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
 function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
+/** Whether a metal's sheets carry a green cut line (Cut Sheet): Rose Gold, 10K, 14K. The one list is charm-nest-rose.js. */
+const cutsMetal = m => !!(window.CharmNestRose && CharmNestRose.cuts(m));
 function stockFor(metal, sheet) {
   // (keptStock: a cut sheet an Apply size left as it was keeps the size it was cut at: Gate.renderRelease)
   const saved=sheet?.roseStock || sheet?.recalled?.stock || sheet?.keptStock;
@@ -3637,7 +3639,7 @@ function assignSource(src, metal) {
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
 function manualSheetClosed(sh){
-  if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)&&!sh.releaseFull&&!sh.roseCutAt&&!sh.recalled&&!sh.laserDoneAt&&!window.Sets?.ofRun(sh.runId)?.some(set=>set.committedAt&&set.sheetIds.includes(sh.sheetId)))return false;
+  if(cutsMetal(sh.metal)&&(sh.rosePlan||sh.roseProtected)&&!sh.releaseFull&&!sh.roseCutAt&&!sh.recalled&&!sh.laserDoneAt&&!window.Sets?.ofRun(sh.runId)?.some(set=>set.committedAt&&set.sheetIds.includes(sh.sheetId)))return false;
   return !!sh.roseCutAt || !!sh.recalled || !!sh.intakeFinalized || !!sh.releaseFull || !!sh.runHold || !!window.LiveNest?.closed(sh);
 }
 /** New artwork waits outside the live job. No worker, saved layout or timer is reset. */
@@ -3653,7 +3655,7 @@ function flushManualIntake(metal) {
     let sh=!manualSheetClosed(newest)?newest:null;
     if(sh&&(['nesting','finishing','queued'].includes(sh.status)||sh._operationStarting||sh._learnedStarting||sh._rosePlanning||sh._roseLoading||sh._roseAction||sh.persisted&&!sh.persistedDone))continue;
     if(window.CharmNestOperations?.busy('production:'+(sh?.runId||current.runId||sh?.sheetId)))continue;
-    if(!sh){sh=addPage(m.key);if(m.key==='rose'&&newest.roseCutAt&&newest.roseStock?.id)sh.roseChoice=newest.roseStock.id;showPage(m.key,pages.indexOf(sh));}
+    if(!sh){sh=addPage(m.key);if(cutsMetal(m.key)&&newest.roseCutAt&&newest.roseStock?.id)sh.roseChoice=newest.roseStock.id;showPage(m.key,pages.indexOf(sh));}
     const incoming=sources.flatMap(s=>s.charms).filter(c=>c.pendingMetal===m.key);
     if(!incoming.length)continue;
     if(!sh.runId)sh.runId=sources[0].runId||uid();
@@ -3973,7 +3975,7 @@ function layoutFixed(sh) {
   return !!sh.roseCutAt || !!sh.releaseFull || !!sh.recalled || !!sh.laserDoneAt || !!(window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && set.sheetIds.includes(sh.sheetId))) ||
     !!(window.Gate && Gate.modern(sh.runId) && sh.setId && !sh.draft);
 }
-function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; delete sh.keptStock; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; if(cutsMetal(sh.metal)&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; delete sh.keptStock; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -4297,9 +4299,9 @@ function buildJob(sh) {
     protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null,
     // a Gold or Silver sheet also reports whether one of the shop's smallest charms could still go in (see topupSettle)
     careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
-    // Rose Gold goes on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS)
-    block: careful && sh.metal === "rose",
-    initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
+    // Rose Gold, 10K and 14K (the metals with a green line) go on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS)
+    block: careful && cutsMetal(sh.metal),
+    initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !cutsMetal(sh.metal),
     // filling its gaps, a sheet takes any later order that fits, not only the oldest
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
@@ -4328,7 +4330,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
 function startNest(sh) {
   if (window.NestHold && NestHold.block(sh)) return;   // a piece of it is still flying (Send to Sheet): its nest starts once the last has landed
   if(sh.roseCutAt)return toast("This layout has been cut. Start a new sheet to use its remainder.","bad");
-  if (S.settings.nestFlow !== "learned" || sh.appendOnly || sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)) return startNestReady(sh);
+  if (S.settings.nestFlow !== "learned" || sh.appendOnly || cutsMetal(sh.metal)&&(sh.rosePlan||sh.roseProtected)) return startNestReady(sh);
   if (sh._learnedStarting || ["nesting", "finishing", "queued"].includes(sh.status)) return;
   sh._learnedStarting = true;
   checkLearnedRunner().then(info => { sh._learnedModelDigest = info.weightsSha256; sh._learnedStarting = false; if (S.settings.nestFlow === "learned" && activeCharms(sh).length) startNestReady(sh); }).catch(e => {
@@ -4348,7 +4350,7 @@ function startNestReady(sh, context) {
       sh._operationStarting = false;
       if (!allSheets().includes(sh)) return;
       if (heldForResume(sh)) return holdForResume(sh);
-      if(sh.metal==="rose" && window.RoseStock)await RoseStock.prepare(sh,{nesting:true});
+      if(cutsMetal(sh.metal) && window.RoseStock)await RoseStock.nestClaim(sh);   // (Rose Gold always; 10K and 14K only onto a leftover that fits)
       startNestReady(sh, token); // Hold the resource only for setup; workers run independently.
     }).catch(e => { sh._operationStarting = false; sh.status = "error"; sh.problem = e.message; renderCard(sh); toast(e.message,"bad"); if(window.RunCtl)RunCtl.onSheetDone(sh,e); });
   }
@@ -5703,7 +5705,7 @@ const sourceOf = id => S.sources.find(s => s.id === id) || (S.poolSources && S.p
 function clearBlock(pg) {
   const pages = pg.page > 1 ? [pg] : pagesOf(pg.metal), r = window.B?.run;
   if (r && !["complete", "abandoned"].includes(r.status) && pages.some(p => p.runId === r.runId && p.charms.length)) return "The open run's orders are on this card. Abandon the run first (⋯ on the run banner) to clear it.";
-  if (pages.some(p => p.metal === "rose" && !p.roseCutAt && (p.rosePlan || p.roseProtected))) return "The protected Rose Gold sheet keeps its green contour and saved positions until it is cut.";
+  if (pages.some(p => cutsMetal(p.metal) && !p.roseCutAt && (p.rosePlan || p.roseProtected))) return `The protected ${CharmNestRose.cutWord(pg.metal)} sheet keeps its green contour and saved positions until it is cut.`;
   return "";
 }
 /** The open run's page that holds this saved sheet, if one does. */
@@ -5717,7 +5719,7 @@ function paintClear(sh) {
 }
 function clearMetal(metal) {
   const prim = S.sheets[metal];
-  if(prim.pages.some(pg=>pg.metal==='rose'&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected))){toast('Finish the protected Rose Gold sheet before clearing this card. Its green contour and saved positions must remain.','bad');return;}
+  if(prim.pages.some(pg=>cutsMetal(pg.metal)&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected))){toast(`Finish the protected ${CharmNestRose.cutWord(metal)} sheet before clearing this card. Its green contour and saved positions must remain.`,'bad');return;}
   for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; delete pg.laserDoneAt; pg.log = []; delete pg.roseStock; delete pg.roseProtected; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
   prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim);
 }
@@ -6317,7 +6319,7 @@ function openCharm(sh, c, placement) {
   const pin = $("#ciPin"); if (pin) pin.onclick = () => { c.pinned = c.pinned && !c.arrivalPin ? null : { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; delete c.arrivalPin; closeDlg(dlg); renderCard(sh); toast(c.pinned ? `${c.name}: pinned — Re-nest places the others around it` : `${c.name}: unpinned`, ""); };
   // leaving a charm out takes it off and keeps the others where they are; taking it back adds it to the gaps
   // (Paul, 27 Sep: seen, not just gone) the charm's piece of the picture rises and fades where it stood; one not on the sheet: the card answers
-  const ex = $("#ciExclude"); if (ex) ex.onclick = () => { const lift = c.excluded ? null : liftFromSheet(sh, c); c.excluded = !c.excluded; closeDlg(dlg); sh.placements = sh.placements.filter(p => p.id !== c.id); if (sh.placements.length && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected))) { sh.appendOnly = true; sh.dirty = true; if (!["nesting", "finishing", "queued"].includes(sh.status)) sh.status = "ready"; renderCard(sh); } else sheetDirty(sh); if (lift) lift(); else if (c.excluded && window.Motion && !Motion.reduced()) ringCard(sh.el); };
+  const ex = $("#ciExclude"); if (ex) ex.onclick = () => { const lift = c.excluded ? null : liftFromSheet(sh, c); c.excluded = !c.excluded; closeDlg(dlg); sh.placements = sh.placements.filter(p => p.id !== c.id); if (sh.placements.length && !(cutsMetal(sh.metal) && (sh.rosePlan || sh.roseProtected))) { sh.appendOnly = true; sh.dirty = true; if (!["nesting", "finishing", "queued"].includes(sh.status)) sh.status = "ready"; renderCard(sh); } else sheetDirty(sh); if (lift) lift(); else if (c.excluded && window.Motion && !Motion.reduced()) ringCard(sh.el); };
   $("#ciSingle").onclick = async () => { const src = sourceOf(c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/illustrator"); };
   // the charm is seen leaving the inspector for its new metal's card: a copy of its picture flies to where it now shows
   $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { const metal = b.dataset.move, M = window.Motion, img = $("#rpBody img");
@@ -6524,7 +6526,7 @@ async function restoreSheet(d) {
     placements.push({...p,id:c.id,scale:p.scale||1});
   }
   const restored={metal:d.metal,sheetId:d.id};
-  if(d.metal==='rose'&&d.roseStockId&&window.RoseStock)await RoseStock.restore(restored,d);
+  if(cutsMetal(d.metal)&&d.roseStockId&&window.RoseStock)await RoseStock.restore(restored,d);
   const guarded=new Set([...(restored.roseProtected?.placements||[]).map(p=>p.id),...(restored.rosePlan?.shapes||[]).map(s=>s.id)]);
   if([...guarded].some(id=>!placements.some(p=>p.id===id)))throw new Error('One or more protected charms could not be restored. The saved sheet was kept untouched');
   const target=sh||addPage(d.metal);
@@ -6847,11 +6849,11 @@ boot();
 <script src="station-activity.js?v=20261006-st2"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
 <script src="charm-nest-laser-time.js?v=20261007-fc2"></script>
-<script src="charm-nest-laser-act.js?v=20261006-sa5-ls2"></script>
+<script src="charm-nest-laser-act.js?v=20261006-sa5-ls2-gc1"></script>
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -6898,9 +6900,9 @@ try {
   try { if (roleOn()) CNRole.start(); } catch (_) {}
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
@@ -6908,8 +6910,8 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5"></script>
-<script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc1"></script>
+<script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1"></script>
 <script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2"></script>

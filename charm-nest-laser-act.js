@@ -81,12 +81,12 @@
     } catch (_) { return false; }
   }
 
-  /** Rose Gold's Cut Sheet, recorded (charm-nest-rose-ui.js: sh is the Nest-tab sheet) */
+  /** Cut Sheet, recorded (charm-nest-rose-ui.js: sh is the Nest-tab sheet; Rose Gold, 10K and 14K: "RG Sheet 1 cut", "10K Sheet 1 cut") */
   function rose(sh) {
     try {
       if (!sh) return false;
       const id = text(sh.sheetId || sh.id, 40) || "rose";
-      return send("complete", [{ id, rec: sh }], `RG Sheet ${Math.max(1, Math.floor(+sh.page) || 1)} cut (Cut Sheet)`, true);
+      return send("complete", [{ id, rec: sh }], `${(root.CharmNestRose && root.CharmNestRose.cutCode && root.CharmNestRose.cutCode(sh.metal)) || "RG"} Sheet ${Math.max(1, Math.floor(+sh.page) || 1)} cut (Cut Sheet)`, true);
     } catch (_) { return false; }
   }
 

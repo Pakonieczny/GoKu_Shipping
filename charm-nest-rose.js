@@ -1,9 +1,14 @@
 /* Physical Rose Gold stock geometry. Coordinates are points, origin top left.
  * A conservative, stepped envelope preserves one connected reusable offcut.
  * History geometry is separate from current production artwork. */
-(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CharmNestRose=api;})(typeof self!=='undefined'?self:this,function(){
+(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else{root.CharmNestRose=api;root.CharmNestCutLine=api;}})(typeof self!=='undefined'?self:this,function(){
   'use strict';
   const STEP=.5, MM=25.4/72;
+  // The metals whose sheets carry a green cut line (Cut Sheet, dated lines, a saved leftover): Rose Gold, 10K and 14K
+  // solid gold. The ONE list: the page, its workers and the server all ask cuts(metal). The names of the geometry below
+  // keep saying "Rose Gold" (its first metal); the rules are the same for all three.
+  const CUT_METALS=['rose','gold10k','gold14k'], CUT_CODE={rose:'RG',gold10k:'10K',gold14k:'14K'}, CUT_WORD={rose:'Rose Gold',gold10k:'10K Gold',gold14k:'14K Gold'};
+  const cuts=metal=>CUT_METALS.includes(metal), cutCode=metal=>CUT_CODE[metal]||'', cutWord=metal=>CUT_WORD[metal]||'Rose Gold';
   // Saved cut outlines are simplified once, so a full sheet fits one saved
   // record. Every dropped point stays within OUTLINE_PT (plus 3-decimal
   // rounding) of the kept outline, and contours add that distance back.
@@ -177,5 +182,5 @@
     }
     return {charms,job:{sheet:{wPt:100/MM,hPt:50/MM,insetPt:1.5,remnant:prior},pieces,angles:Array.from({length:36},(_,i)=>i*10),clearancePt:.6,fineRes:2,coarseRes:.5,maxFill:.95,maxTrials:3,timeBudgetMs:2500,seed:41+batch,verifyResult:true}};
   }
-  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,MM,EDGE_PT,POCKET_PT,demoBatch};
+  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,MM,EDGE_PT,POCKET_PT,demoBatch,CUT_METALS,cuts,cutCode,cutWord};
 });

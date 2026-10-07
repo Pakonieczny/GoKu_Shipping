@@ -42,6 +42,8 @@ const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
 const OrderRules = require("../../charm-nest-orders.js");
 const Readiness = require("../../charm-nest-readiness.js");
+const CutLine = require("../../charm-nest-rose.js");   // which metals have a green line (Cut Sheet): Rose Gold, 10K and 14K solid gold
+
 const Activity = require("../../charm-nest-activity.js");
 const EngravingSeals = require("../../charm-nest-engraving-seals.js");
 // the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
@@ -793,8 +795,8 @@ async function op_putSheet(b) {
     }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
-    if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
-    if(guard&&Object.prototype.hasOwnProperty.call(s,'charms')&&(!Array.isArray(s.charms)||guard.placements.some(p=>!s.charms.some(c=>c?.id===p.id))))throw new Error('The protected Rose Gold charms cannot be removed');
+    if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements,old.metal||s.metal);
+    if(guard&&Object.prototype.hasOwnProperty.call(s,'charms')&&(!Array.isArray(s.charms)||guard.placements.some(p=>!s.charms.some(c=>c?.id===p.id))))throw new Error('The protected '+CutLine.cutWord(old.metal||s.metal)+' charms cannot be removed');
     if(old.rosePlanJson && s.placements && require('./_charmNestRoseStock').fingerprint(s)!==old.roseFingerprint)Object.assign(doc,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
     /* (Paul, 7 Oct) the sheets of a committed set are added and taken out by flowApply's set edit alone (charm-nest-set-edit.js): a page
        that still holds an older membership (a second screen, a save that was under way) saves the rest of its sheet and leaves
@@ -809,7 +811,7 @@ async function op_putSheet(b) {
       }
     }
     if (!ex.exists) doc.createdAt = FV.serverTimestamp();
-    if(s.metal==='rose' && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
+    if(CutLine.cuts(s.metal) && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
     const ids = new Set(s.poolIds || old.poolIds || []), backs = new Map();
     for (const bk of [...(s.backPool || []), ...(old.backPool || [])]) if (ids.has(bk.poolId)) {
       const prev = backs.get(bk.poolId);
@@ -944,7 +946,7 @@ async function op_deleteSheet(b) {
   const d = await db.runTransaction(async tx => {
     const snap = await tx.get(ref); if (!snap.exists) return null;
     const sheet = snap.data();
-    if (!sheet.roseCutAt && (sheet.rosePlanJson || sheet.roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be deleted');
+    if (!sheet.roseCutAt && (sheet.rosePlanJson || sheet.roseProtectedJson)) throw new Error('A planned or protected ' + CutLine.cutWord(sheet.metal) + ' contour cannot be deleted');
     // the record goes in the SAME commit as every pointer to it: the pieces whose rows name this sheet become "on no sheet" (their
     // state and take-off marks are theirs and stay), and an open set stops listing it. A sheet gone with its pointers left behind
     // read "on sheet X" from the pool row and from the set, for a sheet nobody could open (the sheet-gone drift).
@@ -2027,7 +2029,7 @@ async function op_archiveEmptySheet(b) {
     if (!sheet.exists || sheet.data().runId !== b.runId) return { error: "sheet does not belong to this run" };
     const run = await tx.get(col(RUNS).doc(b.runId));
     if (!run.exists || ["complete", "abandoned"].includes(run.data().status)) return { error: "finished sheets cannot be changed by intake" };
-    if (!sheet.data().roseCutAt && (sheet.data().rosePlanJson || sheet.data().roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be archived');
+    if (!sheet.data().roseCutAt && (sheet.data().rosePlanJson || sheet.data().roseProtectedJson)) throw new Error('A planned or protected ' + CutLine.cutWord(sheet.data().metal) + ' contour cannot be archived');
     // its files go only if it was never cut or released: a cut Rose Gold contour or a sheet of a committed set keeps them
     const d = sheet.data(), set = isId(d.setId) ? await tx.get(col(SETS).doc(d.setId)) : null, keep = !!d.roseCutAt || !!(set && set.exists && set.data().committedAt);
     // a laser mark is kept beside it (archivedLaserDoneAt/By): an archived sheet is in no list, nor in the Completed count
@@ -3123,7 +3125,7 @@ async function op_customReopen(b) {
 async function op_customReadGet(b) { return require("./_charmNestCustomRead").lookup(db, b.items, !!PREFIX); }
 async function op_customDecide(b) { return require("./_charmNestCustomRead").decide(db, FV, b, !!PREFIX); }
 
-const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel});
+const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel});   // (GC3: pass recordRemnant here, the leftover repository's hook; _charmNestRoseStock.js roseRecordCut calls it)
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
    record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull.
    Since 28 Sep (A1 · A6) Etsy's own cancels land in the same record (by "Etsy", source "etsy", etsyStatus), written by

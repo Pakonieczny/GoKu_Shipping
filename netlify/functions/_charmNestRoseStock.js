@@ -15,12 +15,13 @@ function stagesOf(guard){
   if(!guard)return [];
   return guard.stages||(guard.lines?.length?[{n:1,at:null,ids:(guard.shapes||guard.placements||[]).map(p=>p.id),lines:[0,guard.lines.length]}]:[]);
 }
-function assertProtected(guard,placements){
+function assertProtected(guard,placements,metal){
   if(!guard)return;
-  if(!Array.isArray(placements))throw new Error('The protected Rose Gold layout cannot be moved or removed');
+  const word=Rose.cutWord(metal||'rose');
+  if(!Array.isArray(placements))throw new Error('The protected '+word+' layout cannot be moved or removed');
   for(const p of guard.placements){
     const rows=placements.filter(x=>x?.id===p.id),q=rows[0];
-    if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected Rose Gold layout cannot be moved or removed');
+    if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected '+word+' layout cannot be moved or removed');
   }
 }
 // Requests may carry unsimplified outlines from pages opened before the
@@ -86,32 +87,42 @@ function withoutPieces(guard, gone, ctx = {}) {
   for (const i of keepIdx) { const own = slice(i); list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); }
   return { guard: build(guard.profile, lines, list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: false, changed: true };
 }
-module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel}){
+module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
+  // Rose Gold, 10K and 14K solid gold share these operations (charm-nest-rose.js: cuts(metal)); a physical sheet belongs to one metal.
+  // Stock saved before the metal was kept is Rose Gold's.
+  const metalOf=d=>(d&&d.metal)||'rose',metalWord=m=>Rose.cutWord(m);
+  const asMetal=m=>{const k=m==null||m===''?'rose':String(m);if(!Rose.cuts(k))throw new Error('Choose a Rose Gold, 10K Gold or 14K Gold sheet');return k;};
   async function roseGet(b){
-    if(!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
-    const snap=await stocks().doc(b.stockId).get();if(!snap.exists)throw new Error('Rose Gold sheet not found');
+    if(!id(b.stockId))throw new Error('Choose a sheet');
+    const snap=await stocks().doc(b.stockId).get();if(!snap.exists)throw new Error('Sheet not found');
     let q=stocks().doc(b.stockId).collection('cuts').orderBy('revision','desc');if(b.before)q=q.startAfter(+b.before);
     // Keep even the largest saved contours below the function response limit.
     const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()),more:cuts.size===4};
   }
-  async function roseList(){const snap=await stocks().where('available','==',true).limit(100).get();return {stocks:snap.docs.map(d=>d.data()).sort((a,b)=>a.createdMs-b.createdMs)};}
+  // the leftovers that can be used again; {metal} keeps one metal's (no metal: every metal's, as before)
+  async function roseList(b){const want=b&&b.metal?asMetal(b.metal):null;const snap=await stocks().where('available','==',true).limit(100).get();return {stocks:snap.docs.map(d=>d.data()).filter(d=>!want||metalOf(d)===want).sort((a,b)=>a.createdMs-b.createdMs)};}
   async function roseClaim(b){
     if(!id(b.sheetId)||![b.wPt,b.hPt].every(n=>Number.isFinite(n)&&n>=14&&n<=1420))throw new Error('Invalid physical sheet');
+    const metal=asMetal(b.metal);
     // Resume a reservation after browser recovery before assigning another sheet.
     const held=await stocks().where('owner','==',b.sheetId).limit(1).get();
     let stockId=held.docs[0]?.id||b.stockId;
-    if(!stockId&&!b.fresh){const available=(await roseList()).stocks;stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01)?.id;}
-    if(stockId&&!id(stockId))throw new Error('Invalid Rose Gold sheet');
+    if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks;stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01)?.id;}
+    // onlyRemnant (10K and 14K nest on a leftover when one fits, and otherwise claim nothing): no leftover, nothing is created or written
+    if(b.onlyRemnant&&!stockId)return {stock:null,protectedJson:null};
+    if(stockId&&!id(stockId))throw new Error('Invalid '+metalWord(metal)+' sheet');
     const ref=stockId?stocks().doc(stockId):stocks().doc('rgs-'+crypto.randomUUID());
     const stock=await db.runTransaction(async tx=>{
       const d=await tx.get(ref),old=d.exists?d.data():null;
+      if(old&&metalOf(old)!==metal)throw new Error('This physical sheet is '+metalWord(metalOf(old))+', not '+metalWord(metal));
       if(old&&(Math.abs(old.wPt-b.wPt)>.01||Math.abs(old.hPt-b.hPt)>.01))throw new Error('The physical sheet size cannot change');
-      if(old?.owner&&old.owner!==b.sheetId)throw new Error('This Rose Gold sheet is reserved for another layout');
+      if(old?.owner&&old.owner!==b.sheetId)throw new Error('This '+metalWord(metal)+' sheet is reserved for another layout');
       if(old&&b.revision!=null&&old.revision!==b.revision)throw new Error('This remnant changed. Reload its history before nesting');
       const sd=await tx.get(sheets().doc(b.sheetId));
       if(sd.exists&&sd.data().roseCutAt)throw new Error("This layout was already cut; start a new sheet");
-      const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
+      if(sd.exists&&sd.data().metal&&sd.data().metal!==metal)throw new Error('This sheet is '+metalWord(sd.data().metal)+', not '+metalWord(metal));
+      const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),metal,owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
       const guard=sd.exists?protectedLayout(sd.data()):null,protectedJson=guard?JSON.stringify(guard):null;
       tx.set(ref,next);
       if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{})});
@@ -123,20 +134,23 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     await db.runTransaction(async tx=>{const ref=stocks().doc(b.stockId),d=await tx.get(ref);if(!d.exists||d.data().owner!==b.sheetId)throw new Error('This stock reservation changed');
       const sheet=await tx.get(sheets().doc(b.sheetId));if(sheet.exists&&sheet.data().setId&&!sheet.data().draft)throw new Error('Remove the sheet from its current set before releasing its stock');
       if(sheet.exists&&(sheet.data().rosePlanJson||sheet.data().roseProtectedJson))throw new Error('A planned or protected Rose Gold contour cannot be released');
-      tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});});return {ok:true};
+      // a 10K or 14K sheet nobody has cut lets go of its fresh physical sheet by deleting it: an uncut sheet is no leftover (Rose Gold's stays as it was)
+      const fresh=metalOf(d.data())!=='rose'&&!d.data().revision&&!d.data().profileJson;
+      if(fresh)tx.delete(ref);else tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});});return {ok:true};
   }
   async function rosePlan(b){
-    if(!id(b.sheetId)||!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
+    if(!id(b.sheetId)||!id(b.stockId))throw new Error('Choose a sheet');
     if(typeof b.shapesJson!=='string')throw new Error('Invalid cut geometry');
     if(b.shapesJson.length>MAX_SHAPES_JSON)throw new Error('Too much charm outline detail to save this contour. Nest fewer new charms on this sheet');
     // Older pages sent unsimplified outlines; store every contour in the same compact form.
     let shapes;try{shapes=parse(b.shapesJson).map(Rose.slimShape);}catch(_){throw new Error('Invalid cut geometry');}
     return db.runTransaction(async tx=>{
       const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId),d=await tx.get(ref),sd=await tx.get(sr),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
-      if(!sheet||sheet.metal!=='rose'||!sheet.verification?.ok||sheet.saving||sheet.dirty||sheet.roseCutAt||!sheet.outputs?.ai)throw new Error('Save and verify this Rose Gold layout first');
+      if(!sheet||!Rose.cuts(sheet.metal)||!sheet.verification?.ok||sheet.saving||sheet.dirty||sheet.roseCutAt||!sheet.outputs?.ai)throw new Error('Save and verify this '+metalWord(sheet&&sheet.metal)+' layout first');
       if(!stock||stock.owner!==b.sheetId||stock.revision!==b.revision)throw new Error('The physical sheet changed. Nest it again');
+      if(metalOf(stock)!==sheet.metal)throw new Error('This physical sheet is '+metalWord(metalOf(stock))+', not '+metalWord(sheet.metal));
       if(fingerprint(sheet)!==b.fingerprint||shapes.length!==sheet.placements.length||new Set(shapes.map(s=>s.id)).size!==shapes.length||shapes.some(s=>!sheet.placements.some(p=>p.id===s.id)))throw new Error('The layout changed. Prepare its contour again');
-      const guard=parse(sheet.roseProtectedJson);assertProtected(guard,sheet.placements);
+      const guard=parse(sheet.roseProtectedJson);assertProtected(guard,sheet.placements,sheet.metal);
       const fixed=new Set((guard?.placements||[]).map(p=>p.id));
       // The saved guard is never rewritten; outlines saved before they were
       // simplified are slimmed only for the new plan copy.
@@ -144,7 +158,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       // Saved placements are rounded to 3 decimals, so a reloaded layout
       // rebuilds its protected outlines a few thousandths of a point away.
       // The stored outlines stay authoritative; only a real move is refused.
-      if(guard&&(protectedShapes.size!==fixed.size||shapes.some(s=>fixed.has(s.id)&&!sameOutline(s,protectedShapes.get(s.id)))))throw new Error('The protected Rose Gold charm outlines cannot be changed');
+      if(guard&&(protectedShapes.size!==fixed.size||shapes.some(s=>fixed.has(s.id)&&!sameOutline(s,protectedShapes.get(s.id)))))throw new Error('The protected '+metalWord(sheet.metal)+' charm outlines cannot be changed');
       const prior=parse(stock.profileJson);
       // Recheck physical exclusions at the persistence boundary, too. This
       // catches a stale rectangular layout attached to a previously cut sheet.
@@ -186,6 +200,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const d=await tx.get(ref),sd=await tx.get(sr),ed=await tx.get(er),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
       if(ed.exists){if(ed.data().planHash!==b.planHash)throw new Error('This cut was already recorded with a different plan');return {ok:true,cut:ed.data(),stock};}
       if(!stock||stock.owner!==b.sheetId||stock.revision!==b.revision||!sheet||sheet.rosePlanHash!==b.planHash||sheet.roseFingerprint!==fingerprint(sheet)||sheet.roseCutAt)throw new Error('The layout or remnant changed. Refresh before recording a cut');
+      if(!Rose.cuts(sheet.metal)||metalOf(stock)!==sheet.metal)throw new Error('This physical sheet is '+metalWord(metalOf(stock))+', not '+metalWord(sheet.metal));
       const run=sheet.runId?await tx.get(col('Charm_Nest_Runs').doc(sheet.runId)):null,runData=run?.exists?run.data():null;
       // the lines of orders the run is done with are in its line archive (charmNestLibrary: decisionsOfRun)
       const engraving=decisionsOfRun?await decisionsOfRun(sheet.runId,runData,sheet.poolIds||[]):Readiness.decisions(Object.values(runData?.lines||{}));
@@ -195,12 +210,16 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const plan=parse(sheet.rosePlanJson);Rose.validate(plan.profile,stock.wPt,stock.hPt);
       const at=Date.now(),revision=stock.revision+1;
       const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),createdAt:FV.serverTimestamp()};
-      const next={...stock,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,updatedAt:FV.serverTimestamp()};
+      // the stock is the saved leftover: its shape (profileJson), its real size (wPt, hPt), its metal, and who cut it from which sheet and when
+      const next={...stock,metal:sheet.metal,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,lastCutBy:cut.by,lastCutSheetId:b.sheetId,lastCutLabel:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),updatedAt:FV.serverTimestamp()};
       tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
-      return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
+      return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet,cutPlan:plan,fresh:true};
     });
     // every order on the sheet gets the cut on its timeline (charmNestLibrary's stamp never throws); the revision is its id
-    const sheet=out.cutSheet;delete out.cutSheet;
+    const sheet=out.cutSheet,cutPlan=out.cutPlan,justCut=out.fresh===true;delete out.cutSheet;delete out.cutPlan;delete out.fresh;
+    // GC3 HOOK: the one place every cut ends (Nest tab Cut Sheet and the Library's calculate with recordCut, Rose Gold, 10K and 14K).
+    // recordRemnant({stock, cut, sheet, plan, metal, device}) saves the leftover for the repository; a failure never fails the cut.
+    if(justCut&&typeof recordRemnant==='function'){try{await recordRemnant({stock:out.stock,cut:out.cut,sheet,plan:cutPlan,metal:sheet&&sheet.metal||metalOf(out.stock),device:String(b.device||'').replace(/[^\w.-]/g,'').slice(0,40)});}catch(e){console.warn('[roseRecordCut] remnant not saved:',e&&e.message);}}
     // who cut it, as the sorter's sign-in names them: none is "" and signedIn false, never the ledger's 'operator'
     // (station tracking B); the page it was pressed on is the device. Orders from the pieces' pool ids when unlisted.
     if(sheet&&stamp)await stamp(()=>{const c=out.cut,label=sheetLabel?sheetLabel(sheet):String(sheet.fileBase||c.sheetId).slice(0,80);
@@ -265,7 +284,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const sr=sheets().doc(b.sheetId),sd=await tx.get(sr);
       if(!sd.exists)return {ok:true,changed:false,missing:true};
       const sheet=sd.data();
-      if(sheet.metal!=='rose')return {ok:true,changed:false};
+      if(!Rose.cuts(sheet.metal))return {ok:true,changed:false};
       if(sheet.roseCutAt||+sheet.laserDoneAt>0)throw new Error('This layout was already cut: its green lines stay');
       const guard=protectedLayout(sheet);
       if(!guard)return {ok:true,changed:false,protectedJson:null};

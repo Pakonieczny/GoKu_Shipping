@@ -1,4 +1,6 @@
-/* LibraryFlowRose: the Rose Gold guard of the Library's process flow (contract v1.1, section 1).
+/* LibraryFlowRose (alias LibraryFlowCutLine): the green-line guard of the Library's process flow (contract v1.1, section 1).
+   It covers every metal that has a green line (charm-nest-rose.js cuts(): Rose Gold, 10K Gold, 14K Gold). The words and names keep
+   saying "Rose Gold" for RG; a 10K or 14K sheet is named by its own code ("10K Sheet 1") and nothing else about the guard differs.
 
    Paul, 3 Oct: Rose Gold sheets that have no green dash line yet "will automatically require a dash line to be
    calculated, this will all have to be visually shown to the user ... and the last verification step will have to be
@@ -41,6 +43,9 @@
   if (window.LibraryFlowRose) return;
   const W = window, doc = document, KEY = 'roseLine';
   const cn = () => W.CN || null, rs = () => W.RoseStock || null;
+  const CL = () => W.CharmNestRose || null;
+  const hasLine = m => { const c = CL(); return !!(c && c.cuts(m)); };           // a metal with a green line (the one list: CharmNestRose.cuts)
+  const codeOf = m => { const c = CL(); return (c && c.cutCode(m)) || 'RG'; };
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
   const parse = s => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
   const liveSheets = () => { try { return cn()?.allSheets?.() || []; } catch (_) { return []; } };
@@ -53,9 +58,11 @@
     const n = +x.sheetIndex || +x.page; if (n > 0) return n;
     const m = /_Sheet-(\d+)/.exec(String(x.fileBase || x.folder || '')); return m ? +m[1] : 0;
   }
-  const labelOf = x => 'RG Sheet' + (sheetNo(x || {}) ? ' ' + sheetNo(x) : '');
+  const labelOf = x => codeOf(x && x.metal) + ' Sheet' + (sheetNo(x || {}) ? ' ' + sheetNo(x) : '');
   // whether a name ("RG Sheet 1") is one of the names in a text (not "RG Sheet 10")
   const mentions = (text, name) => !!name && new RegExp('(^|\\W)' + String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)', 'i').test(String(text || ''));
+  // "A Rose Gold sheet" / "A 10K Gold sheet" / "A sheet" (a label naming sheets of several metals)
+  const sheetWord = label => { const codes = [...new Set((String(label || '').match(/\b(10K|14K|RG)\b/gi) || []).map(c => c.toUpperCase()))]; return codes.length === 1 ? (codes[0] === 'RG' ? 'A Rose Gold sheet' : `A ${codes[0]} Gold sheet`) : codes.length ? 'A sheet' : 'A Rose Gold sheet'; };
   const joinLabels = ls => ls.length <= 1 ? ls[0] || '' : ls.slice(0, -1).join(', ') + ' and ' + ls[ls.length - 1];
 
   /* ── what a sheet has ───────────────────────────────────────────────────────────────────────────────────────── */
@@ -75,8 +82,8 @@
 
   function verdictLive(sh) {
     const placed = (sh.placements || []).length;
-    const base = { sheetId: idOf(sh), label: labelOf(sh), rose: sh.metal === 'rose', needsLine: false, why: '', charms: placed, needs: 0, held: !!(sh.draft || !sh.setId), source: 'live' };
-    if (sh.metal !== 'rose') return noPlan(base, 'Not a Rose Gold sheet');
+    const base = { sheetId: idOf(sh), label: labelOf(sh), metal: sh.metal, cutLine: hasLine(sh.metal), rose: sh.metal === 'rose', needsLine: false, why: '', charms: placed, needs: 0, held: !!(sh.draft || !sh.setId), source: 'live' };
+    if (!hasLine(sh.metal)) return noPlan(base, 'This metal has no green dash line');
     if (cutOf(sh)) return noPlan(base, 'Already cut: its green dash line is recorded');
     if (!placed) return noPlan(base, 'No charms are on this sheet yet');
     const RS = rs();
@@ -95,8 +102,8 @@
   // a saved record (the Library's own copy): it has no geometry, so it can say whether a line exists, not draw one
   function verdictRecord(r, how) {
     const placed = +r.placedCount || (r.placements || []).length || (r.poolIds || []).length || 0;
-    const base = { sheetId: idOf(r), label: labelOf(r), rose: r.metal === 'rose', needsLine: false, why: '', charms: placed, needs: 0, held: !!(r.draft || !r.setId), source: how || 'record' };
-    if (r.metal !== 'rose') return noPlan(base, 'Not a Rose Gold sheet');
+    const base = { sheetId: idOf(r), label: labelOf(r), metal: r.metal, cutLine: hasLine(r.metal), rose: r.metal === 'rose', needsLine: false, why: '', charms: placed, needs: 0, held: !!(r.draft || !r.setId), source: how || 'record' };
+    if (!hasLine(r.metal)) return noPlan(base, 'This metal has no green dash line');
     if (cutOf(r)) return noPlan(base, 'Already cut: its green dash line is recorded');
     if (!placed && !+r.charmCount) return noPlan(base, 'No charms are on this sheet yet');
     const plan = parse(r.rosePlanJson), guard = parse(r.roseProtectedJson);
@@ -172,8 +179,8 @@
     try {
       const g = await gather(item);
       const single = (Array.isArray(item) ? item : [item]).every(x => x && (typeof x === 'string' || isSheetObj(x) || x.kind === 'sheet'));
-      // a set lists its Rose Gold sheets; a sheet asked about by name is always answered, Rose Gold or not
-      for (const e of g.entries) { const v = verdict(e); if (single || v.rose || v.unknown) out.sheets.push(v); }
+      // a set lists its sheets that have a green line (Rose Gold, 10K, 14K); a sheet asked about by name is always answered, line or not
+      for (const e of g.entries) { const v = verdict(e); if (single || v.cutLine || v.unknown) out.sheets.push(v); }
       for (const u of g.unknown) out.sheets.push({ sheetId: u.id || null, label: u.label || 'A sheet', needsLine: false, unknown: true, why: 'This sheet could not be read, so its green dash line was not checked' });
       out.unknown = g.unknown.length > 0;
       const need = out.sheets.filter(s => s.needsLine);
@@ -201,7 +208,7 @@ const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.worki
     const refuse = (error, extra) => end({ ok: false, lines: 0, error, sheets: [], cut: false, warnings: [], ...(extra || {}) });
     try {
       const RS = rs(), C = cn();
-      if (!RS || !RS.plan || (recordCut && !RS.record)) return refuse('Rose Gold cutting is not loaded on this page yet. Reload the page and try again');
+      if (!RS || !RS.plan || (recordCut && !RS.record)) return refuse('Cut Sheet is not loaded on this page yet. Reload the page and try again');
       const g = await gather(item);
       const need = g.entries.map(e => ({ e, v: verdict(e) })).filter(x => x.v.needsLine);
       // nothing is touched until every sheet that needs a line can really be given one
@@ -247,7 +254,7 @@ const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.worki
     finally {
       if (watch) clearInterval(watch);
       sh._roseAction = false; if (failure) sh._roseError = failure.message || String(failure);
-      refresh(sh); try { C.flushManualIntake && C.flushManualIntake('rose'); } catch (_) {}
+      refresh(sh); try { C.flushManualIntake && C.flushManualIntake(sh.metal); } catch (_) {}
     }
     const added = lineCount(sh) - before, drawn = added > 0 || !verdictLive(sh).needsLine;
     const res = { sheetId: v.sheetId, label: v.label, lineAdded: drawn, lines: Math.max(0, added), cut: !!sh.roseCutAt, at: lastLineAt(sh), error: null };
@@ -290,10 +297,10 @@ const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.worki
   const TICK = '<svg class="lfrTick" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.5l3 3 6.2-6.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const escape = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function css() { if (doc.getElementById('lfrCss') || !doc.head) return; const s = doc.createElement('style'); s.id = 'lfrCss'; s.textContent = CSS; doc.head.appendChild(s); }
-  // the sheet a bar shows: the one given, the first live Rose Gold sheet of the item that has no line, or the one its label names
+  // the sheet a bar shows: the one given, the first live sheet (Rose Gold, 10K, 14K) of the item that has no line, or the one its label names
   function previewSheet(o, label) {
     const direct = o.sheet && geometry(o.sheet) ? o.sheet : null; if (direct) return direct;
-    const live = liveSheets().filter(sh => sh.metal === 'rose' && geometry(sh) && !cutOf(sh));
+    const live = liveSheets().filter(sh => hasLine(sh.metal) && geometry(sh) && !cutOf(sh));
     if (o.item) {
       const it = o.item, ids = new Set(), sets = new Set();
       for (const x of Array.isArray(it) ? it : [it]) { if (!x) continue; if (typeof x === 'string') { ids.add(x); sets.add(x); } else if (isSheetObj(x)) ids.add(idOf(x)); else if (x.kind === 'set') sets.add(x.id || x.setId); else ids.add(x.id || x.sheetId); }
@@ -305,7 +312,7 @@ const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.worki
   function paintInto(cv, sh) {
     const C = cn(); if (!C || !C.paintPreview || !C.stockFor) return false;
     try {
-      const st = C.stockFor('rose', sh), w = Math.round(190 * Math.min(2, W.devicePixelRatio || 1));
+      const st = C.stockFor(sh.metal, sh), w = Math.round(190 * Math.min(2, W.devicePixelRatio || 1));
       cv.width = w; cv.height = Math.max(20, Math.round(w * st.hPt / st.wPt));
       C.paintPreview(cv, sh, true, 0);   // the sheet's own picture: RoseStock.paint draws its green lines in it
       return true;
@@ -323,7 +330,7 @@ const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.worki
     bar.className = 'lfrBar lfrNoPv'; bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Green dash line check'); bar.dataset.lfr = 'ask';
     bar.innerHTML = `<div class="lfrPv" hidden><canvas class="before" aria-hidden="true"></canvas><canvas class="after" aria-hidden="true"></canvas></div>
       <div class="lfrBody"><p class="lfrTitle">${escape(label)} ${count > 1 ? 'have' : 'has'} no green dash line yet</p>
-        <p class="lfrText">${escape(o.reason || 'A Rose Gold sheet needs one to go to Laser cutting.')} Moving or dropping ${count > 1 ? 'them' : 'it'} never adds one: only the button below does.</p>
+        <p class="lfrText">${escape(o.reason || `${sheetWord(label)} needs one to go to Laser cutting.`)} Moving or dropping ${count > 1 ? 'them' : 'it'} never adds one: only the button below does.</p>
         <div class="lfrStatus" role="status" aria-live="polite"></div>
         <div class="lfrActions"><button type="button" class="btn gold sm lfrGo" aria-disabled="true">Add the green dash line</button><button type="button" class="btn ghost sm lfrNo">Not now</button></div></div>`;
     const pv = bar.querySelector('.lfrPv'), before = pv.querySelector('.before'), after = pv.querySelector('.after');
@@ -429,5 +436,5 @@ const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.worki
     return ctl;
   }
 
-  W.LibraryFlowRose = { check, calculate, confirmBar, key: KEY };
+  W.LibraryFlowRose = W.LibraryFlowCutLine = { check, calculate, confirmBar, key: KEY, hasLine };   // (hasLine(metal): rose, gold10k, gold14k)
 })();

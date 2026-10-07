@@ -177,7 +177,7 @@
       const sh = all.find(z => z.sheetId === id), going = new Set(snap.pieces.filter(p => p.status === "off" && p.sheetId === id).map(p => p.poolId));
       const stays = sh.placements.filter(p => { const c = sh.charms.find(z => z.id === p.id); return c && !going.has(c.poolId); }).length;
       s.fillable = stays > 0 && K.fillable(sh);
-      if (!s.fillable) s.why = sh.metal === "rose" ? "Rose Gold sheets are never re-arranged" : stays ? "this sheet cannot be filled" : "nothing else is on it";
+      if (!s.fillable) s.why = sh.metal === "rose" ? "Rose Gold sheets are never re-arranged" : (sh.rosePlan || sh.roseProtected) ? "a sheet behind a green line is never re-arranged" : stays ? "this sheet cannot be filled" : "nothing else is on it";
     }
     return snap;
   }
@@ -350,7 +350,7 @@
         if (removed) emit({ type: "removed", sheetId: id, removed });
         const freed = spots != null ? spots : K.freed(id);
         if (freed) emit({ type: "fillBegin", sheetId: id, spots: freed });
-        if (!K.fillable(sh)) { if (freed) emit({ type: "fillSkipped", sheetId: id, why: sh.metal === "rose" ? "Rose Gold sheets are never re-arranged" : "this sheet cannot be filled" }); }
+        if (!K.fillable(sh)) { if (freed) emit({ type: "fillSkipped", sheetId: id, why: sh.metal === "rose" ? "Rose Gold sheets are never re-arranged" : (sh.rosePlan || sh.roseProtected) ? "a sheet behind a green line is never re-arranged" : "this sheet cannot be filled" }); }
         else if (freed) {
           const r = await K.fill(sh, who, {
             skip: [rid], avoid: [...pendingIds],

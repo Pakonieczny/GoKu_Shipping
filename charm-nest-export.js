@@ -110,7 +110,9 @@
     // History never enters production artwork. Only this layout's new contour
     // is cut, at 1:1 scale, on its own named laser layer.
     const rosePlan=sheet.rosePlanJson ? JSON.parse(sheet.rosePlanJson) : sheet.rosePlan;
-    if(sheet.metal==='rose' && sheet.roseStockId && !rosePlan)throw new Error('Prepare the Rose Gold separation contour before exporting');
+    // (a sheet of a metal with a green line, Rose Gold, 10K or 14K, that holds a physical sheet has its separation contour in the file: its layer keeps the name the laser's template knows)
+    const cutR=root.CharmNestRose;
+    if((sheet.metal==='rose'||(cutR&&cutR.cuts(sheet.metal))) && sheet.roseStockId && !rosePlan)throw new Error('Prepare the '+((cutR&&cutR.cutWord&&cutR.cutWord(sheet.metal))||'Rose Gold')+' separation contour before exporting');
     if(rosePlan){
       root.CharmNestRose.validate(rosePlan.profile,front.pageW,front.pageH);
       const ref=out.context.register(out.context.obj({Type:'OCG',Name:L.PDFString.of('ROSE SEPARATION CUT')}));

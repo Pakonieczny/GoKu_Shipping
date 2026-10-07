@@ -20,6 +20,7 @@
  *
  *  No composite index: one equality query per order, sorted in memory (an order has tens of events, not thousands). */
 "use strict";
+const CutLine = require("../../charm-nest-rose.js");   // the metals that have a green line (Rose Gold, 10K, 14K)
 const Placement = require("./_charmNestPlacement");   // where a piece is now: one set of rules for the sorter's reads and this derivation
 const COL = "Order_Timeline";
 const CANCELLED = "Charm_Nest_Cancelled";
@@ -156,7 +157,7 @@ async function probeRev(db, id, opts = {}) {
   const poolIds = [...new Set(poolDocs.map(p => String(p.poolId || p.id).slice(0, 120)))].filter(Boolean).slice(0, CAP.backs);
   const archSet = arch && arch.exists ? arch.get("setId") : null;
   const setIds = [...new Set([...sheetDocs.map(d => d.setId), ...poolDocs.map(p => p.setId), archSet].filter(v => v && typeof v === "string"))].slice(0, CAP.sets * 2);
-  const cuts = sheetDocs.filter(d => d.metal === "rose" && (d.rosePlanHash || d.roseCutAt) && d.roseCutAt && d.roseStockId && typeof d.roseStockId === "string").slice(0, CAP.rose);
+  const cuts = sheetDocs.filter(d => CutLine.cuts(d.metal) && (d.rosePlanHash || d.roseCutAt) && d.roseCutAt && d.roseStockId && typeof d.roseStockId === "string").slice(0, CAP.rose);
   const readKeys = new Set(reads.docs.map(d => d.id));
   const lineKeys = [...new Set([...poolDocs.map(p => p.lineKey || (p.transactionId ? `${id}_${p.transactionId}` : "")), ...customDocs.map(c => c.key || c.id)].filter(k => k && /^[\w-]{3,120}$/.test(k) && !readKeys.has(k)))].slice(0, 20);
   const get = (refs, kind) => (refs.length ? db.getAll(...refs, { fieldMask: NONE }).then(r => r.forEach(d => put(kind, d))) : null);
@@ -373,7 +374,7 @@ async function deriveEvents(db, id, opts) {
   //    lines the first round found but the reading query did not) ──
   const poolIds = [...new Set(pools.map(p => p.poolId))].filter(Boolean).slice(0, CAP.backs);
   const setIds = [...new Set([...sheets.map(d => d.setId), ...pools.map(p => p.setId), arch && arch.setId].filter(v => v && typeof v === "string"))].slice(0, CAP.sets);
-  const rose = sheets.filter(d => d.metal === "rose" && (d.rosePlanHash || d.roseCutAt)).slice(0, CAP.rose);
+  const rose = sheets.filter(d => CutLine.cuts(d.metal) && (d.rosePlanHash || d.roseCutAt)).slice(0, CAP.rose);
   const cut = rose.filter(d => d.roseCutAt && d.roseStockId && typeof d.roseStockId === "string");
   const readKeys = new Set(reads.map(r => r._id));
   const lineKeys = [...new Set([...pools.map(p => p.lineKey || (p.transactionId ? `${id}_${p.transactionId}` : "")), ...customs.map(c => c.key || c._id)].filter(k => k && /^[\w-]{3,120}$/.test(k) && !readKeys.has(k)))].slice(0, 20);
@@ -468,9 +469,9 @@ async function deriveEvents(db, id, opts) {
       let stages = []; try { const j = JSON.parse(plan); stages = Array.isArray(j && j.stages) ? j.stages : []; } catch (_) { stages = []; }
       const mineIds = new Set(onIt.map(p => p.poolId));
       const hits = stages.filter(st => Array.isArray(st.ids) && st.ids.some(x => mineIds.has(String(x)) || mineIds.has(String(x).split(":").pop())));
-      (hits.length ? hits : stages.length === 1 ? stages : []).forEach(st => ev("roseLine", n(st.at), Object.assign({ id: `d-roseline-${sid}-${n(st.n)}`, by: "System", text: `RG green line ${n(st.n) || ""} on ${label}`.replace("  ", " "), data: { n: n(st.n), lines: Array.isArray(st.lines) ? st.lines.slice(0, 2) : null } }, base)));
+      (hits.length ? hits : stages.length === 1 ? stages : []).forEach(st => ev("roseLine", n(st.at), Object.assign({ id: `d-roseline-${sid}-${n(st.n)}`, by: "System", text: `${CutLine.cutCode(d.metal) || "RG"} green line ${n(st.n) || ""} on ${label}`.replace("  ", " "), data: { n: n(st.n), lines: Array.isArray(st.lines) ? st.lines.slice(0, 2) : null } }, base)));
     }
-    if (n(d.roseCutAt)) { const c = cuts.get(sid); ev("roseCut", n(d.roseCutAt), Object.assign({}, base, { id: `d-rosecut-${sid}`, by: c ? s(c.by, 80) : "", station: "laser", text: `Rose Gold ${label} cut` })); }
+    if (n(d.roseCutAt)) { const c = cuts.get(sid); ev("roseCut", n(d.roseCutAt), Object.assign({}, base, { id: `d-rosecut-${sid}`, by: c ? s(c.by, 80) : "", station: "laser", text: `${CutLine.cutWord(d.metal)} ${label} cut` })); }
     if (n(d.laserDoneAt)) ev("laserDone", n(d.laserDoneAt), Object.assign({}, base, { id: `d-laser-${sid}`, by: s(d.laserDoneBy, 80), station: "laser", text: `Cut on the laser: ${label}` }));
   }
 

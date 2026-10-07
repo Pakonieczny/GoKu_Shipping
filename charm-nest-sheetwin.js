@@ -2679,7 +2679,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       // a Rose Gold sheet's saved green lines give up the pieces inside them first, on the server (a line with nothing left
       // inside it goes with them, one that keeps a piece stays as saved): nothing has changed yet if that cannot be done
-      for (const sh of pages) if (sh.metal === "rose" && window.RoseStock && RoseStock.takeOff) await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel });
+      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel });
       changed = true;
       holdRelease(pages);
       off.state = "now"; paint();
@@ -3582,7 +3582,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // the sheet this window can fill: held in this sorter, not Rose Gold (its green line decides), not cut or sent
   function fillTarget() {
     const sh = allSheets().find(p => p.sheetId === W.id);
-    if (!sh || !sh.placements.length || sh.metal === "rose" || sh.roseCutAt || sh.recalled || sh.laserDoneAt || sentToStation(sh) || !SV() || !SV().makeSheetGrid) return null;
+    if (!sh || !sh.placements.length || sh.metal === "rose" || sh.rosePlan || sh.roseProtected || sh.roseCutAt || sh.recalled || sh.laserDoneAt || sentToStation(sh) || !SV() || !SV().makeSheetGrid) return null;
     return sh;
   }
   // an order comes from a sheet still filling in the Nest tab, never from one in a set, released, cut or sent
@@ -4726,7 +4726,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const word = sh => sheetWord(sh.sheetId, sh.fileBase, sh);
     // a sheet the freed room can go to (the window's fillTarget, for any sheet): it still holds a piece, it is not Rose Gold (its
     // green line decides), not cut, recalled or sent
-    const fillable = sh => !!sh && allSheets().includes(sh) && !!sh.sheetId && sh.placements.length > 0 && sh.metal !== "rose" && !sh.roseCutAt && !sh.recalled && !sh.laserDoneAt && !sentToStation(sh) && !!SV() && !!SV().makeSheetGrid;
+    const fillable = sh => !!sh && allSheets().includes(sh) && !!sh.sheetId && sh.placements.length > 0 && sh.metal !== "rose" && !sh.rosePlan && !sh.roseProtected && !sh.roseCutAt && !sh.recalled && !sh.laserDoneAt && !sentToStation(sh) && !!SV() && !!SV().makeSheetGrid;
     // "a newer sheet": a later page of the same metal (its orders are the later ones, and it is the one still filling)
     const newer = (src, target) => src.metal === target.metal && (+src.page || 0) > (+target.page || 0);
     // the orders that can fill a spot, in line: the ones waiting (nothing of them placed) first, oldest first, then an order from a
