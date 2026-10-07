@@ -4175,10 +4175,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* Firebase cost (7 Oct 2026): this probe watched every document the sheet's full answer was made of (the set, every other sheet of the set, the runs, the sheets
      that carry its orders, the hand-completed records): dozens of reads every 2 s while the window was open, to decide whether ONE sheet record changed (memberSig
      reads fields of that record alone). It now watches that record alone (one small read); when it moves, the answer is read in full as before. And the beat slows
-     while the window sits unused: 2 s while a person touches the page or the sheet moved in the last 3 minutes, then 4 s, after 10 minutes 8 s, after an hour 28 s;
-     a touch is back at 2 s at the next beat. */
+     while the window sits unused: 2 s while a person touched the page or the sheet moved in the last 10 minutes, then 4 s, 8 s once it has sat unused for an
+     hour; a touch is back at 2 s at the next beat. */
   for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) document.addEventListener(ev, () => { FOLLOW.touch = Date.now(); }, { capture: true, passive: true });
-  const followGap = () => { const idle = Date.now() - Math.max(FOLLOW.touch, FOLLOW.moved); return idle < 180000 ? 0 : idle < 600000 ? 3500 : idle < 3600000 ? 7500 : 27500; };
+  const followGap = () => { const idle = Date.now() - Math.max(FOLLOW.touch, FOLLOW.moved); return idle < 600000 ? 0 : idle < 3600000 ? 3500 : 7500; };
   const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0]);
   const followBusy = () => !!(W.hand || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
   async function follow(now) {
