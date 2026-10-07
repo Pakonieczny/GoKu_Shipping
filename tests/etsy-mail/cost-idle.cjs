@@ -135,16 +135,21 @@ async function run(browser, label, { openThread, hidden, locked }) {
     Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  if (locked) for (const p of pages) await p.evaluate(() => { EtsyMailAuth.lock(); });   // the sign-in screen, as after a 5 pm sign-out
+  // the sign-in screen, as after the idle sign-out: EtsyMailAuth.lock() (private to the page) first removes body.authed, which is what the polls read
+  if (locked) for (const p of pages) await p.evaluate(() => { document.body.classList.remove("authed"); });
   await settle(5000);
   calls = [];                       // the page loads are counted separately; this is the steady state
   // the person is at the desk (scenarios A and B): one key press every 20 s keeps the idle sign-out away
   for (let t = 0; t < MINUTES * 60 * 1000; t += 20000) {
-    if (!hidden && !locked) for (const p of pages) await p.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true })));
+    // a real key press (the page only counts input a person made: isTrusted)
+    if (!hidden && !locked) for (const p of pages) await p.keyboard.press("Shift");
     await settle(20000);
   }
   const steady = calls.slice(); calls = [];
+  const stillIn = await pages[0].evaluate(() => document.body.classList.contains("authed"));
   const r = summarize(label + ", " + TABS + " tab(s)", steady, MINUTES / 60);
+  r.signedInAtEnd = stillIn;
+  console.log("  signed in at the end: " + stillIn + (locked ? " (expected: no)" : " (expected: " + (hidden ? "either" : "yes") + ")"));
   await ctx.close();
   return r;
 }
@@ -161,8 +166,12 @@ async function run(browser, label, { openThread, hidden, locked }) {
   console.log("\nSUMMARY " + JSON.stringify(out));
   if (process.env.CHECK === "1") {
     const fails = [];
-    if (out.A.reads > 400 * TABS) fails.push("A reads/h too high: " + out.A.reads);
-    if (out.B.reads > 900) fails.push("B reads/h too high: " + out.B.reads);
+    // a low count only means something if the person was still signed in the whole hour
+    if (!out.A.signedInAtEnd) fails.push("A: the page signed itself out during the hour, so its low count proves nothing");
+    if (!out.B.signedInAtEnd) fails.push("B: the page signed itself out during the hour, so its low count proves nothing");
+    // the person presses a key every 20 s here (worst case: at the desk all hour), so the Etsy meter reads every 10 s; the old page read 1,700 / 4,400 an hour
+    if (out.A.reads > 750 * TABS) fails.push("A reads/h too high: " + out.A.reads);
+    if (out.B.reads > 1300) fails.push("B reads/h too high: " + out.B.reads);
     if (out.C.reads > 5) fails.push("C reads/h while hidden: " + out.C.reads);
     if (out.D.reads > 5) fails.push("D reads/h on the sign-in screen: " + out.D.reads);
     if (fails.length) { console.log("FAIL " + fails.join("; ")); process.exit(1); }
