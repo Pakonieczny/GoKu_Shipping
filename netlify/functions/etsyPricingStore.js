@@ -5,7 +5,9 @@
 // Reuses the site's shared firebaseAdmin.js initialization.
 //
 // Actions (POST JSON):
-//   { action:"getAll" }                     -> { docs: { [listing_id]: data } }
+//   { action:"getAll" }                     -> { docs: { [listing_id]: data }, count, asOf }   (the fields the console reads)
+//   { action:"getAll", since: asOf }        -> { docs: <only listings changed since>, delta:true, asOf }
+//   { action:"getAll", full:true }          -> the old answer: every field except the two heavy snapshot fields (a full read)
 //   { action:"set", id, patch }             -> { ok:true } (merge write)
 //
 // Stored fields (all optional, written by the console):
@@ -65,6 +67,72 @@ const CONSOLE_FIELDS = [
 ];
 const MAX_PAYLOAD_BYTES = Number(process.env.ETSY_STORE_MAX_BYTES || 4000000);
 
+/*  ═══ COST (FC19, 7 Oct 2026) ═══════════════════════════════════════════
+ *
+ *  getAll used to read EVERY listing document whole (about 4,700 of them, 21 KB
+ *  of original_inventory on each batched one) and then delete the heavy fields
+ *  from the answer: the bytes were billed as Firestore egress and the reads as
+ *  4,700 document reads, on every page load and about every 14 seconds for as
+ *  long as a batch ran in an open console.
+ *
+ *  Now:
+ *   1. Only the fields the console reads are fetched (a field mask), so the
+ *      snapshot fields are never read. They stay in the documents untouched;
+ *      nothing is moved, copied or deleted, and the rollback still reads the
+ *      single document it needs.
+ *   2. The masked list is kept in this instance's memory and kept current with
+ *      a query for the listings written since the last call (every write here
+ *      and in the batch worker stamps updated_at). A call that finds nothing
+ *      new costs ONE read. The whole collection is read again only when the
+ *      instance starts and then at most every SNAP_FULL_TTL_MS, as a safety net
+ *      for a document that was written without updated_at.
+ *   3. { since } asks for the changes only, straight from Firestore (no
+ *      instance memory), so a polling console downloads a few documents.
+ *  The answer to a plain getAll has the same shape as before.               */
+const SNAP_FULL_TTL_MS = 30 * 60 * 1000;
+const DELTA_MARGIN_MS = 15000;          // covers clock skew between instances and the time a write takes to commit
+const lcache = { docs: null, asOf: 0, fullAt: 0, loading: null, deltaBroken: false };
+
+const maskedListings = (db) => db.collection(COLLECTION).select(...CONSOLE_FIELDS);
+const newer = (cur, doc) => !cur || Number(doc.updated_at || 0) >= Number(cur.updated_at || 0);
+
+const readMasked = async (db) => { const all = await maskedListings(db).get(); const m = new Map(); all.forEach(d => m.set(d.id, d.data() || {})); return m; };
+
+async function listingSnapshot(db) {
+  if (!lcache.docs || lcache.deltaBroken || Date.now() - lcache.fullAt > SNAP_FULL_TTL_MS) {
+    // one full read at a time; callers that arrive meanwhile wait for it and then catch up with a delta below
+    if (!lcache.loading) {
+      const t0 = Date.now();
+      lcache.loading = readMasked(db).then(m => { lcache.docs = m; lcache.asOf = t0; lcache.fullAt = t0; })
+        .finally(() => { lcache.loading = null; });
+    }
+    await lcache.loading;
+    if (lcache.deltaBroken) return { docs: lcache.docs, asOf: lcache.asOf };
+  }
+  const t1 = Date.now();
+  let changed;
+  try { changed = await maskedListings(db).where("updated_at", ">", lcache.asOf - DELTA_MARGIN_MS).get(); }
+  catch (e) {
+    // The changes query could not run (for example the updated_at index is switched off): this instance reads the masked list
+    // whole on every call instead (still without the snapshot fields), exactly as correct, only dearer.
+    lcache.deltaBroken = true;
+    console.warn("[etsyPricingStore] changes query failed, reading the list whole: " + e.message);
+    lcache.docs = await readMasked(db); lcache.asOf = t1; lcache.fullAt = t1;
+    return { docs: lcache.docs, asOf: t1 };
+  }
+  changed.forEach(d => { const o = d.data() || {}; if (newer(lcache.docs.get(d.id), o)) lcache.docs.set(d.id, o); });
+  lcache.asOf = Math.max(lcache.asOf, t1);
+  return { docs: lcache.docs, asOf: t1 };
+}
+
+/*  The run document also holds `ids` (every queued listing id, about 15 bytes each: 70 KB for a full catalogue run),
+    which the console never reads; the answer deletes it. These are the other fields, all of them written by this file,
+    etsyPricingScheduleCron and etsyPricingBatch-background. */
+const RUN_FIELDS = [
+  "status", "total", "done", "ok", "fail", "current", "errors", "errors_dropped", "stop", "paused", "consec_fail", "blocked",
+  "budget_paused", "stop_reason", "fatal_error", "started_by", "created_at", "updated_at", "finished_at", "remaining_ids"
+];
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
@@ -76,7 +144,31 @@ exports.handler = async (event) => {
   const db = admin.firestore();
 
   try {
+    if (body.action === "getAll" && body.full !== true) {
+      const since = Number(body.since);
+      if (body.since != null && Number.isFinite(since) && since > 0) {
+        // Changes only: the listings written since the caller's last answer (its asOf), with a margin.
+        const t0 = Date.now();
+        let changed;
+        try { changed = await maskedListings(db).where("updated_at", ">", Math.min(since, t0) - DELTA_MARGIN_MS).get(); }
+        catch (e) {   // no usable changes query: answer the whole masked list (no delta:true, so the console replaces its list with it)
+          console.warn("[etsyPricingStore] changes query failed, answering the whole list: " + e.message);
+          const s = await listingSnapshot(db), all = {};
+          s.docs.forEach((o, id) => { all[id] = o; });
+          return json(200, { docs: all, count: s.docs.size, asOf: s.asOf });
+        }
+        const docs = {};
+        changed.forEach(d => { docs[d.id] = d.data() || {}; });
+        return json(200, { docs, count: Object.keys(docs).length, delta: true, asOf: t0 });
+      }
+      const s = await listingSnapshot(db);
+      const docs = {};
+      s.docs.forEach((o, id) => { docs[id] = o; });
+      return json(200, { docs, count: s.docs.size, asOf: s.asOf });
+    }
+
     if (body.action === "getAll") {
+      // full:true — the previous answer for any caller that wants every field: a full read of the whole collection.
       const snap = await db.collection(COLLECTION).get();
       const docs = {};
       snap.forEach(d => {
@@ -118,7 +210,7 @@ exports.handler = async (event) => {
       const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(x => /^\d+$/.test(x)) : [];
       if (!ids.length) return json(400, { error: "No listing ids supplied." });
       // Refuse a second concurrent run.
-      const active = await db.collection("EtsyPricing_Runs").where("status", "in", ["queued", "running", "paused"]).limit(1).get();
+      const active = await db.collection("EtsyPricing_Runs").where("status", "in", ["queued", "running", "paused"]).limit(1).select("status").get();
       if (!active.empty) return json(409, { error: "A batch run is already in progress (or paused).", run_id: active.docs[0].id });
       const ref = await db.collection("EtsyPricing_Runs").add({
         status: "queued", ids, total: ids.length, done: 0, ok: 0, fail: 0,
@@ -139,12 +231,13 @@ exports.handler = async (event) => {
       return d;
     };
     if (body.action === "getRun") {
-      const snap = await db.collection("EtsyPricing_Runs").doc(String(body.run_id || "")).get();
+      // COST: `ids` (every queued listing id) is not read; the answer never carried it.
+      const [snap] = await db.getAll(db.collection("EtsyPricing_Runs").doc(String(body.run_id || "")), { fieldMask: RUN_FIELDS });
       if (!snap.exists) return json(404, { error: "Run not found." });
       return json(200, { run: trimRun(snap.data()), run_id: snap.id });
     }
     if (body.action === "activeRun") {
-      const active = await db.collection("EtsyPricing_Runs").where("status", "in", ["queued", "running", "paused"]).limit(1).get();
+      const active = await db.collection("EtsyPricing_Runs").where("status", "in", ["queued", "running", "paused"]).limit(1).select(...RUN_FIELDS).get();
       if (active.empty) return json(200, { run: null });
       return json(200, { run: trimRun(active.docs[0].data()), run_id: active.docs[0].id });
     }

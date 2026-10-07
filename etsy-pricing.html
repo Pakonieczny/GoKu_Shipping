@@ -2138,12 +2138,26 @@ function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(
     toast((e&&e.__offline?'No connection \u2014 #'+id+' was not saved to the cloud yet. It will need re-saving.':'Cloud save failed for #'+id+': '+e.message),'bad');
   })}
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
-async function hydrateFromStore(skipResume){
+/*  COST (FC19). The first read of a console is the whole list; every later one while a batch runs asks only for the
+    listings written since the last answer ({since: asOf}), so a poll costs the server one small query instead of the
+    whole collection. One read at a time (a slow older answer must not overwrite a newer one); the end of a run asks
+    for the whole list again (forceFull), and so does a server that does not know `since` (it answers without delta:true). */
+let hydrateChain=Promise.resolve();
+function hydrateFromStore(skipResume,forceFull){
+  const p=hydrateChain.catch(()=>{}).then(()=>hydrateOnce(skipResume,forceFull));
+  hydrateChain=p;return p;
+}
+async function hydrateOnce(skipResume,forceFull){
   try{
-    const {docs}=await fbCall({action:'getAll'});
-    S.prep=new Map(Object.entries(docs||{}));
+    const incremental=!forceFull&&S.prepAsOf>0&&S.prep instanceof Map&&S.prep.size>0;
+    const r=await fbCall(incremental?{action:'getAll',since:S.prepAsOf}:{action:'getAll'});
+    const docs=r.docs||{};
+    let changed;
+    if(incremental&&r.delta===true){changed=Object.entries(docs);for(const [id,d] of changed)S.prep.set(id,d)}
+    else{S.prep=new Map(Object.entries(docs));changed=[...S.prep]}
+    S.prepAsOf=Number(r.asOf)||0;
     let touched=false;
-    for(const [id,d] of S.prep){
+    for(const [id,d] of changed){
       const l=S.listings.find(x=>String(x.listing_id)===id);
       if(l&&d.health){l._health=d.health;l._scanned=true;touched=true}
       if(d.approval&&(!S.approvals[id]||Number(d.approval.at||0)>Number(S.approvals[id].at||0))){S.approvals[id]=d.approval;touched=true}
@@ -2383,24 +2397,40 @@ async function requeueBlocked(){
   renderPrepUi();renderBlockedPanel();
   toast(list.length+' listing'+(list.length===1?'':'s')+' returned to the batch queue.','ok');
 }
+/*  COST (FC19). The run poll asks the server every 3.5 s while a run is moving. It rests while the tab is hidden (the
+    next look at the tab polls at once) and slows to 15 s when the run is paused or has shown no progress for 90 s, so a
+    forgotten tab on a paused or dead run no longer reads all day. A click on Pause/Resume/Re-launch polls at once. */
+let pollWake=null;
+function pollRunLater(runId,ms){
+  clearTimeout(pollTimer);
+  pollTimer=setTimeout(()=>{
+    if(!document.hidden)return pollRun(runId);
+    pollWake=()=>{if(document.hidden)return;document.removeEventListener('visibilitychange',pollWake);pollWake=null;pollRun(runId)};
+    document.addEventListener('visibilitychange',pollWake);
+  },ms);
+}
 async function pollRun(runId){
   clearTimeout(pollTimer);
+  if(pollWake){document.removeEventListener('visibilitychange',pollWake);pollWake=null}
   try{
     const {run}=await fbCall({action:'getRun',run_id:runId});
     applyRunToUi(run);
     S._pollN=(S._pollN||0)+1;
     if(S._pollN%4===0&&['queued','running'].includes(run.status))hydrateFromStore(true);
-    if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),3500)}
+    if(['queued','running','paused'].includes(run.status)){
+      const quiet=run.status==='paused'||(run.updated_at&&(Date.now()-Number(run.updated_at))>90000);
+      pollRunLater(runId,quiet?15000:3500);
+    }
     else{
       S.currentRunId=null;
-      await hydrateFromStore(true);applyFilter();
+      await hydrateFromStore(true,true);applyFilter();
       renderPrepUi();
       toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
       // renderPrepUi()/hydrateFromStore have already run, so blockedEntries()
       // is accurate by the time this decides whether there is anything to read.
       maybeAutoClose(run);
     }
-  }catch(e){pollTimer=setTimeout(()=>pollRun(runId),6000)}
+  }catch(e){pollRunLater(runId,6000)}
 }
 async function launchBatchWorker(runId){
   const r=await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId})});
