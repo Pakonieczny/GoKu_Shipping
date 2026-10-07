@@ -15,23 +15,28 @@
  *            (a number is read as areaMm2 alone; wMm / hMm are read as minMm / maxMm). Missing parts come from DEFAULT_TYPICAL.
  *   opts     sheetWMm, sheetHMm (the whole physical sheet; default: the outline's far edges), insetMm (the sheet's inset band, default 0.53 mm
  *            = the page's 1.5 pt), edgeMm (the least distance kept from a green cut edge, default 1 mm = charm-nest-rose.js EDGE_PT),
- *            density (default 0.68), lowDensity (0.58), highDensity (0.78).
+ *            density (default 0.75), lowDensity (0.66), highDensity (0.80).
  *
  * Formula
  *   1. usable area U  = the part of the outline that is at least insetMm from the sheet's own border AND at least edgeMm from any green cut edge
  *                       (worked out on a grid of at most about 200 cells across, with a distance transform: cheap, no clipping library).
  *   2. thin strips    O(r) = the part of U that a disc of radius r can still reach while staying inside U (the "opening" of U), with
  *                       r = typical.minMm / 2: a strip narrower than a typical piece, and a corner that cannot hold one, count for nothing.
- *   3. pieces         = floor( density * O(r) / typical.areaMm2 )          density 0.68: the sorter reaches 75 to 80 percent on a full sheet; an
- *                                                                            irregular leftover packs worse, so the estimate uses 65 to 70 percent.
- *      low            = floor( lowDensity  * O(r)   / typical.areaMm2 )     0.58, the careful end
- *      high           = floor( highDensity * O(r/2) / typical.areaMm2 )     0.78 (the sorter's own target) and strips half as wide still count: smaller pieces fit them
- *   4. packedPct      = round( 100 * pieces * typical.areaMm2 / U )         the share of the usable area those pieces would fill: about 65 to 68 for a clean
+ *   3. pieces         = floor( density * O(r) / typical.areaMm2 )          density 0.75: the sorter's target on a full sheet (75 percent, toward 80). A leftover is
+ *                                                                            packed as one tight block from the left, so it is close to a clean rectangle: no extra pessimism.
+ *      low            = floor( lowDensity  * O(r)   / typical.areaMm2 )     0.66, the careful end
+ *      high           = floor( highDensity * O(r/2) / typical.areaMm2 )     0.80 (the sorter's ceiling) and strips half as wide still count: smaller pieces fit them
+ *   4. packedPct      = round( 100 * pieces * typical.areaMm2 / U )         the share of the usable area those pieces would fill: about 72 to 75 for a clean
  *                                                                            block (the floor takes a little), lower where thin strips are wasted.
- *   Example: a clean 50 x 40 mm block in the top left corner of a 100 x 50 mm sheet (green cut edge on its right and bottom, sheet border on the other two),
- *   typical piece 110 mm2 (9 x 14 mm): U = (50 - 0.53 - 1) x (40 - 0.53 - 1) = about 1,870 mm2; no thin part, so O = U; pieces = floor(0.68 x 1,870 / 110) = 11;
- *   low = floor(0.58 x 1,870 / 110) = 9; high = floor(0.78 x 1,870 / 110) = 13; packedPct = round(100 x 11 x 110 / 1,870) = 65.
- *   A 100 x 6 mm strip holds none of a typical (9 mm wide) piece: pieces 0, high 3 (smaller pieces). A 100 x 12 mm strip: 6 (5 to 7).
+ *   The default regular piece (DEFAULT_TYPICAL) is a real 14K Gold charm: 61 mm2 including its spacing (6.7 x 10.4 mm), from a live sheet 50 x 46 mm that held 13
+ *   pieces at 36 percent full. (Paul, 7 Oct 2026: a clean 50 x 44.4 mm sheet "should fit between 24 to 28 parts".)
+ *   Example 1: a clean new sheet 50 x 44.4 mm (the whole sheet is the outline; only the 0.53 mm inset band is lost): U = (50 - 1.06) x (44.4 - 1.06) = about 2,120 mm2,
+ *   O = about 2,108 mm2 (the four corners are a little too tight for a whole piece); pieces = floor(0.75 x 2,108 / 61) = 25; low = floor(0.66 x 2,108 / 61) = 22;
+ *   high = floor(0.80 x 2,115 / 61) = 27.
+ *   Example 2: a clean 50 x 40 mm block in the top left corner of a 100 x 50 mm sheet (green cut edge on its right and bottom, sheet border on the other two):
+ *   U = (50 - 0.53 - 1) x (40 - 0.53 - 1) = about 1,870 mm2; no thin part, so O = about 1,860; pieces = floor(0.75 x 1,860 / 61) = 22; low = floor(0.66 x 1,860 / 61) = 20;
+ *   high = floor(0.80 x 1,870 / 61) = 24; packedPct = round(100 x 22 x 61 / 1,870) = 72.
+ *   A 100 x 6 mm strip holds none of a typical (6.7 mm wide) piece: pieces 0, high 5 (smaller pieces). A 100 x 12 mm strip: 12 (11 to 13).
 
  *     CharmNestPartial.planFor(cards, pieces, opts) -> { fitsAll, needed, partials, needMm2, haveMm2, short, estimate:true }
  *   Which of the (available) partial cards would be needed for these pieces, filled one after the other in `opts.order` ('recent' = newest used first,
@@ -43,8 +48,8 @@
   'use strict';
   const MM = 25.4 / 72;
   // used when a metal has no history yet, and as a gentle prior (PRIOR pieces' worth) under the metal's own average
-  const DEFAULT_TYPICAL = { areaMm2: 110, minMm: 9, maxMm: 14 }, PRIOR = 5;
-  const DEFAULTS = { insetMm: 1.5 * MM, edgeMm: 1, density: 0.68, lowDensity: 0.58, highDensity: 0.78 };
+  const DEFAULT_TYPICAL = { areaMm2: 61, minMm: 6.7, maxMm: 10.4 }, PRIOR = 5;
+  const DEFAULTS = { insetMm: 1.5 * MM, edgeMm: 1, density: 0.75, lowDensity: 0.66, highDensity: 0.80 };
   const num = (v, d) => (Number.isFinite(+v) && +v > 0 ? +v : d);
 
   // typical -> { areaMm2, minMm, maxMm }, every part positive

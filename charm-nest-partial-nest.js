@@ -148,7 +148,7 @@
         return P.estimateFit(card.outline,typical,{sheetWMm:card.sheetWMm,sheetHMm:card.sheetHMm}).packMm2||0;
       }
     }catch(_){}
-    const s=cardSize(card);return (card.areaMm2||s.wMm*s.hMm*.7)*.65;
+    const s=cardSize(card);return (card.areaMm2||s.wMm*s.hMm*.7)*.75;
   }
   // 'automatic' = best fit of the available list: the tightest partial that takes everything left, otherwise the biggest one, then again for the rest
   function bestFit(cards,pieces,taken){
