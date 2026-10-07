@@ -157,6 +157,47 @@ const T = { areaMm2: 110, minMm: 9, maxMm: 14 }, SHEET = { sheetWMm: 100, sheetH
   assert.deepEqual([sw.stock.id, store.get('Charm_Nest_Rose_Stock/' + fresh.stock.id).owner, store.get('Charm_Nest_Rose_Stock/' + fresh.stock.id).available, store.get('Charm_Nest_Rose_Stock/' + stockId).owner], [stockId, null, true, 'sheet-6'], 'given back and taken in one go');
   await O.partialRelease({ sheetId: 'sheet-6' });
 
+  // Paul, 7 Oct: "I'm prevented from using All, new sheets and existing partial sheets. There's no reason why I should be prevented." A sheet in a committed or the current
+  // set, with a saved green line that was never cut, or holding protected lines may swap onto a partial: the line of the old seat is dropped with that seat (never carried onto
+  // the new outline), the sheet keeps its set, the old physical sheet goes back, a small note says what was dropped. A recorded cut is still refused, and loses nothing.
+  {
+    const mine = []; const stockDoc = id => store.get('Charm_Nest_Rose_Stock/' + id);
+    const seatedSheet = async (id, idx, extra) => {
+      const f = await api.roseClaim({ sheetId: id, wPt: 100 / MM, hPt: 50 / MM, fresh: true, nesting: false }); mine.push(f.stock.id);
+      const shapes = [shape('q' + idx, 25, 2, 8, 25)], doc = { ...sheetDoc(id, shapes, idx), ...(extra || {}) }; store.set('Charm_Nest_Sheets/' + id, doc);
+      return { f, doc, shapes };
+    };
+    // 1. a sheet of a committed set with a saved green line (a plan, never cut)
+    const a = await seatedSheet('sheet-9', 9);
+    await api.rosePlan({ sheetId: 'sheet-9', stockId: a.f.stock.id, revision: 0, fingerprint: RoseStock.fingerprint(a.doc), shapesJson: JSON.stringify(a.shapes), allowanceMm: .2, cut: true });
+    assert(store.get('Charm_Nest_Sheets/sheet-9').rosePlanJson && store.get('Charm_Nest_Sheets/sheet-9').setId === 'set-2026-1', 'the sheet is in its set and holds a saved line');
+    const r9 = await O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-9', swap: true, by: 'Fay' });
+    const d9 = store.get('Charm_Nest_Sheets/sheet-9');
+    assert.equal(r9.stock.id, stockId); assert.equal(r9.protectedJson, null, 'no line of the old seat is handed to the nest on the new outline');
+    assert.deepEqual([d9.rosePlanJson, d9.rosePlanHash, d9.roseFingerprint, d9.roseProtectedJson, d9.dirty, d9.setId, d9.draft, d9.roseStockId, d9.roseCutAt], [null, null, null, null, true, 'set-2026-1', false, stockId, undefined], 'plan and protected line gone, sheet marked changed, its set and its record otherwise untouched');
+    assert.deepEqual(d9.roseReseated.map(x => [x.fromStockId, x.toStockId, x.plan, x.kept]), [[a.f.stock.id, stockId, true, false]], 'a small note of what was dropped');
+    assert.deepEqual([stockDoc(a.f.stock.id).owner, stockDoc(a.f.stock.id).available, stockDoc(stockId).owner], [null, true, 'sheet-9'], 'the old physical sheet went back, the partial is held');
+    assert.deepEqual([store.get('Charm_Nest_Remnants/' + pid).status, store.get('Charm_Nest_Remnants/' + pid).inUseBySheetId], ['inUse', 'sheet-9']);
+    assert.deepEqual(d9.placements.map(x => x.id), ['q9'], 'its pieces and placements are not deleted by the claim (the nest places them again)');
+    // 2. a sheet in the current set holding the lines an append kept (protected), swapped onto the partial once it is free again
+    store.set('Charm_Nest_Sheets/sheet-9', { ...d9, draft: true }); await O.partialRelease({ sheetId: 'sheet-9' });   // (the older release path, a draft sheet: the partial is free again)
+    assert.equal(store.get('Charm_Nest_Remnants/' + pid).status, 'available');
+    const b = await seatedSheet('sheet-10', 10, { roseProtectedJson: JSON.stringify({ profile: { version: 1 }, lines: [], shapes: [], placements: [], stages: [] }) });
+    const r10 = await O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-10', swap: true });
+    const d10 = store.get('Charm_Nest_Sheets/sheet-10'); assert.equal(r10.protectedJson, null); assert.deepEqual([d10.roseProtectedJson, d10.rosePlanJson, d10.setId, d10.dirty, d10.roseReseated[0].kept, d10.roseReseated[0].plan], [null, null, 'set-2026-1', true, true, false]);
+    assert.equal(stockDoc(b.f.stock.id).owner, null, 'given back');
+    // 3. the same claim without swap keeps the saved lines exactly as before (the nest's own claim of the stock it already holds)
+    store.set('Charm_Nest_Sheets/sheet-10', { ...d10, draft: true }); await O.partialRelease({ sheetId: 'sheet-10' });
+    const c = await seatedSheet('sheet-12', 12, { roseProtectedJson: JSON.stringify({ profile: { version: 1 }, lines: [], shapes: [], placements: [], stages: [] }) });
+    const keep = await api.roseClaim({ sheetId: 'sheet-12', wPt: 100 / MM, hPt: 50 / MM, stockId: c.f.stock.id, nesting: true });
+    assert(keep.protectedJson && store.get('Charm_Nest_Sheets/sheet-12').roseProtectedJson, 'a plain nest claim keeps the protected lines');
+    // 4. a recorded cut is permanent: refused, and the sheet still holds what it held
+    const d = await seatedSheet('sheet-11', 11, { roseCutAt: 1760000000000 });
+    await assert.rejects(() => O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-11', swap: true }), /already cut/);
+    assert.equal(stockDoc(d.f.stock.id).owner, 'sheet-11', 'a refused swap loses nothing'); assert.equal(store.get('Charm_Nest_Remnants/' + pid).status, 'available');
+    for (const id of mine) store.delete('Charm_Nest_Rose_Stock/' + id); for (const id of ['sheet-9', 'sheet-10', 'sheet-11', 'sheet-12']) store.delete('Charm_Nest_Sheets/' + id);
+  }
+
   // the cut: the leftover it was made on is used (by that sheet), the new one is available with lastUsed = the cut; the held record clears
   await O.partialClaim({ metal: 'rose', id: pid, sheetId: 'sheet-8', by: 'Eve', sheetName: 'RG Sheet 8' });
   const two = await cutOne('sheet-8', [shape('p8', 25, 2, 8, 25)], 8, { stockId, revision: 1 }, 'Eve');

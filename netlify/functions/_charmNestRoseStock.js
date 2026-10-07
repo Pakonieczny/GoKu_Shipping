@@ -137,22 +137,25 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       // the partial sheet's record (a read, before the first write); a chosen partial (partialId) must be available or already this sheet's
       const rem=remnantSync&&old&&(b.partialId||old.owner!==b.sheetId)?await remnantSync.read(tx,ref.id,old.revision,b.partialId,old.made):null;   // (a sheet that already holds it claimed it before: nothing to read, nothing to change)
       if(b.partialId)remnantSync.check(rem,{metal,sheetId:b.sheetId,stockId:ref.id,revision:old.revision});
-      // swap (a chosen partial for a sheet that holds another physical sheet): that one is given back in THIS transaction, as roseRelease would (same refusals), so a refused claim loses nothing
+      // swap (a chosen partial for a sheet that holds another physical sheet): that one is given back in THIS transaction, so a refused claim loses nothing.
+      // (Paul, 7 Oct: "There's no reason why I should be prevented.") A sheet in a committed or the current set, approved for Laser cutting, or holding a saved
+      // green line that was never cut MAY swap: its set, seals and history are not touched here. The only refusal that stays is the recorded cut (above:
+      // roseCutAt; a cut makes a new revision of the stock, so a stock a cut was recorded on is a leftover, never "held" by the sheet).
       let off=null;const heldId=held.docs[0]?.id;
       if(b.swap&&heldId&&heldId!==ref.id){
         const oref=stocks().doc(heldId),od=await tx.get(oref),os=od.exists?od.data():null;
-        if(os&&os.owner===b.sheetId){
-          const own=sd.exists?sd.data():null;
-          if(own&&own.setId&&!own.draft)throw new Error('Remove the sheet from its current set before choosing another partial sheet');
-          if(own&&(own.rosePlanJson||own.roseProtectedJson))throw new Error('A planned or protected '+metalWord(metal)+' contour cannot be given back');
-          off={ref:oref,fresh:metalOf(os)!=='rose'&&!os.revision&&!os.profileJson&&!os.made,rem:remnantSync?await remnantSync.read(tx,heldId,os.revision,null,os.made):null};
-        }
+        if(os&&os.owner===b.sheetId)off={ref:oref,fresh:metalOf(os)!=='rose'&&!os.revision&&!os.profileJson&&!os.made,rem:remnantSync?await remnantSync.read(tx,heldId,os.revision,null,os.made):null};
       }
       const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),metal,owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
-      const guard=sd.exists?protectedLayout(sd.data()):null,protectedJson=guard?JSON.stringify(guard):null;
+      // a re-seat (an exact claim with swap) starts the layout over on the new outline: the green line saved for the old seat (a plan, or the lines an append kept) is
+      // dropped with it, never carried onto another sheet's outline; every other claim keeps the saved lines as it always did (protected layout)
+      const reseat=b.exact===true&&b.swap===true,own=sd.exists?sd.data():null;
+      const guard=own&&!reseat?protectedLayout(own):null,protectedJson=guard?JSON.stringify(guard):null;
       if(off){if(off.fresh)tx.delete(off.ref);else tx.update(off.ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(remnantSync&&!off.fresh)remnantSync.released(tx,off.rem,{sheetId:b.sheetId,at:Date.now()});}
       tx.set(ref,next);
-      if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{})});
+      // (the line that went is noted on the sheet's record, small and append-only: when, who, which seat, what kind)
+      const dropped=reseat&&own&&(own.rosePlanJson||own.roseProtectedJson)?[...(Array.isArray(own.roseReseated)?own.roseReseated:[]).slice(-9),{at:Date.now(),by:String(b.by||'').slice(0,80),fromStockId:heldId||null,toStockId:ref.id,plan:!!own.rosePlanJson,kept:!!own.roseProtectedJson}]:null;
+      if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting||reseat?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{}),...(dropped?{roseReseated:dropped}:{})});
       const partial=remnantSync?remnantSync.claimed(tx,rem,{sheetId:b.sheetId,sheetName:b.sheetName||(sd.exists&&sheetLabel?sheetLabel(sd.data()):''),by:b.by,at:Date.now()}):null;
       return {stock:{...next,updatedAt:null},protectedJson,...(partial?{partial}:{})};
     });return stock;

@@ -103,8 +103,10 @@
   // Partial sheets (charm-nest-partial-nest.js): a sheet in use moves onto the leftover the person chose. With swap the server gives back the physical
   // sheet the sheet holds (a fresh uncut gold sheet is deleted, a leftover returns to the list) and reserves the chosen leftover in ONE transaction
   // (roseClaim with the leftover's id and revision, exact + partialId: the chosen partial is checked itself; nesting:true marks the saved record changed,
-  // as any re-nest does). A refused claim loses nothing: the sheet still holds what it held. A sheet in a set, with a saved green line or a recorded
-  // cut is refused by the server.
+  // as any re-nest does). A refused claim loses nothing: the sheet still holds what it held. A recorded cut is refused by the server. (Paul, 7 Oct: a sheet
+  // in a committed or the current set, approved for Laser cutting, or with a saved green line that was never cut may swap too: with swap the server drops the
+  // line laid on the old seat, as it gives that seat back, and this page drops its copy below, so no line of the old seat survives on the new one. The set,
+  // the seals and the orders' history stay as they are.)
   async function seatOn(sh,stock,o={}){
     if(!hasLine(sh)||sh.roseCutAt)throw new Error('This sheet cannot take a partial sheet');
     if(!S.cloud.ok)throw new Error(`Reconnect to reserve the ${word(sh)} partial sheet`);
@@ -113,6 +115,7 @@
     const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:stock.wPt,hPt:stock.hPt,stockId:stock.id,revision:stock.revision,nesting:true,...(stock.partialId?{exact:true,partialId:stock.partialId}:{}),...(o.swap?{swap:true}:{})});
     if(!r.stock)throw new Error('The partial sheet could not be reserved');
     sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;sh.roseChoice=null;sh.roseFresh=false;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
+    if(o.swap){delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;delete sh.roseProtected;sh._roseError=null;}   // (the line of the old seat: the server dropped it in the same transaction)
     if(r.protectedJson)sh.roseProtected=parse(r.protectedJson);   // (the saved record already held green lines: the sheet stays as it is; the caller sees roseProtected)
     try{await load(sh);}catch(_){}   // (the cut history is only for the timeline: the reservation stands without it)
     window.Session?.schedule();refresh(sh);return r.stock;

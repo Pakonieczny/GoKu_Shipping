@@ -6813,6 +6813,9 @@ const Sets = window.Sets = (() => {
   }
   async function onSheetSaved(sh, items, outputs, {labelsOnly = false, setOverride = null} = {}) {
     const set = setOverride || setOfSheet(sh); if (!set) return;
+    // a sheet of a COMMITTED set that is nested again (a partial sheet chosen for it, Paul 7 Oct) gets its QR label and the set's label list made again, but its orders were
+    // already designed at the station: their pool rows stay "committed" and the set keeps its status
+    if (set.committedAt) labelsOnly = true;
     const byId = new Map(items.map(c => [c.id, c]));
     const placed = sh.placements.map(p => byId.get(p.id)).filter(Boolean);
     const ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))];

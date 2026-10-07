@@ -16,7 +16,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 function world(metal, policy) {
   const dom = new JSDOM('<body></body>', { url: 'https://example.test', runScripts: 'outside-only' }), w = dom.window;
   w.IntersectionObserver = class { observe() { } unobserve() { } };
-  const log = { api: [], started: [], dirty: [], toasts: [], stocks: [] }, docs = new Map(), cuts = new Map();
+  const log = { api: [], started: [], dirty: [], toasts: [], stocks: [], agent: [], kept: [] }, docs = new Map(), cuts = new Map();
   const add = (id, cut, rev) => { const s = stockOf(id, cut, rev); docs.set(id, s); cuts.set(id, cut); return card({ ...s, cut }); };
   const page = n => ({ metal, page: n, charms: [], placements: [], rejects: [], status: 'idle', persisted: false, persistedDone: true });
   const sh = page(1), S = { sheets: { [metal]: { pages: [sh], active: 0 } }, settings: { maxFill: .8, clearancePt: -.5, insetPt: 1.5, stock: {} }, cloud: { ok: true } };
@@ -49,11 +49,11 @@ function world(metal, policy) {
   w.PartialSheets = { list: async () => ({ items: cards.filter(c => c.status === 'available' && (x.stale || !docs.get(c.stockId).owner)) }), policy: () => pol, changed() { },
     stocks: async ids => { log.stocks.push(ids.slice()); return Object.fromEntries(ids.map(id => { const m = /^(.+)-(\d+)$/.exec(id), d = m && docs.get(m[1]); return [id, d ? { stockId: d.id, revision: d.revision, wPt: d.wPt, hPt: d.hPt, profileJson: d.profileJson, metal: d.metal, current: d.revision === +m[2] } : { missing: true }]; })); } };
   const C = w.CN = {
-    S, esc: s => String(s), uid: () => 'u', agent() { }, toast: (m, k) => log.toasts.push(m), inflatedArea: c => c.areaPt2, activeCharms: s => s.charms.filter(c => !c.excluded),
+    S, esc: s => String(s), uid: () => 'u', agent(...a) { log.agent.push(a); }, toast: (m, k) => log.toasts.push(m), inflatedArea: c => c.areaPt2, activeCharms: s => s.charms.filter(c => !c.excluded),
     stockFor: (m, s) => { const k = s && (s.roseStock || s.recalled && s.recalled.stock || s.keptStock || s.newStock); return k && k.wPt ? { wPt: k.wPt, hPt: k.hPt } : { wPt: W, hPt: H }; },
     pagesOf: m => S.sheets[m].pages, allSheets: () => Object.values(S.sheets).flatMap(x => x.pages), renderCard() { }, drawPreview() { }, api,
     addPage: m => { const p = page(Math.max(...S.sheets[m].pages.map(q => q.page)) + 1); S.sheets[m].pages.push(p); return p; },
-    sheetDirty: s => { log.dirty.push(s); s.dirty = true; s.status = 'ready'; s.placements = []; s.rejects = []; delete s.rosePlan; },
+    sheetDirty: s => { log.dirty.push(s); s.dirty = true; s.status = 'ready'; s.placements = []; s.rejects = []; s.releaseFull = false; delete s.rosePlan; },
     startNest: s => { log.started.push({ sheet: s, byHand: !!s._byHand }); },
     buildJob: s => { const st = C.stockFor(s.metal, s), items = C.activeCharms(s); return { sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: 1.5, ...(s.roseStock && s.roseStock.profileJson ? { remnant: JSON.parse(s.roseStock.profileJson) } : {}) }, clearancePt: -.5, angles: [0, 90], fineRes: 2, coarseRes: .5, timeBudgetMs: 3000, maxFill: .8, maxTrials: 60, seed: 1, careful: true, block: true, pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: 0, pinned: c.pinned || null })) }; },
     solverWorker: () => { const k = { onmessage: null, dead: false, terminate() { k.dead = true; }, postMessage(m) { if (m.type !== 'solve') return; Solver.solve(m.job, {}).then(r => { if (!k.dead && k.onmessage) k.onmessage({ data: { type: 'done', jobId: m.jobId, result: Solver.publicLayout(r) } }); }).catch(e => k.onmessage && k.onmessage({ data: { type: 'error', jobId: m.jobId, message: e.message } })); } }; return k; }
@@ -195,16 +195,93 @@ const ids = list => list.map(c => c.id).sort().join();
   // ── 5. a recorded cut is permanent: refused in words, nothing is called ──
   {
     const x = world('rose'), { w, sh, log } = x, PN = w.PartialNest; const p = x.add('rgs-p', 20); x.docs.get('rgs-p').metal = 'rose'; x.setCards([p]); sh.charms = x.pieces(3);
-    for (const [patch, code] of [[{ roseCutAt: 1760000000000 }, 'cut'], [{ laserDoneAt: 1760000000000 }, 'laser'], [{ processReady: true }, 'laser'], [{ recalled: {} }, 'recalled'], [{ status: 'nesting' }, 'busy'], [{ rosePlan: { lines: [] } }, 'line']]) {
-      Object.assign(sh, { roseCutAt: null, laserDoneAt: null, processReady: false, recalled: null, status: 'complete', rosePlan: null }, patch); log.api.length = 0;
+    for (const [patch, code] of [[{ roseCutAt: 1760000000000 }, 'cut'], [{ laserDoneAt: 1760000000000 }, 'laser'], [{ status: 'nesting' }, 'busy'], [{ charms: [] }, 'empty'], [{ roseCutAt: 5, rosePlan: { lines: [] }, roseProtected: { lines: [] } }, 'cut']]) {
+      Object.assign(sh, { roseCutAt: null, laserDoneAt: null, processReady: false, recalled: null, status: 'complete', rosePlan: null, roseProtected: null, charms: x.pieces(3) }, patch); log.api.length = 0;
       const can = PN.canSeat(sh); assert(!can.ok && can.code === code, code + ': ' + JSON.stringify(can));
       const pv = await PN.preview(sh, [p.id]); assert(!pv.ok && pv.code === code && pv.fitsAll === false, JSON.stringify(pv));
       const r = await PN.seat(sh, [p.id]); assert(!r.ok && r.code === code); assert.equal(log.api.length, 0, code + ': nothing is read, claimed or released'); assert.equal(log.started.length, 0);
       if (code === 'cut') assert(/recorded cut is permanent/.test(pv.words) && /keeps its metal/.test(pv.words), pv.words);
+      if (code === 'laser') assert(/Completed \(laser cut\)/.test(pv.words), 'Completed is said in words: ' + pv.words);
+      if (code === 'busy') assert(/Wait a moment/.test(pv.words), 'busy is a short plain wait: ' + pv.words);
     }
-    Object.assign(sh, { roseCutAt: null, laserDoneAt: null, recalled: null, status: 'complete', rosePlan: null });
-    w.Sets.ofRun = () => [{ committedAt: 1, sheetIds: [sh.sheetId] }]; sh.sheetId = 'rose-x'; assert.equal(PN.canSeat(sh).code, 'set', 'a committed set'); w.Sets.ofRun = () => [];
+    Object.assign(sh, { roseCutAt: null, laserDoneAt: null, recalled: null, status: 'complete', rosePlan: null, roseProtected: null, charms: x.pieces(3) });
+    w.Sets.ofRun = () => [{ committedAt: 1, sheetIds: [sh.sheetId] }]; sh.sheetId = 'rose-x'; assert.equal(PN.canSeat(sh).ok, true, 'a committed set is no reason to refuse any more'); w.Sets.ofRun = () => [];
+    w.Gate = { holding: () => true, keep() { } }; assert.equal(PN.canSeat(sh).code, 'busy', 'a sheet something else is rewriting right now: wait a moment'); delete w.Gate;
+    Object.assign(sh, { status: 'complete' }); assert.equal(PN.canSeat({ ...sh, recalled: { laserDoneAt: 7, placedCount: 3 }, charms: [] }).code, 'laser', 'a saved sheet marked Completed is read from its record');
+    assert.equal(PN.canSeat({ ...sh, recalled: { roseCutAt: 7, placedCount: 3 }, charms: [] }).code, 'cut', 'a saved sheet with a recorded cut is read from its record');
+    assert.equal(PN.canSeat({ ...sh, charms: [] }).code, 'empty'); x.S.cloud.ok = false; assert.equal(PN.canSeat(sh).code, 'offline'); x.S.cloud.ok = true;
     assert.equal(PN.canSeat({ ...sh, metal: 'gold' }).code, 'metal', 'GF has no partial sheets');
+  }
+
+  // ── 5b. Paul, 7 Oct: "I'm prevented from using All, new sheets and existing partial sheets. There's no reason why I should be prevented." A sheet in a committed
+  //        set, in the current set, approved for Laser cutting but not cut, released full, or holding a saved green line that was never cut seats on an existing
+  //        partial sheet and on a made sheet: the pieces are nested again there, the sheet keeps its place in its set, no line of the old seat survives, and the sheet
+  //        it sat on goes back. ──
+  {
+    const cases = [
+      ['a committed set', { setId: 'set-1', draft: false, runId: 'run-1' }, id => [{ setId: 'set-1', committedAt: 5, sheetIds: [id, 'g14-other'] }], /stays in its committed set/],
+      ['the current set', { setId: 'set-1', draft: false, runId: 'run-1' }, id => [{ setId: 'set-1', sheetIds: [id, 'g14-other'] }], /stays in its set/],
+      ['approved for Laser cutting', { processReady: true, setId: 'set-1', draft: false, runId: 'run-1' }, id => [{ setId: 'set-1', processReady: true, committedAt: 5, sheetIds: [id] }], /approved for Laser cutting, so its new layout is checked and approved again/],
+      ['released full', { releaseFull: true }, () => [], /nested again/],
+      ['a saved green line that was never cut', { rosePlan: { lines: [[[0, 0], [5, 5]]].map(l => ({ pts: l })) }, rosePlanHash: 'h1', rosePlanKey: 'k1', roseProtected: { lines: [], placements: [] } }, () => [], /nested again/],
+    ];
+    for (const target of ['partial', 'made']) for (const [label, patch, setsOf, said] of cases) {
+      const x = world('gold14k'), { w, sh, log, docs } = x, PN = w.PartialNest;
+      let pick;
+      if (target === 'partial') { pick = x.add('rgs-big', 20); x.setCards([pick]); }
+      else { docs.set('nsh-1', { id: 'nsh-1', metal: 'gold14k', wPt: W, hPt: H, revision: 0, profileJson: null, owner: null, available: true, made: true }); pick = { ...card({ id: 'nsh-1', metal: 'gold14k', revision: 0, cut: 0 }), kind: 'new', madeAt: Date.now(), madeBy: 'Ana' }; x.setCards([pick]); }
+      sh.charms = x.pieces(6); sh.placements = sh.charms.map((c, i) => ({ id: c.id, cxPt: 30 + i * 3, cyPt: 20, angle: 0 })); sh.status = 'complete'; sh.sheetId = 'g14-s1';
+      docs.set('rgs-fresh', { id: 'rgs-fresh', metal: 'gold14k', wPt: W, hPt: H, revision: 0, profileJson: null, owner: 'g14-s1', available: false }); sh.roseStock = { ...docs.get('rgs-fresh') };
+      Object.assign(sh, patch); const sets = setsOf('g14-s1'), before = JSON.stringify(sets); w.Sets.ofRun = () => sets;
+      w.Gate = { holding: s => !!s.keepRelease, keep(s) { log.kept.push({ releaseFull: !!s.releaseFull, dirty: !!s.dirty }); s.keepRelease = { full: !!s.releaseFull, at: Date.now() }; } };
+      const tag = target + ' · ' + label;
+      assert.equal(PN.canSeat(sh).ok, true, tag + ': nothing refuses it');
+      const r = await PN.seat(sh, [pick.id]); assert(r.ok && r.started && r.moved === 6, tag + ': ' + JSON.stringify(r));
+      const claim = log.api.find(b => b.op === 'roseClaim');
+      assert.equal(JSON.stringify([claim.stockId, claim.exact, claim.swap, claim.nesting]), JSON.stringify([pick.stockId, true, true, true]), tag + ': one exact claim that swaps (the old seat goes back inside it)');
+      assert.equal(docs.has('rgs-fresh'), false, tag + ': the old, never-cut gold sheet was given back'); assert.equal(docs.get(claim.stockId).owner, 'g14-s1');
+      assert.equal(sh.roseStock.id, claim.stockId);
+      for (const k of ['rosePlan', 'rosePlanHash', 'rosePlanKey', 'roseProtected']) assert.equal(sh[k], undefined, tag + ': no ' + k + ' of the old seat survives');
+      assert.equal(JSON.stringify(sets), before, tag + ': the set is untouched (sheetIds, approval)'); assert.equal(sh.setId, patch.setId, tag + ': the sheet stays in its set');
+      assert.equal(log.started.length, 1); assert.equal(log.started[0].byHand, true, tag + ': nested again by hand: the timeline records it');
+      if (patch.setId || patch.releaseFull) {
+        assert.equal(log.kept.length, 1, tag + ': Gate.keep marks the sheet so it keeps its set'); assert.deepEqual(log.kept[0], { releaseFull: !!patch.releaseFull, dirty: false }, tag + ': the mark is put before sheetDirty lets go of releaseFull');
+        assert.equal(sh.keepRelease.full, !!patch.releaseFull);
+      } else assert.equal(log.kept.length, 0, tag + ': a sheet in no set needs no mark');
+      assert(said.test(log.agent.at(-1)[2]), tag + ': the history line says it: ' + log.agent.at(-1)[2]); assert(/went back to the list/.test(log.agent.at(-1)[2]));
+      if (target === 'partial' && label === 'a committed set') {   // the preview of such a sheet is a real trial too, and writes nothing
+        const y = world('gold14k'), q = y.add('rgs-big', 20); y.setCards([q]); const s2 = y.sh;
+        s2.charms = y.pieces(4); s2.sheetId = 'g14-s9'; s2.status = 'complete'; s2.setId = 'set-1'; s2.draft = false; y.w.Sets.ofRun = () => [{ setId: 'set-1', committedAt: 5, sheetIds: ['g14-s9'] }];
+        const pv = await y.w.PartialNest.preview(s2, [q.id], { maxMs: 2500 }); assert(pv.ok && pv.fitsAll && pv.pieces === 4, 'a committed set\'s sheet is previewed: ' + JSON.stringify({ ...pv, links: undefined })); assert.equal(y.log.api.length, 0); assert.equal(y.log.started.length, 0);
+      }
+      if (target === 'partial' && label === 'released full') { await wait(2400); assert.equal(sh.keepRelease, undefined, 'the mark is let go once the sheet is at rest again'); }
+    }
+
+    // a sheet opened from a saved set: its pieces are rebuilt from the record first (Recall.rebuild), the physical sheet the record names goes back, the line goes
+    {
+      const x = world('gold14k'), { w, sh, log, docs } = x, PN = w.PartialNest, big = x.add('rgs-big', 20); x.setCards([big]);
+      docs.set('rgs-fresh', { id: 'rgs-fresh', metal: 'gold14k', wPt: W, hPt: H, revision: 0, profileJson: null, owner: 'g14-s1', available: false });
+      Object.assign(sh, { sheetId: 'g14-s1', setId: 'set-1', draft: false, runId: 'run-1', status: 'complete', charms: [], placements: [], recalled: { id: 'g14-s1', placedCount: 6, charmCount: 6, roseStockId: 'rgs-fresh' } });
+      const sets = [{ setId: 'set-1', committedAt: 5, sheetIds: ['g14-s1'] }]; w.Sets.ofRun = () => sets; let rebuilt = 0;
+      w.Gate = { holding: () => false, keep(s) { if (!s.recalled && !s.laserDoneAt && !s.roseCutAt) s.keepRelease = { full: !!s.releaseFull, at: Date.now() }; } };
+      assert.equal(PN.canSeat(sh).code, 'empty', 'with no way to rebuild it, the sheet says what to press'); assert(/Rebuild to edit/.test(PN.canSeat(sh).why));
+      w.Recall = { rebuild: async pg => { rebuilt++; pg.charms = x.pieces(4); pg.recalled = null; } };   // (a record that gives back only 4 of its 6 pieces: nothing may move)
+      assert.equal(PN.canSeat(sh).ok, true, 'a sheet opened from a saved set is no reason to refuse');
+      log.api.length = 0; const bad = await PN.seat(sh, [big.id]); assert(!bad.ok && bad.code === 'failed' && /Only 4 of the 6 pieces/.test(bad.why), JSON.stringify(bad)); assert.equal(log.api.length, 0, 'nothing was claimed or released'); assert.equal(log.started.length, 0);
+      assert.equal(docs.get('rgs-fresh').owner, 'g14-s1', 'the sheet still holds what it held');
+      Object.assign(sh, { charms: [], recalled: { id: 'g14-s1', placedCount: 6, charmCount: 6, roseStockId: 'rgs-fresh' }, _partialBusy: false });
+      w.Recall = { rebuild: async pg => { rebuilt++; pg.charms = x.pieces(6); pg.recalled = null; } };
+      const r = await PN.seat(sh, [big.id]); assert(r.ok && r.started && r.moved === 6, JSON.stringify(r)); assert(rebuilt >= 2);
+      const claim = log.api.find(b => b.op === 'roseClaim'); assert.equal(claim.swap, true, 'the record named the sheet\'s physical sheet: it is swapped, not refused as "holds another physical sheet"');
+      assert.equal(docs.has('rgs-fresh'), false); assert.equal(docs.get('rgs-big').owner, 'g14-s1'); assert.equal(sh.setId, 'set-1'); assert.equal(sh.recalled, null);
+    }
+
+    // a saved green line with no held physical sheet still asks for the swap (so the server drops the line)
+    {
+      const x = world('gold14k'), { w, sh, log, docs } = x, PN = w.PartialNest, big = x.add('rgs-big', 20); x.setCards([big]);
+      Object.assign(sh, { sheetId: 'g14-s1', charms: x.pieces(3), status: 'complete', rosePlan: { lines: [] }, rosePlanHash: 'h', roseProtected: { lines: [], placements: [] } });
+      const r = await PN.seat(sh, [big.id]); assert(r.ok, JSON.stringify(r)); assert.equal(log.api.find(b => b.op === 'roseClaim').swap, true); assert(!sh.rosePlanHash && !sh.roseProtected);
+    }
   }
 
   // ── 6. GF1's open problem: claimLate never reserves a physical sheet for an approved gold sheet; a sheet not yet approved still is claimed ──
@@ -236,5 +313,5 @@ const ids = list => list.map(c => c.id).sort().join();
     assert.equal(sh._partialChain.length, pv.chain.length - 1, 'the previewed chain is what waits for the overflow');
     assert(fired.includes('gold14k')); const ch = E.chain('gold14k'); assert.equal(ch.length, 1); assert.equal(ch[0].n, 1); assert.equal(ch[0].partialId, a.id); assert.equal(ch[0].pieces, 0); assert.equal(ch[0].sheetPage, 1); assert.equal(ch[0].full, false); off();
   }
-  console.log('partial-nest OK: preview is a real trial pack that writes nothing; seat gives back, claims once and re-nests every piece; a refused claim changes nothing; chains of partials fill in order with no limit and incoming pieces follow; policy new never auto-claims; a recorded cut refuses; approved gold sheets are never claimed late');
+  console.log('partial-nest OK: preview is a real trial pack that writes nothing; seat gives back, claims once and re-nests every piece; a refused claim changes nothing; chains of partials fill in order with no limit and incoming pieces follow; policy new never auto-claims; a recorded cut, a Completed sheet, a busy sheet and an empty one refuse while a sheet in a committed or current set, approved, opened from a saved set or with a saved line seats on a partial or a made sheet and keeps its set; approved gold sheets are never claimed late');
 })().catch(e => { console.error(e); process.exitCode = 1; });
