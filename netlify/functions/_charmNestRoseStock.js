@@ -115,7 +115,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     // exact (a chosen partial sheet, partialClaim): never quietly keep another physical sheet this layout holds, never create one
     if(b.exact){
       if(!id(b.stockId))throw new Error('Choose a partial sheet');
-      if(held.docs[0]&&held.docs[0].id!==b.stockId)throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
+      if(held.docs[0]&&held.docs[0].id!==b.stockId&&!b.swap)throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
       stockId=b.stockId;
     }
     if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks;stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01)?.id;}
@@ -134,10 +134,22 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(sd.exists&&sd.data().roseCutAt)throw new Error("This layout was already cut; start a new sheet");
       if(sd.exists&&sd.data().metal&&sd.data().metal!==metal)throw new Error('This sheet is '+metalWord(sd.data().metal)+', not '+metalWord(metal));
       // the partial sheet's record (a read, before the first write); a chosen partial (partialId) must be available or already this sheet's
-      const rem=remnantSync&&old?await remnantSync.read(tx,ref.id,old.revision,b.partialId):null;
+      const rem=remnantSync&&old&&(b.partialId||old.owner!==b.sheetId)?await remnantSync.read(tx,ref.id,old.revision,b.partialId):null;   // (a sheet that already holds it claimed it before: nothing to read, nothing to change)
       if(b.partialId)remnantSync.check(rem,{metal,sheetId:b.sheetId,stockId:ref.id,revision:old.revision});
+      // swap (a chosen partial for a sheet that holds another physical sheet): that one is given back in THIS transaction, as roseRelease would (same refusals), so a refused claim loses nothing
+      let off=null;const heldId=held.docs[0]?.id;
+      if(b.swap&&heldId&&heldId!==ref.id){
+        const oref=stocks().doc(heldId),od=await tx.get(oref),os=od.exists?od.data():null;
+        if(os&&os.owner===b.sheetId){
+          const own=sd.exists?sd.data():null;
+          if(own&&own.setId&&!own.draft)throw new Error('Remove the sheet from its current set before choosing another partial sheet');
+          if(own&&(own.rosePlanJson||own.roseProtectedJson))throw new Error('A planned or protected '+metalWord(metal)+' contour cannot be given back');
+          off={ref:oref,fresh:metalOf(os)!=='rose'&&!os.revision&&!os.profileJson,rem:remnantSync?await remnantSync.read(tx,heldId,os.revision):null};
+        }
+      }
       const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),metal,owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
       const guard=sd.exists?protectedLayout(sd.data()):null,protectedJson=guard?JSON.stringify(guard):null;
+      if(off){if(off.fresh)tx.delete(off.ref);else tx.update(off.ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(remnantSync&&!off.fresh)remnantSync.released(tx,off.rem,{sheetId:b.sheetId,at:Date.now()});}
       tx.set(ref,next);
       if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{})});
       const partial=remnantSync?remnantSync.claimed(tx,rem,{sheetId:b.sheetId,sheetName:b.sheetName||(sd.exists&&sheetLabel?sheetLabel(sd.data()):''),by:b.by,at:Date.now()}):null;
