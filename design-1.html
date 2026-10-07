@@ -2939,6 +2939,7 @@ function purgeLedger() {
     a complete answer; a failed read keeps the orders already known to be done (clearing first used to leave only the
     local ledger's last 60 days, so older completed orders came back as open work). An order completed or undone here
     while the answer was on its way keeps its state here. */
+let __ledgerFullAt = 0;   // when this page last read the whole completion ledger (0: never). One whole read per page session at most; later Refreshes ask only about the open orders (syncCompletedFor), as the sorter's sweeps do
 async function restoreCompleted() {
   const touched = new Set();
   completedOrders.watchers.add(touched);
@@ -2951,6 +2952,7 @@ async function restoreCompleted() {
     completedOrders.watchers.delete(touched);
     [...completedOrders].forEach(id => { if (!next.has(id) && !touched.has(id)) completedOrders.delete(id); });
     next.forEach(id => { if (!touched.has(id)) completedOrders.add(id); });
+    __ledgerFullAt = Date.now();
     return true;
   } catch (e) {
     console.warn("restoreCompleted failed; keeping the completions already known:", e);
@@ -7511,12 +7513,15 @@ async function refreshOrders({ heal = true, targeted = false } = {}) {
   updateRunId++;
   allOpenReceipts = [];
   resetMessageFlags();          // a manual Refresh re-reads message flags
-  if (!targeted) {
+  // A person's own Refresh reads the whole completion ledger the FIRST time in this page session (as it always did); after that the set is
+  // already in memory and each Refresh only asks which of the open orders are completed on record (dcFor, exact for every order shown).
+  const wholeLedger = !targeted && !__ledgerFullAt;
+  if (wholeLedger) {
     if (bar) bar.note("orders already finished");
     await restoreCompleted();
   }
   if (bar) bar.note("the open orders");
-  await buildNewOrderList({ syncCompleted: targeted, allNotes: !targeted });
+  await buildNewOrderList({ syncCompleted: targeted || !wholeLedger, allNotes: !targeted });
   if (bar) bar.note("who is working on what");
   await fetchAllLocksOnce();
   if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
@@ -7689,10 +7694,8 @@ async function boot() {
   beginDeltaPolling();
   askPersistentStorage();
 
-  // Staff notes are read with the open orders (buildNewOrderList): nothing is listed before then.
-  try {
-    await restoreCompleted();
-  } catch (e) { console.warn("Boot index seed failed", e); }
+  // Staff notes and completions are read with the open orders (refreshOrders / buildNewOrderList): nothing is listed before then, so the
+  // boot no longer downloads the whole completion ledger (every completed order on record, one read each) for a list that is empty (Firebase cost, FC6).
 
   scheduleHealMissingLocks();
   applyFilters({ rerender:true });

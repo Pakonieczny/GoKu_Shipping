@@ -12273,6 +12273,17 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       let _consecutiveErrors = 0;
       let _lastSuccessAt = 0;
+      // FC14 (Firebase cost): this panel used to read the counters document every 3 s for as long as the tab was open, hidden or
+      // signed out (1,200 reads and function calls an hour per tab, a 5 to 7 KB document each time). Now: nothing while the tab is
+      // hidden (it reads at once when it is shown again), 10 s while the counters are moving or somebody is at the page (FC13:
+      // the Etsy mirror cron moves the counters every 3 minutes, so at 3 s this stayed near 900 reads an hour), 30 s when the
+      // meter has been quiet and untouched for 2 minutes, and a failing read (signed out, 401, 5xx) backs off to a minute.
+      // FC13 adds: one read per computer however many Inbox tabs are open (emShared) and nothing while the sign-in screen shows.
+      let _lastSig = "", _lastMoveAt = Date.now(), _lastInputAt = Date.now(), _meterTimer = 0, _meterStopped = false;
+      const QUIET_AFTER_MS = 120000, QUIET_POLL_MS = 30000, ERR_MAX_MS = 60000;
+      ["pointerdown", "keydown", "wheel", "touchstart"].forEach(ev => {
+        try { document.addEventListener(ev, () => { _lastInputAt = Date.now(); }, { passive: true, capture: true }); } catch (_) {}
+      });
 
       function tsToMillis(ts) {
         if (!ts) return 0;
@@ -12461,6 +12472,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           _lastSuccessAt = Date.now();
           _consecutiveErrors = 0;
           ensureBanner(null);
+          // FC14: remember when the counters last moved, so a quiet meter can be read less often (see nextDelay).
+          try {
+            const sig = res && res.doc ? String(res.doc.grandTotal) + "|" + JSON.stringify(res.doc.updatedAt || "") : "none";
+            if (sig !== _lastSig) { _lastSig = sig; _lastMoveAt = Date.now(); }
+          } catch (_) {}
           if (res && res.exists && res.doc) {
             render(res.doc);
           } else {
@@ -12478,14 +12494,29 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         }
       }
 
-      pollOnce();
-      const pollTimer = visibleInterval(pollOnce, POLL_INTERVAL_MS);
-      window.addEventListener("focus", () => { pollOnce(); });
-      onTabBecameVisible(pollOnce);
+      function nextDelay() {
+        if (_consecutiveErrors > 0) return Math.min(ERR_MAX_MS, POLL_INTERVAL_MS * Math.pow(2, Math.min(_consecutiveErrors, 5)));
+        const now = Date.now();
+        return (now - _lastMoveAt > QUIET_AFTER_MS && now - _lastInputAt > QUIET_AFTER_MS) ? QUIET_POLL_MS : POLL_INTERVAL_MS;
+      }
+      function armMeter() {
+        clearTimeout(_meterTimer); _meterTimer = 0;
+        if (_meterStopped || document.visibilityState === "hidden") return;
+        // FC13: nothing is read while the sign-in screen shows (the timer keeps its beat, the poll is skipped).
+        _meterTimer = setTimeout(async () => { _meterTimer = 0; if (isSignedInShown()) await pollOnce(); armMeter(); }, nextDelay());
+      }
+      async function refreshNow() { await pollOnce(); armMeter(); }
+
+      refreshNow();
+      window.addEventListener("focus", () => { _lastInputAt = Date.now(); refreshNow(); });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") { clearTimeout(_meterTimer); _meterTimer = 0; }
+        else { _lastInputAt = Date.now(); refreshNow(); }
+      });
 
       window.emApiMeter = {
-        refresh: pollOnce,
-        stop   : () => clearInterval(pollTimer)
+        refresh: refreshNow,
+        stop   : () => { _meterStopped = true; clearTimeout(_meterTimer); _meterTimer = 0; }
       };
     })();
 
@@ -12795,7 +12826,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         _running = true;
         pollOnce();
         if (pollTimer) clearInterval(pollTimer);
-        pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+        // FC14: a hidden tab does not read the mirror state every 2 s (the settings modal may stay open behind other windows)
+        pollTimer = setInterval(() => { if (document.visibilityState !== "hidden") pollOnce(); }, POLL_INTERVAL_MS);
       }
 
       function stop() {
