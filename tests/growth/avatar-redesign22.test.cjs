@@ -79,7 +79,7 @@ test('production finish preserves the dark visor and removes the broad reflectiv
   assert.ok(h.renderer.toneMappingExposure >= 1 && h.renderer.toneMappingExposure <= 1.2);
 });
 
-test('studio lighting uses actual finite HDR radiance independently of the display skybox', t => {
+test('studio lighting uses actual finite HDR radiance independently of the fixed display backdrop', t => {
   const h = sceneHarness(t), texture = h.radiance;
   assert.equal(texture.type, THREE.FloatType);
   assert.equal(texture.colorSpace, THREE.LinearSRGBColorSpace);

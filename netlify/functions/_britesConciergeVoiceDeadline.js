@@ -3,8 +3,9 @@ const voice=require('./_britesConciergeVoice.js');
 const enabled=env=>env.BRITES_CONCIERGE_REALTIME_ENABLED==='1'&&env.BRITES_GROWTH_NAMESPACE==='Brites_Growth_Sandbox'&&!!env.OPENAI_API_KEY;
 async function finish({env,service,callId,fetch:fetcher=globalThis.fetch,now=Date.now}){
   if(!enabled(env)||!/^rtc_[A-Za-z0-9_-]{1,180}$/.test(callId||''))return false;
-  const ref=service.col('VoiceDeadlines').doc(callId),s=await ref.get();if(!s.exists)return false;const row=s.data();if(row.state==='closed')return true;
-  if(row.callId!==callId||!Number.isSafeInteger(row.expiresAt)||row.expiresAt>now())return false;
+  const ref=service.col('VoiceDeadlines').doc(callId),s=await ref.get();if(!s.exists)return false;const row=s.data();
+  if(!row||typeof row!=='object'||Array.isArray(row)||row.callId!==callId||!Number.isSafeInteger(row.expiresAt)||row.expiresAt<=0)return false;
+  if(row.state==='closed')return true;if(row.state!=='pending'||row.expiresAt>now())return false;
   let r;try{r=await fetcher('https://api.openai.com/v1/realtime/calls/'+encodeURIComponent(callId)+'/hangup',{method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY},signal:AbortSignal.timeout(5000)});}catch{
     // A timeout/transport failure is not proof of closure. Record the attempt
     // so the bounded reaper can still give other due calls their turn.
@@ -23,11 +24,16 @@ async function background({env,service,token,fetch,now=Date.now,wait=ms=>new Pro
 }
 async function reap({env,service,fetch,now=Date.now}){
   if(!enabled(env))return {closed:0};
-  const rows=await service.col('VoiceDeadlines').where('state','==','pending').limit(20).get();let closed=0;
-  // Persistent provider failures must not monopolize all four bounded attempts
-  // and starve another expired call. Rotate by the oldest recorded attempt.
-  const due=rows.docs.filter(row=>Number.isSafeInteger(row.data().expiresAt)&&row.data().expiresAt<=now()).sort((a,b)=>(Number(a.data().lastAttemptAt)||0)-(Number(b.data().lastAttemptAt)||0)).slice(0,4);
-  const results=await Promise.all(due.map(row=>finish({env,service,callId:row.id,fetch,now}).catch(()=>false)));closed=results.filter(Boolean).length;
+  // Read all pending rows in this isolated sandbox so permanent first-window
+  // failures cannot hide later deadlines. Reads grow with the pending set;
+  // provider work stays at four attempts and never releases an allocation.
+  const rows=await service.col('VoiceDeadlines').where('state','==','pending').get(),at=now();let closed=0;
+  const due=rows.docs.flatMap(doc=>{
+    const row=doc.data();if(!/^rtc_[A-Za-z0-9_-]{1,180}$/.test(doc.id||'')||!row||typeof row!=='object'||Array.isArray(row)||row.callId!==doc.id||row.state!=='pending'||!Number.isSafeInteger(row.expiresAt)||row.expiresAt<=0||row.expiresAt>at)return [];
+    const attemptedAt=Number.isSafeInteger(row.lastAttemptAt)&&row.lastAttemptAt>=0&&row.lastAttemptAt<=at?row.lastAttemptAt:0;
+    return [{doc,attemptedAt}];
+  }).sort((a,b)=>a.attemptedAt-b.attemptedAt||a.doc.id.localeCompare(b.doc.id)).slice(0,4);
+  const results=await Promise.all(due.map(({doc})=>finish({env,service,callId:doc.id,fetch,now}).catch(()=>false)));closed=results.filter(Boolean).length;
   return {closed};
 }
 module.exports={enabled,finish,background,reap};

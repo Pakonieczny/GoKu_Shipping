@@ -149,6 +149,20 @@ test('source declaration audit checks PBR, shadows, deformation and safe fallbac
   }
 });
 
+test('compiled source audit requires actual casting light and ground receiver declarations beyond diagnostic labels',()=>{
+  const root=path.join(__dirname,'../..'),controllerSource=fs.readFileSync(path.join(root,'brites-concierge-avatar.js'),'utf8'),sceneSource=fs.readFileSync(path.join(root,'assets/brites-concierge-avatar-scene.mjs'),'utf8');
+  const casting=/([\w$]+)\.castShadow=!0,\1\.shadow\.mapSize\.set\([\w$]+\.shadowSize,[\w$]+\.shadowSize\)/,receiving=/([\w$]+)\.receiveShadow=!0,\1\.name="ground-shadow-receiver"/;
+  assert.match(sceneSource,casting); assert.match(sceneSource,receiving);
+  const observed=qa.auditSceneSource({sceneSource,controllerSource});
+  assert.equal(observed.status,'source_contract_declared_visual_unverified');
+  for(const declaration of [casting,receiving]){
+    const report=qa.auditSceneSource({sceneSource:sceneSource.replace(declaration,''),controllerSource});
+    assert.equal(report.status,'source_contract_incomplete','snapshot capability labels cannot replace a removed production declaration');
+    assert.equal(report.checks.castingLight,false); assert.equal(report.checks.receivingGeometry,false);
+    assert.equal(report.claims.gpuAppearance,'unverified'); assert.equal(report.claims.shadowAppearance,'unverified');
+  }
+});
+
 test('DOM control audit exercises every expression plus pause and live fallback semantics, then restores state',async t=>{
   const dom=new JSDOM('<!doctype html><main id="avatar"></main>',{url:'https://growth-sandbox.example/concierge-avatar-qa.html',pretendToBeVisual:true});
   const {window}=dom;window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});window.IntersectionObserver=class{observe(){}disconnect(){}};

@@ -13,10 +13,11 @@ const measured = amplitude => ({amplitude, bands: [.2, .35, .55, .4, .25, .1], b
 function harness(t) {
   const dom = new JSDOM('<div id="stage"></div>', {pretendToBeVisual: true}), win = dom.window, stage = win.document.getElementById('stage');
   let renderer, resizeCallback, time = 0, box = {width: 480, height: 440};
+  const rasterAllocations = [];
   Object.defineProperty(win.performance, 'now', {value: () => time});
   stage.getBoundingClientRect = () => box;
   win.ResizeObserver = class {constructor(callback) {resizeCallback = callback;} observe() {} disconnect() {}};
-  win.HTMLCanvasElement.prototype.getContext = type => type === '2d' ? {createImageData(width, height) {return {data: new Uint8ClampedArray(width * height * 4)};}, putImageData() {}} : null;
+  win.HTMLCanvasElement.prototype.getContext = type => type === '2d' ? {createImageData(width, height) {rasterAllocations.push({width, height}); return {data: new Uint8ClampedArray(width * height * 4)};}, putImageData() {}} : null;
   class SyntheticRenderer {
     constructor() {renderer = this; this.domElement = win.document.createElement('canvas'); this.shadowMap = {}; this.capabilities = {getMaxAnisotropy: () => 1}; this.info = {autoReset: true, render: {calls: 0, triangles: 0}, reset() {}};}
     setClearColor() {}
@@ -34,7 +35,7 @@ function harness(t) {
   const engine = module.exports.createAvatarScene({container: stage, quality: {...avatar.qualityFor({width: 1440, bloom: false}), textureSize: 16}, onFrame: value => avatar.poseFor({time: value, state: 'idle'})});
   t.after(() => {engine.destroy(); win.close();});
   const h = {
-    engine, declarations: module.exports.AVATAR_SCENE_DECLARATIONS,
+    engine, declarations: module.exports.AVATAR_SCENE_DECLARATIONS, rasterAllocations,
     get scene() {return renderer.scene;}, get camera() {return renderer.camera;},
     pose(fields = {}) {engine.render({...avatar.poseFor({state: fields.state || 'idle', time: time / 1000, ...fields}), ...fields}, true); renderer.scene.updateMatrixWorld(true);},
     get(name) {return renderer.scene.getObjectByName(name);},
@@ -162,4 +163,51 @@ test('the oval helmet remains connected and the continuous body stays planted on
     h.pose(fields);
     assert.ok(Math.abs(new THREE.Box3().setFromObject(h.get('sculpted-porcelain-torso')).min.y - platformTop) < 1e-6);
   }
+});
+
+test('floating product guidance retains its transparent real shadow receiver and restores the studio', t => {
+  const h = harness(t), receiver = h.get('ground-shadow-receiver'), platform = h.get('grounding-platform');
+  assert.equal(receiver.isMesh, true); assert.equal(receiver.material.isShadowMaterial, true);
+  assert.equal(receiver.material.transparent, true); assert.equal(receiver.material.depthWrite, false);
+  assert.ok(receiver.material.opacity > 0 && receiver.material.opacity <= .2);
+  assert.equal(receiver.receiveShadow, true); assert.equal(receiver.castShadow, false);
+  const lights = []; h.scene.traverse(part => {if (part.isLight && part.castShadow) lights.push(part);});
+  assert.equal(lights.length, 1); assert.equal(lights[0].isSpotLight, true);
+  const receiverPose = [receiver.position.toArray(), receiver.rotation.toArray(), receiver.scale.toArray()];
+  h.engine.setFloating(true); h.pose({state: 'speaking', headYaw: .1, headPitch: -.09, armLiftRight: .2, level: .7});
+  assert.equal(h.scene.background, null); assert.equal(platform.visible, false); assert.equal(receiver.visible, true);
+  assert.equal(h.get('bounded-ground-contact-cue').visible, true);
+  assert.deepEqual([receiver.position.toArray(), receiver.rotation.toArray(), receiver.scale.toArray()], receiverPose);
+  assert.equal(h.engine.snapshot().shadow.receivingStage, true);
+  receiver.visible = false; assert.equal(h.engine.snapshot().shadow.receivingStage, false, 'a hidden floor and platform cannot certify a receiver');
+  receiver.visible = true; receiver.receiveShadow = false; assert.equal(h.engine.snapshot().shadow.receivingStage, false);
+  receiver.receiveShadow = true; receiver.material.visible = false; assert.equal(h.engine.snapshot().shadow.receivingStage, false);
+  receiver.material.visible = true;
+  h.engine.setFloating(false);
+  assert.equal(receiver.visible, true); assert.equal(platform.visible, true); assert.equal(h.scene.background.isColor, true);
+  assert.equal(h.get('bounded-ground-contact-cue').visible, false);
+  assert.equal(h.engine.snapshot().shadow.receivingStage, true);
+});
+
+test('material transmission diagnostics reflect actual constructed material properties', t => {
+  const h = harness(t), visor = h.get('original-wide-visor').material;
+  assert.equal(h.engine.snapshot().materials.transmission, false, 'the current matte scene has no active transmission');
+  visor.transmission = .25; assert.equal(h.engine.snapshot().materials.transmission, true);
+  visor.transmission = 0; assert.equal(h.engine.snapshot().materials.transmission, false);
+});
+
+test('startup allocates only six material rasters while retaining the actual HDR lighting and fixed backdrop', t => {
+  const h = harness(t), lighting = h.scene.environment, report = h.engine.snapshot().environment;
+  assert.equal(h.rasterAllocations.length, 6, 'unused cube faces must not allocate six additional canvas rasters');
+  assert.ok(h.rasterAllocations.every(value => value.width === 16 && value.height === 16));
+  assert.equal(h.engine.snapshot().textures.length, 6);
+  assert.equal(lighting.isDataTexture, true); assert.equal(lighting.type, THREE.FloatType);
+  assert.equal(lighting.image.width, 512); assert.equal(lighting.image.height, 256);
+  assert.equal(lighting.colorSpace, THREE.LinearSRGBColorSpace);
+  assert.equal(lighting.mapping, THREE.EquirectangularReflectionMapping);
+  let peak = 0; for (const value of lighting.image.data) {assert.ok(Number.isFinite(value)); peak = Math.max(peak, value);}
+  assert.ok(peak > 3, 'unchanged authored lighting retains bright studio softboxes');
+  assert.equal(h.scene.background.isColor, true); assert.equal(h.scene.background.getHexString(), 'bccdd6');
+  assert.equal(report.kind, 'procedural HDR studio radiance'); assert.equal(report.hdr, true); assert.equal(report.hdri, false);
+  assert.equal(Object.hasOwn(report, 'faces'), false); assert.equal(Object.hasOwn(report, 'size'), false);
 });

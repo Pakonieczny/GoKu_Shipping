@@ -103,7 +103,7 @@ function demoCap(env){const value=Number(env.BRITES_CONCIERGE_REALTIME_DEMO_USD_
 const PROVIDER_CODES=Object.freeze(['invalid_api_key','insufficient_quota','billing_hard_limit_reached','rate_limit_exceeded','model_not_found','invalid_model','invalid_request_error','unsupported_parameter','invalid_value','invalid_sdp','permission_denied','provider_rejected']);
 const ATTEMPT_STAGES=Object.freeze(['reserved','provider_requested','provider_rejected','call_unverified','deadline_failed','call_verified','unknown']);
 const DIAGNOSTIC_STAGES=Object.freeze(['provider','verification','deadline','connected','exception']);
-const DIAGNOSTIC_CODES=Object.freeze([...PROVIDER_CODES,'CALL_UNVERIFIED','DEADLINE_UNAVAILABLE','SANDBOX_STOP_REACHED','CALL_VERIFIED','CALL_EXCEPTION']);
+const DIAGNOSTIC_CODES=Object.freeze([...PROVIDER_CODES,'CALL_UNVERIFIED','DEADLINE_UNAVAILABLE','SANDBOX_STOP_REACHED','CALL_VERIFIED','CALL_EXCEPTION','PROVENANCE_UNAVAILABLE']);
 const recordObject=value=>value&&typeof value==='object'&&!Array.isArray(value);
 const nonnegativeInteger=value=>Number.isSafeInteger(value)&&value>=0;
 const positiveInteger=value=>Number.isSafeInteger(value)&&value>0;
@@ -391,7 +391,7 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
     if(publicDemo&&!demo)return json({enabled:false,code:'VOICE_SESSION_EXPIRED',message:'Select Talk to me again to start a fresh voice session.'},401);
     let config;try{config=sessionConfig(env);}catch{return json({enabled:false,code:'VOICE_MODEL_UNAVAILABLE'},503);}
     let reservationOutcome=null,observedProviderResponse=null;
-    async function markAttempt(value){if(reservationOutcome?.recordOutcome)await reservationOutcome.recordOutcome(value);}
+    async function markAttempt(value){return reservationOutcome?.recordOutcome?await reservationOutcome.recordOutcome(value):reservationOutcome===null;}
     try{
       // Request preparation precedes a monetary hold. Provenance below records
       // server-observed stages only and never releases an existing allocation.
@@ -405,7 +405,9 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
           return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);
         }
       }else{const reserve=reserveBudget||createBudgetReservation(service,{now}),allocated=await reserve(reserveUsd,demo?.sessionId);if(!allocated)return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}
-      await markAttempt({stage:'provider_requested'});
+      // A native start needs durable dispatch provenance before paid work. A
+      // storage failure keeps its original hold; it never implies zero usage.
+      if(!await markAttempt({stage:'provider_requested'})){await diagnostic({stage:'verification',providerStatus:null,code:'PROVENANCE_UNAVAILABLE'});return json({error:'OpenAI voice could not connect. You can still type.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
       const r=await fetcher(ENDPOINT,{method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY,'OpenAI-Safety-Identifier':crypto.createHash('sha256').update('brites-isolated-voice-preview').digest('hex')},body:fd,signal:AbortSignal.timeout(12000)});
       const providerRequestId=r.headers.get('x-request-id')||'',location=r.headers.get('Location')||'',match=location.match(/\/realtime\/calls\/(rtc_[A-Za-z0-9_-]{1,180})$/);
       observedProviderResponse={providerStatus:r.status,providerRequestId,...(match?{callId:match[1]}:{})};
@@ -415,7 +417,14 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
       const callId=match[1],latestControl=await service.setup(),at=now(),maxDurationMs=Math.min(MAX_DURATION_MS,Math.min(nativeStopAt(ctrl),nativeStopAt(latestControl),reservationOutcome?.expiresAt||Infinity)-at),expiresAt=at+maxDurationMs;
       if(latestControl.enabled===false||maxDurationMs<=0){const hangupConfirmed=await hangup(callId).catch(()=>false);await Promise.all([markAttempt({stage:'deadline_failed',providerStatus:r.status,providerCode:'SANDBOX_STOP_REACHED',providerRequestId,callId,hangupConfirmed}),diagnostic({stage:'deadline',providerStatus:r.status,code:'SANDBOX_STOP_REACHED'})]);return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'Sandbox voice testing has ended. You can still type.'},503);}
       try{const guarded=await scheduleHangup({callId,expiresAt});if(guarded!==true)throw Error('Deadline not durable.');}catch{const hangupConfirmed=await hangup(callId).catch(()=>false);await Promise.all([markAttempt({stage:'deadline_failed',providerStatus:r.status,providerCode:'DEADLINE_UNAVAILABLE',providerRequestId,callId,expiresAt,hangupConfirmed}),diagnostic({stage:'deadline',providerStatus:r.status,code:'DEADLINE_UNAVAILABLE'})]);return json({error:'Voice deadline was unavailable.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
-      await Promise.all([markAttempt({stage:'call_verified',providerStatus:r.status,providerCode:'CALL_VERIFIED',providerRequestId,callId,expiresAt}),diagnostic({stage:'connected',providerStatus:r.status,code:'CALL_VERIFIED'})]);
+      // Do not release a live SDP without its durable reservation/call binding.
+      // The exact recorded deadline remains a backup if immediate cleanup fails.
+      if(!await markAttempt({stage:'call_verified',providerStatus:r.status,providerCode:'CALL_VERIFIED',providerRequestId,callId,expiresAt})){
+        const hangupConfirmed=await hangup(callId).catch(()=>false);
+        await Promise.all([markAttempt({stage:'unknown',providerStatus:r.status,providerCode:'PROVENANCE_UNAVAILABLE',providerRequestId,callId,expiresAt,hangupConfirmed}),diagnostic({stage:'verification',providerStatus:r.status,code:'PROVENANCE_UNAVAILABLE'})]);
+        return json({error:'OpenAI voice could not connect. You can still type.',code:'VOICE_GUARD_UNAVAILABLE'},503);
+      }
+      await diagnostic({stage:'connected',providerStatus:r.status,code:'CALL_VERIFIED'});
       return json({sdp,stopToken:stopToken(callId,expiresAt,env.OPENAI_API_KEY),expiresAt,maxDurationMs});
     }catch{const hangupConfirmed=observedProviderResponse?.callId?await hangup(observedProviderResponse.callId).catch(()=>false):null;await Promise.all([markAttempt({...observedProviderResponse,stage:'unknown',providerCode:'CALL_EXCEPTION',...(hangupConfirmed!==null?{hangupConfirmed}:{})}),diagnostic({stage:'exception',providerStatus:observedProviderResponse?.providerStatus??null,code:'CALL_EXCEPTION'})]);return json({error:'OpenAI voice could not connect. You can still type.',code:'VOICE_CONNECT_FAILED'},503);}
   };

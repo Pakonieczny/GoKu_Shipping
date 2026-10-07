@@ -14,9 +14,9 @@ const root = path.resolve(__dirname, '../..');
 const fileBytes = relative => fs.statSync(path.join(root, relative)).size;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function rawTextureBytes(quality, materialMaps = 6, cubeFaces = 6) {
-  const cubeSize = Math.min(1024, quality.textureSize);
-  return (materialMaps * quality.textureSize ** 2 + cubeFaces * cubeSize ** 2) * 4;
+function rawTextureBytes(quality, materialMaps = 6) {
+  const hdrRadianceBytes = 512 * 256 * 4 * Float32Array.BYTES_PER_ELEMENT;
+  return materialMaps * quality.textureSize ** 2 * 4 + hdrRadianceBytes;
 }
 
 function harness(t, {visible = false, reducedMotion = false, loader} = {}) {
@@ -79,9 +79,9 @@ test('quality tiers preserve high detail while bounding adaptive allocation work
     assert.deepEqual(tier, {name: 'adaptive', pixelRatio: 1.5, shadowSize: 1024, textureSize: 1024, fps: 30, geometryScale: .8, bloom: false});
   }
   assert.equal(avatar.qualityFor({width: 1440, memory: 8, bloom: false}).bloom, false);
-  assert.equal(rawTextureBytes(high), 125829120);
-  assert.equal(rawTextureBytes(narrow), 50331648);
-  assert.ok(rawTextureBytes(narrow) <= rawTextureBytes(high) * .4);
+  assert.equal(rawTextureBytes(high), 102760448);
+  assert.equal(rawTextureBytes(narrow), 27262976);
+  assert.ok(rawTextureBytes(narrow) <= rawTextureBytes(high) * .3);
 });
 
 test('actual production mesh construction stays finite and adaptive tessellation is materially lower', () => {

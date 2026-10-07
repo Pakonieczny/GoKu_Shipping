@@ -123,7 +123,7 @@ test('closure-note storage failure cannot erase the backup deadline or deny an o
 test('bounded reaper rotates503 expired calls so newer due calls are not permanently starved',async()=>{
   let at=1000000;const rows=new Map(Array.from({length:5},(_,n)=>['rtc_due'+n,{callId:'rtc_due'+n,state:'pending',expiresAt:at-1000,lastAttemptAt:0}])),calls=[];
   rows.set('rtc_future',{callId:'rtc_future',state:'pending',expiresAt:at+300000});
-  const collection={doc:id=>({async get(){return {exists:rows.has(id),data:()=>rows.get(id)};},async set(value){rows.set(id,{...rows.get(id),...value});}}),where:()=>({limit:()=>({async get(){return {docs:[...rows].filter(([,row])=>row.state==='pending').map(([id,row])=>({id,data:()=>row}))};}})})};
+  const collection={doc:id=>({async get(){return {exists:rows.has(id),data:()=>rows.get(id)};},async set(value){rows.set(id,{...rows.get(id),...value});}}),where:()=>({async get(){return {docs:[...rows].filter(([,row])=>row.state==='pending').map(([id,row])=>({id,data:()=>row}))};}})};
   const f={env:{BRITES_CONCIERGE_REALTIME_ENABLED:'1',BRITES_GROWTH_NAMESPACE:'Brites_Growth_Sandbox',OPENAI_API_KEY:'synthetic-key'},service:{col:()=>collection},now:()=>at,fetch:async url=>{calls.push(url.split('/').at(-2));return {ok:false,status:503};}};
   assert.deepEqual(await deadline.reap(f),{closed:0});assert.equal(calls.length,4);assert.equal(calls.includes('rtc_due4'),false);at+=60000;assert.deepEqual(await deadline.reap(f),{closed:0});assert.equal(calls.length,8);assert.equal(calls.slice(4).includes('rtc_due4'),true);assert.equal(calls.includes('rtc_future'),false);assert.ok([...rows.values()].every(row=>row.state==='pending'));assert.ok([...rows.values()].every(row=>row.reservedCents===undefined));
 });
