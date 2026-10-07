@@ -5,9 +5,7 @@
 //      nothing behind. Its frame times and long tasks are printed (the machine is shared: they are not asserted).
 //   2. The split-order question: an order on both sheets; ticking "Include Sheet 1" asks, and Cancel leaves both out,
 //      "Only 14K Gold Sheet 1" takes Sheet 1 alone, "Include both sheets" takes both; the Options panel is closed first.
-//   3. Apply size with Sheet 2 cut (laser done): Sheet 2 keeps its size as well as its layout. It kept its layout but was
-//      drawn, measured and shown in the sheet window at the new size (stockFor read the metal's new size), so a cut
-//      96 mm sheet showed as 120 mm with a fifth of it empty. Sheet 1, not cut, takes the new size.
+//   (3. Apply size left the Options window on 7 Oct 2026, with the Sheet dimensions card.)
 // No network beyond loopback.  NODE_PATH=… PW_DIR=… CHROMIUM=… node tests/charm-nest/adv-solid-sheets.cjs
 const path = require('path'), assert = require('assert/strict'), fs = require('fs');
 const root = path.join(__dirname, '../..');
@@ -170,21 +168,6 @@ const { start } = require('./bridge-server.cjs');
       console.log('  ✓ split order: Cancel leaves both out, "Include both sheets" and "Take out both sheets" move the pair (no "only this sheet"); the panel closes first');
     }
 
-    /* ── 3 · Apply size keeps a cut sheet at its size ── */
-    {
-      const mm = pt => Math.round(pt * 25.4 / 72 * 100) / 100;
-      const before = await page.evaluate(() => { const p2 = CN.pagesOf('gold14k')[1]; p2.laserDoneAt = Date.now() - 60000; return JSON.stringify(p2.placements); });
-      await opts();
-      await page.fill(`dialog.osDlg [data-solid="w"]:visible`, '120');
-      await page.click(`dialog.osDlg [data-solid="size"]:visible`);
-      await page.waitForFunction(() => Math.abs(CN.S.settings.stock.gold14k[0] * 25.4 - 120) < 1e-6, null, { timeout: 5000 });
-      await page.waitForTimeout(800);
-      const after = await page.evaluate(() => { const [p1, p2] = CN.pagesOf('gold14k'); return { p1: CN.stockFor('gold14k', p1).wPt, p2: CN.stockFor('gold14k', p2).wPt, p2h: CN.stockFor('gold14k', p2).hPt, placements: JSON.stringify(p2.placements) }; });
-      assert.equal(after.placements, before, 'the cut sheet keeps its layout');
-      assert.equal(mm(after.p1), 120, 'Sheet 1, not cut, takes the new size');
-      assert.deepEqual([mm(after.p2), mm(after.p2h)], [96, 46], 'the cut Sheet 2 keeps its own size: ' + mm(after.p2) + ' mm wide');
-      console.log('  ✓ Apply size: the cut Sheet 2 stays 96 × 46 mm (its layout too); Sheet 1 takes 120 mm');
-    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('adv-solid-sheets: all passed');
   } finally { await browser.close(); srv.close(); }

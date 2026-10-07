@@ -10,8 +10,10 @@
    too: its drawing lives in the thumbnail of each card (charm-nest-options-history.js, OptionsHistory.card).
 
    What this file is: the window itself and the Sheet source (the repository and the new sheet). One scrolling page of two parts:
-     1. THE SHEET   the card the Gate draws (charm-nest-bridge.js renderRelease: Include in the set and its status line, the size row with Apply
-                    size; Cut contour (charm-nest-rose-ui.js) and Merge sheets as small SETTINGS cards below). They live in ONE element (the box,
+     1. THE SHEET   the card the Gate draws (charm-nest-bridge.js renderRelease: the Sheet card; Cut contour (charm-nest-rose-ui.js) and Merge
+                    sheets as small SETTINGS cards below). The "In current set" switch (osInclude) is carried up into this window's title row, top
+                    right, beside the close button, while the window is open, and put back in the box when it closes (Paul, 7 Oct: the Sheet
+                    dimensions card is gone, a sheet's size is still set in the app's Settings panel). They live in ONE element (the box,
                     node._optBox, .solidOptions) that stays in the sheet card's gate node while the window is closed and is MOUNTED in this
                     window while it is open, so every hook (data-solid, data-rose) and every handler is the very same code: a repaint replaces
                     nothing, so it never steals the focus or a typed value.
@@ -131,7 +133,7 @@
   function build(M) {
     const dlg = M.dlg; dlg.className = 'osDlg'; dlg.setAttribute('data-no-grow', ''); dlg.dataset.metal = M.m; dlg.tabIndex = -1;
     dlg.setAttribute('aria-labelledby', 'osTitle-' + M.m);
-    dlg.innerHTML = `<div class="osBox"><header class="osHead"><div class="osId"><span class="osMetal" style="--c:${esc(colorOf(M.m))}">${esc(CODE[M.m] || '')}</span><div class="osTitle"><h2 id="osTitle-${esc(M.m)}">${esc(M.title)}</h2><span>Sheet, partial sheets and settings</span></div></div><button type="button" class="osX" data-os="close" aria-label="Close options">${ICON.close}</button></header><div class="osBody"></div><div class="osNote" role="status" aria-live="polite"></div></div>`;
+    dlg.innerHTML = `<div class="osBox"><header class="osHead"><div class="osId"><span class="osMetal" style="--c:${esc(colorOf(M.m))}">${esc(CODE[M.m] || '')}</span><div class="osTitle"><h2 id="osTitle-${esc(M.m)}">${esc(M.title)}</h2><span>Sheet, partial sheets and settings</span></div></div><div class="osIncSlot"></div><button type="button" class="osX" data-os="close" aria-label="Close options">${ICON.close}</button></header><div class="osBody"></div><div class="osNote" role="status" aria-live="polite"></div></div>`;
     M.body = dlg.querySelector('.osBody'); M.note = dlg.querySelector('.osNote'); M.titleEl = dlg.querySelector('.osTitle h2');
   }
 
@@ -446,6 +448,8 @@
       M.source = sourceEl(M);
       doc.body.appendChild(M.dlg);
       M.body.appendChild(box); box.hidden = false;
+      M.inc = box.querySelector('.osInclude'); const slot = M.dlg.querySelector('.osIncSlot');   // (the In current set switch rides in the title row, top right: the same element, so its handler and hooks are the Gate's own)
+      if (M.inc && slot) slot.appendChild(M.inc); else if (slot) slot.remove();
       const sheetCard = box.querySelector('[data-card="sheet"]') || box; sheetCard.appendChild(M.source);
       ALL.q = ''; ALL.metal = M.m; ALL.status = 'available'; ALL.shown = PAGE; ALL.enlarged = null;   // (the view it opens on: this sheet's metal, the available ones)
       wire(M); watchToasts(M);
@@ -479,6 +483,7 @@
     try { PUI() && PUI().unbind(M.m); PUI() && PUI().close(M.m); } catch (_) {}
     // the controls go back where the Gate drew them, hidden, exactly as they were (the Gate keeps repainting them there)
     try { M.source.remove(); } catch (_) {}
+    try { if (M.inc) M.box.prepend(M.inc); } catch (_) {}   // (the switch goes back into the box first: the Gate keeps repainting it there)
     try { M.box.hidden = true; if (M.home) M.home.appendChild(M.box); } catch (_) {}
     try { const R = root.Gate && root.Gate.state && root.Gate.state(); if (R) (R.optionsOpen || (R.optionsOpen = {}))[M.m] = false; } catch (_) {}
     closeDialog(M.dlg); try { M.dlg.remove(); } catch (_) {}

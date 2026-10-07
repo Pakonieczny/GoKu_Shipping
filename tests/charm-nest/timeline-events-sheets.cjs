@@ -5,7 +5,7 @@
 //      with who; the same choice made again (a Retry) adds nothing.
 //   2. Options → Merge sheets → Move all onto Sheet 1: merged for each order that moves, from Sheet 2 to Sheet 1; the
 //      charms placed meanwhile send no "placed" from the page.
-//   3. Apply size: sizeChanged for each order on the metal's sheets, with the old and the new mm.
+//   (3. Apply size left the Options window on 7 Oct 2026, with the Sheet dimensions card.)
 //   4. A QR label made (Sets.onSheetSaved), then made again with the same codes: qrLabel once for each order on it.
 //   5. The helper itself: a nest by hand (not one that only adds pieces), a green line prepared twice, an undone commit.
 // Every event goes out in idle time, never inside the action. The page boots against the fake server; OrderTimeline is
@@ -119,21 +119,6 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
       assert.equal((await events('renested')).length, 0, 'a merge is recorded as a merge, not as a re-nest as well');
       assert.equal((await events('placed')).length, 0, 'the pieces placed meanwhile: "placed" is the server\'s (poolUpdate), never the page\'s');
       console.log('  ✓ merge: each order that moved, from Sheet 2 onto Sheet 1, once; no placed from the page');
-    }
-
-    /* ── 3 · Apply size ── */
-    {
-      if (!(await page.isVisible(`dialog.osDlg [data-solid="w"]`))) await page.click(`${card} .sheetOptionsBtn`);
-      await page.fill(`dialog.osDlg [data-solid="w"]`, '120');
-      await page.click(`dialog.osDlg [data-solid="size"]`);
-      await page.waitForFunction(() => Math.abs(CN.S.settings.stock.gold14k[0] * 25.4 - 120) < 1e-6, null, { timeout: 5000 });
-      await settle();
-      const size = await events('sizeChanged');
-      assert.deepEqual(ids(size), [...sheet1, ...sheet2], 'sizeChanged: each of the ten orders now on Sheet 1'); onceEach(size, e => e.orderId + '@' + e.sheetId, 'sizeChanged');
-      assert(size.every(e => e.sheet === '14K Sheet 1' && e.by === 'Tester'));
-      assert.deepEqual(size[0].data.fromMm, [96, 46]); assert.deepEqual(size[0].data.toMm, [120, 46]);
-      assert.match(size[0].text, /96 × 46 mm → 120 × 46 mm/);
-      console.log('  ✓ apply size: each order on the sheets, with the old and the new mm, once');
     }
 
     /* ── 4 · a QR label made, then made again with the same codes ── */

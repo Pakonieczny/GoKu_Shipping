@@ -3029,7 +3029,7 @@ const Gate = window.Gate = (() => {
   const R = { lastReleased: {}, released: {}, forceFill: {}, loaded: false, plan: null };
   // a selection save in progress or just failed is this page's own business: the workspace carried "Saving selection…" and
   // the old error across a reload, where nothing was saving any more (run.membershipDirty is the lasting record of a save owed)
-  for (const k of ["membershipError", "membershipPending", "membershipTask", "membershipRun", "sizeKept"]) Object.defineProperty(R, k, { value: null, writable: true, enumerable: false });
+  for (const k of ["membershipError", "membershipPending", "membershipTask", "membershipRun"]) Object.defineProperty(R, k, { value: null, writable: true, enumerable: false });
   const O_ = window.CharmNestOrders;
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
@@ -3375,7 +3375,7 @@ const Gate = window.Gate = (() => {
     OptionsStudio.open({ sh, node, box: node._optBox, opener: node.querySelector(".sheetOptionsBtn"), title: optionsTitle(sh) });
   }
   function renderRelease(sh, node) {
-    const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
+    const m = sh.metal, seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
     seat(sh, node, "head");
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
@@ -3386,7 +3386,6 @@ const Gate = window.Gate = (() => {
       return;
     }
     const included = m === "rose" ? policy(sh,seq).include : picked(sh);
-    const sizeLocked=!!(sh.recalled || sh.roseCutAt || (m==='rose' && pagesOf(m).some(p=>p.roseStock)) || (solid(m) && sh.roseStock));   // (a 10K or 14K sheet is the size of the physical sheet it holds; the others' sizes stay the person's)
     // Keep the controls mounted: solver ticks, cloud replies and membership saves
     // must not replace a focused input, its draft value, or an open popup.
     if(node._sheetOptionsOwner!==sh){
@@ -3396,16 +3395,11 @@ const Gate = window.Gate = (() => {
       // Options (Paul, 7 Oct 2026): one large window (charm-nest-options-modal.js, OptionsStudio) instead of two popovers. This
       // node keeps the pill button and the controls' own element (the box): they are drawn here exactly as before, and the
       // window mounts the same box while it is open, so a repaint never replaces a focused field or a typed value. Round 2: ONE Sheet
-      // card (include, size, then the window adds the sheet source: partial sheets or a new sheet) and small Settings cards below.
+      // card (the window adds the sheet source: partial sheets or a new sheet) and small Settings cards below. The In current set switch
+      // (osInclude) rides in the window's title row, top right (Paul, 7 Oct); the Sheet dimensions card is gone (a sheet's size is still set in the app's Settings panel).
       node.innerHTML = `<div class="sheetOptions"><button type="button" class="sheetOptionsBtn" aria-haspopup="dialog">Options</button><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options" hidden>
-        <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><div><h3 class="osCardTitle" id="osSheet-${esc(m)}">Sheet</h3><p class="osLead">Whether this sheet is in the set, its size, and where its metal comes from: a partial sheet or a brand new one.</p></div></header>
-        <div class="osSheetTop">
-        <section class="sheetOptionSection osInclude"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"> Include Sheet ${sh.page} in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
-        <section class="sheetOptionSection osSize"><h4>Sheet dimensions</h4><div class="osSizeLine"><div class="solidSize">
-          <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
-          <label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn*25.4).toFixed(2)}"></label>
-        </div><button type="button" class="btn ghost xs" data-solid="size">Apply size</button></div><span class="help" data-solid="size-help"></span></section>
-        </div></section>
+        <div class="osInclude"><label class="osSwitch"><input type="checkbox" role="switch" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"><span class="osSwitchText">In current set</span></label><span class="osSr" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry</button></div>
+        <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><div><h3 class="osCardTitle" id="osSheet-${esc(m)}">Sheet</h3><p class="osLead">Where this sheet's metal comes from: a partial sheet or a brand new one.</p></div></header></section>
         <section class="osSettings" data-card="settings" aria-label="Settings"><h3 class="osGroupLabel">Settings</h3><div class="osSheetGrid">
         ${solid(m) ? `<section class="sheetOptionSection" data-solid="merge" hidden><h4>Merge sheets</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
           <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button><button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
@@ -3414,17 +3408,17 @@ const Gate = window.Gate = (() => {
         </div></section>
       </div></div>`;
       node._optBox=node.querySelector('.solidOptions');
+      node._optInclude=node._optBox.querySelector('.osInclude');   // (the switch: the window carries it up to its title row while it is open, so it is found by this, not by the box)
       node.querySelector('.sheetOptionsBtn').onclick=()=>openOptions(sh,node);
-      for(const axis of ['w','h'])node._optBox.querySelector('[data-solid="'+axis+'"]').oninput=e=>{e.target._draft=true;};
     }
-    const box=node._optBox;
+    const inc=node._optInclude;
     node.querySelector('.sheetOptionsBtn').textContent='Options'+(included?' ✓':'');
-    const include=box.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
-    // a locked checkbox says why, as the size control below it does
+    const include=inc.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
+    // a locked switch says why (the line is read aloud by a screen reader; the window shows only the switch's own short title)
     const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':committing(runNow)?'The set is being committed':'This sheet is in a committed set · it stays there';
-    box.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
+    inc.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
-    const retry=box.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
+    const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
       if(!membershipEditable(sh))return renderRelease(sh,node);
@@ -3445,50 +3439,6 @@ const Gate = window.Gate = (() => {
         list=list.filter(membershipEditable);
       }
       changeMembership(m,want,list).catch(()=>{});
-    };
-    for(const [axis,value] of [['w',st.wIn],['h',st.hIn]]){
-      const input=box.querySelector('[data-solid="'+axis+'"]');
-      input.disabled=sizeLocked;
-      if(!input._draft && input!==document.activeElement)input.value=+(value*25.4).toFixed(2);
-    }
-    // (a merge of this metal's sheets under way: the size waits for it, and says so plainly)
-    const merging=!!MERGE[m]?.busy;
-    const apply=box.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying||merging;
-    apply.textContent=node._sizeApplying?'Applying size…':'Apply size';
-    apply.setAttribute('aria-busy',String(!!node._sizeApplying));
-    const kept=R.sizeKept?.[m],keptNow=kept&&Date.now()-kept.at<60000?kept.text:'';   // (the last Apply size left a cut sheet as it was)
-    box.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':keptNow?keptNow:merging?'Wait until the merge finishes.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
-    apply.onclick=async()=>{
-      const width=box.querySelector('[data-solid="w"]'),height=box.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
-      if(![w,h].every(n=>Number.isFinite(n)&&n>=5&&n<=500))return toast('Use a width and height between 5 and 500 mm','bad');
-      if(node._sizeApplying||sizeLocked||!editable(sh)||MERGE[m]?.busy)return;
-      const run=B.run;
-      const resize=()=>{
-        // Recheck after any short, conflicting record write finishes. A solver
-        // may have started, or the user may have opened a different run.
-        if(B.run!==run || !editable(sh) || sh.roseCutAt || (m==='rose'&&pagesOf(m).some(p=>p.roseStock)) || (solid(m) && sh.roseStock))throw new Error('This material changed while saving. Apply its size again when it is ready.');
-        const was=stockFor(m);
-        S.settings.stock[m]=[w/25.4,h/25.4];saveSettings();
-        if(+width.value===w)width._draft=false;
-        if(+height.value===h)height._draft=false;
-        // a sheet already cut (laser done) or released keeps its size and its layout, as a recalled or RG cut sheet does,
-        // whether or not its set is committed: nesting it again would move pieces whose files already went out
-        const cut=p=>!!(p.laserDoneAt||p.releaseFull||holding(p)||(solid(p.metal)&&p.roseStock)||Sets.ofRun(p.runId).some(s=>s.committedAt&&(s.sheetIds||[]).includes(p.sheetId)));
-        const pages=pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt),resized=pages.filter(p=>!cut(p)),keptPages=pages.filter(cut);
-        // (and the size it was cut at: it was drawn, measured and shown in the sheet window at the new one)
-        for(const p of keptPages)if(!p.keptStock)p.keptStock={wPt:was.wPt,hPt:was.hPt};
-        (R.sizeKept ||= {})[m]=keptPages.length?{at:Date.now(),text:keptPages.map(p=>`${window.SheetEvents?.label?.(p)||sheetName(p)} ${solid(p.metal)&&p.roseStock&&!p.roseCutAt&&!p.laserDoneAt?'holds its physical sheet':'is cut'}: kept at its size`).join(' · ')}:null;
-        window.SheetEvents?.sizeChanged(resized,[was.wIn*25.4,was.hIn*25.4],[w,h]);   // on the orders' timelines (idle time)
-        for(const p of resized){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
-        changed();
-      };
-      node._sizeApplying=true;renderRelease(sh,node);
-      try {
-        const ops=window.CharmNestOperations;
-        if(ops)await ops.run({key:'sheet-size:'+m,label:'Applying '+labelOf(m)+' sheet size',resources:['production:'+(run?.runId || sh.runId || sh.sheetId)],priority:20},resize);
-        else resize();
-      } catch(e){toast('Size not applied: '+e.message,'bad');}
-      finally {node._sizeApplying=false;renderRelease(sh,node);}
     };
     if(solid(m))paintMerge(sh,node);
     if(window.PartialSheetsUI)try{PartialSheetsUI.paint(sh,node);}catch(e){console.warn('partial sheets',e);}   // the Sheet menu's partial sheets work (charm-nest-partial-ui.js: the sheet taking a partial sheet; the window draws it)
