@@ -16432,8 +16432,24 @@ async function _handlerImpl(event) {
       // oldest submission shown as a partial view.
       const truncated = snap.size >= fetchLimit || out.length > limit;
       const sessionIds = [...new Set(out.map(b => b.sessionId).filter(id => /^sess_/.test(id || "")))].slice(0, 10);
-      const sessions = (await Promise.all(sessionIds.map(async sessionId =>
-        (await db.collection(SESSIONS_COLL).doc(sessionId).get()).data()))).filter(Boolean);
+      // COST: a session summary also lists every set of the session (`sets`, about 130 bytes each, up to 130 KB for a
+      // 1000-set session) and the panel only uses the ones that need a person, kept as the short `issueSets`.
+      // Read every field but `sets`; a summary written before `issueSets` existed is read whole, as before.
+      const SUMMARY_FIELDS = ["sessionId", "planned", "registered", "complete", "approved", "active", "queued", "saving",
+        "blocked", "cancelled", "missingImages", "checkedAt", "unregistered", "issues", "processed", "pending", "status",
+        "finishedAt", "issueSets"];
+      const sessionRefs = sessionIds.map(sessionId => db.collection(SESSIONS_COLL).doc(sessionId));
+      let masked = null;
+      if (sessionRefs.length && typeof db.getAll === "function") {
+        try { masked = await db.getAll(...sessionRefs, { fieldMask: SUMMARY_FIELDS }); }
+        catch (err) { console.warn("[batch_list] summary field mask unavailable:", err?.message || err); }
+      }
+      const sessions = (await Promise.all(sessionRefs.map(async (ref, i) => {
+        const part = masked?.[i];
+        if (part && part.exists && Array.isArray(part.data()?.issueSets)) return part.data();
+        if (part && !part.exists) return undefined;
+        return (await ref.get()).data();
+      }))).filter(Boolean);
       return json(200, { ok: true, batches: out.slice(0, limit), sessions, truncated, sweep, nextSweepAt,
         admission: { busy: !!admissionInfo.owner && (admissionInfo.phase === "creating" ||
           Date.now() - Number(admissionInfo.startedAt || 0) < PREPARATION_RESERVATION_MS),

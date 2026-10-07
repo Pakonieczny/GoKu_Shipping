@@ -64,7 +64,10 @@ const FAVICON       = SHOP_URL + "/favicon.ico";
 const FEED_VERSION  = "2.4";
 const SCHEMA_URL    = "http://www.google.com/shopping/reviews/schema/product/2.4/product_reviews.xsd";
 const PRODUCT_IDS_COLLECTION = "Brites_ProductIds";
-const CACHE_MS      = 60 * 1000;                      // tiny cache for repeat test fetches
+// Cost (Firebase emergency, FC18): every miss reads EVERY review of the shop plus the whole product-id map, and the feed is public. Google
+// fetches it about once a day; ten minutes of staleness changes nothing it sees, and a crawler (or ?pretty=1, which used to skip the copy
+// altogether) no longer makes one full read per minute per instance. Misses at the same moment share one read.
+const CACHE_MS      = 10 * 60 * 1000;
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
 function clean(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim(); }
@@ -160,7 +163,7 @@ function reviewBlock({ id, name, verified, ts, body, rating, handle, ids }) {
 async function loadProductIds(F) {
   const map = {};
   try {
-    const snap = await F.db.collection(PRODUCT_IDS_COLLECTION).get();
+    const snap = await F.db.collection(PRODUCT_IDS_COLLECTION).select("sku", "gtin", "barcode").get();
     snap.forEach(doc => {
       const d = doc.data() || {};
       map[doc.id] = { sku: d.sku || "", gtin: d.gtin || d.barcode || "" };
@@ -173,13 +176,14 @@ async function loadProductIds(F) {
 }
 
 /* ─── Core: read Firestore, build feed + stats ───────────────────────────── */
-async function buildFeed(pretty) {
+async function buildFeed() {
   const F = fb();
   if (!F) throw new Error("Firebase unavailable");
 
-  // One collection-group read of every review item + one read of the id map.
+  // One collection-group read of every review item + one read of the id map. Only the fields the feed uses are read (not the
+  // reviewer's email or customer id, which this feed never emitted).
   const [snap, idMap] = await Promise.all([
-    F.db.collectionGroup("items").get(),
+    F.db.collectionGroup("items").select("s", "r", "n", "d", "b", "v").get(),
     loadProductIds(F)
   ]);
 
@@ -229,21 +233,7 @@ async function buildFeed(pretty) {
     if (skuOk)  hi.sku  = true;
   });
 
-  const nl = pretty ? "\n" : "";
-  const ind = pretty ? "  " : "";
-  const reviewsXml = pretty ? blocks.map(b => ind + b).join(nl) : blocks.join("");
-
-  const xml =
-    `<?xml version="1.0" encoding="UTF-8"?>${nl}` +
-    `<feed xmlns:vc="http://www.w3.org/2007/XMLSchema-versioning" ` +
-    `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ` +
-    `xsi:noNamespaceSchemaLocation="${SCHEMA_URL}">${nl}` +
-    `<version>${FEED_VERSION}</version>${nl}` +
-    `<publisher><name>${xmlEsc(PUBLISHER)}</name><favicon>${xmlEsc(FAVICON)}</favicon></publisher>${nl}` +
-    `<reviews>${nl}` +
-    reviewsXml + nl +
-    `</reviews>${nl}` +
-    `</feed>${nl}`;
+  const xml = composeXml(blocks, false);
 
   const stats = {
     ok: true,
@@ -263,7 +253,26 @@ async function buildFeed(pretty) {
     schema_version: FEED_VERSION,
     generated_at: new Date().toISOString()
   };
-  return { xml, stats, handleInfo };
+  return { xml, blocks, stats, handleInfo };
+}
+
+// The feed document from the review blocks. ?pretty=1 is the same reviews with line breaks (testing only), made from the copy of the read.
+function composeXml(blocks, pretty) {
+  const nl = pretty ? "\n" : "";
+  const ind = pretty ? "  " : "";
+  const reviewsXml = pretty ? blocks.map(b => ind + b).join(nl) : blocks.join("");
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>${nl}` +
+    `<feed xmlns:vc="http://www.w3.org/2007/XMLSchema-versioning" ` +
+    `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ` +
+    `xsi:noNamespaceSchemaLocation="${SCHEMA_URL}">${nl}` +
+    `<version>${FEED_VERSION}</version>${nl}` +
+    `<publisher><name>${xmlEsc(PUBLISHER)}</name><favicon>${xmlEsc(FAVICON)}</favicon></publisher>${nl}` +
+    `<reviews>${nl}` +
+    reviewsXml + nl +
+    `</reviews>${nl}` +
+    `</feed>${nl}`
+  );
 }
 
 /* ─── ?audit=1 : does each product_url actually resolve to a live product? ──
@@ -409,14 +418,25 @@ async function runAudit(handleInfo, q) {
 }
 
 /* ─── small in-memory cache (helps repeat test fetches; short TTL) ───────── */
-let _cache = null, _cacheExp = 0;
+let _cache = null, _cacheExp = 0, _flight = null;
 async function getFeed(pretty) {
-  if (pretty) return buildFeed(true);
   const now = Date.now();
-  if (_cache && now < _cacheExp) return _cache;
-  _cache = await buildFeed(false);
-  _cacheExp = now + CACHE_MS;
-  return _cache;
+  if (!(_cache && now < _cacheExp)) {
+    if (!_flight) _flight = (async () => {
+      try {
+        _cache = await buildFeed();
+        _cacheExp = Date.now() + CACHE_MS;
+      } catch (e) {
+        if (!_cache) throw e;                       // a failed read keeps serving the last good feed rather than a 500 to Google
+        console.warn("[productReviewsFeed] refresh failed, serving the previous feed:", e && e.message);
+        _cacheExp = Date.now() + 60 * 1000;
+      }
+      return _cache;
+    })().finally(() => { _flight = null; });
+    await _flight;
+  }
+  if (!pretty) return _cache;
+  return Object.assign({}, _cache, { xml: composeXml(_cache.blocks, true) });
 }
 
 /* ─── HTTP handler ───────────────────────────────────────────────────────── */
