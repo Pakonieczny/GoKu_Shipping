@@ -9,7 +9,8 @@ const url = (p, t) => 'https://firebasestorage.googleapis.com/v0/b/gokudatabase.
 const fat = (id, n) => {
   const charms = Array.from({ length: n }, (_, i) => ({ id: id + ':' + i, hash: 'h' + i.toString(16).padStart(12, '0'), name: 'Charm design number ' + i, sourceId: 'pool:SKU' + i, sourceName: 'SKU-' + i + ' (master)', index: i, qty: 1, order: String(3700000000 + i), layer: null, poolId: null, custom: false, sku: 'SKU-' + i, areaPt2: 123.4, widthPt: 21.33, heightPt: 18.5, thumbUrl: url('charmnest/master/SKU-' + i + '.png', '2f9d1c7e-5a3b-4c1d-9e8f-0123456789ab'), aiUrl: url('charmnest/master/SKU-' + i + '.ai', '7a1c3e5f-9b2d-4f6a-8c0e-ba9876543210'), pngPath: 'charmnest/master/SKU-' + i + '.png', aiPath: 'charmnest/master/SKU-' + i + '.ai', excluded: false, open: false }));
   const placements = charms.map((c, i) => ({ id: c.id, angle: 90, cxPt: 10.123456 + i, cyPt: 20.123456 + i, xPt: 5.123456, yPt: 6.123456, wPt: 21.33, hPt: 18.5, n: i + 1, name: c.order + ' · ' + c.name, layer: null }));
-  return { charms, placements, rejects: [], params: { engine: 'solver', budgetS: 12, gap: 1.2, rotations: 36 }, trials: 120, elapsedMs: 11000, totalMs: 12000, seq: 1, restored: false };
+  const sources = charms.slice(0, 25).map(c => ({ id: c.sourceId, name: c.sourceName, zipName: null, hash: 'ab' + c.index, bytes: 0, path: c.aiPath, url: c.aiUrl, pool: true, custom: false, sku: c.sku }));
+  return { sources, charms, placements, rejects: [], params: { engine: 'solver', budgetS: 12, gap: 1.2, rotations: 36 }, trials: 120, elapsedMs: 11000, totalMs: 12000, seq: 1, restored: false };
 };
 (async () => {
   const srv = await start({ receipts: [] }); seed(srv); const { st } = srv;
@@ -19,6 +20,8 @@ const fat = (id, n) => {
     st.put(S, 'seq-only-sheet', { id: 'seq-only-sheet', metal: 'gold', day: '2026-09-30', status: 'complete', placedCount: 1, charmCount: 1, poolIds: ['3700000999_1_1'], orders: ['3700000999'], seq: 7, setSeq: null, ...fat('seq-only-sheet', 100) });
     // a record from before placedCount was kept: readiness counts its placements, so these are still read
     st.put(S, 'old-sheet', { id: 'old-sheet', metal: 'gold', day: '2026-09-30', status: 'complete', poolIds: [], orders: [], ...fat('old-sheet', 30), placedCount: undefined });
+    // two of them were saved by a page that wrote the short list of sources (sourcesLite), the others before it existed: both answer the same
+    for (const id of ['cut-sheet', 'seq-only-sheet']) st.put(S, id, { sourcesLite: st.doc(S, id).sources.map(x => ({ name: x.name, hash: x.hash })) });
     const ids = ['cut-sheet', 'ready-sheet', 'pending-sheet', 'seq-only-sheet', 'old-sheet'];
     const ask = extra => call({ op: 'laserStatus', sheetIds: ids, setIds: ['set-fixture'], ...extra });
     const strip = a => JSON.parse(JSON.stringify(a, (k, v) => (k === 'checkedAt' ? undefined : v)));
@@ -29,7 +32,13 @@ const fat = (id, n) => {
     // the bytes: a whole read of the five sheets against the masked read of them
     const sizeWhole = ids.reduce((n, id) => n + JSON.stringify(st.doc(S, id)).length, 0);
     console.log(`sheets read whole ${sizeWhole} bytes; read by their fields (answer ${JSON.stringify(masked).length} bytes) ${maskedBytes} bytes in all`);
+    assert(masked.sheets.find(x => x.id === 'old-sheet').sources.length === 25 && masked.sheets.find(x => x.id === 'cut-sheet').sources.length === 25, 'every sheet answers with its sources, from the short list or from the record');
     assert(maskedBytes < sizeWhole / 3, 'the sheets are read for a fraction of their bytes');
+    // every sheet saved with the short list: the sources' download links are not read at all
+    for (const id of ids) st.put(S, id, { sourcesLite: st.doc(S, id).sources.map(x => ({ name: x.name, hash: x.hash })) });
+    st.readBytes = 0; const lite = strip(await ask()); const liteBytes = st.readBytes;
+    assert.deepEqual(lite.sheets, masked.sheets, 'the same answer'); console.log(`...and with every sheet saved with the short list of its sources: ${liteBytes} bytes`);
+    assert(liteBytes < maskedBytes * 0.7, 'the sources\' links are no longer read');
     // the slow, seal-recording check (it writes, so its answers carry their own times) still answers for the same sheets and sets
     st.strictMasks = false; const a = strip(await ask({ recordSeals: true, by: 'Test' })); st.strictMasks = true; const b = strip(await ask({ recordSeals: true, by: 'Test' }));
     assert.deepEqual(b.sheets.map(x => [x.id, x.processReady, x.laser && x.laser.ready]), a.sheets.map(x => [x.id, x.processReady, x.laser && x.laser.ready])); assert.deepEqual(b.sets.map(x => x.setId), a.sets.map(x => x.setId));
