@@ -3475,6 +3475,7 @@ const Gate = window.Gate = (() => {
       finally {node._sizeApplying=false;renderRelease(sh,node);}
     };
     if(solid(m))paintMerge(sh,node);
+    if(window.PartialSheetsUI)try{PartialSheetsUI.paint(sh,node);}catch(e){console.warn('partial sheets',e);}   // the Partial Sheet button and panel (charm-nest-partial-ui.js: its section and second view inside this same Options panel)
   }
 
   /* ── Merge sheets (Paul, 28 Sep 17:07: "add a new button that allows two sheets to be merged into one, especially when
