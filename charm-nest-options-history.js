@@ -28,7 +28,7 @@
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
   const clip = (s, m) => (s.length > m ? s.slice(0, m - 1) + '…' : s);
   const PSU = () => root.PartialSheetsUI || null;                                                        // the picture helpers live there when it is loaded
-  const reduced = () => { try { return !!(root.Motion && root.Motion.reduced && root.Motion.reduced()); } catch (_) { return false; } };
+  const reduced = () => { try { if (root.Motion && root.Motion.reduced) return !!root.Motion.reduced(); return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } };
 
   /* ── words ── */
   /** A time as milliseconds, from what a record may hold (ms, numeric string, ISO text, Firestore timestamp); NaN when it is not there. */
@@ -57,6 +57,14 @@
     if (!Number.isFinite(at)) return 'Date not recorded';
     let s; try { const p = PSU(); s = p && p.friendly ? p.friendly(at, now) : localFriendly(at, now); } catch (_) { s = localFriendly(at, now); }
     return String(s).replace(/[  ]/g, ' ');
+  }
+  /** "Oct 5, 8:57 AM" (this year) · "Oct 5, 2025, 8:57 AM": the short form written on a green line (always the day, never "Today"). */
+  function shortDate(at, now) {
+    if (!Number.isFinite(at)) return 'Date not recorded';
+    const d = new Date(at), n = new Date(Number.isFinite(now) ? now : Date.now());
+    const t = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const day = d.toLocaleDateString('en-US', d.getFullYear() === n.getFullYear() ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' });
+    return `${day}, ${t}`.replace(/[  ]/g, ' ');
   }
   const greyOf = (k, n) => { const t = n > 1 ? (k - 1) / (n - 1) : .5; return '#' + GREY_OLD.map((a, i) => Math.round(a + (GREY_NEW[i] - a) * t).toString(16).padStart(2, '0')).join(''); };
   const metalWord = st => (METAL[st.metal] && METAL[st.metal].word) || (root.CN && root.CN.labelOf && st.metal ? root.CN.labelOf(st.metal) : '');
@@ -127,8 +135,10 @@
   /* ── the model: one pass over the cuts, oldest first (the history may be anything the server returned: it never throws) ── */
   function model(history, o = {}) {
     const h = history || {}, st = h.stock || {}, W = +st.wMm > 0 ? +st.wMm : REF.w, H = +st.hMm > 0 ? +st.hMm : REF.h, total = W * H;
-    const now = Number.isFinite(+o.now) && o.now != null ? +o.now : undefined;
-    const rect = `M0 0L${r3(W)} 0L${r3(W)} ${r3(H)}L0 ${r3(H)}Z`;
+    const now = Number.isFinite(+o.now) && o.now != null ? +o.now : undefined, short = o.dates === 'short' || o.compact === true, when = at => (short ? shortDate(at, now) : friendly(at, now));
+    const rect = `M0 0L${r3(W)} 0L${r3(W)} ${r3(H)}L0 ${r3(H)}Z`, partial = h.partial === true;
+    const stamp = x => (x && typeof x === 'object' ? { at: toMs(x.at), by: String(x.by == null ? '' : x.by).trim(), reason: String(x.reason == null ? '' : x.reason).trim() } : null);
+    const made = stamp(h.made), deleted = stamp(h.deleted), kind = st.kind === 'new' || h.kind === 'new' ? 'new' : '';
     let prev = [[[0, 0], [W, 0], [W, H], [0, H]]], prevArea = total, prevSegs = [];
     const cuts = (Array.isArray(h.cuts) ? h.cuts : []).map((c0, i) => {
       const c = c0 || {}, k = i + 1, own = ringsOf(c), rings = own || prev;
@@ -136,30 +146,32 @@
       const segs = parseD(rings.length ? edgesOf(rings, W, H) : ''), mine = subtract(segs, prevSegs).map(info);
       const at = toMs(c.at), by = String(c.by == null ? '' : c.by).trim(), sheetName = String(c.sheetName || '').trim(), setName = String(c.setName || '').trim();
       const away = Math.max(0, prevArea - area);
-      const out = { k, at, when: friendly(at, now), by, sheetName, setName, area, away, pct: total ? away / total * 100 : 0, layerD: pathOf(rings), segs: mine, lineD: segsToD(mine.map(s => [s.a, s.b])),
+      const rev = Math.floor(+c.revision), label = partial && Number.isFinite(rev) && rev >= 1 ? rev : k;   // an incomplete history keeps the real cut numbers
+      const out = { k, label, at, when: when(at), by, sheetName, setName, area, away, pct: total ? away / total * 100 : 0, layerD: pathOf(rings), segs: mine, lineD: segsToD(mine.map(s => [s.a, s.b])),
         pieceD: (k === 1 ? rect : pathOf(prev)) + pathOf(rings) };
       prev = rings; prevArea = area; prevSegs = segs;
       return out;
     });
-    return { W, H, total, n: cuts.length, cuts, left: prevArea, st, now };
+    return { W, H, total, n: cuts.length, cuts, left: prevArea, st, now, made, deleted, kind, partial, when };
   }
   const selOf = (v, n) => { const k = Math.round(+v); return v != null && v !== '' && Number.isFinite(k) && k >= 1 && k <= n ? k : null; };
   const whatOf = c => [c.sheetName, c.setName].filter(Boolean).join(', ');
 
   /* ── the labels: each cut line gets a badge on it and a card of date, time and person beside it, in a spot nothing else uses ── */
-  function placeTags(m, K, fw, fh) {
-    const R = 11 * K, placed = [], samples = [], FS1 = 13, FS2 = 12, PADX = 9, PH = 42 * K;
+  function placeTags(m, K, fw, fh, compact, small) {   // small: a thumbnail on a phone, the labels shrink so four of them still fit
+    const R = (small ? 9 : 11) * K, placed = [], samples = [], FS1 = compact ? (small ? 10.5 : 13.5) : 13, FS2 = 12, PADX = small ? 6 : 9, PH = (compact ? (small ? 21 : 27) : 42) * K;
     const box = (cx, cy, hw, hh) => ({ x0: cx - hw, y0: cy - hh, x1: cx + hw, y1: cy + hh });
     const ov = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
     const area = b => (b.x1 - b.x0) * (b.y1 - b.y0), fr = { x0: 0, y0: 0, x1: fw, y1: fh };
     for (const c of m.cuts) for (const s of c.segs) for (let t = 0; t <= s.len; t += 1.2) samples.push([s.a[0] + s.u[0] * t, s.a[1] + s.u[1] * t]);
-    const tags = [];
-    for (const c of m.cuts) {
+    const tags = [], spots = compact ? [.5, .3, .7, .14, .86] : [.5, .28, .72];
+    // the longest cut first: it has the most room; the short ones then take what is left
+    for (const c of m.cuts.slice().sort((a, b) => b.segs.reduce((t, s) => t + s.len, 0) - a.segs.reduce((t, s) => t + s.len, 0))) {
       if (!c.segs.length) continue;
-      const l1 = clip(c.when, 28), l2 = clip(c.by || 'Person not recorded', 28);
+      const l1 = clip(c.when, 28), l2 = compact ? '' : clip(c.by || 'Person not recorded', 28);
       const pw = (Math.max(l1.length * FS1 * .6, l2.length * FS2 * .56) + 2 * PADX) * K, hw = pw / 2, hh = PH / 2;
       let best = null;
-      search: for (const s of c.segs.slice().sort((a, b) => b.len - a.len).slice(0, 6)) for (const t of [.5, .28, .72]) {
+      search: for (const s of c.segs.slice().sort((a, b) => b.len - a.len).slice(0, compact ? 8 : 6)) for (const t of spots) {
         const ax = s.a[0] + s.u[0] * s.len * t, ay = s.a[1] + s.u[1] * s.len * t, n0 = [-s.u[1], s.u[0]];
         for (const su of [1, -1]) for (const sn of [1, -1]) {   // the card sits beside the badge, along the line, on either side of it
           const along = R + 3 * K + Math.abs(s.u[0]) * hw + Math.abs(s.u[1]) * hh, across = 4 * K + Math.abs(n0[0]) * hw + Math.abs(n0[1]) * hh;
@@ -172,9 +184,9 @@
         }
       }
       placed.push(best.pill, best.badge);
-      tags.push({ c, l1, l2, FS1, FS2, PADX, pill: best.pill, ax: best.ax, ay: best.ay, R });
+      tags.push({ c, l1, l2, FS1, FS2, PADX, pill: best.pill, ax: best.ax, ay: best.ay, R, compact, small });
     }
-    return tags;
+    return tags.sort((a, b) => a.c.k - b.c.k);
   }
 
   /* ── the drawing ── */
@@ -192,42 +204,54 @@
       + `<path class="ohHalo" d="${c.lineD}" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="5.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`
       + `<path class="ohDash" d="${c.lineD}" fill="none" stroke="${GREEN}" stroke-width="2.6" stroke-dasharray="8 5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`
       + `<path class="ohHit" d="${c.lineD}" fill="none" stroke="transparent" stroke-width="20" vector-effect="non-scaling-stroke" pointer-events="stroke"/></g>`).join('');
-    const tags = placeTags(m, K, fw, fh).map(t => {
-      const c = t.c, label = `Cut ${c.k}, ${c.when}, ${c.by || 'person not recorded'}`, x = t.pill.x0, y = t.pill.y0, pw = t.pill.x1 - t.pill.x0, ph = t.pill.y1 - t.pill.y0;
-      return `<g class="ohTag${on(c.k)}" id="${pfx}-tag-${c.k}" data-cut="${c.k}" role="button" tabindex="0" aria-pressed="${c.k === sel}" aria-label="${esc(label)}" ${dly(c.k - 1)}><title>${esc(label)}</title>`
-        + `<rect class="ohPill" x="${r3(x)}" y="${r3(y)}" width="${r3(pw)}" height="${r3(ph)}" rx="${r3(8 * K)}" ry="${r3(8 * K)}"/>`
-        + `<text class="ohT1${Number.isFinite(c.at) ? '' : ' ohMiss'}" x="${r3(x + t.PADX * K)}" y="${r3(y + 18 * K)}" font-size="${r3(t.FS1 * K)}">${esc(t.l1)}</text>`
-        + `<text class="ohT2${c.by ? '' : ' ohMiss'}" x="${r3(x + t.PADX * K)}" y="${r3(y + 34 * K)}" font-size="${r3(t.FS2 * K)}">${esc(t.l2)}</text>`
+    const compact = o.compact === true;   // the card's thumbnail: the whole drawing is ONE button, so nothing inside it is a control, and a label is just the short date
+    const tags = placeTags(m, K, fw, fh, compact, compact && px < 420).map(t => {
+      const c = t.c, label = `Cut ${c.label}, ${c.when}, ${c.by || 'person not recorded'}`, x = t.pill.x0, y = t.pill.y0, pw = t.pill.x1 - t.pill.x0, ph = t.pill.y1 - t.pill.y0;
+      const open = compact ? `<g class="ohTag" id="${pfx}-tag-${c.k}" data-cut="${c.k}" aria-hidden="true">`
+        : `<g class="ohTag${on(c.k)}" id="${pfx}-tag-${c.k}" data-cut="${c.k}" role="button" tabindex="0" aria-pressed="${c.k === sel}" aria-label="${esc(label)}" ${dly(c.k - 1)}><title>${esc(label)}</title>`;
+      const ty1 = compact ? y + ph / 2 + t.FS1 * K * .34 : y + 18 * K;
+      return open + `<rect class="ohPill" x="${r3(x)}" y="${r3(y)}" width="${r3(pw)}" height="${r3(ph)}" rx="${r3((compact ? 7 : 8) * K)}" ry="${r3((compact ? 7 : 8) * K)}"/>`
+        + `<text class="ohT1${Number.isFinite(c.at) ? '' : ' ohMiss'}" x="${r3(x + t.PADX * K)}" y="${r3(ty1)}" font-size="${r3(t.FS1 * K)}">${esc(t.l1)}</text>`
+        + (compact ? '' : `<text class="ohT2${c.by ? '' : ' ohMiss'}" x="${r3(x + t.PADX * K)}" y="${r3(y + 34 * K)}" font-size="${r3(t.FS2 * K)}">${esc(t.l2)}</text>`)
         + `<circle class="ohBadge" cx="${r3(t.ax)}" cy="${r3(t.ay)}" r="${r3(t.R)}"/>`
-        + `<text class="ohBadgeN" x="${r3(t.ax)}" y="${r3(t.ay + 12 * K * .36)}" font-size="${r3(12 * K)}" text-anchor="middle">${c.k}</text></g>`;
+        + `<text class="ohBadgeN" x="${r3(t.ax)}" y="${r3(t.ay + (t.small ? 10 : 12) * K * .36)}" font-size="${r3((t.small ? 10 : 12) * K)}" text-anchor="middle">${c.label}</text></g>`;
     }).join('');
-    const label = `Sheet history at true scale: ${num(W)} by ${num(H)} millimetres, ${n ? plural(n, 'cut') : 'never cut'}`;
-    return `<svg class="ohSvg${o.reveal === false ? '' : ' ohReveal'}${reduced() ? ' ohStill' : ''}${sel ? ' ohHasSel' : ''}" viewBox="0 0 ${r3(fw)} ${r3(fh)}" style="aspect-ratio:${r3(fw)}/${r3(fh)}" role="group" aria-label="${esc(label)}">`
+    // a deleted sheet is stamped across, in red and quiet; a sheet that was made and never cut says it is new (no cut lines to draw)
+    const sx = r3(W / 2), sy = r3(H / 2), SF = r3(Math.min(W * .095, H * .19));
+    const stamp = m.deleted ? `<g class="ohcStamp" transform="rotate(-12 ${sx} ${sy})" pointer-events="none" aria-hidden="true"><rect class="ohcStampBox" x="${r3(W / 2 - SF * 3.1)}" y="${r3(H / 2 - SF * .85)}" width="${r3(SF * 6.2)}" height="${r3(SF * 1.7)}" rx="${r3(SF * .22)}"/><text class="ohcStampT" x="${sx}" y="${r3(H / 2 + SF * .36)}" font-size="${SF}" text-anchor="middle" letter-spacing="${r3(SF * .12)}">DELETED</text></g>`
+      : !n && (m.kind === 'new' || m.made) ? `<g class="ohcNew" pointer-events="none" aria-hidden="true"><rect class="ohcNewBox" x="${r3(W / 2 - SF * 3.3)}" y="${r3(H / 2 - SF * .62)}" width="${r3(SF * 6.6)}" height="${r3(SF * 1.24)}" rx="${r3(SF * .2)}"/><text class="ohcNewT" x="${sx}" y="${r3(H / 2 + SF * .24)}" font-size="${r3(SF * .64)}" text-anchor="middle" letter-spacing="${r3(SF * .08)}">NEW SHEET</text></g>` : '';
+    const label = `Sheet history at true scale: ${num(W)} by ${num(H)} millimetres, ${n ? plural(n, 'cut') : 'never cut'}${m.deleted ? ', deleted' : ''}`;
+    return `<svg class="ohSvg${compact ? ' ohCompact' : ''}${o.reveal === false || (compact && o.reveal !== true) ? '' : ' ohReveal'}${reduced() ? ' ohStill' : ''}${sel ? ' ohHasSel' : ''}" viewBox="0 0 ${r3(fw)} ${r3(fh)}" style="aspect-ratio:${r3(fw)}/${r3(fh)}" ${compact ? 'aria-hidden="true"' : `role="group" aria-label="${esc(label)}"`}>`
       + (frame ? `<rect class="ohTray" x="0" y="0" width="${r3(fw)}" height="${r3(fh)}" fill="${TRAY}"/>` : '')
       + `<g class="ohLayers">${layers}</g><g class="ohPieces">${pieces}</g>`
       + `<rect class="ohBorder" x=".25" y=".25" width="${r3(Math.max(0, W - .5))}" height="${r3(Math.max(0, H - .5))}" fill="none" stroke="${EDGE}" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>`
-      + `<g class="ohLines">${lines}</g><g class="ohTags">${tags}</g></svg>`;
+      + `<g class="ohLines">${lines}</g>${stamp}<g class="ohTags">${tags}</g></svg>`;
   }
 
   /* ── the list ── */
   const areaWords = c => `${fmtInt(c.away)} mm² cut away<span class="ohDot" aria-hidden="true">·</span>${(Math.round(c.pct * 10) / 10).toLocaleString('en-US')}% of the sheet`;
   function timeline(history, o = {}) {
     ensureCss();
-    const m = model(history, o), { W, H, n } = m, sel = selOf(o.selected, n), word = metalWord(m.st);
-    const swatch = c => `<span class="ohSw" style="--sw:${c}" aria-hidden="true"></span>`;
-    let html = `<li class="ohStep"><div class="ohItem ohStatic"><span class="ohNum ohNumO" aria-hidden="true"></span><span class="ohBody"><span class="ohRow1"><b class="ohWhen">Original sheet ${num(W)} × ${num(H)} mm</b></span>`
-      + `<span class="ohRow3">${word ? esc(word) + '<span class="ohDot" aria-hidden="true">·</span>' : ''}${fmtInt(m.total)} mm² to start with</span></span>${swatch(SHEET)}</div></li>`;
+    const m = model(history, o), { W, H, n } = m, sel = selOf(o.selected, n), word = metalWord(m.st), isNew = m.kind === 'new';
+    const swatch = c => `<span class="ohSw" style="--sw:${c}" aria-hidden="true"></span>`, dot = '<span class="ohDot" aria-hidden="true">·</span>';
+    const madeRow = m.made ? `<span class="ohRow2">Made by <span class="ohWho${m.made.by ? '' : ' ohMiss'}">${esc(m.made.by || 'Person not recorded')}</span>${dot}<span class="ohWhat${Number.isFinite(m.made.at) ? '' : ' ohMiss'}">${esc(m.when(m.made.at))}</span></span>` : '';
+    let html = `<li class="ohStep"><div class="ohItem ohStatic"><span class="ohNum ohNumO" aria-hidden="true"></span><span class="ohBody"><span class="ohRow1"><b class="ohWhen">${isNew ? 'New sheet' : 'Original sheet'} ${num(W)} × ${num(H)} mm</b></span>${madeRow}`
+      + `<span class="ohRow3">${word ? esc(word) + dot : ''}${fmtInt(m.total)} mm² to start with</span></span>${swatch(SHEET)}</div></li>`;
+    if (m.partial) html += `<li class="ohStep"><div class="ohItem ohStatic ohNote"><span class="ohNum ohNumO" aria-hidden="true"></span><span class="ohBody"><span class="ohRow2 ohMiss">Earlier cuts of this sheet are not shown here.</span></span></div></li>`;
     for (const c of m.cuts) {
-      const what = whatOf(c), name = `Cut ${c.k}, ${c.when}, ${c.by || 'person not recorded'}${what ? ', ' + what : ''}, ${fmtInt(c.away)} square millimetres cut away`;
+      const what = whatOf(c), name = `Cut ${c.label}, ${c.when}, ${c.by || 'person not recorded'}${what ? ', ' + what : ''}, ${fmtInt(c.away)} square millimetres cut away`;
       html += `<li class="ohStep"><button type="button" class="ohItem${c.k === sel ? ' ohOn' : ''}" data-cut="${c.k}" aria-pressed="${c.k === sel}" aria-label="${esc(name)}">`
-        + `<span class="ohNum" aria-hidden="true">${c.k}</span><span class="ohBody">`
-        + `<span class="ohRow1"><span class="ohKick">Cut ${c.k}</span><b class="ohWhen${Number.isFinite(c.at) ? '' : ' ohMiss'}">${esc(c.when)}</b></span>`
-        + `<span class="ohRow2"><span class="ohWho${c.by ? '' : ' ohMiss'}">${esc(c.by || 'Person not recorded')}</span><span class="ohDot" aria-hidden="true">·</span><span class="ohWhat${what ? '' : ' ohMiss'}">${esc(what || 'Sheet not recorded')}</span></span>`
+        + `<span class="ohNum" aria-hidden="true">${c.label}</span><span class="ohBody">`
+        + `<span class="ohRow1"><span class="ohKick">Cut ${c.label}</span><b class="ohWhen${Number.isFinite(c.at) ? '' : ' ohMiss'}">${esc(c.when)}</b></span>`
+        + `<span class="ohRow2"><span class="ohWho${c.by ? '' : ' ohMiss'}">${esc(c.by || 'Person not recorded')}</span>${dot}<span class="ohWhat${what ? '' : ' ohMiss'}">${esc(what || 'Sheet not recorded')}</span></span>`
         + `<span class="ohRow3">${areaWords(c)}</span></span>${swatch(greyOf(c.k, n))}</button></li>`;
     }
     html += n ? `<li class="ohStep"><div class="ohItem ohStatic ohNow"><span class="ohNum ohNumNow" aria-hidden="true"></span><span class="ohBody"><span class="ohRow1"><b class="ohWhen">Left on the sheet now</b></span>`
-      + `<span class="ohRow3">${fmtInt(m.left)} mm²<span class="ohDot" aria-hidden="true">·</span>${(Math.round(m.left / (m.total || 1) * 1000) / 10).toLocaleString('en-US')}% of the sheet${m.st.ownerSheetName ? `<span class="ohDot" aria-hidden="true">·</span>on ${esc(m.st.ownerSheetName)}` : ''}</span></span>${swatch(SHEET)}</div></li>`
+      + `<span class="ohRow3">${fmtInt(m.left)} mm²${dot}${(Math.round(m.left / (m.total || 1) * 1000) / 10).toLocaleString('en-US')}% of the sheet${m.st.ownerSheetName ? `${dot}on ${esc(m.st.ownerSheetName)}` : ''}</span></span>${swatch(SHEET)}</div></li>`
       : `<li class="ohStep"><div class="ohItem ohStatic ohNoCuts"><span class="ohNum ohNumNow" aria-hidden="true"></span><span class="ohBody"><span class="ohRow1"><b class="ohWhen">No cut has been made on this sheet yet</b></span></span></div></li>`;
+    if (m.deleted) html += `<li class="ohStep"><div class="ohItem ohStatic ohDel"><span class="ohNum ohNumDel" aria-hidden="true">×</span><span class="ohBody"><span class="ohRow1"><span class="ohKick ohKickDel">Deleted</span><b class="ohWhen${Number.isFinite(m.deleted.at) ? '' : ' ohMiss'}">${esc(m.when(m.deleted.at))}</b></span>`
+      + `<span class="ohRow2">By <span class="ohWho${m.deleted.by ? '' : ' ohMiss'}">${esc(m.deleted.by || 'Person not recorded')}</span></span>`
+      + `<span class="ohRow2 ohReason">Reason: ${m.deleted.reason ? esc(m.deleted.reason) : '<span class="ohMiss">not recorded</span>'}</span></span></div></li>`;
     return `<ol class="ohTl" aria-label="History of this sheet, oldest first">${html}</ol>`;
   }
   /** The drawing with its legend, beside the timeline: one wrapper for the History card. */
@@ -324,9 +348,241 @@
     });
   }
 
+  /* ── the cards (Paul 7 Oct, round 2): the thumbnail of every partial / new sheet IS that sheet's history ──
+     groups(items)                   the repository list -> one { stockId, latest, history } per physical sheet (history in the sheetHistory shape), built from the list alone
+     card(group, { actions, selected, enlarged, now })     one card as HTML: the large thumbnail (button), the facts, the window's `actions` slot
+     bindCards(root, { onEnlarge, onCollapse, getHistory, holdEscape, groupOf, now })      click / Enter / Space on a thumbnail enlarges that card IN PLACE (full width, grow animation),
+                                     shows the whole detail (drawing + timeline), asks getHistory(group) ONCE for the server's exact history and redraws when it arrives */
+  const sid = v => String(v == null ? '' : v);
+  const revOf = c => { const r = Math.floor(+(c && c.revision)); return c && c.revision != null && c.revision !== '' && Number.isFinite(r) && r >= 0 ? r : null; };
+  const statusOf = c => sid(c && c.status).trim() || 'available';
+  const msOrNull = v => { const t = toMs(v); return Number.isFinite(t) ? t : null; };
+  const personOf = v => sid(v).trim();
+  const mmWord = (w, h) => `${num(+w || 0)} × ${num(+h || 0)} mm`;
+  const sizeOf = c => ({ w: +c.wMm || +(c.bboxMm && c.bboxMm.w) || 0, h: +c.hMm || +(c.bboxMm && c.bboxMm.h) || 0 });
+
+  /** The physical sheet's own size: the real sheet size every record carries; else the made sheet; else the extent of all the outlines. */
+  function sheetSizeOf(recs) {
+    for (const c of recs) { const w = +c.sheetWMm, h = +c.sheetHMm; if (w > 0 && h > 0) return { w, h }; }
+    const m = recs.find(c => c.kind === 'new');
+    if (m) { const s = sizeOf(m); if (s.w > 0 && s.h > 0) return s; }
+    let w = 0, h = 0;
+    for (const c of recs) for (const r of ringsOf(c) || []) for (const p of r) { w = Math.max(w, p[0]); h = Math.max(h, p[1]); }
+    return w > 0 && h > 0 ? { w: r3(w), h: r3(h) } : { w: REF.w, h: REF.h };
+  }
+  function buildGroup(g) {
+    const recs = g.recs.slice().sort((a, b) => (revOf(a) == null ? -1 : revOf(a)) - (revOf(b) == null ? -1 : revOf(b)) || (toMs(a.cutAt) || 0) - (toMs(b.cutAt) || 0));
+    const latest = recs[recs.length - 1], R = revOf(latest), cutRecs = recs.filter(c => c.kind !== 'new' && revOf(c) !== 0), madeRec = recs.find(c => c.kind === 'new');
+    const have = new Set(cutRecs.map(revOf).filter(r => r != null && r >= 1));
+    let missing = 0;
+    if (R != null && R >= 1) for (let r = 1; r <= R; r++) if (!have.has(r)) missing++;
+    const size = sheetSizeOf(recs), st = statusOf(latest);
+    const cuts = cutRecs.map((c, i) => { const at = msOrNull(c.cutAt), by = personOf(c.cutBy); return { n: i + 1, revision: revOf(c), at, by, sheetId: sid(c.sourceSheetId), sheetName: sid(c.sourceSheet), setName: sid(c.sourceSet), via: sid(c.via),
+      rings: ringsOf(c), areaMm2: Number.isFinite(+c.areaMm2) ? +c.areaMm2 : null, bboxMm: c.bboxMm || null, exact: at != null && !!by }; });
+    const made = madeRec ? { at: msOrNull(madeRec.madeAt != null ? madeRec.madeAt : madeRec.cutAt), by: personOf(madeRec.madeBy != null ? madeRec.madeBy : madeRec.cutBy) } : null;   // (a made sheet's record keeps its making in cutAt / by too: it is not a cut)
+    const deleted = st === 'deleted' || latest.deletedAt != null ? { at: msOrNull(latest.deletedAt != null ? latest.deletedAt : latest.statusAt), by: personOf(latest.deletedBy != null ? latest.deletedBy : latest.statusBy), reason: sid(latest.deletedReason != null ? latest.deletedReason : latest.reason).trim() } : null;
+    return { stockId: g.stockId, latest,
+      history: { ok: true, stock: { id: g.stockId, metal: latest.metal || 'rose', code: latest.code || '', wMm: size.w, hMm: size.h, revision: R == null ? 0 : R, ownerSheetId: st === 'inUse' ? latest.inUseBySheetId || null : null, ownerSheetName: st === 'inUse' ? latest.inUseBySheetName || null : null, kind: madeRec ? 'new' : '' },
+        cuts, made, deleted, partial: missing > 0, missing } };
+  }
+  /** The repository list (searchAll or partialList cards) -> one group per physical sheet, in the order each sheet first appears in the list. Reads nothing: the earlier revisions of a stock
+   *  are the 'used' records of the same stockId (their outline, cutAt, cutBy, sourceSheet / sourceSet say what each cut left). `history.partial` = some earlier revisions are not in the list. */
+  function groups(items) {
+    const by = new Map(), order = [];
+    (Array.isArray(items) ? items : []).forEach((c, i) => {
+      if (!c || typeof c !== 'object') return;
+      const key = c.stockId ? 's:' + sid(c.stockId) : c.id ? 'i:' + sid(c.id) : 'x:' + i;
+      let g = by.get(key);
+      if (!g) { g = { stockId: c.stockId ? sid(c.stockId) : c.id ? sid(c.id) : 'x' + i, recs: [] }; by.set(key, g); order.push(g); }
+      g.recs.push(c);
+    });
+    return order.map(buildGroup);
+  }
+
+  const REG = new Map(), DETAIL = new Map(), PENDING = new Set(), FAILED = new Set(), LIVE = new Set();   // last group drawn per stock · server histories · loading · gave up · bound roots
+  const keyOf = g => `${g.stockId}|${g.latest ? revOf(g.latest) : ''}|${g.latest ? statusOf(g.latest) : ''}`;
+  const histOf = g => g.history || { stock: {}, cuts: [] };
+  const idOf = (g, tag) => `ohc-${sid(g.stockId).replace(/[^\w-]/g, '_')}-${tag}`;
+  /** The history the detail draws: the server's exact one once it came (kept per sheet and revision), else what the list holds. The server's missing made / deleted fall back to the list's. */
+  function detailOf(g) {
+    const base = histOf(g), d = DETAIL.get(keyOf(g)) || g.detail;
+    if (!d || !Array.isArray(d.cuts)) return base;
+    return Object.assign({}, d, { stock: Object.assign({}, base.stock || {}, d.stock || {}), made: d.made || base.made || null, deleted: d.deleted || base.deleted || null, partial: d.partial === true });
+  }
+  const thumbPx = () => { const w = +root.innerWidth || 0; return w && w < 720 ? Math.max(280, Math.min(560, w - 110)) : 540; };
+  const cutWords = (g, c) => { const n = Math.max(histOf(g).cuts.length, revOf(c) || 0); return n ? plural(n, 'cut') : 'never cut'; };
+  const STATUS_WORD = { available: 'Available', inUse: 'In use', used: 'Used', discarded: 'Discarded', deleted: 'Deleted' };
+  function fitWords(c) {
+    const p = PSU(); try { if (p && typeof p.fitWords === 'function') return p.fitWords(c); } catch (_) { /* the local words */ }
+    const e = c && c.estimate;
+    if (!e || !Number.isFinite(+e.pieces)) return { main: 'Fit not estimated', sub: '' };
+    const n = Math.round(+e.pieces), low = Number.isFinite(+e.low) ? Math.round(+e.low) : n, high = Number.isFinite(+e.high) ? Math.round(+e.high) : n;
+    if (n <= 0) return { main: 'Too small for a regular piece', sub: '' };
+    return { main: `About ${plural(n, 'piece')}`, sub: low !== high && high > 0 ? `roughly ${low} to ${high}` : '' };
+  }
+
+  function titleOf(c) { const s = sizeOf(c); return `${c.kind === 'new' ? 'New sheet' : 'Partial sheet'} ${mmWord(s.w, s.h)}`; }
+  function headHtml(g, o) {
+    const c = g.latest, st = statusOf(c), s = sizeOf(c), code = c.code || (METAL[c.metal] && METAL[c.metal].code) || '', word = (METAL[c.metal] && METAL[c.metal].word) || '';
+    const area = Number.isFinite(+c.areaMm2) ? +c.areaMm2 : areaOf(ringsOf(c) || []);
+    return `<div class="ohcHead"><div class="ohcHeadMain"><div class="ohcTitle" role="heading" aria-level="3">${esc(titleOf(c))}</div>`
+      + `<div class="ohcSub">${code ? `<span class="ohcMetal">${esc(code)}</span>` : ''}${esc([word, area > 0 ? `${fmtInt(area)} mm²` : ''].filter(Boolean).join(' · '))}</div></div>`
+      + `<span class="ohcChip" data-s="${esc(st)}">${esc(STATUS_WORD[st] || st)}</span>${o.closeBtn ? '<button type="button" class="ohcClose" data-oh-close aria-expanded="true" aria-label="Close the detailed view">×</button>' : ''}</div>`;
+  }
+  function factsHtml(g, o) {
+    const c = g.latest, h = histOf(g), st = statusOf(c), now = o.now, rows = [], D = at => shortDate(msOrNull(at), now);
+    const row = (k, main, sub) => rows.push(`<div class="ohcFact"><dt>${k}</dt><dd>${main}${sub ? `<small>${sub}</small>` : ''}</dd></div>`);
+    const who = v => (v ? `<b>${esc(v)}</b>` : '<b class="ohMiss">Person not recorded</b>'), when = at => (Number.isFinite(msOrNull(at)) ? `<b>${esc(D(at))}</b>` : '<b class="ohMiss">Date not recorded</b>');
+    if (st === 'available' || st === 'inUse') { const f = fitWords(c); row('Fits', `<b>${esc(f.main)}</b>`, esc(f.sub)); }
+    if (st === 'inUse') row('In use on', `<b>${esc(c.inUseBySheetName || 'a sheet')}</b>`, [c.inUseBy ? 'by ' + c.inUseBy : '', Number.isFinite(msOrNull(c.inUseAt)) ? 'since ' + D(c.inUseAt) : ''].filter(Boolean).map(esc).join(' · '));
+    if (st === 'used') row('Used on', `<b>${esc(c.usedBySheetName || 'a later sheet')}</b>`, [c.usedBy ? 'by ' + c.usedBy : '', Number.isFinite(msOrNull(c.usedAt)) ? D(c.usedAt) : ''].filter(Boolean).map(esc).join(' · '));
+    if (st === 'discarded') row('Discarded', '<b>Not reusable</b>', [c.reason || '', c.statusBy ? 'by ' + c.statusBy : ''].filter(Boolean).map(esc).join(' · '));
+    if (st === 'deleted') { const d = h.deleted || {}; row('Deleted by', who(d.by), esc(Number.isFinite(d.at) ? D(d.at) : 'Date not recorded')); row('Reason', `<b class="ohcReason">${d.reason ? esc(d.reason) : '<span class="ohMiss">not recorded</span>'}</b>`); }
+    const never = c.kind === 'new' && !h.cuts.length && (st === 'available' || st === 'deleted');
+    if (never) row('Last used', '<b class="ohMiss">Not used yet</b>');
+    else if (Number.isFinite(msOrNull(c.lastUsedAt))) {
+      const first = Number.isFinite(msOrNull(c.cutAt)) && msOrNull(c.lastUsedAt) === msOrNull(c.cutAt) && (!c.lastUsedSheet || c.lastUsedSheet === c.sourceSheet);
+      row('Last used', when(c.lastUsedAt), first ? 'when it was cut' : [c.lastUsedBy ? 'by ' + c.lastUsedBy : '', c.lastUsedSheet ? 'on ' + c.lastUsedSheet : ''].filter(Boolean).map(esc).join(' · '));
+    } else row('Last used', '<b class="ohMiss">Date not recorded</b>');
+    if (c.kind === 'new') { const at = c.madeAt != null ? c.madeAt : c.cutAt; row('Made by', who(personOf(c.madeBy != null ? c.madeBy : c.cutBy)), esc(Number.isFinite(msOrNull(at)) ? D(at) : 'Date not recorded')); }
+    else {
+      row('Cut by', who(personOf(c.cutBy)), [Number.isFinite(msOrNull(c.cutAt)) ? D(c.cutAt) : '', c.sourceSheet ? 'from ' + [c.sourceSheet, c.sourceSet].filter(Boolean).join(', ') : ''].filter(Boolean).map(esc).join(' · '));
+      if (h.made) row('New sheet made by', who(h.made.by), esc(Number.isFinite(h.made.at) ? D(h.made.at) : 'Date not recorded'));
+    }
+    return `<dl class="ohcFacts">${rows.join('')}</dl>`;
+  }
+  function liveHtml(g) {
+    const k = keyOf(g);
+    if (PENDING.has(k)) return '<span class="ohcLoad"><i class="ohcSpin" aria-hidden="true"></i>Loading the full history of this sheet…</span>';
+    if (FAILED.has(k)) return '<span class="ohcNote">The full history could not be loaded, so this shows what the list holds.</span>';
+    return histOf(g).partial === true && !DETAIL.has(k) && !g.detail ? '<span class="ohcNote">Earlier cuts of this sheet are not shown here.</span>' : '';
+  }
+  const detailHtml = (g, o) => view(detailOf(g), { width: o.width || 800, dates: 'short', now: o.now, id: idOf(g, 'd'), reveal: o.reveal, selected: o.selected });
+  function inner(g, o) {
+    const c = g.latest, h = histOf(g), actions = o.keepActions ? '<div class="ohcActions" data-oh-keep></div>' : o.actions ? `<div class="ohcActions">${o.actions}</div>` : '';
+    if (o.enlarged) return `<div class="ohcIn">${headHtml(g, { closeBtn: true })}<div class="ohcLive" aria-live="polite">${liveHtml(g)}</div><div class="ohcDetail" data-oh-detail>${detailHtml(g, o)}</div>${factsHtml(g, o)}${actions}</div>`;
+    const code = c.code || (METAL[c.metal] && METAL[c.metal].code) || '', st = statusOf(c), s = sizeOf(c);
+    const label = `${code ? code + ' ' : ''}${c.kind === 'new' ? 'new' : 'partial'} sheet, ${num(s.w)} by ${num(s.h)} mm, ${cutWords(g, c)}${st === 'available' ? '' : ', ' + (STATUS_WORD[st] || st).toLowerCase()}, press to enlarge`;
+    const thumb = svg(h, { compact: true, width: o.width || thumbPx(), dates: 'short', now: o.now, id: idOf(g, 't'), reveal: o.reveal === true });
+    return `<div class="ohcIn"><div class="ohcFig"><div class="ohcThumb" role="button" tabindex="0" aria-expanded="false" aria-label="${esc(label)}" data-oh-thumb>`
+      + `<div class="ohcStage">${thumb}</div><div class="ohcCap"><span class="ohcLens" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.4 10.4L14 14"/></svg></span><span>${esc(cutWords(g, c))} · click to enlarge</span>`
+      + `${h.partial === true ? '<span class="ohcCapNote">Earlier cuts not shown</span>' : ''}</div></div></div>`
+      + `<div class="ohcInfo">${headHtml(g, {})}${factsHtml(g, o)}</div>${actions}</div>`;
+  }
+  const cardClass = (g, o) => `ohc ohcS-${statusOf(g.latest)}${o.enlarged ? ' ohcBig' : ''}${o.selected ? ' ohcSel' : ''}`;
+  /** One sheet's card as HTML. `actions` = the window's buttons (raw html, kept as they are when the card enlarges); `enlarged: true` draws it open (after a repaint). */
+  function card(group, o = {}) {
+    if (!group || !group.latest) return '';
+    ensureCss();
+    REG.set(group.stockId, group);
+    return `<article class="${cardClass(group, o)}" data-stock="${esc(group.stockId)}" data-id="${esc(group.latest.id)}" data-status="${esc(statusOf(group.latest))}" data-mkey="oh-${esc(group.stockId)}"${o.enlarged ? ' data-enlarged="true"' : ''}>${inner(group, o)}</article>`;
+  }
+
+  /* ── wiring: enlarge in place, collapse, the server's exact history, Esc ── */
+  const safe = (f, ...a) => { if (typeof f !== 'function') return; try { f(...a); } catch (_) { /* a handler's own trouble stays its own */ } };
+  function grow(el, ms) {
+    if (!el || !el.isConnected || reduced()) return;
+    const M = root.Motion;
+    try { if (M && typeof M.grow === 'function') { M.grow(el, ms ? { ms, room: false } : {}); return; } } catch (_) { /* the plain fade */ }
+    try { if (el.animate) el.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: ms || 420, easing: 'cubic-bezier(.3,.1,.2,1)' }); } catch (_) { /* nothing to animate */ }
+  }
+  function toView(el, block) {
+    try { if (!el.scrollIntoView) return; const go = () => el.scrollIntoView({ block, behavior: reduced() ? 'auto' : 'smooth' }); if (root.requestAnimationFrame) root.requestAnimationFrame(go); else go(); } catch (_) { /* not scrollable */ }
+  }
+  const detailPx = el => { const cw = el.clientWidth || 0; if (!cw) return 800; const inner = cw - 40; return Math.max(300, Math.min(900, inner >= 820 ? inner - 364 - 32 : inner - 32)); };
+
+  function bindCards(rootEl, o = {}) {
+    const none = { enlarge() {}, collapse: () => false, enlarged: () => null, destroy() {} };
+    if (!rootEl || !rootEl.addEventListener) return none;
+    if (typeof rootEl._ohcOff === 'function') rootEl._ohcOff();
+    const scope = (rootEl.closest && rootEl.closest('dialog')) || rootEl, now = Number.isFinite(+o.now) && o.now != null ? +o.now : undefined;
+    const cardOf = t => { const el = t && t.closest ? t.closest('.ohc') : null; return el && rootEl.contains(el) ? el : null; };
+    const groupFor = el => { const id = el && el.getAttribute('data-stock'); return (typeof o.groupOf === 'function' && o.groupOf(id)) || REG.get(id) || null; };
+    const bigOnes = () => Array.from(rootEl.querySelectorAll('.ohc.ohcBig'));
+    const repaint = (el, g, big) => {   // the card's inside is drawn again; the window's actions node is moved over as it is (its listeners, its answer in place)
+      const keep = el.querySelector('.ohcActions'), sel = el.classList.contains('ohcSel');
+      el.className = cardClass(g, { enlarged: big, selected: sel });
+      if (big) el.setAttribute('data-enlarged', 'true'); else el.removeAttribute('data-enlarged');
+      el.innerHTML = inner(g, { enlarged: big, now, keepActions: !!keep, width: big ? detailPx(el) : undefined, reveal: big });
+      const slot = el.querySelector('.ohcActions'); if (keep && slot) slot.replaceWith(keep);
+      if (big) wireDetail(el, g);
+    };
+    const wireDetail = (el, g, selected) => { const d = el.querySelector('[data-oh-detail]'); if (d) el._ohcB = bind(d, detailOf(g), { selected }); };
+    const paintDetail = (el, g) => {   // only the drawing and timeline: nothing else under the user's hands moves
+      const d = el.querySelector('[data-oh-detail]'); if (!d) return;
+      const selected = el._ohcB ? el._ohcB.selected() : null;
+      d.innerHTML = detailHtml(g, { now, width: detailPx(el), reveal: false, selected });
+      wireDetail(el, g, selected);
+      const live = el.querySelector('.ohcLive'); if (live) live.innerHTML = liveHtml(g);
+    };
+    const refresh = stockId => { for (const el of bigOnes()) { if (el.getAttribute('data-stock') !== stockId) continue; const g = groupFor(el); if (g) paintDetail(el, g); } };
+    const ensureDetail = (el, g, again) => {   // the server's exact history, asked for once per sheet and revision; the list's data is on screen meanwhile
+      const k = keyOf(g);
+      if (typeof o.getHistory !== 'function' || DETAIL.has(k) || PENDING.has(k)) return;
+      if (FAILED.has(k) && !again) return;
+      FAILED.delete(k); PENDING.add(k);
+      const live = el.querySelector('.ohcLive'); if (live) live.innerHTML = liveHtml(g);
+      let p; try { p = Promise.resolve(o.getHistory(g)); } catch (e) { p = Promise.reject(e); }
+      p.then(h => { if (h && Array.isArray(h.cuts) && h.ok !== false) DETAIL.set(k, h); else FAILED.add(k); }, () => FAILED.add(k))
+        .then(() => { PENDING.delete(k); LIVE.forEach(f => f(g.stockId)); });
+    };
+    const collapse = (el, silent) => {
+      const g = groupFor(el); if (!g) return false;
+      const had = el.contains(rootEl.ownerDocument.activeElement) || rootEl.ownerDocument.activeElement === rootEl.ownerDocument.body;
+      repaint(el, g, false); grow(el, 380);
+      if (had) { const t = el.querySelector('.ohcThumb'); if (t && t.focus) t.focus({ preventScroll: true }); }
+      toView(el, 'nearest');
+      if (!silent) safe(o.onCollapse, g, el);
+      return true;
+    };
+    const enlarge = el => {
+      const g = groupFor(el); if (!g) return;
+      for (const other of bigOnes()) if (other !== el) collapse(other);
+      el.classList.add('ohcBig');   // the card takes the window's full width first, so the drawing is made for the width it really gets
+      repaint(el, g, true); grow(el); toView(el, 'start');
+      const x = el.querySelector('.ohcClose'); if (x && x.focus) x.focus({ preventScroll: true });
+      safe(o.onEnlarge, g, el);
+      ensureDetail(el, g, true);
+    };
+    const onClick = e => {
+      const el = cardOf(e.target); if (!el) return;
+      if (e.target.closest('[data-oh-close]')) { collapse(el); return; }
+      if (e.target.closest('[data-oh-thumb]')) { enlarge(el); return; }
+      // "click again": a click on the open drawing where it is not a cut (the sheet, the tray) closes it; a click on a line, label, piece or list row only picks that cut
+      if (el.classList.contains('ohcBig') && e.target.closest('.ohStage') && !e.target.closest('[data-cut], .ohTag, .ohItem')) collapse(el);
+    };
+    const onKey = e => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.hasAttribute && e.target.hasAttribute('data-oh-thumb')) { e.preventDefault(); const el = cardOf(e.target); if (el) enlarge(el); }
+    };
+    const onEsc = e => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+      const dlg = e.target && e.target.closest ? e.target.closest('dialog') : null;
+      if (dlg && dlg !== scope) return;   // an Esc inside another pop-up is that pop-up's
+      const open = bigOnes(); if (!open.length) return;
+      if (typeof o.holdEscape === 'function') { let hold = false; try { hold = !!o.holdEscape(e); } catch (_) { hold = false; } if (hold) return; }   // the window's own pending answer goes first
+      e.preventDefault(); e.stopPropagation();   // only when a card is open: otherwise the window's own Esc order runs
+      open.forEach(el => collapse(el));
+    };
+    rootEl.addEventListener('click', onClick); rootEl.addEventListener('keydown', onKey); scope.addEventListener('keydown', onEsc, true);
+    LIVE.add(refresh);
+    const destroy = () => { rootEl.removeEventListener('click', onClick); rootEl.removeEventListener('keydown', onKey); scope.removeEventListener('keydown', onEsc, true); LIVE.delete(refresh); if (rootEl._ohcOff === destroy) { rootEl._ohcOff = null; rootEl._ohcApi = null; } };
+    rootEl._ohcOff = destroy;
+    // cards that were drawn open (a repaint of the window's list): their detail is wired again, and asked for if it never came
+    for (const el of bigOnes()) { const g = groupFor(el); if (g) { wireDetail(el, g); ensureDetail(el, g, false); } }
+    const api = {
+      enlarge: id => { const el = rootEl.querySelector(`.ohc[data-stock="${String(id).replace(/["\\]/g, '')}"]`); if (el && !el.classList.contains('ohcBig')) enlarge(el); },
+      collapse: () => { const open = bigOnes(); open.forEach(el => collapse(el)); return open.length > 0; },
+      enlarged: () => { const el = bigOnes()[0]; return el ? el.getAttribute('data-stock') : null; },
+      destroy };
+    rootEl._ohcApi = api;
+    return api;
+  }
+  /** Collapse the enlarged card inside `rootEl` (true when there was one): for a window that runs its own Esc order. */
+  const collapseCards = rootEl => !!(rootEl && rootEl._ohcApi && rootEl._ohcApi.collapse());
+
   /* ── styles (the app's own tokens, with fallbacks so the file also looks right alone) ── */
   const CSS = `
-.ohView,.ohTl,.ohSvg,.ohLegend,.ohStage,.ohSide{--oh-ink:var(--ink,#1c1a17);--oh-ink70:var(--ink70,#5b554c);--oh-ink45:var(--ink45,#938c80);--oh-ink25:var(--ink25,#c4bdb0);--oh-line:var(--line,#e4ddd0);--oh-card:var(--card,#fffefb);--oh-card2:var(--card2,#faf7f1);--oh-gold:var(--gold,#a9823f);--oh-goldLine:var(--goldLine,#e3d3a6);--oh-green:${GREEN}}
+.ohView,.ohTl,.ohSvg,.ohLegend,.ohStage,.ohSide{--oh-ink:var(--ink,#1c1a17);--oh-ink70:var(--ink70,#5b554c);--oh-ink45:var(--ink45,#938c80);--oh-ink25:var(--ink25,#c4bdb0);--oh-line:var(--line,#e4ddd0);--oh-card:var(--card,#fffefb);--oh-card2:var(--card2,#faf7f1);--oh-gold:var(--gold,#a9823f);--oh-goldLine:var(--goldLine,#e3d3a6);--oh-green:${GREEN};--oh-clay:var(--clay,#b0563f)}
 .ohView{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(290px,1fr);gap:24px;align-items:start;min-width:0;font-family:var(--sans,system-ui,sans-serif);color:var(--oh-ink)}
 @media (max-width:900px){.ohView{grid-template-columns:minmax(0,1fr)}}
 .ohFigure{display:grid;gap:14px;min-width:0}
@@ -390,7 +646,72 @@ button.ohItem:hover .ohNum,button.ohItem.ohHot .ohNum,button.ohItem.ohOn .ohNum{
 .ohMiss{font-style:italic;font-weight:500;color:var(--oh-ink45)}
 .ohSw{display:block;width:24px;height:16px;margin-top:6px;border-radius:5px;background:var(--sw);border:1px solid rgba(30,24,16,.16);box-sizing:border-box}
 .ohNoCuts .ohWhen{font-weight:600;color:var(--oh-ink70)}
-@media (prefers-reduced-motion:reduce){.ohReveal .ohL,.ohReveal .ohLine,.ohReveal .ohTag{animation:none!important}.ohPiece,.ohLine,.ohTag,.ohPill,.ohBadge,.ohItem,.ohNum,.ohLine .ohDash{transition:none}}`;
+.ohNumDel{background:var(--oh-clay);font-size:17px;line-height:1}
+.ohKickDel{color:var(--oh-clay)}
+.ohReason{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--oh-ink)}
+.ohNote .ohRow2{font-size:12px}
+.ohcStamp{opacity:.62}
+.ohcStampBox{fill:rgba(176,86,63,.07);stroke:var(--oh-clay);stroke-width:2.4px;vector-effect:non-scaling-stroke}
+.ohcStampT{fill:var(--oh-clay);font-family:var(--sans,system-ui,sans-serif);font-weight:800}
+.ohcNewBox{fill:none;stroke:var(--oh-ink25);stroke-width:1.6px;stroke-dasharray:5 4;vector-effect:non-scaling-stroke}
+.ohcNewT{fill:var(--oh-ink45);font-family:var(--sans,system-ui,sans-serif);font-weight:700}
+.ohSvg.ohCompact *{pointer-events:none}
+/* the cards */
+.ohcGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,500px),1fr));gap:18px;min-width:0}
+.ohc{--oh-ink:var(--ink,#1c1a17);--oh-ink70:var(--ink70,#5b554c);--oh-ink45:var(--ink45,#938c80);--oh-ink25:var(--ink25,#c4bdb0);--oh-line:var(--line,#e4ddd0);--oh-card:var(--card,#fffefb);--oh-card2:var(--card2,#faf7f1);--oh-gold:var(--gold,#a9823f);--oh-goldLine:var(--goldLine,#e3d3a6);--oh-green:${GREEN};--oh-clay:var(--clay,#b0563f);
+  container:ohc/inline-size;position:relative;min-width:0;box-sizing:border-box;background:var(--oh-card);border:1px solid var(--oh-line);border-radius:16px;box-shadow:var(--sh,0 1px 2px rgba(30,26,20,.04),0 9px 28px rgba(30,26,20,.06));padding:20px;font-family:var(--sans,system-ui,sans-serif);color:var(--oh-ink);scroll-margin:12px;transition:border-color .14s,box-shadow .14s}
+.ohc.ohcBig{grid-column:1/-1;width:100%}
+.ohc.ohcSel{border-color:var(--oh-ink);box-shadow:0 0 0 2px var(--oh-goldLine)}
+.ohcIn{display:grid;gap:16px;min-width:0}
+.ohcFig{min-width:0}
+.ohcThumb{display:block;position:relative;box-sizing:border-box;width:100%;max-width:560px;border:1px solid var(--oh-line);border-radius:13px;background:var(--oh-card2);padding:12px 12px 10px;cursor:zoom-in;outline:none;transition:border-color .14s,box-shadow .14s}
+.ohcThumb:hover{border-color:var(--oh-ink45);box-shadow:0 0 0 2px var(--oh-goldLine)}
+.ohcThumb:focus-visible{border-color:var(--oh-gold);box-shadow:0 0 0 3px var(--oh-goldLine)}
+.ohcStage{min-width:0}
+.ohcStage .ohSvg,.ohcDetail .ohSvg{width:auto;max-width:100%;margin:0 auto}
+.ohcStage .ohSvg{max-height:380px}
+.ohcDetail .ohSvg{max-height:72vh;cursor:zoom-out}
+.ohcDetail .ohSvg .ohLine,.ohcDetail .ohSvg .ohTag,.ohcDetail .ohSvg .ohPiece{cursor:pointer}
+.ohcCap{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:9px 2px 0;font-size:12px;font-weight:600;color:var(--oh-ink70)}
+.ohcLens{display:inline-flex;color:var(--oh-ink45)}
+.ohcThumb:hover .ohcLens,.ohcThumb:focus-visible .ohcLens{color:var(--oh-gold)}
+.ohcCapNote{margin-left:auto;font-weight:500;font-style:italic;color:var(--oh-ink45)}
+.ohcInfo{display:grid;gap:14px;align-content:start;min-width:0}
+.ohcHead,.ohcBigHead{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.ohcHeadMain{flex:1 1 auto;min-width:0}
+.ohcTitle{font:500 22px/1.2 var(--serif,Georgia,serif);color:var(--oh-ink);letter-spacing:.005em;overflow-wrap:anywhere}
+.ohcSub{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:5px;font-size:12.5px;color:var(--oh-ink70);font-variant-numeric:tabular-nums}
+.ohcMetal{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--oh-ink);color:#fff;font:700 11px/1.3 var(--mono,ui-monospace,Menlo,Consolas,monospace);letter-spacing:.04em}
+.ohcChip{flex:none;display:inline-block;padding:4px 12px;border-radius:999px;border:1px solid var(--oh-line);background:var(--oh-card2);color:var(--oh-ink70);font:600 11.5px/1.4 var(--sans,system-ui,sans-serif);white-space:nowrap}
+.ohcChip[data-s=available]{background:#e7eddf;border-color:#c9d6bd;color:#46603f}
+.ohcChip[data-s=inUse]{background:#f0e6cd;border-color:var(--oh-goldLine);color:#7a5a1f}
+.ohcChip[data-s=used]{background:#ece8e0;border-color:var(--oh-line);color:var(--oh-ink70)}
+.ohcChip[data-s=discarded]{background:#f1ede6;border-color:var(--oh-line);color:var(--oh-ink45)}
+.ohcChip[data-s=deleted]{background:#f4e3dc;border-color:#e3bfb2;color:#8c3d28}
+.ohcClose{flex:none;width:38px;height:38px;border-radius:50%;border:1px solid var(--oh-line);background:var(--oh-card);color:var(--oh-ink);font:400 24px/1 var(--sans,system-ui,sans-serif);cursor:pointer;padding:0;transition:background-color .13s,border-color .13s}
+.ohcClose:hover{background:var(--oh-card2);border-color:var(--oh-ink45)}
+.ohcClose:focus-visible{outline:2px solid var(--oh-gold);outline-offset:2px}
+.ohcFacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 22px;margin:0;padding:0}
+.ohcFact{min-width:0;margin:0}
+.ohcFact dt{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--oh-ink45);margin:0 0 3px}
+.ohcFact dd{margin:0;display:grid;gap:1px;font-size:13.5px;line-height:1.4;color:var(--oh-ink);min-width:0;overflow-wrap:anywhere}
+.ohcFact dd b{font-weight:650}
+.ohcFact dd small{font-size:12px;color:var(--oh-ink70)}
+.ohcReason{white-space:pre-wrap;font-weight:500}
+.ohc .ohMiss{font-style:italic;font-weight:500;color:var(--oh-ink45)}
+.ohcActions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
+.ohcLive{min-height:0;font-size:12.5px;color:var(--oh-ink70)}
+.ohcLive:empty{display:none}
+.ohcLoad{display:inline-flex;align-items:center;gap:9px;font-weight:600}
+.ohcSpin{display:inline-block;width:14px;height:14px;border-radius:50%;border:2px solid var(--oh-line);border-top-color:var(--oh-gold);animation:ohcSpin .9s linear infinite}
+@keyframes ohcSpin{to{transform:rotate(360deg)}}
+.ohcNote{font-style:italic;color:var(--oh-ink45)}
+.ohcDetail{min-width:0}
+.ohc .ohView{grid-template-columns:minmax(0,1fr) minmax(300px,340px)}
+@container ohc (max-width:860px){.ohc .ohView{grid-template-columns:minmax(0,1fr)}.ohc .ohSide{max-height:none;overflow:visible}}
+@container ohc (min-width:900px){.ohc:not(.ohcBig) .ohcIn{grid-template-columns:minmax(0,540px) minmax(0,1fr);gap:22px 26px;align-items:start}.ohc:not(.ohcBig) .ohcActions{grid-column:1/-1}}
+@media (max-width:560px){.ohc{padding:14px}.ohcTitle{font-size:19px}}
+@media (prefers-reduced-motion:reduce){.ohReveal .ohL,.ohReveal .ohLine,.ohReveal .ohTag{animation:none!important}.ohPiece,.ohLine,.ohTag,.ohPill,.ohBadge,.ohItem,.ohNum,.ohLine .ohDash,.ohc,.ohcThumb,.ohcClose{transition:none}.ohcSpin{animation-duration:1.8s}}`;
   function ensureCss() {
     if (!doc || !doc.head || doc.getElementById('optionsHistoryCss')) return;
     const s = doc.createElement('style');
@@ -400,7 +721,7 @@ button.ohItem:hover .ohNum,button.ohItem.ohHot .ohNum,button.ohItem.ohOn .ohNum{
   }
   ensureCss();
 
-  const api = { svg, timeline, view, bind, filter, greyOf, friendly, ensureCss, css: CSS, GREEN, SHEET, TRAY };
+  const api = { svg, timeline, view, bind, filter, groups, card, bindCards, collapse: collapseCards, shortDate, greyOf, friendly, ensureCss, css: CSS, GREEN, SHEET, TRAY };
   root.OptionsHistory = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -127,6 +127,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const d=await tx.get(ref),old=d.exists?d.data():null;
       if(b.exact&&!old)throw new Error('Partial sheet not found');
       if(old&&metalOf(old)!==metal)throw new Error('This physical sheet is '+metalWord(metalOf(old))+', not '+metalWord(metal));
+      if(old&&old.deleted)throw new Error('This sheet was deleted');   // (a sheet a person deleted, sheetDelete: kept for its history, never nested on again)
       if(old&&(Math.abs(old.wPt-b.wPt)>.01||Math.abs(old.hPt-b.hPt)>.01))throw new Error('The physical sheet size cannot change');
       if(old?.owner&&old.owner!==b.sheetId)throw new Error('This '+metalWord(metal)+' sheet is reserved for another layout');
       if(old&&b.revision!=null&&old.revision!==b.revision)throw new Error('This remnant changed. Reload its history before nesting');
@@ -134,7 +135,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(sd.exists&&sd.data().roseCutAt)throw new Error("This layout was already cut; start a new sheet");
       if(sd.exists&&sd.data().metal&&sd.data().metal!==metal)throw new Error('This sheet is '+metalWord(sd.data().metal)+', not '+metalWord(metal));
       // the partial sheet's record (a read, before the first write); a chosen partial (partialId) must be available or already this sheet's
-      const rem=remnantSync&&old&&(b.partialId||old.owner!==b.sheetId)?await remnantSync.read(tx,ref.id,old.revision,b.partialId):null;   // (a sheet that already holds it claimed it before: nothing to read, nothing to change)
+      const rem=remnantSync&&old&&(b.partialId||old.owner!==b.sheetId)?await remnantSync.read(tx,ref.id,old.revision,b.partialId,old.made):null;   // (a sheet that already holds it claimed it before: nothing to read, nothing to change)
       if(b.partialId)remnantSync.check(rem,{metal,sheetId:b.sheetId,stockId:ref.id,revision:old.revision});
       // swap (a chosen partial for a sheet that holds another physical sheet): that one is given back in THIS transaction, as roseRelease would (same refusals), so a refused claim loses nothing
       let off=null;const heldId=held.docs[0]?.id;
@@ -144,7 +145,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
           const own=sd.exists?sd.data():null;
           if(own&&own.setId&&!own.draft)throw new Error('Remove the sheet from its current set before choosing another partial sheet');
           if(own&&(own.rosePlanJson||own.roseProtectedJson))throw new Error('A planned or protected '+metalWord(metal)+' contour cannot be given back');
-          off={ref:oref,fresh:metalOf(os)!=='rose'&&!os.revision&&!os.profileJson,rem:remnantSync?await remnantSync.read(tx,heldId,os.revision):null};
+          off={ref:oref,fresh:metalOf(os)!=='rose'&&!os.revision&&!os.profileJson&&!os.made,rem:remnantSync?await remnantSync.read(tx,heldId,os.revision,null,os.made):null};
         }
       }
       const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),metal,owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
@@ -162,9 +163,9 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const sheet=await tx.get(sheets().doc(b.sheetId));if(sheet.exists&&sheet.data().setId&&!sheet.data().draft)throw new Error('Remove the sheet from its current set before releasing its stock');
       if(sheet.exists&&(sheet.data().rosePlanJson||sheet.data().roseProtectedJson))throw new Error('A planned or protected Rose Gold contour cannot be released');
       // the partial sheet's record (a read, before the first write): it is available again when the stock is
-      const rem=remnantSync?await remnantSync.read(tx,b.stockId,d.data().revision):null;
+      const rem=remnantSync?await remnantSync.read(tx,b.stockId,d.data().revision,null,d.data().made):null;
       // a 10K or 14K sheet nobody has cut lets go of its fresh physical sheet by deleting it: an uncut sheet is no leftover (Rose Gold's stays as it was)
-      const fresh=metalOf(d.data())!=='rose'&&!d.data().revision&&!d.data().profileJson;
+      const fresh=metalOf(d.data())!=='rose'&&!d.data().revision&&!d.data().profileJson&&!d.data().made;   // (a sheet a person made, sheetMake, is a repository sheet: it is never deleted, it goes back on the list)
       if(fresh)tx.delete(ref);else tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});
       if(remnantSync&&!fresh)remnantSync.released(tx,rem,{sheetId:b.sheetId,at:Date.now()});});return {ok:true};
   }

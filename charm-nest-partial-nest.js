@@ -61,24 +61,26 @@
     cache[metal]={at:Date.now(),items};return items;
   }
   const stockKey=c=>(c.stockId||c.id)+':'+(c.revision==null?'':c.revision);
+  // a sheet a person made (Options, New sheet: kind 'new') is a partial like any other, but revision 0 with no profile: the whole rectangle, uncut
+  const madeCard=c=>!!c&&(c.kind==='new'||(c.revision===0&&c.status!=null&&!c.profileJson));
   async function stockOf(card){
-    if(card.profileJson&&card.wPt&&card.hPt)return {id:card.stockId||card.id,metal:card.metal,wPt:card.wPt,hPt:card.hPt,revision:card.revision||0,profileJson:card.profileJson};
+    if((card.profileJson||madeCard(card))&&card.wPt&&card.hPt)return {id:card.stockId||card.id,metal:card.metal,wPt:card.wPt,hPt:card.hPt,revision:card.revision||0,profileJson:card.profileJson};
     const k=stockKey(card);if(stocks.has(k))return stocks.get(k);
     // PS3's page cache of the physical sheets under partials (ONE op for several ids, a revision's profile never changes)
     try{
       const PS=window.PartialSheets;
       if(PS&&PS.stocks){const r=(await PS.stocks([card.id]))[card.id];
-        if(r&&r.profileJson&&r.current!==false){const out={id:r.stockId,metal:card.metal||r.metal,wPt:r.wPt,hPt:r.hPt,revision:r.revision||0,profileJson:r.profileJson};stocks.set(k,out);return out;}}
+        if(r&&(r.profileJson||(madeCard(card)&&!(r.revision>0)))&&r.current!==false){const out={id:r.stockId,metal:card.metal||r.metal,wPt:r.wPt,hPt:r.hPt,revision:r.revision||0,profileJson:r.profileJson||null};stocks.set(k,out);return out;}}
     }catch(_){}
     const r=await C.api('charmNestLibrary',{op:'roseGet',stockId:card.stockId||card.id,metal:card.metal,noCuts:true},{quiet:true});   // ONE document read: the physical sheet's size and profile, not its cuts
-    const s=r&&r.stock;if(!s||!s.profileJson)throw new Error('This partial sheet could not be read');
-    const out={id:s.id,metal:card.metal,wPt:s.wPt,hPt:s.hPt,revision:s.revision||0,profileJson:s.profileJson};stocks.set(k,out);return out;
+    const s=r&&r.stock;if(!s||(!s.profileJson&&!(madeCard(card)&&!(s.revision>0))))throw new Error('This partial sheet could not be read');
+    const out={id:s.id,metal:card.metal,wPt:s.wPt,hPt:s.hPt,revision:s.revision||0,profileJson:s.profileJson||null};stocks.set(k,out);return out;
   }
   const cardSize=c=>({wMm:c.wMm!=null?c.wMm:c.bboxMm?c.bboxMm.w:c.sheetWMm||0,hMm:c.hMm!=null?c.hMm:c.bboxMm?c.bboxMm.h:c.sheetHMm||0});
   function partialOf(sh){
     if(!sh)return null;
     if(sh._partialId)return sh._partialId;
-    const s=sh.roseStock;return s&&s.id&&s.revision>0?s.id+'-'+s.revision:null;
+    const s=sh.roseStock;return s&&s.id&&(s.revision>0||s.made)?s.id+'-'+(s.revision||0):null;   // (a made sheet, revision 0, is recognised by the stock's own made mark, or by _partialId above)
   }
 
   /* ── what can be seated ── */
@@ -307,7 +309,7 @@
   /* the sheets of the metal that sit on a partial, in page order (for the chain strip) */
   function chain(sh){
     if(!sh||!sh.metal)return [];
-    return pagesOf(sh.metal).filter(p=>p.roseStock&&p.roseStock.id&&(p._partialId||p.roseStock.revision>0||p.roseStock.profileJson)).map(p=>({
+    return pagesOf(sh.metal).filter(p=>p.roseStock&&p.roseStock.id&&(p._partialId||p.roseStock.revision>0||p.roseStock.profileJson||p.roseStock.made)).map(p=>({
       sheet:p,sheetId:p.sheetId||null,label:label(p),page:p.page,partialId:partialOf(p),stockId:p.roseStock.id,
       wMm:mm1(p.roseStock.wPt*MM),hMm:mm1(p.roseStock.hPt*MM),placed:(p.placements||[]).length,waiting:Math.max(0,piecesOf(p).length-(p.placements||[]).length),
       state:p.roseCutAt?'cut':(p.movedOn||p.releaseFull)?'full':'open'}));

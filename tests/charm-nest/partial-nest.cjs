@@ -99,6 +99,24 @@ const ids = list => list.map(c => c.id).sort().join();
     const same = await PN.seat(sh, [big.id]); assert(!same.ok && same.code === 'same', JSON.stringify(same));
   }
 
+  // ── 1b. a sheet a person made (Options, New sheet: kind 'new', revision 0, no profile) is used exactly like a partial: preview, then seat, then it is recognised as one ──
+  {
+    const x = world('gold14k'), { w, sh, log, docs } = x, PN = w.PartialNest;
+    docs.set('nsh-1', { id: 'nsh-1', metal: 'gold14k', wPt: W, hPt: H, revision: 0, profileJson: null, owner: null, available: true, made: true });
+    const made = { ...card({ id: 'nsh-1', metal: 'gold14k', revision: 0, cut: 0 }), kind: 'new', madeAt: Date.now(), madeBy: 'Ana' };   // (the card as sheetMake answers it: the whole rectangle, revision 0, no wPt / hPt / profile on it)
+    x.setCards([made]); sh.charms = x.pieces(6); sh.placements = sh.charms.map((c, i) => ({ id: c.id, cxPt: 30 + i * 3, cyPt: 20, angle: 0 })); sh.status = 'complete'; sh.sheetId = 'g14-s1';
+    docs.set('rgs-fresh2', { id: 'rgs-fresh2', metal: 'gold14k', wPt: W, hPt: H, revision: 0, profileJson: null, owner: 'g14-s1', available: false }); sh.roseStock = { ...docs.get('rgs-fresh2') };
+    assert.equal(w.PartialNest.partialOf(sh), null, 'a plain uncut sheet is not a partial');
+    const pv = await PN.preview(sh, [made.id], { maxMs: 3000 });
+    assert(pv.ok && pv.fitsAll && pv.pieces === 6 && pv.links.length === 1 && pv.links[0].placed === 6, 'a made sheet is checked like a partial: ' + JSON.stringify({ ...pv, links: pv.links.map(l => ({ ...l, placements: undefined })) }));
+    assert.equal(docs.get('nsh-1').owner, null, 'the preview claims nothing');
+    log.api.length = 0; const r = await PN.seat(sh, [made.id], { preview: pv });
+    assert(r.ok && r.started && r.moved === 6, JSON.stringify(r)); const claim = log.api.find(b => b.op === 'roseClaim');
+    assert.equal(JSON.stringify([claim.stockId, claim.revision, claim.exact, claim.partialId]), JSON.stringify(['nsh-1', 0, true, made.id]), 'one exact claim of the made sheet by its record id');
+    assert.equal(docs.get('nsh-1').owner, 'g14-s1'); assert.equal(sh.roseStock.id, 'nsh-1'); assert.equal(PN.partialOf(sh), made.id, 'it sits on a made sheet: its record id'); assert.equal(PN.chain(sh).length, 1, 'and the chain knows it');
+    sh._partialId = null; assert.equal(PN.partialOf({ roseStock: { id: 'nsh-1', revision: 0, made: true } }), 'nsh-1-0', 'a saved sheet is recognised by the made mark of its stock');
+  }
+
   // ── 2. a refused claim (another sheet took the partial a moment ago) changes nothing: the old sheet is held again, nothing is nested ──
   {
     const x = world('gold14k'), { w, sh, log, docs } = x, PN = w.PartialNest;

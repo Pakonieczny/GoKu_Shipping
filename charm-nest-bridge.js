@@ -3395,15 +3395,18 @@ const Gate = window.Gate = (() => {
       node._sheetOptionsOwner=sh;
       // Options (Paul, 7 Oct 2026): one large window (charm-nest-options-modal.js, OptionsStudio) instead of two popovers. This
       // node keeps the pill button and the controls' own element (the box): they are drawn here exactly as before, and the
-      // window mounts the same box while it is open, so a repaint never replaces a focused field or a typed value.
+      // window mounts the same box while it is open, so a repaint never replaces a focused field or a typed value. Round 2: ONE Sheet
+      // card (include, size, then the window adds the sheet source: partial sheets or a new sheet) and small Settings cards below.
       node.innerHTML = `<div class="sheetOptions"><button type="button" class="sheetOptionsBtn" aria-haspopup="dialog">Options</button><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options" hidden>
-        <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><h3 class="osCardTitle" id="osSheet-${esc(m)}">This sheet</h3><p class="osLead">In the set, its size${m==='rose'?', the cut contour':''}${solid(m)?' and merging':''}.</p></header>
-        <div class="osSheetGrid">
-        <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"> Include Sheet ${sh.page} in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
-        <section class="sheetOptionSection"><h4>Sheet dimensions</h4><div class="solidSize">
+        <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><div><h3 class="osCardTitle" id="osSheet-${esc(m)}">Sheet</h3><p class="osLead">Whether this sheet is in the set, its size, and where its metal comes from: a partial sheet or a brand new one.</p></div></header>
+        <div class="osSheetTop">
+        <section class="sheetOptionSection osInclude"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"> Include Sheet ${sh.page} in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
+        <section class="sheetOptionSection osSize"><h4>Sheet dimensions</h4><div class="osSizeLine"><div class="solidSize">
           <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
           <label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn*25.4).toFixed(2)}"></label>
-        </div><div class="sheetSizeAction"><span class="help" data-solid="size-help"></span><button type="button" class="btn ghost xs" data-solid="size">Apply size</button></div></section>
+        </div><button type="button" class="btn ghost xs" data-solid="size">Apply size</button></div><span class="help" data-solid="size-help"></span></section>
+        </div></section>
+        <section class="osSettings" data-card="settings" aria-label="Settings"><h3 class="osGroupLabel">Settings</h3><div class="osSheetGrid">
         ${solid(m) ? `<section class="sheetOptionSection" data-solid="merge" hidden><h4>Merge sheets</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
           <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button><button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
           <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
@@ -3488,7 +3491,7 @@ const Gate = window.Gate = (() => {
       finally {node._sizeApplying=false;renderRelease(sh,node);}
     };
     if(solid(m))paintMerge(sh,node);
-    if(window.PartialSheetsUI)try{PartialSheetsUI.paint(sh,node);}catch(e){console.warn('partial sheets',e);}   // the partial sheets card of the window (charm-nest-partial-ui.js: it adds its own card to the box)
+    if(window.PartialSheetsUI)try{PartialSheetsUI.paint(sh,node);}catch(e){console.warn('partial sheets',e);}   // the Sheet menu's partial sheets work (charm-nest-partial-ui.js: the sheet taking a partial sheet; the window draws it)
     if(window.OptionsStudio)try{OptionsStudio.sync(sh,node,optionsTitle(sh));}catch(e){console.warn('options window',e);}   // (the window's own title and its sheet history follow the sheet)
   }
 
