@@ -471,7 +471,7 @@ async function main() {
     assert.equal(t.fx.length, 1); assert.equal(t.fx[0].kind, 'release'); assert.deepEqual(t.fx[0].pushed, ['start', 'queued', 'target', 'placed', 'released', 'done'], 'the film followed every step');
     assert(t.fx[0].finished); assert.deepEqual(t.returns, [H.rid]);
     assert.equal(await page.evaluate(() => window.__rp), 0, 'the old press was not used');
-    assert.equal(await page.evaluate(() => document.querySelectorAll('.cnNameBar').length), 0, 'no name asked for a release');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.cnNameBar:not([data-kind="role"])').length), 0, 'no name asked for a release');   // (the Laser or Design question of a non-Admin sign-in is the same bar in its other state: not a name asked)
     assert.equal(await page.evaluate(() => window.__dlg.max), 1);
     // blocked: its reason, nothing released
     await page.evaluate(([h]) => { for (const r of Orders.rows()) if (String(r.order.receiptId) === h) { r.hold = 'Taken off GF Sheet 1 by Paul: Add to next sheet'; r.state = 'held'; } window.__t.rels.length = 0; window.__t.returns.length = 0; window.__t.relPlanResult = { canRelease: false, blockedWhy: 'Every sheet of its metal is cut: it needs a new sheet first.' }; Orders.render(); }, [H.rid]);
