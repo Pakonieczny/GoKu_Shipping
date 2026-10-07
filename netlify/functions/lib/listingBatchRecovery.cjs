@@ -4,6 +4,7 @@ const { stallRestartPending } = require('./listingBatchAdmission.cjs');
 
 const SESSIONS_COLL = 'ListingGenerator1Sessions';
 const ACTIVE = new Set(['JOB_STATE_PENDING', 'JOB_STATE_RUNNING']);
+const ISSUE_STATUSES = new Set(['blocked', 'saving', 'cancelled']);
 const normalizeState = value => String(value || '').replace(/^BATCH_STATE_/, 'JOB_STATE_');
 const failureKind = value => /safety system|safety_violations|moderation|content_policy/i.test(String(value || '')) ? 'content'
   : /socket hang up|ECONN|ETIMEDOUT|storage\.googleapis|upload|download|network|fetch failed|manifest:/i.test(String(value || '')) ? 'storage'
@@ -148,6 +149,10 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     for (const update of updates.slice(index, index + 200)) batch.set(update.ref, update.patch, { merge: true });
     await batch.commit();
   }
+  // COST: `sets` lists every set of the session (about 130 bytes each, up to 130 KB for 1000 sets) and the Batch panel only
+  // uses the sets that need a person. batch_list reads this short list with a field mask and leaves `sets` on the server;
+  // `sets` stays in the summary for any reader of the old field.
+  summary.issueSets = summary.sets.filter(set => ISSUE_STATUSES.has(set.status));
   summary.unregistered = Math.max(0, summary.planned - summary.registered);
   summary.issues = summary.blocked + summary.cancelled;
   summary.processed = summary.complete + summary.issues;

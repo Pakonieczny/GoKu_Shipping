@@ -1137,6 +1137,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="cn-poll.js?v=20261007-fc15"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="order-timeline.js?v=20261007-fc4"></script>
 <script src="station-seals.js?v=20261005-s4a"></script>
@@ -2630,7 +2631,21 @@ async function pollCompletedTargeted() {
   return removeCompletedRows(live) > 0;
 }
 
+/* FC15 (Firebase cost): the completion check rides cn-poll.js with the SAME wait schedule (COMPLETE_STEPS: 0.75 s while orders are being
+   completed, backing off to 30 s), so what a person sees is as quick as before; the difference is that a tab nobody can see asks
+   nothing (it used to ask the ledger about up to 120 open orders, 12 queries, every 30 s for as long as it stayed open) and is
+   checked at once when shown again. A failed read counts as an idle one, as it always did. Without the helper the old loop runs. */
+const COMPLETE_POLL = { p: null };
 function startCompletionPolling() {
+  if (window.CnPoll) {
+    if (COMPLETE_POLL.p) return;
+    let n = 0;
+    COMPLETE_POLL.p = CnPoll.create({
+      key: "design-completed", share: false, steps: COMPLETE_STEPS, activity: false,   // (activity: the page's own wake below: a click or a key)
+      fetch: async () => { try { return (await pollCompletedTargeted()) ? { status: 200, etag: "c" + (++n), body: null } : { status: 304 }; } catch (_) { return { status: 304 }; } }
+    }).start();
+    return;
+  }
   const tick = async () => {
     try {
       const changed = await pollCompletedTargeted();
@@ -2643,7 +2658,7 @@ function startCompletionPolling() {
   clearTimeout(__completeTimer);
   tick();
 }
-function wakeCompletionPolling() { __completeIdle = 0; }
+function wakeCompletionPolling() { __completeIdle = 0; if (COMPLETE_POLL.p) COMPLETE_POLL.p.wake(); }
 
 /* ═══ 10 · STAFF NOTES ═══════════════════════════════════════════════════ */
 /* ONE function, ONE Set. The previous build had two declarations in two

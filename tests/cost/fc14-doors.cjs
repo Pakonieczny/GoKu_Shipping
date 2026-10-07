@@ -70,7 +70,7 @@ async function one(name, perHourShown, call, budget) {
   // 4 · the dead `counts` op (nothing in the repo calls it): what one call would cost
   await one('firestoreProxy counts op (unused; one call)', 0, () => get(proxy, { op: 'counts', coll: 'EtsyMail_Threads', groupBy: 'status' }, H));
   // 5 · the Design Station lock poll
-  await one('design.html lock poll: firebaseOrders?rtSince (nothing new)', 560, () => get(orders, { rtSince: String(NOW + 1000) }));
+  await one('design.html lock poll: firebaseOrders?rtSince (nothing new)', 310, () => get(orders, { rtSince: String(NOW + 1000) }));
   await one('design.html lock poll: firebaseOrders?rtSince (2 changes)', 0, () => { db.seed({ 'Design_RealTime_Selected_Orders/9000001': { selected: true, selectedBy: 'c', page: 'design', at: T(NOW + 2000) }, 'Design_RealTime_Selected_Orders/9000002': { selected: false, at: T(NOW + 3000) } }); return get(orders, { rtSince: String(NOW + 1500) }); });
   await one('design pages boot: firebaseOrders?rt=1 (all locks and claims)', 0, () => get(orders, { rt: '1' }));
   await one('design pages boot: firebaseOrders?designCompleted=1 (whole ledger, ids only)', 0, () => get(orders, { designCompleted: '1' }));
