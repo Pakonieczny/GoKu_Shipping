@@ -154,7 +154,7 @@
     // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the person pressed Cut Sheet and the cut is recorded;
     // the pieces are the sheet's charms, one event for each order on it. Cutting is the Laser station's work, not the sorter's.
     try{window.CNLaserAct&&window.CNLaserAct.rose(sh);}catch(_){}
-    try{window.LeftoverSheets&&window.LeftoverSheets.changed();}catch(_){}   // the leftover sheet this cut saved: the Library's Leftover sheets view reads it again when it is open (charm-nest-remnants.js)
+    try{window.PartialSheetsUI&&window.PartialSheetsUI.changed();}catch(_){}   // the partial sheet this cut saved: an open Partial Sheet panel reads its list again (charm-nest-partial-ui.js)
   }
   const inSet=sh=>!!sh.setId&&!sh.draft;
   const observed=new WeakMap();
