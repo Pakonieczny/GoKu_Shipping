@@ -1322,10 +1322,39 @@ async function op_getOrderPieces(b) {
   const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(x => /^\d{4,20}$/.test(x)))].slice(0, 40);
   if (!ids.length && !sheetIds.length) return { error: "orderId required" };
   const ifRev = /^[0-9a-f]{12}$/.test(String(b.ifRev || "")) ? String(b.ifRev) : "";
+  /* FC3 (cost): the page asks every 2.5 s, and the answer used to be made from every pool row and sheet of up to 30 orders (about
+     150 documents, 70 KB) only to find it was the same: `unchanged` saved the answer's size on the wire, not one read. The cloud now
+     keeps ONE small counter (placementGen) that every op that may write a pool row or a sheet raises when it is done; the page sends
+     back the gen of its last answer (ifGen) with that answer's rev (ifRev), and a gen that has not moved is `unchanged` for the price
+     of one read of that counter. The gen is read BEFORE the documents, so a write landing in between only makes the next ask read
+     again, never the reverse. No gen (the sandbox, a failed read) is the old full read, and the page still asks in full once a minute. */
+  const gen = sheetIds.length ? null : await placementGen();
+  if (gen != null && ifRev && b.ifGen != null && Number(b.ifGen) === gen) return { ok: true, unchanged: true, rev: ifRev, gen };
   let answer;
   try { answer = await db.runTransaction(tx => readOrderPieces({ get: q => tx.get(q), getAll: (...a) => (typeof a[a.length - 1].get === "function" ? txGetAll(tx, a) : txGetAll(tx, a.slice(0, -1), a[a.length - 1].fieldMask)) }, ids, sheetIds), { readOnly: true }); }
   catch (e) { console.warn("[charmNestLibrary] getOrderPieces: snapshot read failed, reading without one:", (e && e.message) || e); answer = await readOrderPieces({ get: q => q.get(), getAll: (...a) => db.getAll(...a) }, ids, sheetIds); }
-  return ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : answer;
+  const out = ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : answer;
+  if (gen != null) out.gen = gen;
+  return out;
+}
+/* The placement gen (FC3): Charm_Nest_Rev/placement { n }, raised by the handler after any op that may have written a pool row or a
+   sheet (everything except the ops listed below, which only read, or write records no placement answer is made from). Production
+   only: the sandbox keeps no counter (it would be a leftover of every reset) and answers in full, as before. A read or a raise that
+   fails is never an error of the op: the reader then has no gen and reads in full. */
+const REV_COLL = "Charm_Nest_Rev";
+const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
+  "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
+  "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
+  "runPut", "runArchive", "releasePut", "arrivalRecord"]);
+async function placementGen() {
+  if (PREFIX) return null;
+  try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
+  catch (e) { console.warn("[charmNestLibrary] placement gen not read:", (e && e.message) || e); return null; }
+}
+async function bumpPlacementGen(op) {
+  if (PREFIX || NO_GEN_BUMP.has(op)) return;
+  try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); }
+  catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); }
 }
 const msRow = r => { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; return r; };
 async function readOrderPieces(rd, ids, sheetIds) {
@@ -3292,8 +3321,10 @@ exports.handler = async (event) => {
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   try {
     const out = await fn(body);
+    await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
+    await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
     console.error("[charmNestLibrary]", body.op, e);
     return json(500, { error: e.message || String(e) });
   }
