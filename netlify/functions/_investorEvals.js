@@ -1754,7 +1754,11 @@ const Simulator = (() => {
       if(!locked)return [];
       const selected=[];
       try {
-        const cleanup=(batchId?[]:await rows(batchCol.where('repositoryMode','==','shared_first'))).filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
+        // COST: this tick runs every minute and old batches stay 'incomplete' or 'reset' for ever, so what it reads must not grow with the
+        // history. Each query below asks only for the fields the code after it uses (same decisions, same writes); the runs of an old
+        // incomplete batch are not read at all, because the loop further down skips such a batch before it looks at a run.
+        const masked=(q,fields)=>typeof q.select==='function'?q.select(...fields):q;
+        const cleanup=(batchId?[]:await rows(masked(batchCol.where('repositoryMode','==','shared_first'),['batchId','cleanupVersion','cleanupLeaseUntil','cleanupDispatchedUntil','cleanupNextAtMs','cleanupSequence']))).filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
         selected.push(...cleanup.map(async b=>{
           const sequence=(b.cleanupSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation_cleanup',dedupeId:b.batchId+'_cleanup_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId},createdBy:'simulator',priority:100});
           const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
@@ -1764,9 +1768,23 @@ const Simulator = (() => {
         }));
         const batches=batchId?[await getBatch(batchId)]:await rows(batchCol.where('status','in',['running','incomplete','reset']));
         const latestByOwner=new Map(await Promise.all([...new Set(batches.filter(b=>b.status==='incomplete').map(b=>b.owner))].map(async owner=>{
-          const history=await rows(batchCol.where('owner','==',owner));return [owner,history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0]?.batchId];
+          const history=await rows(masked(batchCol.where('owner','==',owner),['batchId','createdAtMs']));return [owner,history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0]?.batchId];
         })));
-        const sets=await Promise.all(batches.map(async b=>({b,runs:await rows(runCol.where('batchId','==',b.batchId))})));
+        // A reset batch uses only these run fields (its totals, the settlement it may still owe, the lease checks); an old incomplete batch none.
+        const RESET_RUN_FIELDS=['runId','spentNano','reservedNano','pendingAiCount','aiRecheckRequired','leaseUntil','dispatchedUntil','dispatchSequence'];
+        // The two recoveries below are the only use of an incomplete batch's runs: one light read tells whether any run qualifies,
+        // and only then are the whole records read (the predicates are the loop's own, shared so they cannot drift apart).
+        const usageUnknown=r=>!r.paused&&r.status==='incomplete'&&r.error?.code==='SIMULATION_USAGE_UNKNOWN'&&!r.aiRecheckRequired;
+        const xomRecoverable=r=>!r.paused&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable'&&missingXomResearch(r)&&r.researchRecoveryVersion!==XOM_HISTORY_VERSION;
+        const RECOVERY_RUN_FIELDS=['runId','paused','status','error','aiRecheckRequired','initialized','spentNano','reservedNano','pendingAiCount','researchRecoveryVersion'];
+        const runsOf=async b=>{
+          const q=runCol.where('batchId','==',b.batchId);
+          if(b.resetAtMs)return rows(masked(q,RESET_RUN_FIELDS));
+          if(b.status!=='incomplete')return rows(q);                       // work in progress: whole records, as before
+          if(latestByOwner.get(b.owner)!==b.batchId||b.paused)return [];   // archived or paused: the loop below continues before it uses a run
+          return (await rows(masked(q,RECOVERY_RUN_FIELDS))).some(r=>usageUnknown(r)||xomRecoverable(r))?rows(q):[];
+        };
+        const sets=await Promise.all(batches.map(async b=>({b,runs:await runsOf(b)})));
         for(const {b,runs} of sets) {
           if(b.resetAtMs){
             const spentNano=runs.reduce((n,r)=>n+(r.spentNano||0),0),reservedNano=runs.reduce((n,r)=>n+(r.reservedNano||0),0);
@@ -1782,7 +1800,7 @@ const Simulator = (() => {
           let recovered=false;
           // Recover the old usage-unknown dead end by reading its saved response.
           // Exhausted checks under the new code require the explicit recheck button.
-          if(!b.paused)for(const r of runs.filter(r=>!r.paused&&r.status==='incomplete'&&r.error?.code==='SIMULATION_USAGE_UNKNOWN'&&!r.aiRecheckRequired)) {
+          if(!b.paused)for(const r of runs.filter(usageUnknown)) {
             const rr=runCol.doc(r.runId),fields=await rootTransaction(async tx=>{
               const s=await tx.get(rr),bs=await tx.get(batchCol.doc(b.batchId)),v=s.data();
               if(bs.data()?.paused||v.paused||v.leaseUntil>wallNow()||v.status!=='incomplete'||v.error?.code!=='SIMULATION_USAGE_UNKNOWN'||v.aiRecheckRequired)return null;
@@ -1792,7 +1810,7 @@ const Simulator = (() => {
           }
           // One-time recovery of the reported unpaid XOM failures, including batches
           // already closed as incomplete. Never restart paid, initialized or paused runs.
-          if(!b.paused)for(const r of runs.filter(r=>!r.paused&&!r.initialized&&!r.spentNano&&!r.reservedNano&&!r.pendingAiCount&&r.status==='unavailable'&&missingXomResearch(r)&&r.researchRecoveryVersion!==XOM_HISTORY_VERSION)) {
+          if(!b.paused)for(const r of runs.filter(xomRecoverable)) {
             const rr=runCol.doc(r.runId),fields=await rootTransaction(async tx=>{
               const s=await tx.get(rr),batchState=await tx.get(batchCol.doc(b.batchId)),v=s.data();if(batchState.data()?.paused||v.status!=='unavailable'||v.leaseUntil>wallNow()||v.paused||v.initialized||v.spentNano||v.reservedNano||v.pendingAiCount||v.researchRecoveryVersion===XOM_HISTORY_VERSION||!missingXomResearch(v))return null;
               const fields={status:'queued',error:null,finishedAtMs:null,repositoryPointersRef:null,phase:'Repairing XOM historical research',waitReason:'repository',nextAttemptAtMs:0,dispatchedUntil:0,researchRecoveryVersion:XOM_HISTORY_VERSION};
