@@ -117,6 +117,17 @@
   function publish(){state.contextRevision++;document.dispatchEvent(new CustomEvent('brites-storefront:context',{detail:snapshot()}));}
   function status(message){notice.textContent=clean(message,300);notice.dataset.visible=message?'true':'false';clearTimeout(noticeTimer);if(message)noticeTimer=setTimeout(()=>{notice.dataset.visible='false';},3600);}
   function reduced(){return typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;}
+  function focusedElement(){
+    let active=document.activeElement;for(let depth=0;depth<8&&active?.shadowRoot?.activeElement;depth++)active=active.shadowRoot.activeElement;return active;
+  }
+  function mayRevealCollection(initialFocus){
+    if(document.hidden)return false;const active=focusedElement();
+    if(!active?.isConnected||active===document.body||active===document.documentElement)return true;
+    // A completed read must not scroll a retained collection control, or a
+    // newer focus choice, offscreen. An unchanged fixed guide composer can
+    // still initiate the ordinary website reveal.
+    return !collectionControls?.box?.contains(active)&&active===initialFocus;
+  }
   function focusSection(section,highlight=true){
     if(!SECTIONS.has(section))return false;
     const target=main.querySelector('[data-store-section="'+section+'"]');if(!target)return false;
@@ -199,12 +210,12 @@
   async function searchCatalogue(query,options={},action={},newDiscovery=true){
     if(typeof query!=='string'||query.length>250)return {ok:false,action:'search',message:'Please use a shorter jewelry search.'};
     if(action.sort&&!SORTS.has(action.sort)||action.filter&&!FILTERS.has(action.filter))return {ok:false,action:'search',message:'Those collection controls are not available.'};
-    const leavingPage=state.pageKind!=='catalogue',record=begin(options),nextSearch=clean(query,250);state.search=nextSearch;state.checkedSearch=null;state.collectionSource=nextSearch?'search':'browse';if(action.sort)state.sort=action.sort;state.filter=action.filter||'all';state.limit=PAGE_SIZE;restoreCollection();if(leavingPage)commitPage('catalogue','',options.push!==false,{preserveLoading:true});else publish();status(state.search?'Finding “'+state.search+'” in the live shop…':'Opening the wider live collection…');
+    const initialFocus=focusedElement(),leavingPage=state.pageKind!=='catalogue',record=begin(options),nextSearch=clean(query,250);state.search=nextSearch;state.checkedSearch=null;state.collectionSource=nextSearch?'search':'browse';if(action.sort)state.sort=action.sort;state.filter=action.filter||'all';state.limit=PAGE_SIZE;restoreCollection();if(leavingPage)commitPage('catalogue','',options.push!==false,{preserveLoading:true});else publish();status(state.search?'Finding “'+state.search+'” in the live shop…':'Opening the wider live collection…');
     try{
       const data=await get('/api/growth/catalogue'+(nextSearch?'?q='+encodeURIComponent(nextSearch):'?browse=1'),record.controller.signal);
       if(!current(record))return {ok:false,action:'search',message:'The earlier search was cancelled.'};
       const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.pageInfo=pageInfo;state.checkedSearch=nextSearch;state.verifiedAt=Date.now();
-      if(!nextSearch){state.browse=state.products.slice();state.browsePageInfo={...pageInfo};state.browseVerifiedAt=state.verifiedAt;}if(newDiscovery)reviseDiscovery();state.loading=false;drawGrid();publish();focusSection('catalogue',false);status(filtered().length?'Your checked pieces are ready.':'No checked matches yet. Try another symbol or style.');
+      if(!nextSearch){state.browse=state.products.slice();state.browsePageInfo={...pageInfo};state.browseVerifiedAt=state.verifiedAt;}if(newDiscovery)reviseDiscovery();state.loading=false;drawGrid();publish();if(mayRevealCollection(initialFocus))focusSection('catalogue',false);status(filtered().length?'Your checked pieces are ready.':'No checked matches yet. Try another symbol or style.');
       return {ok:true,action:'search',live:data.live!==false,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:filtered().length?'Your checked search results are ready on the page.':'I couldn’t find a name or symbol match in these checked results. Try another symbol or show all pieces.'};
     }catch{if(current(record)){state.loading=false;drawGrid();publish();status('The live selection is temporarily unavailable. Your existing view is preserved.');}return {ok:false,action:'search',message:'The live selection could not be checked. Please try again.'};}
   }

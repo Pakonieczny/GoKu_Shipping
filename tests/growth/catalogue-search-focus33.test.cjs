@@ -30,15 +30,15 @@ function activateBack(h,{mouse=false,focused=true}={}){const back=h.d.querySelec
 test('a focused search submission keeps the exact input through loading and result completion',async t=>{
   const h=fixture(t);await h.ready();const gate=deferred();h.gates.set('daisy',gate);const input=h.submit('daisy'),revision=h.store.snapshot().discoveryRevision;
   assert.equal(input.isConnected,true);assert.equal(h.input(),input);assert.equal(h.d.activeElement,input);assert.equal(h.store.snapshot().loading,true);assert.equal(h.store.snapshot().search,'daisy');assert.equal(h.requests.filter(u=>u.searchParams.get('q')==='daisy').length,1);
-  gate.resolve(h.response());await settle();assert.equal(h.d.activeElement,input);assert.equal(h.input(),input);assert.equal(h.store.snapshot().loading,false);assert.ok(h.store.snapshot().discoveryRevision>revision);assert.deepEqual([...h.d.querySelectorAll('.piece-card h3')].map(n=>n.textContent),daisies.map(p=>p.title));assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);assert.deepEqual(h.errors,[]);
+  gate.resolve(h.response());await settle();assert.equal(h.d.activeElement,input);assert.equal(h.input(),input);assert.equal(h.store.snapshot().loading,false);assert.ok(h.store.snapshot().discoveryRevision>revision);assert.deepEqual([...h.d.querySelectorAll('.piece-card h3')].map(n=>n.textContent),daisies.map(p=>p.title));assert.equal(h.scrolls.length,0,'completed Search must not scroll the still-focused retained control out of view');assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);assert.deepEqual(h.errors,[]);
 });
 
 for(const location of ['sort','outside'])test('search completion respects focus moved to '+location+' during the read',async t=>{
-  const h=fixture(t);await h.ready();const gate=deferred();h.gates.set('daisy',gate);h.submit('daisy');const focused=location==='sort'?h.sort():h.outside();focused.focus();assert.equal(h.d.activeElement,focused);gate.resolve(h.response());await settle();assert.equal(h.d.activeElement,focused);assert.equal(focused.isConnected,true);assert.equal(h.store.snapshot().loading,false);
+  const h=fixture(t);await h.ready();const gate=deferred();h.gates.set('daisy',gate);h.submit('daisy');const focused=location==='sort'?h.sort():h.outside();focused.focus();assert.equal(h.d.activeElement,focused);gate.resolve(h.response());await settle();assert.equal(h.d.activeElement,focused);assert.equal(focused.isConnected,true);assert.equal(h.store.snapshot().loading,false);assert.equal(h.scrolls.length,0,'completion must preserve the newer focused control viewport');
 });
 
 test('a focused Search button is retained rather than refocusing the text field',async t=>{
-  const h=fixture(t);await h.ready();const gate=deferred();h.gates.set('daisy',gate);const input=h.input();input.value='daisy';input.dispatchEvent(new h.w.Event('input',{bubbles:true}));const submit=input.form.querySelector('button[type=submit]');submit.focus();input.form.requestSubmit(submit);assert.equal(h.d.activeElement,submit);gate.resolve(h.response());await settle();assert.equal(h.d.activeElement,submit);assert.equal(submit.isConnected,true);
+  const h=fixture(t);await h.ready();const gate=deferred();h.gates.set('daisy',gate);const input=h.input();input.value='daisy';input.dispatchEvent(new h.w.Event('input',{bubbles:true}));const submit=input.form.querySelector('button[type=submit]');submit.focus();input.form.requestSubmit(submit);assert.equal(h.d.activeElement,submit);gate.resolve(h.response());await settle();assert.equal(h.d.activeElement,submit);assert.equal(submit.isConnected,true);assert.equal(h.scrolls.length,0);
 });
 
 test('failed search keeps the input available and does not override a subsequent focus choice',async t=>{
@@ -84,7 +84,7 @@ test('keyboard Back focuses the explicit restored collection heading after the c
 });
 
 for(const location of ['input','sort','outside'])test('keyboard Back respects the new '+location+' focus while its reset is pending',async t=>{
-  const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});const gate=deferred();h.gates.set(null,gate);activateBack(h);const selected=location==='input'?h.input():location==='sort'?h.sort():h.outside();selected.focus();gate.resolve(h.response(initial));await settle();assert.equal(h.d.activeElement,selected);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);assert.equal(h.store.snapshot().loading,false);
+  const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});const gate=deferred();h.gates.set(null,gate);activateBack(h);const selected=location==='input'?h.input():location==='sort'?h.sort():h.outside();selected.focus();gate.resolve(h.response(initial));await settle();assert.equal(h.d.activeElement,selected);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);assert.equal(h.scrolls.length,0,'pending Back completion must preserve the newer focused control viewport');assert.equal(h.store.snapshot().loading,false);
 });
 
 test('keyboard Back cannot reclaim collection focus when the pending reset completes in a hidden page',async t=>{
@@ -92,7 +92,7 @@ test('keyboard Back cannot reclaim collection focus when the pending reset compl
 });
 
 test('mouse, unfocused synthetic and programmatic collection reset do not acquire keyboard Back focus authority',async t=>{
-  const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});activateBack(h,{mouse:true});await settle();assert.notEqual(h.d.activeElement,h.d.querySelector('.collection-heading h2'));await h.store.execute({type:'open',handle:initial[0].handle});const outside=h.outside();outside.focus();activateBack(h,{focused:false});await settle();assert.equal(h.d.activeElement,outside);await h.store.execute({type:'open',handle:initial[0].handle});outside.focus();await h.store.execute({type:'search',query:''});assert.equal(h.d.activeElement,outside);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);
+  const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});activateBack(h,{mouse:true});await settle();assert.notEqual(h.d.activeElement,h.d.querySelector('.collection-heading h2'));assert.ok(h.scrolls.some(s=>s.node===h.d.querySelector('[data-store-section=catalogue]')&&s.value.block==='center'),'ordinary mouse Back retains collection reveal');await h.store.execute({type:'open',handle:initial[0].handle});const outside=h.outside();outside.focus();activateBack(h,{focused:false});await settle();assert.equal(h.d.activeElement,outside);await h.store.execute({type:'open',handle:initial[0].handle});outside.focus();await h.store.execute({type:'search',query:''});assert.equal(h.d.activeElement,outside);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);
 });
 
 test('a cancelled keyboard Back cannot reclaim focus or replace a newer checked detail view',async t=>{
@@ -101,4 +101,20 @@ test('a cancelled keyboard Back cannot reclaim focus or replace a newer checked 
 
 test('a failed keyboard Back read cannot claim a checked reset or move focus to a success target',async t=>{
   const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});const before=h.store.snapshot().discoveryRevision,gate=deferred();h.gates.set(null,gate);activateBack(h);gate.resolve(h.response([],false));await settle();assert.notEqual(h.d.activeElement,h.d.querySelector('.collection-heading h2'));assert.equal(h.store.snapshot().discoveryRevision,before);assert.equal(h.store.snapshot().loading,false);assert.match(h.d.querySelector('#storefront-status').textContent,/temporarily unavailable/);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);
+});
+
+test('a retained sort control already focused before a programmatic read stays visible at completion',async t=>{
+  const h=fixture(t);await h.ready();const gate=deferred();h.gates.set('daisy',gate);const sort=h.sort();sort.focus();const result=h.store.execute({type:'search',query:'daisy'});gate.resolve(h.response());assert.equal((await result).ok,true);assert.equal(h.d.activeElement,sort);assert.equal(h.scrolls.length,0);assert.equal(h.store.snapshot().loading,false);
+});
+
+test('the unchanged initiating guide composer permits normal native collection reveal without focus transfer',async t=>{
+  const h=fixture(t);await h.ready();const guide=h.d.body.appendChild(h.d.createElement('brites-concierge')),shadow=guide.attachShadow({mode:'open'}),composer=h.d.createElement('input');composer.setAttribute('aria-label','Synthetic guide composer');shadow.append(composer);composer.focus();assert.equal(h.d.activeElement,guide);const gate=deferred();h.gates.set('daisy',gate);const result=h.store.execute({type:'search',query:'daisy'});gate.resolve(h.response());assert.equal((await result).ok,true);assert.equal(shadow.activeElement,composer);assert.equal(h.d.activeElement,guide);assert.ok(h.scrolls.some(s=>s.node===h.d.querySelector('[data-store-section=catalogue]')&&s.value.block==='center'));assert.equal(h.d.activeElement===h.d.querySelector('.collection-heading h2'),false);
+});
+
+test('a newer guide control focused inside the same shadow host prevents a delayed collection reveal',async t=>{
+  const h=fixture(t);await h.ready();const guide=h.d.body.appendChild(h.d.createElement('brites-concierge')),shadow=guide.attachShadow({mode:'open'}),composer=h.d.createElement('input'),newer=h.d.createElement('button');newer.textContent='Synthetic new focus choice';shadow.append(composer,newer);composer.focus();const gate=deferred();h.gates.set('daisy',gate);const result=h.store.execute({type:'search',query:'daisy'});newer.focus();assert.equal(h.d.activeElement,guide);gate.resolve(h.response());assert.equal((await result).ok,true);assert.equal(shadow.activeElement,newer);assert.equal(h.scrolls.length,0);
+});
+
+test('a native read completing in a hidden page does not queue a collection viewport jump',async t=>{
+  const h=fixture(t);await h.ready();let hidden=false;Object.defineProperty(h.d,'hidden',{get:()=>hidden});const gate=deferred();h.gates.set('daisy',gate);const result=h.store.execute({type:'search',query:'daisy'});assert.equal(h.d.activeElement,h.d.body);hidden=true;gate.resolve(h.response());assert.equal((await result).ok,true);assert.equal(h.scrolls.length,0);assert.equal(h.d.activeElement,h.d.body);
 });
