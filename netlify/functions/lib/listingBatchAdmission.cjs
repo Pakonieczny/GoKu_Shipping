@@ -109,7 +109,10 @@ function stallRestartPending(record) {
 function admissionControl(db, collection, timestamp, now = Date.now) {
   const gate = db.collection('LG1_Config').doc('batchAdmission');
   const batches = db.collection(collection);
-  const activeQuery = () => batches.where('state', 'in', ACTIVE);
+  // Only `collected` is read from the active jobs (activeSize), so the query asks for that one field. A job's
+  // record carries its prompts and prepared submission: reading whole records for a head count cost tens of KB
+  // per active job on every admission check and every provider refusal.
+  const activeQuery = () => { const q = batches.where('state', 'in', ACTIVE); return typeof q.select === 'function' ? q.select('collected') : q; };
   const activeSize = snap => snap.docs.filter(d => !d.data().collected).length;
   async function reserve(sourceName) {
     const token = randomUUID();

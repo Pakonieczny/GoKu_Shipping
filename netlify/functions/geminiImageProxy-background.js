@@ -14282,7 +14282,28 @@ async function _handlerImpl(event) {
       const recent = await db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(100).select("sessionId").get();
       const sessionIds = [...new Set([body?.sessionId, ...recent.docs.map(d => d.data().sessionId)]
         .filter(id => /^sess_[A-Za-z0-9_-]{8,80}$/.test(id || "")))].slice(0, 3);
+      // COST: this check reads every batch record of the session in full (prompts and all, up to 4000) and lists
+      // every saved file of its categories, so six of them every ten minutes were the sweep's biggest cost while
+      // nothing was running. A scheduled run now repeats it for a session only while that session has a job
+      // running, queued or being saved (its last summary says so), and otherwise once every half hour (twelve hours
+      // when it was fully complete). A person's own sweep, a session that was never checked, and any error
+      // reading the summary still check at once, exactly as before.
+      const cronRun = body?.cronTriggered === true;
+      const IDLE_SESSION_RECHECK_MS = 30 * 60 * 1000, DONE_SESSION_RECHECK_MS = 12 * 60 * 60 * 1000;
+      const sessionCheckDue = async (sessionId) => {
+        if (!cronRun || sessionId === body?.sessionId) return true;
+        try {
+          const [snap] = await db.getAll(db.collection(SESSIONS_COLL).doc(sessionId),
+            { fieldMask: ["status", "checkedAt", "active", "queued", "saving"] });
+          if (!snap || !snap.exists) return true;
+          const d = snap.data() || {};
+          if ((Number(d.active) || 0) + (Number(d.queued) || 0) + (Number(d.saving) || 0) > 0) return true;
+          const checkedAt = Number(d.checkedAt) || 0;
+          return !checkedAt || Date.now() - checkedAt >= (d.status === "completed" ? DONE_SESSION_RECHECK_MS : IDLE_SESSION_RECHECK_MS);
+        } catch (_) { return true; }
+      };
       for (const sessionId of sessionIds) {
+        if (!(await sessionCheckDue(sessionId))) continue;
         await guardRef.set({ stage: "checking saved listing sets" }, { merge: true });
         try {
           await reconcileSession({ db, bucket: admin.storage().bucket(), collection: BATCHES_COLL, sessionId,
@@ -14348,7 +14369,7 @@ async function _handlerImpl(event) {
       };
 
       let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0, retriesSubmitted = 0;
-      let stalledCancelled = 0, stalledRestarted = 0;
+      let stalledCancelled = 0, stalledRestarted = 0, stateChanges = 0;
 
       const open = [];
       // A 250-document first page can be saturated by failed jobs forever,
@@ -14391,6 +14412,7 @@ async function _handlerImpl(event) {
             catch (err) { console.warn("[batch_sweep] validation not confirmed:", b.batchName, err?.message || err); }
           }
           statusChecked++;
+          if (st?.state && normState(st.state) !== normState(state)) stateChanges++;
           state = st?.state || state;
           // Admission below must use the state we just fetched, not the
           // snapshot from before this sweep started.
@@ -14487,8 +14509,11 @@ async function _handlerImpl(event) {
         if (activeCount >= 30) {
           // Other jobs can finish while new ones validate. Recount before
           // stopping so an old snapshot cannot leave free places unused.
-          const activeNow = await db.collection(BATCHES_COLL).where("state", "in",
-            ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "BATCH_STATE_PENDING", "BATCH_STATE_RUNNING"]).get();
+          // Only `collected` is used below: ask for that field, not the whole record of every active job.
+          let activeQ = db.collection(BATCHES_COLL).where("state", "in",
+            ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "BATCH_STATE_PENDING", "BATCH_STATE_RUNNING"]);
+          if (typeof activeQ.select === "function") activeQ = activeQ.select("collected");
+          const activeNow = await activeQ.get();
           activeCount = activeNow.docs.filter((doc) => !doc.data().collected).length;
           if (activeCount >= 30) break;
         }
@@ -14576,7 +14601,11 @@ async function _handlerImpl(event) {
         } catch (e) { console.warn("[batch_sweep] orchestration resume failed:", id, e?.message || e); }
       }
 
-      if (Date.now() - sweepStart < SWEEP_BUDGET_MS - 60000) {
+      // A scheduled run in which nothing changed (no job moved on, was saved, cancelled or submitted) has
+      // nothing new for a second check minutes after the first.
+      const somethingChanged = !cronRun || stateChanges || collected || collectErrors || resumed ||
+        retriesSubmitted || stalledCancelled || stalledRestarted;
+      if (somethingChanged && Date.now() - sweepStart < SWEEP_BUDGET_MS - 60000) {
         for (const sessionId of sessionIds) {
           try { await reconcileSession({ db, bucket: admin.storage().bucket(), collection: BATCHES_COLL,
             sessionId, timestamp: () => admin.firestore.FieldValue.serverTimestamp() }); }
