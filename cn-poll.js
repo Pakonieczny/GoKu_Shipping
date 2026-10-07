@@ -45,6 +45,8 @@
  *    }).start();
  *    p.poke(reason?)    something happened on this computer: refresh now (any tab; a follower asks the leader), backoff reset.
  *    p.refresh(reason?) same as poke without the backoff reset (a plain "look again").
+ *    p.wake()           the page knows someone is working here (its own idea of activity, with options.activity false): back to the
+ *                       base interval and the next look pulled forward, no request now.
  *    p.stop()           release leadership, stop timers, close the channel (the answer last received stays in p.data()).
  *    p.data()           the last answer received (leader or follower), null before the first.
  *    p.state()          { started, active, leader, shared, intervalMs, nextInMs, etag, seq, unchanged, hasData, stats:{requests,
@@ -387,6 +389,12 @@
       else if (!remote) { post({ t: "poke", reason: reason || "poke" }); evaluate(); }
       return true;
     }
+    /** The page decided "someone is working here": back to the base interval and the next look pulled forward, no request now. */
+    function wake() {
+      if (!started) return false;
+      if (leader) bump(); else post({ t: "active" });
+      return true;
+    }
     function refresh(reason) {
       if (!started) return false;
       if (leader) cycle(reason || "refresh");
@@ -423,7 +431,7 @@
         nextInMs: nextAt ? Math.max(0, nextAt - env.now()) : null, etag, seq, unchanged, hasData, stats: Object.assign({}, stats)
       };
     }
-    const api = { start, stop, poke, refresh, state, data: () => body, key: o.key, id };
+    const api = { start, stop, poke, refresh, wake, state, data: () => body, key: o.key, id };
     return api;
   }
 
