@@ -87,14 +87,55 @@
   // claimed or written, and the size stays the person's to change.
   async function nestClaim(sh){
     if(!hasLine(sh)||sh.roseCutAt)return;
+    const PN=window.PartialNest;
+    // A page of a partial-sheet chain was made with its leftover as its stock (charm-nest-partial-nest.js nextPage): it claims exactly that one.
+    // When another sheet took it meanwhile, the page says so and goes on by the metal's own rule below.
+    if(PN&&PN.pending&&PN.pending(sh)){try{await prepare(sh,{nesting:true,exact:true,partialId:sh._partialId});PN.claimed(sh);return;}catch(e){PN.lost(sh,e);}}
+    // The metal's policy (Options, Partial Sheet): 'new' = never take a partial by itself. Rose Gold takes a brand new physical sheet; 10K and 14K
+    // take none at nest, as GC1 built it; a sheet never nested takes the size the person stipulated. 'auto' (the default) is everything below.
+    if(PN&&PN.mode&&PN.mode(sh.metal)==='new'&&!sh.roseStock&&!sh.roseChoice&&!sh.roseProtected&&!sh.rosePlan){
+      PN.newSheet(sh);
+      return isRose(sh)?prepare(sh,{nesting:true,fresh:true}):undefined;
+    }
     if(isRose(sh)||sh.roseStock||sh.roseChoice||sh.roseProtected||sh.rosePlan)return prepare(sh,{nesting:true});
     return prepare(sh,{nesting:true,onlyRemnant:true});
+  }
+  // Partial sheets (charm-nest-partial-nest.js): a sheet in use moves onto the leftover the person chose. It gives back the physical sheet it holds
+  // (a fresh uncut gold sheet is deleted by the server, a leftover goes back to the list), then reserves the chosen leftover in ONE transaction
+  // (roseClaim with the leftover's id and revision; nesting:true marks the saved record changed, as any re-nest does). A sheet with a recorded cut,
+  // a saved green line or in a set is refused by the server (roseRelease) and here; nothing is claimed after a refusal.
+  async function giveBack(sh){
+    if(!hasLine(sh)||!sh.roseStock?.id||!sh.sheetId)return false;
+    if(sh.roseCutAt)throw new Error('This sheet has a recorded cut: it keeps its metal');
+    if(!S.cloud.ok)throw new Error(`Reconnect to give the physical ${word(sh)} sheet back`);
+    await api('roseRelease',{stockId:sh.roseStock.id,sheetId:sh.sheetId,metal:sh.metal});
+    delete sh.roseStock;delete sh.roseRevision;delete sh.roseChoice;delete sh.rosePlanHash;delete sh.rosePlanKey;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
+    window.Session?.schedule();refresh(sh);return true;
+  }
+  async function seatOn(sh,stock){
+    if(!hasLine(sh)||sh.roseCutAt)throw new Error('This sheet cannot take a partial sheet');
+    if(!S.cloud.ok)throw new Error(`Reconnect to reserve the ${word(sh)} partial sheet`);
+    sh.sheetId ||= (isRose(sh)?'rose':sh.metal)+'-'+Date.now().toString(36)+'-'+C.uid();
+    // exact + partialId: the server checks the chosen partial sheet itself (available or this sheet's, same metal, same revision) and refuses to keep or create another
+    const r=await api('roseClaim',{sheetId:sh.sheetId,metal:sh.metal,wPt:stock.wPt,hPt:stock.hPt,stockId:stock.id,revision:stock.revision,nesting:true,...(stock.partialId?{exact:true,partialId:stock.partialId}:{})});
+    if(!r.stock)throw new Error('The partial sheet could not be reserved');
+    sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;sh.roseChoice=null;sh.roseFresh=false;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
+    if(r.protectedJson)sh.roseProtected=parse(r.protectedJson);   // (the saved record already held green lines: the sheet stays as it is; the caller sees roseProtected)
+    try{await load(sh);}catch(_){}   // (the cut history is only for the timeline: the reservation stands without it)
+    window.Session?.schedule();refresh(sh);return r.stock;
   }
   // A 10K or 14K sheet that is in the set, has charms outside any line and room for one holds a physical sheet from then on, so the set
   // waits for its Cut Sheet exactly as a Rose Gold set does (the saved record then names its stock: CharmNestReadiness). A full sheet
   // takes the rest of the metal whole and claims nothing. Never adds a line.
+  // A sheet already approved for Laser cutting, in a committed set or with the laser is never claimed late (Paul's 14K Sheet 1: a claim here made
+  // readiness hold it for "Cut Sheet" and dropped an approved sheet out of Laser cutting). A sheet not yet approved is still claimed. Rose Gold
+  // never came here (isRose below), so it keeps today's behaviour exactly.
+  const approved=sh=>{
+    const sets=(window.Sets&&window.Sets.ofRun&&window.Sets.ofRun(sh.runId))||[];
+    return !!(+sh.laserDoneAt>0||sh.laserSetPending||sh.processReady||sets.some(s=>(s.sheetIds||[]).includes(sh.sheetId)&&(s.committedAt||s.processReady||+s.laserDoneAt>0||s.laserSetPending)));
+  };
   async function claimLate(sh){
-    if(isRose(sh)||!hasLine(sh)||sh.roseStock||sh.roseCutAt||sh.recalled||!inSet(sh)||sh._roseClaiming||!sh.sheetId||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status)||!S.cloud.ok)return;
+    if(isRose(sh)||!hasLine(sh)||sh.roseStock||sh.roseCutAt||sh.recalled||!inSet(sh)||approved(sh)||sh._roseClaiming||!sh.sheetId||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status)||!S.cloud.ok)return;
     sh._roseClaiming=true;sh._roseStep='claim';sh._roseError=null;refresh(sh);
     try{await prepare(sh,{fresh:true});}catch(e){sh._roseError=e.message;}
     finally{sh._roseClaiming=false;sh._roseStep=null;refresh(sh);}
@@ -327,7 +368,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,giveBack,seatOn,approved,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 

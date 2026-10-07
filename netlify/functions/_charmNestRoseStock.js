@@ -98,6 +98,8 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
   async function roseGet(b){
     if(!id(b.stockId))throw new Error('Choose a sheet');
     const snap=await stocks().doc(b.stockId).get();if(!snap.exists)throw new Error('Sheet not found');
+    // noCuts (the partial sheet trial pack, charm-nest-partial-nest.js): only the physical sheet itself, ONE document read and none of the cuts' heavy plans
+    if(b.noCuts===true)return {stock:snap.data(),cuts:[],more:false};
     let q=stocks().doc(b.stockId).collection('cuts').orderBy('revision','desc');if(b.before)q=q.startAfter(+b.before);
     // Keep even the largest saved contours below the function response limit.
     const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()),more:cuts.size===4};

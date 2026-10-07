@@ -3220,7 +3220,7 @@ function loadSettings() {
 function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
 function stockFor(metal, sheet) {
   // (keptStock: a cut sheet an Apply size left as it was keeps the size it was cut at: Gate.renderRelease)
-  const saved=sheet?.roseStock || sheet?.recalled?.stock || sheet?.keptStock;
+  const saved=sheet?.roseStock || sheet?.recalled?.stock || sheet?.keptStock || sheet?.newStock;   // (newStock: a sheet made while the metal's Partial Sheet policy is 'new sheet', at the size the person set: charm-nest-partial-nest.js)
   if(saved?.wPt && saved?.hPt)return {wPt:saved.wPt,hPt:saved.hPt,wIn:saved.wPt/72,hIn:saved.hPt/72};
   const p = STOCK_PRESETS.find(p => p.id === S.stockPreset);
   const inches = (p && p.id !== "custom" && !["gold10k", "gold14k", "rose"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
@@ -4033,9 +4033,12 @@ function overflowToNextSheet(sh, announce = true) {
   // a 10K or 14K rerun from Options → Merge sheets refills its sheets in their order: the next sheet of the rerun takes
   // what did not fit (after its own work, if it is busy), not the metal's newest sheet or a new one (Gate: mergeSheets)
   const chained = prim.pages.includes(sh._mergeNext) && !manualSheetClosed(sh._mergeNext) ? sh._mergeNext : null;
-  let next = chained || (inLine ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null);
-  if (!chained && (!next || manualSheetClosed(next) || !inLine && (["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone))) next = addPage(sh.metal);
-  const after = (inLine || !!chained) && writing(next);
+  // a sheet moved onto a partial sheet (Options, Partial Sheet) passes what does not fit to a page made for the next partial of its chain, which is filled
+  // before anything else takes the rest (charm-nest-partial-nest.js nextPage); with no chain left this is null and the lines below are what they were
+  const seatNext = !chained && window.PartialNest ? PartialNest.nextPage(sh, moving) : null;
+  let next = chained || seatNext || (inLine ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null);
+  if (!chained && !seatNext && (!next || manualSheetClosed(next) || !inLine && (["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone))) next = addPage(sh.metal);
+  const after = (inLine || !!chained || !!seatNext) && writing(next);
   if (!after) { next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend; }
   // (a charm a Move all onto Sheet 1 could not fit goes back to the spot it had on its own sheet: Gate, _mergeSpots)
   moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} const was=next._mergeSpots&&next._mergeSpots.get(c.id); if(was){c.pinned={cxPt:was.cxPt,cyPt:was.cyPt,angle:was.angle};c.arrivalPin=true;} c.metal = sh.metal; next.charms.push(c); });
@@ -6836,7 +6839,8 @@ async function boot() {
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
-    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups };   // for tests, the console and charm-nest-bridge.js
+    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups,
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20260925-fill-holes") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
@@ -6910,8 +6914,9 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2"></script>
 <script src="charm-nest-partial-data.js?v=20261007-ps3"></script>
+<script src="charm-nest-partial-nest.js?v=20261007-ps2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1"></script>
