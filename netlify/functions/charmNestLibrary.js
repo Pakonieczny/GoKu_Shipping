@@ -3155,7 +3155,8 @@ async function op_flowState(b) {
     docs.push({ setId: d.id, seq: num(x.seq) || null, day: x.day || null, name: x.name || null, runId: x.runId || null, status: x.status || null, committedAt: ms(x.committedAt) || num(x.committedAt) || null, sheetIds: x.sheetIds || [], materials: x.materials || [], laserDoneAt: num(x.laserDoneAt) || null, laserDoneBy: x.laserDoneBy || null, processReady: !!x.processReady, processSeals: Readiness.processStamps(x) });
   }
   const runIds = [...new Set((status.sheets || []).map(x => x.runId).concat(docs.map(x => x.runId)).filter(isId))].slice(0, 100), runs = {};
-  for (const id of runIds) { const r = await col(RUNS).doc(id).get(); runs[id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) }; }
+  // one batch asking only for `status` (a run record is a big document; the page asks every few seconds): same answer, one round trip
+  if (runIds.length) for (const r of await db.getAll(...runIds.map(id => col(RUNS).doc(id)), { fieldMask: ["status"] })) runs[r.id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) };
   // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
   const mv = b.move && typeof b.move === "object" ? b.move : null;
   const shared = mv && mv.to && (mv.to.set || mv.to.newSet) ? await sharedAnswer(mv) : null;
