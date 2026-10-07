@@ -3039,6 +3039,7 @@ const Gate = window.Gate = (() => {
      The switch was the metal's: ticked on Sheet 1, it took the partial Sheet 2 with it. A sheet ticked before, when the
      tick was the metal's, keeps it until a sheet of its metal is ticked on its own (changeMembership hands it over). */
   const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : choices[sh.metal] === true;
+  const inSetNow = sh => !!sh.setId && !sh.draft;   // the sheet's real place: a set it is in (a draft is in none)
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
   const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
@@ -3083,6 +3084,8 @@ const Gate = window.Gate = (() => {
     return r;
   }
   function basePolicy(sh, seq, choices = selected()) {
+    // a sheet a person took out of its committed set (the In current set switch, or the Library) stays out of every other set until it is put back: the run never pulls it in by itself
+    if (sh.leftSet && !inSetNow(sh)) return { include: false, reason: "Taken out of its set" };
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
   }
@@ -3270,6 +3273,16 @@ const Gate = window.Gate = (() => {
   function membershipEditable(sh) {
     return !sh.recalled && !committedSheet(sh) && !(B.run && (["complete","abandoned"].includes(B.run.status) || committing(B.run)));
   }
+  /** A sheet in a set the open run no longer makes: a committed set, the set of a saved sheet, the set of a finished run. The Library edits such a set from
+   *  the records (LibraryFlow, below); the run's own Include cannot touch it. */
+  const fixedSet = sh => !!sh.sheetId && (committedSheet(sh) || (inSetNow(sh) && !membershipEditable(sh)));
+  /** The committed set a person took this saved sheet out of (its hold says "Taken out of Set N", its history names the set): null for any other sheet. */
+  function leftSetOf(d) {
+    const h = d && d.laserHold;
+    if (!h || !(+h.at > 0) || !/^Taken out of /.test(String(h.note || "")) || (d.setId && !d.draft)) return null;
+    const e = [...(Array.isArray(d.flowHistory) ? d.flowHistory : [])].reverse().find(x => x && x.type === "setLeave" && x.setId);
+    return e ? String(e.setId) : null;
+  }
   function projectLibraryRecords(rows) {
     window.Cleanups?.seen(rows);   // a sheet here whose record carries a cleanup this page has not applied gets it
     const run = B.run; if (!run || !modern(run.runId) || ["complete","abandoned"].includes(run.status)) return rows;
@@ -3295,6 +3308,8 @@ const Gate = window.Gate = (() => {
     if(run && (['complete','abandoned'].includes(run.status) || committing(run)))return Promise.reject(new Error(committing(run) ? 'The set is being committed · try again when it finishes' : 'This run is finished'));
     const choices=run ? (run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
     const list=(Array.isArray(sh) ? sh : [sh]).filter(Boolean);   // one sheet, or the sheets an order spans (askSplit)
+    // an Include is a person's own yes: a sheet they took out of a committed set may be taken into the run's sets again (basePolicy keeps it out until now)
+    if(included)for(const p of (list.length ? list : allSheets().filter(p=>p.metal===m)))delete p.leftSet;
     if(solid(m) && list.length){
       // the tick is each sheet's own: every sheet of the metal first keeps the metal's tick as it stands, then only the
       // sheets' own are read (a new sheet starts out of the set)
@@ -3355,6 +3370,96 @@ const Gate = window.Gate = (() => {
     Session.schedule(); refreshAllCards();
     return true;
   }
+  /* ── The "In current set" switch (Paul, 7 Oct 2026: "This toggle is not operational") ──────────────────────────────────────
+     The switch was a checkbox that was DISABLED for every sheet of a committed set (and for a cut, a saved or a finished one), and a disabled
+     checkbox takes no press: nothing happened and nothing was said. Its handler refused silently as well, and it only knew the open run's own
+     Include (changeMembership), which cannot touch a committed set (assemble leaves one alone). Now the switch is never disabled and every press is
+     answered:
+       · a sheet of a committed set goes out of its set, and back into it, by the Library's own functions (LibraryFlow.plan and LibraryFlow.commit:
+         op flowApply, step setMember, charm-nest-set-edit.js): the same guards (A: no multi-piece order shared with another sheet of the set; B: not
+         marked Completed, no recorded cut; a set keeps at least one sheet) and the same words. Seals, history and cut records are never touched;
+       · any other sheet is the open run's own Include (changeMembership), as before;
+       · a press the rule refuses leaves the switch where the truth is, shakes it, and says why in one short plain line next to it for a few seconds;
+       · a press that saves shows the app's small labelled spinner and keeps the switch busy (sh._incBusy), so a repaint cannot flip it back. */
+  const SETEDIT = { busy: null };   // the one set edit being saved by a switch (a second press waits: it is told so)
+  const SAY_MS = 5200;
+  const SHORT = (t, n = 90) => { const s = String(t || "").replace(/\s+/g, " ").trim(), one = /^[^.!?]*[.!?]/.exec(s), x = one ? one[0] : s; return x.length > n ? x.slice(0, n - 1).trimEnd() + "…" : x; };
+  // what the Library's plan calls a refusal (need.key), in the few everyday words the line next to the switch has room for
+  const WHY = {
+    sheetCut: "Already cut.", sheetCompleted: "Already laser cut.", lastSheet: "Last sheet of the set. Use Undo set in the Library.", sharedOrders: "Shares an order with another sheet.",
+    setCompleted: "That set is already laser cut.", setClosed: "That set was replaced.", noSet: "That set was not found. Refresh the Library.", set: "That set was not found. Refresh the Library.",
+    missing: "That sheet was not found. Refresh the Library.", runElsewhere: "Its run is open on another screen.", roseSet: "Rose Gold joins a set with Cut Sheet.", runOwned: "Its set is still being made by the run.",
+    leaveCommitted: "Its set is committed. Take the sheet out first."
+  };
+  const needWords = n => WHY[n && n.key] || SHORT(n && n.label) || "The set could not be changed.";
+  /** The words for a commit that did not go through: the plan it was refused on, else what the server said (it checks the same rules again inside its transaction). */
+  function errWords(res) {
+    const n = res && res.plan && res.plan.needs && res.plan.needs[0]; if (n) return needWords(n);
+    const t = String((res && res.error) || "");
+    if (/pieces on|shares? an order/i.test(t)) return WHY.sharedOrders;
+    if (/all that is in|Undo set/i.test(t)) return WHY.lastSheet;
+    if (/was already cut/i.test(t)) return WHY.sheetCut;
+    if (/Set \d+ is completed|completed set|takes no more/i.test(t)) return WHY.setCompleted;
+    if (/is completed/i.test(t)) return WHY.sheetCompleted;
+    if (/changed since this move was planned/i.test(t)) return "It changed meanwhile. Try again.";
+    return SHORT(t) || "Not saved. Try again.";
+  }
+  const said = text => Object.assign(new Error(text), { said: true });   // a refusal the switch shows as its line
+  /** The one short line next to the switch (never a tooltip): the reason, for a few seconds, and the switch shakes (or flashes, with reduced motion) once. */
+  function sayNo(node, text) {
+    const inc = node && node._optInclude, line = inc && typeof inc.querySelector === "function" ? inc.querySelector('[data-solid="say"]') : null;
+    if (!line) { toast(text, "bad"); return; }   // (no line to draw it in: never silent)
+    const sw = inc.querySelector(".osSwitch"), sr = inc.querySelector('[data-solid="status"]');
+    line.textContent = text; line.hidden = false; if (sr) sr.textContent = text;
+    if (sw && sw.classList) { sw.classList.remove("nope"); void sw.offsetWidth; sw.classList.add("nope"); }
+    clearTimeout(node._sayT);
+    node._sayT = setTimeout(() => { line.hidden = true; line.textContent = ""; if (sw && sw.classList) sw.classList.remove("nope"); if (sr && sr.textContent === text) sr.textContent = ""; }, SAY_MS);
+  }
+  const who = () => { try { return typeof employeeName === "function" ? employeeName() : ""; } catch (_) { return ""; } };
+  /** The press, decided at once (no wait): { no: the line } refuses, { edit } is the Library's path, {} is the open run's own Include. */
+  function includeRoute(sh, want) {
+    const run = B.run;
+    if (sh._incBusy || SETEDIT.busy) return { no: "Still saving. One moment." };
+    if (committing(run)) return { no: "The set is being committed. Try again soon." };
+    if (!want && fixedSet(sh)) return { edit: "out" };                                            // a sheet of a committed set (or a saved / finished one): out of its set
+    // a sheet a person took out: back into the set it was taken from (Rose Gold is not: the Library lets it join a committed set only by its own Cut Sheet press, so it is the run's Include, as any held sheet)
+    if (want && !inSetNow(sh) && sh.leftSet && sh.metal !== "rose" && !committedSheet(sh)) return { edit: "in" };
+    if (!membershipEditable(sh)) return { no: sh.recalled ? "Saved sheet. Its set is fixed." : run && ["complete", "abandoned"].includes(run.status) ? "The run is finished." : "Its set is fixed." };
+    if (sh.roseCutAt) return { no: "Already cut." };
+    return {};
+  }
+  /** Out of a committed set, or back into it, through LibraryFlow (the Library's own path). Resolves "" when done, or a short line to show (a warning); throws said() for a refusal. */
+  async function runEdit(sh, want) {
+    const LF = window.LibraryFlow;
+    if (!sh.sheetId) throw said("Not saved yet. Try again in a moment.");
+    if (!S.cloud.ok) throw said("Offline. Try again when connected.");
+    if (!LF || typeof LF.plan !== "function" || typeof LF.commit !== "function") throw said("Not ready yet. Reload the page.");
+    const by = who() || (typeof needEmployee === "function" ? await needEmployee("Kept with this change to the set.") : "");
+    if (!by) throw said("Sign in to change a set.");
+    const plan = await LF.plan({ kind: "sheet", id: sh.sheetId, to: want ? { set: sh.leftSet } : { area: "progress" }, by });
+    if (plan.needs && plan.needs.length) throw said(needWords(plan.needs[0]));
+    if (want && plan.noop) return "";   // (already in that set)
+    // only a set that is committed is the Library's to edit; any other plan for the same drop (a hold on a sheet of an open set, a reopened one, "already in progress") is not what this switch means
+    if (want ? !plan.committed : !plan.leave) throw said(plan.from && plan.from.area === "completed" ? WHY.sheetCompleted : sh.recalled ? "Saved sheet. Its set is fixed." : "Its set is fixed.");
+    // the press is the yes to its own change (taking the sheet out; the set waiting for it); anything else the plan asks (other sheets joining, a green line) is the Library's to ask
+    const keys = (plan.confirm || []).map(c => c.key), odd = keys.find(k => k !== "leaveSet" && k !== "setWaits");
+    if (odd) throw said(odd === "together" ? WHY.sharedOrders : "Use the Library to move this sheet.");
+    const res = await LF.commit(plan, { confirmed: keys, by });
+    if (!res || res.ok === false) throw said(errWords(res));
+    if (want) delete sh.leftSet; else sh.leftSet = (plan.from && plan.from.setId) || null;
+    Session.schedule();
+    return res.warnings && res.warnings.length ? "Saved. The set's labels are not remade yet." : "";
+  }
+  async function editCommitted(sh, node, want) {
+    SETEDIT.busy = sh; sh._incBusy = { want, text: want ? "Putting in…" : "Taking out…" };
+    renderRelease(sh, node);   // (the pill shows the pressed position and the spinner while it saves)
+    let line = "";
+    try { line = await runEdit(sh, want); }
+    catch (e) { line = e && e.said ? e.message : "Not saved: " + (SHORT(e && e.message) || "try again."); }
+    finally { SETEDIT.busy = null; sh._incBusy = null; }
+    try { refreshMembership(); } catch (e) { console.warn("[In current set]", e); }   // every card follows the truth, the switch with them
+    if (line) sayNo(node, line);
+  }
   async function flush(run) {
     // A save that failed (the network down, a 5xx, the cloud offline) is tried once more here. Its error used to be thrown
     // again at every labels and commit step, Resume after Resume, until Retry was pressed in Options.
@@ -3413,7 +3518,7 @@ const Gate = window.Gate = (() => {
       // card (the window adds the sheet source: partial sheets or a new sheet) and small Settings cards below. The In current set switch
       // (osInclude) rides in the window's title row, top right (Paul, 7 Oct); the Sheet dimensions card is gone (a sheet's size is still set in the app's Settings panel).
       node.innerHTML = `<div class="sheetOptions"><button type="button" class="sheetOptionsBtn" aria-haspopup="dialog">Options</button><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options" hidden>
-        <div class="osInclude"><label class="osSwitch"><input type="checkbox" role="switch" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"><span class="osSwitchText">In current set</span></label><span class="osSr" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry</button></div>
+        <div class="osInclude"><label class="osSwitch"><input type="checkbox" role="switch" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"><span class="osSwitchText">In current set</span></label><span class="osBusy" data-solid="busy" role="status" hidden><span class="osSpin" aria-hidden="true"></span><span data-solid="busy-text"></span></span><span class="osSay" data-solid="say" role="alert" hidden></span><span class="osSr" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry</button></div>
         <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><div><h3 class="osCardTitle" id="osSheet-${esc(m)}">Sheet</h3><p class="osLead">Where this sheet's metal comes from: a partial sheet or a brand new one.</p></div></header></section>
         <section class="osSettings" data-card="settings" aria-label="Settings"><h3 class="osGroupLabel">Settings</h3><div class="osSheetGrid">
         ${solid(m) ? `<section class="sheetOptionSection" data-solid="merge" hidden><h4>Merge sheets</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
@@ -3427,17 +3532,28 @@ const Gate = window.Gate = (() => {
       node.querySelector('.sheetOptionsBtn').onclick=()=>openOptions(sh,node);
     }
     const inc=node._optInclude;
-    node.querySelector('.sheetOptionsBtn').textContent='Options'+(included?' ✓':'');
-    const include=inc.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
-    // a locked switch says why (the line is read aloud by a screen reader; the window shows only the switch's own short title)
-    const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':committing(runNow)?'The set is being committed':'This sheet is in a committed set · it stays there';
-    inc.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
+    // the switch's position is the TRUTH: a sheet of a committed set (or a saved / finished one) is in its set as long as it has its place there; a press that is saving shows
+    // the position pressed until it is done (a repaint must not flip it back); every other sheet is as the release rule says
+    const busy=sh._incBusy||null,on=busy?busy.want:fixedSet(sh)?true:included;
+    node.querySelector('.sheetOptionsBtn').textContent='Options'+(on?' ✓':'');
+    const include=inc.querySelector('[data-solid="include"]');include.checked=!!on;include.disabled=false;   // (never disabled: a disabled switch takes no press and says nothing)
+    const working=busy?busy.text:R.membershipPending&&!R.membershipError?'Saving…':'';
+    const sw=inc.querySelector('.osSwitch');if(sw&&sw.classList)sw.classList.toggle('busy',!!working);
+    if(working)include.setAttribute('aria-busy','true');else include.removeAttribute('aria-busy');
+    const spin=inc.querySelector('[data-solid="busy"]');if(spin){spin.hidden=!working;const t=spin.querySelector('[data-solid="busy-text"]');if(t&&t.textContent!==working)t.textContent=working;}
+    // (the line read aloud by a screen reader; the line a person sees is [data-solid="say"], drawn only by a refused press)
+    const sr=inc.querySelector('[data-solid="status"]'),lineUp=inc.querySelector('[data-solid="say"]');
+    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
-      if(!membershipEditable(sh))return renderRelease(sh,node);
-      const want=e.target.checked,rule=solid(m)?cardinalFor(sh,want):{list:[sh],blocked:''};let list=[sh];
+      const want=e.target.checked,route=includeRoute(sh,want);
+      // a press the rule refuses: the switch goes back to where the truth is and says why, next to itself
+      if(route.no){renderRelease(sh,node);return sayNo(node,route.no);}
+      // a sheet of a committed set (out of it, or back into it): the Library's own path, with its guards; the pill shows the press and a spinner while it saves
+      if(route.edit)return editCommitted(sh,node,want);
+      const rule=solid(m)?cardinalFor(sh,want):{list:[sh],blocked:''};let list=[sh];
       // the cardinal rule: sheets that share a multi-piece order change set together; one that cannot follow stops the change, and says why
       if(rule.blocked){
         closeOptions(m,{focus:false});
@@ -4171,7 +4287,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -7568,6 +7684,7 @@ const RunCtl = window.RunCtl = (() => {
       const set = d.draft ? null : bySet.get(d.setId);
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
       if (["gold10k","gold14k"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K sheet's own Include tick
+      pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k"].includes(d.metal)) pg.solidPick = false;   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from
