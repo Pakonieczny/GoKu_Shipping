@@ -65,7 +65,8 @@ function leftover(p) {
 module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
   const coll = () => col(COLL);
   const bump = tx => { const ref = revDoc && revDoc(); if (ref && FV.increment) tx.set(ref, { n: FV.increment(1), at: Date.now() }, { merge: true }); };
-  const revNow = async () => { const ref = revDoc && revDoc(); if (!ref) return null; const s = await ref.get(); return String(s.exists ? Number((s.data() || {}).n) || 0 : 0); };
+  // the counter's value, and whether the earlier cuts' leftovers were saved (remnantBackfill); null = the sandbox, which keeps no counter
+  const revState = async () => { const ref = revDoc && revDoc(); if (!ref) return null; const s = await ref.get(), d = s.exists ? s.data() || {} : {}; return { rev: String(Number(d.n) || 0), backfilled: !!d.backfilledAt }; };
   const ms = t => (t && typeof t.toMillis === 'function' ? t.toMillis() : typeof t === 'number' ? t : null);
   const clean = (id, d) => { const o = { id }; for (const k of FIELDS) if (d[k] !== undefined) o[k] = d[k]; o.createdAt = ms(d.createdAt); return o; };
 
@@ -100,7 +101,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
      -> { items (newest first), rev, scope, more } or { unchanged: true, rev }. ONE query, with a field mask: 'available' reads every
      available leftover (an equality query: no composite index), 'all' the newest cuts (one ordered field). */
   async function remnantList(b = {}) {
-    const rev = await revNow(), ifRev = typeof b.ifRev === 'string' && /^[\w.-]{1,40}$/.test(b.ifRev) ? b.ifRev : null;
+    const state = await revState(), rev = state ? state.rev : null, ifRev = typeof b.ifRev === 'string' && /^[\w.-]{1,40}$/.test(b.ifRev) ? b.ifRev : null;
     if (rev !== null && ifRev !== null && ifRev === rev && b.verify !== true) return { unchanged: true, rev };
     const scope = b.scope === 'all' ? 'all' : 'available', limit = Math.min(150, Math.max(1, Math.floor(+b.limit) || (scope === 'all' ? 60 : 100)));
     let q = scope === 'all' ? coll().orderBy('cutAt', 'desc') : coll().where('status', '==', 'available');
@@ -109,7 +110,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
     if (typeof q.select === 'function') q = q.select(...FIELDS);
     const snap = await q.get(), docs = snap.docs.slice(0, limit);
     const items = docs.map(d => clean(d.id, d.data())).sort((a, c) => (c.cutAt || 0) - (a.cutAt || 0) || (c.revision || 0) - (a.revision || 0));
-    return { items, rev, scope, more: snap.docs.length > limit };
+    return { items, rev, scope, more: snap.docs.length > limit, ...(state && !state.backfilled ? { needsBackfill: true } : {}) };
   }
 
   /* remnantMark { id, status: 'available' | 'used' | 'discarded', by } a person's press on a card (the page sends the signed-in name). A leftover
@@ -134,7 +135,40 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
     });
   }
 
-  return { recordRemnant, ops: { remnantList, remnantMark } };
+  /* remnantBackfill {}: ONCE, the leftover of each physical sheet as it stands now, for the cuts recorded before leftovers were saved (the page asks
+     for it when remnantList says needsBackfill, and when it is done the counter says so for good). Only the CURRENT leftover of each stock that has
+     been cut: the stock document already holds its outline (profileJson), its size and its revision; the last cut's own record (not its heavy plan)
+     says which sheet and who. Create-only: a leftover already saved is never touched, so it is safe to repeat or to run from two pages at once.
+     Production only (the sandbox keeps no counter and no such history). */
+  async function remnantBackfill() {
+    const mark = revDoc && revDoc(); if (!mark) return { ok: true, skipped: true, created: 0 };
+    const was = await mark.get(); if (was.exists && (was.data() || {}).backfilledAt) return { ok: true, already: true, created: 0 };
+    const stocks = (await col('Charm_Nest_Rose_Stock').limit(1000).get()).docs.map(d => ({ ...d.data(), id: d.id })).filter(x => +x.revision >= 1 && okId(x.id) && x.profileJson);
+    let created = 0;
+    for (const x of stocks) {
+      const id = `${x.id}-${x.revision}`;
+      if ((await coll().doc(id).get()).exists) continue;
+      let profile; try { profile = JSON.parse(x.profileJson); Rose.validate(profile, x.wPt, x.hPt); } catch (_) { continue; }
+      let cutQ = col('Charm_Nest_Rose_Stock').doc(x.id).collection('cuts').where('revision', '==', x.revision).limit(1);
+      if (typeof cutQ.select === 'function') cutQ = cutQ.select('sheetId', 'by', 'at', 'revision', 'fileBase');
+      const cut = (await cutQ.get()).docs[0], c = cut ? cut.data() : {};
+      const sheetId = String(c.sheetId || x.lastCutSheetId || ''), sheet = okId(sheetId) ? await col('Charm_Nest_Sheets').doc(sheetId).get() : null, sd = sheet && sheet.exists ? sheet.data() : {};
+      const g = leftover(profile), metalKey = String(x.metal || sd.metal || 'rose').slice(0, 20), at = +c.at || +x.lastCutAt || 0, usable = x.wPt * x.hPt - Rose.area(profile) > 14 * 14;   // (the stock's own floor for reuse: roseRecordCut's available)
+      const rec = {
+        v: 1, backfilled: true, metal: metalKey, code: CODES[metalKey] || '', sheetId, sheetName: String((sheetLabel && sheetLabel(sd.id || sd.metal ? sd : null, c.fileBase)) || c.fileBase || x.lastCutLabel || sheetId).slice(0, 80),
+        setId: sd.setId || null, setName: sd.setId ? String((setLabel && setLabel(sd.setId)) || (sd.setSeq ? 'Set ' + sd.setSeq : '')).slice(0, 40) : '', fileBase: String(c.fileBase || sd.fileBase || sheetId).slice(0, 120),
+        stockId: x.id, revision: +x.revision, via: '', cutAt: at, by: person(c.by || x.lastCutBy), sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, rings: g.rings, areaMm2: g.areaMm2, bboxMm: g.bboxMm,
+        status: usable ? 'available' : 'discarded', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp()
+      };
+      if (!usable) Object.assign(rec, { auto: true, reason: g.areaMm2 > 0 ? 'Too small to reuse' : 'No metal left' });
+      await db.runTransaction(async tx => { const ref = coll().doc(id); if ((await tx.get(ref)).exists) return; tx.set(ref, rec); created++; });
+    }
+    const done = { n: FV.increment ? FV.increment(1) : 1, at: Date.now(), backfilledAt: Date.now(), backfilled: created };
+    await mark.set(done, { merge: true });
+    return { ok: true, created };
+  }
+
+  return { recordRemnant, ops: { remnantList, remnantMark, remnantBackfill } };
 };
 module.exports.leftover = leftover;
 module.exports.FIELDS = FIELDS;

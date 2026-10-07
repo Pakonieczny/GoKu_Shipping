@@ -198,7 +198,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const next={...stock,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,updatedAt:FV.serverTimestamp()};
       // GC3: the leftover sheet this cut makes (its exact outline, real size, who, when) is saved in THIS transaction: a cut never exists without it.
       // It reads (the stock's previous leftover) before it writes, so it comes before the first write below.
-      if(recordRemnant)await recordRemnant(tx,{stock:next,cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via});
+      if(recordRemnant)await recordRemnant(tx,{stock:{...next,id:ref.id},cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via});
       tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
       return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
     });

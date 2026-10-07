@@ -36,7 +36,7 @@ const shoelace = rings => rings.reduce((s, ring) => s + Math.abs(ring.reduce((t,
 
   // 2. the record: written in the cut's transaction (with a fake Firestore that refuses a read after a write), the previous leftover turns used
   const store = new Map(), clone = x => structuredClone(x);
-  const ref = path => ({ path, id: path.split('/').at(-1), collection: n => query(path + '/' + n), get: async () => snap(path) });
+  const ref = path => ({ path, id: path.split('/').at(-1), collection: n => query(path + '/' + n), get: async () => snap(path), set: async (v, o) => put({ path }, v, o && o.merge) });
   const snap = path => ({ id: path.split('/').at(-1), ref: ref(path), exists: store.has(path), data: () => clone(store.get(path)) });
   const query = (path, filters = [], order = null, limit = Infinity) => ({ doc: id => ref(path + '/' + id), where: (...f) => query(path, [...filters, f], order, limit), orderBy: (...o) => query(path, filters, o, limit), limit: n => query(path, filters, order, n),
     get: async () => { let docs = [...store.keys()].filter(k => k.startsWith(path + '/') && !k.slice(path.length + 1).includes('/')).map(snap); docs = docs.filter(d => filters.every(([f, , v]) => d.data()[f] === v)); if (order) docs.sort((a, b) => (a.data()[order[0]] - b.data()[order[0]]) * (order[1] === 'desc' ? -1 : 1)); docs = docs.slice(0, limit); return { docs, size: docs.length }; } });
@@ -82,5 +82,24 @@ const shoelace = rings => rings.reduce((s, ring) => s + Math.abs(ring.reduce((t,
   await assert.rejects(() => rem.ops.remnantMark({ id: `${stockId}-1`, status: 'available' }), /stays used/, 'a leftover a later cut was made on stays used');
   assert.equal((await rem.ops.remnantMark({ id: `${stockId}-2`, status: 'available', by: 'Pat Lee' })).item.status, 'available', "a person's own mark can be taken back");
   await assert.rejects(() => rem.ops.remnantMark({ id: 'nope-nope', status: 'used' }), /not found/);
+  // 4. the cuts made before leftovers were saved: the current leftover of each cut stock is saved once, create-only (never one already saved)
+  assert.equal((await rem.ops.remnantList({})).needsBackfill, true, 'the first read says the earlier cuts are not saved yet');
+  const old = Rose.plan([shape('z', 2, 2, 12, 40)], 100, 50, null, .2).profile, T = 1759660000000;
+  store.set('Charm_Nest_Rose_Stock/rgs-old-1', { id: 'rgs-old-1', wPt: 100, hPt: 50, revision: 2, profileJson: JSON.stringify(old), available: true, owner: null, lastCutAt: T });
+  store.set('Charm_Nest_Rose_Stock/rgs-old-1/cuts/sheet-old', { sheetId: 'sheet-old', revision: 2, by: 'Ana', at: T, fileBase: 'RG_2026-10-05_Sheet-1', planJson: '{"huge":1}' });
+  store.set('Charm_Nest_Rose_Stock/rgs-old-1/cuts/sheet-older', { sheetId: 'sheet-older', revision: 1, by: 'Ben', at: T - 5, fileBase: 'RG_2026-10-04_Sheet-1' });
+  store.set('Charm_Nest_Sheets/sheet-old', { id: 'sheet-old', metal: 'rose', sheetIndex: 1, setId: 'set-2026-10-05-1', fileBase: 'RG_2026-10-05_Sheet-1' });
+  store.set('Charm_Nest_Rose_Stock/rgs-fresh-1', { id: 'rgs-fresh-1', wPt: 100, hPt: 50, revision: 0, profileJson: null });
+  const before = JSON.stringify(store.get(`Charm_Nest_Remnants/${stockId}-2`));
+  const bf = await rem.ops.remnantBackfill();
+  assert.deepEqual([bf.ok, bf.created], [true, 1], 'one stock needed it: the cut one with no saved leftover');
+  const old2 = store.get('Charm_Nest_Remnants/rgs-old-1-2'), og = leftover(old);
+  assert.deepEqual([old2.status, old2.backfilled, old2.sheetName, old2.setName, old2.by, old2.cutAt, old2.revision, old2.areaMm2], ['available', true, 'RG Sheet 1', 'Set 1', 'Ana', T, 2, og.areaMm2]);
+  assert.deepEqual(old2.rings, og.rings);
+  assert.equal(JSON.stringify(store.get(`Charm_Nest_Remnants/${stockId}-2`)), before, 'a leftover already saved is never touched');
+  assert.equal(store.get('Charm_Nest_Remnants/rgs-fresh-1-0'), undefined, 'a sheet never cut has no leftover to save');
+  assert.deepEqual(await rem.ops.remnantBackfill(), { ok: true, already: true, created: 0 }, 'done once, never again');
+  assert.equal((await rem.ops.remnantList({})).needsBackfill, undefined);
+  assert((await rem.ops.remnantList({})).items.some(i => i.id === 'rgs-old-1-2'), 'and it is on the list');
   console.log('rose-leftover: ok (exact outline, area, bounding box, both axes, record in the cut transaction, used on the next cut, list, mark)');
 })().catch(e => { console.error(e); process.exit(1); });
