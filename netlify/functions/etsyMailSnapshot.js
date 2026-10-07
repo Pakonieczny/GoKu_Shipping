@@ -236,13 +236,38 @@ function scrapeProblem(body, messages, ctx) {
   return null;
 }
 
+// FC13b (Firebase cost): a good scrape that follows a good one written by this same warm instance less than a minute ago
+// changes nothing the Inbox shows (it polls this document once a minute and only reads consecutiveBad and the bad reason), so
+// it is not written again. A bad scrape is always written, and so is the first good one after it.
+const HEALTH_QUIET_MS = 60 * 1000;
+let _healthLast = { atMs: 0, ok: false };
 async function recordScrapeHealth(problem, threadId) {
   const now = Date.now();
+  if (!problem && _healthLast.ok && now - _healthLast.atMs < HEALTH_QUIET_MS) return;
   const patch = problem
     ? { lastAtMs: now, lastBadAtMs: now, lastBadReason: problem, lastBadThreadId: threadId || null, consecutiveBad: FV.increment(1) }
     : { lastAtMs: now, lastOkAtMs: now, consecutiveBad: 0 };
   await db.collection("EtsyMail_Config").doc("scrapeHealth").set(patch, { merge: true });
+  _healthLast = { atMs: now, ok: !problem };
 }
+
+// FC13b (Firebase cost): does this scrape leave the thread document as it is? Compared field by field with what is stored;
+// the three that every scrape rewrites (page hash, sync time, updatedAt) are not part of the comparison.
+const SCRAPE_STAMPS = new Set(["lastScrapedDomHash", "lastSyncedAt", "updatedAt"]);
+function patchLeavesThreadAsIs(prev, patch) {
+  for (const k of Object.keys(patch)) {
+    if (SCRAPE_STAMPS.has(k)) continue;
+    let a = prev[k], b = patch[k];
+    if (a == null && b == null) continue;
+    // The tab's address can carry a different query string on every visit; the conversation is the same one.
+    if (k === "etsyConversationUrl" && typeof a === "string" && typeof b === "string") { a = a.split(/[?#]/)[0]; b = b.split(/[?#]/)[0]; }
+    if (a !== b) return false;
+  }
+  return true;
+}
+// A scrape that found nothing new still refreshes updatedAt once in this long: the reapers drop a closed thread's mirrored
+// pictures by updatedAt after 90 days, and the Inbox lists threads by it.
+const QUIET_BUMP_MS = 6 * 3600 * 1000;
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
@@ -293,7 +318,8 @@ exports.handler = async (event) => {
     if (!convId) return bad("threadExists requires etsyConversationId");
     const threadId = `etsy_conv_${convId}`;
     try {
-      const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
+      // FC13b: only messageCount is used, and the thread document is about 12 KB (two search texts): read the one field.
+      const [tSnap] = await db.getAll(db.collection(THREADS_COLL).doc(threadId), { fieldMask: ["messageCount"] });
       if (!tSnap.exists) return json(200, { exists: false });
       const data = tSnap.data() || {};
       const mc = typeof data.messageCount === "number" ? data.messageCount : null;
@@ -446,9 +472,9 @@ exports.handler = async (event) => {
         etsyViewOrderUrl    : (conversationHeading && conversationHeading.viewOrderUrl) || null
       };
       await tRef.set(initial, { merge: false });
-    } else {
-      await tRef.set(threadPatch, { merge: true });
     }
+    // An existing thread's patch is written below, after the scrape has been matched with what is stored (and before
+    // anything is inserted, as before), unless the scrape changes nothing (FC13b).
 
     // ─── 2) Match the scrape against what is stored, then insert ───
     // By message order and content, never by time (see
@@ -561,6 +587,32 @@ exports.handler = async (event) => {
         timestampSource   : (ts != null && ts === incoming[i].tsMs) ? "page" : "placed",
         createdAt         : now
       });
+    }
+
+    // ─── FC13b (Firebase cost): a scrape that changes nothing ───
+    // The extension scrapes once per Etsy notice e-mail (and for the reapers' retries and manual rescrapes), and many of those find
+    // every message already stored. Such a scrape used to rewrite the thread document anyway (updatedAt moves, so every open Inbox tab
+    // read the whole 12 KB thread again), add an audit row, write scrapeHealth and ask for a buyer sync (an invocation, three
+    // diagnostic writes, the buyer's receipts). Now, when nothing is new, nothing in the conversation or the page's facts differs,
+    // the thread is settled (known customer name, past its first scrape), Etsy is signed in and the scrape read cleanly:
+    //   - the thread document is not written (updatedAt, which the reapers use for the Storage-mirror 90-day rule, still moves
+    //     at least once every 6 hours, so that rule sees the same thing it saw before to within hours);
+    //   - no audit row (nothing is read from "scrape_succeeded" rows);
+    //   - no buyer sync when the customer record is in place (see the trigger below).
+    // The answer given to the extension is the same.
+    const prevThread = tSnap.exists ? (tSnap.data() || {}) : {};
+    const quiet = threadExisted
+      && toInsert.length === 0 && dupIds.size === 0
+      && !(aligned.gap && scrapeMode !== "full")
+      && !scrapeIssue
+      && !(session && session.etsyLoggedIn === false)
+      && !advanceable.includes(currentStatus)
+      && !!prevThread.customerName && prevThread.customerName !== "Unknown"
+      && patchLeavesThreadAsIs(prevThread, threadPatch);
+    if (threadExisted) {
+      const lastBumpMs = awaitMsOf(prevThread.updatedAt);
+      const freshQuiet = quiet && lastBumpMs > 0 && Date.now() - lastBumpMs < QUIET_BUMP_MS;
+      if (!freshQuiet) await tRef.set(threadPatch, { merge: true });
     }
 
     // Write inserts (new messages)
@@ -825,8 +877,8 @@ exports.handler = async (event) => {
       }
     }
 
-    // ─── 5) Audit ───
-    await writeAudit({
+    // ─── 5) Audit ───  (not for a scrape that found nothing: FC13b)
+    if (!quiet) await writeAudit({
       threadId,
       eventType: threadExisted ? "scrape_succeeded" : "thread_created_from_scrape",
       actor    : "system:extension",
@@ -904,6 +956,26 @@ exports.handler = async (event) => {
         if (buyerForSync)   syncBody.buyerUserId = buyerForSync;
         if (receiptIdValid) syncBody.receiptId   = receiptIdValid;
 
+        // FC13b (Firebase cost): every scrape started this function, which writes three diagnostic rows and then (inside the buyer's
+        // 3-5 minute window) does nothing else. The same window test is made here with a one-field read of the customer record
+        // (etsyMailSync-background keeps its own test, so a skipped call here only ever skips what it would have skipped).
+        // A scrape that found nothing new also skips it when the customer record is in place with orders on it: the receipts mirror
+        // keeps that record current, and a buyer with no record (or one with no orders) is still synced at once.
+        let skipWhy = null;
+        if (buyerForSync) {
+          try {
+            const [cs] = await db.getAll(db.collection("EtsyMail_Customers").doc(buyerForSync), { fieldMask: ["nextBuyerSyncEligibleAtMs", "orderCount"] });
+            if (cs.exists) {
+              const c = cs.data() || {};
+              const nextMs = typeof c.nextBuyerSyncEligibleAtMs === "number" ? c.nextBuyerSyncEligibleAtMs : 0;
+              if (nextMs && Date.now() < nextMs) skipWhy = "inside the buyer's debounce window";
+              else if (quiet && Number(c.orderCount) > 0) skipWhy = "nothing new and the customer record is in place";
+            }
+          } catch (e) { /* cannot tell: ask for the sync, as before */ }
+        }
+        if (skipWhy) {
+          console.log(`[snapshot] buyer sync not queued (${skipWhy}) — buyerUserId=${buyerForSync} threadId=${threadId}`);
+        } else {
         require("node-fetch")(syncUrl, {
           method : "POST",
           headers: { "Content-Type": "application/json" },
@@ -918,6 +990,7 @@ exports.handler = async (event) => {
           `[snapshot] queued buyer sync — buyerUserId=${buyerForSync || "(unresolved)"}` +
           ` receiptId=${receiptIdValid || "(none)"} threadId=${threadId}`
         );
+        }
       } else {
         console.warn(
           `[snapshot] no fnHost (URL/DEPLOY_PRIME_URL) — skipping buyer sync trigger ` +
