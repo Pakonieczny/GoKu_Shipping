@@ -1842,7 +1842,7 @@ async function dispatch({ body, event = {}, admin = null, nowMs = Date.now(), au
   if (!admin) await require('./_investorMarket').loadMarketSettings();
   /* The handler's stop gate read the control document moments ago; reuse it (same document, one read fewer per request). */
   const ctrl = (!admin && controlHint && typeof controlHint === "object") ? controlHint : await controlDoc(D);
-  if (A.stopState(ctrl) && action !== "firebaseStop") return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("FIREBASE_STOPPED", "Firebase is stopped by the operator (" + new Date(Number(ctrl.firebaseStop.atMs) || nowMs).toISOString() + "). Nothing reads or writes the database until you press Resume.", { correlationId }) }) };
+  if (A.stopState(ctrl) && action !== "firebaseStop") return { statusCode: 503, body: envelope({ ok: false, requestId: body.requestId, nowMs, error: S.errorShape("FIREBASE_STOPPED", "Firebase is stopped by the operator (" + new Date(Number(A.stopState(ctrl).atMs) || nowMs).toISOString() + "). Nothing reads or writes the database until you press Resume.", { correlationId }) }) };
   const accountId = String(params.accountId || ctrl.accountId || "paper-1");
   const policy = POLICY.loadActiveSync(ctrl);
   const ctx = { admin: D, control: ctrl, accountId, nowMs, policy, auth, actorId: auth.subject || "operator", correlationId, mutationId: null };

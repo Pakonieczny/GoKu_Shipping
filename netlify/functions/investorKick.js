@@ -654,6 +654,8 @@ exports.handler = async (event) => {
   if (!isScheduledInvocation(event)) {
     return { statusCode: 403, body: JSON.stringify({ error: "scheduled invocation only" }) };
   }
+  /* Code pause (Paul, 7 Oct 2026): before any secret or database read, so a paused tick costs nothing. */
+  if (A.codePaused()) return { statusCode: 200, body: JSON.stringify({ ok: true, stopped: true, paused: true, note: "Investor code pause is on: nothing dispatched, nothing read" }) };
   /* The worker nonce is minted from the session secret, so it must resolve
      before dispatch. An unresolved secret mints nothing and the worker
      rejects the invocation — the cycle stops rather than running unsigned. */

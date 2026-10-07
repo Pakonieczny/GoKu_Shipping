@@ -346,8 +346,26 @@ function envelope(extra = {}) {
    nothing while it is active, so the only Firestore traffic left is one
    small read per invocation. `isStopped` caches for 15 s for long loops. */
 const STOP_CACHE = { at: 0, active: false };
-function stopState(ctrl) { const s = ctrl && ctrl.firebaseStop; return s && s.active === true ? s : null; }
+
+/* ── CODE PAUSE (Paul, 7 Oct 2026): the Investor app is paused indefinitely ──
+   Same effect as the stop switch above, but it lives in the deployed code, so it needs no
+   sign-in to set and costs no Firestore read to check. While active, the minute cron, every
+   background worker (they cannot start without a nonce the cron or API issues), the tuner door
+   and every API action except firebaseStop exit at once, and nothing is read or written.
+   Nothing is deleted: research, simulations, trades and saved responses stay as they are.
+   TO RESUME: set active to false (or remove the block) and push; the console's Resume button
+   does NOT clear this, it only clears the stored switch. Open paper positions are not managed
+   while paused. INVESTOR_CODE_PAUSE=off in the environment disables it for local runs. */
+const CODE_PAUSE = Object.freeze({
+  active: true, atMs: Date.UTC(2026, 9, 7, 3, 45), by: "code-pause", reason: "Paused indefinitely at Paul's request (7 Oct 2026). Resume by editing CODE_PAUSE in _investorAdmin.js.",
+});
+function codePaused() { return CODE_PAUSE.active === true && process.env.INVESTOR_CODE_PAUSE !== "off"; }
+function stopState(ctrl) {
+  if (codePaused()) return CODE_PAUSE;
+  const s = ctrl && ctrl.firebaseStop; return s && s.active === true ? s : null;
+}
 async function isStopped({ force = false } = {}) {
+  if (codePaused()) return true;
   if (!force && Date.now() - STOP_CACHE.at < 15000) return STOP_CACHE.active;
   try { const s = await col(COL.control).doc("control").get(); STOP_CACHE.active = !!stopState(s.exists ? s.data() : {}); }
   catch (e) { /* a failed read never silently unstops: keep the last answer */ }
@@ -359,6 +377,7 @@ async function isStopped({ force = false } = {}) {
  *  very read returned. The API handler needs that document right after the gate, so it no longer reads it a second
  *  time per request. `control` is null when the read failed (the caller then reads for itself). */
 async function stopGate() {
+  if (codePaused()) return { stopped: true, control: null };
   try {
     const s = await col(COL.control).doc("control").get();
     const data = s.exists ? s.data() : {};
@@ -372,7 +391,7 @@ async function stopGate() {
 }
 
 module.exports = {
-  stopState, isStopped, stopGate,
+  stopState, isStopped, stopGate, codePaused, CODE_PAUSE,
   currentScope, withSimulationScope, now,
   firestoreSafe, installNestedArrayGuard, rawDb,
   FV, TS, col, doc, runTransaction, batch,

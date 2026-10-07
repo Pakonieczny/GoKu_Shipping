@@ -2580,7 +2580,7 @@ exports.handler = async (event) => {
     let peek = null; try { peek = JSON.parse(event.body || "{}"); } catch { peek = null; }
     if (!(peek && peek.action === "firebaseStop")) {
       const gate = await A.stopGate();
-      if (gate.stopped) return AUTH.json(event, 503, { ok: false, error: { code: "FIREBASE_STOPPED", message: "Firebase is stopped by the operator. Nothing reads or writes the database until you press Resume." } });
+      if (gate.stopped) return AUTH.json(event, 503, { ok: false, error: { code: "FIREBASE_STOPPED", message: A.codePaused() ? "The Investor app is paused in code (7 Oct 2026). Nothing reads or writes the database. Pressing Resume here does not lift it; a code change does." : "Firebase is stopped by the operator. Nothing reads or writes the database until you press Resume." } });
       controlHint = gate.control;
     }
   } catch (e) { /* the gate never blocks the resume path */ }
