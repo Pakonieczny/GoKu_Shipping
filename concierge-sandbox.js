@@ -68,6 +68,14 @@
     const service=/^(?:custom\s+)?(?:design\s+fees?\b|engraving(?:\s+(?:on|for|services?)\b|$))/i.test(title);
     const extender=/\bchain\s+extenders?\b/i.test(title)&&!/\b(?:earrings?|studs?|huggies?|hoops?|bracelets?|rings?)\b/i.test(title);
     if(service||extender)return false;
+    // A finished source type outranks descriptive words such as "pendant",
+    // "hoop" or "stud" in the name. Charm/Studio types still need title
+    // evidence, since they also group finished necklaces and custom earrings.
+    if(category==='necklaces'||category==='earrings'){
+      if(/^(?:necklaces?|pendants?)$/i.test(type))return category==='necklaces';
+      if(/^(?:earrings?|(?:studs?|huggies?|hoops?)(?:\s+earrings?)?)$/i.test(type))return category==='earrings';
+      if(category==='necklaces'&&/\bearrings?\b/i.test(title)&&!/\bnecklaces?\b/i.test(title))return false;
+    }
     // Only an explicit single-category tag can supplement title/type. Broad
     // body copy and unstructured promotional tags never reclassify a piece.
     const tags=(Array.isArray(p.tags)?p.tags:[]).slice(0,80).flatMap(tag=>{const match=clean(tag,100).match(/^(?:product[ _-]?type|category)\s*:\s*(necklaces?|pendants?|earrings?|studs?|huggies?|hoops?|bracelets?|rings?|charms?)$/i);return match?[match[1]]:[];});

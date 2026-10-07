@@ -786,13 +786,15 @@ function currentMaterialComparisonRequest(message,currentHandle){
   const materialPattern='sterling[ -]silver|(?:\\d{1,2}\\s*k\\s+)?(?:rose\\s+)?gold[ -]filled|(?:\\d{1,2}\\s*k\\s+)?solid[ -]gold';
   const materials=[...new Set(fieldMentions(text,materialPattern).filter(hit=>!hit.negative).map(hit=>hit.raw.replace(/[^a-z0-9]+/g,' ').trim()))];
   if(materials.length!==2)return null;
-  const reference='(?:this|current|selected) (?:exact )?(?:product|piece|item|one|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?)|on this (?:product )?page';
+  // Earrings are naturally called a pair or "these earrings" while still
+  // referring to one current product. Other plural pieces remain ambiguous.
+  const reference='(?:this|current|selected) (?:exact )?pair of (?:earrings|huggies|studs|hoops)|these (?:exact )?(?:earrings|huggies|studs|hoops)|(?:this|current|selected) (?:exact )?(?:product|piece|item|one|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?)|on this (?:product )?page';
   const references=fieldMentions(text,reference).filter(hit=>!hit.negative);
   if(!references.length&&!destination.handles.length)return null;
   // This lane compares materials on one current page. Another named piece,
   // foreign URL or competing page reference must not become a substitute.
   const remainder=text.replace(new RegExp('\\b(?:'+reference+')\\b','g'),' ').replace(new RegExp('\\b(?:'+materialPattern+')\\b','g'),' ');
-  const otherPiece=/\b(?:products?|pieces?|items?|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?)\b/.test(remainder);
+  const otherPiece=/\b(?:products?|pieces?|items?|pairs?|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|hoops?|rings?|charms?)\b/.test(remainder);
   return {materials,contextConfirmed:/^[a-z0-9_-]{1,180}$/.test(currentHandle||'')&&!destination.unsafe&&destination.handles.every(handle=>handle===currentHandle)&&destination.handles.length<=1&&references.length<=1&&!otherPiece};
 }
 
