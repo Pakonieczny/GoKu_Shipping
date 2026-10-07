@@ -5149,6 +5149,10 @@ function sheetFileBase(sh) { if (sh.draft) return `${METAL_TAG[sh.metal]}_workin
 /** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
   if (window.Gate && (Gate.modern(sh.runId) || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)))) {
+    // A sheet of a COMMITTED set that is nested again (Use this one, a partial sheet chosen for it: Paul, 7 Oct, "I could not cut the sheet after placing new pieces on the partial sheet")
+    // keeps its place: the run never puts a sheet of a committed set back (Gate.assemble leaves them out) and the cloud keeps the place anyway (putSheet), so drafting it here left
+    // the card reading "Filling" with no Set number and Cut Sheet refused with "Not cut: Included by you". Its set, number, day and file name stay; the save makes its QR label again.
+    if (sh.setId && !sh.draft && Gate.committedSheet && Gate.committedSheet(sh)) return sh.seq || null;
     sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; return null;
   }
   const runKey = sh.runId || (sh.runId = "manual-" + uid());
@@ -7001,7 +7005,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7058,7 +7062,7 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1"></script>

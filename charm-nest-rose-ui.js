@@ -185,8 +185,11 @@
       const G=window.Gate;if(!G?.changeMembership)throw new Error('Sets are not loaded yet · try again in a moment');
       sh._roseStep='include';refresh(sh);
       // (Rose Gold joins by its metal's tick; a 10K or 14K sheet by its own Include, which keeps the rule of orders that span two sheets)
-      try{if(isRose(sh))await G.changeMembership('rose',true);else if(G.cutInclude)await G.cutInclude(sh);else await G.changeMembership(sh.metal,true,sh);}finally{sh._roseStep=null;}
-      if(!inSet(sh))throw new Error('Not cut: '+(G.policy?.(sh)?.reason||'this sheet is not in a set yet'));
+      // A sheet of a COMMITTED set that lost its place on this page (moved onto a partial sheet and nested again: Paul, 7 Oct, "I could not cut the sheet after placing new pieces on
+      // the partial sheet") is never added again: the set and the saved record kept it, so it takes its place back from them (Gate.rejoin). An Include cannot do it: the run leaves committed sheets alone.
+      try{if(!(G.rejoin&&await G.rejoin(sh))){if(isRose(sh))await G.changeMembership('rose',true);else if(G.cutInclude)await G.cutInclude(sh);else await G.changeMembership(sh.metal,true,sh);}}finally{sh._roseStep=null;}
+      // (the old line here was 'Not cut: '+the release rule's words, which for a sheet the person had ticked read "Not cut: Included by you": a reason that is no reason)
+      if(!inSet(sh)){const pol=G.policy?.(sh),why=pol&&!pol.include&&pol.reason?pol.reason:'';throw new Error('Not cut: this sheet is not in a set yet'+(why?` (${why})`:'')+'. Switch on In current set in Options, or reload the page, then press Cut Sheet again.');}
       refresh(sh);
     }
     if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh,{cut:true});
@@ -194,7 +197,9 @@
     // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
     let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||window.B?.employee||'').trim();}
     const r=await api('roseRecordCut',{sheetId:sh.sheetId,metal:sh.metal,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1',via:o.via||(S.mode==='library'?'library':'nest')});   // via: which tab pressed it, saved on the leftover sheet this cut makes (_charmNestRemnants.js)
-    sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
+    // (the cuts the stock already holds stay on the card: a sheet that was moved onto the leftover its own cut made cuts again, and both cuts are shown, each with its date;
+    //  only a copy of THIS cut, a retry of the same press, is replaced)
+    sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)];
     refresh(sh);C.toast(`Sheet cut · the next ${word(sh)} charms nest past this green line`,'ok');
     // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the person pressed Cut Sheet and the cut is recorded;
     // the pieces are the sheet's charms, one event for each order on it. Cutting is the Laser station's work, not the sorter's.
@@ -233,7 +238,7 @@
     host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;
     host.classList.toggle('roseEmpty',!host.innerHTML);
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
-    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.(sh.metal);}};
+    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=(e&&e.message)||String(e||'')||'Cut Sheet could not finish. Try again.';}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.(sh.metal);}};   // (a refusal always leaves its one line under the button)
     slot.querySelector('[data-rose="cut"]')?.addEventListener('click',invoke(()=>record(sh)));
     // (the Options window's controls: the box the Gate draws in this card's gate node; the window mounts the same box while it is open)
     const gate=sh.el.querySelector('.shGate'),menu=(gate&&gate._optBox)||sh.el.querySelector('.solidOptions');

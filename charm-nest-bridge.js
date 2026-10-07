@@ -3340,6 +3340,21 @@ const Gate = window.Gate = (() => {
     if (split.length) no(`${sheetNameOf(sh)} shares an order with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
     await changeMembership(sh.metal, true, sh);
   }
+  /** A sheet of a COMMITTED set whose page copy lost its place in it (Paul, 7 Oct: a partial sheet was chosen for it and it was nested again; the page drafted it out of its
+   *  set, "Filling" with no Set number, and the run never puts a sheet of a committed set back, so Cut Sheet was refused with "Not cut: Included by you"). The set's own record
+   *  and the saved sheet record both kept it, so the page copy takes its place back from them: only this page's copy changes, nothing is written, nothing is added to any set.
+   *  Resolves true when the sheet is in its set again, false when no committed set lists it or the saved record does not (then the sheet's own Include decides).
+   *  charm-nest-rose-ui.js record() asks it before it asks for an Include. */
+  async function rejoin(sh) {
+    if (!sh || sh.recalled || !sh.sheetId || !sh.runId || (sh.setId && !sh.draft) || !committedSheet(sh) || !S.cloud.ok) return false;
+    const set = Sets.ofRun(sh.runId).find(s => s.committedAt && (s.sheetIds || []).includes(sh.sheetId));
+    const rec = set ? ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })) || {}).sheet : null;
+    if (!set || !rec || rec.draft || rec.setId !== set.setId) return false;
+    Object.assign(sh, { draft: false, setId: set.setId, seq: set.seq, setDay: set.day || sh.setDay, group: set.group || sh.group || "dispatch", sheetIndex: +rec.sheetIndex || sh.sheetIndex || null });
+    sh.fileBase = CN.sheetFileBase(sh);
+    Session.schedule(); refreshAllCards();
+    return true;
+  }
   async function flush(run) {
     // A save that failed (the network down, a 5xx, the cloud offline) is tried once more here. Its error used to be thrown
     // again at every labels and commit step, Resume after Resume, until Retry was pressed in Options.
@@ -4156,7 +4171,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */

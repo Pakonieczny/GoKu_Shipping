@@ -34,5 +34,26 @@ const piece = (p, id, order) => { p.charms.push({ id, poolId: 'p' + id, order })
   run.status = 'complete';
   await assert.rejects(() => Gate.cutInclude(pages[0]), /finished|Not cut/, 'a finished run takes no sheet');
   run.status = 'review';
-  console.log('gold-cut-include: ok (own Include, refusal with the reason, nothing changed when refused)');
+  // A sheet of a COMMITTED set whose page copy lost its place in it (Paul, 7 Oct: a partial sheet was chosen for it and it was nested again, so the page drafted it out of its set):
+  // Gate.rejoin takes the place back from the set and the saved record, writing nothing; an Include cannot, the run leaves committed sheets alone.
+  const set = sets[0]; set.sheetIds = ['gold14k-1', 'gold14k-2']; set.committedAt = Date.now(); set.seq = 3;
+  assert.equal(typeof Gate.rejoin, 'function'); assert.equal(typeof Gate.committedSheet, 'function');
+  assert.equal(Gate.committedSheet(pages[0]), true, 'a sheet of a committed set is one'); assert.equal(Gate.committedSheet({ ...pages[0], sheetId: 'other' }), false);
+  const reads = [], real = ctx.api, lost = () => Object.assign(pages[0], { draft: true, setId: null, seq: null, sheetIndex: null, fileBase: 'working' });
+  const saved0 = JSON.stringify([...saved.keys()]);
+  ctx.api = async (name, body) => { reads.push(name + ':' + body.op); if (body.op === 'getSheet') return { sheet: { id: body.id, setId: 'set', draft: false, sheetIndex: 2 } }; throw new Error('rejoin writes nothing: ' + body.op); };
+  lost(); assert.equal(await Gate.rejoin(pages[0]), true, 'the committed sheet takes its place back');
+  assert.deepEqual([pages[0].draft, pages[0].setId, pages[0].seq, pages[0].sheetIndex, pages[0].fileBase], [false, 'set', 3, 2, 'Set-1-Sheet-1'], 'its set, number, index and file name');
+  assert.deepEqual(reads, ['charmNestLibrary:getSheet'], 'one read, no write'); assert.equal(JSON.stringify([...saved.keys()]), saved0, 'nothing was saved');
+  // nothing to take back: the saved record says it is a draft, or sits in another set; no committed set lists it; it is recalled; the cloud is off
+  ctx.api = async (name, body) => ({ sheet: { id: body.id, setId: 'set', draft: true } }); lost(); assert.equal(await Gate.rejoin(pages[0]), false, 'a saved draft stays a draft'); assert.equal(pages[0].draft, true);
+  ctx.api = async (name, body) => ({ sheet: { id: body.id, setId: 'elsewhere', draft: false } }); assert.equal(await Gate.rejoin(pages[0]), false, 'another set is not this one');
+  ctx.api = async () => { throw new Error('must not read'); };
+  assert.equal(await Gate.rejoin(null), false); assert.equal(await Gate.rejoin({ ...pages[0], sheetId: 'unlisted', draft: true, setId: null }), false, 'no committed set lists it');
+  assert.equal(await Gate.rejoin({ ...pages[0], recalled: { roseStockId: 'x' } }), false, 'a recalled sheet');
+  assert.equal(await Gate.rejoin({ ...pages[0], draft: false, setId: 'set' }), false, 'a sheet already in its set');
+  ctx.S.cloud.ok = false; assert.equal(await Gate.rejoin(pages[0]), false, 'the cloud is off'); ctx.S.cloud.ok = true;
+  set.committedAt = 0; ctx.api = async (name, body) => ({ sheet: { id: body.id, setId: 'set', draft: false } }); assert.equal(await Gate.rejoin(pages[0]), false, 'an uncommitted set is not rejoined (its sheets join by Include)');
+  ctx.api = real;
+  console.log('gold-cut-include: ok (own Include, refusal with the reason, nothing changed when refused; a committed set sheet takes its place back, reading only)');
 })().catch(e => { console.error(e); process.exit(1); });
