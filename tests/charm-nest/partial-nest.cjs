@@ -177,8 +177,8 @@ const ids = list => list.map(c => c.id).sort().join();
   // ── 5. a recorded cut is permanent: refused in words, nothing is called ──
   {
     const x = world('rose'), { w, sh, log } = x, PN = w.PartialNest; const p = x.add('rgs-p', 20); x.docs.get('rgs-p').metal = 'rose'; x.setCards([p]); sh.charms = x.pieces(3);
-    for (const [patch, code] of [[{ roseCutAt: 1760000000000 }, 'cut'], [{ laserDoneAt: 1760000000000 }, 'laser'], [{ recalled: {} }, 'recalled'], [{ status: 'nesting' }, 'busy'], [{ rosePlan: { lines: [] } }, 'line']]) {
-      Object.assign(sh, { roseCutAt: null, laserDoneAt: null, recalled: null, status: 'complete', rosePlan: null }, patch); log.api.length = 0;
+    for (const [patch, code] of [[{ roseCutAt: 1760000000000 }, 'cut'], [{ laserDoneAt: 1760000000000 }, 'laser'], [{ processReady: true }, 'laser'], [{ recalled: {} }, 'recalled'], [{ status: 'nesting' }, 'busy'], [{ rosePlan: { lines: [] } }, 'line']]) {
+      Object.assign(sh, { roseCutAt: null, laserDoneAt: null, processReady: false, recalled: null, status: 'complete', rosePlan: null }, patch); log.api.length = 0;
       const can = PN.canSeat(sh); assert(!can.ok && can.code === code, code + ': ' + JSON.stringify(can));
       const pv = await PN.preview(sh, [p.id]); assert(!pv.ok && pv.code === code && pv.fitsAll === false, JSON.stringify(pv));
       const r = await PN.seat(sh, [p.id]); assert(!r.ok && r.code === code); assert.equal(log.api.length, 0, code + ': nothing is read, claimed or released'); assert.equal(log.started.length, 0);

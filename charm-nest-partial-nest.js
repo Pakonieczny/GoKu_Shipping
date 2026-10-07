@@ -89,6 +89,7 @@
     const sets=(window.Sets&&window.Sets.ofRun&&window.Sets.ofRun(sh.runId))||[];
     if(+sh.laserDoneAt>0||sh.releaseFull||(window.Gate&&window.Gate.holding&&window.Gate.holding(sh)))return refuse('laser','This sheet has gone on to Laser cutting. Its layout is kept as it is, so it cannot move to another partial sheet.');
     if(sets.some(s=>s.committedAt&&(s.sheetIds||[]).includes(sh.sheetId)))return refuse('set','This sheet belongs to a committed set. Its layout is kept as it is, so it cannot move to another partial sheet.');
+    if(window.RoseStock&&window.RoseStock.approved&&window.RoseStock.approved(sh))return refuse('laser','This sheet is already approved for Laser cutting. Its layout is kept as it is, so it cannot move to another partial sheet.');
     if(sh.rosePlan||sh.roseProtected)return refuse('line','This sheet already has a green cut line saved, so its pieces stay where they are. A partial sheet can be used on a new sheet.');
     if(['nesting','finishing','queued'].includes(sh.status)||sh._operationStarting||sh._partialBusy||(sh.persisted&&!sh.persistedDone))return refuse('busy','Wait until this sheet has finished nesting and saving, then choose the partial sheet.');
     if(inSet(sh)&&sh.roseStock)return refuse('set',`${label(sh)} is in the current set. Take it out of the set first (Options, Include in current set), then choose the partial sheet.`);
