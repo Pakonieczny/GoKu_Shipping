@@ -1227,14 +1227,18 @@ const Orders = window.Orders = (() => {
     // the Custom Orders a person finished by hand (their QR label printed) come with the maps: the lines pulled that may
     // have one are read by their keys, and the list of recent ones (for orders that have left the pull) once a session and
     // every 30 minutes, neither with its sticker; a failed read keeps what was read before and never holds the maps
-    const ck = customKeys(), began = Date.now(), listDue = began - customListAt > 30 * 60000;
-    const [om, al, nd, cl, cd] = await Promise.all([api("charmNestLibrary", { op: "optionMapGet" }), api("charmNestLibrary", { op: "aliasGet" }), api("charmNestLibrary", { op: "noDesignGet" }), listDue ? api("charmNestLibrary", { op: "customGet" }, { quiet: true }).catch(() => null) : null, ck.length ? api("charmNestLibrary", { op: "customGet", keys: ck }, { quiet: true }).catch(() => null) : null]);
+    const ck = customKeys(), began = Date.now(), listDue = began - customListAt > 30 * 60000, seq = ++mapsSeq;
+    // (each map is asked for with the signature it was last read with: one that has not changed answers `unchanged` and
+    // costs the cloud two small reads, where it read every document of the map at every check)
+    const [om, al, nd, cl, cd] = await Promise.all([readMap("om", "optionMapGet"), readMap("al", "aliasGet"), readMap("nd", "noDesignGet"), listDue ? api("charmNestLibrary", { op: "customGet" }, { quiet: true }).catch(() => null) : null, ck.length ? api("charmNestLibrary", { op: "customGet", keys: ck }, { quiet: true }).catch(() => null) : null]);
     mergeCustom(cl, cd, ck, began);
     // the server's clock at the whole list's read: the Review tab's changes feed (ReviewLive) asks for what changed after it
     if (cl && cl.records && typeof cl.at === "number") { customBase = { at: cl.at, seen: Date.now() }; }
     // the maps are replaced only when what was read differs: a new map object is what makes interpretAll read lines again
     const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
-    if (sig !== mapsSig || !mapsSame()) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
+    // (a read that was asked for before another one that has already come back is older than it: its answer is not put over the newer)
+    if (seq > mapsApplied && (sig !== mapsSig || !mapsSame())) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
+    if (seq > mapsApplied) mapsApplied = seq;
     B.maps.loadedAt = Date.now();
     // a map larger than one answer holds comes back cut short (truncated), where it used to stop at a count in silence: said
     // once, not at every reload
@@ -1243,7 +1247,15 @@ const Orders = window.Orders = (() => {
     mapsCut = cut;
     if (window.Session?.ready?.()) window.CustomSheet?.load?.().catch(() => {});
   }
-  let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0, customBase = null;
+  let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0, customBase = null, mapsSeq = 0, mapsApplied = 0;
+  const mapReply = {};   // the last whole answer of each learned map, with the signature it came with
+  let mapAsk = 0;
+  async function readMap(key, op) {
+    const had = mapReply[key], at = ++mapAsk, r = await api("charmNestLibrary", had && had.sig ? { op, ifSig: had.sig } : { op });
+    if (r && r.unchanged && had) return (mapReply[key] || had).r;   // (the newest whole answer held: one that came back meanwhile is newer)
+    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) mapReply[key] = { sig: r.sig, r, at }; } else delete mapReply[key];
+    return r;
+  }
   if (!B.maps.customDone) B.maps.customDone = {};
   // the records of lines reopened (state "open"): not completed, but their seals are kept and shown on their buttons for
   // good (Paul, 29 Sep 00:35: "the seal must always remain and follow that order forever")
@@ -2039,12 +2051,13 @@ const Master = window.Master = (() => {
     B.master.loading = (async () => {
       if (changed) render();
       try {
-        const sig = x => JSON.stringify(x || null), first = o.quiet && B.master.index ? await api("charmNestLibrary", { op: "masterListFiles" }, quiet) : null;
+        const sig = x => JSON.stringify(x || null), first = o.quiet && B.master.index ? await api("charmNestLibrary", B.master.filesSig ? { op: "masterListFiles", ifFilesSig: B.master.filesSig } : { op: "masterListFiles" }, quiet) : null;   // (the file records are sent again only when they changed)
         const unchanged = !!(first && first.index && sig(first.index) === sig(B.master.index));
         const [ix, fl] = await Promise.all([unchanged ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: "entries" }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
         if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; changed = true; }
+        if (fl.unchanged) fl.files = B.master.files || [];
         if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
-        B.master.files = fl.files || []; B.master.loadedAt = Date.now();
+        B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
         if (B.master.error) changed = true;
         B.master.error = null;
       } catch (e) { if (B.master.error !== e.message) changed = true; B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
