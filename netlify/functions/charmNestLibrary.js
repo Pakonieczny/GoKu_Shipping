@@ -1402,7 +1402,8 @@ const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
-  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut"]);
+  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
+  "sandboxCancel", "sandboxPut", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -3026,13 +3027,21 @@ const countOf = () => col(CANCELLED).count().get().then(s => s.data().count);
 async function op_cancelList(b) {
   const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
   const tidyRec = d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; };
+  /* FC3b (cost): the placement feed asked this (idsOnly, after) every 2.5 s per open tab: a query and a count() (4 to 7 reads) to learn
+     that nothing was written. Every writer of a cancel record raises Charm_Nest_Rev/cancel in its own transaction or batch
+     (_orderCancel.bump); a page that sends the counter it saw (ifGen) is answered `unchanged` for ONE read when it has not moved. The
+     counter is read BEFORE the records, so a record written in between only makes the next ask read again. `wantGen` asks for it with
+     the answer (no ifGen yet). Production only (the sandbox answers in full, as before); a counter that cannot be read is no gen. */
+  const gen = b.idsOnly && (b.ifGen != null || b.wantGen) && !PREFIX ? await OrderCancel.gen(db, PREFIX) : null;
   if (b.after !== undefined) {
     const a = b.after && typeof b.after === "object" ? b.after : {}, s0 = Math.round(num(a.s)), n0 = Math.round(num(a.n)), id0 = orderIdOf(a.id);
     if (!(s0 > 0) || !(n0 >= 0 && n0 < 1e9) || !id0) return { error: "bad cursor" };
+    if (gen != null && b.ifGen != null && Number(b.ifGen) === gen) return { cursor: { s: s0, n: n0, id: id0 }, more: false, ids: [], unchanged: true, gen };
     let q = col(CANCELLED).orderBy("createdAt").orderBy(docOrder()).startAfter(new admin.firestore.Timestamp(s0, n0), id0).limit(n);
     if (b.idsOnly) q = q.select("orderId", "createdAt");
     const [s, total] = await Promise.all([q.get(), b.idsOnly ? countOf() : null]);
     const out = { cursor: (s.size && cursorOf(s.docs[s.size - 1])) || { s: s0, n: n0, id: id0 }, more: s.size >= n };
+    if (gen != null) out.gen = gen;
     return b.idsOnly ? Object.assign(out, { ids: s.docs.map(d => d.id), total }) : Object.assign(out, { list: s.docs.map(tidyRec) });
   }
   const top = b.track ? await col(CANCELLED).orderBy("createdAt", "desc").orderBy(docOrder(), "desc").select("createdAt").limit(1).get() : null;
@@ -3041,7 +3050,7 @@ async function op_cancelList(b) {
   //  the order a person cancelled today, which the orders check must keep out of the pull)
   if (b.idsOnly) {
     const [s, total] = await Promise.all([col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(), top ? countOf() : null]);
-    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {});
+    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {}, gen != null ? { gen } : {});
   }
   let cq=col(CANCELLED).orderBy("at",b.direction==='asc'?'asc':'desc');
   const dates=Activity.bounds(b.range);
@@ -3122,7 +3131,8 @@ async function op_cancelRestore(b) {
     text: `Was cancelled${c.by ? " by " + c.by : ""}${c.why ? ": " + c.why : ""}`, data: { cancelled: c }, id: String(num(c.at) || "record") }; }, "cancel restored");
   const batch = db.batch();
   if (rec) batch.set(col(CANCEL_HISTORY).doc(`${id}~${Math.round(num(rec.at)) || Date.now()}`), Object.assign({}, rec, { restoredAt: Date.now(), restoredBy: str(b.by, 80) || "operator" }));
-  batch.delete(ref); await batch.commit(); return { ok: true };
+  batch.delete(ref); OrderCancel.bump(batch, db, FV, PREFIX);   // (FC3b: the cancel counter moves with the delete, in this batch: readers of the cancelled list ask after it, see cancelList)
+  await batch.commit(); return { ok: true };
 }
 /** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */
 function cancelCopy(r) {

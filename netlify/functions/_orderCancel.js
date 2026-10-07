@@ -128,6 +128,28 @@ function stage(w, db, FV, ref, p, prefix, create) {
 }
 const tidy = r => { const x = Object.assign({}, r); delete x.createdAt; return x; };
 
+/* The cancel counter (FC3b, cost). Charm_Nest_Rev/cancel { n } is raised IN THE SAME transaction or batch as every write that adds, rewrites or
+   removes a cancel record (a person's cancel and Etsy's through put(); the mirror's page and the sweep through putMany(); a restore, which
+   charmNestLibrary's cancelRestore does with bump() below), so the counter can never be behind a record and a record write that fails raises
+   nothing. The sorter's placement feed used to ask cancelList (a query and a count(), 4 to 7 reads) every 2.5 s per open tab only to learn
+   nothing had changed; it now sends the counter it saw (ifGen) and a counter that has not moved is answered for ONE read. A write that
+   nothing raised the counter for (an edit by hand in the console) shows at the page's next deep read (at most a minute on). Production only:
+   the sandbox keeps no counter (a leftover of every reset). Never raised for noteFates/noteRemovals: they change no record's presence. */
+const REV_COL = "Charm_Nest_Rev", REV_DOC = "cancel";
+const revRef = db => db.collection(REV_COL).doc(REV_DOC);
+/** Queue the counter's raise on a transaction or batch (once per commit). Returns whether it was queued. */
+function bump(w, db, FV, prefix) {
+  if (prefix || !FV || typeof FV.increment !== "function") return false;
+  w.set(revRef(db), { n: FV.increment(1), at: FV.serverTimestamp() }, { merge: true });
+  return true;
+}
+/** The counter now (0 before the first raise), or null when it cannot be read or this is the sandbox: the reader then reads in full. */
+async function gen(db, prefix) {
+  if (prefix) return null;
+  try { const snap = await revRef(db).get(); return snap.exists ? Number((snap.data() || {}).n) || 0 : 0; }
+  catch (e) { console.warn("[orderCancel] cancel counter not read:", (e && e.message) || e); return null; }
+}
+
 /** One cancel, in a transaction (a person's, the sorter's word that Etsy cancelled it, the sandbox's pretend one).
     opts: prefix · person (who pressed it) · detectedBy · eventId · mustExist (putMany's retry of a record it read: gone
     since means a person restored the order meanwhile, and a detection does not bring it back). */
@@ -139,6 +161,7 @@ async function put(db, FV, inc, opts = {}) {
     if (!cur && opts.mustExist) return null;
     const pl = plan(cur, inc, opts);
     stage(t, db, FV, ref, pl, opts.prefix, false);
+    if (pl.kind) bump(t, db, FV, opts.prefix);   // (the counter moves with the record, in this transaction)
     return pl;
   });
   if (!p) return { ok: true, record: null, created: false, kept: false, changed: false, gone: true };
@@ -186,6 +209,7 @@ async function putMany(db, FV, recs, opts = {}) {
   for (let i = 0; i < todo.length; i += 100) {
     const part = todo.slice(i, i + 100), batch = db.batch();
     for (const x of part) stage(batch, db, FV, x.ref, x.p, opts.prefix, true);
+    if (part.some(x => x.p.kind)) bump(batch, db, FV, opts.prefix);   // (once for the batch, in the batch)
     try { await batch.commit(); part.forEach(count); }
     catch (e) {
       for (const x of part) {
@@ -360,4 +384,4 @@ function mergeRemovals(cur, inc) {
 }
 /** Removals of a cancelled order onto its record (never makes one: a restored order stays restored). opts: prefix · by. */
 async function noteRemovals(db, orderId, removals, opts = {}) { return noteFates(db, orderId, [], Object.assign({}, opts, { removals })); }
-module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, BACKLOG, REMOVALS_MAX, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates, noteRemovals, removalOf, mergeRemovals, cancelledIds, keepBacklog, retryBacklog };
+module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, BACKLOG, REMOVALS_MAX, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates, noteRemovals, removalOf, mergeRemovals, cancelledIds, keepBacklog, retryBacklog, bump, gen, REV_COL, REV_DOC };
