@@ -17,11 +17,20 @@ const lib = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
 const T0 = Date.parse("2026-10-07T10:00:00Z");
 const SESSIONS = ["sess_aaaaaaaa", "sess_bbbbbbbb", "sess_cccccccc"];
 
+const pick = (job, fields) => fields ? Object.fromEntries(fields.filter(k => k in job).map(k => [k, job[k]])) : { ...job };
+
 async function runSweep({ body = {}, summaries = {}, jobs = [], statusAnswer = "JOB_STATE_RUNNING", summaryError = false } = {}) {
-  const reconciled = [], summaryReads = [];
+  const reconciled = [], summaryReads = [], setsFetched = [], marked = [], selects = [];
   const guard = {};
   const db = {
-    getAll: async (ref, opts) => {
+    getAll: async (...args) => {
+      const opts = args.pop(), refs = args;
+      if (refs[0] && refs[0].job) {            // records' `sets`, by field mask
+        assert.equal(JSON.stringify(opts.fieldMask), '["sets"]', "only the sets field is fetched");
+        refs.forEach(r => setsFetched.push(jobs[r.id].batchName));
+        return refs.map(r => ({ exists: true, data: () => pick(jobs[r.id], opts.fieldMask) }));
+      }
+      const ref = refs[0];
       summaryReads.push({ id: ref.id, fieldMask: opts && opts.fieldMask });
       if (summaryError) throw new Error("unavailable");
       const d = summaries[ref.id];
@@ -37,13 +46,18 @@ async function runSweep({ body = {}, summaries = {}, jobs = [], statusAnswer = "
       if (name === "batches") return {
         orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({
           docs: SESSIONS.map(sessionId => ({ data: () => ({ sessionId }) })) }) }) }) }),
-        where: (field) => field === "repairPending"
-          ? { limit: () => ({ select: () => ({ get: async () => ({ forEach: () => {} }) }) }) }
-          : { orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => {
-              const docs = jobs.map((job, i) => ({ id: i, data: () => ({ ...job }) }));
+        where: (field) => {
+          if (field === "repairPending") return { limit: () => ({ select: () => ({ get: async () => ({ forEach: () => {} }) }) }) };
+          let fields = null;
+          const q = { orderBy: () => q, limit: () => q, startAfter: () => q,
+            select: (...f) => { fields = f; selects.push(f); return q; },
+            get: async () => {
+              const docs = jobs.map((job, i) => ({ id: i, ref: { id: i, job: true }, data: () => pick(job, fields) }));
               return { size: docs.length, docs, forEach: fn => docs.forEach(fn) };
-            } }) }) }) },
-        doc: () => ({ set: async () => {} }),
+            } };
+          return q;
+        },
+        doc: (id) => ({ set: async (value) => { marked.push({ id, value }); } }),
       };
       throw new Error(`unexpected collection ${name}`);
     },
@@ -53,6 +67,8 @@ async function runSweep({ body = {}, summaries = {}, jobs = [], statusAnswer = "
   const handler = async (event) => {
     const payload = JSON.parse(event.body);
     if (payload.kind === "batch_status") return { body: JSON.stringify({ ok: true, state: statusAnswer }) };
+    if (payload.kind === "batch_collect") return { body: JSON.stringify({ ok: true }) };
+    if (payload.kind === "batch_retry_missing") return { body: JSON.stringify({ ok: true, queued: true, reason: "Waiting for an active job to finish" }) };
     throw new Error(`unexpected call ${payload.kind}`);
   };
   const result = await vm.runInNewContext(`(async () => { ${source.slice(start, end)} })()`, {
@@ -76,7 +92,7 @@ async function runSweep({ body = {}, summaries = {}, jobs = [], statusAnswer = "
     batchDocIdFromName: (x) => x,
     safeErr: (err) => ({ message: err.message }),
   });
-  return { result, reconciled, summaryReads, guard };
+  return { result, reconciled, summaryReads, setsFetched, marked, selects, guard };
 }
 
 const idle = (extra = {}) => ({ status: "completed_with_issues", active: 0, queued: 0, saving: 0, checkedAt: T0 - 5 * 60000, ...extra });
@@ -119,5 +135,26 @@ const idle = (extra = {}) => ({ status: "completed_with_issues", active: 0, queu
   // A person's sweep for one session (right after a submit) always checks that session even when scheduled flags are present.
   const named = await runSweep({ body: { cronTriggered: true, sessionId: SESSIONS[1] }, summaries: { [SESSIONS[0]]: idle(), [SESSIONS[1]]: idle(), [SESSIONS[2]]: idle() } });
   assert.deepEqual(named.reconciled, [SESSIONS[1]], "the named session is always checked");
+
+  // The open-job page reads routing fields only; `sets` (prompts, manifests) is fetched, by field mask, just for the
+  // records that use it. Finished history nothing waits on, and replaced jobs, never download their prompts.
+  const set1 = [{ outputBasePath: "listing-generator-1/Rings/Ready_To_List/Set_1", setKind: null, tasks: [{ prompt: "x".repeat(5000) }] }];
+  const jobs = [
+    { batchName: "batch_dead_failed", state: "JOB_STATE_FAILED", collected: false, providerError: "Invalid image format", sets: set1 },
+    { batchName: "batch_dead_cancelled", state: "JOB_STATE_CANCELLED", collected: false, sets: set1 },
+    { batchName: "batch_replaced", state: "JOB_STATE_FAILED", collected: false, retryBatchName: "batch_next", retryRequested: true, sets: set1 },
+    { batchName: "batch_pointer", state: "JOB_STATE_QUEUED", collected: false, locallyQueued: true, retryBatchName: "batch_next", sets: set1 },
+    { batchName: "batch_running", state: "JOB_STATE_RUNNING", collected: false, sets: set1 },
+    { batchName: "batch_quota_failed", state: "JOB_STATE_FAILED", collected: false, providerError: "Enqueued token limit reached", sets: set1 },
+    { batchName: "batch_saved_cancelled", state: "JOB_STATE_CANCELLED", collected: false, collectionPending: true, responsesFile: "file-x", sets: set1 },
+  ];
+  const lean = await runSweep({ body: { cronTriggered: true }, jobs, summaries: {} });
+  assert.equal(lean.result.statusCode, 200);
+  assert(lean.selects.every(f => !f.includes("sets")), "the open-job page never selects sets");
+  assert.deepEqual(lean.setsFetched.sort(), ["batch_quota_failed", "batch_running", "batch_saved_cancelled"],
+    "only the jobs that use their sets download them: dead history and replaced jobs do not");
+  assert(lean.marked.some(m => m.id === "batch_quota_failed" && m.value.retryRequested === true),
+    "a quota failure is still marked for retry from its fetched sets (one non-charm set)");
+  assert.equal(lean.result.openBatches, 7, "every uncollected record is still seen");
   console.log("sweep idle cost: ok");
 })().catch((err) => { console.error(err); process.exit(1); });
