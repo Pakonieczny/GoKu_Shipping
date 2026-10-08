@@ -2,6 +2,7 @@
 // This is a bounded discovery sample of public Shopify listings, not a sales
 // ranking, an inventory assertion, or a replacement for exact product reads.
 const CATEGORIES=['regular-necklaces','beady-necklaces','stud-earrings','hoop-earrings','charm-only'];
+const catalogueIntents=require('../../brites-catalogue-intents.js');
 const QUERIES=['necklace','beady necklace','hoop earrings','charm'];
 const MINIMUM=100,TARGET=120,MAXIMUM=160,PAGE_LIMIT=4,CACHE_MS=60000;
 function categories(product){
@@ -22,7 +23,14 @@ function categories(product){
 }
 function counts(products){const result=Object.fromEntries(CATEGORIES.map(name=>[name,0]));for(const p of products)for(const name of categories(p))result[name]++;return result;}
 function choose(products){
-  const groups=CATEGORIES.map(name=>products.filter(p=>categories(p).includes(name))),chosen=new Map();
+  // Keep the five structural groups balanced, and rotate actual named motifs
+  // within each group so dozens of one design do not crowd every other motif
+  // out of the warm test collection. Every row still comes from a public read.
+  function diverse(rows){
+    const buckets=new Map();for(const product of rows){const planned=catalogueIntents.plan(String(product.title||'')),key=planned.terms.filter(word=>!/^\d+$/.test(word)&&!['tiny','mini','small','little','dainty','profile','silhouette'].includes(word)).slice(0,1).join(' ')||planned.themes[0]||'other';if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(product);}
+    const result=[],groups=[...buckets.values()];for(let i=0;groups.some(group=>i<group.length);i++)for(const group of groups)if(group[i])result.push(group[i]);return result;
+  }
+  const groups=CATEGORIES.map(name=>diverse(products.filter(p=>categories(p).includes(name)))),chosen=new Map();
   let offset=0;
   while(chosen.size<TARGET&&groups.some(group=>offset<group.length)){
     for(const group of groups){const p=group[offset];if(p&&!chosen.has(p.id))chosen.set(p.id,p);if(chosen.size>=TARGET)break;}offset++;

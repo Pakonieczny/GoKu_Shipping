@@ -6,6 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const {gzipSync} = require('node:zlib');
 const {JSDOM} = require('jsdom');
 const avatar = require('../../brites-concierge-avatar.js');
 const diagnostic = require('../../scripts/inspect-concierge-avatar.cjs');
@@ -117,9 +118,11 @@ test('actual production mesh construction stays finite and adaptive tessellation
 test('scene network and source budgets prevent accidental eager or oversized avatar regressions', () => {
   const controller = fs.readFileSync(path.join(root, 'brites-concierge-avatar.js'), 'utf8');
   assert.ok(fileBytes('assets/brites-concierge-avatar-scene.mjs') <= 640 * 1024);
-  // Explicit 64 KiB source ceiling allows the single signal envelope, closed
-  // expressive curve and measured spectral contours. Scene download stays bounded.
-  assert.ok(fileBytes('brites-concierge-avatar.js') <= 64 * 1024);
+  // The request-bound waiting rig adds at most 8 KiB to the former 64 KiB
+  // source ceiling. A separate compressed ceiling guards the transfer size;
+  // no extra presentation asset request is introduced. Scene stays bounded.
+  assert.ok(fileBytes('brites-concierge-avatar.js') <= 72 * 1024);
+  assert.ok(gzipSync(controller).length <= 20 * 1024);
   assert.ok(fileBytes('brites-concierge-avatar.css') <= 12 * 1024);
   assert.doesNotMatch(controller, /avatar-concept\.png/);
   assert.match(controller, /await import\(moduleUrl\)/);

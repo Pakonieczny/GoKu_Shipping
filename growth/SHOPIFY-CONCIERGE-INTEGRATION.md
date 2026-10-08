@@ -67,9 +67,9 @@ The Shopify adapter can open the real checkout through the existing form after c
 
 ## Installation and migration checks
 
-1. Copy the shared concierge, voice, action, bridge and avatar assets listed in the existing deployment manifest to an unpublished Shopify theme. Keep the deployed server API base and existing OpenAI credentials on the server.
+1. Copy the shared concierge, catalogue-intent, shopping-guide, voice, action, bridge and avatar assets listed in the existing deployment manifest to an unpublished Shopify theme. Keep the deployed server API base and existing OpenAI credentials on the server.
 2. Render `brites-concierge` with `enable_storefront_adapter: true`. Its Liquid config provides locale root, currency, exact product identity/count and only collection handles that Shopify exposes. It embeds no customer or cart-note JSON.
-3. Verify one listing from each of the five groups, literal material/length menus, native menu closing, selected engraving text and its actual property schema, price changes, quantity, guarded undo, exact-choice review and a shopper-confirmed addition in the unpublished theme. Editing a text field does not certify a personalized addition.
+3. Verify one listing from each of the five groups, literal material/length menus, native menu closing, selected engraving text and its actual property schema, price changes, quantity, guarded undo, exact-choice review, incomplete-choice walkthrough and an explicit exact-selection addition in the unpublished theme. Editing a text field does not certify a personalized addition.
 4. Verify real cart rows, same-variant/different-property line identities, quantity/remove readback, detected wrapping/note fields and their actual native saves, charge display, and native checkout handoff. A missing/changed/duplicated binding disables the action rather than guessing a selector. Confirm native image-dialog bindings before advertising image closing; sandbox zoom alone does not establish a production overlay mapping.
 5. Test actual microphone audio, WebRTC networking and graphics in a supported shopper browser. Synthetic callback tests and cloud browser checks do not certify physical audio or GPU quality.
 6. Promote the reviewed unpublished theme only when the production move is authorized. No server-side campaign, conversion or payment action is part of this installation.

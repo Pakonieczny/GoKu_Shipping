@@ -80,8 +80,8 @@ test('typed partial completion exposes exact public receipts and the next questi
   assert.deepEqual([...f.root.querySelectorAll('.card')].map(card=>card.dataset.productId),[f.rows[0].id]);
   const question=await f.command('What is the price of this piece?');assert.equal(question.productFacts.handle,'daisy-necklace');assert.match(question.reply,/USD 50\.00 to USD 75\.00/);assert.equal(f.requests.length,requests);
 });
-test('two-piece bag review returns a separate visible confirmation receipt and never adds automatically',async t=>{
-  const f=await fixture(t);await f.command('Open Daisy Necklace then select Sterling Silver then select 18 inch');const requests=f.requests.length,result=await f.command('Add two of this to my cart');
+test('explicit two-piece bag review returns a separate visible confirmation receipt and never adds automatically',async t=>{
+  const f=await fixture(t);await f.command('Open Daisy Necklace then select Sterling Silver then select 18 inch');const requests=f.requests.length,result=await f.command('Set quantity to two then review adding this piece to my cart');
   assert.equal(result.ok,true,result.reply);assert.equal(result.partial,false);assert.equal(result.prepared,true);assert.match(result.requiredCustomerClick,/Confirm add to bag/i);assert.deepEqual(clone(result.completedActions).map(action=>action.type),['product-quantity','review-add']);assert.equal(result.snapshot.productControls.quantity,2);assert.equal(result.snapshot.productControls.itemTotalPrice,110);assert.equal(result.snapshot.bagControls.itemCount,0);assert.equal(result.cartChanged,false);
   assert.equal(f.d.querySelector('.product-review .primary').textContent,'Confirm add to test bag');assert.equal(f.requests.length,requests);
 });

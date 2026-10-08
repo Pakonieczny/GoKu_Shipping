@@ -11,7 +11,7 @@ export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
   schema: 5,
   identity: 'original pearlfin porcelain guide',
   expressionRig: 'two open deformable light ribbons, raised brow arcs, faceted cheek lights, continuously closed expressive mouth curve and measured sound emission ripples; no human iris, opening aperture or phoneme claim',
-  interactionProfile: Object.freeze({authorship: 'original authored choreography', blink: 'rare irregular 0.19-0.21 second closure', transitionMs: 320, signal: 'brow silhouette, eye shape, smile glyph and faceted cheek signals; colour is supplementary', grounded: true, loopingBodyMotion: false, gaze: 'one continuous acceleration and velocity bounded cursor and product trajectory'}),
+  interactionProfile: Object.freeze({authorship: 'original authored choreography', blink: 'rare irregular 0.19-0.21 second closure', transitionMs: 320, signal: 'brow silhouette, eye shape, smile glyph and faceted cheek signals; colour is supplementary', thinking: 'relaxed balanced eyes and a small closed smile; request-bound consideration, softening and patient attention; cursor and product gaze take priority', grounded: true, loopingBodyMotion: false, gaze: 'one continuous acceleration and velocity bounded cursor and product trajectory'}),
   expressions: Object.freeze(['neutral', 'attentive', 'curious', 'explaining', 'delighted', 'reassuring', 'warm']),
   stateColors: Object.freeze({idle: '#4aa8ff', listening: '#49c9ff', thinking: '#ab87ff', speaking: '#70d8f1', success: '#72ddd1', error: '#ffc28e'}),
   textures: Object.freeze([

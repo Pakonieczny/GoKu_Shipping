@@ -44,7 +44,7 @@ const run=(f,action,requestId='request-one',extra={})=>f.instance.execute(action
 test('matches the live custom form without exposing shopper notes or cart tokens',t=>{
   const f=fixture(t),snap=f.instance.snapshot();
   assert.deepEqual(snap.productControls,{handle:'sample-bunny',productId:'gid://shopify/Product/9001',productTitle:'Sample Bunny Necklace',productType:'Necklace',variantId:'gid://shopify/ProductVariant/1001',quantity:1,optionsOpen:false,openedOption:null,optionGroups:[{name:'Metal Choice',values:['Sterling Silver','14k Gold Filled']},{name:'Necklace Length',values:['14 inch','18 inch']},{name:'Engraving',values:['None','Engraved']}],selectedOptions:[{name:'Metal Choice',value:'Sterling Silver'},{name:'Necklace Length',value:'14 inch'},{name:'Engraving',value:'None'}],selectedVariant:{id:'gid://shopify/ProductVariant/1001',title:'Sterling Silver / 14 inch / None',price:54,currency:'USD',available:true,options:[{name:'Metal Choice',value:'Sterling Silver'},{name:'Necklace Length',value:'14 inch'},{name:'Engraving',value:'None'}]},itemTotalPrice:54,reviewReady:false});
-  assert.equal(snap.checkoutControls,null);assert.deepEqual(snap.bagControls,{lines:[],itemCount:0});
+  assert.equal(snap.checkoutControls,null);assert.deepEqual(snap.bagControls,{lines:[],itemCount:0,countKnown:false,linesComplete:false});
   assert.equal(JSON.stringify(snap).includes('PRIVATE'),false);
 });
 test('capabilities distinguish real controls from simulated checkout and unverified cart rows',t=>{

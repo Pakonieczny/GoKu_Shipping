@@ -7,12 +7,30 @@ const milestoneDiscovery = require('./_britesMilestoneDiscovery');
 const storefront = require('./_britesStorefront');
 const storefrontSeed = require('./_britesStorefrontSeed');
 const catalogueDiscovery = require('./_britesCatalogueDiscovery');
+const catalogueIntents = require('../../brites-catalogue-intents.js');
 const publicSeedCache = {};
 const CATALOG_QUERY = `query GrowthProducts($query:String!, $after:String){products(first:50,query:$query,after:$after){nodes{id handle title status onlineStoreUrl descriptionHtml productType tags updatedAt featuredImage{url altText} images(first:16){nodes{url altText}} options{name values} variants(first:100){nodes{id title sku price availableForSale selectedOptions{name value}} pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}shop{name currencyCode}}`;
 const STOP_AT = Date.parse('2026-10-11T02:00:00Z');
 const clean = (v,n=500) => String(v==null?'':v).replace(/\u0000/g,'').trim().slice(0,n);
 const hash = v => crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
-const textOf = v => clean(String(v||'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,' ').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/\s+/g,' '),24000);
+function textOf(v){
+  const html=String(v||''),hidden=[],visible=[];let cursor=0;
+  // Remove invisible contents before flattening markup so hidden measurements
+  // cannot become product facts. Track nesting rather than the first close tag.
+  for(const token of html.matchAll(/<!--[\s\S]*?(?:-->|$)|<\/?(script|style|template|noscript)\b[^>]*>/gi)){
+    if(!hidden.length)visible.push(html.slice(cursor,token.index),' ');
+    if(token[1]){
+      const tag=token[1].toLowerCase(),closing=token[0][1]==='/',raw=/^(?:script|style)$/.test(hidden[hidden.length-1]||'');
+      if(!raw||closing&&tag===hidden[hidden.length-1]){
+        if(closing){const start=hidden.lastIndexOf(tag);if(start>=0)hidden.length=start;}
+        else hidden.push(tag);
+      }
+    }
+    cursor=token.index+token[0].length;
+  }
+  if(!hidden.length)visible.push(html.slice(cursor));
+  return clean(visible.join('').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/\s+/g,' '),24000);
+}
 function publicUrl(v,storeOnly=false){try{const u=new URL(String(v));if(u.protocol!=='https:'||u.username||u.password||u.port||!u.hostname.includes('.')||/^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(u.hostname))return null;if(storeOnly&&!['britesjewelry.com','www.britesjewelry.com'].includes(u.hostname))return null;return u.href;}catch{return null;}}
 function sameSecret(a,b){if(!a||!b)return false;return crypto.timingSafeEqual(Buffer.from(hash(String(a))),Buffer.from(hash(String(b))));}
 function catalogueImageUrl(value){const normalized=typeof value==='string'&&value.startsWith('//')?'https:'+value:value,url=publicUrl(normalized);if(!url)return null;const u=new URL(url);return ['britesjewelry.com','www.britesjewelry.com','cdn.shopify.com'].includes(u.hostname)?url:null;}
@@ -45,7 +63,7 @@ function productProjection(p){
   const title=shopperCatalogueField(p.title,300),type=shopperCatalogueField(p.type,100);
   const variants=(p.variants||[]).flatMap(v=>{const variantTitle=shopperCatalogueField(v?.title,200),options=(v?.options||[]).flatMap(o=>{const name=shopperCatalogueField(o?.name,100),value=shopperCatalogueField(o?.value,100);return name&&value?[{name,value}]:[];});return variantTitle&&options.length===(v?.options||[]).length?[{id:v.id,numericId:v.numericId,title:variantTitle,price:v.price,available:v.available,...(v.availabilityKnown===false?{availabilityKnown:false}:{}),options}]:[];});
   const images=catalogueImages(p.images,{url:p.image,altText:p.imageAlt});
-  return {id:p.id,handle:p.handle,title,type,url:p.url,image:images[0]?.url||null,imageAlt:images[0]?.altText||null,images,currency:p.currency,description:shopperCatalogueText(p.description),partsOnly:/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(type||''),options:(p.options||[]).flatMap(o=>{const name=shopperCatalogueField(o?.name,100),values=(o?.values||[]).map(value=>shopperCatalogueField(value,100)).filter(Boolean);return name?[{name,values}]:[];}),variants,variantsComplete:p.variantsComplete,checkedAt:p.checkedAt,cartHold:p.cartHold===true,recommendationHold:p.recommendationHold===true,meaningHold:p.meaningHold===true};
+  return {id:p.id,handle:p.handle,title,type,url:p.url,image:images[0]?.url||null,imageAlt:images[0]?.altText||null,images,currency:p.currency,description:shopperCatalogueText(p.description),partsOnly:/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(type||'')&&!(/^(?:custom\s+charm\s+)?studio$/i.test(type||'')&&['necklaces','earrings','bracelets','rings'].some(category=>catalogueIntents.categoryMatches(p,category))),options:(p.options||[]).flatMap(o=>{const name=shopperCatalogueField(o?.name,100),values=(o?.values||[]).map(value=>shopperCatalogueField(value,100)).filter(Boolean);return name?[{name,values}]:[];}),variants,variantsComplete:p.variantsComplete,checkedAt:p.checkedAt,cartHold:p.cartHold===true,recommendationHold:p.recommendationHold===true,meaningHold:p.meaningHold===true};
 }
 function validIdentity(id){return /^gid:\/\/shopify\/Product\/\d+$/.test(String(id));}
 function validateDossier(d,p,now=Date.now()){
@@ -378,6 +396,8 @@ function applyProductIssues(products,records){const holds=new Map((Array.isArray
 // Shopper preferences are deliberately a small public allowlist. Raw account,
 // owner or repository state never enters the conversation projection.
 const MOTIFS = [
+  ['animal','animals?|wildlife|fauna|creatures?'],['pet','pets?'],['insect','insects?|bugs?'],
+  ['ocean','ocean|marine|sea life'],['floral','floral|blossoms?'],
   ['bunny','bunn(?:y|ies)|rabbits?'],['cardinal','cardinals?'],
   ['fire badge','firefighters?|firem[ae]n|fire badge'],['stethoscope','nurses?|doctors?|medical|stethoscopes?'],
   ['tooth','dentists?|dental|teeth|tooths?'],['apple book','teachers?|teaching'],
@@ -435,7 +455,7 @@ function negatedAt(text,index) {
   // Contrast and punctuation terminate a negation. “Not gold, silver please”
   // therefore selects silver; “no gold or silver” excludes both. Preserve
   // “instead of” as a rejection while standalone “instead” starts a choice.
-  const prefix=text.slice(0,index).split(/[,;.!?]|\b(?:but|instead(?!\s+of\b)|however|i (?:want|prefer|like)|she (?:likes|loves|prefers)|he (?:likes|loves|prefers)|they (?:like|love|prefer))\b/i).at(-1).replace(/\b(?:no (?:item )?(?:price|budget|spending) limit|without (?:a |the |my )?(?:item )?(?:price|budget|spending) limit)\b/gi,'').slice(-75);
+  const prefix=text.slice(0,index).split(/[,;.!?]|\b(?:but|instead(?!\s+of\b)|however|i (?:want|prefer|like|mean|meant)|she (?:likes|loves|prefers)|he (?:likes|loves|prefers)|they (?:like|love|prefer))\b/i).at(-1).replace(/\b(?:no (?:item )?(?:price|budget|spending) limit|without (?:a |the |my )?(?:item )?(?:price|budget|spending) limit)\b/gi,'').slice(-75);
   return /\b(?:not|no|never|without|avoid|except|excluding|rather than|instead\s+of|don'?t(?:\s+\w+){0,3}|doesn'?t(?:\s+\w+){0,3}|do not(?:\s+\w+){0,3}|does not(?:\s+\w+){0,3})\s+(?:\w+\s+){0,4}$/i.test(prefix);
 }
 
@@ -450,6 +470,14 @@ function categoryMentions(text){
 
 function freshCatalogueRequest(message,before={}){
   const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
+  // Ordinary shop-inventory questions explicitly leave a narrowed product or
+  // collection. They must not fall through to the default necklace search.
+  const discovery=catalogueIntents.discovery(text,before);
+  if(discovery.recognized&&!discovery.denied&&discovery.mode==='browse')return {mode:'reset',type:null};
+  if(discovery.recognized&&!discovery.denied&&discovery.mode==='refine-category'){
+    const category=discovery.plan.categories[0],type={necklaces:'necklace',earrings:'earrings',bracelets:'bracelet',rings:'ring',charms:'charm'}[category]||categoryType(category);
+    return {mode:'category',type,...(storefrontSeed.CATEGORIES.includes(category)?{storeCategory:category}:{}),replaceQuery:false};
+  }
   // Explicit identities, ordinals and "same" references still resolve against
   // the checked current selection. A category name alone is a fresh browse,
   // never permission to open a newly discovered product or prepare a cart.
@@ -488,6 +516,7 @@ function semanticInquiry(message){
 // existing live, grounded route. No page context is an action authorization.
 function conversationReply(message){
   const raw=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
+  const discovery=catalogueIntents.discovery(raw);if(discovery.recognized&&!discovery.denied&&discovery.mode==='browse')return null;
   if(/https?:|www\.|\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data)|checkout|check out|pay|payment)\b/.test(raw))return null;
   const text=raw.replace(/[^a-z0-9'\s]/g,' ').replace(/\s+/g,' ').trim();
   const greeting='(?:hello|hi|hey|hiya|greetings|good morning|good afternoon|good evening|hello there|hi there|hey there)';
@@ -633,8 +662,8 @@ function motifPattern(value) {
   return entry?entry[1]:clean(value,80).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 }
 function typeMatches(product,type) {
-  const patterns={necklace:'necklace|pendant',pendant:'pendant|necklace',earrings:'earrings?|studs?|huggies?',studs:'studs?',huggie:'huggies?',bracelet:'bracelets?',ring:'rings?',charm:'charms?'};
-  return !type||new RegExp('\\b(?:'+patterns[type]+')\\b','i').test(product.title+' '+product.type);
+  const categories={necklace:'necklaces',pendant:'necklaces',earrings:'earrings',studs:'stud-earrings',huggie:'hoop-earrings',bracelet:'bracelets',ring:'rings',charm:'charms'};
+  return !type||catalogueIntents.categoryMatches(product,categories[type]);
 }
 function chainEvidence(product,variant){
   const detail=product.description||'',variantText=variant.title+' '+(variant.options||[]).map(o=>o.value).join(' ');
@@ -644,15 +673,15 @@ function chainEvidence(product,variant){
   return length||lengthConfiguration||/\b(?:chain|necklace)\b[^.!?]{0,70}\b(?:included|\d{1,2}(?:\.\d+)?\s*(?:inch(?:es)?|cm))\b/i.test(detail)||/\b(?:includes|comes with)\s+(?:a\s+)?(?:[^.!?]{0,35}\s)?chain\b/i.test(detail);
 }
 function variantTypeMatches(product,variant,type) {
-  const actualType=clean(product.type,100),part=/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(actualType);
+  const actualType=clean(product.type,100),finished=['necklaces','earrings','bracelets','rings'].some(category=>catalogueIntents.categoryMatches(product,category)),part=/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(actualType)&&!(/^(?:custom\s+charm\s+)?studio$/i.test(actualType)&&finished);
   if(!type)return !part;
   if(type==='charm')return /\bcharms?\b/i.test(actualType);
   if(part)return false;
-  if(type==='necklace'&&(!/\bnecklaces?\b/i.test(actualType)||!chainEvidence(product,variant)))return false;
-  if(type==='pendant'&&!/\b(?:pendants?|necklaces?)\b/i.test(actualType))return false;
-  if(['earrings','studs','huggie'].includes(type)&&!/\b(?:earrings?|studs?|hoops?|huggies?)\b/i.test(actualType))return false;
-  if(type==='bracelet'&&!/\bbracelets?\b/i.test(actualType))return false;
-  if(type==='ring'&&!/\brings?\b/i.test(actualType))return false;
+  if(type==='necklace'&&(!catalogueIntents.categoryMatches(product,'necklaces')||!chainEvidence(product,variant)))return false;
+  if(type==='pendant'&&!catalogueIntents.categoryMatches(product,'necklaces'))return false;
+  if(['earrings','studs','huggie'].includes(type)&&!typeMatches(product,type))return false;
+  if(type==='bracelet'&&!catalogueIntents.categoryMatches(product,'bracelets'))return false;
+  if(type==='ring'&&!catalogueIntents.categoryMatches(product,'rings'))return false;
   const detail=variant.title+' '+(variant.options||[]).filter(o=>/type|style|jewel|option|item/i.test(o.name)).map(o=>o.value).join(' ');
   if(/\b(?:necklace|huggie|earring|bracelet)\s+charms?\b|charm\s*\+\s*engrav|pendant only|charm only|loose charm/i.test(detail))return false;
   return /\b(?:necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?)\b/i.test(detail)?typeMatches({title:detail,type:''},type):typeMatches(product,type);
@@ -677,15 +706,18 @@ function personalizedVariant(product,variant) {
 }
 function rankProducts(items,intent,now=Date.now(),limit=6) {
   const p=shopperPreferences(intent),wanted=p.interests.length?p.interests:p.query.split(/\s+/).filter(Boolean);
+  const plannedQuery=p.query?catalogueIntents.plan(p.query):null,literalPlan=plannedQuery&&(!p.interests.length||plannedQuery.themes.length)?plannedQuery:null;
   const matches=[];
   for(const product of Array.isArray(items)?items:[]) {
     if(!isStorefrontDiscoveryProduct(product))continue;
     if(product?.recommendationHold===true)continue;
     if(!validIdentity(product?.id)||!publicUrl(product.url,true)||!Number.isFinite(product.checkedAt)||now-product.checkedAt>5*60000||product.checkedAt>now+60000)continue;
     if(!shopperCatalogueField(product.title,300)||!shopperCatalogueField(product.type,100))continue;
-    const searchable=product.title+' '+product.type+' '+(product.tags||[]).join(' ');
-    if(p.excludedInterests.filter(value=>value!=='engraved').some(value=>new RegExp('\\b(?:'+motifPattern(value)+')\\b','i').test(product.title)))continue;
-    const interestHits=wanted.filter(value=>new RegExp('\\b(?:'+motifPattern(value)+')\\b','i').test(searchable));
+    const motifTags=(Array.isArray(product.tags)?product.tags:[]).flatMap(tag=>{const value=clean(tag,100),hit=value.match(/^(?:motif|symbol|theme)\s*:\s*([\p{L}\p{N}\s-]+)$/iu);return hit?[hit[1]]:/^[\p{L}\p{N}-]+$/u.test(value)?[value]:[];}),searchable=product.title+' '+product.type+' '+motifTags.join(' ');
+    const motifProof=value=>['apple book','fire badge','police badge','movie slate','engraved'].includes(value)?new RegExp('\\b(?:'+motifPattern(value)+')\\b','i').test(searchable):catalogueIntents.motifMatches(product,value);
+    if(p.excludedInterests.filter(value=>value!=='engraved').some(motifProof))continue;
+    if(literalPlan&&!catalogueIntents.match(product,literalPlan,{variants:false}))continue;
+    const interestHits=wanted.filter(motifProof);
     if(wanted.length&&!interestHits.length)continue;
     const budgetApplies=!p.budgetCurrency||p.budgetCurrency===product.currency;
     const variants=(product.variants||[]).filter(v=>v.available===true&&Number.isFinite(v.price)&&v.price>=0&&shopperCatalogueField(v.title,200)&&(v.options||[]).every(option=>shopperCatalogueField(option?.name,100)&&shopperCatalogueField(option?.value,100))&&(p.storeCategory?categoryVariantMatches(product,v,p.storeCategory):variantTypeMatches(product,v,p.type))&&!p.excludedTypes.some(type=>variantTypeMatches(product,v,type))&&metalMatches(v,p.metal)&&!p.excludedMetals.some(metal=>metalMatches(v,metal))&&(!p.excludedInterests.includes('engraved')||!personalizedVariant(product,v))&&(!budgetApplies||((p.budget==null||v.price<=p.budget)&&(p.minBudget==null||v.price>=p.minBudget))));
@@ -832,6 +864,10 @@ function exactCurrentPageRequest(text,currentHandle){
 
 function productFactRequest(message,context={}){
   const destination=explicitDestination(clean(message,2000)),text=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
+  // Availability phrasing about a new theme/type requests discovery even on
+  // an open detail page. Deictic "this in silver" still inspects that product.
+  const discovery=catalogueIntents.discovery(text);
+  if(discovery.recognized&&!discovery.denied&&discovery.mode==='browse')return null;
   // Historical interpretations retain their separate reviewed-evidence route.
   if(semanticInquiry(text)||fieldMentions(text,'compare|comparison|versus|vs').some(hit=>!hit.negative))return null;
   const patterns={description:'describe|description|details?|tell me(?: more)? about|what (?:is|are) (?:it|this|that|these)|comes? with|includes?|included',price:'how much|prices?|costs?|item (?:total|subtotal)|subtotal|selected (?:total|price)|total (?:cost|price)',materials:'materials?|metals?|made (?:of|from)|silver|sterling|gold|plated|filled|hypoallergenic|nickel|allerg\\w*|waterproof|tarnish',lengths:'lengths?',engraving:'engrav\\w*|personali[sz]\\w*',options:'options?|choices?|configurations?|variants?',dimensions:'dimensions?|measurements?|width|height|weight|diameter|thickness|sizes?',availability:'available|availability|stock|sold out'};
@@ -858,6 +894,7 @@ function productFactRequest(message,context={}){
   const ordinalHandle=index==null?'':validHandle(Array.isArray(context.productHandles)?context.productHandles[index]:'');
   const explicitCurrent=fieldMentions(text,'current (?:product|piece|item|one)|on this (?:product )?page|selected (?:product|piece|item|one|option|variant)').some(hit=>!hit.negative);
   const deictic=/\b(?:it|this|that|these|current|selected)\b/.test(text);
+  if(discovery.recognized&&!discovery.denied&&(discovery.plan.categories.length||discovery.plan.themes.length)&&!deictic&&!explicitCurrent&&!destination.handles.length&&!ordinal&&!named.length)return null;
   if(!current&&!focused&&!destination.handles.length&&!destination.unsafe&&!ordinal&&!deictic&&!named.length)return null;
   if(!deictic&&!overview&&!destination.handles.length&&!named.length&&/\b(?:necklaces|earrings|bracelets|pendants|charms|rings|products|pieces|catalogue|catalog|collection)\b/.test(text))return null;
   const broad=/\b(?:all|other|different|catalogue|catalog|collection)\b/.test(text)&&!overview&&!/\b(?:this|that|it|current|selected|these)\b/.test(text);

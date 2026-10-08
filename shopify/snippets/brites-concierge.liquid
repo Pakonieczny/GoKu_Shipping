@@ -31,6 +31,8 @@
       "product": {{ product | json | replace: '<', '\u003c' }}
     }
   </script>
+  <script src="{{ 'brites-catalogue-intents.js' | asset_url }}" defer></script>
+  <script src="{{ 'brites-concierge-shopping-guide.js' | asset_url }}" defer></script>
   <script src="{{ 'brites-storefront-bridge.js' | asset_url }}" defer></script>
   <script src="{{ 'brites-shopify-storefront-adapter.js' | asset_url }}" defer></script>
 {% endif %}

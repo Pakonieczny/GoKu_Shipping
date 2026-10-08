@@ -28,6 +28,8 @@ const assets = [
   "concierge-sandbox.js",
   "concierge-sandbox.css",
   "brites-storefront-bridge.js",
+  "brites-catalogue-intents.js",
+  "brites-concierge-shopping-guide.js",
   "brites-shopify-storefront-adapter.js",
   "concierge-storefront-qa.html",
   "concierge-storefront-qa.js",
