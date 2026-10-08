@@ -7,6 +7,12 @@
    reserve no page space; the existing shop/voice DOM stays mounted. */
 /* Keep rotated decorative orbits inside the narrow hero, without page overflow. */
 @media(max-width:760px){.intro-art{min-width:0;overflow:hidden}}
+/* Long native variant labels must not set the width of the mobile product grid. */
+@media(max-width:760px){
+  .product-layout,.product-details{grid-template-columns:minmax(0,1fr)}
+  .product-layout>*,.product-details>*{min-width:0}
+  .option-area select{min-width:0}
+}
 @media(min-width:1100px){
   body.shop-demo[data-storefront="expanded"]:has(brites-concierge[data-storefront-docked="true"][data-open="true"]){padding-right:392px}
   body:has(brites-concierge[data-storefront-docked="true"][data-open="true"]) .shop-head{padding:22px clamp(24px,3vw,52px);gap:18px}
