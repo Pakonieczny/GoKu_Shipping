@@ -43,7 +43,7 @@ const run=(f,action,requestId='request-one',extra={})=>f.instance.execute(action
 
 test('matches the live custom form without exposing shopper notes or cart tokens',t=>{
   const f=fixture(t),snap=f.instance.snapshot();
-  assert.deepEqual(snap.productControls,{handle:'sample-bunny',productId:'gid://shopify/Product/9001',variantId:'gid://shopify/ProductVariant/1001',quantity:1,optionsOpen:false,openedOption:null,optionGroups:[{name:'Metal Choice',values:['Sterling Silver','14k Gold Filled']},{name:'Necklace Length',values:['14 inch','18 inch']},{name:'Engraving',values:['None','Engraved']}],selectedOptions:[{name:'Metal Choice',value:'Sterling Silver'},{name:'Necklace Length',value:'14 inch'},{name:'Engraving',value:'None'}],reviewReady:false});
+  assert.deepEqual(snap.productControls,{handle:'sample-bunny',productId:'gid://shopify/Product/9001',productTitle:'Sample Bunny Necklace',productType:'Necklace',variantId:'gid://shopify/ProductVariant/1001',quantity:1,optionsOpen:false,openedOption:null,optionGroups:[{name:'Metal Choice',values:['Sterling Silver','14k Gold Filled']},{name:'Necklace Length',values:['14 inch','18 inch']},{name:'Engraving',values:['None','Engraved']}],selectedOptions:[{name:'Metal Choice',value:'Sterling Silver'},{name:'Necklace Length',value:'14 inch'},{name:'Engraving',value:'None'}],selectedVariant:{id:'gid://shopify/ProductVariant/1001',title:'Sterling Silver / 14 inch / None',price:54,currency:'USD',available:true,options:[{name:'Metal Choice',value:'Sterling Silver'},{name:'Necklace Length',value:'14 inch'},{name:'Engraving',value:'None'}]},itemTotalPrice:54,reviewReady:false});
   assert.equal(snap.checkoutControls,null);assert.deepEqual(snap.bagControls,{lines:[],itemCount:0});
   assert.equal(JSON.stringify(snap).includes('PRIVATE'),false);
 });
@@ -210,7 +210,7 @@ for(const action of [
   {type:'bag',selector:'#bjAdd'},{type:'open',handle:'../checkout'},{type:'open',handle:'javascript:alert(1)'},{type:'open',handle:'sample-bunny',url:'https://evil.example'},
   {type:'search',query:'<script>alert(1)</script>'},{type:'search',query:'https://evil.example'},{type:'select-option',handle:'sample-bunny',variantId:'1001'},
   {type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001',optionName:'Metal Choice',optionValue:'Sterling Silver'},
-  {type:'gift-preferences',giftNote:'PRIVATE'},{type:'checkout-complete'},{type:'bag-remove',lineId:'1001:opaque'},
+  {type:'gift-preferences',giftNote:'PRIVATE'},{type:'checkout-complete'},{type:'bag-remove',lineId:'../checkout'},
 ])test(`rejects untrusted or unsupported ${JSON.stringify(action)}`,()=>assert.equal(adapter.validateAction(action),null));
 test('does not invoke action getters before rejecting them',()=>{let called=false;const action={};Object.defineProperty(action,'type',{enumerable:true,get(){called=true;return 'bag';}});assert.equal(adapter.validateAction(action),null);assert.equal(called,false);});
 test('inherited action getters cannot supply a requested handle or trigger execution',()=>{let called=false;const inherited={};Object.defineProperty(inherited,'handle',{get(){called=true;return 'sample-bunny';}});const action=Object.assign(Object.create(inherited),{type:'open'});assert.equal(adapter.validateAction(action),null);assert.equal(called,false);});

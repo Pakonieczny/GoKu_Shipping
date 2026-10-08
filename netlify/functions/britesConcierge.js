@@ -27,7 +27,7 @@ export default async (req,context) => {
     const env=environment(),storage=await recorder.run('storage_connect',()=>({db:core.makeDb(env),namespace:core.namespace(env)})),db=storage.db;
     recorder.attach({namespace:storage.namespace,col:suffix=>db.collection(storage.namespace+'_'+suffix)});
     const rawShopify=await recorder.run('catalogue_connect',()=>core.createShopify({env}));
-    const shopify=observed(recorder,rawShopify,{search:'catalogue_search',byHandle:'catalogue_product'});
+    const shopify=observed(recorder,rawShopify,{search:'catalogue_search',discover:'catalogue_search',byHandle:'catalogue_product'});
     const rawService=await recorder.run('service_connect',()=>core.createGrowthService({db,env,shopify}));recorder.attach(rawService);
     const service=observed(recorder,rawService,{rateLimit:'rate_limit',setup:'control_state',saveProducts:'catalogue_persist',productIssues:'holds_read',research:'knowledge_read',storySupplements:'knowledge_read'});
     if(!await service.rateLimit((context.ip||'concierge')+(body.event?'-events':'-messages'),body.event?45:20))return await respond({error:'Please wait a moment before trying again.'},429,'limited');

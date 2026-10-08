@@ -12,11 +12,21 @@
   {% unless brites_root_last == '/' %}
     {% assign brites_root = brites_root | append: '/' %}
   {% endunless %}
+  {% assign brites_collection_candidates = 'all,necklaces,beady-chain-necklaces,earrings,charm-studs,huggie-hoops,bracelets,rings,charms-only' | split: ',' %}
   <script type="application/json" data-brites-shopify-config>
     {
       "theme": "brites-v1",
       "root": {{ brites_root | json | replace: '<', '\u003c' }},
       "currency": {{ cart.currency.iso_code | json | replace: '<', '\u003c' }},
+      "collectionHandles": [
+        {% assign brites_collection_separator = '' %}
+        {% for brites_collection_handle in brites_collection_candidates %}
+          {% if collections[brites_collection_handle] != blank %}
+            {{ brites_collection_separator }}{{ brites_collection_handle | json }}
+            {% assign brites_collection_separator = ',' %}
+          {% endif %}
+        {% endfor %}
+      ],
       "variantCount": {{ product.variants_count | default: 0 | json }},
       "product": {{ product | json | replace: '<', '\u003c' }}
     }

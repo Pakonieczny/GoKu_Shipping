@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const milestoneDiscovery = require('./_britesMilestoneDiscovery');
 const storefront = require('./_britesStorefront');
 const storefrontSeed = require('./_britesStorefrontSeed');
+const catalogueDiscovery = require('./_britesCatalogueDiscovery');
 const publicSeedCache = {};
 const CATALOG_QUERY = `query GrowthProducts($query:String!, $after:String){products(first:50,query:$query,after:$after){nodes{id handle title status onlineStoreUrl descriptionHtml productType tags updatedAt featuredImage{url altText} images(first:16){nodes{url altText}} options{name values} variants(first:100){nodes{id title sku price availableForSale selectedOptions{name value}} pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}shop{name currencyCode}}`;
 const STOP_AT = Date.parse('2026-10-11T02:00:00Z');
@@ -31,7 +32,7 @@ function makeDb(env){const {Firestore}=require('@google-cloud/firestore');if(!en
 function normalizeProduct(p,currency='USD',now=Date.now()){
   const url=publicUrl(p.onlineStoreUrl,true);if(!url||p.status!=='ACTIVE')throw Error('Product is not published in the live online store.');
   const images=catalogueImages(p.images?.nodes,p.featuredImage);
-  return {id:p.id,handle:clean(p.handle,180),title:clean(p.title,300),url,currency,description:textOf(p.descriptionHtml),type:clean(p.productType,100),tags:(p.tags||[]).map(t=>clean(t,100)).slice(0,80),image:images[0]?.url||null,imageAlt:images[0]?.altText||'',images,options:(p.options||[]).map(o=>({name:clean(o.name,100),values:(o.values||[]).map(v=>clean(v,100))})),variants:(p.variants?.nodes||[]).map(v=>({id:v.id,numericId:String(v.id).split('/').pop(),title:clean(v.title,200),sku:clean(v.sku,200),price:Number(v.price),available:!!v.availableForSale,options:v.selectedOptions||[]})).filter(v=>Number.isFinite(v.price)&&v.price>=0),variantsComplete:p.variants?.pageInfo?.hasNextPage===false,updatedAt:typeof p.updatedAt==='string'?clean(p.updatedAt,100):null,checkedAt:now};
+  return {id:p.id,handle:clean(p.handle,180),title:clean(p.title,300),url,currency,description:textOf(p.descriptionHtml),type:clean(p.productType,100),tags:(p.tags||[]).map(t=>clean(t,100)).slice(0,80),image:images[0]?.url||null,imageAlt:images[0]?.altText||'',images,options:(p.options||[]).map(o=>({name:clean(o.name,100),values:(o.values||[]).map(v=>clean(v,100))})),variants:(p.variants?.nodes||[]).map(v=>({id:v.id,numericId:String(v.id).split('/').pop(),title:clean(v.title,200),sku:clean(v.sku,200),price:Number(v.price),available:v.availableForSale===true,...(typeof v.availableForSale!=='boolean'?{availabilityKnown:false}:{}),options:v.selectedOptions||[]})).filter(v=>Number.isFinite(v.price)&&v.price>=0),variantsComplete:p.variants?.pageInfo?.hasNextPage===false,updatedAt:typeof p.updatedAt==='string'?clean(p.updatedAt,100):null,checkedAt:now};
 }
 function shopperCatalogueText(value,limit=24000){
   return clean(value,limit).split(/(?<=[.!?])\s+/).filter(sentence=>{
@@ -42,7 +43,7 @@ function shopperCatalogueText(value,limit=24000){
 function shopperCatalogueField(value,limit){const normalized=clean(value,limit);return normalized&&shopperCatalogueText(normalized,limit)===normalized?normalized:null;}
 function productProjection(p){
   const title=shopperCatalogueField(p.title,300),type=shopperCatalogueField(p.type,100);
-  const variants=(p.variants||[]).flatMap(v=>{const variantTitle=shopperCatalogueField(v?.title,200),options=(v?.options||[]).flatMap(o=>{const name=shopperCatalogueField(o?.name,100),value=shopperCatalogueField(o?.value,100);return name&&value?[{name,value}]:[];});return variantTitle&&options.length===(v?.options||[]).length?[{id:v.id,numericId:v.numericId,title:variantTitle,price:v.price,available:v.available,options}]:[];});
+  const variants=(p.variants||[]).flatMap(v=>{const variantTitle=shopperCatalogueField(v?.title,200),options=(v?.options||[]).flatMap(o=>{const name=shopperCatalogueField(o?.name,100),value=shopperCatalogueField(o?.value,100);return name&&value?[{name,value}]:[];});return variantTitle&&options.length===(v?.options||[]).length?[{id:v.id,numericId:v.numericId,title:variantTitle,price:v.price,available:v.available,...(v.availabilityKnown===false?{availabilityKnown:false}:{}),options}]:[];});
   const images=catalogueImages(p.images,{url:p.image,altText:p.imageAlt});
   return {id:p.id,handle:p.handle,title,type,url:p.url,image:images[0]?.url||null,imageAlt:images[0]?.altText||null,images,currency:p.currency,description:shopperCatalogueText(p.description),partsOnly:/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(type||''),options:(p.options||[]).flatMap(o=>{const name=shopperCatalogueField(o?.name,100),values=(o?.values||[]).map(value=>shopperCatalogueField(value,100)).filter(Boolean);return name?[{name,values}]:[];}),variants,variantsComplete:p.variantsComplete,checkedAt:p.checkedAt,cartHold:p.cartHold===true,recommendationHold:p.recommendationHold===true,meaningHold:p.meaningHold===true};
 }
@@ -128,7 +129,7 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
   function fromPublic(p,currency,priceInCents){
     if(!p||!/^\d+$/.test(String(p.id))||!/^[-_a-z0-9]{1,180}$/.test(p.handle||''))throw Error('The published product identity could not be verified.');
     const optionNames=(p.options||[]).map((o,i)=>typeof o==='string'?o:o.name||'Option '+(i+1));
-    const variants=(p.variants||[]).map(v=>({id:'gid://shopify/ProductVariant/'+v.id,title:v.title,sku:v.sku,price:priceInCents?Number(v.price)/100:Number(v.price),availableForSale:v.available===true,selectedOptions:optionNames.map((name,i)=>({name,value:clean(v.options?.[i]??v['option'+(i+1)],100)}))}));
+    const variants=(p.variants||[]).map(v=>({id:'gid://shopify/ProductVariant/'+v.id,title:v.title,sku:v.sku,price:priceInCents?Number(v.price)/100:Number(v.price),availableForSale:typeof v.available==='boolean'?v.available:undefined,selectedOptions:optionNames.map((name,i)=>({name,value:clean(v.options?.[i]??v['option'+(i+1)],100)}))}));
     const images=catalogueImages(p.images,p.image||{url:p.featured_image,altText:p.title});
     const result=normalizeProduct({id:'gid://shopify/Product/'+p.id,handle:p.handle,title:p.title,status:'ACTIVE',onlineStoreUrl:publicBase+'/products/'+p.handle,descriptionHtml:p.description||p.body_html,productType:p.type||p.product_type,tags:Array.isArray(p.tags)?p.tags:String(p.tags||'').split(',').map(x=>x.trim()),updatedAt:p.updated_at,featuredImage:images[0],images:{nodes:images},options:optionNames.map((name,i)=>({name,values:[...new Set(variants.map(v=>v.selectedOptions[i]?.value).filter(Boolean))]})),variants:{nodes:variants,pageInfo:{hasNextPage:variants.length>=250}}},currency,now());
     result.source=priceInCents?'published_product_ajax':'published_catalogue_json';return result;
@@ -168,7 +169,8 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
   async function search(terms){let result;if(!adminConfigured())result=await publicSearch(terms);else{const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');result=await products(query);}return {...result,products:result.products.filter(isStorefrontDiscoveryProduct)};}
   async function byHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const r=await products('handle:'+handle);return r.products.find(p=>p.handle===handle)||null;}
   const seedReader=storefrontSeed.createSeedReader({readPage:page=>publicProducts('', 'public:'+page,8000),readSearch:query=>publicSearch(query,8000),isDiscovery:isStorefrontDiscoveryProduct,project:productProjection,now,cache:fetch===globalThis.fetch?publicSeedCache:{}});
-  return {products,search,byHandle,browse,seed:seedReader.read};
+  const discovery=catalogueDiscovery.createDiscovery({readSeed:seedReader.read,readSearch:query=>publicSearch(query,8000),readFallback:()=>publicProducts('',null,8000),now});
+  return {products,search,byHandle,browse,seed:seedReader.read,discover:discovery.read};
 }
 function createGrowthService({db,env={},shopify,now=Date.now}){
   const ns=namespace(env), col=suffix=>db.collection(ns+'_'+suffix), state=()=>col('State').doc('control'), pid=id=>hash(id).slice(0,40);
@@ -401,6 +403,9 @@ const MOTIFS = [
   ['zodiac','zodiac|astrology'],['initial','initials?'],['engraved','engrave[ds]?|engraving|personali[sz](?:ed|ation|e)|handwriting|handwritten|my (?:own )?writing']
 ];
 const TYPES = ['necklace','earrings','bracelet','pendant','huggie','studs','ring','charm'];
+const TYPE_PATTERN='necklaces?|earrings?|bracelets?|pendants?|huggies?|hoops?|studs?|rings?|charms?';
+const typeName=value=>value.startsWith('stud')?'studs':value.startsWith('earring')||value.startsWith('hoop')?'earrings':value.replace(/s$/,'');
+const categoryType=category=>category==='charm-only'?'charm':category==='stud-earrings'||category==='hoop-earrings'?'earrings':'necklace';
 const METALS = ['silver','gold','rose gold'];
 const RECIPIENTS = ['mom','mother','dad','father','wife','husband','daughter','son','friend','sister','brother','grandmother','grandfather','partner','teacher','nurse','doctor','myself'];
 const OCCASIONS = ['birthday','anniversary','graduation','memorial','christmas','wedding','retirement','thank you','just because'];
@@ -414,7 +419,7 @@ function shopperPreferences(saved={}) {
   const budget=amount(saved?.budget),unlimitedBudget=saved?.unlimitedBudget===true&&budget==null;
   return {
     query:clean(saved?.query,250),interests:plainList(saved?.interests),excludedInterests:plainList(saved?.excludedInterests),
-    type:TYPES.includes(saved?.type)?saved.type:null,excludedTypes:plainList(saved?.excludedTypes).filter(x=>TYPES.includes(x)),
+    type:TYPES.includes(saved?.type)?saved.type:null,excludedTypes:plainList(saved?.excludedTypes).filter(x=>TYPES.includes(x)),storeCategory:storefrontSeed.CATEGORIES.includes(saved?.storeCategory)?saved.storeCategory:null,
     metal:METALS.includes(saved?.metal)?saved.metal:null,excludedMetals:plainList(saved?.excludedMetals).filter(x=>METALS.includes(x)),
     recipient:RECIPIENTS.includes(saved?.recipient)?saved.recipient:null,occasion:OCCASIONS.includes(saved?.occasion)?saved.occasion:null,
     budget,minBudget:unlimitedBudget?null:amount(saved?.minBudget),unlimitedBudget,currency:currencyCode(saved?.currency)||'USD',
@@ -437,6 +442,11 @@ function negatedAt(text,index) {
 function fieldMentions(text,pattern,canonical) {
   return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],raw:m[0],index:m.index,negative:negatedAt(text,m.index)}));
 }
+function categoryMentions(text){
+  // Match the qualifier without consuming an intervening motif. Bounded
+  // necklace lookahead keeps ordinary uses of "regular" and "bead" out.
+  return fieldMentions(text,'regular(?=(?:[ -][a-z]+){0,4}[ -]necklaces?\\b)(?:[ -]chain)?|beady(?:[ -]chain)?(?: necklaces?)?|(?:beaded|bead)(?=(?:[ -][a-z]+){0,4}[ -]necklaces?\\b)|stud(?: earrings?)?|(?:hoop|huggie)(?: earrings?)?|hoops|huggies|charm[ -]only|(?:loose|standalone|individual) charms?|only charms?',value=>/^regular/.test(value)?'regular-necklaces':/^bead/.test(value)?'beady-necklaces':/^stud/.test(value)?'stud-earrings':/^(?:hoop|huggie)/.test(value)?'hoop-earrings':'charm-only');
+}
 
 function freshCatalogueRequest(message,before={}){
   const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
@@ -446,10 +456,12 @@ function freshCatalogueRequest(message,before={}){
   if(/https?:|www\.|\/products\/|\b(?:this|that|these|those|same|exact|current|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(text))return null;
   const reset='(?:reset|clear|remove) (?:the |my |all )?(?:search|filters?|category filters?)|(?:show|browse|view|open|restore|return to|go back to|back to|take me back to) (?:me )?(?:the )?(?:previous )?(?:(?:full|whole|entire|complete|unfiltered|original) (?:catalogue|catalog|collection|list|selection)|all (?:jewellery|jewelry|pieces|products|items|categories))|start (?:fresh|over|again)';
   if(fieldMentions(text,reset).some(hit=>!hit.negative)||/^(?:please )?(?:show (?:me )?all|browse all|view all|go back|reset(?: all)?|clear all)(?: please)?[.!?]*$/.test(text))return {mode:'reset',type:null};
-  const types=fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,''));
-  const positive=[...new Set(types.filter(hit=>!hit.negative).map(hit=>hit.value))];
+  const types=fieldMentions(text,TYPE_PATTERN,typeName),category=categoryMentions(text).filter(hit=>!hit.negative).at(-1)?.value;
+  let positive=[...new Set(types.filter(hit=>!hit.negative).map(hit=>hit.value))];
+  if(category)positive=[categoryType(category)];
+  else if(positive.includes('earrings')&&positive.some(type=>['studs','huggie'].includes(type)))positive=positive.filter(type=>type!=='earrings');
   if(positive.length!==1||MOTIFS.some(([,pattern])=>fieldMentions(text,pattern).some(hit=>!hit.negative)))return null;
-  const allowed=new Set([...GENERIC,'all','full','catalogue','catalog','collection','collections','list','listings','listing','stock','available','see','browse','search','switch','switching','move','on','offer','offers','offering','got','pair','pairs','take','view','yes']);
+  const allowed=new Set([...GENERIC,'all','full','catalogue','catalog','collection','collections','list','listings','listing','stock','available','see','browse','search','switch','switching','move','on','offer','offers','offering','got','pair','pairs','take','view','yes','regular','beady','beaded','bead','chain','loose','standalone','individual','charm-only']);
   const residual=(text.match(/[a-z][a-z-]*/g)||[]).filter(word=>!allowed.has(word)&&!types.some(hit=>hit.raw===word||hit.value===word||hit.value===word.replace(/s$/,''))&&!['silver','sterling','gold','rose','filled','plated'].includes(word));
   if(residual.length)return null;
   // A bare type answer can fill the existing gift question, and a deliberate
@@ -458,7 +470,7 @@ function freshCatalogueRequest(message,before={}){
   const browsing=fieldMentions(text,'show|find|browse|see|search|open|view|switch|list|what|which').some(hit=>!hit.negative);
   const correcting=types.some(hit=>hit.negative);
   const prior=shopperPreferences(before);
-  return {mode:'category',type:positive[0],replaceQuery:browsing||!correcting&&!!prior.type&&prior.type!==positive[0]};
+  return {mode:'category',type:positive[0],...(category?{storeCategory:category}:{}),replaceQuery:browsing||!correcting&&!!prior.type&&prior.type!==positive[0]||!!category&&prior.storeCategory!==category};
 }
 
 // Semantic follow-ups share one route through preference preservation,
@@ -525,9 +537,9 @@ function applyPreferenceMessage(before,message) {
   if(conversationReply(message))return p;
   if(/\b(?:start (?:fresh|over|again)|reset (?:everything|preferences)|forget (?:everything|the previous|all that)|new gift|different gift|different person)\b/.test(text))p=shopperPreferences();
   const freshBrowse=freshCatalogueRequest(text,p);
-  if(freshBrowse&&(freshBrowse.mode==='reset'||freshBrowse.replaceQuery)){p.query='';p.interests=[];p.excludedInterests=[];if(freshBrowse.mode==='reset'){p.type=null;p.excludedTypes=[];}}
+  if(freshBrowse&&(freshBrowse.mode==='reset'||freshBrowse.replaceQuery)){p.query='';p.interests=[];p.excludedInterests=[];if(freshBrowse.mode==='reset'){p.type=null;p.excludedTypes=[];p.storeCategory=null;}}
   const mentions={
-    type:fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,'')),
+    type:fieldMentions(text,TYPE_PATTERN,typeName),
     metal:fieldMentions(text,'rose gold|sterling silver|silver|gold(?: filled| plated)?',v=>v.startsWith('rose')?'rose gold':v.includes('silver')?'silver':'gold'),
     recipient:fieldMentions(text,RECIPIENTS.join('|'),v=>v).filter(hit=>(!['teacher','nurse','doctor'].includes(hit.value)||!/\b(?:as|became|becoming) (?:a |an )?$/.test(text.slice(0,hit.index)))&&(!['mother','father'].includes(hit.value)||!/\b(?:became|becoming) (?:a |an )?$/.test(text.slice(0,hit.index)))),
     occasion:fieldMentions(text,OCCASIONS.join('|'),v=>v)
@@ -542,6 +554,9 @@ function applyPreferenceMessage(before,message) {
       else {p[field]=hit.value;if(excluded)p[excluded]=p[excluded].filter(x=>x!==hit.value);}
     }
   }
+  const categories=categoryMentions(text),positiveCategory=categories.filter(hit=>!hit.negative).at(-1)?.value;
+  if(positiveCategory){p.storeCategory=positiveCategory;p.type=categoryType(positiveCategory);p.excludedTypes=p.excludedTypes.filter(type=>type!==p.type);}
+  else if(categories.some(hit=>hit.negative&&hit.value===p.storeCategory)||mentions.type.some(hit=>!hit.negative)&&(freshBrowse||p.storeCategory&&categoryType(p.storeCategory)!==p.type))p.storeCategory=null;
   const giftIntentText=text.replace(/\bgift\s+(?:wrap(?:ping)?|notes?|packages?|packaging|boxes|box)\b/g,' ');
   if(/\b(?:gift|present)\b/.test(giftIntentText)){p.gifting=true;p.giftDiscovery=true;}
   else if(newRecipient&&newRecipient!=='myself')p.gifting=true;
@@ -575,6 +590,7 @@ function applyPreferenceMessage(before,message) {
   const nonShopping=semanticInquiry(text)||/\b(?:shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|skip|pass on|prefer not|gift details?|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
   if(!freshBrowse&&!positive.length&&!negative.length&&!nonShopping){
     const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
+    for(const hit of categories)for(const word of hit.raw.split(/[ -]/))controlled.add(word);
     const words=(queryText.replace(/\b(?:i|we) mean\b/g,' ').match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t));
     const messageMilestone=milestoneDiscovery.parseMilestone(text,p.milestone,negatedAt);
     const residual=messageMilestone?milestoneDiscovery.contextResidual(words.join(' '),messageMilestone):words.join(' ');
@@ -641,6 +657,11 @@ function variantTypeMatches(product,variant,type) {
   if(/\b(?:necklace|huggie|earring|bracelet)\s+charms?\b|charm\s*\+\s*engrav|pendant only|charm only|loose charm/i.test(detail))return false;
   return /\b(?:necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?)\b/i.test(detail)?typeMatches({title:detail,type:''},type):typeMatches(product,type);
 }
+function categoryVariantMatches(product,variant,category){
+  if(!storefrontSeed.categories(product).includes(category))return false;
+  if(category==='regular-necklaces'||category==='beady-necklaces')return chainEvidence(product,variant);
+  return variantTypeMatches(product,variant,categoryType(category));
+}
 function metalMatches(variant,metal) {
   if(!metal)return true;
   const material=variant.title+' '+(variant.options||[]).filter(o=>/metal|material|finish|colour|color/i.test(o.name)).map(o=>o.value).join(' ');
@@ -654,7 +675,7 @@ function personalizedVariant(product,variant) {
   if(/no engraving|not engraved|without engraving|non[ -]?engraved|unengraved/i.test(detail)||options.some(o=>/^(?:no|none|without|not included)$/i.test(o.value)))return false;
   return /engrav|personali[sz]|handwrit|custom|monogram/i.test(detail)||options.some(o=>/^(?:yes|included|with)$/i.test(o.value))||/handwrit|monogram|custom studio/i.test(product.title);
 }
-function rankProducts(items,intent,now=Date.now()) {
+function rankProducts(items,intent,now=Date.now(),limit=6) {
   const p=shopperPreferences(intent),wanted=p.interests.length?p.interests:p.query.split(/\s+/).filter(Boolean);
   const matches=[];
   for(const product of Array.isArray(items)?items:[]) {
@@ -667,14 +688,43 @@ function rankProducts(items,intent,now=Date.now()) {
     const interestHits=wanted.filter(value=>new RegExp('\\b(?:'+motifPattern(value)+')\\b','i').test(searchable));
     if(wanted.length&&!interestHits.length)continue;
     const budgetApplies=!p.budgetCurrency||p.budgetCurrency===product.currency;
-    const variants=(product.variants||[]).filter(v=>v.available&&Number.isFinite(v.price)&&v.price>=0&&shopperCatalogueField(v.title,200)&&(v.options||[]).every(option=>shopperCatalogueField(option?.name,100)&&shopperCatalogueField(option?.value,100))&&variantTypeMatches(product,v,p.type)&&!p.excludedTypes.some(type=>variantTypeMatches(product,v,type))&&metalMatches(v,p.metal)&&!p.excludedMetals.some(metal=>metalMatches(v,metal))&&(!p.excludedInterests.includes('engraved')||!personalizedVariant(product,v))&&(!budgetApplies||((p.budget==null||v.price<=p.budget)&&(p.minBudget==null||v.price>=p.minBudget))));
+    const variants=(product.variants||[]).filter(v=>v.available===true&&Number.isFinite(v.price)&&v.price>=0&&shopperCatalogueField(v.title,200)&&(v.options||[]).every(option=>shopperCatalogueField(option?.name,100)&&shopperCatalogueField(option?.value,100))&&(p.storeCategory?categoryVariantMatches(product,v,p.storeCategory):variantTypeMatches(product,v,p.type))&&!p.excludedTypes.some(type=>variantTypeMatches(product,v,type))&&metalMatches(v,p.metal)&&!p.excludedMetals.some(metal=>metalMatches(v,metal))&&(!p.excludedInterests.includes('engraved')||!personalizedVariant(product,v))&&(!budgetApplies||((p.budget==null||v.price<=p.budget)&&(p.minBudget==null||v.price>=p.minBudget))));
     if(!variants.length)continue;
     const minPrice=Math.min(...variants.map(v=>v.price));
     const why=[interestHits.length?interestHits.join(', '):null,p.type,p.metal,budgetApplies&&p.budget!=null?'within your '+(p.budgetCurrency||product.currency)+' item budget':null].filter(Boolean);
     const projected=productProjection({...product,variants});
     matches.push({score:interestHits.length*10+(p.type?3:0)+(p.metal?2:0),product:{...projected,suggestedVariantId:variants.slice().sort((a,b)=>a.price-b.price)[0].id,minPrice,why:why.length?'Selected for '+why.join(' · '):'An available piece from the live shop selection',budgetApplied:budgetApplies&&p.budget!=null}});
   }
-  return matches.sort((a,b)=>b.score-a.score||a.product.minPrice-b.product.minPrice||a.product.title.localeCompare(b.product.title)).slice(0,6).map(x=>x.product);
+  return matches.sort((a,b)=>b.score-a.score||a.product.minPrice-b.product.minPrice||a.product.title.localeCompare(b.product.title)).slice(0,Number.isInteger(limit)?Math.max(1,Math.min(18,limit)):6).map(x=>x.product);
+}
+async function readDiscoveryIssues(service,products){
+  if(typeof service.productIssues!=='function')return [];
+  const ids=[...new Set(products.map(product=>product.id))],issues=[];
+  // The shared storage reader deliberately caps each call at 100 identities.
+  // A larger public discovery sample must not discard later reviewed holds.
+  for(let i=0;i<ids.length;i+=100)issues.push(...await service.productIssues(ids.slice(i,i+100)));
+  return issues;
+}
+async function refreshDiscoverySelection({service,shopify,eligibleProducts,intent,at}){
+  const provisional=eligibleProducts.map(product=>({...product,variants:(product.variants||[]).map(variant=>variant.availabilityKnown===false?{...variant,available:true}:variant)}));
+  const candidates=rankProducts(provisional,intent,at,18),checked=[],issues=[];let failedReads=0;
+  // Read six exact handles at a time, trying at most 18 candidates when current
+  // options differ from the cached public sample. Never release cached prices
+  // or infer availability when an exact read fails or the identity changes.
+  for(let i=0;i<candidates.length;i+=6){
+    const group=candidates.slice(i,i+6),attempts=await Promise.allSettled(group.map(product=>shopify.byHandle(product.handle))),fresh=[];
+    for(let j=0;j<attempts.length;j++){
+      const attempt=attempts[j],candidate=group[j];if(attempt.status==='rejected'){failedReads++;continue;}
+      const product=attempt.value,url=publicUrl(product?.url,true);
+      if(!product||product.id!==candidate.id||product.handle!==candidate.handle||!url||!new URL(url).pathname.replace(/\/$/,'').endsWith('/products/'+candidate.handle))continue;
+      fresh.push(product);
+    }
+    if(fresh.length){const [,currentIssues]=await Promise.all([service.saveProducts(fresh),readDiscoveryIssues(service,fresh)]);checked.push(...fresh);issues.push(...currentIssues);}
+    if(rankProducts(applyProductIssues(checked,issues),intent,at).length>=6)break;
+  }
+  if(candidates.length&&!checked.length&&failedReads)throw Error('The matching published pieces could not be checked.');
+  const eligible=applyProductIssues(checked,issues);
+  return {checked,issues,eligible,products:rankProducts(eligible,intent,at),partial:failedReads>0};
 }
 
 function publicMeaningText(value){return clean(value,1500).split(/(?<=[.!?])\s+/).filter(sentence=>!!storySafeText(sentence,1500)&&!/^\s*(?:ask (?:whether|if|the|about|a question)|(?:prompt|tell|advise|remind) (?:the )?(?:user|shopper|customer|recipient)|use (?:this|the) (?:story|meaning|copy)|(?:do not|don't|never) (?:claim|promise|infer|say)|when (?:suggesting|recommending)|for (?:the )?concierge|(?:you|the assistant) should|recommend (?:this|the)|suggest (?:that|this|the)|avoid (?:claiming|saying)|include (?:this|the)|confirm (?:whether|if))\b/i.test(sentence)).join(' ').trim();}
@@ -965,7 +1015,9 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     for(let i=0;i<attempts.length;i++){const attempt=attempts[i],hint=milestoneHints[i];if(attempt.status!=='fulfilled'||!attempt.value)continue;if(attempt.value.handle!==hint.handle||(hint.productId&&attempt.value.id!==hint.productId))continue;recalled.push(attempt.value);if(hint.dossierVersion)recalledVersions.set(attempt.value.id,{dossierVersion:hint.dossierVersion,supplementVersion:hint.supplementVersion});}
     if(milestoneHints.length&&!searched.length&&!recalled.length&&attempts.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
     queried={products:[...new Map([...searched,...recalled].map(product=>[product.id,product])).values()].slice(0,30+bounds.liveHandles)};
-  } else queried=freshBrowse?.mode==='reset'&&!intent.query&&!intent.type?await shopify.products(''):milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
+  } else if(!milestonePlan&&typeof shopify.discover==='function')queried=await shopify.discover(intent.query||intent.storeCategory||intent.type||'necklace',{reset:freshBrowse?.mode==='reset'&&!intent.query&&!intent.type});
+  else queried=freshBrowse?.mode==='reset'&&!intent.query&&!intent.type?await shopify.products(''):milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
+  const seedDiscovery=queried.discovery?.source==='public_catalogue_sample';
   let checkedProducts=queried.products;
   const namedComparison=namedComparisonFromText(destinationPlain,checkedProducts);
   // Product names select identities, not a new motif, type or metal preference.
@@ -982,7 +1034,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const displayedSelectedProduct=displayedTitleProduct||displayedOrdinalProduct;
   // Persisting a live catalogue mirror and reading independent reviewed holds
   // can overlap, but neither may be bypassed before ranking or recommending.
-  let [,issueRecords]=await Promise.all([service.saveProducts(checkedProducts),service.productIssues?service.productIssues(checkedProducts.map(p=>p.id)):[]]);
+  let [,issueRecords]=await Promise.all([seedDiscovery?Promise.resolve():service.saveProducts(checkedProducts),readDiscoveryIssues(service,checkedProducts)]);
   // An explicit exact-page reference selects that validated live product,
   // rather than letting stale discovery preferences filter it back out.
   const directProductContext=exactProductContext||!!displayedSelectedProduct;
@@ -1015,10 +1067,15 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     if(candidateHandles.length&&!refreshed.length&&attempts.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
     if(refreshed.length){
       checkedProducts=[...new Map([...checkedProducts,...refreshed].map(p=>[p.id,p])).values()];
-      [,issueRecords]=await Promise.all([service.saveProducts(refreshed),service.productIssues?service.productIssues(checkedProducts.map(p=>p.id)):[]]);
+      [,issueRecords]=await Promise.all([service.saveProducts(refreshed),readDiscoveryIssues(service,checkedProducts)]);
       eligibleProducts=applyProductIssues(checkedProducts,issueRecords);
       products=rankProducts(eligibleProducts,intent,at);
     }
+  }
+  let discoveryPartial=seedDiscovery&&queried.discovery.partial===true;
+  if(seedDiscovery){
+    const refreshed=await refreshDiscoverySelection({service,shopify,eligibleProducts,intent:rankingIntent,at});
+    checkedProducts=refreshed.checked;issueRecords=refreshed.issues;eligibleProducts=refreshed.eligible;products=refreshed.products;discoveryPartial=discoveryPartial||refreshed.partial;
   }
   // Ordinals refer to the prior visible card order, never a new price sort.
   if(useContext&&handles.length)products=products.sort((a,b)=>handles.indexOf(a.handle)-handles.indexOf(b.handle));
@@ -1055,6 +1112,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let reply=products.length?'These available pieces connect with '+(intent.query||'the preferences you’ve shared')+giftContext(intent)+'.':'I couldn’t confirm an available match for those preferences. We can adjust the selection together.';
   let question=!products.length?(recovery?.question||'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null&&!intent.unlimitedBudget?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':intent.giftDiscovery&&!intent.recipient&&!intent.recipientSkipped?'Who is the gift for?':intent.giftDiscovery&&!intent.occasion&&!intent.occasionSkipped?'Is there an occasion for the gift?':null;
   const result={schema:1,reply,question,preferences:intent,products,meanings,actions:products.map(p=>({type:'navigate',productId:p.id,url:p.url,label:'View '+p.title})),checkedAt:at,live:true,aiUsed:false};
+  if(seedDiscovery)result.discovery={...queried.discovery,partial:discoveryPartial,exactListingsChecked:checkedProducts.length};
   if(!freshBrowse&&intent.milestone&&!(useContext&&handles.length)&&!command){
     const presentation=milestoneDiscovery.presentation(intent.milestone);
     result.reply=presentation.intro+(products.length?(milestonePlan?' These available pieces have reviewed interpretations you might personally connect with '+presentation.label+'. Meanings vary; choose what feels right to you.':' These available pieces match the motif and preferences you shared.'):' I couldn’t confirm a reviewed, available connection with those preferences.');

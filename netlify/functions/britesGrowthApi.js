@@ -48,15 +48,15 @@ export default async (req,context) => {
         if(seed&&(url.searchParams.has('browse')||url.searchParams.has('cursor')||url.searchParams.has('q')))return json({error:'Use the starter collection without search or browse parameters.'},400);
         if(browse&&cursor&&(!/^storefront:[1-9]\d{0,3}$/.test(cursor)||Number(cursor.slice(11))>200))return json({error:'Invalid storefront catalogue cursor.'},400);
         if(!browse&&cursor)return json({error:'Use catalogue browsing with a cursor.'},400);
-        const r=seed?await shopify.seed():browse?await shopify.browse(cursor):await shopify.search(url.searchParams.get('q')||'necklace');
+        const query=url.searchParams.get('q')||'necklace',r=seed?await shopify.seed():browse?await shopify.browse(cursor):typeof shopify.discover==='function'?await shopify.discover(query):await shopify.search(query);
         // Broad browsing is an observed public read, not a mirror sync or an
         // authoring action. Holds are still read before any piece is shown.
-        if(!browse&&!seed)await service.saveProducts(r.products);
+        if(!browse&&!seed&&!r.discovery)await service.saveProducts(r.products);
         // The shared hold reader has a 100-ID limit. Check every seed product
         // in bounded chunks, including those beyond that first hundred.
         const issues=[];for(let i=0;i<r.products.length;i+=100)issues.push(...await service.productIssues(r.products.slice(i,i+100).map(p=>p.id)));
         const products=core.applyProductIssues(r.products,issues).map(p=>({...core.productProjection(p),...(seed?{storeCategories:p.storeCategories}:{})}));
-        return json({products,pageInfo:r.pageInfo,checkedAt:r.checkedAt||Date.now(),live:true,...(seed?{seed:r.seed}:{})});
+        return json({products,pageInfo:r.pageInfo,checkedAt:r.checkedAt||Date.now(),live:true,...(seed?{seed:r.seed}:{}),...(r.discovery?{discovery:r.discovery}:{})});
       }
       if(op==='storefront-services')return json(await core.readStorefrontServices());
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}

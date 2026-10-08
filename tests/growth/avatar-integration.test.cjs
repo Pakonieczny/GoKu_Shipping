@@ -620,7 +620,7 @@ test('a renderer draw exception cannot block text search or sandbox cart', async
 
 test('parts-only and personalized pieces hand off to the product page without a cart write', async t => {
   for (const product of [
-    {...fixtureProduct, type: 'Charm', partsOnly: true, title: 'Bunny Necklace Charm'},
+    {...fixtureProduct, type: 'Component', partsOnly: true, title: 'Bunny Necklace Component'},
     {...fixtureProduct, title: 'Handwriting Bunny Necklace'}
   ]) {
     const answer = {...fixtureAnswer, products: [product]}, h = makeWidget(t, {answer: () => response(answer)});

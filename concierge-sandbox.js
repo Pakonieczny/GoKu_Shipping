@@ -13,6 +13,7 @@
   const PAGE_SIZE=24,MAX_PIECES=1200;
   const state={pageKind:'catalogue',currentHandle:'',focusedHandle:'',search:'',checkedSearch:'',collectionSource:'browse',sort:'featured',filter:'all',contextRevision:0,discoveryRevision:0,activeSection:'catalogue',loading:false,products:[],browse:[],browsePageInfo:{hasNextPage:false,endCursor:null},browseVerifiedAt:0,seedInfo:null,seedFailure:false,seedBrowseStarted:false,limit:PAGE_SIZE,pageInfo:{hasNextPage:false,endCursor:null},current:null,services:null,servicesPending:null,selectedImage:0,verifiedAt:0};
   let navigationVersion=0,request=null,noticeTimer=0,highlightTimer=0,focusTimer=0,storyVersion=0,collectionControls=null,productUI=null,checkoutUI=null,cartLines=null,lineSequence=0;
+  let guideBusy=false,guideCommandKey='';
   const CONTROL_CAPABILITIES=Object.freeze({controlVersion:1,mode:'sandbox',actions:Object.freeze(['search','sort','filter','open','highlight','scroll','zoom','bag','checkout','gift','customize','options','select-option','product-quantity','review-add','bag-quantity','bag-remove','gift-preferences','checkout-step','checkout-option','checkout-complete']),quantity:Object.freeze({minimum:1,maximum:20}),reviewBeforeAdd:true,finalOrder:false,addMode:'shopper-confirmation',checkoutMode:'simulation-only',notesMode:'local-session'});
   const known=new Map(),identities=new Map();
   const notice=document.querySelector('#storefront-status')||document.body.appendChild(node('aside','','storefront-notice'));
@@ -48,7 +49,7 @@
     if(typeof cursor!=='string'||!cursor.trim()||cursor.length>2048||/[\u0000-\u001f]/.test(cursor)||cursor===requestedCursor)throw Error('The next collection page could not be confirmed.');
     return {hasNextPage:true,endCursor:cursor};
   }
-  function minimum(p){const available=p.variants.filter(v=>v.available);return available.length?Math.min(...available.map(v=>v.price)):null;}
+  function minimum(p){const candidates=p.variants.filter(v=>v.available||v.availabilityKnown===false);return candidates.length?Math.min(...candidates.map(v=>v.price)):null;}
   function projection(p){const available=p.variants.filter(v=>v.available);return {...p,minPrice:minimum(p),suggestedVariantId:available[0]?.id||null};}
   function categoryMatches(p,category){
     if(SEED_CATEGORIES.includes(category)){
@@ -134,13 +135,47 @@
   }
   function controlSnapshot(){
     const ui=currentProductUI(),cart=readCart(),lines=cartIdentities(cart),visible=new Set([...main.querySelectorAll('[data-bag-line]')].map(row=>row.dataset.bagLine)),checkout=checkoutUI?.page?.isConnected&&state.pageKind==='checkout'?checkoutUI:null;
-    return {controlVersion:1,productControls:ui?{handle:ui.product.handle,productId:ui.product.id,variantId:ui.select.value||null,quantity:ui.quantity(),optionsOpen:!ui.menu.hidden,openedOption:ui.openedOption||null,optionGroups:ui.groups.map(g=>({name:g.name,values:g.values.slice()})),selectedOptions:ui.choices(),reviewReady:!!ui.review?.isConnected}:null,bagControls:{lines:cart.flatMap((item,index)=>visible.has(lines[index])?[{lineId:lines[index],productId:item.productId,variantId:'gid://shopify/ProductVariant/'+item.variantId,title:item.title,variant:item.variant,quantity:item.quantity||1}]:[]),itemCount:cart.reduce((sum,item)=>sum+(item.quantity||1),0)},checkoutControls:checkout?{step:checkout.step,shipping:checkout.shipping,acknowledged:checkout.check.checked,complete:checkout.completed}:null};
+    const variant=ui?.product.variants.find(v=>v.id===ui.select.value),q=ui?.quantity(),selectedVariant=variant?{id:variant.id,title:variant.title,price:variant.price,currency:ui.product.currency,available:variant.available,options:(variant.options||[]).map(o=>({name:o.name,value:o.value}))}:null;
+    return {controlVersion:1,productControls:ui?{handle:ui.product.handle,productId:ui.product.id,productTitle:ui.product.title,productType:ui.product.type||'',variantId:ui.select.value||null,quantity:q,optionsOpen:!ui.menu.hidden,openedOption:ui.openedOption||null,optionGroups:ui.groups.map(g=>({name:g.name,values:g.values.slice()})),selectedOptions:ui.choices(),selectedVariant,...(variant&&validQuantity(q)?{itemTotalPrice:Math.round(variant.price*q*100)/100}:{}),reviewReady:!!ui.review?.isConnected}:null,bagControls:{lines:cart.flatMap((item,index)=>visible.has(lines[index])?[{lineId:lines[index],productId:item.productId,variantId:'gid://shopify/ProductVariant/'+item.variantId,title:item.title,variant:item.variant,quantity:item.quantity||1,price:item.price,currency:item.currency}]:[]),itemCount:cart.reduce((sum,item)=>sum+(item.quantity||1),0)},checkoutControls:checkout?{step:checkout.step,shipping:checkout.shipping,acknowledged:checkout.check.checked,complete:checkout.completed}:null};
   }
   function currentProductUI(){return productUI?.panel?.isConnected&&state.pageKind==='product'&&!state.loading&&state.current===productUI.product&&state.currentHandle===productUI.product.handle?productUI:null;}
+  async function sendGuideCommand(command){
+    const input=document.querySelector('#guide-request'),reply=document.querySelector('#guide-request-status');
+    if(guideBusy||!clean(command,700))return;
+    if(typeof window.BritesConcierge?.sendShopperCommand!=='function'){if(reply)reply.textContent='Your guide is still loading. Try again in a moment.';return;}
+    guideBusy=true;if(input)input.value=command;renderGuideCommands();if(reply)reply.textContent='Your guide is working on: '+command;
+    try{const result=await window.BritesConcierge.sendShopperCommand(command);if(reply)reply.textContent=result?.ok===false?clean(result.reason||result.message,300)||'Check your guide’s reply before continuing.':'See your guide’s reply and the page result below.';}
+    catch{if(reply)reply.textContent='The request could not be completed. Try it in the guide’s message box.';}
+    finally{guideBusy=false;renderGuideCommands();}
+  }
+  function renderGuideCommands(){
+    const container=document.querySelector('#guide-commands'),summary=document.querySelector('#guide-selection');if(!container)return;
+    const ui=currentProductUI(),pc=controlSnapshot().productControls,commands=[],add=(label,command)=>commands.push({label,command});
+    if(state.pageKind==='catalogue'){
+      [['regular-necklaces','Regular necklaces'],['beady-necklaces','Beady necklaces'],['stud-earrings','Stud earrings'],['hoop-earrings','Hoop earrings'],['charm-only','Charm-only']].forEach(([,label])=>add(label,'Show me '+label.toLowerCase()));
+      filtered().slice(0,2).forEach(p=>add('Open '+p.title,'Open '+p.title));add('Lowest price first','Sort by price low to high');
+    }else if(ui){
+      add('Highlight price','Highlight the price of this piece');add('Show details','Highlight the details of this piece');
+      ui.groups.forEach(group=>add('Open '+group.name,'Open the '+group.name+' menu for this piece'));
+      const groups=pc.openedOption?ui.groups.filter(g=>g.name===pc.openedOption):ui.groups.filter(g=>/metal|material/i.test(g.name));
+      groups.forEach(group=>group.values.slice(0,8).forEach(value=>add('Choose '+value,'Select '+value+' for this piece')));
+      if(pc.selectedVariant){add('Quantity 2','Set quantity to 2');add('Review for my bag','Add this piece to my bag');}
+      if(ui.groups.some(g=>/metal|material/i.test(g.name)))add('Compare materials','Compare the published materials for this piece and their prices');
+      add('Open my bag','Open my bag');
+    }else if(state.pageKind==='bag'){
+      const cart=readCart();cart.slice(0,3).forEach(item=>{if(cart.filter(row=>row.title===item.title).length===1){add('Quantity 2 · '+item.title,'Set '+item.title+' quantity to 2 in my bag');add('Remove '+item.title,'Remove '+item.title+' from my bag');}});
+      add('Request gift wrapping','Enable gift wrapping');if(cart.length)add('Open test checkout','Open checkout');add('Explore all pieces','Show me all pieces');
+    }else if(state.pageKind==='checkout'){
+      add('Review step','Show checkout review step');add('Shipping step','Show checkout shipping step');add('Demo express','Select express shipping');add('Confirmation step','Show checkout confirmation step');add('Complete test review','Complete test checkout');add('Open my bag','Open my bag');
+    }
+    const key=JSON.stringify([commands,guideBusy,state.loading]);if(guideCommandKey!==key){guideCommandKey=key;container.replaceChildren(...commands.slice(0,22).map(({label,command})=>{const control=button(label,'guide-command',()=>void sendGuideCommand(command));control.disabled=guideBusy||state.loading;control.title=command;return control;}));}
+    const input=document.querySelector('#guide-request'),submit=document.querySelector('#guide-request-send');if(input)input.disabled=guideBusy;if(submit)submit.disabled=guideBusy;
+    if(summary)summary.textContent=pc?pc.selectedVariant?pc.productTitle+' · '+pc.selectedVariant.title+' · quantity '+pc.quantity+' · '+money(pc.itemTotalPrice,pc.selectedVariant.currency)+' item subtotal':pc.productTitle+' · choose each published option to see the exact price':state.pageKind==='bag'?readCart().reduce((sum,item)=>sum+(item.quantity||1),0)+' pieces in your test bag':state.pageKind==='checkout'?'Test checkout · '+(checkoutUI?.step||'review')+' · purchases stay simulated':'Move your pointer over a piece, then ask the guide about it. Choose a request below to see it operate the page.';
+  }
   // Subject changes are separate from gaze, scrolling and other page context.
   // Commit only completed views so canceled reads cannot revive an old subject.
   function reviseDiscovery(){if(state.discoveryRevision<Number.MAX_SAFE_INTEGER)state.discoveryRevision++;}
-  function publish(){state.contextRevision++;document.dispatchEvent(new CustomEvent('brites-storefront:context',{detail:snapshot()}));}
+  function publish(){state.contextRevision++;renderGuideCommands();document.dispatchEvent(new CustomEvent('brites-storefront:context',{detail:snapshot()}));}
   function status(message){notice.textContent=clean(message,300);notice.dataset.visible=message?'true':'false';clearTimeout(noticeTimer);if(message)noticeTimer=setTimeout(()=>{notice.dataset.visible='false';},3600);}
   function reduced(){return typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;}
   function focusedElement(){
@@ -211,7 +246,8 @@
   function updateBag(){const count=document.querySelector('#bag-count');if(count)count.textContent=String(readCart().reduce((sum,item)=>sum+(item.quantity||1),0));}
   function link(label,url){const a=node('a',label);a.href=url;a.target='_blank';a.rel='noopener noreferrer';return a;}
   function needsCustomizer(p,v){
-    if(!v||p.cartHold||p.recommendationHold||p.partsOnly||/\bcharms?\b/i.test(p.type||''))return true;
+    const ordinaryCharm=/^charms?(?:[ -]only)?$/i.test(clean(p.type,100))&&!/\b(?:custom|personalized|personalised|engraving|design fee|chain extender|components?|add[ -]?ons?)\b/i.test(p.title+' '+p.type);
+    if(!v||p.cartHold||p.recommendationHold||p.partsOnly&&!ordinaryCharm||/\bcharms?\b/i.test(p.type||'')&&!ordinaryCharm||/\b(?:components?|add[ -]?ons?|custom[ -]?only)\b/i.test(p.type||''))return true;
     const opts=(v.options||[]).filter(o=>/engrav|personali[sz]|custom/i.test(o.name)),detail=v.title+' '+opts.map(o=>o.value).join(' ');
     if(/handwrit|monogram|photo|upload|custom studio/i.test(p.title))return true;
     if(/no engraving|not engraved|without engraving|non[ -]?engraved|unengraved/i.test(detail)||opts.some(o=>/^(?:no|none|without|not included)$/i.test(o.value)))return false;
@@ -248,7 +284,7 @@
       const card=node('article',null,'piece-card card-enter');card.dataset.productHandle=p.handle;card.dataset.productId=p.id;
       const a=document.createElement('a');a.href='/concierge-sandbox.html?product='+encodeURIComponent(p.handle);a.setAttribute('aria-label','View '+p.title);
       const photo=node('div',null,'piece-photo'),img=picture(p);photo.append(img||node('span','b.','piece-placeholder'));if(p.type)photo.append(node('span',p.type,'piece-type'));
-      const copy=node('div',null,'piece-copy');copy.append(node('h3',p.title));const amount=minimum(p);copy.append(node('p',amount==null?'Currently unavailable':'From '+money(amount,p.currency),'piece-price'));const opts=(p.options||[]).map(o=>o.name).filter(Boolean).slice(0,2);if(opts.length)copy.append(node('p',opts.join(' · '),'piece-meta'));a.append(photo,copy);card.append(a);grid.append(card);
+      const copy=node('div',null,'piece-copy');copy.append(node('h3',p.title));const amount=minimum(p),unconfirmed=p.variants.some(v=>v.availabilityKnown===false);copy.append(node('p',amount==null?'Currently unavailable':'From '+money(amount,p.currency),'piece-price'));if(unconfirmed)copy.append(node('p','Availability checked when you open this piece','piece-meta'));const opts=(p.options||[]).map(o=>o.name).filter(Boolean).slice(0,2);if(opts.length)copy.append(node('p',opts.join(' · '),'piece-meta'));a.append(photo,copy);card.append(a);grid.append(card);
     });
     if(!shown.length){const empty=node('div',null,'empty-collection');empty.append(node('h3','A little more room to explore'),node('p',state.loading?'Checking the live shop for your search…':'No loaded pieces match those choices. Search the live shop, try another symbol, or clear the filters.'),button('Show all pieces','secondary',()=>void execute({type:'search',query:'',filter:'all'})));grid.append(empty);}
     const summary=main.querySelector('#result-summary');if(summary)summary.textContent=(state.loading?'Checking the live shop · ':'')+shown.length+' of '+pieces.length+' loaded pieces'+(state.search?' matching “'+state.search+'”':'')+(state.pageInfo.hasNextPage&&!state.search?' · more collection pages available':'')+(state.filter!=='all'?' · '+state.filter:'');
@@ -317,7 +353,7 @@
     }finally{if(keyboard)document.removeEventListener('focusin',movedFocus);}
   }
   function exactOptionGroups(p){
-    const groups=new Map(),append=(name,value)=>{name=clean(name,100);value=clean(value,200);if(!name||!value)return;const key=name.toLowerCase();if(!groups.has(key)&&groups.size<12)groups.set(key,{name,values:[]});const group=groups.get(key);if(group&&group.values.length<60&&!group.values.includes(value))group.values.push(value);};
+    const groups=new Map(),append=(name,value)=>{name=clean(name,100);value=clean(value,300);if(!name||!value)return;const key=name.toLowerCase();if(!groups.has(key)&&groups.size<12)groups.set(key,{name,values:[]});const group=groups.get(key);if(group&&group.values.length<250&&!group.values.includes(value))group.values.push(value);};
     (Array.isArray(p.options)?p.options:[]).slice(0,12).forEach(o=>(Array.isArray(o?.values)?o.values:[]).forEach(value=>append(o.name,value)));
     p.variants.forEach(v=>(Array.isArray(v.options)?v.options:[]).slice(0,12).forEach(o=>append(o.name,o.value)));return [...groups.values()];
   }
@@ -533,6 +569,8 @@
   }
   window.BritesSandboxStorefront=Object.freeze({capabilities:CONTROL_CAPABILITIES,snapshot,execute,presentProducts});
   window.BritesSandboxNavigate=handle=>openProduct(handle,{revealRequested:true});
+  document.querySelector('#guide-request-form')?.addEventListener('submit',event=>{event.preventDefault();void sendGuideCommand(document.querySelector('#guide-request')?.value||'');});
+  renderGuideCommands();
   document.addEventListener('click',event=>{
     const control=event.target.closest?.('[data-store-action]');if(control&&!event.defaultPrevented){const type=control.dataset.storeAction;event.preventDefault();if(type==='bag')void execute({type:'bag'});else if(type==='gifts')void execute({type:'gift'});else if(type==='customize')void execute({type:'customize'});else if(type==='browse')focusSection('catalogue',false);else if(type==='collection')void execute({type:'search',query:''});return;}
     const anchor=event.target.closest?.('a[href]');if(!anchor||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||anchor.target==='_blank')return;
