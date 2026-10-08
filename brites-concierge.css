@@ -22,6 +22,34 @@
 @media(max-width:680px){
   :host([data-storefront-connected="true"]) .panel{left:8px;right:8px;width:auto}
 }
+/* The same mounted guide accompanies a nonmodal image on narrow screens. */
+@media(max-width:1099px){
+  :host([data-storefront-connected="true"][data-open="true"][data-storefront-image-open="true"]) .panel{top:calc(40dvh + 4px);left:12px;right:12px;bottom:12px;width:auto;height:auto;max-height:calc(60dvh - 16px);display:grid;grid-template-columns:clamp(90px,25vw,150px) minmax(0,1fr);grid-template-areas:"bar bar" "avatar captions" "avatar voice" "avatar utility" "avatar status" "history history" "composer composer";grid-template-rows:auto auto auto auto auto auto auto;align-content:start;overflow:auto;border-radius:18px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .launcher{display:none}
+  :host([data-storefront-image-open="true"][data-open="true"]) .bar{grid-area:bar;padding:7px 12px;gap:8px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .bar h2{font-size:15px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .brand{font-size:8px;letter-spacing:1.6px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .concierge-avatar-stage{grid-area:avatar;min-height:130px;max-height:none;align-self:stretch;flex:none}
+  :host([data-storefront-image-open="true"][data-open="true"]) .captions{grid-area:captions;min-height:0;padding:8px 10px;border-top:0}
+  :host([data-storefront-image-open="true"][data-open="true"]) .caption-label{font-size:8px;margin-bottom:3px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .caption-text{font-size:12px;max-height:64px;line-height:1.4;padding:0}
+  :host([data-storefront-image-open="true"][data-open="true"]) .captions[data-speaker=user] .caption-text{font-size:11px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .avatar-controls{grid-area:voice;gap:4px;padding:4px 8px 7px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .voice-state{font-size:10px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .voice-actions{min-height:0;gap:5px;flex-wrap:wrap}
+  :host([data-storefront-image-open="true"][data-open="true"]) .voice-button{min-width:118px;padding:8px 12px;font-size:12px;gap:7px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .interrupt-button,:host([data-storefront-image-open="true"][data-open="true"]) .voice-recovery{padding:7px 9px;font-size:11px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .utility-controls{grid-area:utility;gap:1px;padding:0 4px 5px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .quiet-control{padding:5px;font-size:10px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .status{grid-area:status;padding:0 8px 5px;font-size:10px;max-height:48px;overflow:auto}
+  :host([data-storefront-image-open="true"][data-open="true"]) .storefront-presence,:host([data-storefront-image-open="true"][data-open="true"]) .product-tray{display:none}
+  :host([data-storefront-image-open="true"][data-open="true"]) .messages{grid-area:history;min-height:0;max-height:84px;padding:8px 12px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .composer{grid-area:composer;position:sticky;bottom:0;z-index:2;padding:8px 10px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .composer input{padding:8px 10px;font-size:13px}
+  :host([data-storefront-image-open="true"][data-open="true"]) .send{padding:8px 12px;font-size:12px}
+}
+@media(max-width:680px) and (max-height:540px){:host([data-storefront-connected="true"][data-open="true"][data-storefront-image-open="true"]) .panel{top:calc(28dvh + 8px);max-height:calc(72dvh - 20px)}}
+@media(min-width:681px) and (max-width:1099px) and (max-height:540px){:host([data-storefront-connected="true"][data-open="true"][data-storefront-image-open="true"]) .panel{top:12px;left:calc(50vw + 12px);right:12px;bottom:12px;max-height:calc(100dvh - 24px);grid-template-columns:90px minmax(0,1fr)}}
 @media(min-width:1100px){
   :host([data-storefront-docked="true"]) .panel{top:12px;right:12px;bottom:12px;width:360px;height:calc(100dvh - 24px);border-radius:22px;box-shadow:0 10px 35px #203c491c}
   :host([data-storefront-docked="true"][data-open="true"]) .launcher{display:none}
