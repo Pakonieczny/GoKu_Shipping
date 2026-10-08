@@ -151,3 +151,28 @@ test('J13: published-choice console offers available literal values and adds onl
   assert.deepEqual(held.cart(),[]);
   assert.deepEqual(f.errors,[]);assert.deepEqual(held.errors,[]);
 });
+
+for(const phrase of ['Add this exact piece to my cart','Add this piece to my cart','Add it to my bag'])test('J14: current Butterfly Silver quantity two adds without an extra confirmation — '+phrase,async t=>{
+  const p=product(44501,'Butterfly Cutout Stud Earrings','Earrings','butterfly',{silver:48,gold:58,engraving:false}),f=await fixture(t,{rows:[p]});
+  for(const text of ['Open '+p.title,'Select Sterling Silver','Select 8 mm','Set quantity to 2'])assertOk(await f.command(text),text);
+  const before=clone(f.store.snapshot().productControls),reads=f.requests.filter(r=>r.url.pathname==='/api/growth/product').length;
+  assert.equal(before.selectedVariant.price,48);assert.equal(before.itemTotalPrice,96);
+  const result=await f.command(phrase);assertOk(result,phrase);
+  assert.equal(result.cartChanged,true);assert.equal(f.cart().length,1);
+  assert.equal(f.cart()[0].variantId,p.variants[0].numericId);assert.equal(f.cart()[0].quantity,2);assert.equal(f.cart()[0].price,48);
+  assert.equal(f.requests.filter(r=>r.url.pathname==='/api/growth/product').length,reads+1,'The add still freshly verifies the exact current selection');
+  assert.deepEqual(clone(f.store.snapshot().productControls.selectedOptions),before.selectedOptions);assert.equal(f.store.snapshot().productControls.quantity,2);
+  assert.equal(f.d.querySelector('.product-review'),null);assert.equal(f.root.querySelector('.review'),null);
+  assert.equal(f.fallbacks().length,0);assert.deepEqual(f.errors,[]);
+});
+
+test('J15: exact reference wording never turns an unknown named piece into the current selected Butterfly',async t=>{
+  const p=product(44501,'Butterfly Cutout Stud Earrings','Earrings','butterfly',{silver:48,gold:58,engraving:false}),f=await fixture(t,{rows:[p]});
+  for(const text of ['Open '+p.title,'Select Sterling Silver','Select 8 mm','Set quantity to 2'])assertOk(await f.command(text),text);
+  const before=clone(f.store.snapshot()),reads=f.requests.length;
+  for(const phrase of ['Add this exact Hidden Butterfly Cutout Stud Earrings to my cart','Add Unlisted Mermaid Earrings to my cart']){
+    const result=await f.command(phrase);assert.equal(result.ok,false,phrase);assert.doesNotMatch(result.reply||'',/FALLBACK_SENTINEL43/);
+    assert.deepEqual(clone(f.store.snapshot()),before);assert.deepEqual(f.cart(),[]);
+  }
+  assert.equal(f.requests.length,reads,'Unknown targets must fail before a product read or cart change');assert.equal(f.fallbacks().length,0);assert.deepEqual(f.errors,[]);
+});

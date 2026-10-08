@@ -39,6 +39,26 @@ function native(t,options={}){
 const run=(f,action,id='current-shopper-43',extra={})=>f.instance.execute(action,{requestId:id,...extra});
 
 for(const text of ['Tell me about what I am looking at','How big is the charm on this?','Tell me some interesting tidbits about this piece','What is the weight of the one I have opened?'])test('current detail question stays on the open product despite another hover: '+text,()=>assert.equal(bridge.resolveKnowledgeTarget(text,context).handle,daisy.handle));
+for(const text of ['What am I looking at?','Which piece is this?','What is this piece?','What am I viewing?'])test('ordinary identity question follows the actual open listing after manual navigation: '+text,()=>{
+  const previous={...clone(context),search:'animal necklaces gold filled under 60 USD',filter:'necklaces'};
+  assert.deepEqual(bridge.resolveKnowledgeTarget(text,previous),{handle:daisy.handle,match:'scope'});
+  assert.equal(bridge.resolve(text,previous).targetHandle,daisy.handle);
+  const opened={...previous,contextRevision:44,currentHandle:butterfly.handle,focusedHandle:daisy.handle,productControls:null};
+  const original=clone(opened);
+  assert.deepEqual(bridge.resolveKnowledgeTarget(text,opened),{handle:butterfly.handle,match:'scope'});
+  const result=bridge.resolve(text,opened);assert.equal(result.delegated,'knowledge');assert.equal(result.targetHandle,butterfly.handle);assert.equal(result.action,undefined);
+  assert.deepEqual(opened,original,'a read-only identity request preserves the current controls and old search criteria');
+});
+test('current identity wording cannot borrow an unknown named target or silently substitute for an explicit pointer',()=>{
+  for(const text of ['What am I looking at on Hidden Pendant?','Which piece is this Hidden Pendant?','What is this piece called Hidden Pendant?','What am I viewing on Hidden Pendant?']){
+    assert.equal(bridge.resolveKnowledgeTarget(text,context).handle,undefined,text);
+    assert.equal(bridge.resolve(text,context).targetHandle,undefined,text);
+  }
+  assert.deepEqual(bridge.resolveKnowledgeTarget('What am I viewing under my cursor?',context),{handle:butterfly.handle,match:'pointed'});
+  assert.deepEqual(bridge.resolveKnowledgeTarget('What is this piece Butterfly Earrings?',context),{handle:butterfly.handle,match:'named'});
+  assert.equal(bridge.resolveKnowledgeTarget('Which piece is this Daisy Necklace or Butterfly Earrings?',context).handle,undefined);
+  assert.equal(bridge.resolveKnowledgeTarget('Which piece is this?',{...context,pageKind:'collection',currentHandle:'',focusedHandle:''}).handle,undefined,'several collection rows do not establish one current piece');
+});
 test('only explicit pointer wording overrides the open product subject',()=>{assert.equal(bridge.resolveKnowledgeTarget('How big is the piece under my cursor?',context).handle,butterfly.handle);assert.equal(bridge.resolveKnowledgeTarget('Tell me about what I am looking at',{...context,pageKind:'collection'}).handle,butterfly.handle);assert.equal(bridge.resolveKnowledgeTarget('What is the size of Hidden Pendant?',context).handle,undefined);});
 for(const text of ['Choose Gold Filled for Butterfly Earrings','Use Sterling Silver for the other necklace','Select Gold Filled for Hidden Pendant','Open the options for Butterfly Earrings','Add Butterfly Earrings to my cart','Add Hidden Pendant to my bag','Set quantity to 3 for Butterfly Earrings'])test('a different or unresolved target cannot modify the current product: '+text,()=>{const original=clone(context);assert.equal(bridge.resolve(text,context).ok,false);assert.deepEqual(context,original);});
 for(const text of ['No, choose Gold Filled instead','Actually, select Gold Filled','Correction, choose Gold Filled'])test('explicit repair keeps the current exact product: '+text,()=>assert.deepEqual(bridge.resolve(text,context).action,{type:'select-option',handle:daisy.handle,optionName:'Metal Choice',optionValue:'Gold Filled'}));

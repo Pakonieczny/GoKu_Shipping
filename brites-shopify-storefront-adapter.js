@@ -294,7 +294,22 @@
     function announce(){if(stopped)return;try{var value=snapshot();doc.dispatchEvent(new win.CustomEvent('brites-storefront:context',{detail:value}));doc.dispatchEvent(new win.CustomEvent('brites:storefront-context',{detail:value}));}catch{}}
     function scheduleContext(){if(stopped||contextScheduled)return;contextScheduled=true;Promise.resolve().then(function(){contextScheduled=false;if(!stopped)announce();});}
     function assertCurrent(ticket){if(stopped||ticket.epoch!==epoch||ticket.signal&&ticket.signal.aborted)throw Object.assign(Error('The website request was cancelled.'),{cancelled:true});if(location.href!==ticket.url||snapshot().contextRevision!==ticket.revision)throw Object.assign(Error('The current shop selection changed. Please ask again.'),{stale:true});}
-    function reveal(node,ticket,focus){assertCurrent(ticket);if(!visible(node))throw Error('That part of this product page is not available.');var details=node.tagName==='DETAILS'?node:node.closest('details');if(details)details.open=true;var target=node.tagName==='SELECT'?one('button.bjselx__btn',node.parentElement)||node:node;target.scrollIntoView?.({block:'center',behavior:'auto'});if(focus&&typeof target.focus==='function')target.focus({preventScroll:true});return target;}
+    function revealAboveGuide(node){
+      // Measure the actual compact guide; a closed, wide or image-mode guide
+      // does not reserve any native-control space or acquire action authority.
+      var width=Number(win.innerWidth),height=Number(win.innerHeight),host=one('brites-concierge[data-open="true"][data-storefront-control-assist="true"]');
+      if(!(width>0&&width<=640&&height>0)||doc.hidden||!host||host.getAttribute('data-storefront-image-open')==='true'||typeof win.scrollBy!=='function')return false;
+      var panel=host.shadowRoot?.querySelector('.panel'),panelBounds=panel?.getBoundingClientRect?.(),bounds=node?.getBoundingClientRect?.(),viewport=win.visualViewport,top=Number.isFinite(viewport?.offsetTop)?viewport.offsetTop:0,bottom=top+(Number.isFinite(viewport?.height)&&viewport.height>0?viewport.height:height);
+      if(!panel||panel.hidden||!panelBounds||!(panelBounds.width>0&&panelBounds.height>0&&panelBounds.top>top+80&&panelBounds.top<bottom)||!bounds||!(bounds.width>0&&bounds.height>0))return false;
+      var first=bounds.top,last=bounds.bottom;
+      // Native listboxes can extend beyond their wrapper's flow rectangle.
+      all('[role="listbox"],[role="option"]',node).filter(visible).forEach(function(child){var r=child.getBoundingClientRect?.();if(r&&r.width>0&&r.height>0){first=Math.min(first,r.top);last=Math.max(last,r.bottom);}});
+      var exposedTop=top+12,exposedBottom=Math.min(bottom-12,panelBounds.top-12),available=exposedBottom-exposedTop;
+      if(!(available>=56&&Number.isFinite(first)&&Number.isFinite(last)))return false;
+      var desired=exposedTop+Math.max(0,(available-Math.min(last-first,available))/2),delta=first-desired;
+      if(Math.abs(delta)>1)win.scrollBy({top:delta,behavior:'auto'});return true;
+    }
+    function reveal(node,ticket,focus,optionScope){assertCurrent(ticket);if(!visible(node))throw Error('That part of this product page is not available.');var details=node.tagName==='DETAILS'?node:node.closest('details');if(details)details.open=true;var target=node.tagName==='SELECT'?one('button.bjselx__btn',node.parentElement)||node:node;if(!revealAboveGuide(optionScope||target))target.scrollIntoView?.({block:'center',behavior:'auto'});if(focus&&typeof target.focus==='function')target.focus({preventScroll:true});return target;}
     function clearHighlight(node){var held=highlights.get(node);if(!held)return;win.clearTimeout(held.timer);if(node.style.outline===held.appliedOutline)node.style.outline=held.outline;if(node.style.outlineOffset===held.appliedOffset)node.style.outlineOffset=held.offset;highlights.delete(node);}
     function highlight(node){clearHighlight(node);var held={outline:node.style.outline,offset:node.style.outlineOffset};node.style.outline='2px solid #4c708b';node.style.outlineOffset='5px';held.appliedOutline=node.style.outline;held.appliedOffset=node.style.outlineOffset;held.timer=win.setTimeout(function(){clearHighlight(node);},1600);highlights.set(node,held);}
     function disclosure(label){var details=all('#shopify-section-product-template details').filter(function(d){return text(d.querySelector('summary')?.textContent.trim(),120)===label;});return details.length===1?details[0]:null;}
@@ -323,9 +338,16 @@
     }
     function openPublishedOptions(entries,name,ticket){
       var binding=name?entries.find(function(entry){return entry.name===name;}):null;if(name&&!binding)throw Error('That named option is not published for this piece.');
-      var node=binding?.node||form();reveal(node,ticket,true);
+      var node=binding?.node||form();assertCurrent(ticket);if(!visible(node))throw Error('That part of this product page is not available.');var details=node.tagName==='DETAILS'?node:node.closest('details');if(details)details.open=true;
+      function selectionScope(){var page=snapshot(),pc=page.productControls,engraving=engravingBinding();return JSON.stringify([page.pageKind,page.currentHandle,pc&&[pc.productId,pc.handle,pc.quantity,pc.variantId,pc.selectedOptions,pc.selectedVariant,pc.optionGroups],page.bagControls,page.engravingControls,privateFormRevision,engraving?.input.value]);}
+      var previousScope=selectionScope();
       if(binding?.kind==='select'){var button=one('button.bjselx__btn',binding.node.parentElement);if(!button||button.getAttribute('aria-haspopup')!=='listbox')throw Error('Use the visible selector to open those options.');if(button.getAttribute('aria-expanded')!=='true')button.click();if(button.getAttribute('aria-expanded')!=='true')throw Error('The shop has not confirmed that the option menu opened.');}
-      activeSection='options';openedOption=binding?.name||null;return binding;
+      if(stopped||ticket.epoch!==epoch||ticket.signal?.aborted)throw Object.assign(Error('The website request was cancelled.'),{cancelled:true});
+      var actualEntries=bindings(model());if(location.href!==ticket.url||previousScope!==selectionScope()||!actualEntries||actualEntries.length!==entries.length||actualEntries.some(function(entry,index){return entry.node!==entries[index].node;}))throw Object.assign(Error('The current shop selection changed. Please ask again.'),{stale:true});
+      activeSection='options';openedOption=binding?.name||null;
+      // Publish only the verified opened state, then measure the guide's new
+      // region. Recheck after listeners run rather than accepting their changes.
+      ticket.revision=snapshot().contextRevision;announce();reveal(node,ticket,true,binding?.kind==='select'?binding.node.parentElement:node);return binding;
     }
     function missingChoice(p,entries,ticket){
       var previous=chosen(entries),missing=entries.find(function(entry){return !previous.some(function(choice){return choice.name===entry.name&&entry.values.includes(choice.value);});});if(!missing)return null;

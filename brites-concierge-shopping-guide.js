@@ -63,10 +63,15 @@
     if (/^(?:charms?|charm only)$/.test(v)) return 'charm';
     return '';
   }
+  function ordinaryCharm(p) {
+    return /^charms?(?:[ -]only)?$/i.test(String(p && p.type || '').trim()) && !/\b(?:custom|personalized|personalised|engraving|design fee|chain extender|components?|add[ -]?ons?)\b/i.test(String(p && p.title || '') + ' ' + String(p && p.type || ''));
+  }
+  function restrictedParts(p) { return p.partsOnly && !ordinaryCharm(p); }
   function productCategory(p) {
     var explicit = category(p.type);
     if (explicit && explicit !== 'charm') return explicit;
     var title = key(p.title), matches = [];
+    if (explicit === 'charm' && /\b(?:necklace|pendant) charms?\b/.test(title) && !/\b(?:earrings?|studs?|huggies?|bracelets?|rings?)\b/.test(title)) return 'charm';
     [['earrings', /\b(?:earrings?|studs?|huggies?)\b/], ['necklace', /\bnecklaces?\b/], ['bracelet', /\bbracelets?\b/], ['ring', /\brings?\b/]].forEach(function (entry) { if (entry[1].test(title)) matches.push(entry[0]); });
     if (matches.length === 1) return matches[0];
     return matches.length ? '' : explicit || (/\bcharms?\b/.test(title) ? 'charm' : '');
@@ -297,7 +302,7 @@
       if (result.reference) result.status = 'confirmed'; return result;
     }
     function candidates(p, kind, context, passive, comparison) {
-      if (!p || !p.category || !isFresh(p) || p.service || p.partsOnly || p.recommendationHold || p.cartHold) return [];
+      if (!p || !p.category || !isFresh(p) || p.service || restrictedParts(p) || p.recommendationHold || p.cartHold) return [];
       var handles = new Set(), bag = new Set((Array.isArray(context.bagControls && context.bagControls.lines) ? context.bagControls.lines : []).map(function (line) { return line.productId; }));
       if (kind === 'alternatives') (byCategory.get(p.category) || []).forEach(function (h) { handles.add(h); });
       else p.evidence.motifs.forEach(function (motif) { (byMotif.get(motif) || []).forEach(function (h) { handles.add(h); }); });
@@ -308,7 +313,7 @@
       var results = [], eligibleExactMotif = false;
       handles.forEach(function (handle) {
         var other = products.get(handle);
-        if (other.id === p.id || bag.has(other.id) || !isFresh(other) || other.service || other.partsOnly || other.recommendationHold || other.cartHold || pref.excludedTypes.includes(other.category)) return;
+        if (other.id === p.id || bag.has(other.id) || !isFresh(other) || other.service || restrictedParts(other) || other.recommendationHold || other.cartHold || pref.excludedTypes.includes(other.category)) return;
         if (kind === 'matching' && (!other.category || other.category === p.category)) return;
         if (comparison && comparison.requestedCategories.length && !comparison.requestedCategories.includes(other.category)) return;
         if (comparison && comparison.kind !== 'category' && !comparison.reference) return;
@@ -348,7 +353,7 @@
       // A newly stated preference can replace an earlier chosen material or
       // length. Keep the other current choices and propose the actual change.
       choices = choices.filter(function (choice) { return !(/metal|material|finish/i.test(choice.name) && pref.material && !materialMatches(material(choice.value), pref.material)) && !(/length/i.test(choice.name) && pref.length && key(choice.value) !== key(pref.length)); });
-      if (!isFresh(p) || p.cartHold || p.recommendationHold || p.partsOnly || p.service) return { suggestions: suggestions, next: null };
+      if (!isFresh(p) || p.cartHold || p.recommendationHold || restrictedParts(p) || p.service) return { suggestions: suggestions, next: null };
       var variants = p.variants.filter(function (v) { return v.available && choices.every(function (choice) { return v.options.some(function (option) { return option.name === choice.name && option.value === choice.value; }); }) && materialMatches(v.material, pref.material) && !pref.excludedMaterials.some(function (m) { return materialMatches(v.material, m); }) && (!pref.length || !v.options.some(function (option) { return /length/i.test(option.name); }) || v.options.some(function (option) { return /length/i.test(option.name) && key(option.value) === key(pref.length); })) && ((pref.max === null && pref.min === null) || (!pref.currency || pref.currency === p.currency) && (pref.max === null || v.price <= pref.max) && (pref.min === null || v.price >= pref.min)); });
       if (!variants.length) return { suggestions: suggestions, next: null };
       var selected = selectedVariant(p, pc); if (selected && !variants.includes(selected)) selected = null;
@@ -422,7 +427,7 @@
         var rows = pack[kind].slice(0, 2);
         if (rows.length) suggestion = { kind: kind, handle: current, text: cheaper ? 'I found ' + rows.length + (smaller ? ' lower-priced, smaller alternative' : ' lower-priced alternative') + (rows.length === 1 ? '' : 's') + ' in the same currency and ' + (pack.comparison.reference.materialIsPreference ? 'your requested material' : 'material') + '.' : smaller ? 'I found ' + rows.length + ' alternative' + (rows.length === 1 ? '' : 's') + ' with smaller comparable published dimensions.' : kind === 'matching' ? 'I have ' + rows.length + (rows.length === 1 ? ' piece that shares' : ' pieces that share') + ' this design’s motif for a possible pairing.' : 'I have ' + rows.length + ' other ' + CATEGORY_LABELS[products.get(current).category] + ' option' + (rows.length === 1 ? '' : 's') + ' ready if you’d like to compare.', products: rows, actions: rows.map(function (row) { return row.action; }) };
         else if (explicit && pack.comparison && current) {
-          var reason = cheaper ? pack.comparison.status === 'missing-reference' ? 'I need a confirmed current material and price' + (smaller ? ' plus comparable published dimensions' : '') + ' before I can verify that comparison.' : 'I haven’t found a confirmed lower-priced' + (smaller ? ', smaller' : '') + ' alternative in this material and currency.' : smaller ? pack.comparison.status === 'missing-reference' ? 'I don’t have comparable published dimensions for this exact choice yet. I can show its actual size options instead.' : 'I haven’t found a piece with confirmed smaller comparable dimensions in this checked selection.' : 'I haven’t found a checked matching ' + (categories.map(function (c) { return CATEGORY_LABELS[c]; }).join(' or ') || 'piece') + ' for this design.';
+          var reason = cheaper ? pack.comparison.status === 'missing-reference' ? 'I need a confirmed current material and price' + (smaller ? ' plus comparable published dimensions' : '') + ' before I can verify that comparison.' : 'I haven’t found a confirmed lower-priced' + (smaller ? ', smaller' : '') + ' alternative in this material and currency.' : smaller ? pack.comparison.status === 'missing-reference' ? 'I don’t have comparable published dimensions for this exact choice yet. I can show its actual size options instead.' : 'I haven’t found a piece with confirmed smaller comparable dimensions in this checked selection.' : 'I haven’t found ' + (categories.length ? 'checked matching ' + categories.map(function (c) { return CATEGORY_LABELS[c] + (c === 'earrings' ? '' : 's'); }).join(' or ') : 'a checked matching piece') + ' for this design.';
           suggestion = { kind: kind, handle: current, text: reason, products: [], actions: [] };
         }
         else if (explicit && kind === 'alternatives' && current) {

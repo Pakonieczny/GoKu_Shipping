@@ -18,6 +18,11 @@ function response(products,pageInfo={hasNextPage:false,endCursor:null}){return {
 function fixture(t,{products=moonRows,catalogue,pageInfo={hasNextPage:false,endCursor:null},session={}}={}){
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',error=>errors.push(error));
   const dom=new JSDOM(html,{url:'https://sandbox.example/concierge-sandbox.html',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc}),w=dom.window,d=w.document,reads=[],views=[];
+  // This catalogue-only fixture does not serve /inventory. Its unrelated
+  // failed-preload retry can otherwise enter the strict paging read ledger
+  // under full-suite load. Complete preload/retry remains exercised by the
+  // inventory and actual 120-row browse suites; paging assertions stay exact.
+  delete d.body.dataset.inventoryPreload;
   Object.entries(session).forEach(([key,value])=>w.sessionStorage.setItem(key,value));
   w.HTMLElement.prototype.scrollIntoView=function(){};
   d.addEventListener('brites-storefront:context',event=>views.push(clone(event.detail)));

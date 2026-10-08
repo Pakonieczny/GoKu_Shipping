@@ -108,6 +108,25 @@ test('native cart projection retains large checked count and marks context-limit
   const bounded=Voice.publicContext({controlVersion:1,pageKind:'bag',bagControls:{lines,itemCount:50,countKnown:true,linesComplete:true}});assert.ok(Buffer.byteLength(JSON.stringify(bounded))<=18000);assert.equal(bounded.bagControls.itemCount,50);assert.ok(bounded.bagControls.lines.length<50);assert.equal(bounded.bagControls.linesTruncated,true);assert.equal(bounded.bagControls.linesComplete,false);
 });
 
+for(const phrase of ['Add this exact piece to my cart','Add this piece to my cart','Add it to my bag'])test('exact current-reference finalized native add preserves its selected variant and quantity — '+phrase,async t=>{
+  const h=await productionFixture(t,{quantity:2}),before=clone(h.store.snapshot().productControls);
+  assert.equal(before.variantId,VARIANT);assert.equal(before.quantity,2);assert.equal(before.itemTotalPrice,150);
+  await h.say(phrase);assert.equal(h.result()?.ok,true,JSON.stringify(h.result()));assert.equal(h.result()?.cartChanged,true);
+  assert.equal(h.controls.length,1);assert.equal(h.controls[0].action.type,'add');assert.equal(h.controls[0].action.handle,HANDLE);assert.equal(h.controls[0].action.variantId,VARIANT);
+  assert.equal(h.hookCalls.length,1);assert.equal(h.hookCalls[0].variantId,VARIANT);assert.equal(h.hookCalls[0].quantity,2);
+  assert.equal(h.postCount(),1);const post=h.requests.find(r=>r.url.pathname==='/cart/add.js');assert.equal(post.body.items[0].id,4304);assert.equal(post.body.items[0].quantity,2);
+  assert.equal(h.cart().item_count,2);assert.deepEqual(clone(h.store.snapshot().productControls.selectedOptions),before.selectedOptions);assert.equal(h.store.snapshot().productControls.quantity,2);
+  assert.equal(h.root.querySelector('.review'),null);assert.equal(h.responses().at(-1).response.tool_choice,'none');
+});
+
+test('exact wording in a finalized native add does not borrow current selection for an unknown named target',async t=>{
+  const h=await productionFixture(t,{quantity:2}),before=clone(h.store.snapshot().productControls);
+  await h.say('Add this exact Hidden Butterfly Charm Necklace to my cart');
+  assert.ok(h.result()?.ok===false||typeof h.result()?.error==='string',JSON.stringify(h.result()));
+  assert.equal(h.controls.length,0);assert.equal(h.hookCalls.length,0);assert.equal(h.postCount(),0);assert.equal(h.cart().item_count,0);
+  assert.deepEqual(clone(h.store.snapshot().productControls),before);
+});
+
 test('actual finalized voice add calls the production hook and posts exact selected variant and quantity once',async t=>{
   const h=await productionFixture(t),input=await h.say('Add this piece to my cart');assert.equal(h.controls.length,1,JSON.stringify(h.result()));assert.equal(h.controls[0].action.type,'add');assert.equal(h.hookCalls.length,1,JSON.stringify(h.result()));assert.equal(h.hookCalls[0].variantId,VARIANT);assert.equal(h.hookCalls[0].quantity,3);assert.equal(typeof h.hookCalls[0].reviewAuthority,'object');assert.equal(h.postCount(),1,JSON.stringify(h.result()));
   const post=h.requests.find(r=>r.url.pathname==='/cart/add.js');assert.equal(post.body.items[0].id,4304);assert.equal(post.body.items[0].quantity,3);assert.match(post.body.items[0].properties._BritesConciergeRequest,/^[a-zA-Z0-9_-]{16,100}$/);assert.equal(h.cart().item_count,3);assert.equal(h.result().ok,true);assert.equal(h.result().cartChanged,true);assert.equal(h.result().publicContext.currentHandle,HANDLE);assert.equal(h.result().publicContext.bagControls.itemCount,3);assert.equal(h.responses().at(-1).response.tool_choice,'none');assert.equal(h.root.querySelector('.review'),null);

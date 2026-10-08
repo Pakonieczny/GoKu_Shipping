@@ -149,6 +149,41 @@ test('published unavailability, unknown stock, identity holds, parts and service
   ];
   assert.deepEqual(create([current, ...rows]).prepare(view(current)).matching, []);
 });
+test('ordinary published charms retain motif pairings and exact option help for every style and engraving variant', () => {
+  const metals = ['Sterling Silver', '14/20 Gold Filled'], styles = ['Necklace Charm', 'Bracelet Charm'], engraving = ['No', 'Yes'];
+  let nextId = 50101;
+  const variants = metals.flatMap((metal, m) => styles.flatMap((style, s) => engraving.map((value, e) => ({ id: 'gid://shopify/ProductVariant/' + nextId++, title: metal + ' / ' + style + ' / ' + value, price: 30 + m * 10 + s * 5 + e * 12, available: true, options: [{ name: 'Metal Choice', value: metal }, { name: 'Charm Type', value: style }, { name: 'Engraving', value }] }))));
+  const current = piece(501, 'Sea Otter Necklace Charm', 'Charms', { partsOnly: true, variants });
+  const stud = piece(502, 'Sea Otter Charm Stud Earrings', 'Earrings');
+  const other = piece(503, 'Eating Otter Stud Earrings', 'Earrings');
+  const charm = piece(504, 'Sea Otter Outline Necklace Charm', 'Charms', { partsOnly: true });
+  const invalid = [piece(505, 'Sea Otter Custom Components', 'Charms', { partsOnly: true }), piece(506, 'Sea Otter Stud Earrings', 'Earrings', { recommendationHold: true })];
+  const guide = create([current, stud, other, charm, ...invalid], { interests: ['animals'] });
+  guide.dismiss();
+  const empty = guide.prepare(view(current));
+  assert.equal(empty.nextStep.action.optionName, 'Metal Choice');
+  assert.ok(empty.optionSuggestions.some(row => row.name === 'Metal Choice'));
+  assert.deepEqual(empty.alternatives.map(row => row.id), [charm.id], 'A necklace charm keeps the published charm category');
+  for (const variant of variants) {
+    const context = selected(current, variant, { selectionStatus: 'ready', quantity: 3 }), before = JSON.stringify(context);
+    const result = guide.suggest({ context, message: 'Show me matching earrings' });
+    assert.deepEqual(result.suggestion.products.map(row => row.id).sort(), [stud.id, other.id].sort());
+    assert.ok(result.suggestion.products.every(row => row.variantTitle.includes(variant.options[0].value)));
+    assert.ok(result.suggestion.products.every(row => /Shares the otter motif/.test(row.why) && /sold separately/.test(row.why)));
+    assert.ok(result.suggestion.products.every(row => row.action.type === 'open'));
+    assert.equal(result.pack.current.id, current.id);
+    if (variant.options[2].value === 'Yes') { assert.equal(result.pack.nextStep.kind, 'options'); assert.match(result.pack.nextStep.text, /personalization requirements/); }
+    else { assert.equal(result.pack.nextStep.kind, 'add'); assert.equal(result.pack.nextStep.subtotal, variant.price * 3); }
+    assert.equal(JSON.stringify(context), before);
+  }
+  for (const extra of [{ cartHold: true }, { recommendationHold: true }, { title: 'Sea Otter Custom Charm' }, { type: 'Components' }]) {
+    const blocked = { ...current, ...extra }, blockedGuide = create([blocked, stud]);
+    assert.deepEqual(blockedGuide.prepare(view(blocked)).matching, []);
+    assert.equal(blockedGuide.prepare(view(blocked)).nextStep, null);
+  }
+  guide.updateProducts([current]);
+  assert.match(guide.suggest({ context: view(current), message: 'Show me matching earrings' }).reply, /haven’t found checked matching earrings/);
+});
 test('expired, future-dated and incomplete catalogue cannot authorize readiness or availability guidance', () => {
   const p = piece(1, 'Butterfly Necklace'), stale = piece(2, 'Butterfly Earrings', 'Earrings', { checkedAt: NOW - 300000 }), future = piece(3, 'Butterfly Stud Earrings', 'Earrings', { checkedAt: NOW + 60001 }), incomplete = piece(4, 'Butterfly Hoop Earrings', 'Earrings', { variantsComplete: false });
   const guide = create([p, stale, future, incomplete]);
@@ -302,7 +337,7 @@ test('a shopper who says not sure immediately after matching suggestions receive
   assert.equal(unsure.suggestion.products[0].title, 'Butterfly Disc Necklace');
   assert.ok(unsure.suggestion.products.every(row => /Gold Filled/.test(row.variantTitle)));
 });
-test('more like that explicitly requests current-design alternatives despite cooldown and passive session mute', () => {
+for (const phrase of ['More like that', 'More like this']) test(phrase + ' explicitly requests current-design alternatives despite cooldown and passive session mute', () => {
   const current = piece(1, 'Fox Charm Necklace'), exact = piece(2, 'Fox Outline Necklace', 'Necklace', { variants: [variant(201, 'Sterling Silver', 20), variant(202, '14/20 Gold Filled', 55)] });
   const matched = piece(3, 'Fox Hoop Earrings', 'Earrings'), broad = piece(4, 'Butterfly Necklace');
   let called = false;
@@ -311,7 +346,7 @@ test('more like that explicitly requests current-design alternatives despite coo
   const previous = guide.suggest({ context, message: 'What earrings match?' });
   guide.markShown(previous.suggestion);
   guide.dismiss();
-  const answer = guide.suggest({ context, message: 'More like that' });
+  const answer = guide.suggest({ context, message: phrase });
   assert.equal(answer.suggestion.kind, 'alternatives');
   assert.deepEqual(answer.suggestion.products.map(row => row.id), [exact.id]);
   assert.equal(answer.suggestion.products[0].variantId, exact.variants[1].id);

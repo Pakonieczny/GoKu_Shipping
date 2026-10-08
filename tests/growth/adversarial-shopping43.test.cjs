@@ -517,6 +517,43 @@ test('A01/D05: current-product pronouns and material facts do not become unrelat
   }
 });
 
+for (const nativeVoice of [false, true]) for (const phrase of ['What am I looking at?', 'Which piece is this?', 'What is the current piece?', 'What size is it?', 'How much is this?', 'What metals can I choose?']) test('A01/A03/R08: literal current question follows manual listing entry after older animal cards: ' + phrase + ' / ' + (nativeVoice ? 'synthetic realtime' : 'typed'), async t => {
+  const h = await fixture(t, { nativeVoice }), p = h.rows[6], selected = p.variants[1];
+  const old = await h.command('What animal earrings do you have?');
+  assert.equal(old.ok, true, old.reply || old.error); assert.equal(h.handles().length, 6);
+  const link = h.d.querySelector('#demo-products [data-product-handle="' + p.handle + '"] a');
+  assert(link, 'The shopper must enter a real displayed listing link rather than an assistant open command'); link.click();
+  for (let n = 0; n < 5; n++) await settle();
+  assert.equal(h.store.snapshot().pageKind, 'product'); assert.equal(h.store.snapshot().currentHandle, p.handle);
+  assert.equal(h.d.querySelector('.product-copy h1').textContent, p.title);
+  const nativeSelect = h.d.querySelector('#piece-variant'), quantity = h.d.querySelector('input[aria-label="Quantity of this exact piece"]');
+  nativeSelect.value = selected.id; nativeSelect.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  quantity.value = '2'; quantity.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  if (nativeVoice) await h.startVoice();
+  const before = clone(h.store.snapshot()), count = h.requests.length;
+  assert.equal(before.productControls.variantId, selected.id); assert.equal(before.productControls.quantity, 2);
+  const result = await (nativeVoice ? h.say(phrase) : h.command(phrase));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.productFacts?.handle, p.handle, 'The exact manually opened product must provide the answer');
+  assert.equal(result.productFacts.productId, p.id); assert.equal(result.productFacts.title, p.title);
+  assert.equal(result.verified, true); assert.equal(result.live, true); assert.equal(result.cached, true);
+  assert(Number.isFinite(result.checkedAt) && Date.now() - result.checkedAt < 300000);
+  assert.deepEqual(clone(result.productFacts.sources), [{ title: 'Published Brites product details', url: p.url, checkedAt: result.checkedAt }]);
+  assert.equal(result.productFacts.selectedVariant.id, selected.id); assert.equal(result.productFacts.quantity, 2);
+  assert.match(result.reply, /Butterfly Stud Earrings/);
+  assert.doesNotMatch(result.reply, /Synthetic server fallback|choose a listing|select a piece|connect with animal|Rabbit Huggie|Elephant Hoop/i, 'Old discovery or another card cannot answer the current-product question');
+  if (/size/i.test(phrase)) { assert.match(result.reply, /11\s*mm/); assert.match(result.reply, /7\s*mm/); }
+  else if (/much/i.test(phrase)) {
+    assert.match(result.reply, /USD 53\.00.*each.*quantity 2.*USD 106\.00/i, 'Quote the actual manual selected unit price and two-item subtotal');
+    assert.equal(result.productFacts.selectedVariant.price, 53); assert.equal(result.productFacts.itemTotalPrice, 106);
+  } else if (/metals/i.test(phrase)) { assert.match(result.reply, /Sterling Silver/); assert.match(result.reply, /14k Gold Filled/); }
+  else { assert.match(result.reply, /charm measures 11 mm wide and 7 mm high/i, 'An identity answer includes this listing’s checked details'); }
+  assert.deepEqual(clone(h.store.snapshot()), before, 'Factual answers preserve the manually chosen controls, current page, quantity and navigation');
+  assert.equal(h.requests.length, count, 'The checked current facts must use zero new model/product HTTP after the manual view is warm');
+  assert.deepEqual(h.cart(), []); assert.deepEqual(h.errors, []);
+});
+
 test('A02: hidden template and noscript measurements cannot become visible facts after public product normalization', async t => {
   const rows = catalogue(), p = rows[0];
   const normalized = Growth.normalizeProduct({
@@ -529,8 +566,41 @@ test('A02: hidden template and noscript measurements cannot become visible facts
   const count = h.requests.length, result = await h.command('What size is the charm?');
   assert.equal(result.ok, true, result.reply || result.error);
   assert.match(result.reply, /11\s*mm/); assert.match(result.reply, /7\s*mm/);
-  assert.doesNotMatch(result.reply, /\b[1-6]\s*mm\b/, 'Only actually published visible measurements survive the upstream normalization and current-fact reply');
-  assert((result.productFacts?.dimensions || []).every(sentence => !/\b[1-6]\s*mm\b/.test(sentence)));
+  assert.doesNotMatch(result.reply, /(?<![\d.])[1-6]\s*mm\b/, 'Only actually published visible measurements survive the upstream normalization and current-fact reply; the actual 8.5mm hoop option is legitimate');
+  assert((result.productFacts?.dimensions || []).every(sentence => !/(?<![\d.])[1-6]\s*mm\b/.test(sentence)));
+  assert.equal(h.requests.length, count); assert.deepEqual(h.cart(), []);
+});
+
+for (const nativeVoice of [false, true]) for (const kind of ['metal-only', 'hoop-size', 'chain-length']) test('A02/R08: generic size question distinguishes missing physical measurements from published option axes: ' + kind + ' / ' + (nativeVoice ? 'synthetic realtime' : 'typed'), async t => {
+  const p = kind === 'chain-length'
+    ? product(43122, 'Butterfly Chain Necklace', { type: 'Necklace', description: 'This butterfly necklace offers published metal and chain length choices.' })
+    : product(43121, kind === 'metal-only' ? 'Butterfly Cutout Stud Earrings' : 'Butterfly Huggie Earrings', { description: kind === 'metal-only' ? 'These butterfly cutout stud earrings are offered in the published metal options.' : 'These butterfly huggie earrings offer published metal and hoop size choices.' });
+  if (kind === 'metal-only') {
+    p.options = [p.options[0]];
+    p.variants = [p.variants[0], p.variants[2]].map(v => ({ ...v, title: v.options[0].value, options: [v.options[0]] }));
+  }
+  const h = await fixture(t, { rows: [p], nativeVoice }); await h.store.execute({ type: 'open', handle: p.handle });
+  if (nativeVoice) await h.startVoice();
+  const before = clone(h.store.snapshot()), count = h.requests.length, ask = text => nativeVoice ? h.say(text) : h.command(text);
+  const result = await ask('What size is this piece?');
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.productFacts?.handle, p.handle);
+  assert.deepEqual(clone(result.productFacts.dimensions), [], 'Option length/diameter values are not physical charm or pendant measurements');
+  if (kind === 'metal-only') {
+    assert.match(result.reply, /size|dimensions?|measurements?/i);
+    assert.match(result.reply, /(?:do(?:es)? not|doesn['’]t).*?(?:confirm|give|publish|provide|list|state)|not (?:published|provided|listed|available|stated|verified)|no (?:physical|published|verified|size)|unknown/i, 'An exact listing without measurements must say so honestly');
+    assert.doesNotMatch(result.reply, /Metal Choice|Sterling Silver|Gold Filled/i, 'Size must not be answered with unrelated metal choices');
+  } else {
+    const group = kind === 'hoop-size' ? 'Hoop Size' : 'Necklace Length';
+    assert.match(result.reply, new RegExp(group, 'i'), 'Published option sizes must keep their actual axis label');
+    assert.match(result.reply, kind === 'hoop-size' ? /8\.5\s*mm/ : /16\s*inch/i);
+    assert.match(result.reply, kind === 'hoop-size' ? /10\s*mm/ : /18\s*inch/i);
+    assert.doesNotMatch(result.reply, /(?:charm|pendant)\s+(?:is|measures|diameter)\s+(?:8\.5|10|16|18)\s*(?:mm|inch)/i);
+    const specific = await ask(kind === 'hoop-size' ? 'What width is the charm?' : 'What width is the pendant?');
+    assert.equal(specific.ok, true, JSON.stringify(specific));
+    assert.match(specific.reply, /(?:do(?:es)? not|doesn['’]t).*?(?:confirm|give|publish|provide|list|state)|not (?:published|provided|listed|available|stated|verified)|no (?:physical|published|verified|size)|unknown/i, 'A particular charm/pendant dimension cannot be inferred from hoop or chain choices');
+    assert.deepEqual(clone(specific.productFacts?.dimensions), []);
+  }
+  assert.deepEqual(clone(h.store.snapshot()), before, 'Size questions preserve the actual current product, literal choices and quantity');
   assert.equal(h.requests.length, count); assert.deepEqual(h.cart(), []);
 });
 

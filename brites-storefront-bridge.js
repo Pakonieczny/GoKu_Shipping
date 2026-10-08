@@ -272,7 +272,7 @@
       var explicitChoice=pc.optionGroups.flatMap(function(g){return g.values.filter(function(v){return has(command,v);}).map(function(v){return {name:g.name,value:v};});});
       if(explicitChoice.some(function(v){return !pc.selectedOptions.some(function(s){return s.name===v.name&&s.value===v.value;});}))return failed('Those options differ from the current selection. Select the exact option before adding.',true);
       var reviewWords=optionRequestText(command,context,t.handle);pc.optionGroups.forEach(function(g){[g.name].concat(g.values).sort(function(a,b){return b.length-a.length;}).forEach(function(v){if(has(reviewWords,v))reviewWords=reviewWords.replace(norm(v),'');});});
-      if(reviewWords.replace(/\b(?:add|put|review|prepare|adding|to|in|into|my|the|a|an|test|mock|demo|sandbox|bag|cart|basket|please|current|selected|piece|pieces|product|listing|item|it|its|this|that|of)\b/g,'').trim())return failed('Name the exact current piece and quantity before adding it.',true);
+      if(reviewWords.replace(/\b(?:add|put|review|prepare|adding|to|in|into|my|the|a|an|test|mock|demo|sandbox|bag|cart|basket|please|current|selected|exact|piece|pieces|product|listing|item|it|its|this|that|of)\b/g,'').trim())return failed('Name the exact current piece and quantity before adding it.',true);
       if(!directAdd&&(!pc.variantId||pc.selectedOptions.length!==pc.optionGroups.length))return failed('Choose every exact published option first, then review adding this piece.',true);
       return success(Object.assign({type:directAdd?'add':'review-add',handle:t.handle},pc.variantId?{variantId:pc.variantId}:{}),context);
     }

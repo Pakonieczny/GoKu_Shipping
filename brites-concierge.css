@@ -89,3 +89,33 @@
 
 .shopping-suggestion-price{display:block;color:var(--ink);font-weight:600;font-size:10px;overflow-wrap:anywhere}.shopping-material-advice{max-width:240px;font-size:10px;line-height:1.4}.shopping-material-advice summary{cursor:pointer;margin:4px 0}.shopping-material-advice p{margin:4px 0}.shopping-material-advice a{display:block;overflow-wrap:anywhere}.shopping-option-suggestion{max-width:100%}
 .shopping-help-choices .chip{max-width:100%;overflow-wrap:anywhere;white-space:normal}
+/* A real open option menu keeps its native controls above the same mounted guide. */
+@media(max-width:640px){
+  :host([data-open="true"][data-storefront-control-assist="true"]) .panel{top:auto;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));width:auto;height:auto;max-height:min(400px,54dvh);display:grid;grid-template-columns:clamp(80px,24vw,110px) minmax(0,1fr);grid-template-areas:"bar bar" "avatar captions" "avatar voice" "avatar utility" "avatar status" "help help" "history history" "composer composer";grid-template-rows:auto auto auto auto auto auto auto auto;align-content:start;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;border-radius:18px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .launcher{display:none}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .bar{grid-area:bar;position:sticky;top:0;z-index:3;padding:4px 10px;gap:8px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .bar h2{font-size:15px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .brand{font-size:8px;letter-spacing:1.6px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .icon{width:44px;height:44px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .concierge-avatar-stage{grid-area:avatar;min-height:100px;max-height:none;align-self:stretch;flex:none}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .captions{grid-area:captions;min-height:0;padding:5px 8px;border-top:0}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .caption-label{font-size:8px;margin-bottom:3px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .caption-text{font-size:12px;max-height:56px;line-height:1.4;padding:0}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .captions[data-speaker=user] .caption-text{font-size:11px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .avatar-controls{grid-area:voice;gap:3px;padding:3px 6px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .voice-state{font-size:10px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .voice-actions{min-height:0;gap:4px;flex-wrap:wrap}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .voice-button{min-width:110px;min-height:44px;padding:7px 10px;font-size:12px;gap:6px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .interrupt-button,:host([data-open="true"][data-storefront-control-assist="true"]) .voice-recovery{min-height:44px;padding:7px 8px;font-size:11px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .utility-controls{grid-area:utility;gap:1px;padding:0 3px 4px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .quiet-control{min-height:32px;padding:5px;font-size:10px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .status{grid-area:status;padding:0 8px 5px;font-size:10px;max-height:32px;overflow:auto}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .storefront-presence,:host([data-open="true"][data-storefront-control-assist="true"]) .product-tray{display:none}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .shopping-help{grid-area:help;min-width:0;margin:4px 10px 6px;padding:6px 8px;max-height:100px;overflow:auto}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .shopping-help-text{font-size:11px;margin-bottom:5px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .shopping-help-choices .chip{min-height:44px;max-width:100%;font-size:11px;padding:7px 9px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .messages{grid-area:history;min-height:0;max-height:84px;padding:8px 10px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .composer{grid-area:composer;position:sticky;bottom:0;z-index:2;min-width:0;padding:7px 10px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .composer input{font-size:16px;min-height:44px;padding:8px 10px}
+  :host([data-open="true"][data-storefront-control-assist="true"]) .send{min-height:44px;padding:8px 12px;font-size:12px}
+}

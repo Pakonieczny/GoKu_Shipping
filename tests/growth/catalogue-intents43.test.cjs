@@ -29,6 +29,16 @@ test('ordinary inventory wording browses all checked types and clears prior narr
   }
   const constrained=catalogue.discovery('What silver earrings do you have?');assert.equal(constrained.mode,'search');assert.deepEqual(constrained.plan.categories,['earrings']);assert.equal(constrained.plan.material.family,'silver');
 });
+test('explicit all/everything browse preserves full host browsing separately from a bounded inventory overview',()=>{
+  for(const text of ['Show me all pieces','Show all','Show me everything','Browse all','Browse all jewelry','Please show me all pieces','Can you show me all pieces','Let me see everything','Show me the full collection','Show your whole catalogue','Browse the entire collection','List all pieces']){
+    const found=catalogue.discovery(text,'animal stud earrings gold filled under USD 60');assert.equal(found.recognized,true,text);assert.equal(found.mode,'browse',text);assert.equal(found.browseAll,true,text);assert.equal(found.query,'',text);assert.deepEqual(found.plan.categories,[],text);assert.deepEqual(found.plan.themes,[],text);assert.equal(found.plan.material,null,text);assert.equal(found.plan.max,null,text);
+  }
+  for(const text of ['What do you have?','What kinds of jewelry do you sell?',"What's in your collection?",'Can you show me what you have?']){
+    const found=catalogue.discovery(text,'animal stud earrings');assert.equal(found.mode,'browse',text);assert.equal(found.browseAll,false,text);
+  }
+  for(const text of ['Show all butterfly earrings','Show all animal necklaces']){const found=catalogue.discovery(text);assert.equal(found.mode,'search',text);assert.notEqual(found.browseAll,true,text);assert.ok(found.plan.categories.length,text);assert.ok(found.plan.terms.length||found.plan.themes.length,text);}
+  assert.equal(catalogue.discovery("Don't show all pieces").denied,true);
+});
 test('family refinements distinguish birds, pets and flower themes',()=>{
   assert.deepEqual(ids('bird earrings'),[owl.id]);assert.deepEqual(ids('pet earrings'),[bunny.id]);assert.deepEqual(ids('floral earrings'),[flower.id]);assert.deepEqual(ids('nature necklaces'),[leaf.id]);
 });
@@ -54,6 +64,13 @@ test('deliberate just/only category followups replace format and retain motif, e
 });
 test('deictic details and actual page-control language remain outside catalogue discovery',()=>{
   for(const text of ['Do you have this in silver?','What size is it?','What size is the charm?','What material is this?','Do they come in silver?','Which metal is better?','Show me their sizes','How many do you have?','Open butterfly earrings','Add it to my cart','Show the metal options','Go to my cart','What is shipping?','What does this mean?','Do you have these in gold filled?','Use Sterling Silver for the other earrings','Change butterfly earrings','Help me choose butterfly earrings','Enable butterfly earrings','Disable butterfly earrings','Sort butterfly earrings','Filter butterfly earrings','Reset butterfly earrings','Clear butterfly earrings','Show butterfly earrings and then add them to bag','What should I choose?','What should I pick?','Show the next image','Show the previous photo','What pictures do you have?'])assert.equal(catalogue.discovery(text,'animal earrings').recognized,false,text);
+});
+test('ordinary current identity aliases remain knowledge while first-person shopping grammar adds no motif',()=>{
+  for(const text of ['What am I looking at?','Which piece is this?','What is this piece?','What am I viewing?','What is the current piece?','Please what am I looking at?','What am I viewing under my cursor?','What am I looking at on Hidden Pendant?']){
+    const found=catalogue.discovery(text,'animal earrings');assert.equal(found.recognized,false,text);assert.equal(found.mode,'none',text);assert.equal(found.query,'',text);
+  }
+  for(const text of ['I am looking for butterfly earrings','I am looking for animal earrings']){const found=catalogue.discovery(text,'leaf necklaces');assert.equal(found.recognized,true,text);assert.equal(found.mode,'search',text);assert.deepEqual(found.plan.categories,['earrings'],text);assert(!found.plan.terms.includes('am'),text);assert.deepEqual(ids(found.plan),text.includes('butterfly')?[butterfly.id]:[butterfly.id,bunny.id,owl.id],text);}
+  const correction=catalogue.discovery('Actually I am looking for butterfly earrings instead','leaf necklaces');assert.equal(correction.denied,false);assert.equal(correction.mode,'search');assert.deepEqual(ids(correction.plan),[butterfly.id]);assert.equal(catalogue.discovery("Don't show animal earrings").denied,true);assert.equal(catalogue.discovery('Show me all pieces','animal earrings').browseAll,true);
 });
 test('price ordering frames do not become a design word or steal product facts',()=>{
   for(const [text,sort]of [['Show the cheapest bunny earrings','price-asc'],['Show the lowest-priced bunny earrings','price-asc'],['Show bunny earrings price low to high','price-asc'],['Show the most expensive bunny earrings','price-desc'],['Show the highest-priced bunny earrings','price-desc'],['Show bunny earrings price high to low','price-desc']]){
