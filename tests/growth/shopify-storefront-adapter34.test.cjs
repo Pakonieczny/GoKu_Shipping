@@ -76,11 +76,10 @@ test('pointer attention uses mounted exact product identity and never reads note
   const f=fixture(t);f.doc.querySelector('a.bjc-pcard').dispatchEvent(new f.win.Event('pointerover',{bubbles:true}));
   assert.equal(f.instance.snapshot().focusedHandle,'sample-earrings');
 });
-test('opens the verified existing native selector with fresh locale-aware GET checks',async t=>{
+test('opens the verified existing native selector immediately without a product or cart GET',async t=>{
   const f=fixture(t,{root:'/en-ca/'}),res=await run(f,{type:'options',handle:'sample-bunny',optionName:'Necklace Length'});
   assert.equal(res.ok,true);assert.equal(f.doc.querySelector('.bjselx__btn').getAttribute('aria-expanded'),'true');
-  assert.equal(res.snapshot.productControls.openedOption,'Necklace Length');assert.deepEqual(f.calls.map(c=>c.url),['/en-ca/cart.js','/en-ca/products/sample-bunny.js']);
-  assert(f.calls.every(c=>c.options.method==='GET'&&c.options.cache==='no-store'&&c.options.credentials==='same-origin'));assert.equal(f.addClicks(),0);
+  assert.equal(res.snapshot.productControls.openedOption,'Necklace Length');assert.deepEqual(f.calls,[]);assert.equal(f.addClicks(),0);
 });
 test('literal partial option selection preserves every other group',async t=>{
   const f=fixture(t),res=await run(f,{type:'select-option',handle:'sample-bunny',optionName:'Necklace Length',optionValue:'18 inch'});
@@ -91,15 +90,28 @@ test('full variant selection updates all exact native groups together without ad
   const f=fixture(t),res=await run(f,{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1008'});
   assert.equal(res.ok,true);assert.equal(f.doc.querySelector('#bjMetals .on').textContent,'14k Gold Filled');assert.equal(f.doc.querySelector('select.bjOptSel').value,'18 inch');assert.equal(f.doc.querySelector('#bjEngrChk').checked,true);assert.equal(f.doc.querySelector('#bjEngrTxt').value,'PRIVATE-GIFT-NOTE');assert.equal(f.addClicks(),0);
 });
+for(const [name,action] of [
+  ['unknown literal group',{type:'select-option',handle:'sample-bunny',optionName:'Length',optionValue:'18 inch'}],
+  ['unknown literal value',{type:'select-option',handle:'sample-bunny',optionName:'Necklace Length',optionValue:'20 inch'}],
+  ['unknown variant',{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/9999'}]
+])test(`rejects ${name} without changing native choices or reading the network`,async t=>{const f=fixture(t),res=await run(f,action);assert.equal(res.ok,false);assert.equal(f.doc.querySelector('select.bjOptSel').value,'14 inch');assert.deepEqual(f.calls,[]);assert.equal(f.addClicks(),0);});
 for(const [name,change,action] of [
   ['unavailable exact combination',f=>f.state.raw.variants[2].available=false,{type:'select-option',handle:'sample-bunny',optionName:'Necklace Length',optionValue:'18 inch'}],
-  ['unknown literal group',()=>{},{type:'select-option',handle:'sample-bunny',optionName:'Length',optionValue:'18 inch'}],
-  ['unknown literal value',()=>{},{type:'select-option',handle:'sample-bunny',optionName:'Necklace Length',optionValue:'20 inch'}],
-  ['unknown variant',()=>{},{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/9999'}],
-  ['mismatched product response',f=>f.state.raw={...f.state.raw,id:9002},{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1008'}],
-  ['truncated variants',f=>f.state.raw={...f.state.raw,variants:f.state.raw.variants.slice(0,4)},{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1004'}],
   ['selling-plan variant',f=>f.state.raw.variants[7].requires_selling_plan=true,{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1008'}]
-])test(`rejects ${name} without changing native choices`,async t=>{const f=fixture(t);change(f);const res=await run(f,action);assert.equal(res.ok,false);assert.equal(f.doc.querySelector('select.bjOptSel').value,'14 inch');assert.equal(f.addClicks(),0);});
+])test(`a completed public refresh rejects ${name} before any local selection changes`,async t=>{
+  const f=fixture(t);change(f);assert.equal(await f.instance.refresh(),true);assert.deepEqual(f.calls.map(c=>c.url),['/cart.js','/products/sample-bunny.js']);
+  const res=await run(f,action);assert.equal(res.ok,false);assert.equal(f.doc.querySelector('select.bjOptSel').value,'14 inch');assert.equal(f.doc.querySelector('#bjMetals .on').textContent,'Sterling Silver');assert.equal(f.doc.querySelector('#bjEngrChk').checked,false);assert.equal(f.calls.length,2);assert.equal(f.addClicks(),0);
+});
+for(const [name,change] of [
+  ['mismatched product identity',f=>f.state.raw={...f.state.raw,id:9002}],
+  ['truncated variant response',f=>f.state.raw={...f.state.raw,variants:f.state.raw.variants.slice(0,4)}],
+  ['newly unavailable current variant',f=>f.state.raw.variants[0].available=false],
+  ['new selling-plan requirement',f=>f.state.raw.variants[0].requires_selling_plan=true]
+])test(`fresh review refuses ${name} despite a locally loaded current choice`,async t=>{
+  const authority={},f=fixture(t,{root:'/en-ca/',reviewAdd:async()=>({prepared:true})});change(f);
+  const res=await run(f,{type:'review-add',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001'},'fresh-review',{reviewAuthority:authority});
+  assert.equal(res.ok,false);assert.equal(f.reviews.length,0);assert.equal(f.doc.querySelector('select.bjOptSel').value,'14 inch');assert.equal(f.nativeQuantity(),1);assert.equal(f.addClicks(),0);assert.deepEqual(f.calls.map(c=>c.url),['/en-ca/cart.js','/en-ca/products/sample-bunny.js']);assert(f.calls.every(c=>c.options.method==='GET'&&c.options.cache==='no-store'&&c.options.credentials==='same-origin'));
+});
 test('does not report success if a theme ignores the option change',async t=>{
   const f=fixture(t);f.doc.querySelector('select').addEventListener('change',e=>{e.target.value='14 inch';});
   const res=await run(f,{type:'select-option',handle:'sample-bunny',optionName:'Necklace Length',optionValue:'18 inch'});assert.equal(res.ok,false);assert.match(res.reason,/could not confirm/);
@@ -149,18 +161,34 @@ test('duplicate review request cannot create multiple reviews',async t=>{
 test('aborted request does not fetch or mutate',async t=>{
   const f=fixture(t),controller=new AbortController();controller.abort();const res=await run(f,{type:'product-quantity',handle:'sample-bunny',quantity:2},'request-one',{signal:controller.signal});assert.equal(res.cancelled,true);assert.equal(f.calls.length,0);
 });
-test('a shopper selection change during fresh reads cancels the stale control',async t=>{
+test('a shopper quantity change during fresh review reads cancels the stale review',async t=>{
   let release;const wait=new Promise(resolve=>release=resolve),raw=product();
-  const f=fixture(t,{fetch:async url=>{await wait;return {ok:true,json:async()=>url.endsWith('cart.js')?{currency:'USD',item_count:0,items:[]}:raw};}});
-  const work=run(f,{type:'product-quantity',handle:'sample-bunny',quantity:3});f.doc.querySelector('#bjQty').value='2';release();const res=await work;assert.equal(res.stale,true);assert.equal(f.doc.querySelector('#bjQty').value,'2');
+  const f=fixture(t,{reviewAdd:async()=>({prepared:true}),fetch:async url=>{await wait;return {ok:true,json:async()=>url.endsWith('cart.js')?{currency:'USD',item_count:0,items:[]}:raw};}});
+  const work=run(f,{type:'review-add',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001'},'fresh-review',{reviewAuthority:{}});f.doc.querySelector('button[data-q="1"]').click();release();const res=await work;assert.equal(res.stale,true);assert.equal(f.doc.querySelector('#bjQty').value,'2');assert.equal(f.nativeQuantity(),2);assert.equal(f.reviews.length,0);assert.equal(f.addClicks(),0);
 });
-test('newer shopper request supersedes an earlier asynchronous request',async t=>{
+test('newer local shopper request supersedes an earlier asynchronous fresh review',async t=>{
   let release;const wait=new Promise(resolve=>release=resolve),raw=product();
-  const f=fixture(t,{fetch:async url=>{await wait;return {ok:true,json:async()=>url.endsWith('cart.js')?{currency:'USD',item_count:0,items:[]}:raw};}});
-  const older=run(f,{type:'product-quantity',handle:'sample-bunny',quantity:3},'older');const newer=await run(f,{type:'highlight',handle:'sample-bunny',section:'price'},'newer');release();assert.equal(newer.ok,true);assert.equal((await older).cancelled,true);assert.equal(f.doc.querySelector('#bjQty').value,'1');
+  const f=fixture(t,{reviewAdd:async()=>({prepared:true}),fetch:async url=>{await wait;return {ok:true,json:async()=>url.endsWith('cart.js')?{currency:'USD',item_count:0,items:[]}:raw};}});
+  const older=run(f,{type:'review-add',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001'},'older',{reviewAuthority:{}});const newer=await run(f,{type:'highlight',handle:'sample-bunny',section:'price'},'newer');release();assert.equal(newer.ok,true);assert.equal((await older).cancelled,true);assert.equal(f.doc.querySelector('#bjQty').value,'1');assert.equal(f.reviews.length,0);assert.equal(f.addClicks(),0);
 });
-test('a failed GET never becomes a successful native action',async t=>{
-  const f=fixture(t,{fetch:async()=>({ok:false,status:503})}),res=await run(f,{type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1008'});assert.equal(res.ok,false);assert.equal(f.addClicks(),0);
+test('a failed fresh GET never authorizes a cart review',async t=>{
+  const f=fixture(t,{reviewAdd:async()=>({prepared:true}),fetch:async()=>({ok:false,status:503})}),res=await run(f,{type:'review-add',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001'},'failed-review',{reviewAuthority:{}});assert.equal(res.ok,false);assert.equal(f.reviews.length,0);assert.equal(f.nativeQuantity(),1);assert.equal(f.addClicks(),0);
+});
+test('local reversible controls stay immediate even when a future public read would fail',async t=>{
+  let attempted=0;const f=fixture(t,{fetch:async()=>{attempted++;return {ok:false,status:503};}});
+  assert.equal((await run(f,{type:'options',handle:'sample-bunny',optionName:'Necklace Length'},'menu')).ok,true);
+  assert.equal((await run(f,{type:'select-option',handle:'sample-bunny',optionName:'Necklace Length',optionValue:'18 inch'},'length')).ok,true);
+  assert.equal((await run(f,{type:'product-quantity',handle:'sample-bunny',quantity:3},'quantity')).ok,true);
+  assert.equal(attempted,0);assert.equal(f.doc.querySelector('select.bjOptSel').value,'18 inch');assert.equal(f.nativeQuantity(),3);assert.equal(f.addClicks(),0);
+});
+for(const [name,tamper] of [
+  ['changed literal metal label',f=>f.doc.querySelector('#bjMetals button[data-vi="0"]').textContent='Gold'],
+  ['changed native length option',f=>f.doc.querySelector('select.bjOptSel option').textContent='16 inch'],
+  ['duplicated current product form',f=>f.doc.querySelector('#MainContent').appendChild(f.doc.querySelector('#bjForm').cloneNode(true))],
+  ['changed product route',f=>f.win.history.pushState({},'','/products/another-piece')]
+])test(`fresh cart review fails closed after ${name} during its read`,async t=>{
+  let release;const wait=new Promise(resolve=>release=resolve),raw=product(),f=fixture(t,{reviewAdd:async()=>({prepared:true}),fetch:async url=>{await wait;return {ok:true,json:async()=>url.endsWith('cart.js')?{currency:'USD',item_count:0,items:[]}:raw};}});
+  const work=run(f,{type:'review-add',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001'},'binding-review',{reviewAuthority:{}});tamper(f);release();const res=await work;assert.equal(res.ok,false);assert.equal(f.reviews.length,0);assert.equal(f.addClicks(),0);assert.equal(f.nativeQuantity(),1);
 });
 test('highlight is visible and safely restores the pre-existing outline on destroy',async t=>{
   const f=fixture(t),price=f.doc.querySelector('#bjPrice');price.style.outline='1px dashed red';price.style.outlineOffset='2px';
@@ -210,7 +238,7 @@ for(const action of [
   {type:'bag',selector:'#bjAdd'},{type:'open',handle:'../checkout'},{type:'open',handle:'javascript:alert(1)'},{type:'open',handle:'sample-bunny',url:'https://evil.example'},
   {type:'search',query:'<script>alert(1)</script>'},{type:'search',query:'https://evil.example'},{type:'select-option',handle:'sample-bunny',variantId:'1001'},
   {type:'select-option',handle:'sample-bunny',variantId:'gid://shopify/ProductVariant/1001',optionName:'Metal Choice',optionValue:'Sterling Silver'},
-  {type:'gift-preferences',giftNote:'PRIVATE'},{type:'checkout-complete'},{type:'bag-remove',lineId:'../checkout'},
+  {type:'gift-preferences',giftNote:'PRIVATE',selector:'#gift-note'},{type:'checkout-complete'},{type:'bag-remove',lineId:'../checkout'},
 ])test(`rejects untrusted or unsupported ${JSON.stringify(action)}`,()=>assert.equal(adapter.validateAction(action),null));
 test('does not invoke action getters before rejecting them',()=>{let called=false;const action={};Object.defineProperty(action,'type',{enumerable:true,get(){called=true;return 'bag';}});assert.equal(adapter.validateAction(action),null);assert.equal(called,false);});
 test('inherited action getters cannot supply a requested handle or trigger execution',()=>{let called=false;const inherited={};Object.defineProperty(inherited,'handle',{get(){called=true;return 'sample-bunny';}});const action=Object.assign(Object.create(inherited),{type:'open'});assert.equal(adapter.validateAction(action),null);assert.equal(called,false);});

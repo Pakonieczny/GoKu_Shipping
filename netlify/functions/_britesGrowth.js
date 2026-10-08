@@ -170,7 +170,7 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
   async function byHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const r=await products('handle:'+handle);return r.products.find(p=>p.handle===handle)||null;}
   const seedReader=storefrontSeed.createSeedReader({readPage:page=>publicProducts('', 'public:'+page,8000),readSearch:query=>publicSearch(query,8000),isDiscovery:isStorefrontDiscoveryProduct,project:productProjection,now,cache:fetch===globalThis.fetch?publicSeedCache:{}});
   const discovery=catalogueDiscovery.createDiscovery({readSeed:seedReader.read,readSearch:query=>publicSearch(query,8000),readFallback:()=>publicProducts('',null,8000),now});
-  return {products,search,byHandle,browse,seed:seedReader.read,discover:discovery.read};
+  return {products,search,byHandle,publicByHandle,browse,seed:seedReader.read,discover:discovery.read};
 }
 function createGrowthService({db,env={},shopify,now=Date.now}){
   const ns=namespace(env), col=suffix=>db.collection(ns+'_'+suffix), state=()=>col('State').doc('control'), pid=id=>hash(id).slice(0,40);
@@ -830,6 +830,107 @@ function exactCurrentPageRequest(text,currentHandle){
   return fieldMentions(normalized,reference).some(hit=>!hit.negative);
 }
 
+function productFactRequest(message,context={}){
+  const destination=explicitDestination(clean(message,2000)),text=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
+  // Historical interpretations retain their separate reviewed-evidence route.
+  if(semanticInquiry(text)||fieldMentions(text,'compare|comparison|versus|vs').some(hit=>!hit.negative))return null;
+  const patterns={description:'describe|description|details?|tell me(?: more)? about|what (?:is|are) (?:it|this|that|these)|comes? with|includes?|included',price:'how much|prices?|costs?|item (?:total|subtotal)|subtotal|selected (?:total|price)|total (?:cost|price)',materials:'materials?|metals?|made (?:of|from)|silver|sterling|gold|plated|filled|hypoallergenic|nickel|allerg\\w*|waterproof|tarnish',lengths:'lengths?',engraving:'engrav\\w*|personali[sz]\\w*',options:'options?|choices?|configurations?|variants?',dimensions:'dimensions?|measurements?|width|height|weight|diameter|thickness|sizes?',availability:'available|availability|stock|sold out'};
+  const fields=Object.keys(patterns).filter(field=>fieldMentions(text,patterns[field]).some(hit=>!hit.negative));
+  const overview=fieldMentions(text,'tell me(?: more)? about|describe|what (?:is|are) (?:it|this|that|these)').some(hit=>!hit.negative)||/^(?:please )?(?:product )?details(?: about| of| on| for)\b/.test(text.trim());
+  const inquiry=overview||/\?|\b(?:what|which|how)\b/.test(text)||/(?:^|[.!?;,]\s*)(?:please\s+)?(?:is|are|does|do|can|tell|explain|describe)\b/.test(text.trim());
+  if(!fields.length||!inquiry)return null;
+  if(fields.length===1&&fields[0]==='options'&&/\b(?:shipping|delivery|returns?|gifts?)\b/.test(text))return null;
+  // Asking to display a menu or to select an option remains a host control.
+  if(!overview&&!/\?|\b(?:what|which|how|is|are|does|do|tell|explain)\b/.test(text)&&/\b(?:open|show|select|choose|set|change)\b/.test(text))return null;
+  const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th))\b/.exec(text),words=['first','second','third','fourth','fifth','sixth'];
+  const index=ordinal?(words.includes(ordinal[1])?words.indexOf(ordinal[1]):Number(ordinal[1][0])-1):null;
+  const validHandle=value=>typeof value==='string'&&/^[a-z0-9_-]{1,180}$/.test(value)?value:'';
+  const identities=publicInventoryIdentities(context.inventoryPieces),normal=value=>clean(value,2000).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim(),aliases=new Map(),matches=new Map();let masked=' '+normal(text)+' ';
+  for(const product of identities){const name=' '+normal(product.title)+' ';if(!aliases.has(name))aliases.set(name,[]);aliases.get(name).push(product);}
+  // A longer exact title masks contained shorter titles, while two separately
+  // named products or duplicate published titles remain ambiguous.
+  for(const [name,rows]of [...aliases].sort((a,b)=>b[0].length-a[0].length))if(masked.includes(name)){for(const product of rows)matches.set(product.id,product);masked=masked.split(name).join(' ');}
+  for(const product of identities)if(new RegExp('(?:^|[^a-z0-9_-])'+product.handle+'(?=$|[^a-z0-9_-])','i').test(text))matches.set(product.id,product);
+  const named=[...matches.values()];
+  const namedProduct=named.length===1?named[0]:null;
+  const current=validHandle(context.currentHandle),focused=validHandle(context.focusedHandle);
+  const scoped=context.pageKind==='collection'?focused||current:current||focused;
+  const ordinalHandle=index==null?'':validHandle(Array.isArray(context.productHandles)?context.productHandles[index]:'');
+  const explicitCurrent=fieldMentions(text,'current (?:product|piece|item|one)|on this (?:product )?page|selected (?:product|piece|item|one|option|variant)').some(hit=>!hit.negative);
+  const deictic=/\b(?:it|this|that|these|current|selected)\b/.test(text);
+  if(!current&&!focused&&!destination.handles.length&&!destination.unsafe&&!ordinal&&!deictic&&!named.length)return null;
+  if(!deictic&&!overview&&!destination.handles.length&&!named.length&&/\b(?:necklaces|earrings|bracelets|pendants|charms|rings|products|pieces|catalogue|catalog|collection)\b/.test(text))return null;
+  const broad=/\b(?:all|other|different|catalogue|catalog|collection)\b/.test(text)&&!overview&&!/\b(?:this|that|it|current|selected|these)\b/.test(text);
+  if(broad&&!destination.handles.length&&!ordinal&&!named.length)return null;
+  const handle=destination.handles[0]||namedProduct?.handle||ordinalHandle||(explicitCurrent?current:scoped);
+  const references=fieldMentions(text,'(?:this|that|current|selected) (?:exact )?(?:piece|product|item|one|necklace|charm|pair)|these (?:exact )?(?:earrings|huggies|studs|hoops)').filter(hit=>!hit.negative);
+  const negatedDestination=destination.handles.length&&fieldMentions(text,'tell me(?: more)? about|describe|details (?:about|of|on|for)').some(hit=>hit.negative);
+  const conflicting=destination.unsafe||destination.handles.length>1||negatedDestination||named.length>1||index!=null&&(!ordinalHandle||ordinalHandle!==handle)||destination.handles.length===1&&(namedProduct&&namedProduct.handle!==handle||explicitCurrent&&current&&current!==handle)||references.length>1&&/\b(?:and|another|other)\b/.test(text);
+  return {handle:conflicting?'':handle,...(namedProduct?{productId:namedProduct.id}:{}),fields,overview,careQuestion:/\b(?:hypoallergenic|nickel|allerg\w*|waterproof|tarnish)\b/i.test(text),confirmed:!!handle&&!conflicting};
+}
+function publicInventoryIdentities(value){return catalogueDiscovery.inventoryIdentities(value,{safeTitle:title=>typeof title==='string'&&title.length<=300&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(title)?shopperCatalogueField(title,180):null});}
+function createPublicInventory(options={}){
+  // The inventory module receives this completed core explicitly to avoid a
+  // require cycle. Small read-only adapters may already supply readProduct.
+  if(typeof options.shopify?.seed!=='function'||typeof options.service?.productIssues!=='function')return null;
+  return require('./_britesStorefrontInventory').createInventory({...options,core:module.exports});
+}
+
+async function currentProductFacts({request,service,shopify,context,preferences,at}){
+  const result={schema:1,preserveSelection:true,reply:'I couldn’t confirm the published details for that exact piece. Please choose its product page or try again.',question:null,preferences:shopperPreferences(preferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false,productFacts:{status:'unconfirmed'}};
+  if(!request.confirmed){result.reply='Please choose one exact Brites piece so I can answer from its published details.';result.question='Which piece would you like to know about?';return result;}
+  let product,snapshot;
+  try{
+    if(typeof shopify.readProduct==='function'){snapshot=await shopify.readProduct(request.handle);product=snapshot?.product;}
+    if(!product)product=await (typeof shopify.publicByHandle==='function'?shopify.publicByHandle(request.handle):shopify.byHandle(request.handle));
+    const url=publicUrl(product?.url,true),u=url?new URL(url):null;
+    if(!product||product.handle!==request.handle||!validIdentity(product.id)||!u||u.search||u.hash||u.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]{1,180})\/?$/i)?.[1]!==request.handle||!currencyCode(product.currency)||!Number.isFinite(product.checkedAt)||at-product.checkedAt>5*60000||product.checkedAt>at+60000||!shopperCatalogueField(product.title,300)||!shopperCatalogueField(product.type,100)||!isStorefrontDiscoveryProduct(product))return result;
+    if(context.productControls?.handle===request.handle&&validIdentity(context.productControls.productId)&&context.productControls.productId!==product.id)return result;
+    if(request.productId&&request.productId!==product.id)return result;
+    product=applyProductIssues([product],await readDiscoveryIssues(service,[product]))[0];
+    if(product.cartHold||product.recommendationHold)return result;
+  }catch{return result;}
+  const projected=productProjection(product),groups=projected.options,groupNames=groups.map(group=>group.name),rawVariants=projected.variants;
+  const groupValid=groups.length<=6&&new Set(groupNames).size===groups.length&&groups.every(group=>group.values.length&&new Set(group.values).size===group.values.length);
+  const counts=new Map();for(const variant of rawVariants)counts.set(variant.id,(counts.get(variant.id)||0)+1);
+  const variants=rawVariants.filter(variant=>groupValid&&/^gid:\/\/shopify\/ProductVariant\/[1-9]\d{0,19}$/.test(variant?.id||'')&&counts.get(variant.id)===1&&Number.isFinite(variant.price)&&variant.price>=0&&typeof variant.available==='boolean'&&variant.options.length===groups.length&&groups.every(group=>variant.options.filter(option=>option.name===group.name&&group.values.includes(option.value)).length===1));
+  const available=variants.filter(variant=>variant.available===true&&variant.availabilityKnown!==false),unknown=variants.some(variant=>variant.availabilityKnown===false),allKnown=variants.length>0&&variants.length===rawVariants.length&&!unknown;
+  const complete=product.variantsComplete===true&&groupValid&&variants.length>0&&variants.length===rawVariants.length&&rawVariants.length===(Array.isArray(product.variants)?product.variants.length:0);
+  const status=available.length?'available':unknown?'unconfirmed':allKnown&&complete?'unavailable':'unconfirmed';
+  const controls=context.productControls,selectedIdentity=controls&&controls.handle===product.handle&&controls.productId===product.id&&typeof controls.variantId==='string';
+  const selected=selectedIdentity?variants.find(variant=>variant.id===controls.variantId):null;
+  const quantity=selected&&Number.isInteger(controls.quantity)&&controls.quantity>=1&&controls.quantity<=20?controls.quantity:null;
+  const rangeRows=available.length?available:variants,priceRange=rangeRows.length?{min:Math.min(...rangeRows.map(variant=>variant.price)),max:Math.max(...rangeRows.map(variant=>variant.price)),currency:product.currency,basis:available.length?'checked_available_options':'checked_published_options'}:null;
+  const options=groups.map(group=>({name:group.name,values:group.values,availableValues:[...new Set(available.flatMap(variant=>variant.options.filter(option=>option.name===group.name).map(option=>option.value)))]}));
+  const selectedVariant=selected?{id:selected.id,title:selected.title,price:selected.price,currency:product.currency,available:selected.available,availabilityKnown:selected.availabilityKnown!==false,options:selected.options}:null;
+  const dimensions=projected.description.split(/(?<=[.!?])\s+/).filter(sentence=>/\b(?:dimensions?|measur\w*|width|height|weight)\b|\b\d+(?:\.\d+)?\s*(?:mm|cm|inches?|inch|grams?|oz)\b/i.test(sentence)).slice(0,5);
+  const facts={status:'verified',productId:product.id,handle:product.handle,title:projected.title,type:projected.type,partsOnly:projected.partsOnly,description:projected.description,dimensions,options,priceRange,availability:{status,checkedVariants:variants.length,availableVariants:available.length,variantsComplete:complete},selectedVariant,quantity,itemTotalPrice:quantity!=null?Math.round(selected.price*quantity*100)/100:null,checkedAt:product.checkedAt,fromCache:snapshot?.fromCache===true||snapshot?.cached===true,sources:[{title:'Published Brites product details',url:product.url,checkedAt:product.checkedAt}]};
+  const requested=new Set(request.fields),lines=[];
+  if(request.overview){for(const field of ['description','materials','lengths','engraving','price'])requested.add(field);}
+  if(requested.has('description'))lines.push(projected.description?'Published description: '+clean(projected.description,1800):'The checked listing does not provide a description.');
+  const optionText=(pattern,label)=>{const matches=options.filter(option=>pattern.test(option.name));return matches.length?label+': '+matches.map(option=>option.name+' — '+(requested.has('availability')?(option.availableValues.length?option.availableValues.join(', ')+' among the checked available configurations':'no confirmed available values'):option.values.join(', '))).join('; ')+'.':'The checked listing does not specify '+label.toLowerCase()+' options.';};
+  const detailText=pattern=>projected.description.split(/(?<=[.!?])\s+/).filter(sentence=>pattern.test(sentence)).slice(0,3).join(' ');
+  if(requested.has('materials'))lines.push(optionText(/metal|material|finish|colo[u]?r/i,'Published materials'));
+  if(requested.has('materials')&&request.careQuestion)lines.push('The exact material labels alone do not establish allergy safety, nickel content or care guarantees.');
+  if(requested.has('lengths'))lines.push(optionText(/length/i,'Published lengths'));
+  if(requested.has('engraving')){lines.push(optionText(/engrav|personali[sz]|custom/i,'Published engraving'));const detail=detailText(/engrav|personali[sz]|characters?|upload/i);if(detail)lines.push('Published personalization details: '+detail);}
+  if(requested.has('options'))lines.push(options.length?'Published options: '+options.map(option=>option.name+' — '+option.values.join(', ')).join('; ')+'.':'No option groups are specified in the checked listing.');
+  if(requested.has('dimensions'))lines.push(dimensions.length?'Published measurements: '+dimensions.join(' '):'The checked listing does not specify dimensions or weight.');
+  if(requested.has('price')){
+    if(selected){lines.push('Your selected '+selected.title+' is '+product.currency+' '+selected.price.toFixed(2)+' per item.'+(quantity!=null?' For quantity '+quantity+', the item subtotal is '+product.currency+' '+facts.itemTotalPrice.toFixed(2)+', before shipping and taxes.':''));}
+    else if(priceRange)lines.push('The '+(available.length?'checked available options':'checked published options')+' range from '+product.currency+' '+priceRange.min.toFixed(2)+(priceRange.max!==priceRange.min?' to '+product.currency+' '+priceRange.max.toFixed(2):'')+'. No exact selected configuration price has been assumed.');
+    else lines.push('I couldn’t confirm a published price for the checked options.');
+  }
+  if(requested.has('availability')||selected&&!selected.available||status==='unconfirmed')lines.push(selected?(selected.availabilityKnown===false?'Stock for your selected option is unconfirmed.':selected.available?'Your selected option was available at the published check time.':'Your selected option was unavailable at the published check time.'):(status==='available'?'There are '+available.length+' checked available options.':status==='unavailable'?'No published options were available at the check time.':'Availability is unconfirmed for the complete option range.'));
+  if(status==='unconfirmed'&&selected&&selected.availabilityKnown!==false)lines.push('Availability is unconfirmed for the complete option range.');
+  if(!complete)lines.push('The full variant range could not be confirmed.');
+  if(facts.fromCache)lines.push('These published details were checked at '+new Date(product.checkedAt).toISOString()+'.');
+  result.reply=projected.title+'. '+lines.join(' ');result.productFacts=facts;result.checkedAt=product.checkedAt;result.live=true;
+  if(requested.has('price')&&currencyCode(context.currency)&&context.currency!==product.currency){result.currencyMismatch=true;result.reply+=' These checked prices are in '+product.currency+'; local storefront pricing may differ.';}
+  if(requested.has('price')&&(selected||priceRange)&&(result.preferences.budget!=null||result.preferences.minBudget!=null)&&result.preferences.budgetCurrency&&result.preferences.budgetCurrency!==product.currency){result.currencyMismatch=true;result.reply+=' I haven’t applied your '+result.preferences.budgetCurrency+' budget to these '+product.currency+' prices.';}
+  return result;
+}
+
 function currentMaterialComparisonRequest(message,currentHandle){
   const destination=explicitDestination(clean(message,2000)),text=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
   if(!fieldMentions(text,'compare|comparison|versus|vs|differences? between').some(hit=>!hit.negative))return null;
@@ -963,16 +1064,17 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const basePreferences=shopperCurrency&&!currencyCode(preferences.currency)?{...preferences,currency:shopperCurrency}:preferences;
   const boundary=checkoutRequest(text),at=now();
   if(boundary)return {schema:1,checkoutBoundary:true,reply:boundary==='destination'?'I can open an exact Brites product page when you select a piece. Complete payment yourself through the shop’s secure checkout; I can’t open an outside checkout or skip confirmation.':'Review your bag and complete payment yourself through the shop’s secure checkout. I can’t use saved cards, retrieve card details, place an order or confirm that a payment succeeded.',question:null,preferences:shopperPreferences(basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
-  const conversation=conversationReply(text);
-  if(conversation)return {schema:1,conversationOnly:true,preserveSelection:true,conversationKind:conversation.kind,needsModelConversation:conversation.needsModelConversation,reply:conversation.reply,question:null,preferences:intentFrom('',history,basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
+  const factsRequest=productFactRequest(text,context),conversation=conversationReply(text);
+  if(conversation&&!factsRequest)return {schema:1,conversationOnly:true,preserveSelection:true,conversationKind:conversation.kind,needsModelConversation:conversation.needsModelConversation,reply:conversation.reply,question:null,preferences:intentFrom('',history,basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   let intent=intentFrom(text,history,basePreferences);
   if(/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i.test(text))return {schema:1,reply:'I can help with publicly listed pieces, gift ideas and the shop’s published information.',question:'What kind of piece are you looking for?',preferences:intent,products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
-  if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
+  if(!factsRequest&&sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
   const exactCurrentContext=exactCurrentPageRequest(text,currentHandle);
   const destination=explicitDestination(text);
   const materialComparison=currentMaterialComparisonRequest(text,currentHandle);
   if(materialComparison)return currentMaterialComparison({request:materialComparison,service,shopify,currentHandle,context,preferences:basePreferences,at});
+  if(factsRequest)return currentProductFacts({request:factsRequest,service,shopify,context,preferences:basePreferences,at});
   // Positive inquiries about one safe Brites URL select its knowledge, but
   // do not authorize navigation or cart actions. Ignore URL path words when
   // checking inquiry language, negation and references to other cards.
@@ -1152,4 +1254,4 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(ai&&!milestonePlan){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;const refined=result.question&&safeQuestionRefinement(result.question,chosen.question);if(refined&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(refined)))result.question=refined;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
   return result;
 }
-module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,freshCatalogueRequest,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge,catalogueImageUrl,catalogueImages,isStorefrontDiscoveryProduct,merchantGuidance:storefront.merchantGuidance,readStorefrontServices:storefront.readServices,createStorefrontGuide:storefront.createStorefrontGuide};
+module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,freshCatalogueRequest,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,productFactRequest,publicInventoryIdentities,createPublicInventory,concierge,catalogueImageUrl,catalogueImages,isStorefrontDiscoveryProduct,merchantGuidance:storefront.merchantGuidance,readStorefrontServices:storefront.readServices,createStorefrontGuide:storefront.createStorefrontGuide};

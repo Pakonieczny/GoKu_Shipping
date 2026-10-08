@@ -129,7 +129,7 @@ for (const message of ['Tell me the meaning of both earrings.', 'Tell me the sym
   });
 }
 
-for (const [message, type] of [['Open the meaning of Moon Earrings.', 'highlight'], ['Scroll to the meaning of Moon Earrings.', 'highlight'], ['Highlight the meaning of Moon Earrings.', 'highlight'], ['Zoom the image of Moon Earrings.', 'zoom']]) {
+for (const [message, type] of [['Open the meaning of Moon Earrings.', 'highlight'], ['Scroll to the meaning of Moon Earrings.', 'scroll'], ['Highlight the meaning of Moon Earrings.', 'highlight'], ['Zoom the image of Moon Earrings.', 'zoom']]) {
   test('explicit named page control stays on the bridge: ' + message, async t => {
     const h = fixture(t); await h.openTyping(); h.submit(message); for (let i = 0; i < 3; i++) await settle();
     assert.equal(h.calls.core.length, 0); assert.equal(h.calls.controls.length, 1); assert.equal(h.calls.controls[0].type, type); assert.equal(h.calls.controls[0].handle, earrings[0].handle); assert.equal(h.errors.length, 0);

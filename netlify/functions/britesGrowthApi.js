@@ -6,6 +6,7 @@ import etsyCacheReadOnly from './_britesGrowthEtsyCacheReadOnly.js';
 import historicalLookup from './_britesGrowthHistoricalLookup.js';
 import conciergeDiagnostics from './_britesConciergeDiagnostics.js';
 import keywordRevision from './_britesGrowthKeywordRevision.js';
+import storefrontInventory from './_britesStorefrontInventory.js';
 
 function environment(){const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY'];return Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));}
 function headers(req){const origin=req.headers.get('Origin');const allowed=origin&&(/https:\/\/(?:www\.)?britesjewelry\.com$/.test(origin)||origin===new URL(req.url).origin);return {'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin',...(allowed?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-Growth-Key, X-Edit-Passcode','Access-Control-Allow-Methods':'GET, POST, OPTIONS'}:{})};}
@@ -17,13 +18,21 @@ export default async (req,context) => {
   try{
     const env=environment(),db=core.makeDb(env),shopify=core.createShopify({env}),service=core.createGrowthService({db,env,shopify});
     const url=new URL(req.url),op=context.params?.op||url.searchParams.get('op')||'status';
-    const publicOps=new Set(['catalogue','product','knowledge','storefront-services']);
+    const publicOps=new Set(['catalogue','product','knowledge','storefront-services','inventory']);
     publicRequest=publicOps.has(op);
     if(!publicOps.has(op)&&!await auth(req,env,db))return json({error:'Operator sign-in required.'},401);
     if(publicOps.has(op)&&!await service.rateLimit(context.ip||'public-api',60))return json({error:'Please wait a moment before trying again.'},429);
     if(publicOps.has(op)&&req.method!=='GET')return json({error:'Use GET for public shop reads.'},405);
     if(op==='story-supplements'&&req.method!=='GET')return json({error:'Use GET for the private stored story read.'},405);
     if(req.method==='GET'){
+      if(op==='inventory'){
+        if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+        const page=storefrontInventory.parsePage({offset:url.searchParams.get('offset')??0,limit:url.searchParams.get('limit')??24});
+        // A configured Admin connection must never be used to create this
+        // public cache: seed + exact product.js only, with fresh reviewed holds.
+        const publicShop=core.createShopify({env:{}});
+        return json(await storefrontInventory.createInventory({shopify:publicShop,service,core}).read(page));
+      }
       if(op==='status')return json(await service.status());
       if(op==='etsy-cache-state')return json(await etsyCacheReadOnly.read({db}));
       if(op==='concierge-diagnostics'){

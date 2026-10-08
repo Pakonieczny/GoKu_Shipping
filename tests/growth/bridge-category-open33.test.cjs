@@ -16,8 +16,10 @@ for(const [text,filter] of [
 
 for(const [text,expected] of [
   ['Open the Moon Earrings',{type:'open',handle:'moon-earrings'}],['View the second earrings',{type:'open',handle:'moon-earrings'}],
-  ['Open the necklace under my cursor',{type:'open',handle:'bunny-necklace'}],['What does the Bunny Necklace mean?',{type:'highlight',handle:'bunny-necklace',section:'story'}]
+  ['Open the necklace under my cursor',{type:'open',handle:'bunny-necklace'}]
 ])test('category words retain an exact current reference: '+text,()=>assert.deepEqual(Bridge.resolve(text,context).action,expected));
+
+test('a named meaning question delegates exact identity to knowledge without opening a section',()=>{const text='What does the Bunny Necklace mean?',result=Bridge.resolve(text,context);assert.equal(result.ok,false);assert.equal(result.action,undefined);assert.equal(result.delegated,'knowledge');assert.equal(Bridge.resolveKnowledgeTarget(text,context).handle,'bunny-necklace');});
 
 for(const text of [
   'Do not open earrings','Never view earrings','Please do not open earrings','Say "open earrings"','If I ask, open earrings','Yesterday I asked what earrings do you have',

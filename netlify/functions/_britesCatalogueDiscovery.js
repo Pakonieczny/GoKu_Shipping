@@ -3,6 +3,19 @@
 // window. They remain a bounded sample; exact product reads authorize facts and
 // controls later. This module never uses Admin inventory or private research.
 const MAX_SEED=160,MAX_SEARCH=60,MAX_CANDIDATES=MAX_SEED+MAX_SEARCH;
+const CATEGORIES=require('./_britesStorefrontSeed').CATEGORIES;
+function inventoryIdentities(value,{safeTitle=title=>typeof title==='string'&&title.trim()&&title.length<=180&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(title)?title.trim():null}={}){
+  if(!Array.isArray(value)||value.length>MAX_SEED)return [];
+  const ids=new Map(),handles=new Map();
+  for(const row of value){
+    const title=safeTitle(row?.title);
+    if(!/^gid:\/\/shopify\/Product\/[1-9]\d{0,19}$/.test(row?.id||'')||!/^[a-z0-9_-]{1,180}$/.test(row?.handle||'')||!title)continue;
+    const previous=ids.get(row.id),other=handles.get(row.handle);
+    if(previous&&previous.handle!==row.handle||other&&other!==row.id)return [];
+    handles.set(row.handle,row.id);ids.set(row.id,{id:row.id,handle:row.handle,title,storeCategories:Array.isArray(row.storeCategories)?[...new Set(row.storeCategories.filter(category=>CATEGORIES.includes(category)))]:[]});
+  }
+  return [...ids.values()];
+}
 function mergeProducts(groups){
   const ids=new Map(),handles=new Map();
   for(const group of groups)for(const product of group){
@@ -26,4 +39,4 @@ function createDiscovery({readSeed,readSearch,readFallback,now=Date.now}){
   }
   return {read};
 }
-module.exports={createDiscovery,mergeProducts,MAX_SEED,MAX_SEARCH,MAX_CANDIDATES};
+module.exports={createDiscovery,mergeProducts,inventoryIdentities,MAX_SEED,MAX_SEARCH,MAX_CANDIDATES};

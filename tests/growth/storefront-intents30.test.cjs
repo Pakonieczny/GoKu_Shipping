@@ -31,22 +31,15 @@ const cases=[
   ['Open the first one',request('open',{handle:'compass-necklace'})],
   ['Open the second option',request('open',{handle:'rabbit-necklace'})],
   ['Open the item under my cursor',request('open',{handle:'compass-necklace'})],
-  ['How much does this cost?',request('highlight',{handle:'compass-necklace',section:'price'})],
-  ['Show the materials for the Compass Necklace',request('highlight',{handle:'compass-necklace',section:'details'})],
-  ['What does the Compass Necklace mean?',request('highlight',{handle:'compass-necklace',section:'story'})],
+  ['Show the materials for the Compass Necklace',request('highlight',{handle:'compass-necklace',section:'materials'})],
   ['Show the options for the first one',request('highlight',{handle:'compass-necklace',section:'options'})],
   ['Zoom in on the Compass Necklace',request('zoom',{handle:'compass-necklace'})],
   ['Make the image bigger',request('zoom',{handle:'compass-necklace'})],
   ['Enlarge the second listing',request('zoom',{handle:'rabbit-necklace'})],
   ['Scroll to shipping',request('scroll',{section:'shipping'})],
   ['Scroll to the catalogue',request('scroll',{section:'catalogue'})],
-  ['How long is production?',request('highlight',{section:'shipping'})],
-  ['What shipping options are there?',request('highlight',{section:'shipping'})],
   ['Show gift wrapping',request('gift',{section:'gifts'})],
-  ['Can I add a gift note?',request('gift',{section:'gifts'})],
-  ['What published discount codes do you have?',request('highlight',{section:'offers'})],
   ['Show me offers',request('highlight',{section:'offers'})],
-  ['Can I customize this?',request('customize',{handle:'compass-necklace',section:'customize'})],
   ['I want a custom design',request('customize',{section:'customize'})],
   ['Open my bag',request('bag')],
   ['Show the cart',request('bag')],
@@ -54,6 +47,7 @@ const cases=[
   ['I want to check out',request('checkout')]
 ];
 for(const [text,expected] of cases)test('direct website request: '+text,()=>assert.deepEqual(action(text),expected));
+for(const text of ['How much does this cost?','What does the Compass Necklace mean?','How long is production?','What shipping options are there?','Can I add a gift note?','What published discount codes do you have?','Can I customize this?'])test('an informational question delegates to knowledge without mutating the page: '+text,()=>{const result=bridge.resolve(text,catalogue);assert.equal(result.ok,false);assert.equal(result.action,undefined);assert.equal(result.delegated,'knowledge');});
 test('product-page pronoun uses the current piece; explicit hover still uses focus',()=>{assert.equal(action('Show its price',product).handle,'rabbit-necklace');assert.equal(action('Show the price of the piece I am hovering over',{...product,focusedHandle:'compass-necklace'}).handle,'compass-necklace');});
 for(const text of [
   'What necklace would you recommend for my mother?',
@@ -84,7 +78,8 @@ for(const text of [
 ])test('advice, negation, history, quotes and unsafe requests never authorize a control: '+text,()=>assert.equal(bridge.resolve(text,catalogue).ok,false));
 for(const text of ['Open the rabbit','Show the price of the rabbit','Enlarge the rabbit','Open the fourth one'])test('ambiguous or nonexistent target is a handled clarification: '+text,()=>{const r=bridge.resolve(text,catalogue);assert.equal(r.ok,false);assert.equal(r.recognized,true);assert.ok(r.reason);});
 test('a product-specific question cannot silently choose first among several unselected listings',()=>{const c={...catalogue,focusedHandle:''};assert.equal(bridge.resolve('How much is it?',c).ok,false);assert.equal(bridge.resolve('Open it',c).ok,false);assert.equal(action('Open it',{...c,visiblePieces:[pieces[1]]}).handle,'rabbit-necklace');});
-for(const text of ['What is the price of the unicorn necklace?','What is the price of this unicorn necklace?','Show the materials for the hummingbird necklace','Enlarge the fox pendant','What does the sunflower pendant mean?'])test('an unseen named piece cannot fall back to an unrelated current or hovered piece: '+text,()=>{const r=bridge.resolve(text,catalogue);assert.equal(r.ok,false);assert.equal(r.recognized,true);});
+for(const text of ['What is the price of the unicorn necklace?','What is the price of this unicorn necklace?','What does the sunflower pendant mean?'])test('an unseen factual target cannot borrow the current or hovered piece: '+text,()=>{const r=bridge.resolve(text,catalogue);assert.equal(r.ok,false);assert.equal(r.action,undefined);assert.equal(r.delegated,'knowledge');assert.equal(bridge.resolveKnowledgeTarget(text,catalogue).handle,undefined);});
+for(const text of ['Show the materials for the hummingbird necklace','Enlarge the fox pendant'])test('an unseen control target cannot fall back to an unrelated current or hovered piece: '+text,()=>{const r=bridge.resolve(text,catalogue);assert.equal(r.ok,false);assert.equal(r.recognized,true);});
 test('cart additions delegate to the existing exact-option Review/Confirm flow',()=>{for(const t of ['Add the Compass Necklace to my bag','Put the first piece into the cart','Remove the rabbit from my bag']){const r=bridge.resolve(t,catalogue);assert.equal(r.ok,false);assert.equal(r.recognized,false);assert.equal(r.delegated,'review');}});
 test('a compound navigation then cart request is refused as a whole instead of delegated to legacy shopping',()=>{const r=bridge.resolve('Open the first and then add it to my bag',catalogue);assert.equal(r.ok,false);assert.equal(r.recognized,true);assert.equal(r.delegated,undefined);});
 test('snapshot projects bounded local identity only and drops storage, prices, customer and author data',()=>{const r=bridge.sanitizeSnapshot({...catalogue,account:'secret',token:'secret',cart:[{customer:'private'}],instruction:'internal',visiblePieces:[...pieces,{...pieces[0],title:'duplicate'},{handle:'../../admin',title:'Bad'},{handle:'evil',title:'Bad\u0001'}]});assert.deepEqual(r.visiblePieces,pieces);assert.equal(JSON.stringify(r).includes('secret'),false);assert.equal('cart' in r,false);assert.equal('instruction' in r,false);assert.equal('price' in r.visiblePieces[0],false);});

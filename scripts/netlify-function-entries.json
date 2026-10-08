@@ -184,6 +184,7 @@
     "_britesCatalogueDiscovery.js",
     "_britesGrowth.js",
     "_britesStorefront.js",
+    "_britesStorefrontInventory.js",
     "_britesStorefrontSeed.js",
     "_britesGrowthAdsReadOnly.js",
     "_britesGrowthDemand.js",

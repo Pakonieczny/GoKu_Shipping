@@ -85,10 +85,10 @@ test('canceled old query cannot advance discovery or replace a newer category vi
 for(const action of [{type:'filter',filter:'earrings'},{type:'sort',sort:'price-desc'}])test('early '+action.type+' delegated browse commits its discovery exactly once or not at all',async t=>{
   const initial=deferred();let reads=0;const h=fixture(t,{catalogue:()=>++reads===1?initial.promise:response([necklace,earrings])});const out=await h.store.execute(action);assert.equal(out.ok,true);assert.equal(h.revision(),action.type==='filter'?1:0);initial.resolve(response([ring]));await settle();assert.equal(h.revision(),action.type==='filter'?1:0);assert.equal(h.cards().includes(ring.handle),false);
 });
-test('cached browser Back restores broad discovery and preserves history length',async t=>{
+test('cached browser Back restores the prior exact discovery scope and preserves history length',async t=>{
   const h=fixture(t);await settle();await h.store.execute({type:'search',query:'bunny',filter:'necklaces'});await h.store.execute({type:'open',handle:necklace.handle});const length=h.w.history.length;
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Missing history traversal.')),1000);h.w.addEventListener('popstate',()=>{clearTimeout(timer);resolve();},{once:true});h.w.history.back();});await settle();
-  assert.equal(h.revision(),2);assert.equal(h.store.snapshot().filter,'all');assert.equal(h.store.snapshot().search,'');assert.deepEqual(h.cards(),[necklace.handle,earrings.handle,ring.handle]);assert.equal(h.w.history.length,length);
+  assert.equal(h.revision(),2);assert.equal(h.store.snapshot().filter,'necklaces');assert.equal(h.store.snapshot().search,'bunny');assert.deepEqual(h.cards(),[necklace.handle]);assert.equal(h.w.history.length,length);
 });
 test('a broad popstate reset from a deep link fetches and commits discovery once',async t=>{
   const h=fixture(t,{query:'?product='+necklace.handle});await settle();assert.equal(h.revision(),0);h.w.history.replaceState({},'','/concierge-sandbox.html');h.w.dispatchEvent(new h.w.PopStateEvent('popstate'));await settle();assert.equal(h.revision(),1);assert.deepEqual(h.cards(),[necklace.handle,earrings.handle,ring.handle]);

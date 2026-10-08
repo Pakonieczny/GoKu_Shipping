@@ -23,13 +23,17 @@ export default async (req,context) => {
   const recorder=diagnostics.createRecorder();h['X-Concierge-Reference']=recorder.reference;
   if(h['Access-Control-Allow-Origin'])h['Access-Control-Expose-Headers']='X-Concierge-Reference';
   const respond=async(answer,status=200,outcome='ok')=>{const response=json(answer,status);await recorder.flush({outcome,statusCode:status});return response;};
-  try{const raw=await req.text();if(raw.length>20000)return json({error:'That message is too long.'},413);let body;try{body=JSON.parse(raw||'{}');}catch{return json({error:'Send a valid JSON message.'},400);}if(!body||typeof body!=='object'||Array.isArray(body))return json({error:'Send a valid message.'},400);if(!body.event&&(typeof body.message!=='string'||!core.clean(body.message,2000)))return json({error:'Write a message first.'},400);if(typeof body.message==='string'&&body.message.length>2000)return json({error:'That message is too long.'},413);
+  try{const raw=await req.text();if(raw.length>120000)return json({error:'That message is too long.'},413);let body;try{body=JSON.parse(raw||'{}');}catch{return json({error:raw.length>20000?'That message is too long.':'Send a valid JSON message.'},raw.length>20000?413:400);}const inventoryPieces=core.publicInventoryIdentities(body?.context?.inventoryPieces);if(raw.length>20000&&(!inventoryPieces.length||inventoryPieces.length!==body?.context?.inventoryPieces?.length))return json({error:'That message is too long.'},413);if(!body||typeof body!=='object'||Array.isArray(body))return json({error:'Send a valid message.'},400);if(!body.event&&(typeof body.message!=='string'||!core.clean(body.message,2000)))return json({error:'Write a message first.'},400);if(typeof body.message==='string'&&body.message.length>2000)return json({error:'That message is too long.'},413);
     const env=environment(),storage=await recorder.run('storage_connect',()=>({db:core.makeDb(env),namespace:core.namespace(env)})),db=storage.db;
     recorder.attach({namespace:storage.namespace,col:suffix=>db.collection(storage.namespace+'_'+suffix)});
     const rawShopify=await recorder.run('catalogue_connect',()=>core.createShopify({env}));
-    const shopify=observed(recorder,rawShopify,{search:'catalogue_search',discover:'catalogue_search',byHandle:'catalogue_product'});
+    const shopify=observed(recorder,rawShopify,{search:'catalogue_search',discover:'catalogue_search',byHandle:'catalogue_product',publicByHandle:'catalogue_product'});
     const rawService=await recorder.run('service_connect',()=>core.createGrowthService({db,env,shopify}));recorder.attach(rawService);
     const service=observed(recorder,rawService,{rateLimit:'rate_limit',setup:'control_state',saveProducts:'catalogue_persist',productIssues:'holds_read',research:'knowledge_read',storySupplements:'knowledge_read'});
+    if(typeof shopify.readProduct!=='function'&&typeof core.createPublicInventory==='function'){
+      const inventory=core.createPublicInventory({shopify,service});
+      if(inventory)shopify.readProduct=handle=>recorder.run('catalogue_product',()=>inventory.lookup(handle));
+    }
     if(!await service.rateLimit((context.ip||'concierge')+(body.event?'-events':'-messages'),body.event?45:20))return await respond({error:'Please wait a moment before trying again.'},429,'limited');
     if(body.event)return await respond(await recorder.run('client_event',()=>service.event(body.event,body)));
     // A completed live answer is independent of this optional activity record.
@@ -37,18 +41,20 @@ export default async (req,context) => {
     const messageEvent=()=>recorder.optionalMessage(()=>service.event('message'));
     const history=Array.isArray(body.history)?body.history.filter(x=>x&&['user','assistant'].includes(x.role)).slice(-12).map(x=>({role:x.role,content:core.clean(x.content,2000)})):[];
     const preferences=body.preferences&&typeof body.preferences==='object'&&!Array.isArray(body.preferences)?core.shopperPreferences(body.preferences):{};
-    const shopperContext=body.context&&typeof body.context==='object'&&!Array.isArray(body.context)?{currentHandle:core.clean(body.context.currentHandle,180),productHandles:Array.isArray(body.context.productHandles)?body.context.productHandles.slice(0,6).map(h=>core.clean(h,180)):[],currency:/^[A-Z]{3}$/.test(body.context.currency||'')?body.context.currency:null}:{};
+    const shopperContext=body.context&&typeof body.context==='object'&&!Array.isArray(body.context)?{currentHandle:core.clean(body.context.currentHandle,180),focusedHandle:core.clean(body.context.focusedHandle,180),pageKind:['product','collection','catalogue'].includes(body.context.pageKind)?body.context.pageKind:null,productHandles:Array.isArray(body.context.productHandles)?body.context.productHandles.slice(0,6).map(h=>core.clean(h,180)):[],currency:/^[A-Z]{3}$/.test(body.context.currency||'')?body.context.currency:null,...(inventoryPieces.length?{inventoryPieces}:{})}:{};
     const productControls=body.context?.productControls;
-    // Public identities only. Fresh catalogue variants supply the actual
-    // option tuple; custom text, notes and caller-authored choices stay out.
-    if(productControls&&typeof productControls==='object'&&!Array.isArray(productControls)&&typeof productControls.handle==='string'&&/^[a-z0-9_-]{1,180}$/.test(productControls.handle)&&productControls.handle===shopperContext.currentHandle&&typeof productControls.productId==='string'&&/^gid:\/\/shopify\/Product\/\d+$/.test(productControls.productId)&&typeof productControls.variantId==='string'&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(productControls.variantId))shopperContext.productControls={handle:productControls.handle,productId:productControls.productId,variantId:productControls.variantId};
+    // Public identity and bounded page quantity only. Checked catalogue
+    // variants supply prices/options; caller prices, notes and custom text
+    // never become product facts or authorize an action.
+    if(productControls&&typeof productControls==='object'&&!Array.isArray(productControls)&&typeof productControls.handle==='string'&&/^[a-z0-9_-]{1,180}$/.test(productControls.handle)&&productControls.handle===shopperContext.currentHandle&&typeof productControls.productId==='string'&&/^gid:\/\/shopify\/Product\/\d+$/.test(productControls.productId)&&typeof productControls.variantId==='string'&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(productControls.variantId))shopperContext.productControls={handle:productControls.handle,productId:productControls.productId,variantId:productControls.variantId,...(Number.isInteger(productControls.quantity)&&productControls.quantity>=1&&productControls.quantity<=20?{quantity:productControls.quantity}:{})};
+    const factsRequest=core.productFactRequest(body.message,shopperContext);
     // Social dialogue never waits for catalogue, knowledge, policy or model
     // work. Keep the same request validation, origin and public rate limiter.
-    if(core.conversationReply(body.message)){const answer=await recorder.run('conversation',()=>core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env}));await messageEvent();return await respond(answer);}
+    if(core.conversationReply(body.message)&&!factsRequest){const answer=await recorder.run('conversation',()=>core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env}));await messageEvent();return await respond(answer);}
     const policyClassification=storefrontGuide.classify(body.message,history);
     const policyTask=policyClassification.topics.length?recorder.run('policy_read',()=>storefrontGuide.answer({message:body.message,history})).then(guidance=>{if(guidance?.policyUnavailable)recorder.degraded('policy_read','policy_unverified');return guidance;}).catch(()=>storefrontGuide.unavailableAnswer({message:body.message,history})):Promise.resolve(null);
-    if(policyClassification.policyOnly){const guidance=await policyTask||storefrontGuide.unavailableAnswer({message:body.message,history});const answer={schema:1,...guidance,preferences:core.shopperPreferences({...preferences,...(!preferences.currency&&shopperContext.currency?{currency:shopperContext.currency}:{})}),products:[],meanings:[],actions:[],checkedAt:Date.now(),live:guidance?.policyKnowledge?.status==='verified',aiUsed:false};await messageEvent();return await respond(answer);}
-    const ai=await runtimeAI(service,env);
+    if(policyClassification.policyOnly&&!factsRequest){const guidance=await policyTask||storefrontGuide.unavailableAnswer({message:body.message,history});const answer={schema:1,...guidance,preferences:core.shopperPreferences({...preferences,...(!preferences.currency&&shopperContext.currency?{currency:shopperContext.currency}:{})}),products:[],meanings:[],actions:[],checkedAt:Date.now(),live:guidance?.policyKnowledge?.status==='verified',aiUsed:false};await messageEvent();return await respond(answer);}
+    const ai=factsRequest?null:await runtimeAI(service,env);
     const [answer,guidance]=await Promise.all([recorder.run('conversation',()=>core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env,ai})),policyTask]);
     if(guidance){
       const generic=/^Shipping timing and returns depend on the order and destination\./.test(answer.reply||'');
@@ -57,7 +63,7 @@ export default async (req,context) => {
       // item budget. Preserve that fact when a gift search includes policies.
       if(generic&&answer.currencyMismatch&&answer.products?.[0]?.currency&&answer.preferences?.budgetCurrency)prior='Catalogue prices are shown in '+answer.products[0].currency+'. I haven’t applied your '+answer.preferences.budgetCurrency+' budget to those prices.';
       answer.reply=(prior?prior+'\n\n':'')+guidance.reply;
-      answer.question=answer.requestedAction?null:guidance.question;
+      answer.question=answer.productFacts?answer.question:answer.requestedAction?null:guidance.question;
       answer.policyOnly=false;
       answer.policyLinks=guidance.policyLinks;answer.policyKnowledge=guidance.policyKnowledge;answer.policyUnavailable=guidance.policyUnavailable;if(guidance.serviceKnowledge)answer.serviceKnowledge=guidance.serviceKnowledge;
     }
