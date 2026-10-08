@@ -992,6 +992,7 @@
       var failure=e.name==='AbortError'?'The live check took too long. You can retry or browse the shop.':e.message;
       cancelAvatarPerformance();setShopperProgress('needs-help');if(!voiceTurn){setAvatarState('error');bubble(failure,'error');}state.pendingTurn=null;save();status.textContent='You can retry or browse the shop.';
       if(voiceTurn)return {error:'The live catalogue could not be checked. Please try again.'};
+      return {error:failure};
     }finally{
       document.removeEventListener('focusin',movedFocus);root.removeEventListener('focusin',movedFocus);clearTimeout(timeout);externalSignal?.removeEventListener('abort',externalAbort);record.controller.signal.removeEventListener('abort',abortListener);
       if(activeRequest===record){activeRequest=null;requestController=null;busy=false;send.disabled=input.disabled=false;if(state.open&&returnInputFocus&&(document.activeElement===host||document.activeElement===document.body))input.focus();}

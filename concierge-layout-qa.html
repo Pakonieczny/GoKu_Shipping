@@ -1,2 +1,49 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Brites · Concierge layout checks</title><style>body{background:#eeeae3;color:#203a46;font:15px/1.5 system-ui,sans-serif;margin:24px}h1{font:500 30px Georgia,serif}.views{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}iframe{display:block;border:1px solid #bfc8c6;border-radius:16px;background:#fff}h2{font-size:16px}a{color:inherit}</style></head><body><a href="/concierge-sandbox.html">← Gift guide demo</a><h1>Concierge layout checks</h1><p>Open the guide inside each frame to check the same deployed interface at mobile and desktop widths. Voice is always opt-in.</p><div class="views"><section><h2>360 × 720 mobile viewport</h2><iframe title="Mobile concierge layout" src="/concierge-sandbox.html" width="360" height="720"></iframe></section><section><h2>1024 × 760 desktop viewport</h2><iframe title="Desktop concierge layout" src="/concierge-sandbox.html" width="1024" height="760"></iframe></section></div></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Brites · Concierge layout checks</title>
+  <style>body{background:#eeeae3;color:#203a46;font:15px/1.5 system-ui,sans-serif;margin:24px}h1{font:500 30px Georgia,serif}.views{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}iframe{display:block;border:1px solid #bfc8c6;border-radius:16px;background:#fff}h2{font-size:16px}a{color:inherit}.viewport-links{display:flex;gap:18px;flex-wrap:wrap}.viewport-links [aria-current=page]{font-weight:700;text-decoration-thickness:2px}</style>
+</head>
+<body>
+  <a href="/concierge-sandbox.html">← Gift guide demo</a>
+  <h1>Concierge layout checks</h1>
+  <nav class="viewport-links" aria-label="Viewport checks">
+    <a href="?viewport=mobile" data-viewport="mobile">Mobile only</a>
+    <a href="?viewport=desktop" data-viewport="desktop">Desktop only</a>
+    <a href="?viewport=both" data-viewport="both">Both views</a>
+  </nav>
+  <p id="layout-instructions">Open the guide inside each frame to check the same deployed interface at mobile and desktop widths. Voice is always opt-in.</p>
+  <div class="views">
+    <section data-viewport="mobile"><h2>360 × 720 mobile viewport</h2><iframe title="Mobile concierge layout" width="360" height="720"></iframe></section>
+    <section data-viewport="desktop"><h2>1024 × 760 desktop viewport</h2><iframe title="Desktop concierge layout" width="1024" height="760"></iframe></section>
+  </div>
+  <noscript><p><a href="/concierge-sandbox.html">Open the gift guide demo</a> to try the storefront.</p></noscript>
+  <script>
+    (function(){
+      'use strict';
+      const params=new URLSearchParams(location.search),requested=params.get('viewport');
+      const viewport=requested==='mobile'||requested==='desktop'?requested:'both';
+      const values=params.getAll('product'),candidate=values.length===1?values[0]:'';
+      const product=candidate.length>0&&candidate.length<=180&&!/[^a-z0-9_-]/.test(candidate)?candidate:'';
+      const target=new URL('/concierge-sandbox.html',location.origin);
+      if(product)target.searchParams.set('product',product);
+      document.body.dataset.viewport=viewport;
+      const sections=[...document.querySelectorAll('.views > section')];
+      // Choose the frame before assigning any storefront URL, so a single view
+      // never starts a second inventory preload or avatar renderer.
+      sections.filter(section=>viewport!=='both'&&section.dataset.viewport!==viewport).forEach(section=>section.remove());
+      document.querySelectorAll('.views iframe').forEach(frame=>{frame.src=target.href;});
+      document.querySelectorAll('.viewport-links a').forEach(link=>{
+        const query=new URLSearchParams({viewport:link.dataset.viewport});
+        if(product)query.set('product',product);
+        link.setAttribute('href','?'+query.toString());
+        if(link.dataset.viewport===viewport)link.setAttribute('aria-current','page');
+      });
+      if(viewport!=='both')document.querySelector('#layout-instructions').textContent='Open the guide inside this '+viewport+' frame to check the same deployed interface. Voice is always opt-in.';
+    }());
+  </script>
+</body>
+</html>

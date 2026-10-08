@@ -105,21 +105,27 @@ test('invalid local media time omits a clock but never blocks current real spect
   Object.defineProperty(f.audio(),'currentTime',{get(){throw Error('private media getter');}});valid(f.frame().outputSignal);assert.equal(f.voice.state,'speaking');
 });
 for(const boundary of ['paused','ended','hidden','disconnected','blocked','suspended','interrupted','closed context'])test(boundary+' clears real signal until the same current media becomes usable',async t=>{
-  const f=fixture(t);await f.voice.start();f.attachRemote();f.begin();f.bind();f.start();valid(f.frame().outputSignal);
+  const f=fixture(t);await f.voice.start();const peer=f.peer();f.attachRemote();f.begin();f.bind();f.start();valid(f.frame().outputSignal);
   if(boundary==='paused')f.audio().paused=true;
   else if(boundary==='ended')f.audio().ended=true;
   else if(boundary==='hidden')f.document.hidden=true;
   else if(boundary==='disconnected'){f.peer().connectionState='disconnected';f.peer().onconnectionstatechange();assert.deepEqual(f.levels.at(-1),NO_LEVELS);}
   else if(boundary==='blocked'){f.audio().play=()=>Promise.reject(Error('synthetic autoplay gate'));assert.equal(await f.voice.resumeAudio(),false);assert.deepEqual(f.levels.at(-1),NO_LEVELS);}
   else f.contexts[0].state=boundary==='closed context'?'closed':boundary;
-  const sample=f.frame();assert.equal(sample.output,0);assert.deepEqual(sample.outputSignal,NO_SIGNAL);assert.equal(f.voice.state,'speaking');assert.equal(f.requests.filter(value=>value.action==='stop').length,0);
+  const sample=f.frame();assert.equal(sample.output,0);assert.deepEqual(sample.outputSignal,NO_SIGNAL);assert.equal(f.voice.state,boundary==='disconnected'?'listening':'speaking');assert.equal(f.requests.filter(value=>value.action==='stop').length,0);
   if(boundary==='paused')f.audio().paused=false;
   else if(boundary==='ended')f.audio().ended=false;
   else if(boundary==='hidden')f.document.hidden=false;
   else if(boundary==='disconnected'){f.peer().connectionState='connected';f.peer().onconnectionstatechange();}
   else if(boundary==='blocked'){f.audio().play=function(){this.paused=false;return Promise.resolve();};assert.equal(await f.voice.resumeAudio(),true);}
   else f.contexts[0].state='running';
-  valid(f.frame().outputSignal);assert.equal(f.requests.filter(value=>value.action==='start').length,1);
+  if(boundary==='disconnected'){
+    const retired=f.frame();assert.deepEqual(retired.outputSignal,NO_SIGNAL);assert.equal(Object.hasOwn(retired,'outputTimeMs'),false);assert.equal(Object.hasOwn(retired,'responseId'),false);assert.equal(f.voice.currentOutput,null);assert.equal(f.peer(),peer);
+    f.start('response-current');assert.deepEqual(f.frame().outputSignal,NO_SIGNAL);assert.equal(f.voice.state,'listening');
+    f.begin('input-recovered');f.bind('response-recovered');f.start('response-recovered');f.audio().currentTime=.75;const recovered=f.frame();valid(recovered.outputSignal);assert.equal(recovered.outputTimeMs,750);assert.equal(recovered.responseId,'response-recovered');assert.equal(recovered.inputItemId,'input-recovered');assert.equal(f.voice.state,'speaking');
+    f.emit({type:'output_audio_buffer.stopped',response_id:'response-current'});valid(f.frame().outputSignal);assert.equal(f.voice.currentOutput.responseId,'response-recovered');assert.equal(f.requests.filter(value=>value.action==='stop').length,0);
+  }else valid(f.frame().outputSignal);
+  assert.equal(f.requests.filter(value=>value.action==='start').length,1);
 });
 test('spectrum support is optional; missing or failing FFT cannot stop native voice or invent bands',async t=>{
   const f=fixture(t,{spectrum:false});await f.voice.start();f.attachRemote();f.begin();f.bind();f.start();const sample=f.frame();near(sample.output,.4);assert.deepEqual(sample.outputSignal,NO_SIGNAL);assert.equal(f.voice.state,'speaking');assert.equal(f.voice.outputMeterState,'ready');

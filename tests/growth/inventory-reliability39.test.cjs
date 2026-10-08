@@ -16,7 +16,7 @@ function catalogue(rows,checkedAt,partial=false){return {live:true,checkedAt,pro
 async function page(t,{failCatalogue=false,failOffsets=[],sourcePartial=false,hangOffset=null,wait=true}={}){
   const errors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',error=>errors.push(error));
   const dom=new JSDOM(html,{url:'https://preview.example/concierge-sandbox.html',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole}),w=dom.window,d=w.document,clock={value:Date.now()};
-  const model={rows:Array.from({length:120},(_,i)=>product(i,clock.value)),failOffsets:new Set(failOffsets),sourcePartial,failCatalogue,hangOffset,mixedOffset:null,duplicateOffset:null},requests=[],timers=new Map();let sequence=0;
+  const model={rows:Array.from({length:120},(_,i)=>product(i,clock.value)),failOffsets:new Set(failOffsets),sourcePartial,failCatalogue,hangOffset,mixedOffset:null,duplicateOffset:null,inventoryGates:new Map()},requests=[],timers=new Map();let sequence=0;
   w.Date.now=()=>clock.value;w.matchMedia=()=>({matches:false,addEventListener(){}});w.HTMLElement.prototype.scrollIntoView=function(){};w.scrollTo=()=>{};
   const nativeSet=w.setTimeout.bind(w),nativeClear=w.clearTimeout.bind(w);w.setTimeout=(fn,delay,...args)=>{if(delay===32000||String(fn).includes('preloadInventory')){const id=-(++sequence);timers.set(id,{fn,delay});return id;}return nativeSet(fn,delay,...args);};w.clearTimeout=id=>{if(id<0)timers.delete(id);else nativeClear(id);};
   w.fetch=async(raw,init={})=>{
@@ -24,6 +24,7 @@ async function page(t,{failCatalogue=false,failOffsets=[],sourcePartial=false,ha
     if(url.pathname==='/api/growth/inventory'){
       const offset=Number(url.searchParams.get('offset'));if(model.failOffsets.has(offset))throw Error('Synthetic public inventory failure');
       if(model.hangOffset===offset)await new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(Error('Synthetic aborted read')),{once:true}));
+      if(model.inventoryGates.has(offset))await model.inventoryGates.get(offset);
       let rows=model.rows.slice(offset,offset+24);if(model.duplicateOffset===offset)rows=[model.rows[0],...rows.slice(1)];
       body={live:true,checkedAt:clock.value,products:rows,inventory:{schema:1,total:model.rows.length,offset,limit:24,loaded:rows.length,partial:model.sourcePartial,sourcePartial:model.sourcePartial,fingerprint:model.mixedOffset===offset?'f'.repeat(64):fingerprint(model.rows)},pageInfo:{hasNextPage:offset+24<model.rows.length,nextOffset:offset+24<model.rows.length?offset+24:null}};
     }else if(url.pathname==='/api/growth/catalogue'){if(model.failCatalogue)throw Error('Synthetic catalogue failure');body=catalogue(model.rows,clock.value,model.sourcePartial);}
@@ -67,6 +68,22 @@ test('an unchanged background refresh preserves the real focused option controls
   f.clock.value+=1000;f.model.rows=f.model.rows.map(row=>({...row,checkedAt:f.clock.value}));await f.retry();assert.equal(f.d.querySelector('.product-quantity input'),input);assert.equal(f.d.activeElement,input);assert.equal(f.d.querySelector('.option-menu'),menu);assert.equal(menu.hidden,false);assert.equal(f.d.querySelector('.product-review'),review);assert.equal(f.store.snapshot().productControls.itemTotalPrice,140);assert.equal((await f.store.readProduct(p.handle)).checkedAt,f.clock.value);
   await f.store.execute({type:'zoom',handle:p.handle});const dialog=f.d.querySelector('#storefront-image-dialog'),focus=f.d.activeElement;assert(dialog.hasAttribute('open'));f.clock.value+=1000;f.model.rows=f.model.rows.map(row=>({...row,checkedAt:f.clock.value}));await f.retry();assert.equal(f.d.querySelector('#storefront-image-dialog'),dialog);assert.equal(dialog.hasAttribute('open'),true);assert.equal(f.d.activeElement,focus);assert.equal(f.store.snapshot().productControls.variantId,p.variants[1].id);assert.equal(f.store.snapshot().productControls.quantity,2);
 });
+test('the 75-second refresh lead preserves all 120 fresh rows through a 62-second two-stage page cycle',async t=>{
+  const f=await page(t),initial=f.clock.value,timer=[...f.timers].find(([,value])=>String(value.fn).includes('preloadInventory'));
+  assert(timer);assert.equal(Inventory.REFRESH_AHEAD_MS,75000);assert.equal(timer[1].delay,Inventory.CACHE_MS-Inventory.REFRESH_AHEAD_MS);assert(Inventory.REFRESH_AHEAD_MS>2*32000);
+  const release=new Map();for(const offset of [0,24,48,72,96])f.model.inventoryGates.set(offset,new Promise(resolve=>release.set(offset,resolve)));
+  f.clock.value+=timer[1].delay;f.timers.delete(timer[0]);timer[1].fn();await settle();const refresh=f.store.preloadInventory();
+  assert.equal(f.store.inventoryStatus().ready,true);assert.equal(f.store.inventoryStatus().loading,true);
+  f.clock.value+=31000;assert.equal(f.store.inventoryStatus().loaded,120);assert.equal(f.store.inventoryStatus().ready,true);f.model.rows=f.model.rows.map((p,index)=>index<24?{...p,checkedAt:f.clock.value}:p);release.get(0)();await settle();
+  assert.equal((await f.store.readProduct(f.model.rows[0].handle)).checkedAt,f.clock.value);assert.equal((await f.store.readProduct(f.model.rows[119].handle)).checkedAt,initial);
+  f.clock.value+=31000;assert.equal(f.clock.value-initial,287000);assert.equal(f.store.inventoryStatus().ready,true);assert.equal(f.store.inventoryStatus().loaded,120);
+  f.model.rows=f.model.rows.map((p,index)=>index>=24?{...p,checkedAt:f.clock.value}:p);for(const offset of [24,48,72,96])release.get(offset)();await refresh;await settle();
+  assert.equal(f.store.inventoryStatus().ready,true);assert.equal(f.store.inventoryStatus().loaded,120);assert.equal(f.store.inventoryStatus().loading,false);assert(f.store.getInventory().every(p=>p.checkedAt>initial));assert.equal(f.requests.filter(r=>r.url.pathname==='/api/growth/product').length,0);assert.equal(f.errors.length,0);
+});
+test('earlier refreshing never extends genuinely expired browser product evidence',async t=>{
+  const f=await page(t),p=f.model.rows[119],before=f.requests.length;assert.equal((await f.store.readProduct(p.handle)).cached,true);f.clock.value+=Inventory.CACHE_MS;
+  assert.equal(f.store.inventoryStatus().loaded,0);assert.equal(f.store.inventoryStatus().ready,false);assert.equal(f.store.inventoryStatus().partial,true);assert.equal(f.store.getInventory().length,0);assert.equal(await f.store.readProduct(p.handle),null);assert.equal(f.requests.length,before);
+});
 function reader({count=120,clock={value:Date.now()},seedCost=0,exactCost=0,unknownIndex=null}={}){
   const rows=Array.from({length:count},(_,i)=>product(i,clock.value)),calls={seed:0,exact:[],holds:[],order:[]};
   const shopify={seed:async()=>{calls.seed++;clock.value+=seedCost;return {products:rows.map(p=>({...p,checkedAt:clock.value})),seed:{partial:false}};},publicByHandle:async(handle,timeout)=>{calls.order.push('exact');calls.exact.push({handle,timeout});clock.value+=exactCost;const p=clone(rows.find(p=>p.handle===handle));p.checkedAt=clock.value;if(rows.indexOf(rows.find(p=>p.handle===handle))===unknownIndex)p.variants[0].availabilityKnown=false;return p;}};
@@ -86,7 +103,8 @@ test('unknown availability elsewhere in the inventory prevents a neighbor page f
   const f=reader({count:3,unknownIndex:0});await f.instance.read({offset:0,limit:1});const response=await f.instance.read({offset:1,limit:2});assert.equal(response.inventory.detailsLoaded,2);assert.equal(response.inventory.ready,false);assert.equal(response.products.length,2);
 });
 test('background refresh replaces expiring facts before cache expiry while ordinary fact lookup stays instant',async()=>{
-  const f=reader({count:1});await f.instance.read({offset:0,limit:1});const original=f.clock.value;f.clock.value+=Inventory.CACHE_MS-15000;const before=await f.instance.lookup(f.rows[0].handle);assert.equal(before.checkedAt,original);assert.equal(f.calls.exact.length,1);const fresh=await f.instance.read({offset:0,limit:1});assert.equal(f.calls.seed,2);assert.equal(f.calls.exact.length,2);assert.equal(fresh.products[0].checkedAt,f.clock.value);assert.equal(fresh.products[0].cached,false);
+  const f=reader({count:1});await f.instance.read({offset:0,limit:1});const original=f.clock.value;f.clock.value+=Inventory.CACHE_MS-Inventory.REFRESH_AHEAD_MS-1;const early=await f.instance.read({offset:0,limit:1});assert.equal(f.calls.seed,1);assert.equal(f.calls.exact.length,1);assert.equal(early.products[0].checkedAt,original);assert.equal(early.products[0].cached,true);
+  f.clock.value++;const before=await f.instance.lookup(f.rows[0].handle);assert.equal(before.checkedAt,original);assert.equal(f.calls.exact.length,1);const fresh=await f.instance.read({offset:0,limit:1});assert.equal(f.calls.seed,2);assert.equal(f.calls.exact.length,2);assert.equal(fresh.products[0].checkedAt,f.clock.value);assert.equal(fresh.products[0].cached,false);assert.equal(fresh.inventory.expiresAt,f.clock.value+Inventory.CACHE_MS);
 });
 test('cached descriptions with unknown stock are rechecked on recovery instead of blocking readiness for five minutes',async()=>{
   const p=product(0);let exact=0;const service={namespace:'Brites_Growth_Sandbox',productIssues:async()=>[]},shopify={seed:async()=>({products:[p],seed:{partial:false}}),publicByHandle:async()=>{exact++;return {...p,variants:p.variants.map(v=>exact===1?{...v,available:false,availabilityKnown:false}:v)};}};

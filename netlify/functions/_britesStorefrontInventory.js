@@ -6,7 +6,9 @@
 // reads reviewed holds and preserves the exact product's original timestamp.
 const crypto=require('node:crypto');
 const categories=require('./_britesStorefrontSeed');
-const CACHE_MS=5*60000,REFRESH_AHEAD_MS=15000,MAXIMUM=160,PAGE_LIMIT=24,CONCURRENCY=6,READ_MS=7000,DEADLINE_MS=28000;
+// Match the browser's 75-second lead: its first 32-second page precedes the
+// remaining parallel pages. Refresh early without extending any fact's TTL.
+const CACHE_MS=5*60000,REFRESH_AHEAD_MS=75000,MAXIMUM=160,PAGE_LIMIT=24,CONCURRENCY=6,READ_MS=7000,DEADLINE_MS=28000;
 const shared=new Map(),clone=value=>structuredClone(value);
 const hash=value=>crypto.createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
 const handleValid=value=>typeof value==='string'&&/^[a-z0-9_-]{1,180}$/.test(value);
@@ -161,4 +163,4 @@ function createInventory({shopify,service,core,now=Date.now,cache}={}){
   }
   return {read,lookup,peek};
 }
-module.exports={createInventory,parsePage,CACHE_MS,MAXIMUM,PAGE_LIMIT,CONCURRENCY,READ_MS,DEADLINE_MS};
+module.exports={createInventory,parsePage,CACHE_MS,REFRESH_AHEAD_MS,MAXIMUM,PAGE_LIMIT,CONCURRENCY,READ_MS,DEADLINE_MS};

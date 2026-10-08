@@ -180,11 +180,59 @@
     if(new URL(endpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
     let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,disconnectDeadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false,lastError=null,playbackBlocked=false,outputMeterState='waiting';
-    let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,localMediaClock=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',activePlaybackResponseId='',playbackNotice='',turnPerformanceUsed=false,performanceContinuationUsed=false,finalizedInput=null,finalizedDeadline=null;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set(),responseOutputItems=new Map(),listeningEvents=new Map(),drainedOutputs=new Map();
+    let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,localMediaClock=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',activePlaybackResponseId='',playbackNotice='',turnPerformanceUsed=false,performanceContinuationUsed=false,finalizedInput=null,finalizedDeadline=null,commitWait=null,responseWait=null,outputWait=null,turnReleased=false;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set(),responseOutputItems=new Map(),listeningEvents=new Map(),drainedOutputs=new Map();
     const eventId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u001f\u007f]/.test(value)?value:'';
     function remember(map,key,value){if(!key||map.has(key))return;map.set(key,value);if(map.size>100)map.delete(map.keys().next().value);}
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
     function clear(id){if(id!=null){rt.clearTimeout(id);timers.delete(id);}}
+    function currentLifecycle(record){return !!record&&record.epoch===epoch&&record.turnVersion===turnVersion&&record.inputItemId===activeInputItemId&&!turnReleased&&!disposed&&!['idle','closing'].includes(state);}
+    function retireCommitWait(){clear(commitWait?.timer);commitWait=null;}
+    function retireResponseWait(){clear(responseWait?.timer);responseWait=null;}
+    function retireOutputWait(){clear(outputWait?.timer);outputWait=null;}
+    function retireTurnWaits(){retireCommitWait();retireResponseWait();retireOutputWait();}
+    function releaseCurrentTurn(record,message='That turn could not finish. Please ask again; voice is still connected.'){
+      if(!currentLifecycle(record))return;
+      // Expire authority before aborting callbacks or clearing native buffers.
+      // Recovery keeps this peer/session; it never creates another provider call.
+      interrupt('interrupt');turnReleased=true;notify('onTurnWarning',message);settleState();
+    }
+    function refreshWait(record,ms,isActive,message){
+      clear(record.timer);const timer=timeout(ms,()=>{if(record.timer!==timer||!isActive(record)||!currentLifecycle(record))return;record.timer=null;releaseCurrentTurn(record,message);});record.timer=timer;
+    }
+    function awaitInputCommit(){
+      if(!activeInputItemId||activeInputCommitted||commitWait)return;
+      commitWait={epoch,turnVersion,inputItemId:activeInputItemId,timer:null};refreshWait(commitWait,5000,record=>commitWait===record);
+    }
+    function awaitResponse(requestId){
+      retireResponseWait();responseWait={epoch,turnVersion,inputItemId:activeInputItemId,requestId,responseId:'',timer:null};refreshWait(responseWait,15000,record=>responseWait===record,'That reply could not finish. Please ask again; voice is still connected.');
+    }
+    function responseWaitMatches(record,event){
+      if(!currentLifecycle(record))return false;
+      const raw=event.response_id??event.response?.id,id=eventId(raw);if(raw!=null&&!id)return false;
+      if(!id)return !record.responseId;
+      const bound=currentResponse(id);return !!bound&&bound.requestId===record.requestId&&bound.inputItemId===record.inputItemId&&(!record.responseId||record.responseId===id);
+    }
+    function noteResponseProgress(event){
+      const record=responseWait;if(!responseWaitMatches(record,event))return false;
+      const id=eventId(event.response_id??event.response?.id);if(id)record.responseId=id;
+      refreshWait(record,15000,value=>responseWait===value,'That reply could not finish. Please ask again; voice is still connected.');return true;
+    }
+    function finishResponseWait(event){if(!responseWaitMatches(responseWait,event))return false;retireResponseWait();responsePending=false;return true;}
+    function outputWaitMatches(record,event){
+      if(!currentLifecycle(record))return false;
+      const raw=event.response_id??event.response?.id,id=eventId(raw);return !(raw!=null&&!id)&&record.responseId===id&&(!id||!!currentResponse(id));
+    }
+    function awaitOutputDrain(responseId){
+      if(outputWait?.responseId===responseId&&currentLifecycle(outputWait)){noteOutputProgress({response_id:responseId});return;}
+      retireOutputWait();outputWait={epoch,turnVersion,inputItemId:activeInputItemId,responseId,timer:null};refreshWait(outputWait,30000,record=>outputWait===record,'That reply could not finish. Please ask again; voice is still connected.');
+    }
+    function noteOutputProgress(event){const record=outputWait;if(outputWaitMatches(record,event))refreshWait(record,30000,value=>outputWait===value,'That reply could not finish. Please ask again; voice is still connected.');}
+    function noteMeasuredOutput(binding,levels){
+      // Real current PCM is an activity signal, never an invented duration.
+      // Healthy streamed/buffered speech can continue beyond these inactivity
+      // bounds; an absent drain event with silent media cannot latch forever.
+      if(binding&&Number.isFinite(levels.output)&&levels.output>0){const event={response_id:binding.responseId};noteOutputProgress(event);noteResponseProgress(event);}
+    }
     function setState(next){if(state===next)return;state=next;notify('onState',next);}
     function reportFailure(error){lastError=publicFailure(error);notify('onError',lastError.message,lastError);return lastError;}
     function reportOutputMeterState(){
@@ -219,10 +267,10 @@
       // when an actual committed conversational response is requested, not for
       // every card hover or mouse frame. Context still cannot create authority.
       try{if(typeof options.getContext==='function')updateContext(options.getContext());}catch{}
-      const requestId='voice-'+epoch+'-'+version+'-'+(++responseRequest),binding={turnVersion:version,inputItemId,responseId:'',toolsDisabled:response.tool_choice==='none'};
+      const requestId='voice-'+epoch+'-'+version+'-'+(++responseRequest),binding={epoch,requestId,turnVersion:version,inputItemId,responseId:'',toolsDisabled:response.tool_choice==='none'};
       remember(issuedResponses,requestId,binding);
-      const sent=send({type:'response.create',response:{...response,metadata:{brites_voice_request:requestId,brites_input_item:inputItemId,brites_turn_version:String(version)}}});
-      if(sent)responsePending=true;else issuedResponses.delete(requestId);return sent;
+      const sent=send({type:'response.create',event_id:requestId,response:{...response,metadata:{brites_voice_request:requestId,brites_input_item:inputItemId,brites_turn_version:String(version)}}});
+      if(sent){responsePending=true;awaitResponse(requestId);}else issuedResponses.delete(requestId);return sent;
     }
     function currentFinalizedInput(record){return !!record&&!record.expired&&finalizedInput===record&&record.epoch===epoch&&record.turnVersion===turnVersion&&record.inputItemId===activeInputItemId&&activeInputCommitted&&!inputSpeaking&&!doc?.hidden&&!disposed&&!['idle','closing'].includes(state);}
     async function answerFinalizedInput(record){
@@ -253,7 +301,7 @@
       if(typeof options.onFinalizedTurn!=='function')return false;
       if(!finalizedInput)finalizedInput={epoch,turnVersion,inputItemId:activeInputItemId,text:null,started:false,responseIssued:false};
       if(typeof finalizedInput.text==='string')void answerFinalizedInput(finalizedInput);
-      else if(finalizedDeadline==null)finalizedDeadline=timeout(5000,()=>{finalizedDeadline=null;if(!activeInputCommitted||inputSpeaking||finalizedInput?.started)return;if(finalizedInput)finalizedInput.expired=true;responsePending=false;notify('onTurnWarning','That turn could not finish. Please ask again; voice is still connected.');settleState();});
+      else if(finalizedDeadline==null){const record=finalizedInput;finalizedDeadline=timeout(5000,()=>{if(finalizedInput!==record||!currentLifecycle(record)||!activeInputCommitted||inputSpeaking||record.started)return;finalizedDeadline=null;record.expired=true;releaseCurrentTurn(record);});}
       return true;
     }
     function continueAudioTail(){
@@ -265,7 +313,7 @@
       if(!id||!metadata||typeof metadata!=='object'||Array.isArray(metadata))return null;
       const issued=typeof metadata.brites_voice_request==='string'?issuedResponses.get(metadata.brites_voice_request):null;
       if(!issued||metadata.brites_input_item!==issued.inputItemId||metadata.brites_turn_version!==String(issued.turnVersion)||issued.responseId&&issued.responseId!==id)return null;
-      issued.responseId=id;return {turnVersion:issued.turnVersion,inputItemId:issued.inputItemId,toolsDisabled:issued.toolsDisabled};
+      issued.responseId=id;return {requestId:issued.requestId,turnVersion:issued.turnVersion,inputItemId:issued.inputItemId,toolsDisabled:issued.toolsDisabled};
     }
     function staleResponse(event){const raw=event.response_id??event.response?.id,id=eventId(raw),binding=id?responseTurns.get(id):null;return raw!=null&&!id||!!id&&(!binding||binding.turnVersion!==turnVersion);}
     function currentResponse(id){const bound=responseTurns.get(id);return bound&&bound.turnVersion===turnVersion?bound:null;}
@@ -331,6 +379,7 @@
     }
     function cleanup(){
       reportPlayback(activePlaybackResponseId||activePerformanceResponseId,false,true);
+      retireTurnWaits();
       for(const controller of toolControllers)controller.abort();toolControllers.clear();
       abort?.abort();abort=null;for(const cancel of [...pending])cancel();clear(deadline);deadline=null;clear(disconnectDeadline);disconnectDeadline=null;
       if(raf!=null){rt.cancelAnimationFrame?.(raf);raf=null;}
@@ -342,7 +391,7 @@
       if(ctx){ctx.onstatechange=null;try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
       if(dc){dc.onopen=dc.onmessage=dc.onerror=dc.onclose=null;dc.close();dc=null;}
       if(pc){pc.ontrack=pc.onconnectionstatechange=null;pc.close();pc=null;}
-      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;finalizedInput=null;finalizedDeadline=null;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();drainedOutputs.clear();notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
+      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=turnReleased=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;finalizedInput=null;finalizedDeadline=null;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();drainedOutputs.clear();notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
     }
     function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;if(channel==='output')analyser.smoothingTimeConstant=0;source.connect(analyser);sources.push(source,analyser);const count=analyser.frequencyBinCount;return {channel,stream,analyser,samples:new Float32Array(analyser.fftSize),frequencies:typeof analyser.getFloatFrequencyData==='function'&&Number.isInteger(count)&&count===analyser.fftSize/2?new Float32Array(count):null};}catch{return null;}}
     function blockPlayback(current,playbackAudio,stream){
@@ -409,6 +458,7 @@
       // missing samples with fabricated speech motion.
       if(binding)Object.assign(levels,{responseId:binding.responseId,itemId:binding.itemId,inputItemId:binding.inputItemId,turnVersion:binding.turnVersion,currentTurn:true});
       const clock=measuredOutputClock(binding);if(clock)Object.assign(levels,clock);
+      noteMeasuredOutput(binding,levels);
       notify('onLevel',levels);notify('onInputSignal',inputFrame);const current=epoch,context=ctx;try{raf=rt.requestAnimationFrame?.(()=>{if(current===epoch&&ctx===context)sample();});}catch{raf=null;}
     }
     function settleState(){if(state==='idle'||state==='closing')return;if(outputPlaying)setState('speaking');else if(inputSpeaking)setState('listening');else if(toolControllers.size||responsePending)setState('thinking');else setState('listening');}
@@ -482,27 +532,30 @@
     function receive(raw,current){
       let event;try{if(typeof raw!=='string'||raw.length>65000)return;event=JSON.parse(raw);}catch{return;}
       if(!event||typeof event.type!=='string'||current!==epoch||state==='closing'||state==='idle')return;
+      if(turnReleased&&(event.type.startsWith('response.')||event.type.startsWith('output_audio_buffer.')||event.type==='error'))return;
+      if(/^response\.(?:output_item|content_part)\.(?:added|done)$/.test(event.type)||/^response\.(?:output_audio|audio|output_text|text|output_audio_transcript|audio_transcript|function_call_arguments)\.(?:delta|done)$/.test(event.type)){noteResponseProgress(event);if(/audio/.test(event.type))noteOutputProgress(event);}
       if(event.type==='input_audio_buffer.speech_started'){inputSpeaking=true;interrupt('speech',eventId(event.item_id));setState('listening');}
-      else if(event.type==='input_audio_buffer.speech_stopped'){const itemId=eventId(event.item_id);if(itemId&&activeInputItemId&&itemId!==activeInputItemId)return;inputSpeaking=false;notify('onInputSignal',noInputFrame());responsePending=true;setState('thinking');}
+      else if(event.type==='input_audio_buffer.speech_stopped'){const itemId=eventId(event.item_id);if(turnReleased||event.item_id!=null&&!itemId||itemId&&(itemId!==activeInputItemId||speechTurns.get(itemId)!==turnVersion)||activeInputCommitted)return;inputSpeaking=false;notify('onInputSignal',noInputFrame());responsePending=true;awaitInputCommit();setState('thinking');}
       else if(event.type==='input_audio_buffer.committed'){
         const itemId=eventId(event.item_id);
-        if(!inputSpeaking&&!activeInputCommitted&&itemId&&itemId===activeInputItemId&&speechTurns.get(itemId)===turnVersion){activeInputCommitted=true;if(!awaitFinalizedInput())requestResponse({tool_choice:'auto'},turnVersion,itemId);settleState();}
+        if(!inputSpeaking&&!activeInputCommitted&&itemId&&itemId===activeInputItemId&&speechTurns.get(itemId)===turnVersion){retireCommitWait();activeInputCommitted=true;if(!awaitFinalizedInput())requestResponse({tool_choice:'auto'},turnVersion,itemId);settleState();}
       }
       else if(event.type==='response.created'){
         const id=eventId(event.response?.id);
         remember(responseTurns,id,responseBinding(event)||{turnVersion:null,inputItemId:''});
         if(id&&responseTurns.get(id)?.turnVersion!==turnVersion)return;
         const bound=responseTurns.get(id);if(id&&bound){remember(performanceResponses,id,{open:true,hadContent:false,expression:false,otherTool:false});activePerformanceResponseId=id;}
-        responsePending=true;settleState();
+        if(noteResponseProgress(event))responsePending=true;settleState();
       }
       else if(event.type==='response.output_item.added'){
         if(staleResponse(event))return;const responseId=eventId(event.response_id),itemId=eventId(event.item?.id);if(currentResponse(responseId)&&itemId&&event.item?.type==='message'&&event.item?.role==='assistant')remember(responseOutputItems,responseId,itemId);
       }
-      else if(event.type==='output_audio_buffer.started'){if(staleResponse(event)||drainedOutputs.has(eventId(event.response_id)))return;const responseId=eventId(event.response_id),performance=performanceResponses.get(responseId);if(performance)performance.hadContent=true;if(currentResponse(responseId)){if(activePlaybackResponseId!==responseId){if(activePlaybackResponseId)remember(drainedOutputs,activePlaybackResponseId,true);localMediaClock=null;}activePlaybackResponseId=responseId;}outputPlaying=true;reportPlayback(responseId,true);setState('speaking');}
-      else if(event.type==='output_audio_buffer.stopped'||event.type==='output_audio_buffer.cleared'){if(staleResponse(event))return;const responseId=eventId(event.response_id),cleared=event.type==='output_audio_buffer.cleared';if(activePlaybackResponseId&&responseId&&responseId!==activePlaybackResponseId)return;outputPlaying=false;localMediaClock=null;if(currentResponse(responseId))remember(drainedOutputs,responseId,true);notify('onLevel',noOutputLevels());reportPlayback(responseId,false,cleared);if(activePlaybackResponseId===responseId)activePlaybackResponseId='';if(!cleared)continueAudioTail();else continuation=null;settleState();}
+      else if(event.type==='output_audio_buffer.started'){if(staleResponse(event)||drainedOutputs.has(eventId(event.response_id)))return;const responseId=eventId(event.response_id),performance=performanceResponses.get(responseId);if(!responseId&&(responseWait?.responseId||activePlaybackResponseId))return;if(performance)performance.hadContent=true;if(currentResponse(responseId)){if(activePlaybackResponseId!==responseId){if(activePlaybackResponseId)remember(drainedOutputs,activePlaybackResponseId,true);localMediaClock=null;}activePlaybackResponseId=responseId;}outputPlaying=true;awaitOutputDrain(responseId);noteResponseProgress(event);reportPlayback(responseId,true);setState('speaking');}
+      else if(event.type==='output_audio_buffer.stopped'||event.type==='output_audio_buffer.cleared'){if(staleResponse(event))return;const responseId=eventId(event.response_id),cleared=event.type==='output_audio_buffer.cleared';if(activePlaybackResponseId&&responseId!==activePlaybackResponseId)return;if(outputWaitMatches(outputWait,event))retireOutputWait();outputPlaying=false;localMediaClock=null;if(currentResponse(responseId))remember(drainedOutputs,responseId,true);notify('onLevel',noOutputLevels());reportPlayback(responseId,false,cleared);if(activePlaybackResponseId===responseId)activePlaybackResponseId='';if(!cleared)continueAudioTail();else continuation=null;settleState();}
       else if(event.type==='response.done'){
         if(staleResponse(event))return;
-        responsePending=false;
+        const pendingResponse=finishResponseWait(event),playingResponse=outputWaitMatches(outputWait,event);
+        if(event.response?.status==='failed'&&(pendingResponse||playingResponse)){releaseCurrentTurn({epoch,turnVersion,inputItemId:activeInputItemId},'That reply could not finish. Please ask again; voice is still connected.');return;}
         finishPerformanceResponse(event);
         if(eventId(event.response?.id)&&responseTurns.get(event.response.id)?.turnVersion===turnVersion&&event.response?.status==='incomplete'&&event.response?.status_details?.reason==='max_output_tokens'&&!continuationUsed){continuation={version:turnVersion,inputItemId:activeInputItemId};if(!outputPlaying)continueAudioTail();}
         // Generation can finish while WebRTC is still playing buffered audio.
@@ -521,15 +574,21 @@
         else notify('onTranscript',{role:'user',text,final:true,itemId,turnVersion:version,currentTurn});
       }
       else if(event.type==='conversation.item.input_audio_transcription.failed'){
-        if(eventId(event.item_id)!==activeInputItemId)return;clear(finalizedDeadline);finalizedDeadline=null;if(finalizedInput)finalizedInput.expired=true;responsePending=false;notify('onTurnWarning','That turn could not finish. Please ask again; voice is still connected.');settleState();
+        if(eventId(event.item_id)!==activeInputItemId)return;clear(finalizedDeadline);finalizedDeadline=null;if(finalizedInput)finalizedInput.expired=true;releaseCurrentTurn({epoch,turnVersion,inputItemId:activeInputItemId});
       }
       else if(event.type==='error'){
         // response.cancel during silence can yield a harmless race. Raw
         // provider messages may contain account details and never reach the UI.
-        if(event.error?.code!=='response_cancel_not_active')notify('onTurnWarning','That turn could not finish. Please ask again; voice is still connected.');
+        if(event.error?.code==='response_cancel_not_active')return;
+        // OpenAI nests the originating client ID under error.event_id. The
+        // outer event_id identifies the server notification, not our request.
+        const requestId=eventId(event.error?.event_id);
+        if(requestId){if(responseWait?.requestId===requestId&&currentLifecycle(responseWait))releaseCurrentTurn(responseWait);return;}
+        notify('onTurnWarning','That turn could not finish. Please ask again; voice is still connected.');
       }
     }
     function interrupt(reason='interrupt',itemId=''){
+      retireTurnWaits();turnReleased=false;if(reason!=='speech')inputSpeaking=false;
       reportPlayback(activePlaybackResponseId||activePerformanceResponseId,false,true);activePlaybackResponseId='';localMediaClock=null;
       continuation=null;continuationUsed=false;activePerformanceResponseId='';turnPerformanceUsed=performanceContinuationUsed=false;clear(finalizedDeadline);finalizedDeadline=null;finalizedInput=null;const nextVersion=turnVersion+1;
       notify('onAvatarPerformanceCancelled',{reason:['speech','stop','interrupt'].includes(reason)?reason:'interrupt',turnVersion:nextVersion});
@@ -570,6 +629,9 @@
         connection.onconnectionstatechange=()=>{
           if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;
           if(connection.connectionState==='disconnected'){
+            // Retire the interrupted turn while this same peer may recover.
+            // Old lifecycle timers/output cannot revive after reconnection.
+            interrupt('interrupt');turnReleased=true;
             localMediaClock=null;notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
             // Brief interruptions may recover this same peer. Keep the
             // deadline tied to its first interruption rather than extending
@@ -591,7 +653,7 @@
         await bounded(pc.setRemoteDescription({type:'answer',sdp:answer.sdp}),5000,MESSAGES.setupTimeout);await bounded(ready,10000,MESSAGES.media);
         if(current!==epoch)throw Error('Voice start cancelled.');
         const duration=Math.min(120000,Math.max(1000,Number(answer.maxDurationMs)||120000),Number.isFinite(answer.expiresAt)?Math.max(0,answer.expiresAt-Date.now()):120000);
-        deadline=timeout(duration,()=>void stop('limit'));setState('listening');notify('onConnectionPhase','connected');
+        deadline=timeout(duration,()=>{if(current===epoch&&!disposed)void stop('limit');});setState('listening');notify('onConnectionPhase','connected');
         try{if(typeof options.getContext==='function')updateContext(options.getContext());}catch{}
         if(options.greeting!==false){requestResponse({instructions:'Greet the shopper warmly with only one brief friendly invitation: "Hi, what would you like to see?" No introduction, product facts, follow-up chatter or second question. Speak as the Brites AI concierge with a relaxed natural voice.',tool_choice:'none',max_output_tokens:160},turnVersion,'');settleState();}
         return true;

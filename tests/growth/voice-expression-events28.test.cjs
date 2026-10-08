@@ -133,7 +133,7 @@ test('invalid, throwing, backward and huge native clocks are omitted without poi
 });
 
 for(const boundary of ['paused','ended','hidden','disconnected','blocked'])test('native '+boundary+' media never leaks an output clock',async t=>{
-  const f=fixture(t,{mediaClock:true});await f.voice.start();f.attachRemote();f.begin();f.bind();f.emit({type:'output_audio_buffer.started',response_id:'response-current'});f.audio().currentTime=1;assert.equal(f.frame().outputTimeMs,1000);
+  const f=fixture(t,{mediaClock:true});await f.voice.start();const peer=f.peer();f.attachRemote();f.begin();f.bind();f.emit({type:'output_audio_buffer.started',response_id:'response-current'});f.audio().currentTime=1;assert.equal(f.frame().outputTimeMs,1000);
   if(boundary==='paused')f.audio().paused=true;
   else if(boundary==='ended')f.audio().ended=true;
   else if(boundary==='hidden')f.document.hidden=true;
@@ -145,7 +145,14 @@ for(const boundary of ['paused','ended','hidden','disconnected','blocked'])test(
   else if(boundary==='hidden')f.document.hidden=false;
   else if(boundary==='disconnected'){f.peer().connectionState='connected';f.peer().onconnectionstatechange();}
   else {f.audio().play=function(){this.paused=false;return Promise.resolve();};assert.equal(await f.voice.resumeAudio(),true);}
-  f.audio().currentTime=1.4;assert.equal(f.frame().outputTimeMs,1400);assert.equal(f.requests.filter(value=>value.action==='start').length,1,'clock recovery never opens another provider session');
+  f.audio().currentTime=1.4;
+  if(boundary==='disconnected'){
+    const retired=f.frame();assert.equal(Object.hasOwn(retired,'outputTimeMs'),false);assert.equal(Object.hasOwn(retired,'responseId'),false);assert.equal(retired.output,0);assert.equal(f.voice.state,'listening');assert.equal(f.peer(),peer);
+    f.emit({type:'output_audio_buffer.started',response_id:'response-current'});assert.equal(Object.hasOwn(f.frame(),'outputTimeMs'),false);
+    const fresh=f.begin('input-recovered');f.bind('response-recovered');f.emit({type:'output_audio_buffer.started',response_id:'response-recovered'});f.audio().currentTime=1.6;const recovered=f.frame();assert.equal(recovered.outputTimeMs,1600);assert.equal(recovered.responseId,'response-recovered');assert.equal(recovered.turnVersion,fresh.turnVersion);assert.ok(recovered.output>.39);
+    f.emit({type:'output_audio_buffer.stopped',response_id:'response-current'});assert.equal(f.frame().responseId,'response-recovered');assert.equal(f.requests.filter(value=>value.action==='stop').length,0);
+  }else assert.equal(f.frame().outputTimeMs,1400);
+  assert.equal(f.requests.filter(value=>value.action==='start').length,1,'clock recovery never opens another provider session');
 });
 
 test('native clear, turn replacement and disconnect remove old clock identity',async t=>{
