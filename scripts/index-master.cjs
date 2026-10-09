@@ -163,6 +163,13 @@ function settleTwins(lab, charms, pins) {
     const f = lines[0]; if (f !== l) { l.sku = f.sku; l.size = f.size; l.str = f.str; l.bbox = f.bbox; }
     l.extra = lines.slice(1); if (c) { c.sku = l.sku; c.skuSize = l.size; c.extraSkus = l.extra; }
   };
+  const giveLine = (i, line) => {
+    const l = lab.labels.get(i), c = cOf(i), x = { sku: line.sku, size: line.size, str: line.str, bbox: line.bbox };
+    if (l) { l.extra = (l.extra || []).concat([x]); if (c) c.extraSkus = l.extra; return; }
+    lab.labels.set(i, Object.assign({ seg: null, gap: 0, extra: [] }, x));
+    const u = lab.unlabelled.indexOf(i); if (u >= 0) lab.unlabelled.splice(u, 1);
+    if (c) { c.sku = x.sku; c.skuSize = x.size; c.extraSkus = []; }
+  };
   for (const [i, l] of [...lab.labels]) {                              // a SKU written twice under one charm is one line
     const seen = new Set(), lines = linesOf(l).filter(x => { const k = keyOf(x); if (seen.has(k)) return false; seen.add(k); return true; });
     if (lines.length !== 1 + (l.extra || []).length) setLines(i, lines);
@@ -185,6 +192,11 @@ function settleTwins(lab, charms, pins) {
       }
       if (want == null || !set.has(want)) throw new Error(`--pin ${k}: no charm carrying it is where the pin says (${JSON.stringify(pin)}); its charms are ${idx.map(i => { const b = cOf(i).outline.bbox; return `#${i} at ${((b[0] + b[2]) / 2).toFixed(1)},${((b[1] + b[3]) / 2).toFixed(1)}`; }).join("; ")}`);
       owner = want; rule = "pinned";
+    }
+    // an owner that lost the line to labelCharms' duplicate rule (another charm was first on the page, so this one's line was dropped) gets it back
+    if (!(lab.labels.get(owner) && linesOf(lab.labels.get(owner)).some(x => keyOf(x) === k))) {
+      const proto = idx.map(i => lab.labels.get(i)).filter(Boolean).flatMap(linesOf).find(x => keyOf(x) === k);
+      if (proto) giveLine(owner, proto);
     }
     for (const i of idx) if (i !== owner) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); }
     out.push({ key: k, owner, others: idx.filter(i => i !== owner), rule });
@@ -244,9 +256,13 @@ function pairLayer(P, G, Pair, g, lab, items, o, log) {
       const outlines = bodyCharms.map(c => c.outline);
       const merged = Object.assign({}, owner.outline, { subpaths: [].concat(...outlines.map(x => x.subpaths || [])), bbox: outlines.map(x => x.bbox).reduce(union), closed: outlines.every(x => x.closed) });
       const eng = bodyCharms.map(engraveOf), first = eng[bodyCharms.indexOf(owner)];   // (the labelled body's up direction is the one the library always held for this SKU)
+      // each body can be written as a form of its own only when no two bodies draw from one top-level group of the master (then the per-SKU file keeps them apart)
+      const parentsOf = c => new Set(c.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null));
+      const par = bodyCharms.map(parentsOf), apart = par.every((a, i) => par.every((b, j) => i === j || ![...a].some(t => b.has(t))));
       row.folded = true; row.forced = forced && !r.sure; row.partners = bodyCharms.filter(c => c !== owner).map(c => c.index);
+      if (!apart) row.note = "the bodies share a top-level group of the master: written as one group";
       out.fold.set(r.owner, {
-        rec: r, charm, view: Object.assign({}, charm, { outline: merged }),                      // (the merged outline is only what the area and the hash are read from; the charm keeps a real body's outline, so its bodies can be told apart again)
+        rec: r, charm, bodies: apart ? bodyCharms : null, view: Object.assign({}, charm, { outline: merged }),                      // (the merged outline is only what the area and the hash are read from; the charm keeps a real body's outline, so its bodies can be told apart again)
         open: bodyCharms.some(openOf), holes: bodyCharms.reduce((n, c) => n + P.cutLinesOf(c).length, 0),
         engrave: { engravable: eng.every(e => e.engravable), upAngle: first.upAngle, upSource: first.upSource, flipOk: eng.every(e => e.flipOk), flipWhy: (eng.find(e => !e.flipOk) || {}).flipWhy || null },
         field: { v: 1, bodies: r.bodies, mismatched: r.kind === "mismatched" || (forced && r.bodies === 2 && !["twins", "sizes", "sample"].includes(r.kind)) }
@@ -355,7 +371,7 @@ async function main(argv, log = console.log) {
     catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
     let aiUp = { path: `charmnest/master/${key}.ai`, url: "" }, thumb = null;
     if (!o.dry) {
-      const ai = await P.buildSingleCharm(c, parsed), png = thumbnailPng(G, c, 168, P);
+      const ai = await P.buildSingleCharm(c, parsed, pm && pm.bodies ? { bodies: pm.bodies } : undefined), png = thumbnailPng(G, c, 168, P);
       if (stage) {
         const put = (rel, bytes) => { const f = path.join(o.outDir, "files", rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(bytes)); return { path: rel, url: "" }; };
         aiUp = put(`charmnest/master/${key}.ai`, ai); if (png) thumb = put(`charmnest/master/${key}.png`, png);

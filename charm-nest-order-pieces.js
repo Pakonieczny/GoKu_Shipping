@@ -104,12 +104,19 @@
     //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
       const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
-      const plan = planOf(l), qty = plan ? Math.max(qty0, plan.length) : qty0;   // (a mismatched pair makes two pieces for every unit bought: its Left and its Right)
+      let plan = planOf(l), glued = false; const wasPlan = plan;
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
+      // an OLD record of a mismatched pair (pooled before pairs were tracked) is ONE glued piece per unit that carries both bodies: it is on a sheet whole, with nothing to split.
+      // It is told by what the line already holds: some pool rows, fewer than the pair makes now, none with a side. A line not pooled yet, or pooled since, makes the two pieces.
+      if (plan) {
+        const held = new Set(ids); for (const [id, p] of pools) if (p.lineKey === key && !GONE.has(p.state)) held.add(id);
+        if (held.size && held.size < plan.length && ![...held].some(id => { const r = pools.get(id); return r && (r.side === 'L' || r.side === 'R'); })) { plan = null; glued = true; }
+      }
+      const qty = plan ? Math.max(qty0, plan.length) : qty0;   // (a mismatched pair makes two pieces for every unit bought: its Left and its Right)
       for (let n = 1; ids.length < qty; n++) if (!ids.includes(`${key}_${n}`)) ids.push(`${key}_${n}`);
       for (const [id, p] of pools) if (p.lineKey === key && !ids.includes(id) && !GONE.has(p.state)) ids.push(id);
       ids.sort((a, b) => tailNo(a) - tailNo(b));   // (stable: by copy number, so a record that lists _3 before _1 does not change which piece is piece 2)
-      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos }));
+      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos, glued, wasPlan }));
     }
     // (a pool row a Hold took off its sheet is a held piece, still: an order this page holds no lines of, found by number, says it is on hold)
     for (const [id, p] of pools) if (!seen.has(id) && (!GONE.has(p.state) || (!lines.length && heldRow(p)))) add(id, null, { qty: +p.quantity || 1 });
@@ -155,17 +162,21 @@
       const pp = o.plan && o.plan[o.pos] || null, rowSide = p && (p.side === 'L' || p.side === 'R') ? p.side : null, planSide = pp && (pp.side === 'L' || pp.side === 'R') ? pp.side : null;
       const side = rowSide || planSide || null, bodyIndex = p && p.bodyIndex != null && Number.isFinite(+p.bodyIndex) ? +p.bodyIndex : pp && pp.bodyIndex != null ? +pp.bodyIndex : null;
       const groupKey = String((p && p.groupKey) || (pp && pp.groupKey) || `${rid}:${(l && l.transactionId) || o.tx || ''}`);
-      const kind = o.plan ? (kindOf && l ? kindOf(l) || 'mismatched' : 'mismatched') : (side ? 'mismatched' : kindOf && l ? kindOf(l) || null : null);
+      const hookKind = kindOf && l ? kindOf(l) || null : null, guess = o.plan || o.wasPlan ? ((o.plan || o.wasPlan).some(x => x && x.bodyIndex === 1) ? 'mismatched' : 'pair') : (side || o.glued) ? (bodyIndex === 1 ? 'mismatched' : 'pair') : null;
+      const kind = hookKind || guess;   // (without the hook the kind is a guess: settled for the whole group below, a Left is of a mismatched pair when its group has a second body)
+      // (mirror: the pool row's own when it has one, else what the plan says of this piece: the Right is the mirror image of the Left, whichever way the master drawing faces)
+      const mirror = side ? (p && typeof p.mirror === 'boolean' ? p.mirror : pp && typeof pp.mirror === 'boolean' ? pp.mirror : side === 'R') : false;
       const sideLabel = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
-      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
+      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, mirror, glued: !!o.glued, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
-        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
+        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey), kindGuess: !hookKind && !!guess && !(o.plan || o.wasPlan) };
     });
     // a line cancelled or gone from the order: its pieces that are still on a sheet are reported (gone), those on none are not
     // numbered as CharmNestReadiness.pieces numbers them: the live pieces 1.. in order; a piece with nothing to cut (no design), or cancelled and still on a sheet, after them
     const shown = pieces.filter(p => !(p.gone && !p.nested)), live = shown.filter(p => !p.gone && !p.noDesign), rest = shown.filter(p => p.gone || p.noDesign);
     const size = new Map(); for (const p of shown) if (!p.gone) size.set(p.groupKey, (size.get(p.groupKey) || 0) + 1);
-    return live.concat(rest).map((p, i) => Object.assign(p, { index: i + 1, groupSize: p.groupSize || size.get(p.groupKey) || 1 }));
+    const second = new Set(); for (const p of shown) if (p.kindGuess && p.bodyIndex === 1) second.add(p.groupKey);
+    return live.concat(rest).map((p, i) => { const q = Object.assign(p, { index: i + 1, groupSize: p.groupSize || size.get(p.groupKey) || 1 }); if (q.kindGuess) { if (q.kind) q.kind = second.has(q.groupKey) ? 'mismatched' : 'pair'; } delete q.kindGuess; return q; });
   }
 
   /** How an order's pieces are spread over sheets. */
@@ -225,16 +236,18 @@
     const livePlaced = id => { try { return root.Pool && root.Pool.sheetOf ? root.Pool.sheetOf(id) : null; } catch (_) { return null; } };
     const liveSheet = sid => { if (!sid) return null; for (const p of pages()) if (p.sheetId === sid) return p; return null; };
 
-    // a MISMATCHED pair line (the master record says its design draws two different bodies: entry.pair.mismatched) makes the pieces CharmNestPair.piecesFor says; every other line: null,
-    // so nothing about it changes. Without the shared module (CharmNestPair) or the master record's pair field the page behaves as it always did.
-    const pairEntry = l => { try { const M = root.Master, e = l && l.sku && M && M.entryFor ? M.entryFor(l.sku) : null; return e && e.pair && e.pair.mismatched === true ? e : null; } catch (_) { return null; } };
+    // an earring PAIR line (Paul, 9 Oct 18:47: every earring pair, matching or mismatched, is one Left and one Right piece per unit; its form or the intake's spec.pair says so) makes the
+    // pieces CharmNestPair.piecesFor says (each with its side and its mirror flag); every other line (a single charm, discs, letters, a single earring): null, so nothing about it changes.
+    // Without the shared module (CharmNestPair) the page behaves as it always did. The master entry (when this page holds it) tells a mismatched design (entry.pair) and the way it faces (entry.facing).
+    const entryOf = l => { try { const M = root.Master; return l && l.sku && M && M.entryFor ? M.entryFor(l.sku) || null : null; } catch (_) { return null; } };
     const pairArg = l => ({ receiptId: l.receiptId, transactionId: l.transactionId, sku: l.sku, quantity: Math.max(1, Math.round(+(l.spec && l.spec.quantity || l.quantity) || 1)), form: l.form || '', key: l.key, spec: l.spec || {}, line: l });
-    const pairOf = l => { const CP = root.CharmNestPair, e = CP && typeof CP.piecesFor === 'function' ? pairEntry(l) : null; if (!e) return null; try { const x = CP.piecesFor(pairArg(l), e); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
-    const kindOf = l => { const CP = root.CharmNestPair, e = CP && typeof CP.kindOf === 'function' ? pairEntry(l) : null; if (!e) return null; try { return CP.kindOf(pairArg(l), e) || null; } catch (_) { return null; } };
+    const earringLine = l => { const CP = root.CharmNestPair; try { return !!(CP && l && typeof CP.piecesFor === 'function' && (typeof CP.isEarringPair === 'function' ? CP.isEarringPair(pairArg(l), entryOf(l)) : CP.isMismatched(entryOf(l)))); } catch (_) { return false; } };
+    const pairOf = l => { const CP = root.CharmNestPair; if (!earringLine(l)) return null; try { const x = CP.piecesFor(pairArg(l), entryOf(l)); return Array.isArray(x) && x.length > 1 && x.some(p => p.side) ? x : null; } catch (_) { return null; } };
+    const kindOf = l => { const CP = root.CharmNestPair; if (!earringLine(l) || typeof CP.kindOf !== 'function') return null; try { return CP.kindOf(pairArg(l), entryOf(l)) || null; } catch (_) { return null; } };
     function lineOfRow(r) {
       const sp = r.spec || {}, ln = r.line || {};
       return { key: r.key, receiptId: r.order && r.order.receiptId, form: sp.form || '', transactionId: ln.transactionId, sku: sp.designSku || ln.sku || '', title: ln.title || '', material: r.material || sp.material || r.metal || null,
-        quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null }, reason: r.reason || '', listingId: ln.listingId || '' };
+        quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair }, reason: r.reason || '', listingId: ln.listingId || '' };
     }
     function linesOf(rid) {
       const pulled = root.Orders && root.Orders.rows ? (root.Orders.rows() || []).filter(r => String(r.order && r.order.receiptId) === rid && r.state !== 'gone') : [];
@@ -254,7 +267,7 @@
         const mineNewer = stampOf(p) >= stampOf(cur), a = mineNewer ? cur : p, b = mineNewer ? p : cur;
         pools.set(id, Object.assign({}, a, b, { sheetId: GONE.has(b.state) ? (b.sheetId || null) : (b.sheetId || a.sheetId || null) }));
       };
-      // (how many copies a line makes: its quantity, or the pieces of a mismatched pair: two for every unit)
+      // (how many copies a line makes: its quantity, or the pieces of an earring pair: a Left and a Right for every unit)
       const copiesOf = l => { const pl = pairOf(l), n = Math.max(1, Math.round(+l.quantity || 1)); return pl ? Math.max(n, (l.poolIds || []).length, pl.length) : n; };
       if (mem) for (const l of lines) {
         for (let c = 1; c <= copiesOf(l); c++) { const id = `${l.key}_${c}`, p = mem.get(id); if (p) merge(id, p); }

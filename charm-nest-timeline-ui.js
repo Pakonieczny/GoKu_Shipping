@@ -808,11 +808,14 @@
      the whole order (arrived, a cancel, a note), or, when it names a sheet, to the pieces on that sheet. */
   function ofPiece(e, p, pieces) {
     if (!e || !p) return false;
-    if (e.lineKey) return e.lineKey === p.key;
-    if (e.transactionId) return !p.tid || e.transactionId === String(p.tid);
+    // (a SIDE piece, Paul 9 Oct 2026: the Left or the Right of a mismatched pair, `side` "L" | "R" with its line's key in `lineKey`: it is the line's piece for every event of the whole line
+    //  (the line's key, its transaction, an event with no piece), and its own only for an event that names one of ITS pool ids, or ITS sheet when no pool id is named)
+    const lk = p.side ? p.lineKey || p.key : p.key;
     const d = e.data || {}, ids = [].concat(d.poolId || [], Array.isArray(d.poolIds) ? d.poolIds : []).map(String);
-    if (ids.length) return ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
-    if (e.sheetId && (pieces || []).some(q => (q.sheets || []).length)) return (p.sheets || []).includes(e.sheetId);
+    if (e.lineKey) return e.lineKey === lk && (!p.side || !ids.length || ids.some(id => (p.pools || []).includes(id)));
+    if (e.transactionId) return (!p.tid || e.transactionId === String(p.tid)) && (!p.side || !ids.length || ids.some(id => (p.pools || []).includes(id)));
+    if (ids.length) return p.side ? ids.some(id => (p.pools || []).includes(id)) : ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
+    if (e.sheetId && (pieces || []).some(q => (q.sheets || []).length || (q.sides || []).some(z => (z.sheets || []).length))) return (p.sheets || []).includes(e.sheetId);
     return true;
   }
   /** The order across its pieces: each piece where it stands (derive over its own events, its own steps), each rail step

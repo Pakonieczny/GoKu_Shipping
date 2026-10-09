@@ -195,7 +195,7 @@ function lineOf(rid_, l) {
   // (the line carries its own piece count and its kind, as the intake sets spec.pieceCount and spec.pair.kind)
   const want = pieceCount(kind, qty, count), charm = charmOf(sku);
   const line = { receiptId: rid_, transactionId: t, quantity: qty, form, sku, pieceCount: want, pair: { kind: K.pair }, ...(kind === 'discs' ? { discs: count } : kind === 'letters' ? { letters: count } : {}),
-    title: l.title || (kind === 'discs' ? `Disc necklace, ${count} discs` : kind === 'letters' ? `Letters necklace, ${count} letters` : kind === 'mismatched' ? `Mismatched ${sku} earrings` : `${sku} ${form}`) };
+    title: l.title || (kind === 'earring-single' ? `${sku} Charm + Shipping` : kind === 'discs' ? `Disc necklace, ${count} discs` : kind === 'letters' ? `Letters necklace, ${count} letters` : kind === 'mismatched' ? `Mismatched ${sku} earrings` : `${sku} ${form}`) };
   const per = Pair.piecesFor(line, charm, l.facing ? { facing: l.facing } : undefined);
   if (per.length !== want) throw new Error(`CharmNestPair.piecesFor makes ${per.length} piece(s) for ${kind} x${qty}${count ? ' (' + count + ')' : ''}, the fixture expects ${want}`);
   const on = l.on == null ? Array(want).fill(null) : Array.isArray(l.on) ? l.on.slice() : Array(want).fill(l.on);
@@ -502,7 +502,7 @@ function receipts(w, at) {
   const t = Math.floor((at || T0) / 1000);
   return w.orders.map((o, i) => ({ receipt_id: Number(o.rid), order_number: o.rid, name: 'Buyer ' + o.rid.slice(-3), country_iso: 'US', city: 'Austin', message_from_buyer: '', create_timestamp: t - 3600 * (w.orders.length - i), created_timestamp: t - 3600 * (w.orders.length - i), update_timestamp: t, updated_timestamp: t, status: 'Paid', is_paid: true, is_shipped: false,
     transactions: o.lines.map(l => ({ transaction_id: Number(tx(l.n)), receipt_id: Number(o.rid), listing_id: 1900000000 + l.n, sku: l.sku, title: l.line.title, quantity: l.qty, expected_ship_date: t + 5 * 86400, shipped_timestamp: null,
-      variations: [{ formatted_name: l.kind === 'discs' ? 'Number of Discs / Metal' : 'Metal Choice', formatted_value: l.kind === 'discs' ? `${l.discs} discs • ${l.metal === 'gold' ? 'gold' : l.metal}` : METAL_WORD[l.metal] || l.metal }], is_personalized: false })) }));
+      variations: [l.kind === 'discs' ? { formatted_name: 'Number of Discs / Metal', formatted_value: `${l.discs} discs • ${l.metal === 'gold' ? 'gold' : l.metal}` } : l.kind === 'earring-single' ? { formatted_name: 'Price', formatted_value: `${METAL_WORD[l.metal] || l.metal} - Single` } : { formatted_name: 'Metal Choice', formatted_value: METAL_WORD[l.metal] || l.metal }], is_personalized: false })) }));
 }
 // the real listings of the Sep 17 sandbox snapshot each case stands for (listing ids and SKUs only; see PAIRTESTS-points.md for counts and order numbers)
 const EXAMPLES = {

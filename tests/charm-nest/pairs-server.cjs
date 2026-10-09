@@ -314,7 +314,7 @@ function seed(st) {
       const plain = await call({ op: 'putSheet', sheet: { id: 'sheet-pr-plain', poolIds: [], charms: [{ id: 'x', poolId: SOLO.L }], pieceSides: 'junk' } });
       assert.equal(plain.status, 200); assert.deepEqual(rec('sheet-pr-plain').charms, [{ id: 'x', poolId: SOLO.L }]); assert.equal('pieceSides' in rec('sheet-pr-plain'), false);
     });
-    await t('10d the master index keeps `facing` (the way the drawing faces, L or R): silence leaves it, junk is ignored, null removes it, a person\'s word stands over a re-index', async () => {
+    await t('10d the master index keeps `facing` (the way the drawing faces, L or R, or X for reads one way): silence leaves it, junk is ignored, null removes it, a person\'s word stands over a re-index', async () => {
       const e = (o = {}) => Object.assign({ sku: 'HEART_FACINGTEST', masterHash: 'abcdef13', charmHash: 'ch2', widthPt: 40, heightPt: 40, areaPt2: 1200, members: 3, holes: 1 }, o);
       const put = async entries => (await call({ op: 'masterPutIndex', entries, masterHash: 'abcdef13', masterName: 'test2.ai' })).body;
       const get = async () => (await call({ op: 'masterGet', sku: 'HEART_FACINGTEST' })).body.entry;
@@ -329,7 +329,7 @@ function seed(st) {
       assert.equal((await call({ op: 'masterPatch', sku: 'HEART_FACINGTEST', patch: { facing: null } })).status, 200); assert.equal('facing' in (await get()), false, 'null gives it back');
       await put([e({ facing: 'L' })]); assert.equal((await get()).facing, 'L', 'and the indexer may write it again');
       await put([e({ sku: 'PLAIN_FACINGTEST' })]); assert.equal('facing' in (await call({ op: 'masterGet', sku: 'PLAIN_FACINGTEST' })).body.entry, false);
-      assert.equal(Master.cleanFacing('X'), undefined); assert.equal(Master.cleanFacing(undefined), undefined); assert.equal(Master.cleanFacing(null), null);
+      assert.equal(Master.cleanFacing('X'), 'X', 'X says the design reads one way (letters, numbers): cut as drawn on both sides'); assert.equal(Master.cleanFacing('sideways'), undefined); assert.equal(Master.cleanFacing(undefined), undefined); assert.equal(Master.cleanFacing(null), null);
     });
     await t('10e a pair always has two pieces: a group whose rows say 2 and that has one piece left is named (missing), counted both sides; a made-up-again piece is counted once; rows that disagree say nothing', () => {
       const A = MATCH.L, B = MATCH.R, rows = [{ poolId: A, side: 'L', groupSize: 2 }, { poolId: B, side: 'R', mirror: true, groupSize: 2 }];
@@ -349,6 +349,33 @@ function seed(st) {
       const r = await call({ op: 'poolUpdate', poolIds: [W.R], patch: HOLD() });
       assert.equal(r.status, 200, JSON.stringify(r.body)); assert.deepEqual(r.body.extended, [W.L]);
       assert.equal(row(W.L).state, 'abandoned'); assert.equal(row(W.R).state, 'abandoned'); assert.deepEqual(rec('sheet-pr-mw').poolIds, [SINGLE.L], 'the single charm of another order stays');
+    });
+
+    await t('10g poolUpdate of ONE piece of a sided group keeps side, mirror, bodyIndex, groupKey and groupSize intact; a patch that carries pair fields is checked like poolPut\'s (all valid or none); a take-off never changes them', async () => {
+      const W = line('4200000025', '9100000025'), keys = ['side', 'mirror', 'bodyIndex', 'groupKey', 'groupSize'];
+      st.put('Charm_Pool', W.L, mrow(W, 1, { state: 'ready', sheetId: null })); st.put('Charm_Pool', W.R, mrow(W, 2, { state: 'ready', sheetId: null }));
+      const mine = () => keys.map(k => row(W.R)[k]);
+      const want = mine(); assert.deepEqual(want, ['R', true, 0, W.group, 2]);
+      const r1 = await call({ op: 'poolUpdate', poolId: W.R, patch: { state: 'written', sheetId: 'sheet-pr-t1', setId: null } });
+      assert.equal(r1.status, 200, JSON.stringify(r1.body)); assert.equal(r1.body.count, 1); assert.equal('legacy' in r1.body, false); assert.equal(row(W.R).state, 'written'); assert.deepEqual(mine(), want, 'a plain patch leaves them as they are');
+      await call({ op: 'poolUpdate', poolId: W.R, patch: { heldNote: 'x', side: 'X', bodyIndex: 3, groupSize: 2, groupKey: 'zzz', mirror: false } });
+      assert.deepEqual(mine(), want, 'a patch whose pair fields are not all valid writes none of them');
+      await call({ op: 'poolUpdate', poolId: W.R, patch: { side: 'R', mirror: true, bodyIndex: 0, groupKey: 'zzz', groupSize: 2, runId: 'run-pr-2' } });
+      assert.deepEqual(mine(), want, 'a valid set is written with the group key from the pool id'); assert.equal(row(W.R).runId, 'run-pr-2'); assert.equal('poolId' in row(W.R) && row(W.R).poolId !== W.R, false);
+      const hold = await call({ op: 'poolUpdate', poolId: W.R, patch: HOLD({ side: 'L', mirror: false, groupSize: 9 }) });
+      assert.equal(hold.status, 200, JSON.stringify(hold.body)); assert.equal(row(W.R).state, 'abandoned'); assert.deepEqual(mine(), want, 'a take-off never changes what a piece is');
+    });
+    await t('10h poolUpdate: left and right named over an old glued row still in play is not written (`legacy`, like poolPut); another line in the same call is written; a plain piece takes them', async () => {
+      const G = line('4200000026', '9100000026'), F = line('4200000027', '9100000027'), N = line('4200000028', '9100000028');
+      st.put('Charm_Pool', G.L, { poolId: G.L, orderId: G.rid, transactionId: G.tid, sku: 'MISMATCHED_7134', copy: 1, quantity: 1, state: 'written', sheetId: 'sheet-pr-t1', runId: 'run-pr' });
+      st.put('Charm_Pool', F.L, { poolId: F.L, orderId: F.rid, transactionId: F.tid, sku: 'MISMATCHED_7134', copy: 1, quantity: 1, state: 'ready', runId: 'run-pr' });
+      st.put('Charm_Pool', N.L, { poolId: N.L, orderId: N.rid, transactionId: N.tid, sku: 'MISMATCHED_7134', copy: 1, quantity: 1, state: 'abandoned', removedAt: NOW, removedBy: 'Paul', runId: 'run-pr' });
+      const patch = { side: 'L', mirror: false, bodyIndex: 0, groupSize: 2, groupKey: 'x' };
+      const r = await call({ op: 'poolUpdate', poolIds: [G.L, F.L, N.L], patch });
+      assert.equal(r.status, 200, JSON.stringify(r.body)); assert.deepEqual(r.body.legacy, [G.L]); assert.equal(r.body.count, 2);
+      assert.equal('side' in row(G.L), false, 'the glued row in play is as it was'); assert.equal('groupSize' in row(G.L), false);
+      assert.equal(row(F.L).side, 'L'); assert.equal(row(F.L).groupKey, F.group, 'a plain piece not on a sheet takes them'); assert.equal(row(N.L).side, 'L', 'a piece taken off is free to become a left piece');
+      const same = await call({ op: 'poolUpdate', poolId: G.L, patch: { state: 'written', note: 'only a plain patch' } }); assert.equal('legacy' in same.body, false); assert.equal(same.body.count, 1);
     });
 
     // ═══ 9 · nothing the fake stored has an array inside an array ═══
