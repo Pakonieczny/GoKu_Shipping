@@ -3715,9 +3715,9 @@ const Gate = window.Gate = (() => {
   }
   /** " (3 pairs, each kept whole)" for the pairs (lines of exactly two pieces) among these sheets' charms; "" when there is none. */
   const pairsNote = pages => {
-    if (typeof groupOf !== "function") return "";
-    const by = new Map(); for (const p of pages) for (const c of p.charms) { if (c.excluded) continue; const g = groupOf(c); if (g) by.set(g, (by.get(g) || 0) + 1); }
-    const n = [...by.values()].filter(v => v === 2).length; return n ? ` (${n} pair${n === 1 ? "" : "s"}, each kept whole)` : "";
+    if (typeof groupOf !== "function" || typeof isPairLine !== "function") return "";
+    const by = new Map(); for (const p of pages) for (const c of p.charms) { if (c.excluded) continue; const g = groupOf(c); if (g) { if (!by.has(g)) by.set(g, []); by.get(g).push(c); } }
+    const n = [...by.values()].filter(isPairLine).length; return n ? ` (${n} pair${n === 1 ? "" : "s"}, each kept whole)` : "";
   };
   /** What a press will do, in the words the panel asks with. */
   function mergeWords(plan, kind) {
