@@ -75,5 +75,16 @@ const gold = (n, keys, extra) => sheet('gold', n, keys, extra), silver = (n, key
   assert.equal(Gate.solidSelected('gold14k', pages[1]), true); assert.equal(typeof pages[1].solidPick, 'undefined');
   const rows = Gate.projectLibraryRecords([{ id: 'gold14k-1', runId: 'r', metal: 'gold14k', draft: true }]); assert.equal(rows[0].solidIncluded, true); assert.equal(rows[0].draft, false);
   pages[0].charms = []; pages[0].placements = []; pages[0].releaseFull = false; await Gate.assemble(run); assert.deepEqual(inSet(), [], 'the order and the full sheet gone: the solid sheet goes back out');
+  // ── 9. a pair (a Left and a Right piece, matching or not) on two sheets: the set keeps both sheets together, and the notes say what the pieces are (Paul, 9 Oct) ──
+  const sideOn = (page, idx, side) => { page.charms[idx].side = side; return page; };
+  const pl = sideOn(gold(1, ['9001_1_1', '9002_1_1'], { releaseFull: true }), 0, 'L'), pr = sideOn(gold(2, ['9001_1_2']), 0, 'R');
+  reset([pl, pr]);
+  assert.equal(Gate.policy(pr, 1).include, false, 'on its own the partial gold sheet is not released');
+  await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'GF2'], 'the sheet with the right earring comes in with the one that holds the left');
+  assert(/Shares order 9001 \(its left and right earrings\) with GF Sheet 1/.test(Gate.policy(pr, 1).reason), Gate.policy(pr, 1).reason);
+  // the right earring's sheet is still being nested: the full sheet waits, and the line says it is the pair
+  const wl = sideOn(gold(1, ['9101_1_1'], { releaseFull: true }), 0, 'L'), wr = sideOn(gold(2, ['9101_1_2'], { status: 'nesting', persistedDone: false }), 0, 'R');
+  reset([wl, wr]); await Gate.assemble(run); assert.deepEqual(inSet(), [], 'the full sheet waits for the sheet with the other earring');
+  assert(/Waits for GF Sheet 2 \(it is still being nested or saved\).*order 9101 \(its left and right earrings\)/.test(Gate.policy(wl, 1).reason), Gate.policy(wl, 1).reason);
   console.log('PASS: cardinal rule in the set assembly: partner pulled in, both wait while one nests, a started set takes what can come and says what cannot, Rose Gold never pulled, committed mate named, order off lets it go, 10K/14K chain moves together or says why not');
 })().catch(e => { console.error(e); process.exit(1); });

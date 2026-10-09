@@ -145,7 +145,8 @@
       // the biggest closed cut path may be bigger than the chosen outline (a custom outline): it competes on area, not on being first
       for (const s of seeds) {
         const polys = pl(s), pts = sampleOf(s, polys);
-        const holder = all.find(b => bbNear(s.bbox, b.bbox, 0) && pts.length && pts.filter(p => inPolys(p[0], p[1], b.polys)).length / pts.length >= 0.6);
+        const sameBox = b => { const iw = Math.min(s.bbox[2], b.outlineBbox[2]) - Math.max(s.bbox[0], b.outlineBbox[0]), ih = Math.min(s.bbox[3], b.outlineBbox[3]) - Math.max(s.bbox[1], b.outlineBbox[1]); return iw > 0 && ih > 0 && iw * ih >= 0.85 * (bbArea(s.bbox) + bbArea(b.outlineBbox) - iw * ih); };   // the same path drawn twice (a stroked outline and its twin)
+        const holder = all.find(b => sameBox(b) || (bbNear(s.bbox, b.bbox, 0) && pts.length && pts.filter(p => inPolys(p[0], p[1], b.polys)).length / pts.length >= 0.6));
         if (holder) continue;                                  // a cut-out or inner ring of a body
         const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
         const ringLike = maxDim <= RING_MAX_PT && (s.subpaths || []).length <= 2 && (s.subpaths || []).every(sp => sp.length <= 20);
@@ -486,7 +487,7 @@
      from the grouping (it changes nothing in it): connected components of touching charms of one size, exactly one of them labelled,
      the label centred under the row. A row of two is a pair; of three or more is a set; size ladders (the same shape at two sizes)
      and charm-plus-sample rows are told apart and are not pairs. */
-  const PAIR_DEFAULTS = { gx: 6, vo: 0.6, areaRatio: [0.4, 2.5], off: 0.18, maxBodies: 6, sameShapeIoU: 0.9, sameSizeTol: 0.04, minLinearRatio: 0.55 };
+  const PAIR_DEFAULTS = { gx: 6, vo: 0.6, areaRatio: [0.4, 2.5], off: 0.18, maxBodies: 6, sameShapeIoU: 0.9, sameSizeTol: 0.08, maxOverlap: 0.3, stackIoU: 0.7, minLinearRatio: 0.55 };
 
   /** Shape of an outline normalised to its own box (uniform scale, centred) as an N x N mask; `mirror` flips it left to right. */
   function shapeMask(body, N, mirror) {
@@ -513,6 +514,8 @@
       for (let j = i + 1; j < I.length; j++) {
         const b = I[j]; if (b.b[0] > a.b[2] + opts.gx) break;   // sorted by left edge: nothing later can touch
         const gx = Math.max(b.b[0] - a.b[2], a.b[0] - b.b[2]); if (gx > opts.gx) continue;
+        if (gx < -opts.maxOverlap * Math.min(a.w, b.w)) continue;   // one drawn over the other (a stacked twin, a layer): not a row
+        { const iw = Math.min(a.b[2], b.b[2]) - Math.max(a.b[0], b.b[0]), ih = Math.min(a.b[3], b.b[3]) - Math.max(a.b[1], b.b[1]); if (iw > 0 && ih > 0 && iw * ih >= opts.stackIoU * (a.a + b.a - iw * iw * 0 - iw * ih)) continue; }
         const ov = Math.min(a.b[3], b.b[3]) - Math.max(a.b[1], b.b[1]); if (ov / Math.min(a.h, b.h) < opts.vo) continue;
         const ar = a.a / b.a; if (ar < opts.areaRatio[0] || ar > opts.areaRatio[1]) continue;
         parent[find(i)] = find(j);
@@ -531,6 +534,8 @@
    *    "twins"       two identical bodies drawn side by side (a matching pair drawn twice: doubtful)
    *    "neighbours"  every body of the row has a label of its own (separate designs that touch: normal)
    *    "tag"         a second labelled body whose label is not under the row (doubtful)
+   *    "tagged"      the same, where the other body's SKU says MISMATCHED (AVOCADO_1948 with MISMATCHED): which SKU is the pair? (doubtful)
+   *    "mirror"      the second body is the first flipped: a front and back view of one charm (custom samples), not a pair of designs (doubtful)
    *    "sample"      a body far smaller than the other (charm plus sample: normal)
    *  and `sure` says whether the layer may rewrite the design without a person looking (kind mismatched, one owner, a well centred label). */
   function masterPairs(charms, labelsOf, opts) {
@@ -550,7 +555,9 @@
         const separate = others.every(c => { const o = offOf(c); return o == null || Math.abs(o) > opts.off; });   // each has its own label under itself
         const bodies = row.map(c => bodiesOf(c)[0]);
         // a neighbour whose label is its own and the row's label is not centred under all of it: separate designs that touch
-        rec.kind = separate && others.length >= row.length - 1 ? "neighbours" : "tag";
+        const tagged = others.length === 1 && row.length === 2 && /MISMATCH/i.test((labelsOf(others[0])[0] || {}).sku || "");
+        rec.kind = tagged ? "tagged" : separate && others.length >= row.length - 1 ? "neighbours" : "tag";
+        if (tagged) { const A = bodies[0], B = bodies[1], sm = shapeSimilarity(A, B); rec.sim = [sm]; rec.partnerSku = (labelsOf(others[0])[0] || {}).sku; rec.why = "the other body carries the SKU " + rec.partnerSku + " (a tag beside the label, not under the row): is the pair " + (rec.skus[0] || "") + "?"; out.push(rec); continue; }
         rec.why = rec.kind === "neighbours" ? "every body has a label of its own" : "a second body carries its own label (" + others.map(c => (labelsOf(c)[0] || {}).sku).join(", ") + ") beside the one centred under the row";
         if (rec.kind === "tag") rec.sim = row.slice(1).map((c, i) => shapeSimilarity(bodies[i], bodies[i + 1]));
         out.push(rec); continue;
@@ -564,8 +571,11 @@
       if (lin < opts.minLinearRatio) { rec.kind = "sample"; rec.why = "one body is " + Math.round(lin * 100) + "% of the other's size (a charm and a sample)"; }
       else if (sameShape && Math.abs(1 - lin) > opts.sameSizeTol) { rec.kind = "sizes"; rec.why = "one shape at two sizes (" + Math.round(lin * 100) + "%)"; }
       else if (sameShape && sameBody(A, B)) { rec.kind = "twins"; rec.why = "two identical bodies, cut line and engraving"; }
-      else { rec.kind = "mismatched"; rec.why = sameShape ? "one cut shape, different engraving" : sim.mirrored >= opts.sameShapeIoU ? "mirror-image shapes" : "two different shapes"; rec.mirrored = sim.mirrored >= opts.sameShapeIoU; }
-      rec.sure = rec.kind === "mismatched" && Math.abs(rec.offset) <= opts.off;
+      else if (!sameShape && sim.mirrored >= opts.sameShapeIoU) { rec.kind = "mirror"; rec.why = "the second body is the first one flipped (a front and a back view, or a left and a right of one design)"; rec.mirrored = true; }
+      else { rec.kind = "mismatched"; rec.why = sameShape ? "one cut shape, different engraving" : "two different shapes"; rec.mirrored = false; }
+      const weak = (rec.skus[0] || "").replace(/[^A-Z0-9]/gi, "").length < 4;   // a label of one or two characters ("V1 V2") is a note, not a SKU
+      if (weak) rec.weak = "the label \"" + (rec.skus[0] || "") + "\" is too short to be a SKU";
+      rec.sure = rec.kind === "mismatched" && Math.abs(rec.offset) <= opts.off && !weak;
       out.push(rec);
     }
     return out;

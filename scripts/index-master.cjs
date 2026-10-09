@@ -108,15 +108,24 @@ function thumbnailPng(Geom, charm, size, PDF) {
   const pair = PT ? PT.plan(charm) : null;
   const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = pair ? PT.layout(pair, b, { size, padPt: pad }).s : size / Math.max(w, h);
   const css = c => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
-  const parts = [];
-  for (const m of charm.members) { if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue;
+  const parts = [], partOf = new Map();   // (partOf: what each member drew, kept only so a pair's bodies can be grouped when one has to be turned over)
+  let cur = null; const emit = x => { parts.push(x); if (pair) { const l = partOf.get(cur) || []; l.push(x); partOf.set(cur, l); } };
+  for (const m of charm.members) { cur = m; if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue;
     // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
-    if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
-    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; parts.push(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
+    if (PDF && PDF.isCutSilhouetteFill(charm, m)) { emit(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
+    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; emit(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
   // (the cut outline in red: both bodies' outlines for a pair, the charm's own for every other design)
-  for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(`<path d="${Geom.svgPathOf(o)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
+  const redOutline = o => `<path d="${Geom.svgPathOf(o)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`;
+  for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(redOutline(o));
   if (pair) {
-    const pic = PT.svgPicture(pair, { bbox: b, padPt: pad, size, bg: "#ece7dc", inner: parts.join("") });
+    // each ear faces its own side: a body the master drew facing the wrong way is turned over left to right about its own centre (the same as the app's pictures)
+    let inner = parts.join("");
+    if (pair.bodies.some(x => x.mirror)) {
+      const used = new Set();
+      inner = pair.bodies.map(bd => { const g = (bd.members || []).map(m => { used.add(m); return (partOf.get(m) || []).join(""); }).join("") + (bd.outline ? redOutline(bd.outline) : ""); return `<g${bd.mirror ? ` transform="${PT.mirrorSvg(bd.bbox)}"` : ""}>${g}</g>`; }).join("")
+        + [...partOf.entries()].filter(([m]) => !used.has(m)).map(([, l]) => l.join("")).join("");
+    }
+    const pic = PT.svgPicture(pair, { bbox: b, padPt: pad, size, bg: "#ece7dc", inner });
     // the chip lettering is the repo's own Source Sans 3 Semibold, so it does not depend on a font this PC happens to have
     try { return new Resvg(pic.svg, { fitTo: { mode: "width", value: pic.layout.W }, font: { fontFiles: [path.join(root, "vendor", "fonts", "SourceSans3-Semibold.otf")], loadSystemFonts: false, defaultFontFamily: "Source Sans 3 Semibold" } }).render().asPng(); } catch (_) { return null; }
   }

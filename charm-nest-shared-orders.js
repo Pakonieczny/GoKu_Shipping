@@ -55,10 +55,10 @@
     if (!rec || rec.archived) return null;
     const id = String(rec.id || rec.sheetId || ''); if (!id) return null;
     const keys = [...new Set((Array.isArray(rec.poolIds) ? rec.poolIds : []).map(String).filter(Boolean))];
-    // a record that says which side a piece is (pieceSides: { poolId: 'L'|'R' }) tells the two bodies of a mismatched pair apart even under one pool id:
-    // the identity of a piece is then its id AND its side (a record without sides: the id alone, exactly as before)
+    // a record may say which side a piece is (pieceSides: { poolId: 'L'|'R' }). A piece is still its pool id (an earring pair is two ids, a Left and a Right, matching or not);
+    // only when sheets list ONE id with two different sides does index() tell the two bodies apart (a record without sides: the id alone, exactly as before)
     const sides = rec.pieceSides && typeof rec.pieceSides === 'object' && !Array.isArray(rec.pieceSides) ? rec.pieceSides : null;
-    let pieces = keys.map(k => { const side = sides ? sideOk(sides[k]) : null, g = parseKey(k); return { key: k, orderId: orderOfKey(k), ...(g ? { groupKey: g.groupKey } : {}), ...(side ? { side, uid: k + '#' + side } : {}) }; }).filter(p => p.orderId);
+    let pieces = keys.map(k => { const side = sides ? sideOk(sides[k]) : null, g = parseKey(k); return { key: k, orderId: orderOfKey(k), ...(g ? { groupKey: g.groupKey } : {}), ...(side ? { side } : {}) }; }).filter(p => p.orderId);
     // a record that lists orders and no pieces (an old one): one unknown piece per order and sheet
     if (!pieces.length) pieces = [...new Set((Array.isArray(rec.orders) ? rec.orders : []).map(String).filter(x => /^\d{1,30}$/.test(x)))].map(oid => ({ key: `${oid}~${id}`, orderId: oid, unknown: true }));
     return { id, label: o.label || sheetLabelOf(rec), metal: rec.metal || '', setId: o.setId !== undefined ? o.setId : effectiveSet(rec), runId: rec.runId || null, fixed: o.fixed || '', pieces };
@@ -67,11 +67,14 @@
   /* ── the rule over sheets ───────────────────────────────────────────────────────────────────────────────────── */
   // orderId -> Map(sheetId -> Map(pieceKey -> piece))
   function index(sheets) {
-    const by = new Map();
+    const by = new Map(), sidesOf = new Map();
+    // the sides each pool id is listed with, across all sheets: an id listed with BOTH a Left and a Right is two bodies (never the case for an id listed with one side, or none: that is one piece, stale copies included)
+    for (const s of sheets) for (const p of s.pieces) if (p.side) { let t = sidesOf.get(p.key); if (!t) sidesOf.set(p.key, t = new Set()); t.add(p.side); }
     for (const s of sheets) for (const p of s.pieces) {
       let m = by.get(p.orderId); if (!m) by.set(p.orderId, m = new Map());
       let k = m.get(s.id); if (!k) m.set(s.id, k = new Map());
-      k.set(p.uid || p.key, p);
+      const two = p.side && sidesOf.get(p.key).size > 1, q = two ? Object.assign({}, p, { uid: p.key + '#' + p.side }) : p;
+      k.set(q.uid || q.key, q);
     }
     return by;
   }
@@ -122,12 +125,13 @@
   /* ── what the pieces ARE (Paul, 9 Oct: pairs, mismatched pairs and disc necklaces): the words a refusal or a plan says ──────────────────────────
    * The rule above counts pieces by ORDER (the number inside the pool id), never by design or SKU, so the two different charms of a mismatched pair,
    * the two of a matching pair and the n discs of a necklace are all counted. What follows only DESCRIBES an item (nothing here decides anything):
-   *   item.kind   'mismatched' (a left and a right earring) | 'pair' (two earrings of one design) | 'multi' (n discs or other pieces) | 'single'/'' (not told)
+   *   item.kind   'mismatched' (a left and a right earring of two different designs) | 'pair' (a Left and a Right earring; two pieces of one line) | 'multi' (n discs, letters or other pieces) | 'single'/'' (not told)
    *   item.words  the verb phrase after "Order N": "has its left earring on GF Sheet 1 and its right earring on GF Sheet 2" (only when the item is told what its
    *               pieces are; without that it stays '' and every caller keeps the plain "has pieces on ..." words it always had)
    *   piece.side / piece.sideLabel / piece.groupKey, and item.groups [{ groupKey, kind, form, pieces:[key] }]
    * meta(poolKey) -> { side?, form?, kind?, discs? } | null is what the caller knows of a piece (the page: OrderPieces and the order rows; the server: the pool row).
-   * A piece's own `side` (from the record or the page) always counts. */
+   * A piece's own `side` (from the record or the page) always counts. Every earring pair is a Left and a Right piece (Paul, 9 Oct 18:47), matching or not, so a side alone never
+   * says "mismatched": that comes from the caller's kind, or from the two pieces being two different bodies (bodyIndex 0 and 1). */
   const EAR_FORM = /earring|stud|hoop|huggie|pair/i;
   const listWords = l => l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`;
   function describe(items, meta) {
@@ -142,14 +146,17 @@
         if (m && m.kind && !p.kind) p.kind = String(m.kind);
         if (m && m.discs) p.discs = true;
         if (m && m.sku && !p.sku) p.sku = String(m.sku);
+        if (m && m.bodyIndex != null && p.bodyIndex == null && Number.isFinite(+m.bodyIndex)) p.bodyIndex = +m.bodyIndex;
         const k = p.groupKey || `${it.orderId}:`;
-        let grp = by.get(k); if (!grp) by.set(k, grp = { groupKey: k, kind: '', form: '', pieces: [], sides: 0, discs: false });
+        let grp = by.get(k); if (!grp) by.set(k, grp = { groupKey: k, kind: '', form: '', pieces: [], sides: 0, discs: false, bodies: new Set() });
         grp.pieces.push(p); if (p.side) grp.sides++; if (p.discs) grp.discs = true; if (!grp.form && p.form) grp.form = p.form; if (!grp.kind && p.kind) grp.kind = p.kind;
+        if (p.bodyIndex != null) grp.bodies.add(p.bodyIndex);
       }
       const groups = [...by.values()];
       for (const g of groups) {
         if (g.kind === 'single') g.kind = '';       // (one piece says nothing about the others: an order of single pieces keeps the plain words)
-        if (g.sides) g.kind = 'mismatched';
+        if (g.bodies.size > 1) g.kind = 'mismatched';                  // (two different bodies in one line: a left and a right of different designs)
+        else if (g.sides) g.kind = g.kind === 'mismatched' ? 'mismatched' : 'pair';     // (a Left and a Right piece of an earring pair, matching or not)
         else if (g.kind === 'pair' && !(g.form && EAR_FORM.test(g.form))) g.kind = 'multi';     // (two pieces of a line that is not known to be earrings are "pieces", never "earrings")
         else if (!g.kind) g.kind = g.form && EAR_FORM.test(g.form) && g.pieces.length === 2 ? 'pair' : g.discs && g.pieces.length > 1 ? 'multi' : '';
       }
@@ -169,7 +176,7 @@
     const sort = ps => ps.slice().sort((a, b) => (a.side === 'L' ? 0 : a.side === 'R' ? 1 : 2) - (b.side === 'L' ? 0 : b.side === 'R' ? 1 : 2) || a.index - b.index);
     if (groups.length === 1) {
       const g = groups[0], ps = sort(g.pieces), sheets = [...new Set(ps.map(placeOf))];
-      if (g.kind === 'mismatched') return `has ${listWords(ps.map(p => `its ${p.side ? sideWord(p.side) + ' ' : ''}${earWord(g)} on ${placeOf(p)}`))}`;
+      if (g.kind === 'mismatched' || (g.kind === 'pair' && ps.some(p => p.side))) return `has ${listWords(ps.map(p => `its ${p.side ? sideWord(p.side) + ' ' : ''}${earWord(g)} on ${placeOf(p)}`))}`;
       if (g.kind === 'pair') return `has its two ${earWord(g)}s on ${listWords(sheets)}`;
       if (g.kind === 'multi') return `has its ${ps.length} ${g.discs ? 'discs' : 'pieces'} on ${listWords(sheets)}`;
       return `has ${ps.length === 1 ? 'a piece' : ps.length + ' pieces'} on ${listWords(sheets)}`;
@@ -291,7 +298,7 @@
       // what each piece IS (a left or right earring, one of two earrings, one of n discs): OrderPieces says it when it knows, else the order line's form
       describe([it], key => {
         const k = byKey.get(String(key)), row = rs.find(r => String(key).startsWith(String(r.key).replace(':', '_') + '_'));
-        return { side: k && k.side, kind: k && k.kind, discs: !!(k && k.discs), form: (k && k.form) || safe(() => row.spec.form, '') || '', sku: (k && k.sku) || safe(() => row.spec.designSku, '') || '' };
+        return { side: k && k.side, kind: k && k.kind, bodyIndex: k && k.bodyIndex, discs: !!(k && k.discs), form: (k && k.form) || safe(() => row.spec.form, '') || '', sku: (k && k.sku) || safe(() => row.spec.designSku, '') || '' };
       });
     }
     return items;
@@ -308,7 +315,7 @@
       for (const p of ps) {
         if (!p || !p.sheetId || by.has(p.sheetId)) continue;
         let s = extra.get(p.sheetId); if (!s) extra.set(p.sheetId, s = { id: p.sheetId, label: p.sheetLabel || p.sheetId, metal: p.metal || '', setId: p.setId || null, runId: null, fixed: '', pieces: [], cutAll: true });
-        if (!s.pieces.some(x => x.key === p.key && (x.side || null) === (sideOk(p.side) || null))) s.pieces.push({ key: String(p.key), orderId: oid, ...(sideOk(p.side) ? { side: sideOk(p.side), uid: String(p.key) + '#' + sideOk(p.side) } : {}) });
+        if (!s.pieces.some(x => x.key === p.key && (x.side || null) === (sideOk(p.side) || null))) s.pieces.push({ key: String(p.key), orderId: oid, ...(sideOk(p.side) ? { side: sideOk(p.side) } : {}) });
         if (p.state !== 'cut') s.cutAll = false;
       }
     }
