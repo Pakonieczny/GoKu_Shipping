@@ -24,6 +24,52 @@ function assertProtected(guard,placements,metal){
     if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected '+word+' layout cannot be moved or removed');
   }
 }
+/* Pairs and groups (PAIRPARTIAL, Paul 9 Oct: "every piece of an order line is tracked at every step"). A group = one order line, receipt:transaction (the pool id is
+   rid_tid_copy; a charm saved with `groupKey` says it itself). The saved sheet record keeps `order` and `poolId` for each charm, so an old record reads the same way. */
+const groupOf=c=>{
+  if(c&&c.groupKey)return String(c.groupKey);
+  const m=/^(\d{1,30})_([^_]*)_\d{1,3}$/.exec(String(c&&c.poolId||''));
+  return m?m[1]+':'+m[2]:String(c&&c.order!=null?c.order:c&&c.id);
+};
+const orderIdOf=c=>String(c&&c.order!=null?c.order:'').split('/')[0];
+/* Which pieces of which group a cut took: [{ k, order, cut, onSheet, size, sides, ids }] (flat maps; ids is a flat string list, never an array in an array) for the pieces inside the
+   plan's lines (plan.shapes), and a summary { pieces, pairs, split }: pairs = groups whose pieces were cut together (2 pieces, or a size of 2), split = groups of which only some
+   pieces were cut (their size is known: charms saved with groupSize; an older record cannot say). */
+function cutGroups(sheet,plan){
+  const cutIds=new Set((plan&&plan.shapes||[]).map(s=>s.id)),by=new Map();
+  for(const c of sheet&&sheet.charms||[]){
+    if(!c||c.excluded)continue;
+    const k=groupOf(c),g=by.get(k)||{k,order:orderIdOf(c),cut:0,onSheet:0,size:0,sides:'',ids:[]};
+    g.onSheet++;if(+c.groupSize>g.size)g.size=+c.groupSize;
+    if(cutIds.has(c.id)){g.cut++;g.ids.push(String(c.id));if(c.side==='L'||c.side==='R')g.sides+=c.side;}
+    by.set(k,g);
+  }
+  const groups=[...by.values()].filter(g=>g.cut>0).slice(0,300).map(g=>({k:g.k,order:g.order,cut:g.cut,onSheet:g.onSheet,size:g.size||null,sides:g.sides,ids:g.ids.slice(0,60)}));
+  // pairs cut together: a Left with a Right (Amendment 2: every earring pair is one of each, matching or mismatched; a quantity-2 line cut whole is 2 pairs); a group with no sides saved is one pair when it is 2 pieces
+  const pairsCut=g=>{const l=(g.sides.match(/L/g)||[]).length,r=(g.sides.match(/R/g)||[]).length;return l&&r?Math.min(l,r):(g.size||g.cut)===2&&g.cut===2?1:0;};
+  return {groups,summary:{pieces:groups.reduce((n,g)=>n+g.cut,0),pairs:groups.reduce((n,g)=>n+pairsCut(g),0),split:groups.filter(g=>g.size&&g.cut<g.size).length}};
+}
+/* pieces taken off a sheet: the groups of which only SOME pieces go (the rest stay): [{ k, order, taken, left }] */
+function partialGroups(sheet,gone){
+  const by=new Map();
+  for(const c of sheet&&sheet.charms||[]){if(!c||c.excluded)continue;const k=groupOf(c),g=by.get(k)||{k,order:orderIdOf(c),taken:0,left:0};if(gone.has(c.id))g.taken++;else g.left++;by.set(k,g);}
+  return [...by.values()].filter(g=>g.taken>0&&g.left>0).slice(0,100);
+}
+/* A request may say what the sheet is about to nest ({ unit: pieces of its smallest order, areaMm2, minMm, maxMm }): an AUTOMATIC choice of a leftover then skips one whose most
+   generous estimate holds fewer pieces than that order, because it could only strand part of a pair. No hint, no change. Pure CPU on documents roseList already read. */
+function fitCheck(fit){
+  const unit=fit&&Math.floor(+fit.unit);
+  if(!(unit>1&&unit<=50))return ()=>true;
+  const typical={};for(const [k,v] of [['areaMm2',fit.areaMm2],['minMm',fit.minMm],['maxMm',fit.maxMm]])if(Number.isFinite(+v)&&+v>0)typical[k]=+v;
+  return s=>{
+    if(!s||!s.profileJson)return true;
+    try{
+      const g=require('./_charmNestRemnants').leftover(parse(s.profileJson));
+      return !g.rings.length?false:require('../../charm-nest-partial').estimateFit(g.rings,typical,{sheetWMm:g.sheetWMm,sheetHMm:g.sheetHMm}).high>=unit;
+    }catch(_){return true;}
+  };
+}
+
 // Requests may carry unsimplified outlines from pages opened before the
 // simplification; the saved record size is checked after slimming.
 const OUTLINE_TOLERANCE_PT=.1,MAX_SHAPES_JSON=3000000;
@@ -119,7 +165,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(held.docs[0]&&held.docs[0].id!==b.stockId&&!b.swap)throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
       stockId=b.stockId;
     }
-    if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks;stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01)?.id;}
+    if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks,room=fitCheck(b.fit);stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01&&room(s))?.id;}
     // onlyRemnant (10K and 14K nest on a leftover when one fits, and otherwise claim nothing): no leftover, nothing is created or written
     if(b.onlyRemnant&&!stockId)return {stock:null,protectedJson:null};
     if(stockId&&!id(stockId))throw new Error('Invalid '+metalWord(metal)+' sheet');
@@ -286,12 +332,14 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(!Readiness.sheet(checked).ready)throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
       const plan=parse(sheet.rosePlanJson);Rose.validate(plan.profile,stock.wPt,stock.hPt);
       const at=Date.now(),revision=stock.revision+1;
-      const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),createdAt:FV.serverTimestamp()};
+      // which pieces of which order line this cut took (permanent, with the cut): a pair cut together, or a group of which only some pieces were cut
+      const taken=cutGroups(sheet,plan);
+      const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),...(taken.groups.length?{groups:taken.groups}:{}),createdAt:FV.serverTimestamp()};
       // the stock is the saved leftover: its shape (profileJson), its real size (wPt, hPt), its metal, and who cut it from which sheet and when
       const next={...stock,metal:sheet.metal,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,lastCutBy:cut.by,lastCutSheetId:b.sheetId,lastCutLabel:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),updatedAt:FV.serverTimestamp()};
       // GC3: the leftover sheet this cut makes (its exact outline, real size, who, when) is saved in THIS transaction: a cut never exists without it.
       // It reads (the stock's previous leftover) before it writes, so it comes before the first write below. Rose Gold, 10K and 14K all end here.
-      if(recordRemnant)await recordRemnant(tx,{stock:{...next,id:ref.id},cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via});
+      if(recordRemnant)await recordRemnant(tx,{stock:{...next,id:ref.id},cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via,summary:taken.groups.length?taken.summary:null});
       tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
       return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
     });
@@ -302,7 +350,9 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     if(sheet&&stamp)await stamp(()=>{const c=out.cut,label=sheetLabel?sheetLabel(sheet):String(sheet.fileBase||c.sheetId).slice(0,80);
       const who=String(c.by||'').trim().slice(0,80),signedIn=!!who&&who!=='operator',device=String(b.device||'').replace(/[^\w.-]/g,'').slice(0,40);
       const orders=Array.isArray(sheet.orders)&&sheet.orders.length?sheet.orders:(sheet.poolIds||[]).map(k=>(/^(\d{1,30})_/.exec(String(k))||[])[1]||'').filter(Boolean);
-      return [...new Set(orders.map(String))].slice(0,300).map(orderId=>({orderId,type:'roseCut',at:c.at,by:signedIn?who:'',station:'laser',device,sheetId:c.sheetId,sheet:label,setId:sheet.setId||'',text:label,data:{stockId:c.stockId,revision:c.revision,signedIn},id:`${c.sheetId}-${c.revision}`}));},'rose cut');
+      // (pieces: how many of this order's pieces the cut took: the same count the green line's own event carries)
+      const pieces=new Map();for(const g of c.groups||[])pieces.set(String(g.order),(pieces.get(String(g.order))||0)+g.cut);
+      return [...new Set(orders.map(String))].slice(0,300).map(orderId=>({orderId,type:'roseCut',at:c.at,by:signedIn?who:'',station:'laser',device,sheetId:c.sheetId,sheet:label,setId:sheet.setId||'',text:label,data:{stockId:c.stockId,revision:c.revision,signedIn,...(pieces.get(orderId)?{pieces:pieces.get(orderId)}:{})},id:`${c.sheetId}-${c.revision}`}));},'rose cut');
     return out;
   }
   // A rehearsal has its own collection and cannot reserve physical stock,
@@ -364,16 +414,17 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(!Rose.cuts(sheet.metal))return {ok:true,changed:false};
       if(sheet.roseCutAt||+sheet.laserDoneAt>0)throw new Error('This layout was already cut: its green lines stay');
       const guard=protectedLayout(sheet);
-      if(!guard)return {ok:true,changed:false,protectedJson:null};
+      const parts=partialGroups(sheet,gone);   // (groups of which only some pieces were asked to leave: the caller decides, the answer says so)
+      if(!guard)return {ok:true,changed:false,protectedJson:null,...(parts.length?{partialGroups:parts}:{})};
       const stockDoc=id(sheet.roseStockId)?await tx.get(stocks().doc(sheet.roseStockId)):null,stock=stockDoc&&stockDoc.exists?stockDoc.data():null;
       let prior=null;try{prior=stock?parse(stock.profileJson):null;}catch(_){prior=null;}
       const r=withoutPieces(guard,gone,{wPt:stock?.wPt,hPt:stock?.hPt,prior,allowanceMm:+b.allowanceMm||+sheet.roseAllowanceMm||.2});
-      if(!r.changed)return {ok:true,changed:false,protectedJson:sheet.roseProtectedJson||null,planned:!!sheet.rosePlanJson};
+      if(!r.changed)return {ok:true,changed:false,protectedJson:sheet.roseProtectedJson||null,planned:!!sheet.rosePlanJson,...(parts.length?{partialGroups:parts}:{})};
       const protectedJson=r.guard?JSON.stringify(r.guard):null;
       // (what the sheet's charms were: the orders whose timeline says the line went)
       const orderOf=new Map((sheet.charms||[]).map(c=>[c.id,String(c.order||(/^(\d{1,30})_/.exec(String(c.poolId||''))||[])[1]||'')]));
       tx.update(sr,{roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null,updatedAt:FV.serverTimestamp()});
-      return {ok:true,changed:true,protectedJson,removedLines:r.removed,keptLines:r.kept,exact:r.exact,sheet:{id:sheet.id||b.sheetId,label:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),setId:sheet.setId||''},
+      return {ok:true,changed:true,protectedJson,removedLines:r.removed,keptLines:r.kept,exact:r.exact,...(parts.length?{partialGroups:parts}:{}),sheet:{id:sheet.id||b.sheetId,label:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),setId:sheet.setId||''},
         orders:r.removed.map(l=>({n:l.n,at:l.at,orders:[...new Set(l.ids.map(x=>orderOf.get(x)).filter(Boolean))]}))};
     });
     // each order that had a piece in a line that went: a note on its timeline, kept for good (charmNestLibrary's stamp never throws)
@@ -392,4 +443,7 @@ module.exports.fingerprint=fingerprint;
 module.exports.protectedLayout=protectedLayout;
 module.exports.withoutPieces=withoutPieces;
 module.exports.stagesOf=stagesOf;
+module.exports.cutGroups=cutGroups;
+module.exports.partialGroups=partialGroups;
+module.exports.fitCheck=fitCheck;
 module.exports.assertProtected=assertProtected;
