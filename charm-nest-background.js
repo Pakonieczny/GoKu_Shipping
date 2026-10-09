@@ -32,7 +32,7 @@
   P.groupCharmsAsync=async(parsed,opts)=>P.adoptGrouping(await geometry.run('group',{parsed:plain(parsed),opts}),parsed);
   P.buildSilhouettes=async(parsed,charms,scale,onProgress)=>{const result=await geometry.run('silhouettes',{charms:charms.map(charm),scale},onProgress);result.forEach((fields,i)=>Object.assign(charms[i],fields));return charms;};
   P.thumbnail=(c,size)=>preview.run('thumbnail',{charm:charm(c),size});
-  P.frontPreview=(c,size,opts)=>preview.run('front',{charm:charm(c),size,opts:opts&&(opts.highlight||opts.body===0||opts.body===1)?{highlight:opts.highlight,body:opts.body}:undefined});
+  P.frontPreview=(c,size,opts)=>preview.run('front',{charm:charm(c),size,opts:opts&&(opts.highlight||opts.body===0||opts.body===1||opts.mirror===true||opts.mirror===false||opts.side)?{highlight:opts.highlight,body:opts.body,mirror:opts.mirror,side:opts.side}:undefined});
   P.buildSheet=async spec=>{const data={...spec,placements:spec.placements.map(p=>({...p,charm:charm(p.charm)})),sources:new Map([...spec.sources].map(([key,p])=>[key,plain(p)]))};const result=await geometry.run('sheet',{spec:data});result.layers.forEach((layer,i)=>{spec.placements[i].layerName=layer;});return result.bytes;};
   P.buildSingleCharm=(c,parsed)=>geometry.run('single',{charm:charm(c),parsed:plain(parsed)});
   P.buildBackFile=spec=>geometry.run('back',{spec:{...spec,charm:charm(spec.charm),parsed:plain(spec.parsed)}});
