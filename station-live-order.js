@@ -62,13 +62,21 @@
   const SAYS = /(?:^|[^A-Za-z])mis-?matched(?![A-Za-z])/i;
   const ordersLib = () => { try { const O = window.CharmNestOrders; return O && typeof O === "object" ? O : null; } catch (_) { return null; } };
   const skuOf = t => String((t && (t.sku || t.__sku)) || "");
+  /** the SKU itself says mismatched (MISMATCHED, MISMATCHED_7134) */
+  const skuSays = t => SAYS.test(skuOf(t));
+  /** the line's own words name earrings (title or a chosen option): the guard that keeps a note or a SKU on a charm, a necklace or a disc line from making a pair of it */
+  const EAR_WORDS = /\b(?:ear\s?rings?|studs?|huggies?|hoops?)\b/i;
+  const earWords = t => { try { return EAR_WORDS.test([t && t.title].concat(Array.isArray(t && t.variations) ? t.variations.map(v => v && (v.formatted_value != null ? v.formatted_value : v.value)) : []).filter(Boolean).join(" ")); } catch (_) { return false; } };
   function saysMismatched(t) {
     try {
       if (!t || typeof t !== "object") return false;
       if (t.__pair === "mismatched" || (t.__pair && t.__pair.mismatched === true)) return true;
-      if (SAYS.test(skuOf(t))) return true;
+      if (skuSays(t)) return true;
       for (const v of (Array.isArray(t.variations) ? t.variations : [])) if (SAYS.test(String((v && (v.formatted_value != null ? v.formatted_value : v.value)) || ""))) return true;
-      const O = ordersLib(); if (O && typeof O.lineMismatched === "function" && O.lineMismatched(Object.assign({}, t, { title: "" })) === true) return true;   // (the listing title is on every line of the listing, whichever the buyer picked: not read)
+      // the intake's own reading of the words (an option or a note that says mismatched / two designs), with the listing title blanked (a title is on every line of the listing, whichever the buyer picked)
+      const O = ordersLib(); if (O && typeof O.lineSignals === "function" && O.lineSignals(Object.assign({}, t, { title: "" })).says === true) return true;
+      // a SKU that names two designs ("A / B", "A + B", "A & B", "A, B"): only on a line sold as a pair of earrings. The same shapes are on single charms ("CAT(+FISH) - Cat Only", "HEART & STAR"), which are one piece and never a Left and a Right.
+      if (O && typeof O.splitSkus === "function" && soldAsPair(t) && O.splitSkus(skuOf(t))) return true;
     } catch (_) {}
     return false;
   }
@@ -87,9 +95,11 @@
    *  single earring whose line names its side); glued = a mismatched line the pool still makes as ONE piece per unit (left and right drawn together).
    *  When the intake file can list the pieces itself (CharmNestOrders.piecesOf: side per piece) its list is the word; else the line's words decide. */
   function describe(t) {
-    const q = qtyOf(t), n = countOf(t), mis = saysMismatched(t);
-    let sided = n === 2 * q && (mis || soldAsPair(t)), list = null;
+    const q = qtyOf(t), n = countOf(t), earring = soldAsPair(t) || skuSays(t) || earWords(t);
+    let sided = n === 2 * q && earring, list = null;
     try { const O = ordersLib(); if (O && typeof O.piecesOf === "function") { const l = O.piecesOf(t); if (Array.isArray(l) && l.length === n) { list = l; sided = l.some(p => p && (p.side === "L" || p.side === "R")); } } } catch (_) {}
+    // "mismatched" is a fact about an EARRING line (the pool makes a Left and a Right, or one glued piece): a note, an option or a SKU such as "CAT(+FISH)" on a charm, a necklace or a disc line says nothing about a pair
+    const mis = (sided || earring) && saysMismatched(t);
     return { q, n, mis, sided, list, glued: mis && !sided && n === q };
   }
   /** single | pair | mismatched | multi, from the line alone */
@@ -140,8 +150,13 @@
       const pairs = [];
       for (const t of (Array.isArray(list) ? list : [])) {
         if (!t || typeof t !== "object") continue;
-        if (!(saysMismatched(t) || soldAsPair(t))) continue;
-        for (let u = 0; u < Math.min(qtyOf(t), 20); u++) pairs.push(1);
+        const d = describe(t);
+        let k = d.sided && d.n >= 2 ? Math.floor(d.n / 2) : 0;                   // (the pool's own count: a line the pool makes ONE piece of prints no Left / Right, whatever words its title carries)
+        if (!k && d.n === d.q) {                                                 // one piece per unit: only a switched-off count rule (or no intake file) leaves the words of an earring line in charge, as before
+          const O = ordersLib(), R = O && O.PIECE_RULES, mis = saysMismatched(t);
+          if ((!R || (mis ? R.mismatchedMakesTwo === false : R.pairFormsMakeTwo === false)) && (mis || soldAsPair(t))) k = d.q;
+        }
+        for (let u = 0; u < Math.min(k, 20); u++) pairs.push(1);
       }
       for (let i = 0; i < pairs.length && out.length + 2 <= 40; i++) { out.push({ side: "L", n: i + 1, of: pairs.length }, { side: "R", n: i + 1, of: pairs.length }); }
     } catch (_) {}

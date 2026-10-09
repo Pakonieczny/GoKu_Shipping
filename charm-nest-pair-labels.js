@@ -173,11 +173,17 @@
     const of = Math.ceil(list.length / 2);
     return list.map((p, i) => ({ side: p.side, n: Math.floor(i / 2) + 1, of }));
   }
-  /** The stickers a card's lines need together (rows: the sorter's rows { spec, line }); entryOf(row) → the master entry of the row's design. null when none. */
+  /** The stickers a card's lines need together (rows: the sorter's rows { spec, line }); entryOf(row) → the master entry of the row's design. null when none.
+   *  The ears are numbered across the whole card (a stud pair and a huggie pair on one order: 1/2 and 2/2, never two stickers that both say LEFT 1/1),
+   *  so no two stickers of one order are alike; one pair line reads exactly as labelPieces says it. */
   function stickerPieces(rows, entryOf) {
-    const out = [];
-    for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const p = labelPieces(r, e); if (p) out.push(...p); }
-    return out.length ? out : null;
+    const lists = [];
+    for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const list = earPieces(r, e); if (list) lists.push(list); }
+    if (!lists.length) return null;
+    const of = lists.reduce((n, l) => n + Math.ceil(l.length / 2), 0), out = [];
+    let n = 0;
+    for (const list of lists) list.forEach((p, i) => { if (i % 2 === 0) n++; out.push({ side: p.side, n, of }); });
+    return out;
   }
   /** Pieces behind a card's lines: an earring pair line makes two per unit, every other line what its quantity says (as the page counted before). null when no line is a pair. */
   function pieceCount(rows, entryOf) {
