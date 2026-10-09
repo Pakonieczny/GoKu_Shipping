@@ -37,6 +37,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   const calls = (from, name, op) => st.calls.slice(from).filter(c => (!name || c.name === name) && (!op || c.op === op)).length;
   const idx = sku => st.docs.get('Charm_Master_Index/' + sku);
   const urlOf = p => `https://firebasestorage.googleapis.com/v0/b/test-bucket/o/${encodeURIComponent(p)}?alt=media&token=t`;
+  const by2 = from => { const o = {}; for (const c of st.calls.slice(from)) { const k = c.name + ':' + c.op; o[k] = (o[k] || 0) + 1; } return o; };
   const run = (mod, args) => mod.main(['node', 'x', ...args], log);
 
   // ── the library as it stands: the whole fixture indexed, then one design made stale ──
@@ -157,6 +158,12 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   assert(dfa.changed === 1 && dfa.same === 5 && dfa.failed === 0, 'whole sheet: only the stale design differs: ' + JSON.stringify(dfa));
   const dja = JSON.parse(fs.readFileSync(path.join(stageAll, 'diff.json'), 'utf8'));
   assert.deepStrictEqual(dja.liveOnly.map(x => x.sku).sort(), ['11.4 MM', 'FRONT'], 'the records the sheet no longer carries are listed');
+  // diff --save-to: the backup of what it found, from the one read of the index it made
+  c0 = st.calls.length; const bk2 = path.join(tmp, 'backup2');
+  await run(CR, ['diff', '--origin', sorterOrigin, '--stage', stageAll, '--save-to', bk2]);
+  assert.deepStrictEqual(by2(c0), { 'charmNestLibrary:masterList': 1, 'charmNestLibrary:masterListFiles': 1 }, 'one index read and one file-record read: ' + JSON.stringify(by2(c0)));
+  const man2 = JSON.parse(fs.readFileSync(path.join(bk2, 'manifest.json'), 'utf8'));
+  assert(man2.skus.includes('BR-TST-01') && man2.files.some(f => f.path === stalePath) && fs.existsSync(path.join(bk2, 'files', stalePath)), 'the changed design is in the backup');
 
   // ── the audit tool runs on a master and its report names a defect ──
   const dumpFile = path.join(tmp, 'dump.json'), outDir = path.join(tmp, 'audit');

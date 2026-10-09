@@ -14,7 +14,10 @@
  *             one, (3) no SKU that was NOT repaired changed against the backup. Exit 1 on any difference.
  *    diff     READ-ONLY. Takes the files a staged run (index-master --out-dir) would write and compares each, drawn part by drawn
  *             part, with the .ai the site serves for that SKU now. The SKUs whose live file already draws the same are left
- *             out: only the ones that differ are written (DIR/changed-skus.json, which index-master --only takes).
+ *             out: only the ones that differ, in drawing or in the index record they would write (size, holes, up angle), are rewritten
+ *             (DIR/changed-skus.json, which index-master --only takes). It also lists the live records the stage does not carry.
+ *             With --save-to BACKUPDIR it writes the backup of exactly those designs (same layout as `backup`) from the index it has
+ *             just read: one pass, one read of the index. Keep one backup folder per master.
  *    junk     READ-ONLY. Lists the SKUs in a backed-up index that the reader no longer accepts as SKUs (a measurement such as "11.4 MM",
  *             a view word such as "FRONT", and with --numbers a bare 1-3 digit number): callouts the master's artists wrote beside a
  *             charm that an older reader took for its SKU. DIR/junk-skus.json.
@@ -24,7 +27,7 @@
  *             link keeps working) and writes their index records back as the backup holds them. --dry lists what it would do.
  *
  *    node scripts/catalog-repair.cjs backup  --origin https://goldenspike.app --out DIR [--skus FILE|A,B] [--no-files]
- *    node scripts/catalog-repair.cjs diff    --origin https://goldenspike.app --stage DIR [--skus FILE|A,B]
+ *    node scripts/catalog-repair.cjs diff    --origin https://goldenspike.app --stage DIR [--skus FILE|A,B] [--save-to BACKUPDIR]
  *    node scripts/catalog-repair.cjs verify  --origin https://goldenspike.app --stage DIR --backup DIR [--changed FILE]
  *    node scripts/catalog-repair.cjs junk    --from DIR [--numbers] [--exclude FILE]
  *    node scripts/catalog-repair.cjs prune   --origin https://goldenspike.app --from DIR [--skus FILE|A,B] [--exclude FILE] [--numbers] [--write]
@@ -48,7 +51,7 @@ function args(argv) {
     const a = argv[i], v = argv[i + 1];
     if (a === "--origin") { o.origin = String(v || "").replace(/\/+$/, ""); i++; }
     else if (a === "--out") { o.out = v; i++; } else if (a === "--from") { o.from = v; i++; } else if (a === "--stage") { o.stage = v; i++; } else if (a === "--backup") { o.backup = v; i++; }
-    else if (a === "--skus") { o.skus = v; i++; } else if (a === "--changed") { o.changed = v; i++; } else if (a === "--dry") o.dry = true; else if (a === "--no-files") o.noFiles = true; else if (a === "--numbers") o.numbers = true; else if (a === "--write") o.write = true; else if (a === "--exclude") { o.exclude = v; i++; }
+    else if (a === "--skus") { o.skus = v; i++; } else if (a === "--save-to") { o.saveTo = v; i++; } else if (a === "--changed") { o.changed = v; i++; } else if (a === "--dry") o.dry = true; else if (a === "--no-files") o.noFiles = true; else if (a === "--numbers") o.numbers = true; else if (a === "--write") o.write = true; else if (a === "--exclude") { o.exclude = v; i++; }
     else if (a === "--concurrency") { o.concurrency = Math.max(1, Math.min(8, +v || 4)); i++; }
   }
   return o;
@@ -97,40 +100,45 @@ async function download(o, f) {
 }
 
 /* ── backup ── */
-async function backup(o, log) {
-  if (!o.origin || !o.out) throw new Error("backup needs --origin and --out");
-  fs.mkdirSync(o.out, { recursive: true });
-  const t0 = Date.now(), { entries, index } = await readIndex(o);
+/** Write the backup folder: the whole index and the file records (tokens redacted), and the live files of `list` (the records to be
+ *  rewritten, with the SKUs that share their files) with a manifest of their sha256. `cache` holds files already downloaded. */
+async function writeBackup(o, out, { entries, index, list, want, noFiles, cache, log }) {
+  fs.mkdirSync(out, { recursive: true });
+  const t0 = Date.now();
   const bySource = {}, byMaster = {}; for (const e of entries) { const k = e.labelSource || "text"; bySource[k] = (bySource[k] || 0) + 1; const m = (e.masterName || "?") + " " + String(e.masterHash || "").slice(0, 12); byMaster[m] = (byMaster[m] || 0) + 1; }
   log(`read the index: ${entries.length} SKU record(s)${index ? ` (index signature ${JSON.stringify(index)})` : ""} · by label source ${JSON.stringify(bySource)} · by master file ${JSON.stringify(byMaster)}`);
   const files = await get(o, "charmNestLibrary", { op: "masterListFiles" });
-  fs.writeFileSync(path.join(o.out, "index-all.json"), json({ readAt: new Date().toISOString(), origin: new URL(o.origin).host, count: entries.length, index, entries }));
-  fs.writeFileSync(path.join(o.out, "files.json"), json({ readAt: new Date().toISOString(), files: files.files || [], index: files.index || null }));
-  const want = o.skus ? onlySet(o.skus) : null;
-  const list = want ? affected(entries, want) : [];
+  fs.writeFileSync(path.join(out, "index-all.json"), json({ readAt: new Date().toISOString(), origin: new URL(o.origin).host, count: entries.length, index, entries }));
+  fs.writeFileSync(path.join(out, "files.json"), json({ readAt: new Date().toISOString(), files: files.files || [], index: files.index || null }));
   const missing = want ? [...want].filter(s => !entries.some(e => up(e.sku) === s)) : [];
   const manifest = { readAt: new Date().toISOString(), skus: list.map(e => e.sku).sort(), files: [] };
-  if (want && !o.noFiles) {
+  if (list.length && !noFiles) {
     const seen = new Map(); for (const e of list) for (const f of filesOf(e)) if (!seen.has(f.path)) seen.set(f.path, f);
     let n = 0, bytes = 0; const failed = [];
     await pool(o.concurrency, [...seen.values()], async f => {
-      try { const b = await download(o, f), dest = path.join(o.out, "files", f.path); fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, b); manifest.files.push({ path: f.path, kind: f.kind, bytes: b.length, sha256: sha(b) }); bytes += b.length; if (++n % 50 === 0) log(`  ${n}/${seen.size} files`); }
+      try { const b = (cache && cache.get(f.path)) || await download(o, f), dest = path.join(out, "files", f.path); fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, b); manifest.files.push({ path: f.path, kind: f.kind, bytes: b.length, sha256: sha(b) }); bytes += b.length; if (++n % 50 === 0) log(`  ${n}/${seen.size} files`); }
       catch (e) { failed.push({ path: f.path, error: e.message }); }
     });
     manifest.files.sort((a, b) => a.path.localeCompare(b.path)); manifest.failed = failed;
     log(`downloaded ${n} file(s), ${(bytes / 1048576).toFixed(1)} MB${failed.length ? ` · ${failed.length} FAILED: ${failed.slice(0, 5).map(x => x.path).join(", ")}` : ""}`);
     if (failed.length) process.exitCode = 1;
   }
-  fs.writeFileSync(path.join(o.out, "manifest.json"), json(manifest));
-  fs.writeFileSync(path.join(o.out, "backup-info.json"), json({ at: new Date().toISOString(), origin: new URL(o.origin).host, indexRecords: entries.length, named: want ? want.size : 0, notInIndex: missing, skusBackedUp: list.length, designFiles: manifest.files.filter(f => f.kind === "ai").length, seconds: Math.round((Date.now() - t0) / 1000), reads: "masterList (1 Firestore read per SKU record) + masterListFiles (<= 200 file records)", note: "tokens are redacted; restore re-puts the files at the same storage paths" }));
-  log(`backup written to ${o.out}${missing.length ? ` · ${missing.length} named SKU(s) are not in the index: ${missing.slice(0, 20).join(", ")}` : ""}`);
+  fs.writeFileSync(path.join(out, "manifest.json"), json(manifest));
+  fs.writeFileSync(path.join(out, "backup-info.json"), json({ at: new Date().toISOString(), origin: new URL(o.origin).host, indexRecords: entries.length, named: want ? want.size : 0, notInIndex: missing, skusBackedUp: list.length, designFiles: manifest.files.filter(f => f.kind === "ai").length, seconds: Math.round((Date.now() - t0) / 1000), reads: "masterList (1 Firestore read per SKU record) + masterListFiles (<= 200 file records)", note: "tokens are redacted; restore re-puts the files at the same storage paths" }));
+  log(`backup written to ${out}${missing.length ? ` · ${missing.length} named SKU(s) are not in the index: ${missing.slice(0, 20).join(", ")}` : ""}`);
   return { entries: entries.length, skus: list.length, files: manifest.files.length, missing };
+}
+async function backup(o, log) {
+  if (!o.origin || !o.out) throw new Error("backup needs --origin and --out");
+  const { entries, index } = await readIndex(o);
+  const want = o.skus ? onlySet(o.skus) : null, list = want ? affected(entries, want) : [];
+  return writeBackup(o, o.out, { entries, index, list, want, noFiles: o.noFiles, cache: null, log });
 }
 
 /* ── diff ── */
 async function diff(o, log) {
   if (!o.origin || !o.stage) throw new Error("diff needs --origin and --stage (the --out-dir of an index-master run)");
-  const staged = JSON.parse(fs.readFileSync(path.join(o.stage, "records.json"), "utf8")), { entries } = await readIndex(o);
+  const staged = JSON.parse(fs.readFileSync(path.join(o.stage, "records.json"), "utf8")), { entries, index } = await readIndex(o), cache = o.saveTo ? new Map() : null;
   const live = new Map(entries.map(e => [up(e.sku), e])), want = o.skus ? onlySet(o.skus) : null;
   // one design file can carry several SKUs: compare it once, answer for all of them
   const byFile = new Map();
@@ -141,7 +149,8 @@ async function diff(o, log) {
       const l = live.get(up(e.sku)); const g = l && (e.size ? (l.sizes || {})[up(e.size)] : l);
       if (!l || !g || !g.aiPath) { gone.push({ skus, aiPath, why: "no live record or file for it" }); return; }
       const mine = await filePrint(fs.readFileSync(path.join(o.stage, "files", aiPath)));
-      const theirs = await filePrint(await download(o, { path: g.aiPath, url: g.aiUrl }));
+      const liveBytes = await download(o, { path: g.aiPath, url: g.aiUrl }); if (cache) cache.set(g.aiPath, liveBytes);
+      const theirs = await filePrint(liveBytes);
       const why = printDiff(theirs, mine);
       (why.length ? changed : same).push({ skus, aiPath, live: g.aiPath, why: why.join("; "), liveParts: theirs.n, stagedParts: mine.n });
       // what the staged record would change in the index besides the drawing: the numbers the nesting and the engraving read
@@ -166,6 +175,11 @@ async function diff(o, log) {
   }
   fs.writeFileSync(path.join(o.stage, "diff.json"), json({ at: new Date().toISOString(), designs: byFile.size, changed, same: same.length, gone, failed, recordChanges: rec, liveOnly }));
   fs.writeFileSync(path.join(o.stage, "changed-skus.json"), json(skusChanged));
+  if (o.saveTo) {
+    // the backup of exactly what is about to change, from the index this diff has just read (no second read of the index)
+    const set = new Set(skusChanged.map(up));
+    await writeBackup(o, o.saveTo, { entries, index, list: affected(entries, set), want: set, noFiles: false, cache, log });
+  }
   const reasons = {}; for (const c of changed) reasons[c.why.split(";")[0].replace(/\d+/g, "N")] = (reasons[c.why.split(";")[0].replace(/\d+/g, "N")] || 0) + 1;
   log(`diff: ${byFile.size} design file(s) compared with what the site serves · ${changed.length} draw differently, ${skusChanged.length} SKUs to rewrite (drawing or record) · ${same.length} already draw the same · ${gone.length} have no live file · ${failed.length} could not be compared`);
   for (const [k, v] of Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8)) log(`  ${v} × ${k}`);
