@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-rose.js?v=20261007-edges-gc1", "charm-nest-solver.js?v=20261007-pocket-fill");
+importScripts("charm-nest-rose.js?v=20261007-edges-gc1", "charm-nest-solver.js?v=20261009-unjam1");
 
 let current = null;   // { jobId, job, stop }
 

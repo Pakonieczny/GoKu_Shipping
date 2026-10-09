@@ -3185,7 +3185,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75"></script>
-<script src="charm-nest-solver.js?v=20261007-pocket-fill"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col"></script>
@@ -4441,7 +4441,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261007-pocket-fill");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -5037,7 +5037,8 @@ async function finishNest(sh, { result, error }) {
     sh.nestInitial = sh.nestInitial.map(p => moved.has(p.id) && now.has(p.id) ? { ...now.get(p.id), scale: p.scale } : p);
   }
   if (result.unjam?.attempts && !result.unjam.committed) sh._unjamFails = (sh._unjamFails || 0) + 1;
-  if (result.unjam?.committed) { const lifted = result.unjam.tries.filter(t => t.ok).reduce((n, t) => n + t.k, 0); agent({ metal: sh.metal }, "nest", `Making room: the ${lifted} newest charm(s) around the bottleneck were moved (none older) so that ${result.unjam.filled.length} more charm(s) fit this sheet instead of the next: ${result.unjam.filled.slice(0, 6).map(id => byId.get(id)?.name || id).join(", ")}`); }
+  if (result.unjam?.committed) { const lifted = result.unjam.tries.filter(t => t.ok).reduce((n, t) => n + t.k, 0), t1 = result.unjam.tries.find(t => t.ok); agent({ metal: sh.metal }, "nest", `Making room: ${t1 && t1.needMm ? `the widest free gap was ${t1.widestMm} mm and the next charm needs ${t1.needMm} mm; ` : ""}the ${lifted} newest charm(s) around the bottleneck were moved (none older) so that ${result.unjam.filled.length} more charm(s) fit this sheet instead of the next: ${result.unjam.filled.slice(0, 6).map(id => byId.get(id)?.name || id).join(", ")}`); }
+  else if (result.unjam?.attempts) agent({ metal: sh.metal }, "nest", `Making room: tried ${result.unjam.attempts} arrangement(s) of the newest charms for the order that did not fit, none seated every charm, so the sheet stays as it was`);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · ${sh.resumeWait ? "waiting for Resume" : "did not fit"}: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
@@ -6904,7 +6905,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261007-pocket-fill');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -7036,7 +7037,7 @@ async function boot() {
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261007-pocket-fill") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();

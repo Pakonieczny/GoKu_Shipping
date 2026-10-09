@@ -27,13 +27,13 @@ const stock = { wPt, hPt, ...(sc.left ? { remnant: L.leftover(wPt, hPt, sc.w ===
 (async () => {
   const stream = L.makeOrders(S, orders, seed, { small: .35, mid: .40, large: .25, two: .15, grow: sc.grow || 1 });
   const t0 = Date.now();
-  const run = await L.runStream({ root, metal: sc.metal, sheet: stock, orders: stream, batch: 3, seed: 1, checkRoom: true, unjam, unjamMs, onSearch: dump ? (job, result) => { if (result.rejects.length) { n++; require('fs').writeFileSync(require('path').join(dump, `${name}-s${seed}-${n}.v8`), require('v8').serialize(job)); if (arg('stopAtMiss', '0') !== '0') process.exit(0); } } : null });
+  const run = await L.runStream({ root, metal: sc.metal, sheet: stock, orders: stream, batch: 3, seed: 1, checkRoom: true, unjam, unjamMs, onSearch: dump ? (job, result) => { if (result.rejects.length || (result.unjam && result.unjam.attempts)) { n++; require('fs').writeFileSync(require('path').join(dump, `${name}-s${seed}-${n}.v8`), require('v8').serialize(job)); if (arg('stopAtMiss', '0') !== '0') process.exit(0); } } : null });
   const m = L.measure(run, stock, { step, cut: ['gold10k', 'gold14k', 'rose'].includes(sc.metal) });
   const closed = m.sheets.filter(s => s.closed), fills = closed.map(s => s.fill);
   const all = m.sheets.map(s => s.fill);
   console.log(JSON.stringify({
     scenario: name, root: root === L.REPO ? 'repo' : root, orders, seed, sheets: m.sheets.length, closedSheets: closed.length,
-    closedFill: fills.length ? +(fills.reduce((a, b) => a + b, 0) / fills.length).toFixed(3) : null, fills: m.sheets.map(s => `${s.page}:${s.fill}${s.envFill != null ? '/env' + s.envFill : ''}${s.closed ? 'c' : ''}`),
+    closedFill: fills.length ? +(fills.reduce((a, b) => a + b, 0) / fills.length).toFixed(3) : null, fills: m.sheets.map(s => `${s.page}:${s.fill}${s.envFill != null ? '/env' + s.envFill : ''}${s.closed ? 'c' : ''}`), charmsPerSheet: m.sheets.map(s => s.placed),
     anywhere: { leftOut: m.sheets.reduce((n, s) => n + s.leftOutAnywhere, 0), potential: m.sheets.reduce((n, s) => n + s.potentialAnywhere, 0) },
     placed: m.placedTotal, smallRoomWrong: run.roomWrong.length, leftOutWhileFits: m.leftOut.length, potentialLater: m.potential.length, leftOut: m.leftOut, potential: m.potential,
     pocketPass: { searchesWithMiss: run.searches.filter(s => s.rejects).length, filled: run.searches.reduce((n, s) => n + (s.pocket ? s.pocket.filled : 0), 0), ms: run.searches.reduce((n, s) => n + (s.pocket ? s.pocket.ms : 0), 0), worstMs: Math.max(0, ...run.searches.map(s => s.pocket ? s.pocket.ms : 0)),

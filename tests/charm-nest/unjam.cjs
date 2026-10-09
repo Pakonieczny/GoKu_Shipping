@@ -47,6 +47,8 @@ const solve = (job, cb) => S.solve(job, cb || {});
     assert.equal(r.placements.length, 9, 'every charm is on the sheet, once');
     assert.equal(new Set(r.placements.map(p => p.id)).size, 9);
     assert(r.unjam.committed && r.unjam.rounds >= 1 && r.unjam.filled.includes('M'), 'the page is told: ' + JSON.stringify(r.unjam));
+    const t0 = r.unjam.tries[0];
+    assert(t0.needMm > t0.widestMm && t0.widestMm > 0, 'the bottleneck is measured: the widest free gap (' + t0.widestMm + ' mm) is narrower than the charm needs (' + t0.needMm + ' mm)');
     assert(r.pocketFilled.includes('M'), 'the page keeps the order the unjam seated (it is not lifted for being younger than a miss)');
     assert(r.unjam.moved.length >= 1 && r.unjam.moved.length <= 7, 'a few charms move: ' + r.unjam.moved);
     for (const id of r.unjam.moved) assert(['s4', 's5', 's6', 's7'].includes(id), id + ' is among the newest saved charms');
@@ -142,6 +144,15 @@ const solve = (job, cb) => S.solve(job, cb || {});
     const spent = await solve(jam({ unjam: true, unjamMs: 1 }, [M]));
     for (const l of saved) assert(same(spent.placements.find(p => p.id === l.id), l) || spent.unjam.committed, 'a spent budget changes nothing it did not finish');
     assert(S.verify(rebased(jam({ unjam: true, unjamMs: 1 }, [M]), spent).job, rebased({ ...jam({}, [M]), unjam: true }, spent).placements, 4).ok);
+  }
+
+  /* 7b. A fault inside the unjam (here: the live view's callback throwing while a charm is lifted) never fails the search: the sheet is
+         left exactly as the passes made it and the fault is reported. */
+  {
+    const M = sq('M', 30, 1), off = await solve(jam({}, [M])), r = await solve(jam({ unjam: true }, [M]), { onProbe: p => { if (p.unjam) throw new Error('boom'); } });
+    assert.deepEqual(r.placements.map(p => [p.id, p.cxPt, p.cyPt, p.angle]), off.placements.map(p => [p.id, p.cxPt, p.cyPt, p.angle]), 'the sheet as the passes left it');
+    assert.deepEqual(r.rejects, ['M']);
+    assert(/boom/.test(r.unjam.error || '') && !r.unjam.committed && r.unjam.moved.length === 0, 'the fault is reported: ' + JSON.stringify(r.unjam));
   }
 
   /* 8. The page: asks for it on every metal but Rose Gold, never lifts a charm a person pinned, shows "Making room", saves the moved
