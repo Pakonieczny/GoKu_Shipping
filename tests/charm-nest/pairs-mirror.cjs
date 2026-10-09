@@ -120,6 +120,9 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   ok(sideWord(Pair.piecesFor(line(), same)) === 'L,Rm', 'D2 both bodies drawn thumb-left (Paul\'s picture): the left body is the Left as drawn, the right body is the Right turned');
   ok(sideWord(Pair.piecesFor(line(), mirr)) === 'L,R', 'D3 the right body already drawn as the mirror image of the left: nothing is turned');
   ok(sideWord(Pair.piecesFor(line(), Object.assign(mk(THUMB_LEFT), { facing: 'R' }))) === 'Lm,R', 'D4 a person says the first body faces right and the second is drawn the same way: both face right, so the left body is turned and the right body is as drawn');
+  // an index entry with no geometry (the order window asks piecesFor with the entry): the words it holds for each body decide, as the drawing would
+  const entryMis = { sku: 'M', pair: { v: 1, bodies: 2, mismatched: true } };
+  ok(sideWord(Pair.piecesFor(line(), entryMis)) === 'L,Rm' && sideWord(Pair.piecesFor(line(), Object.assign({ facings: [null, 'R'] }, entryMis))) === 'L,R' && sideWord(Pair.piecesFor(line(), Object.assign({ facings: ['R', 'R'] }, entryMis))) === 'Lm,R' && sideWord(Pair.piecesFor(line(), Object.assign({ facing: 'R' }, entryMis))) === 'Lm,Rm', 'D3b a mismatched entry with no drawing: unknown = Left as drawn, Right turned; the words for each body (facings, or facing for body 0) decide');
   const gL = Pair.pieceGeometry(same, { side: 'L', bodyIndex: 0, mirror: false }), gR = Pair.pieceGeometry(same, { side: 'R', bodyIndex: 1, mirror: true });
   ok(gL.bbox.join() === '0,0,24,30' && gR.bbox.join() === '40,0,64,30', 'D5 each piece is its own body (not the pair)');
   const rx = ptsOf(gR.outline), lx = ptsOf(gL.outline);
