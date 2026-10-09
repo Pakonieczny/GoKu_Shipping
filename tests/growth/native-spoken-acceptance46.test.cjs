@@ -115,3 +115,11 @@ test('late cart knowledge respects a native homepage request and makes controls 
   const before=clone(f.cart()),home=await f.say('Take me to the homepage');assert.equal(home.result?.ok,true,JSON.stringify(home.result));await f.releaseInventory();assert.equal(f.store.snapshot().pageKind,'collection');assert.equal(f.w.location.search,'');assert.equal(f.d.querySelector('[data-bag-line]'),null);assert.deepEqual(f.cart(),before);
   const opened=await f.say('Open my cart');assert.equal(opened.result?.ok,true,JSON.stringify(opened.result));assert.equal(f.d.querySelectorAll('[data-bag-option]').length,3);assert.deepEqual(f.cart(),before);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
 });
+
+test('native product and cart engraving clear replies describe the empty field without repeating private wording',async t=>{
+  const f=await fixture(t);await openInitial(f);await chooseInitial(f);await f.say('Select Engraved');
+  await f.say('Set engraving text to PRODUCT46');assert.equal(f.d.querySelector('[aria-label="Preview engraving wording for this piece"]').value,'PRODUCT46');
+  await f.say('Clear engraving text');assert.equal(f.d.querySelector('[aria-label="Preview engraving wording for this piece"]').value,'');assert.match(f.lastSpoken(),/cleared/i);assert.doesNotMatch(f.lastSpoken(),/PRODUCT46|in the visible field/i);shopperReply(f.lastSpoken());
+  await f.say('Add this piece to my cart then open my cart');await f.say('Change the engraving wording of the first item in my cart to TEST46');const before=clone(f.cart()[0]);
+  await f.say('Clear engraving wording for the first item in my cart');assert.equal(f.d.querySelector('[data-bag-engraving]').value,'');assert.equal(f.cart()[0].engravingPreview||'','');assert.equal(f.cart()[0].variant,before.variant);assert.equal(f.cart()[0].price,before.price);assert.match(f.lastSpoken(),/cleared/i);assert.doesNotMatch(f.lastSpoken(),/TEST46|in the visible field/i);shopperReply(f.lastSpoken());assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});
