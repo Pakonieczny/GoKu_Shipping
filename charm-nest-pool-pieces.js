@@ -8,15 +8,18 @@
  *                                 module.exports            (node tests and Netlify functions: require("../../charm-nest-pool-pieces.js"))
  *
  *  THE RECORD. A piece keeps its id: `${receiptId}_${transactionId}_${n}` (n = 1..number of pieces; the server accepts that shape only).
- *  Four scalar fields are added to a piece of a MISMATCHED pair, and to no other piece (a single charm, a matching pair and a disc
- *  necklace stay byte-identical, so none of these is ever written for them):
+ *  Scalar fields are added to every piece of an EARRING PAIR (stud, hoop, huggie; matching or mismatched: contract.md amendment 2, Paul
+ *  18:47), and to no other piece (a single charm, a necklace's discs, letters and charms stay as they were, so none of these is written
+ *  for them; their group is read from the pool id and their `quantity`):
  *      side       "L" | "R"                 the ear
- *      bodyIndex  0 | 1                     which of the design's two bodies this piece is cut from (0 = left in the drawing)
+ *      mirror     true | false              true: the piece is the MIRROR IMAGE of the as-drawn master design (a Left faces left, a Right faces right)
+ *      bodyIndex  0 | 1                     which of the design's bodies this piece is cut from (a matching pair: 0; a mismatched pair: 0 = left body, 1 = right body)
  *      groupKey   "receiptId:transactionId" every piece of one order line (contract.md)
  *      groupSize  number of pieces in the group (2 x the Etsy quantity)
- *  They are written in the pool row (poolPut), on the page's charm, and in the sheet record's `charms[]` entry. All four or none:
- *  a record with some of them is read as having none. Scalars only (Firestore refuses arrays in arrays; nothing here stores a list).
- *  Piece numbering of a mismatched line: unit u = 1..q makes piece 2u-1 (LEFT, body 0) then piece 2u (RIGHT, body 1).
+ *  They are written in the pool row (poolPut), on the page's charm, and in the sheet record's `charms[]` entry. side, bodyIndex, groupKey and
+ *  groupSize come all four or none (a record with some of them is read as having none); `mirror` is a boolean or absent (an older sided
+ *  record has none: read as the as-drawn piece). Scalars only (Firestore refuses arrays in arrays; nothing here stores a list).
+ *  Piece numbering: unit u = 1..q makes piece 2u-1 (LEFT) then piece 2u (RIGHT); a mismatched pair's Left is cut from body 0, its Right from body 1.
  *
  *  OLD RECORDS (no fields) are read, never rewritten: metaOf() derives the group from the pool id, the size from `quantity` (the
  *  number of copies a row counts up to), side null. A row of a design known to be mismatched that carries no fields is a GLUED
@@ -28,7 +31,7 @@
 })(typeof self !== "undefined" ? self : this, function (root) {
   "use strict";
 
-  const FIELDS = ["side", "bodyIndex", "groupKey", "groupSize"];
+  const FIELDS = ["side", "mirror", "bodyIndex", "groupKey", "groupSize"];
   const MAX_PIECES = 400;                         // the most pool rows one poolPut call carries (charmNestLibrary poolPut slice)
   const POOL_ID = /^(\d{4,20})_([^_]*)_(\d{1,3})$/;   // receiptId_transactionId_copy (charm-nest-orders.js poolId)
   const num = v => (Number.isFinite(+v) && +v > 0 ? Math.floor(+v) : 0);
@@ -62,20 +65,21 @@
     return lk ? lk[1] + ":" + lk[2] : "";
   }
 
-  /** The four fields of a piece that has them ALL and valid ones, else {}: what a record may carry. A plain piece carries none. */
+  /** The fields of a piece that has side, bodyIndex, groupKey and groupSize ALL valid (and `mirror` when it is a boolean), else {}: what a record may carry. A plain piece carries none. */
   function cleanFields(o) {
     if (!o || typeof o !== "object") return {};
-    const side = o.side, bodyIndex = o.bodyIndex, size = o.groupSize, key = o.groupKey;
+    const side = o.side, bodyIndex = o.bodyIndex, size = o.groupSize, pid = typeof o.poolId === "string" ? parsePoolId(o.poolId) : null;
+    const key = pid ? pid.groupKey : o.groupKey;   // a pool id names its group by itself: a wrong groupKey on a row is repaired from it
     if (side !== "L" && side !== "R") return {};
     if (!Number.isInteger(bodyIndex) || bodyIndex < 0 || bodyIndex > 9) return {};
     if (!Number.isInteger(size) || size < 2 || size > MAX_PIECES) return {};
     if (!keyOk(key)) return {};
-    return { side, bodyIndex, groupKey: key, groupSize: size };
+    return typeof o.mirror === "boolean" ? { side, mirror: o.mirror, bodyIndex, groupKey: key, groupSize: size } : { side, bodyIndex, groupKey: key, groupSize: size };
   }
-  /** The record fields of one piece from CharmNestPair.piecesFor ({ side, bodyIndex, groupKey, n, of }), or from a stored piece: {} unless it is a left or right piece. */
+  /** The record fields of one piece from CharmNestPair.piecesFor ({ side, mirror, bodyIndex, groupKey, n, of }), or from a stored piece: {} unless it is a left or right piece. */
   function fieldsOf(piece) {
     if (!piece) return {};
-    return cleanFields({ side: piece.side, bodyIndex: piece.bodyIndex, groupKey: piece.groupKey, groupSize: piece.groupSize != null ? piece.groupSize : piece.of });
+    return cleanFields({ side: piece.side, mirror: piece.mirror, bodyIndex: piece.bodyIndex, groupKey: piece.groupKey, groupSize: piece.groupSize != null ? piece.groupSize : piece.of });
   }
   /** What a sheet record's charms[] entry adds for a charm: the four fields of a left or right piece, nothing for any other charm. */
   const sheetCharmFields = charm => fieldsOf(charm);
@@ -89,11 +93,13 @@
     const p = parsePoolId(id), f = cleanFields(row);
     const n = p ? p.copy : num(row.copy) || num(row.orderInfo && row.orderInfo.copy) || 1;
     if (f.side) {
-      return { poolId: id, groupKey: f.groupKey, n, groupSize: f.groupSize, side: f.side, bodyIndex: f.bodyIndex, unit: Math.ceil(n / 2), kind: f.groupSize === 2 ? "mismatched" : "multi", glued: false, legacy: false };
+      // (a mismatched pair's Right is cut from body 1; a matching pair has one body. A Left of a mismatched pair says so only with ctx.mismatchedDesign: the master entry's `pair`)
+      const mis = !!ctx.mismatchedDesign || f.bodyIndex > 0;
+      return { poolId: id, groupKey: f.groupKey, n, groupSize: f.groupSize, side: f.side, mirror: typeof f.mirror === "boolean" ? f.mirror : null, bodyIndex: f.bodyIndex, unit: Math.ceil(n / 2), kind: f.groupSize === 2 ? (mis ? "mismatched" : "pair") : "multi", glued: false, legacy: false };
     }
     const size = num(row.quantity) || num(row.orderInfo && row.orderInfo.quantity) || num(ctx.groupSize) || num(ctx.quantity) || 1;
     const glued = !!ctx.mismatchedDesign;
-    return { poolId: id, groupKey: groupKeyOf(row) || (p ? p.groupKey : ""), n, groupSize: size, side: null, bodyIndex: 0, unit: n, kind: glued ? "glued" : size > 2 ? "multi" : size === 2 ? "pair" : "single", glued, legacy: glued };
+    return { poolId: id, groupKey: groupKeyOf(row) || (p ? p.groupKey : ""), n, groupSize: size, side: null, mirror: null, bodyIndex: 0, unit: n, kind: glued ? "glued" : size > 2 ? "multi" : size === 2 ? "pair" : "single", glued, legacy: glued };
   }
 
   /** The groups (order lines) of a list of pieces, each with where its pieces are. `sheetOf(row)` gives a piece's sheet id or null.
@@ -103,8 +109,8 @@
     const where = typeof sheetOf === "function" ? sheetOf : () => null, by = new Map();
     for (const r of rows || []) {
       const m = metaOf(r); if (!m.groupKey) continue;
-      if (!by.has(m.groupKey)) by.set(m.groupKey, { groupKey: m.groupKey, size: 0, have: 0, sided: false, ids: [], sheets: {}, off: [] });
-      const g = by.get(m.groupKey); g.size = Math.max(g.size, m.groupSize); g.have++; g.sided = g.sided || !!m.side; g.ids.push(m.poolId);
+      if (!by.has(m.groupKey)) by.set(m.groupKey, { groupKey: m.groupKey, size: 0, have: 0, sided: false, mismatched: false, ids: [], sheets: {}, off: [] });
+      const g = by.get(m.groupKey); g.size = Math.max(g.size, m.groupSize); g.have++; g.sided = g.sided || !!m.side; g.mismatched = g.mismatched || m.bodyIndex > 0; g.ids.push(m.poolId);
       const s = where(r);
       if (s) (g.sheets[s] || (g.sheets[s] = [])).push(m.poolId); else g.off.push(m.poolId);
     }

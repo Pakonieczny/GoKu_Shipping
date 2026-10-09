@@ -1334,7 +1334,8 @@ async function op_poolPut(b) {
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()], found = [];
   // the four fields of a piece of a mismatched pair are all there and valid, or none are stored (a plain piece never has them)
-  for (const p of list) { const keep = PoolPieces.cleanFields(p); for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); }
+  // (groupKey alone is what the pool id says, as Placement.cleanPiece writes it; the other three come with it or not at all)
+  for (const p of list) { const keep = PoolPieces.cleanFields(p), gk = Object.prototype.hasOwnProperty.call(p, "groupKey") ? Placement.groupOfPool(p.poolId) : ""; for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); if (gk && !keep.groupKey) p.groupKey = gk; }
   for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), { fieldMask: POOL_PUT_FIELDS }));
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
@@ -1347,11 +1348,11 @@ async function op_poolPut(b) {
   /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
      committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
   const legacyLines = new Set();
-  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(p.groupKey); });
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(Placement.groupOfPool(p.poolId)); });
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
-    if (p.side && legacyLines.has(p.groupKey)) { (out.legacy || (out.legacy = [])).push(p.poolId); continue; }
+    if (p.side && legacyLines.has(Placement.groupOfPool(p.poolId))) { (out.legacy || (out.legacy = [])).push(p.poolId); continue; }
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
     // (a piece of a pair carries side / bodyIndex / groupKey / groupSize: kept when they are sound, left out when not; a row without them is written as it always was)

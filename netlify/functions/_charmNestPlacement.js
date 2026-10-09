@@ -83,6 +83,7 @@ function cleanPiece(row) {
   if (!row || typeof row !== "object") return row;
   const has = k => Object.prototype.hasOwnProperty.call(row, k);
   if (has("side") && row.side !== "L" && row.side !== "R" && row.side !== null) delete row.side;
+  if (has("mirror") && typeof row.mirror !== "boolean") delete row.mirror;   // (PAIRPOOL, amendment 2: true = the mirror image of the as-drawn design)
   if (has("bodyIndex")) { const n = Number(row.bodyIndex); if (Number.isInteger(n) && n >= 0 && n <= 9) row.bodyIndex = n; else delete row.bodyIndex; }
   if (has("groupSize")) { const n = Number(row.groupSize); if (Number.isInteger(n) && n >= 1 && n <= 400) row.groupSize = n; else delete row.groupSize; }
   if (has("groupKey")) { const k = groupOfPool(row.poolId); if (k) row.groupKey = k; else delete row.groupKey; }
