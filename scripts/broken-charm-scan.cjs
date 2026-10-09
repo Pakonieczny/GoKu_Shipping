@@ -50,6 +50,8 @@ function familyOf(sku) {
 }
 
 // ═══ scan ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/** How far the end of a stroked path lies from its start (the size of the opening in a cut line that was drawn closed). */
+function openGap(s) { const sub = s.subpaths && s.subpaths[0]; if (!sub || !sub.length) return null; let l = null; for (const o of sub) { if (o[0] === "m" || o[0] === "l") l = o[1]; else if (o[0] === "c") l = o[3]; } return l ? Math.round(Math.hypot(sub[0][1][0] - l[0], sub[0][1][1] - l[1]) * 100) / 100 : null; }
 async function scan(file, opts) {
   const { CharmNestPDF: P, Geom: G } = require(path.join(root, "netlify/functions/_charmNestPdf.js"));
   let parsed, g, lab;
@@ -85,7 +87,7 @@ async function scan(file, opts) {
     if (dropped.length) {
       const big = dropped.filter(s => (s.bbox[2] - s.bbox[0]) >= 6 && (s.bbox[3] - s.bbox[1]) >= 6 && /^cut/i.test(String(s.layer || "")));
       const dropArea = dropped.reduce((a, s) => a + area(s.bbox), 0);
-      if (big.length || dropArea >= 0.15 * area(c.bbox)) flags.push({ rule: "ink-dropped", openBodies: big.filter(s => !s.closed).length, why: `${dropped.length} drawing(s) beside it belong to no charm (${[...new Set(dropped.map(s => s.layer))].join("/")}${big.length ? `, ${big.length} body-sized cut line(s), ${big.map(s => (s.closed ? "closed" : "open")).join("/")}` : ""})`, detail: dropped.slice(0, 6).map(s => ({ layer: s.layer, closed: !!s.closed, bbox: s.bbox.map(r1) })) });
+      if (big.length || dropArea >= 0.15 * area(c.bbox)) flags.push({ rule: "ink-dropped", openBodies: big.filter(s => !s.closed).length, why: `${dropped.length} drawing(s) beside it belong to no charm (${[...new Set(dropped.map(s => s.layer))].join("/")}${big.length ? `, ${big.length} body-sized cut line(s), ${big.map(s => (s.closed ? "closed" : "open, gap " + openGap(s) + " pt")).join("/")}` : ""})`, detail: dropped.slice(0, 6).map(s => ({ layer: s.layer, closed: !!s.closed, bbox: s.bbox.map(r1), gapPt: s.closed ? undefined : openGap(s) })) });
     }
     // 3 · engraving or hatching with no cut outline around it
     const art = c.members.filter(m => m !== c.outline && m.kind === "path" && !G.isCutLine(m) && G.pathRole(m) === "artwork" && m.bbox);
@@ -107,7 +109,7 @@ async function scan(file, opts) {
       master, charm: index, sku: skus[0], skus, name: l.str || null, label: l.bbox ? l.bbox.map(r1) : null, atMm: atMm(c.bbox),
       outlineMm: [r1(ow * MM), r1(oh * MM)], bbox: ob.map(r1),
       widthPt: sil ? r2(sil.bboxOuter[2] - sil.bboxOuter[0]) : null, heightPt: sil ? r2(sil.bboxOuter[3] - sil.bboxOuter[1]) : null, areaPt2: sil ? r2(sil.areaPt2) : null,
-      holes, members: c.members.length, nearClosed: c.members.concat([c.outline]).some(m => m.nearClosed != null) || undefined, flags
+      holes, members: c.members.length, nearClosed: c.members.concat([c.outline]).some(m => m.nearClosed != null) || undefined, nearGapPt: (g => g.length ? r2(Math.max(...g)) : undefined)(c.members.concat([c.outline]).filter(m => m.nearClosed != null).map(m => m.nearClosed)), bodyNearClosed: c.outline.nearClosed != null || undefined, flags
     });
   }
   // 5 · a SKU-like label that found no charm, with cut or engraving ink right above it
@@ -211,23 +213,40 @@ function report(a) {
   // siblings: same name before the number and the same variant; the comparison uses the design's own silhouette area
   const fam = new Map();
   for (const r of rows) for (const sku of r.skus) { const f = familyOf(sku); const k = f.base + "|" + f.variant; if (!fam.has(k)) fam.set(k, []); fam.get(k).push({ sku, r }); }
-  const affected = new Map();
-  const add = (sku, reason, extra) => { const k = String(sku).toUpperCase(); if (!affected.has(k)) affected.set(k, { sku: k, reasons: [], ...extra }); const e = affected.get(k); if (!e.reasons.some(x => x.rule === reason.rule)) e.reasons.push(reason); Object.assign(e, extra || {}); };
+  // one entry per design (a SKU that labels two different drawings in two masters is two entries: the reasons must not mix)
+  const affected = new Map(), rowOfKey = new Map(), shortMaster = m => String(m || "").replace(/^MASTER SKU_/, "").replace(/_MV_.*$/, "");
+  const add = (sku, reason, extra, row) => { const k = String(sku).toUpperCase() + "@" + shortMaster(extra && extra.master) + "#" + (extra && extra.charm != null ? extra.charm : "-"); if (!affected.has(k)) { affected.set(k, { sku: String(sku).toUpperCase(), reasons: [], ...extra }); if (row) rowOfKey.set(k, row); } const e = affected.get(k); if (!e.reasons.some(x => x.rule === reason.rule)) e.reasons.push(reason); Object.assign(e, extra || {}); return k; };
+  // the other designs a SKU labels (master, charm index): a SKU in two masters is held live by only one of them
+  const designsOf = new Map(); for (const r of rows) for (const sku of new Set(r.skus.map(x => x.toUpperCase()))) { if (!designsOf.has(sku)) designsOf.set(sku, []); designsOf.get(sku).push(r); }
+  const sameMasterLive = (e, r) => !!e && String(e.masterName || "").replace(/\.ai$/i, "") === r.master;
   for (const r of rows) {
     for (const sku of r.skus) {
       const base = { master: r.master, charm: r.charm, atMm: r.atMm, widthMm: r.widthPt != null ? r1(r.widthPt * MM) : null, heightMm: r.heightPt != null ? r1(r.heightPt * MM) : null, holes: r.holes, members: r.members };
-      for (const f of r.flags) add(sku, f, base);
+      for (const f of r.flags) add(sku, f, base, r);
+      if (r.nearClosed) add(sku, { rule: "cut-line-not-closed", why: `${r.bodyNearClosed ? "the body" : "a cut line"} is drawn closed but ends ${r.nearGapPt != null ? r.nearGapPt + " pt" : "a hair"} from its start (no closing operator), so it was no cut line: the design read as a ring or was not indexed at all; the reader now closes it` }, base, r);
       const f = familyOf(sku), sibs = (fam.get(f.base + "|" + f.variant) || []).filter(x => x.r !== r && x.r.areaPt2 > 0);
-      if (sibs.length >= 3 && r.areaPt2 > 0) { const med = median(sibs.map(x => x.r.areaPt2)); if (r.areaPt2 < 0.3 * med) add(sku, { rule: "small-vs-siblings", why: `silhouette ${r1(r.areaPt2 * MM * MM)} mm² against ${r1(med * MM * MM)} mm² (median of ${sibs.length} ${f.base}${f.variant ? " (" + f.variant + ")" : ""} designs)` }, base); }
+      if (sibs.length >= 3 && r.areaPt2 > 0) { const med = median(sibs.map(x => x.r.areaPt2)); if (r.areaPt2 < 0.3 * med) add(sku, { rule: "small-vs-siblings", why: `silhouette ${r1(r.areaPt2 * MM * MM)} mm² against ${r1(med * MM * MM)} mm² (median of ${sibs.length} ${f.base}${f.variant ? " (" + f.variant + ")" : ""} designs)` }, base, r); }
       const twin = rows.filter(x => x !== r && x.skus.some(s2 => { const g = familyOf(s2); return g.name === f.name && g.variant !== f.variant; }));
       // (a huggie is smaller than the full-size piece of the same design, so only an extreme ratio counts)
-      if (f.variant === "HUGGIE" && twin.length && r.areaPt2 > 0) { const t = twin.find(x => x.areaPt2 > 0); if (t && r.areaPt2 < 0.08 * t.areaPt2) add(sku, { rule: "small-vs-twin", why: `silhouette ${r1(r.areaPt2 * MM * MM)} mm² against ${r1(t.areaPt2 * MM * MM)} mm² for the same design without (HUGGIE)` }, base); }
+      if (f.variant === "HUGGIE" && twin.length && r.areaPt2 > 0) { const t = twin.find(x => x.areaPt2 > 0); if (t && r.areaPt2 < 0.08 * t.areaPt2) add(sku, { rule: "small-vs-twin", why: `silhouette ${r1(r.areaPt2 * MM * MM)} mm² against ${r1(t.areaPt2 * MM * MM)} mm² for the same design without (HUGGIE)` }, base, r); }
       // the stored record and picture
       const e = live.get(sku.toUpperCase());
-      if (e && r.areaPt2 > 0 && e.areaPt2 > 0 && (e.areaPt2 < 0.5 * r.areaPt2 || e.areaPt2 > 2 * r.areaPt2)) add(sku, { rule: "live-record-differs", why: `the library holds ${r1(e.areaPt2 * MM * MM)} mm² (${r1(e.widthPt * MM)} x ${r1(e.heightPt * MM)} mm, ${e.holes} holes); the reader now gives ${r1(r.areaPt2 * MM * MM)} mm² (${r1(r.widthPt * MM)} x ${r1(r.heightPt * MM)} mm, ${r.holes} holes)` }, base);
-      const pic = pics[e ? e.sku : sku];
-      if (pic && (pic.widestPieceSpan < 0.7 || pic.inkShare < 0.02)) add(sku, { rule: "stored-picture", why: `the stored card picture is ${pic.inkShare < 0.02 ? "almost empty" : "no body, only loose pieces"} (ink ${Math.round(pic.inkShare * 1000) / 10} %, the widest connected piece spans ${Math.round(pic.widestPieceSpan * 100)} % of the picture, ${pic.pieces} pieces)` }, base);
+      // the library record against the design: far off in area AND in size or hole count (an area-only difference is another way of measuring), and
+      // against every drawing this SKU labels in that master (a SKU written on two drawings is held once: the other drawing is not a stale record)
+      const differs = x => x.areaPt2 > 0 && e.areaPt2 > 0 && (e.areaPt2 < 0.5 * x.areaPt2 || e.areaPt2 > 2 * x.areaPt2) && (Math.abs(e.widthPt - x.widthPt) > 0.2 * Math.max(e.widthPt, x.widthPt) || Math.abs(e.heightPt - x.heightPt) > 0.2 * Math.max(e.heightPt, x.heightPt) || e.holes !== x.holes);
+      if (sameMasterLive(e, r) && r.areaPt2 > 0 && (designsOf.get(sku.toUpperCase()) || [r]).filter(x => x.master === r.master).every(differs)) add(sku, { rule: "live-record-differs", why: `the library holds ${r1(e.areaPt2 * MM * MM)} mm² (${r1(e.widthPt * MM)} x ${r1(e.heightPt * MM)} mm, ${e.holes} holes); the reader now gives ${r1(r.areaPt2 * MM * MM)} mm² (${r1(r.widthPt * MM)} x ${r1(r.heightPt * MM)} mm, ${r.holes} holes)` }, base, r);
+      const pic = sameMasterLive(e, r) ? pics[e.sku] : null;
+      if (pic && (pic.widestPieceSpan < 0.7 || pic.inkShare < 0.02)) add(sku, { rule: "stored-picture", why: `the stored card picture is ${pic.inkShare < 0.02 ? "almost empty" : "no body, only loose pieces"} (ink ${Math.round(pic.inkShare * 1000) / 10} %, the widest connected piece spans ${Math.round(pic.widestPieceSpan * 100)} % of the picture, ${pic.pieces} pieces)` }, base, r);
     }
+  }
+  // a label that is no SKU (a size note, a sample caption, a single letter pair): such a "design" is a stray sample, not a charm of the shop
+  const isJunkSku = k => /^\d{1,3}$/.test(k) || /^[A-Z]{1,3}$/.test(k) || /^(HUGGIE|NEW|PREVIOUS|DECEMBER \d{4})$/.test(k);
+  // stored card pictures that are a lone ring or loose pieces, for library entries no design of the current masters explains (older sample sheets)
+  for (const [sku, pic] of Object.entries(pics)) {
+    if (!(pic.widestPieceSpan < 0.7 || pic.inkShare < 0.02)) continue;
+    const K = String(sku).toUpperCase(); if ([...affected.values()].some(x => x.sku === K && x.reasons.some(y => y.rule === "stored-picture"))) continue;
+    const e = live.get(K);
+    add(K, { rule: "stored-picture", why: `the stored card picture is ${pic.inkShare < 0.02 ? "almost empty" : "no body, only loose pieces"} (ink ${Math.round(pic.inkShare * 1000) / 10} %, the widest connected piece spans ${Math.round(pic.widestPieceSpan * 100)} % of the picture, ${pic.pieces} pieces)` }, { master: e ? String(e.masterName || "").replace(/\.ai$/i, "") : null, charm: null, libraryOnly: true });
   }
   for (const s of scans) for (const o of s.orphanLabels) {
     if (!o.looseInk) continue;                                                       // the ink above it is held by charms: another matter (the label sits too far from them)
@@ -235,23 +254,33 @@ function report(a) {
   }
   // what each design needs: the reader now reads it right (a re-index writes it), the stored data is stale, the artist must fix the master, or a person looks
   const stored1 = arg(a, "--files") ? JSON.parse(fs.readFileSync(arg(a, "--files"), "utf8")).files : {};
-  for (const e of affected.values()) { const sf = stored1[e.sku]; if (sf) e.storedFile = sf; const lv = live.get(e.sku); if (lv) e.library = { widthMm: r1(lv.widthPt * MM), heightMm: r1(lv.heightPt * MM), areaMm2: r1(lv.areaPt2 * MM * MM), holes: lv.holes, members: lv.members, file: lv.aiPath, picture: lv.thumbPath }; }
-  const rowBySku = new Map(); for (const r of rows) for (const sku of r.skus) rowBySku.set(sku.toUpperCase(), r);
-  const rewrite = new Map(), addRewrite = (sku, why) => { const k = String(sku).toUpperCase(); if (!rewrite.has(k)) rewrite.set(k, why); };
-  for (const e of affected.values()) {
-    const r = rowBySku.get(e.sku), rules = e.reasons.map(x => x.rule), own = r ? r.flags.length : 1;
+  const rewrite = new Map(), collisions = {}, heldElsewhere = {}, addRewrite = (sku, why, row) => {
+    const k = String(sku).toUpperCase(); if (isJunkSku(k) || rewrite.has(k)) return;
+    const lv = live.get(k); if (lv && row && !sameMasterLive(lv, row)) { heldElsewhere[k] = `the library holds ${k} from ${lv.masterName} (another drawing); this design is in ${row.master}: not re-indexed under this SKU`; return; }   // the other master's record would be replaced
+    rewrite.set(k, why);
+  };
+  for (const [k, e] of affected) {
+    const r = rowOfKey.get(k), lv = live.get(e.sku), sf = stored1[e.sku];
+    if (lv && sameMasterLive(lv, r || { master: e.master })) { if (sf) e.storedFile = sf; e.library = { widthMm: r1(lv.widthPt * MM), heightMm: r1(lv.heightPt * MM), areaMm2: r1(lv.areaPt2 * MM * MM), holes: lv.holes, members: lv.members, master: lv.masterName, file: lv.aiPath, picture: lv.thumbPath }; }
+    else if (lv) e.libraryHeldBy = lv.masterName;                                    // the library holds this SKU from another master (another drawing)
+    const others = (designsOf.get(e.sku) || []).filter(x => x !== r && !(x.skus.length === (r ? r.skus.length : -1) && x.master === e.master && x.charm === e.charm));
+    if (others.length) e.alsoLabelsOtherDesigns = [...new Set(others.map(x => shortMaster(x.master) + " #" + x.charm + " (" + r1(x.widthPt * MM) + " x " + r1(x.heightPt * MM) + " mm)"))];
+    const rules = e.reasons.map(x => x.rule), own = r ? r.flags.length : 1;
     const masterSide = e.reasons.some(x => (x.rule === "open-outline") || (x.openBodies > 0));
-    e.inLibrary = live.size ? live.has(e.sku) : undefined;
-    e.fix = r && r.nearClosed && !own ? "reader" : masterSide ? "master" : r && !own && rules.every(x => x === "live-record-differs" || x === "stored-picture") ? "reindex" : "review";
-    e.needs = { reader: "re-index: the reader now reads it right (closeNearlyClosed in charm-nest-pdf.js)", master: "the artist closes or completes the cut line in Illustrator, then re-index", reindex: "re-index: the stored record or picture is stale against what the reader gives now", review: "a person looks at the drawing (not a certain defect)" }[e.fix];
+    e.inLibrary = live.size ? !!lv : undefined;
+    e.fix = r && r.nearClosed && !own ? "reader" : masterSide ? "master" : r && !own && rules.includes("stored-picture") && rules.every(x => x === "live-record-differs" || x === "stored-picture") ? "reindex" : "review";   // a record that merely differs may be another drawing under the same label: a person looks
+    if (isJunkSku(e.sku)) { e.fix = "review"; e.junkSku = true; }
+    e.needs = e.junkSku ? "not a real SKU (a size note or a sample caption read as a label): leave it out of the re-index; a person may remove the stray library card" : { reader: "re-index: the reader now reads it right (closeNearlyClosed in charm-nest-pdf.js)", master: "the artist closes or completes the cut line in Illustrator (the opening is named in the reasons), then re-index; until then the library record stays as it is (it is not in the re-index list)", reindex: "re-index: the stored record or picture is stale against what the reader gives now", review: "a person looks at the drawing (not a certain defect)" }[e.fix];
   }
-  for (const r of rows) if (r.nearClosed) for (const sku of r.skus) addRewrite(sku, "reader");                  // every line under a design whose cut line the reader now closes (they share one file)
-  for (const e of affected.values()) if (e.fix === "reindex" || e.fix === "reader") for (const sku of (rowBySku.get(e.sku) || { skus: [e.sku] }).skus) addRewrite(sku, e.fix);
+  for (const r of rows) if (r.nearClosed) for (const sku of r.skus) addRewrite(sku, "reader", r);                  // every line under a design whose cut line the reader now closes (they share one file)
+  for (const [k, e] of affected) if (e.fix === "reindex" || e.fix === "reader") { const r = rowOfKey.get(k); for (const sku of (r || { skus: [e.sku] }).skus) addRewrite(sku, e.fix, r); }
+  // a SKU that labels another design in another master is held live by only one of them: the coordinator decides which, so it is named here
+  for (const sku of rewrite.keys()) { const ds = designsOf.get(sku) || []; const masters = new Set(ds.map(x => x.master)); if (masters.size > 1) collisions[sku] = ds.map(x => shortMaster(x.master) + " #" + x.charm + " (" + r1(x.widthPt * MM) + " x " + r1(x.heightPt * MM) + " mm)").filter((v, i, arr) => arr.indexOf(v) === i); }
   const list = [...affected.values()].sort((x, y) => x.sku < y.sku ? -1 : 1);
   const fixBy = {}; for (const e of list) fixBy[e.fix] = (fixBy[e.fix] || 0) + 1;
-  fs.writeFileSync(path.join(outDir, "BROKENCHARM-affected.json"), JSON.stringify({ at: new Date().toISOString(), masters: scans.map(s => ({ master: s.master, at: s.at, counts: s.counts })), count: list.length, byFix: fixBy, affected: list }, null, 1));
+  fs.writeFileSync(path.join(outDir, "BROKENCHARM-affected.json"), JSON.stringify({ at: new Date().toISOString(), cause: "A cut line the artist drew closed but that ends a hair from its start (no closing operator, 0.09 pt for DACHSHUND_88528 (HUGGIE)) was no cut line to the reader: the design came out as its jump ring alone (0 holes), or was not read at all. closeNearlyClosed in charm-nest-pdf.js closes such a line in memory (up to 1 pt and 5 % of its length, and open runs of one compound path whose ends meet); the master file is not changed.", fixMeaning: { reader: "the reader now reads it right: re-index it (it is in BROKENCHARM-rewrite-skus.json unless it is a stray label or its SKU is held live from another master)", master: "broken in the master itself: the artist closes or completes the cut line in Illustrator", reindex: "the library picture is empty or loose pieces while the reader now gives a body: re-index", review: "not a certain defect (a person looks), or a stray label that is no SKU" }, masters: scans.map(s => ({ master: s.master, at: s.at, counts: s.counts })), count: list.length, byFix: fixBy, affected: list }, null, 1));
   const rw = [...rewrite.keys()].sort();
-  fs.writeFileSync(path.join(outDir, "BROKENCHARM-rewrite-skus.json"), JSON.stringify({ at: new Date().toISOString(), note: "SKUs to re-index (index-master.cjs --only <this file>): the reader now reads these right, or their stored record or picture is stale. A SKU under a design with other SKUs travels with it. Designs broken in the master itself are NOT here: they are fix=master in BROKENCHARM-affected.json.", count: rw.length, newInLibrary: live.size ? rw.filter(k => !live.has(k)) : undefined, skus: rw, why: Object.fromEntries(rw.map(k => [k, rewrite.get(k)])) }, null, 1));
+  fs.writeFileSync(path.join(outDir, "BROKENCHARM-rewrite-skus.json"), JSON.stringify({ at: new Date().toISOString(), note: "SKUs to re-index (index-master.cjs --only <this file>): the reader now reads these right, or their stored record or picture is stale. A SKU under a design with other SKUs travels with it. Designs broken in the master itself are NOT here: they are fix=master in BROKENCHARM-affected.json.", count: rw.length, newInLibrary: live.size ? rw.filter(k => !live.has(k)) : undefined, skus: rw, why: Object.fromEntries(rw.map(k => [k, rewrite.get(k)])), skuInSeveralMasters: collisions, notReindexedHeldByAnotherMaster: heldElsewhere }, null, 1));
   console.log(`${list.length} SKU(s) flagged → ${path.join(outDir, "BROKENCHARM-affected.json")} ${JSON.stringify(fixBy)} · ${rw.length} to re-index → BROKENCHARM-rewrite-skus.json`);
   const by = {}; for (const e of list) for (const r of e.reasons) by[r.rule] = (by[r.rule] || 0) + 1; console.log(JSON.stringify(by));
   return list;
