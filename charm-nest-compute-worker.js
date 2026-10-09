@@ -1,5 +1,5 @@
 /* Dedicated PDF/geometry worker. No network APIs or production state live here. */
-importScripts('vendor/pdf-lib-1.17.1.min.js','vendor/clipper-6.4.2.js','charm-nest-vector.js','charm-nest-geom.js?v=20261009-flat-col','charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2','charm-nest-rose.js?v=20261007-edges-gc1','charm-nest-export.js?v=20261009-cutfill-plb1-bf1','charm-nest-pair.js?v=20261009-pr1-mi1-mi3-mi4','charm-nest-pair-thumb.js?v=20261009-pt3-pt2-mi1-mi2');
+importScripts('vendor/pdf-lib-1.17.1.min.js','vendor/clipper-6.4.2.js','charm-nest-vector.js','charm-nest-geom.js?v=20261009-flat-col','charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2','charm-nest-rose.js?v=20261007-edges-gc1','charm-nest-export.js?v=20261009-cutfill-plb1-bf1','charm-nest-pair.js?v=20261009-pr1-mi1-mi3-mi4-mi5','charm-nest-pair-thumb.js?v=20261009-pt3-pt2-mi1-mi2');
 const P=self.CharmNestPDF,parsedCache=new Map();
 async function hydrate(parsed){
   if(parsed.doc)return parsed;
