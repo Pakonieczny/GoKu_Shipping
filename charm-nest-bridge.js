@@ -25,7 +25,7 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 // Shared by waiting and decided engravings; choices remain read-only purchase facts.
 function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec);
-  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong></div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
+  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
 }
 // Zoom/pan ported from Index(20260922-153718).html, wireTiles review viewer.
 // Keep its transform order, clamp, wheel steps, drag damping and click maths.
@@ -11847,10 +11847,12 @@ const OrderWin = window.OrderWin = (() => {
     // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
     const sheetEngOf = x => () => { const m = SV.info && (SV.info.mine || []).find(y => y.poolId && (x.poolIds || []).includes(y.poolId)); return (m && m.eng) || null; };
     const here = multi && !all ? ps.find(p => p.key === r.key) : null;
-    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r, label: here ? here.name : "", meta: here ? meta(here) : "",
+    // (an earring pair: which pool piece is the Left and which the Right, and which is the mirror image, for a card that engraves each ear on its own; none for any other line)
+    const earsOf = x => { const sd = tryDo(() => pairSides(x)) || []; return sd.length ? sd.map(c => ({ poolId: String(c.poolId || c.key), side: c.side, mirror: !!c.mirror })) : undefined; };
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r, ears: earsOf(r), label: here ? here.name : "", meta: here ? meta(here) : "",
       events: () => (W.evFor === rid ? W.events : null),
       sheetEng: sheetEngOf(r),
-      pieces: all ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean).sort((a, b) => (b.key === r.key) - (a.key === r.key)) : undefined,   // (the line the order was opened on first)
+      pieces: all ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, ears: earsOf(x), label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean).sort((a, b) => (b.key === r.key) - (a.key === r.key)) : undefined,   // (the line the order was opened on first)
       // (an approval made elsewhere, or here: what hangs on it is drawn again: the Engraving cell, the Sheet tab)
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
     if (W.engCard && W.engCard.el === host && W.engCard.mode === (all ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
@@ -12143,7 +12145,7 @@ const OrderWin = window.OrderWin = (() => {
       if (dot && !row.style.getPropertyValue("--pc")) row.style.setProperty("--pc", dot.style.getPropertyValue("--c") || "var(--gold)");
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
-    const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + x.qty, 0);
+    const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
     const html = p ? `Showing <b>${esc(p.name)}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
   }

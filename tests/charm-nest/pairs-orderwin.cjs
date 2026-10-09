@@ -207,6 +207,7 @@ async function partB() {
     assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'Waiting for a sheet']], JSON.stringify(w));
     assert.equal(w.rows.filter(r => !r.side).length, 1); assert.ok(w.rows.filter(r => r.side).every(r => r.piece === `${R.rid}_${R.tx}`), 'both side rows pick their line');
     assert.match(w.split, /Left on GF Sheet 1, Right not on a sheet yet/); ok('B3 a pair and another line: the Right is waiting, the Left is on its sheet, the other line has its own row');
+    assert.equal(await page.evaluate(() => (document.querySelector('#owPcSum .owPcState') || {}).textContent), 'Showing all 3 pieces', 'the pair counts as two pieces beside the other line'); ok('B3a the quiet line counts pieces: a pair (2) and another line (1) are 3');
     // a press on the Right row picks the line, a second press shows all pieces again
     await page.evaluate(() => document.querySelector('#owPcSum .owPcRow[data-side="R"] .owPcName').click()); await page.waitForTimeout(300);
     assert.equal(await page.evaluate(() => OrderWin.selectedPiece()), `${R.rid}_${R.tx}`); ok('B3b a press on a side row picks its line');
