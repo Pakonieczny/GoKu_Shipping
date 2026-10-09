@@ -124,15 +124,20 @@ const SAMPLES = '/mnt/project-files/plans/pairs-1009/PAIRMASTER-samples/';
     }
     ok('B2 real mismatched pairs (MISMATCHED_7134, KEY_5598, HEART_2206): the Left ear is the left body, the Right ear the right body mirrored, each at its own size');
 
-    // C · the layers
-    { const { parsed, charm } = await charmOf(REAL + 'BEAR_7932.ai'); const left = Pair.pieceGeometry(charm, { side: 'L', mirror: false }), right = Pair.pieceGeometry(charm, { side: 'R', mirror: true });
-      const e = await ears(parsed, left, right, 0), lay = ps => ps.map(p => p.layer).sort().join('|');
-      console.log('    layers of the Left ear: ' + lay(e.L) + '   of the Right ear: ' + lay(e.R));
-      open('PAIRMASTER', lay(e.L) === lay(e.R), 'C1 the Right ear is written on the layers the Left is on (a real per-SKU file keeps CUT / ENGRAVE / HATCH inside its form, buildSheet\'s layerKeyOf only reads the page)');
+    // C · the layers: the Right ear is on the master's own layers (CUT / ENGRAVE / HATCH), so the laser sees one cut layer and one engrave layer for both ears
+    for (const name of ['BEAR_7932.ai', 'ACORN_5207_HUGGIE_.ai', 'BEAR_1.ai', 'ANGEL_33719_HUGGIE_.ai']) {
+      if (!fs.existsSync(REAL + name)) continue;
+      const { parsed, charm } = await charmOf(REAL + name); const left = Pair.pieceGeometry(charm, { side: 'L', mirror: false }), right = Pair.pieceGeometry(charm, { side: 'R', mirror: true });
+      const e = await ears(parsed, left, right, 0), lay = ps => ps.map(p => /(?:^|\s)(?:Left|Right)$/.test(p.layer) ? 'EAR' : p.layer).sort().join('|');   // (a piece's own layer is named for its ear: Left / Right)
+      assert.equal(lay(e.R), lay(e.L), name + ': the Right ear is on the layers the Left is on, path for path (Left ' + lay(e.L) + ', Right ' + lay(e.R) + ')');
       const dxf = t => { const m = {}; const L = t.split('\r\n'); for (let i = 0; i < L.length - 1; i++) if (L[i] === '0' && (L[i + 1] === 'LWPOLYLINE' || L[i + 1] === 'HATCH')) { let j = i; while (L[j] !== '8') j++; m[L[j + 1]] = (m[L[j + 1]] || 0) + 1; } return m; };
-      const d = dxf(Ex.dxf(Ex.productionPaths(e.sheet), e.names).text); const cutLayers = Object.keys(d).filter(k => /^(CUT|ENGRAVE|HATCH)$/.test(k));
-      open('PAIRMASTER', Object.keys(d).every(k => !/Right/.test(k)) , 'C2 no DXF layer holds a whole Right ear (' + JSON.stringify(d) + ')');
-      assert(cutLayers.length >= 1); }
+      const d = dxf(Ex.dxf(Ex.productionPaths(e.sheet), e.names).text);
+      for (const k of Object.keys(d)) if (k !== 'SHEET (do not cut)' && !/Left|Right/.test(k)) assert(d[k] % 2 === 0, name + ': layer ' + k + ' holds the same number of entities for both ears (' + d[k] + ')');
+      const ownL = Object.entries(d).filter(([k]) => /Left/.test(k)).reduce((a, [, v]) => a + v, 0), ownR = Object.entries(d).filter(([k]) => /Right/.test(k)).reduce((a, [, v]) => a + v, 0); assert.equal(ownL, ownR, name + ': as many entities on the Left\'s own layer as on the Right\'s (' + ownL + '/' + ownR + ')');
+      // the file is still one valid PDF: the layers the Right ear names are listed where the Left's are
+      const re = await P.parseSource(e.bytes, 'again'); assert(re.segments.length >= 2);
+    }
+    ok('C1/C2 the exported Right ear is on the master\'s own layers (CUT / ENGRAVE / HATCH) in the .ai and in the DXF, entity for entity like the Left (4 real per-SKU files)');
 
     // D · the back flip is not the left/right mirror
     for (const name of ['BEAR_7932.ai', 'ACORN_5207_HUGGIE_.ai', 'BEAR_1.ai', 'ANGEL_33719_HUGGIE_.ai']) {
