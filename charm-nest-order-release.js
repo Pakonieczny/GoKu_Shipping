@@ -113,6 +113,21 @@
   }
   const piecesOnSheets = rid => { const out = []; for (const sh of allSheets()) for (const c of sh.charms || []) if (c.poolId && ridOfCharm(c) === str(rid)) out.push({ sh, c }); return out; };
 
+  /** How many pieces a held line comes back as: the pieces the cloud still lists for it (a pair of earrings is two, a mismatched pair a left and a right, n discs n),
+   *  else the line's quantity as before. */
+  function pieceCount(r, rid) {
+    const q = Math.max(1, +(r.spec && r.spec.quantity) || +(r.line && r.line.quantity) || 1);
+    try { const OP = G.OrderPieces; if (OP && OP.of) { const n = OP.of(rid).filter(p => p && p.lineKey === r.key && p.poolId).length; if (n > 0) return n; } } catch (_) { /* the quantity below */ }
+    return q;
+  }
+  /** Sentences for a pair (or n discs) whose pieces went on more than one sheet: "Its pair is on two sheets: the left earring on GF Sheet 1 and the right earring on GF Sheet 2."; [] when every group is whole on one sheet. */
+  function landedWords(ids) {
+    try {
+      const P = G.PairRemove; if (!P) return [];
+      const items = [...locate(new Set(ids))].map(([id, x]) => { const pr = (G.B && G.B.pool && G.B.pool.rows.get(id)) || { poolId: id }; return { id, groupKey: P.keyOf(pr) || P.keyOf(x.c) || P.keyOf(id), side: P.sideOfPiece(pr, P.isMismatchedSku(pr.sku)), form: str(pr.form), where: label(x.sh) }; });
+      return P.groupsOf(items).filter(g => g.sheets.length > 1).map(g => ((g.kind === 'pair' || g.kind === 'mismatched') && g.size === 2 ? `Its pair is on two sheets: ${g.phrase}.` : g.text));
+    } catch (_) { return []; }
+  }
   /* ── pairs (Paul, 9 Oct 2026, amendment 2): every earring pair line makes TWO pieces for each unit, one Left and one Right (matching or
      mismatched, mirror images), and a necklace with a count (discs, letters, charms) makes that many pieces of one group. A line is one
      GROUP (charm-nest-pair.js: receipt + transaction) and goes back on a sheet whole; one whose other pieces stay on a sheet already cut
@@ -159,7 +174,7 @@
       // (an earring pair line makes a Left and a Right for each unit, so it is counted by its pieces; every other line keeps the count it had)
       if (lk.pair) { pc.kind = lk.mismatched ? 'mismatched' : 'pair'; pc.pieces = lk.pieces; pc.sides = ['Left', 'Right']; pairs.push(pc); }
       base.pieces.push(pc);
-      if (m) byMetal.set(m, (byMetal.get(m) || 0) + (lk.pair ? lk.pieces : qty));
+      if (m) byMetal.set(m, (byMetal.get(m) || 0) + (lk.pair ? lk.pieces : pieceCount(r, rid)));   // (any other line: the pieces the cloud lists for it, n discs, else its quantity)
     }
     const open = runOpen(), fx = base.effects;
     fx.push(`Order ${rid} goes to the front of the queue, ahead of the orders coming in from Etsy.`);
@@ -353,11 +368,11 @@
     const unplaced = after.filter(r => !done.includes(r.state) && !(r.state === 'noDesign' && !(r.poolIds || []).length));
     if (unplaced.length && open) { const r = unplaced[0]; for (const x of after) delete x.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but ${str(r.reason || r.state)}`, 'place', { released: true }); }
 
-    const finish = async (pages, placed, why) => {
-      const first = pages[0], where = pages.map(label).join(', ');
+    const finish = async (pages, placed, why, landed) => {
+      const first = pages[0], where = pages.map(label).join(', '), said = landed && landed.length ? ` · ${landed.join(' ')}` : '';
       if (G.SheetEvents && G.SheetEvents.order) G.SheetEvents.order({ type: 'released', orderId: rid, id: `oh-rel-${rid}-${frontAt}`, by: who, at: Date.now(), sheetId: first ? first.sheetId || '' : '', sheet: where, setId: first && inSet(first) ? first.setId : '',
-        text: (placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`) + (split.length ? ` · pair split: ${split.map(splitWords).join('; ')}` : ''),
-        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, split.length ? { split: split.map(x => x.groupKey) } : {}) });
+        text: (placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`) + (split.length ? ` · pair split: ${split.map(splitWords).join('; ')}` : '') + said,
+        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, Object.assign(split.length ? { split: split.map(x => x.groupKey) } : {}, said ? { landed: true } : null)) });
       for (const r of rowsOfOrder(rid)) delete r.releasing;
       for (const sh of kept) unkeep(sh);
       refresh(); await persist();
@@ -380,7 +395,10 @@
 
     /* 5 · the QR label of each sheet that changed, then the timeline's permanent step with the sheet and the time */
     for (const sh of pages) await remakeQr(sh, rid, emit, wasSet(sh));
-    return finish(pages, true);
+    // a pair (or n discs) that could not go on one sheet is said, never "placed" as if whole (the sets and the order window read the same fact)
+    const landed = landedWords(fresh);
+    if (landed.length) emit({ type: 'pairSplit', rid, text: landed.join(' ') });
+    return finish(pages, true, undefined, landed);
   }
 
   OH.release = function release(rid, opts) {
