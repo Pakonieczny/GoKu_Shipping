@@ -3262,7 +3262,7 @@ function trueFrame(st) {
 }
 window.trueFrame = trueFrame;
 const TRAY = "#efe9de";   // the part of the 100 × 50 mm frame a smaller sheet leaves
-const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round(ms % 60000 / 1000) + "s" };
+const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => { const t = Math.round(ms / 1000); return t < 60 ? t + "s" : Math.floor(t / 60) + "m " + (t % 60) + "s"; } };   // (whole seconds first: 539.6 s read "8m 60s")
 /* Storage redirects are read through the same-origin production asset route. */
 const cors = u => CharmNestAssets.url(u);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4126,7 +4126,7 @@ function layoutFixed(sh) {
   return !!sh.roseCutAt || !!sh.releaseFull || !!sh.recalled || !!sh.laserDoneAt || !!(window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && set.sheetIds.includes(sh.sheetId))) ||
     !!(window.Gate && Gate.modern(sh.runId) && sh.setId && !sh.draft);
 }
-function sheetDirty(sh) { if(sh.roseCutAt)return; if((sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal)))&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; delete sh.keptStock; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; if((sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal)))&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.releaseWhy; delete sh.missRearranged; delete sh.keptStock; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -4245,7 +4245,17 @@ function topupSettle(sh, result, full) {
   // only the live Auto run brings later orders to this sheet; anywhere else it would wait for nothing
   const live = S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId && !["complete", "abandoned"].includes(window.B.run.status);
   if (!t) {
-    if (!full || atCeiling || reached || noRoom || !sh.rejects.length || !live) return full;
+    if (!full || atCeiling || reached || noRoom || !sh.rejects.length || !live) {
+      // a sheet released below the 75% target with no gap fill says why, on its card and in its log (Paul, 9 Oct: "the silver sheet
+      // did not finish being filled and then the system decided to start a new sheet")
+      if (full && !atCeiling && !reached) {
+        const why = noRoom ? "no room left for even the smallest charms" : !sh.rejects.length ? "no order is waiting to try its gaps"
+          : S.settings.runMode !== "auto" ? "Manual mode brings no later orders to try its gaps" : "it is not a sheet of the live Auto run, so no later orders come to try its gaps";
+        if (sh.releaseWhy !== why) { sh.releaseWhy = why; log(sh, `Released at ${fmt.pct(shownFull(result))} without a gap fill: ${why}`); }
+      }
+      return full;
+    }
+    delete sh.releaseWhy;
     sh.topup = { at: topupNow(), base: +result.density.toFixed(4), tried: [], placed: sh.placements.length };
     log(sh, `Filling its gaps at ${fmt.pct(result.density)}: the order that missed moves to the next sheet, and the next ${TOPUP.orders} orders try this sheet first`);
     return false;
@@ -4260,10 +4270,18 @@ function topupSettle(sh, result, full) {
   if (!live || atCeiling || reached || noRoom || t.tried.length >= TOPUP.orders) {
     t.closedAt = topupNow(); t.density = +result.density.toFixed(4);
     const why = reached ? `${fmt.pct(shownFull(result))} full` : atCeiling ? "at the fill ceiling" : noRoom ? "no room left for even the smallest charms" : !live ? "the run stopped bringing orders" : `${TOPUP.orders} later orders tried`;
+    t.why = why;   // (kept on the sheet record, which already carries the gap fill: the card says why a sheet below 75% went to the laser)
     log(sh, `Gap fill done, ${why}: ${fmt.pct(t.base)} → ${fmt.pct(result.density)}, sheet released`);
     return true;
   }
   return false;
+}
+/** Why a Gold or Silver sheet went to the laser below the 75% target: how its gap fill ended, or why it had none ("" for any
+    other sheet, one at the target, and one whose reason this page never saw). `pct` is the fill the card shows. */
+function releasedBelowTarget(sh, pct) {
+  if (!sh.releaseFull || !["gold", "silver"].includes(sh.metal) || !(pct < TOPUP.target - .005)) return "";
+  const t = sh.topup, why = (t && t.closedAt && t.why) || sh.releaseWhy || "";
+  return why ? `released at ${fmt.pct(pct)} · ${why}` : "";
 }
 /** The orders a sheet filling its gaps can still take for a try: 35 less those that have tried it and (waiting) less
     those already on it waiting for their try; any other sheet has no such limit. A big batch used to wait on the full
@@ -4314,7 +4332,7 @@ async function settleTopups() {
     for (const sh of pages) {
       const t = sh.topup;
       if (!t.closedAt) {
-        t.closedAt = topupNow(); t.density = +(+sh.density || 0).toFixed(4); t.streamEnd = true;
+        t.closedAt = topupNow(); t.density = +(+sh.density || 0).toFixed(4); t.streamEnd = true; t.why = "every order of the stream is in";
         sh.releaseFull = true; sh._renderAreas = null;
         log(sh, `Gap fill done, every order of the stream is in: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`);
         agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: every order of the stream is in, so its gap fill ends (${(t.tried || []).length} of ${TOPUP.orders} later orders tried) · released at ${fmt.pct(sh.density || 0)} with its QR label`);
@@ -5994,6 +6012,7 @@ function renderCard(sh) {
   // a Gold or Silver sheet filling its gaps is not released yet: say so where the set is named (see topupSettle)
   if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
   { const qr = qrRetryNote(sh); if (qr) bits.push(qr); }   // a stream release still owed its QR label (settleTopups)
+  { const rb = releasedBelowTarget(sh, sh.sat ? sh.sat.fullPct : sh.density); if (rb) bits.push(`<span title="${esc(`A Gold or Silver sheet waits for ${TOPUP.target * 100}% full or for ${TOPUP.orders} later orders to try its gaps, unless not even the smallest charms still fit it. This one went to the laser earlier: ${rb}.`)}">${esc(rb)}</span>`); }
   { const cu = sh.charms.filter(c => c.custom && !c.excluded).length; if (cu) bits.push(`<span class="cuTag" title="Custom orders' own designs on this sheet, tinted plum">${cu} custom</span>`); }
 
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
