@@ -172,9 +172,9 @@ const ENGRAVE_INTENT_SCHEMA = { type: "object", additionalProperties: false, pro
    keyed by the request, so nothing already read is paid for again). */
 const ENGRAVE_PIECES_INSTRUCTIONS = ENGRAVE_INTENT_INSTRUCTIONS + `
 
-THIS LINE MAKES SEVERAL PIECES, each cut and engraved on its own. The message lists their slots: "L" is the LEFT earring and "R" the RIGHT earring (a mismatched pair: a different charm on each ear); "D1", "D2", "D3" ... are the discs of a disc necklace, disc 1 first. Besides the fields above, answer "pieces": one entry for every slot listed, each with the exact words for that piece only (the same verbatim rules as text).
+THIS LINE MAKES SEVERAL PIECES, each cut and engraved on its own. The message lists their slots: "L" is the LEFT earring and "R" the RIGHT earring (a matching pair: one design on each ear, the right earring is the left turned over like a mirror image; a mismatched pair: a different charm on each ear); "D1", "D2", "D3" ... are the discs of a disc necklace, disc 1 first. Besides the fields above, answer "pieces": one entry for every slot listed, each with the exact words for that piece only (the same verbatim rules as text).
 - The customer gives different words for different ears or discs ("left: Anna, right: Ben", "A B C" for three discs, a name for each ear): put each piece's own words in its slot.
-- The customer gives ONE inscription for the whole line (one name, one date): give every slot that same text.
+- The customer gives ONE inscription for the whole line (one name, one date): give every slot that same text (the words read the normal way on both ears; the right ear's letters are never reversed).
 - The words are clear but it is NOT clear which piece gets which (two names with no left or right, three letters and no order): give your best guess in pieces, add one short question for the operator ("Which ear gets Anna and which gets Ben?") and lower confidence.
 - A piece that is to have NO engraving gets "" for its text.
 - "text" is every inscription of the line together, joined by "\n" in slot order (left before right, disc 1 first).`;

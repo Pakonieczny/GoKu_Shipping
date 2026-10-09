@@ -4433,7 +4433,9 @@ const Engrave = window.Engrave = (() => {
   const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
   const fitOpts = job => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
   const items = () => B.engrave.items;
-  const charmFor = job => job.editCharm || Pool.charmOf(job.copies[0]);
+  /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
+  const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
+  const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]));
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
   let openingBack = null, openingBackId = null;
   async function openBack(poolId, sheetId) {
@@ -4456,6 +4458,7 @@ const Engrave = window.Engrave = (() => {
         charm=Pool.cloneCharm(src.charms[0],poolId); charm.poolId=poolId;
         if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
       }
+      charm=pieceCharmOf(poolId,charm,saved);   // a Right ear's back is edited on the mirrored geometry it was cut and written on
       const sheet=Object.assign({},d,{sheetId:d.id,seq:d.setSeq,backPool:d.backPool || [],fileBase:d.fileBase || d.folder,
         folderPath:d.outputs?.ai?.path?.replace(/\/[^/]+$/,"")});
       if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
@@ -4556,7 +4559,7 @@ const Engrave = window.Engrave = (() => {
     return ensureJobs(row)[0];
   }
   /** What a back record (and its events) says of the piece it is for: nothing for a line that is not cut into slots, so those records stay as they were. */
-  const pieceFields = job => (job && job.slot ? { slot: job.slot, ...(job.row && job.row.side ? { side: job.row.side } : {}), groupKey: job.groupKey || "" } : {});
+  const pieceFields = job => (job && job.slot ? { slot: job.slot, ...(job.row && job.row.side ? { side: job.row.side } : {}), ...((job.editCharm || (job.copies && job.copies.length && charmFor(job)) || {}).mirrored ? { mirror: true } : {}), groupKey: job.groupKey || "" } : {});
   /** The job that holds one piece (by its pool id): the line's only job, or the one of that piece's slot. */
   function jobForPool(row, poolId) {
     const js = ensureJobs(row); if (js.length === 1) return js[0];
@@ -4988,7 +4991,7 @@ const Engrave = window.Engrave = (() => {
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
     const src=sourceOf(charm.sourceId),poolId=job.copies[0];
     const glyphs=fit.glyphs.map(g=>({cmds:g.cmds.map(c=>{const o={type:c.type};if(c.type!=="Z"){o.x=c.x-view.cx;o.y=c.y-view.cy;}if(c.type==="C" || c.type==="Q"){o.x1=c.x1-view.cx;o.y1=c.y1-view.cy;}if(c.type==="C"){o.x2=c.x2-view.cx;o.y2=c.y2-view.cy;}return o;})}));
-    const built=await P.buildBackFile({charm,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:"Source Sans 3",weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
+    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:"Source Sans 3",weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
     const verified=await verifyBackFile(built.bytes,job);
     if(!verified.ok)throw new Error(`The back file needs adjustment (${verified.why}). Move or resize the words before approving.`);
     return {fit,view};
@@ -5255,7 +5258,7 @@ const Engrave = window.Engrave = (() => {
     if(!host || !job)return;
     const revision=host._thumbRevision=(host._thumbRevision || 0)+1;
     const current=()=>host.isConnected && host._thumbRevision === revision;
-    const charm=(job.copies || job.row.poolIds || []).map(id=>Pool.charmOf(id)).find(Boolean);
+    const charm=(job.copies || job.row.poolIds || []).map(id=>pieceCharmOf(id,Pool.charmOf(id))).find(Boolean);
     const paint=c=>{if(current())host.replaceChildren(renderFront(c,220));};
     if(charm?.outline && charm.members?.length){paint(charm);return;}
     const sku=job.row.spec.designSku || job.row.line.sku;
@@ -5372,7 +5375,7 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
-        const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written back file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;

@@ -1476,7 +1476,7 @@
     const topOf = m => (m.parent != null ? m.parent : m.index);
     const tops = [...new Set(cut.map(topOf).filter(t => t != null))];
     const shared = c.members.some(m => !cutSet.has(m) && tops.includes(topOf(m)));
-    const reference = { redrawn: shared || cut.some(m => m.synthetic), tops };
+    const reference = { redrawn: shared || cut.some(m => m.synthetic) || !!spec.mirrored, tops };   // a mirrored piece (the Right earring) has no source bytes to copy: its cut is the mirrored geometry the caller passes, redrawn from the exact transformed paths
     // 1 · CUT OUTLINE (reference)
     addOCG("CUT OUTLINE (reference)", "ocCut");
     page.pushOperators(ocgOps("ocCut"), pushGraphicsState());
