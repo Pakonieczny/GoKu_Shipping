@@ -588,6 +588,21 @@ humanAct.set = (undone, ids, name) => {
    exactly as before when the live layer is missing or down.
    A Laser or Design person's two windows share ONE slot (their role's card): the window that opened last shows, closing the other
    one leaves it alone, and when the window that shows is closed the one still open shows again. With no role they are two slots. */
+/* The pair fields of the pieces one sorter line makes (Paul, 9 and 10 Oct 2026: every earring pair is one LEFT and one RIGHT piece per unit, matching or mismatched):
+   [{ side, grp, of, n, both }] in order, or [] for a line that is not one (it is told exactly as before). CharmNestPair.piecesFor reads the line's own facts first
+   (its pool ids, spec.pieceCount, spec.pair, the design's master entry); a mismatched design the pool still makes as ONE glued piece per unit is `both` (the live
+   board draws its left and its right together and shows it as Left + Right). */
+const livePairOf = (r, rid) => {
+  try {
+    const P = window.CharmNestPair, M = window.Master;
+    if (!P || typeof P.piecesFor !== "function" || !r || !r.line) return [];
+    const e = M && typeof M.entryFor === "function" ? M.entryFor(String((r.spec && r.spec.designSku) || r.line.sku || "")) : null;
+    const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
+    if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
+    if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+  } catch (_) {}
+  return [];
+};
 const CNLive = window.CNLive = (() => {
   const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null }, owner = {}, last = {};
   const A = () => { const a = window.StationActivity; return a && typeof a.working === "function" ? a : null; };
@@ -600,10 +615,16 @@ const CNLive = window.CNLive = (() => {
       rid = String(rid || "").replace(/\D/g, ""); const w = who();
       if (!rid || !w) return false;
       const all = (rows || []).filter(r => r && r.order && r.line && !r.loading), here = all.filter(r => r.state !== "gone"), use = (here.length ? here : all).slice(0, 24);
-      const pieces = use.map((r, i) => {
+      const pieces = []; let total = 0;
+      use.forEach((r, i) => {
         const l = r.line, sp = r.spec || {}, q = Math.floor(+l.quantity) || 1, sku = String(sp.designSku || l.sku || "");
         const title = String(l.title || (r.snap && r.snap.title) || "").replace(/\s+/g, " ").trim().slice(0, 50);
-        return { id: rid + "_" + (String(l.transactionId || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + (title || sku || "Piece " + (i + 1)), sku, listingId: l.listingId, size: sp.size };
+        const one = { id: rid + "_" + (String(l.transactionId || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + (title || sku || "Piece " + (i + 1)), sku, listingId: l.listingId, size: sp.size };
+        const sd = livePairOf(r, rid);
+        total += sd.length || 1;
+        if (!sd.length) { pieces.push(one); return; }
+        // an earring pair: one piece per ear, Left then Right, one group (a pair goes in whole or not at all)
+        if (pieces.length + sd.length <= 24) sd.forEach((d, k) => pieces.push(Object.assign({}, one, { id: one.id + "-" + (k + 1), label: title || sku || "Piece " + (i + 1) }, d)));
       });
       const customer = String((use[0] && use[0].order.buyer && use[0].order.buyer.name) || "");
       const fp = JSON.stringify([w.person, w.device, rid, customer, pieces]);
@@ -611,7 +632,7 @@ const CNLive = window.CNLive = (() => {
       if (seen.sorter === fp) return true;
       seen.sorter = fp;
       if (!since.sorter || since.sorter.rid !== rid) since.sorter = { rid, at: Date.now() };       // (one scan time for the whole opening, however often the lines are read again)
-      const ok = A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+      const ok = A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: Math.max(total, pieces.length), holdMs: HOLD, scannedAt: since.sorter.at });
       if (ok) owner[at("sorter")] = "sorter";
       return ok;
     } catch (_) { return false; }
