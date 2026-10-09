@@ -18,6 +18,15 @@
  *    --replaces HASH     an earlier version of this master to supersede (repeatable)
  *    --resume            continue an interrupted run (progress is kept in <file>.index-progress.json)
  *    --all               rebuild every charm on the sheet, including SKUs the library already holds (default: skip those)
+ *    --only LIST         rebuild ONLY the charms carrying one of these SKUs (a JSON file: an array of SKUs, of {sku} rows, or
+ *                        an object with .skus / .offending; or SKUs separated by commas). Implies --all for those charms and
+ *                        reads the library for just those SKUs (masterGetMany) instead of the whole index (masterList).
+ *                        A charm's other SKUs travel with it (they share one file), so they are rewritten too.
+ *    --out-dir DIR       STAGE instead of upload: write every per-SKU .ai / .png and records.json (the exact entries that
+ *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
+ *                        count, the sizes and a few files, then run again without --out-dir to write the same thing.
+ *    --work-dir DIR      keep the progress and report files in DIR instead of next to the master file
+ *    (the passcode is read from the EDIT_PASSCODE environment variable when --passcode is not given: it is never printed)
  *  The master library (index and per-SKU files) is one library, read by production and the sandbox alike; it holds
  *  designs, not orders, so there is no sandbox copy of it.
  *
@@ -43,10 +52,27 @@ function args(argv) {
     else if (a === "--replaces") { o.replaces.push(String(v || "")); i++; }
     else if (a === "--resume") o.resume = true;
     else if (a === "--all") o.all = true;
+    else if (a === "--only") { o.only = String(v || ""); i++; }
+    else if (a === "--out-dir") { o.outDir = String(v || ""); i++; }
+    else if (a === "--work-dir") { o.workDir = String(v || ""); i++; }
     else if (a === "--engrave-margin-mm") { o.engraveMarginMm = +v || 0.8; i++; }
     else if (!a.startsWith("--") && !o.file) o.file = a;
   }
+  if (!o.passcode && process.env.EDIT_PASSCODE) o.passcode = process.env.EDIT_PASSCODE;
   return o;
+}
+
+/** --only: a list of SKUs from a file or a comma list → Set of upper-case SKUs (or null when not given). */
+function onlySet(spec) {
+  if (!spec) return null;
+  let list;
+  if (fs.existsSync(spec)) {
+    const j = JSON.parse(fs.readFileSync(spec, "utf8"));
+    list = Array.isArray(j) ? j : Array.isArray(j.skus) ? j.skus : Array.isArray(j.offending) ? j.offending : [];
+  } else list = spec.split(",");
+  const set = new Set(list.map(x => String(x && typeof x === "object" ? x.sku : x || "").trim().toUpperCase()).filter(Boolean));
+  if (!set.size) throw new Error("--only names no SKU");
+  return set;
 }
 
 async function api(origin, passcode, fn, body) {
@@ -78,12 +104,16 @@ function thumbnailPng(Geom, charm, size) {
 async function main(argv, log = console.log) {
   const o = args(argv);
   if (!o.file) throw new Error('usage: node scripts/index-master.cjs "<master.ai>" --origin <sorter site> [--dry] [--passcode …]');
-  if (!o.dry && !o.origin) throw new Error("--origin is required (or use --dry to only parse and report)");
+  const stage = !!o.outDir, net = !o.dry && !stage;                      // stage: files and records go to a folder, no server is touched
+  if (net && !o.origin) throw new Error("--origin is required (or use --dry to only parse and report, or --out-dir to stage the files)");
+  const only = onlySet(o.only);
   const { CharmNestPDF: P, Geom: G } = require(path.join(root, "netlify/functions/_charmNestPdf.js"));
   const buf = fs.readFileSync(o.file); const name = path.basename(o.file);
   const masterHash = crypto.createHash("sha256").update(buf).digest("hex");
-  log(`${name}: ${(buf.length / 1048576).toFixed(1)} MB · sha256 ${masterHash.slice(0, 12)} · ${o.dry ? "DRY RUN (nothing written)" : "→ " + o.origin}`);
-  const progressPath = o.file + ".index-progress.json";
+  log(`${name}: ${(buf.length / 1048576).toFixed(1)} MB · sha256 ${masterHash.slice(0, 12)} · ${o.dry ? "DRY RUN (nothing written)" : stage ? "STAGING into " + o.outDir + " (no server is touched)" : "→ " + o.origin}${only ? " · only " + only.size + " SKU(s)" : ""}`);
+  const workBase = o.workDir ? path.join(o.workDir, name) : stage ? path.join(o.outDir, name) : o.file;   // where .index-progress.json / .index-report.json go
+  for (const d of [o.workDir, o.outDir]) if (d) fs.mkdirSync(d, { recursive: true });
+  const progressPath = workBase + ".index-progress.json";
   let progress = { masterHash, done: {} };
   if (o.resume && fs.existsSync(progressPath)) { try { const p = JSON.parse(fs.readFileSync(progressPath, "utf8")); if (p.masterHash === masterHash) progress = p; } catch (_) {} }
   const saveProgress = () => { try { fs.writeFileSync(progressPath, JSON.stringify(progress)); } catch (_) {} };
@@ -100,14 +130,25 @@ async function main(argv, log = console.log) {
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
 
   let masterUp = null;
-  if (!o.dry && o.uploadMaster) { masterUp = await upload(o.origin, o.passcode, `charmnest/master/files/${masterHash.slice(0, 12)}-${name.replace(/[^\w.\-]+/g, "_")}`, buf, "application/pdf"); log(`master stored at ${masterUp.path}`); }
+  if (net && o.uploadMaster) { masterUp = await upload(o.origin, o.passcode, `charmnest/master/files/${masterHash.slice(0, 12)}-${name.replace(/[^\w.\-]+/g, "_")}`, buf, "application/pdf"); log(`master stored at ${masterUp.path}`); }
 
   let items = [...lab.labels].map(([index, l]) => ({ index, l, c: g.charms.find(x => x.index === index) })).filter(x => x.c);
+  const skusOf = l => [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
+  if (only) {
+    const found = new Set(); items = items.filter(({ l }) => { const mine = skusOf(l); const hit = mine.some(sk => only.has(sk)); if (hit) for (const sk of mine) found.add(sk); return hit; });
+    const absent = [...only].filter(sk => !found.has(sk));
+    log(`--only: ${items.length} charm(s) on this sheet carry ${[...only].filter(sk => found.has(sk)).length} of the ${only.size} SKU(s) asked for${absent.length ? ` (${absent.length} not on this sheet: ${absent.slice(0, 20).join(", ")}${absent.length > 20 ? " …" : ""})` : ""}`);
+  }
+  const held = new Map();                                                // the library's entries for these SKUs, when it was read
   // The SKUs are read from the sheet as text, so the library is consulted before any charm is built: one whose SKUs are
   // all held already is left alone, and one with even a single new SKU is rebuilt whole so they keep sharing a file.
-  const supersede = new Set(); let heldCount = 0;
-  if (!o.dry) {
-    const held = new Map();
+  const supersede = new Set(); let heldCount = 0, fileRecs = [];
+  if (net) {
+    if (only) {
+      // only the SKUs being rebuilt are read (one read each), not the whole index
+      const want = [...new Set(items.flatMap(({ l }) => skusOf(l)))];
+      for (let i = 0; i < want.length; i += 300) { const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterGetMany", skus: want.slice(i, i + 300) }); for (const [k, e] of Object.entries(r.entries || {})) if (e && e.sku) held.set(String(k).toUpperCase(), e); }
+    } else
     // the index comes in parts (each answer says where the next starts): every part is read, or a library past the
     // first part would be taken for one without the rest
     for (let cursor = null, part = 0; ; part++) {
@@ -118,13 +159,13 @@ async function main(argv, log = console.log) {
     }
     // Whichever master a SKU belongs to now is superseded by this one, or the two would block each other as the same SKU
     // in two files. This is read even when every charm is being rebuilt, because the clash does not depend on skipping.
-    const files = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterListFiles" });
+    const files = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterListFiles" }); fileRecs = files.files || [];
     for (const f of files.files || []) if (f && f.masterHash && f.masterHash !== masterHash && String(f.name || "") === name) supersede.add(f.masterHash);
     const before = items.length;
     items = items.filter(({ l }) => {
       const mine = [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
       for (const sk of mine) { const e = held.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
-      if (!o.all && mine.every(sk => held.has(sk))) return false;
+      if (!o.all && !only && mine.every(sk => held.has(sk))) return false;
       return true;
     });
     heldCount = before - items.length;
@@ -144,9 +185,17 @@ async function main(argv, log = console.log) {
     catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
     let aiUp = { path: `charmnest/master/${key}.ai`, url: "" }, thumb = null;
     if (!o.dry) {
-      const ai = await P.buildSingleCharm(c, parsed);
-      aiUp = await upload(o.origin, o.passcode, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
-      const png = thumbnailPng(G, c, 168); if (png) thumb = await upload(o.origin, o.passcode, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
+      const ai = await P.buildSingleCharm(c, parsed), png = thumbnailPng(G, c, 168);
+      if (stage) {
+        const put = (rel, bytes) => { const f = path.join(o.outDir, "files", rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(bytes)); return { path: rel, url: "" }; };
+        aiUp = put(`charmnest/master/${key}.ai`, ai); if (png) thumb = put(`charmnest/master/${key}.png`, png);
+      } else {
+        aiUp = await upload(o.origin, o.passcode, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
+        if (png) thumb = await upload(o.origin, o.passcode, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
+      }
+      // No thumbnail could be drawn (@resvg/resvg-js is not installed here): the entry keeps the picture it already has, because a
+      // record written without one would blank thumbPath/thumbUrl (masterPutIndex merges what it is sent).
+      if (!thumb) { const e = held.get(String(l.sku).toUpperCase()), t = e && (l.size ? e.sizes && e.sizes[String(l.size).toUpperCase()] : e); if (t && t.thumbPath) thumb = { path: t.thumbPath, url: t.thumbUrl || "" }; }
     }
     const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push(flipWhy);
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
@@ -162,14 +211,26 @@ async function main(argv, log = console.log) {
   log(`${entries.length} SKU entr${entries.length === 1 ? "y" : "ies"} ready (${skipped} from the previous run) · ${blocked.length} blocked · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 
   let conflicts = [], sizeMoved = [], written = 0;
-  if (!o.dry) {
+  if (stage) {
+    written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;
+    fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], entries, blocked }, null, 1));
+    log(`staged ${written} SKU record(s) and ${new Set(entries.map(e => e.aiPath)).size} design file(s) in ${o.outDir} (records.json, files/) — nothing was sent anywhere`);
+  }
+  if (net) {
     written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;   // one record per SKU, its sizes inside it
+    // the master's stored path (the entries already name it) is kept when this run does not upload the master again
+    const keepPath = masterUp ? masterUp.path : ([...held.values()].find(e => e.masterHash === masterHash && e.masterPath) || {}).masterPath || null;
     for (let i = 0; i < entries.length; i += 150) {
-      const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: masterUp ? masterUp.path : null, masterName: name, hashSource: "local", replaces: i === 0 ? [...new Set(o.replaces.concat([...supersede]))] : [] });
+      const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: i === 0 ? [...new Set(o.replaces.concat([...supersede]))] : [] });
       conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []);
       log(`  index ${Math.min(i + 150, entries.length)}/${entries.length}`);
     }
-    await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, replaces: o.replaces, indexedBy: "local-indexer" } });
+    // --only rewrites a few SKUs of a master whose file record is already there: that record (its counts and lists) is left as it is
+    // when it exists, and written whole (every SKU the sheet carries) when it does not
+    if (!(only && fileRecs.some(f => f && f.masterHash === masterHash))) {
+      const fileSkus = only ? [...lab.labels.values()].flatMap(l => [l.sku, ...(l.extra || []).map(x => x.sku)]) : skus;
+      await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, replaces: o.replaces, indexedBy: "local-indexer" } });
+    }
     if (conflicts.length) log(`  ${conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${conflicts.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (sizeMoved.length) log(`  ${sizeMoved.length} SKU(s) changed size by more than 5 % since the last index: ${sizeMoved.slice(0, 30).map(b => b.sku).join(", ")}`);
     // read the index back: a batch that times out can answer without having stored everything
@@ -183,14 +244,14 @@ async function main(argv, log = console.log) {
       log(`  ${missing.length} SKU(s) did not land — writing them again (pass ${pass})`);
       if (pass === 3) { log(`  still missing: ${missing.slice(0, 40).join(", ")}${missing.length > 40 ? " …" : ""}`); break; }
       const again = entries.filter(e => missing.includes(String(e.sku).toUpperCase()));
-      for (let i = 0; i < again.length; i += 100) await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: again.slice(i, i + 100), masterHash, masterPath: masterUp ? masterUp.path : null, masterName: name, hashSource: "local", replaces: [] });
+      for (let i = 0; i < again.length; i += 100) await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: again.slice(i, i + 100), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: [] });
     }
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
   const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
-  try { fs.writeFileSync(o.file + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${o.file}.index-report.json`); } catch (_) {}
+  try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main };
+module.exports = { main, api, upload, onlySet };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });
