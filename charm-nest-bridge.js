@@ -685,7 +685,7 @@ const CNLive = window.CNLive = (() => {
   }
   return { order, sheet, close, pressed };
 })();
-const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + Math.max(1, Math.floor(+(r && r.line && r.line.quantity) || 1)), 0); } catch (_) { return 0; } };
+const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + O.pieceCountOf(r), 0); } catch (_) { return 0; } };   // (the one count of a line's pieces: CharmNestOrders.pieceCountOf)
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
    asked at the first approval, decision or label), the one every other sorter event carries. Nobody named: by "" with
@@ -1383,6 +1383,7 @@ const Orders = window.Orders = (() => {
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
       const inputs = inputsOf(row), was = readAs.get(row), prev = row.spec;
       if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
+      window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
@@ -1675,6 +1676,7 @@ const Orders = window.Orders = (() => {
         try {
           const r = await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: opt.by, at: opt.at, cancel: !!opt.cancel });
           if (r && r.changed) lines.set(sh, r.removedLines || []);
+          if (r && r.partialGroups && r.partialGroups.length) agent({ metal: sh.metal, run: sh.runId }, "warn", `${row.order.receiptId}: on ${sheetName(sh)} only part of a group came off the green lines (${r.partialGroups.map(g => g.taken + " of " + (g.taken + g.left)).join(", ")}); check the rest`);
         } catch (e) {
           skip.add(sh); if (opt.failed) opt.failed.push(sh);
           agent({ metal: sh.metal, run: sh.runId }, "warn", `${row.order.receiptId}: the green lines of ${sheetName(sh)} could not give up its pieces yet (${e.message}); they come off at the next check`);
@@ -2007,7 +2009,7 @@ const Orders = window.Orders = (() => {
       if(key && lines.has(key))continue;if(key)lines.add(key);
       if(r.spec?.noDesign || r.state==="noDesign")continue;
       const qty=Number(r.spec?.quantity ?? r.line?.quantity ?? 1);
-      if(Number.isFinite(qty) && qty>0)charms+=Math.round(qty);
+      if(Number.isFinite(qty) && qty>0)charms+=O.pieceCountOf(r);
     }
     return {orders:receipts.size,charms};
   }
@@ -2831,6 +2833,16 @@ const Pool = window.Pool = (() => {
     }
     return repaired.size;
   }
+  /** A line already pooled keeps the pieces it was pooled with: the number its pool rows say they were made as (a row's `quantity` is the pieces of
+   *  its line at that time; for a line pooled before the pair and count rule it is the Etsy quantity). spec.pieceCount becomes that number and
+   *  spec.pieceNote says in plain words what the rule gives now. Nothing is added to the pool or taken from it. A line changed on Etsy is made up
+   *  new (repoolChanged, changePending), at the new count. */
+  function pinPooled(row) {
+    const sp = row.spec; if (!sp || row.repoolChanged || row.changePending) return;
+    // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
+    const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
+    if (had) O.pinPieces(sp, had);
+  }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
   /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
@@ -2865,8 +2877,13 @@ const Pool = window.Pool = (() => {
        outline. What a line makes is charm-nest-pair.js piecesFor's word. A line an older run made before pieces had a side (and a piece of it is still
        on a sheet) stays as it was until it is taken off. Every other line makes `quantity` pieces from the one charm (or the count the intake set),
        exactly as before. */
+    // A line pooled before the pair and count rule keeps the pieces it has (its pool rows' own quantity; never added to silently): spec.pieceCount is pinned to
+    // them and spec.pair.legacy says so, so piecesFor below gives it no side and no plan.
+    pinPooled(row);
+    if (sp.pieceNote) agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote}`);
     const Pair = window.CharmNestPair, wanted = Pair && Pair.piecesFor && PoolPieces && !gluedLine(row) ? Pair.piecesFor(pairLine(row), base) : null;
     const plan = wanted && wanted.length >= 2 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && wholeBody(src, +p.bodyIndex)) ? wanted : null;
+    if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
@@ -2932,8 +2949,17 @@ const Pool = window.Pool = (() => {
     return PoolPieces.legacyGlued(ids.map(id => B.pool.rows.get(id) || { poolId: id }), r => !!r.sheetId || !!charmOf(r.poolId)) && !ids.some(id => charmOf(id)?.side);
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
-  function attachPool(row, run, prep, contended, placed) {
+  function attachPool(row, run, prep, contended, placed, short) {
     const { sp, pools, charms } = prep;
+    // the cloud already holds this line with fewer pieces than the rule now gives (it was pooled before the pair and count rule): its
+    // rows were not written, and none is added; the line is what it was, with a plain note
+    const kept = (short || []).filter(x => pools.some(p => p.poolId === x.poolId));
+    if (kept.length) {
+      const had = Math.max(...kept.map(x => +x.had || 0));
+      O.pinPieces(sp, had); row.poolIds = pools.slice(0, had).map(p => p.poolId); row.state = "pooled"; row.reason = null; delete row.poolTry; delete row.poolError; settle(row);
+      agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote || "kept as it was"}`);
+      return;
+    }
     // a line that went (cancelled, AutoCancel, or gone from Etsy) while it was made up never goes onto a sheet: the run's
     // pool step is not waited for by AutoCancel, and it used to place the cancelled order after it had been taken off
     if (row.state === "gone" || window.Cancelled?.has?.(row.order.receiptId)) { const ids = pools.map(p => p.poolId); if (ids.length && S.cloud.ok) update(ids, { state: "abandoned", sheetId: null, setId: null }).catch(() => {}); return; }
@@ -2982,7 +3008,7 @@ const Pool = window.Pool = (() => {
       let r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
       // the cloud holds an older glued piece of this line on a saved sheet: the line is made again as it was (one piece, both bodies), never half and half
       if (r.legacy && r.legacy.length) { row.glued = true; const again = await preparePool(row, run); if (!again) return; prep = again; r = await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }); }
-      attachPool(row, run, prep, r.contended, r.placed);
+      attachPool(row, run, prep, r.contended, r.placed, r.short);
     } finally { free(); }
   }
   /* A line that could not go on a sheet (its SKU in no master file or blocked, a size its design lacks, too big for the
@@ -3066,7 +3092,7 @@ const Pool = window.Pool = (() => {
       try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); else row.poolTry = trySig(row); } catch (e) { hold(row, e, true); }
       if (++n % 5 === 0) { Orders.render(); }
     }
-    let contended = [], placed = [], failure = null;
+    let contended = [], placed = [], short = [], failure = null;
     if (S.cloud.ok && made.length) {
       const all = made.flatMap(([, prep]) => prep.pools);
       // four hundred rows read and written one after another ran past the edge's patience (its "Inactivity Timeout" page,
@@ -3075,17 +3101,17 @@ const Pool = window.Pool = (() => {
       const parts = []; if (all.some(p => p.side)) { let cur = []; for (const [, prep] of made) { if (cur.length && cur.length + prep.pools.length > 200) { parts.push(cur); cur = []; } cur = cur.concat(prep.pools); } if (cur.length) parts.push(cur); } else for (let i = 0; i < all.length; i += 200) parts.push(all.slice(i, i + 200));
       try {
         const legacy = new Set();
-        for (const part of parts) { const r = await api("charmNestLibrary", { op: "poolPut", pools: part }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); for (const id of r.legacy || []) legacy.add(id); }
+        for (const part of parts) { const r = await api("charmNestLibrary", { op: "poolPut", pools: part }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); short = short.concat(r.short || []); for (const id of r.legacy || []) legacy.add(id); }
         // lines whose older glued piece is still on a saved sheet were not written: they are made again as they were
         if (legacy.size) {
           const redo = [];
           for (const item of made) if (item[1].pools.some(p => legacy.has(p.poolId))) { item[0].glued = true; const again = await preparePool(item[0], run); if (again) { item[1] = again; redo.push(...again.pools); } }
-          if (redo.length) { const r = await api("charmNestLibrary", { op: "poolPut", pools: redo }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); }
+          if (redo.length) { const r = await api("charmNestLibrary", { op: "poolPut", pools: redo }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); short = short.concat(r.short || []); }
         }
       }
       catch (e) { failure = e; }
     }
-    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed); } catch (e) { hold(row, e); } }
+    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed, short); } catch (e) { hold(row, e); } }
     if (bar) bar.end();
     await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
@@ -3159,7 +3185,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size)) n = 2 * q;   // (the master entry says two bodies; the charm is not traced yet)
     return n;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -4528,7 +4554,7 @@ const Gate = window.Gate = (() => {
     const sp = row.spec; if (!sp || !sp.designSku) return 0;
     const e = Master.entryFor(sp.designSku); if (!e) return 0;
     const g = Pool.sizeEntry(e, sp.size) || e; if (!(g.areaPt2 > 0)) return 0;
-    return CN.inflatedArea({ areaPt2: g.areaPt2, widthPt: g.widthPt || 0, heightPt: g.heightPt || 0 }) * Math.max(1, sp.quantity || 1);
+    return CN.inflatedArea({ areaPt2: g.areaPt2, widthPt: g.widthPt || 0, heightPt: g.heightPt || 0 }) * O.pieceCountOf(sp);
   }
   const capacity = () => Object.fromEntries(METALS.map(m => [m.key, CN.usableArea(S.sheets[m.key]) * (+S.settings.maxFill || 0.80)]));
   /** Plan the lines that could pool now, and mark the ones that wait. Returns the plan. */
@@ -4591,7 +4617,7 @@ const Gate = window.Gate = (() => {
     if (!B.run || ["complete", "stopped", "abandoned"].includes(B.run.status)) { el2.classList.add("hidden"); return; }
     const m = sh.metal, p = R.plan && R.plan.materials[m];
     const waiting = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.material === m);
-    const pieces = waiting.reduce((n, r) => n + Math.max(1, (r.spec && r.spec.quantity) || 1), 0);
+    const pieces = waiting.reduce((n, r) => n + O.pieceCountOf(r), 0);
     let html = "", cls = "shGate";
     if (O_.SLOW_MATERIALS.has(m)) {
       const last = R.lastReleased[m], open = !last || (R.released[m] === today()) || daysUntil(last) <= -(+S.settings.cadenceDays || 2);
@@ -9071,6 +9097,30 @@ const CustomSheet = window.CustomSheet = (() => {
   const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
+  /* ── an earring pair cut from the customer's own designs (Paul, 9 Oct 2026, 18:47) ──
+     A pair of earrings is a LEFT and a RIGHT piece for every pair bought (charm-nest-pair.js piecesFor), a custom order too. The customer's file may draw
+     both ears (two bodies: the one on the left is the Left) or one (the Right is then the Left mirrored, as for every other design). The card's Send to
+     Sheet waits until the designs make as many pieces as the order needs, and says so in words. Which ear each piece is stays derived (never stored): the
+     same body twice is a Left and its mirror, two bodies of one file are told apart by where they sit, two files by the order they were dropped in. */
+  const pairLine = row => Object.assign({}, row.line, { receiptId: row.order.receiptId, transactionId: row.line.transactionId, quantity: row.spec && row.spec.quantity, form: row.spec && row.spec.form, spec: row.spec });
+  /** The pieces an earring-pair line makes ([{ side, groupKey, of... }], a Left then a Right per pair), or null for any other line. */
+  function pairPlan(row) {
+    const Pair = window.CharmNestPair; if (!Pair || !Pair.piecesFor || !row || !row.spec || !row.order || !row.line) return null;
+    try { const per = Pair.piecesFor(pairLine(row), null); return per.length >= 2 && per.length % 2 === 0 && per.every(pc => pc.side === "L" || pc.side === "R") ? per : null; } catch (_) { return null; }
+  }
+  /** What a card's designs have to make: `total` pieces over its open lines, `pairs` of them in earring-pair lines (0: nothing changes on this card). */
+  const needMemo = new Map();
+  function needOf(e) {
+    const list = Orders.rows(), hit = needMemo.get(e.ck);
+    if (hit && hit.ver === ver && hit.list === list && hit.n === list.length && Date.now() - hit.t < 2000) return hit.val;
+    const val = needOfNow(e, list); needMemo.set(e.ck, { ver, list, n: list.length, t: Date.now(), val }); return val;
+  }
+  function needOfNow(e, list) {
+    const rows = list.filter(r => r && r.spec && Review.cardKey(r) === e.ck && r.state !== "gone" && !(r.poolIds || []).length && !r.spec.customDone && !["committed", "skipped"].includes(r.state));
+    let total = 0, pairs = 0;
+    for (const r of rows) { const plan = pairPlan(r); if (plan) { total += plan.length; pairs += plan.length; } else total += Math.max(1, Math.round(+r.spec.quantity || 1)); }
+    return { total, pairs };
+  }
   /** Why the card's designs cannot be sent yet, or "" when they can. */
   function notReady(e) {
     if (!e || !e.files.length) return "Drop the order's .ai or .dxf designs on its card first";
@@ -9078,6 +9128,9 @@ const CustomSheet = window.CustomSheet = (() => {
     const bad = e.files.find(F => F.state === "error"); if (bad) return `${bad.name} could not be read — remove it or drop it again`;
     const none = e.files.filter(F => !F.metal); if (none.length) return none.length === 1 ? `Pick the metal for ${none[0].name}` : `Pick a metal for each design (${none.length} have none)`;
     const big = e.files.find(F => tooBig(F)); if (big) return `${big.name} is too big for the ${labelOf(big.metal)} plate`;
+    // a pair of earrings needs a left and a right piece for every pair: fewer pieces than that would leave an ear uncut
+    const need = needOf(e);
+    if (need.pairs) { const have = e.files.reduce((a, F) => a + F.pieces * F.qty, 0); if (have < need.total) return `This order is ${need.pairs === 2 ? "a pair of earrings" : "pairs of earrings"}: it needs ${plural(need.total, "piece")} (a left and a right for each pair) and the designs make ${have}. Raise how many to cut, or add the other ear's design`; }
     return "";
   }
   function tooBig(F) {
@@ -9188,7 +9241,15 @@ const CustomSheet = window.CustomSheet = (() => {
     // each is read once it has landed in its row: tracing a design and drawing its picture are long tasks (50-130 ms)
     // that made the flight jump on its way. Bounded, so one whose flight was cut short (the window closed) is read too.
     const landed = Promise.race([Promise.resolve(flown).catch(() => {}), new Promise(r => setTimeout(r, 2600 + 140 * fresh.length))]);
-    let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F));
+    let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F)).then(() => pairQty(e, F));
+  }
+  /** The one design dropped on an earring-pair card starts at as many copies as the pair needs (one body twice = a Left and its mirror; both ears drawn in one file once). */
+  function pairQty(e, F) {
+    try {
+      if (F.state !== "ready" || e.files.length !== 1 || e.files[0] !== F || all()[e.ck] !== e) return;
+      const need = needOf(e); if (!need.pairs || !F.pieces) return;
+      const qty = Math.max(1, Math.min(99, Math.ceil(need.total / F.pieces))); if (qty !== F.qty) { F.qty = qty; changed(); }
+    } catch (_) { /* the quantity stays as it was */ }
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return;
@@ -9379,6 +9440,34 @@ const CustomSheet = window.CustomSheet = (() => {
       }catch(err){loadedAt=Date.now()-45000;console.warn("Custom design recovery",err);await recover();return 0;}
     })();try{return await loading;}finally{loading=null;}
   }
+  /** The ear of each piece of an earring-pair line sent from its card, worked out from the sent list and the designs (never stored; the same answer each time):
+   *  [{ side, mirror, bodyIndex, assumed? }] parallel to the list, or null when the line is not a pair or the list is not the pair's size (an older send reads as it was). */
+  async function earsOf(row, e, mine) {
+    const plan = pairPlan(row); if (!plan || plan.length !== mine.length) return null;
+    const out = new Array(mine.length).fill(null);
+    for (let u = 0; u < mine.length; u += 2) {
+      const a = mine[u], b = mine[u + 1];
+      if (a.f === b.f && a.i === b.i) { out[u] = { side: "L", mirror: false, bodyIndex: 0 }; out[u + 1] = { side: "R", mirror: true, bodyIndex: 0 }; continue; }   // one body twice: the Right is the Left mirrored
+      if (a.f === b.f) {
+        const F = e.files.find(x => x.id === a.f), cs = F ? (await read(F)).charms : null, ca = cs && cs[a.i], cb = cs && cs[b.i];
+        if (ca && cb && ca.bbox && cb.bbox) { const aLeft = (ca.bbox[0] + ca.bbox[2]) <= (cb.bbox[0] + cb.bbox[2]); out[u] = { side: aLeft ? "L" : "R", mirror: false, bodyIndex: aLeft ? 0 : 1 }; out[u + 1] = { side: aLeft ? "R" : "L", mirror: false, bodyIndex: aLeft ? 1 : 0 }; continue; }   // two bodies of one file: the one on the left is the Left
+      }
+      out[u] = { side: "L", mirror: false, bodyIndex: 0, assumed: true }; out[u + 1] = { side: "R", mirror: false, bodyIndex: 1, assumed: true };   // two files: the first dropped is the Left (a person confirms it, the sheet shows each piece's ear)
+    }
+    return out;
+  }
+  /** One body of a design as its mirror image (CharmNestPair.pieceGeometry): its outline and art reflected, its silhouette traced again, once per body and source. */
+  function mirroredOf(src, i) {
+    src.mirrorTasks ||= {};
+    return src.mirrorTasks[i] ||= (async () => {
+      const Pair = window.CharmNestPair, base = src.charms[i], geoM = Pair && Pair.pieceGeometry ? Pair.pieceGeometry(base, { side: "R", bodyIndex: 0, mirror: true }) : null;
+      if (!geoM || geoM === base) throw new Error("the mirrored (right-hand) piece cannot be made: charm-nest-pair.js has no pieceGeometry");
+      const made = Object.assign({}, base, geoM, { id: `${src.id}:${i}m`, mirror: true });
+      delete made.frontAt; made.pinned = null;
+      await P.buildSilhouettes(src.parsed, [made], +S.settings.silhouetteRes || 6);
+      return made;
+    })().catch(err => { delete src.mirrorTasks[i]; throw err; });
+  }
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
   async function prepare(row, run) {
     const e = sentOf(row), mine = decisionLines(e)[row.key] || [];
@@ -9386,18 +9475,22 @@ const CustomSheet = window.CustomSheet = (() => {
     if(e?.sendIntent && !e.sendIntent.pressed)return null; // background intake waits until the original press has lifted
     if (!mine.length) { row.state = "noDesign"; row.reason = "made with its order's other piece"; return null; }
     const sp = row.spec, rid = row.order.receiptId, pools = [], charms = [];
+    const ears = await earsOf(row, e, mine).catch(() => null), gk = window.CharmNestPair && CharmNestPair.groupKey ? CharmNestPair.groupKey(pairLine(row)) : `${rid}:${row.line.transactionId}`;   // (an earring pair: each piece's ear, and the Right a mirror when it is one body twice)
     for (const [n, pc] of mine.entries()) {
       if(pc.removed)continue;
       const owner=all();
       const F = e.files.find(x => x.id === pc.f); if (!F) throw new Error("a design sent for it is missing");
       if (tooBig(F)) { row.state = "oversize"; row.reason = `${F.name} does not fit the ${labelOf(F.metal)} plate`; return null; }
-      const src = await sourceOf(e, F); if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null; const base = src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
+      const src = await sourceOf(e, F); if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null; const ear = ears && ears[n], base = ear && ear.mirror ? await mirroredOf(src, pc.i) : src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
+      if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null;
+      const mineFields = ear && window.CharmNestPoolPieces ? CharmNestPoolPieces.fieldsOf({ side: ear.side, mirror: ear.mirror, bodyIndex: ear.bodyIndex, groupKey: gk, groupSize: mine.length }) : null;
       const copy = n + 1, poolId = O.poolId(row.order, row.line, copy);
       const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null });
       Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}),
         orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
         poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name, ...(mineFields || {}) });
+      if (mineFields) Object.assign(c, mineFields);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
       charms.push(c);
     }
     if(!charms.length){row.state="noDesign";row.reason="its sent designs were removed from the sheets";return null;}
@@ -10130,7 +10223,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? `option "${p.optionName}: ${p.optionValue}" not mapped` : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -10352,6 +10445,29 @@ const Review = window.Review = (() => {
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
+    } else if (it.kind === "needsMapping" && p.count) {
+      /* An option that may name how many separate pieces ONE of these makes (letters, initials, "Set of 3", a range), or that the buyer's note
+         disagrees with, is not guessed (Paul, 9 Oct 2026): one press says how many, and the answer is kept for this listing and this value
+         like every other option answer ({ field: "count" }). "Just 1" says the option is no count of pieces. */
+      const lids = [...new Set(group.map(x => String(x.line.listingId)))], g = +p.count.guess || 0;
+      c.innerHTML = head("How many pieces?", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
+        `<div class="ask">How many separate pieces does ONE of these make in all?</div><div class="why">${esc(p.count.why || "")}</div>
+        <div class="fixes pick">${[1, 2, 3, 4, 5, 6].map(n => `<button class="btn ${n === g ? "gold" : "ghost"} sm" data-n="${n}" title="${n === 1 ? "one piece: this option is not a number of pieces" : n + " separate pieces, each cut on its own and kept together as one order line"}">${n === 1 ? "Just 1" : n}</button>`).join("")}<input type="number" min="1" max="12" step="1" data-f="n" placeholder="other"><button class="btn gold sm" data-a="n">Use it</button></div>
+        ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are answered together</label>` : ""}`;
+      const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
+      const say = n => saving(c, async () => {
+        n = Math.floor(+n); if (!(n >= 1 && n <= 12)) { toast("A whole number from 1 to 12", "bad"); return; }
+        const who = by(); if (!who) return;
+        const wide = lids.length > 1 && !oneOnly();
+        await api("charmNestLibrary", { op: "optionMapPut", listingId: wide ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "count", value: String(n) }, by: who });
+        answered(it, "decided", n === 1 ? `“${p.optionValue}” is not a number of pieces (1 piece)` : `“${p.optionValue}” makes ${n} pieces`, { option: p.optionName, value: p.optionValue, field: "count", to: String(n), listing: wide ? "all" : String(p.listingId) }, who);
+        await Orders.loadMaps(true);
+        toast(`“${p.optionValue}” → ${n} piece${n === 1 ? "" : "s"} · remembered for ${wide ? "every listing" : "this listing"}`, "ok");
+        for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
+      })();
+      c.querySelectorAll("[data-n]").forEach(b => { b.onclick = () => say(b.dataset.n); });
+      bindNeeds(c, "n", "n");
+      c.querySelector("[data-a=n]").onclick = () => say(c.querySelector("[data-f=n]").value);
     } else if (it.kind === "needsMapping") {
       /* This was a dropdown, a free-text box, a second dropdown and a button that did nothing at all until you had
          guessed the exact word it wanted. The question only ever has a handful of answers, so they are the buttons:

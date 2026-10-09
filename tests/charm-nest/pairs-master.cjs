@@ -161,4 +161,25 @@ ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0
   const rf = IM.pairLayer(Pst, Gst, Pair, t.g, t.lab, ti, { pairAlso: 'TWINS_1' }, () => {});
   ok(rf.fold.size === 1 && rf.fold.get(1).field.mismatched === false && rf.fold.get(1).field.bodies === 2 && rf.rows[0].forced === true, '--pair-also folds a doubtful row a person named, as a matching pair drawn twice');
 }
+
+// agreement with the intake's own rule (charm-nest-orders.js piecesOf / pieceCountOf / kindFor) on lines carrying spec.pair
+{
+  const Orders = require('../../charm-nest-orders.js');
+  const L = (q, pr, extra) => Object.assign({ receiptId: 5, transactionId: 6, quantity: q, spec: Object.assign({ quantity: q, pair: pr }, extra || {}) });
+  const cases = [
+    L(2, { earring: true, single: false, mismatched: false, perUnit: 2 }),
+    L(1, { earring: true, mismatched: true, perUnit: 2 }),
+    L(3, { earring: true, mismatched: true, perUnit: 2 }),
+    L(1, { earring: true, mismatched: true, glued: true, perUnit: 1 }),
+    L(1, { earring: false, single: true, sideSaid: 'R', perUnit: 1 }),
+    L(1, { earring: false, perUnit: 3 }, { pieceCount: 3 }),
+    L(1, { earring: true, perUnit: 2 }),
+    L(1, { earring: true, legacy: true, perUnit: 2 }, { pieceCount: 1 })
+  ];
+  for (const c of cases) {
+    const a = Orders.piecesOf(c).map(p => (p.side || '-') + p.bodyIndex).join(' '), b = Pair.piecesFor(c, null).map(p => (p.side || '-') + p.bodyIndex).join(' ');
+    ok(a === b && Orders.pieceCountOf(c) === Pair.pieceCountOf(c, null), 'piecesFor agrees with CharmNestOrders.piecesOf: ' + a);
+  }
+  ok(Pair.kindOf(cases[1], null) === 'mismatched' && Pair.kindOf(cases[0], null) === 'multi' && Pair.kindOf(cases[3], null) === 'mismatched' && Pair.kindOf(cases[6], null) === 'pair', 'kindOf follows the intake facts (quantity-2 pair is multi, one glued copy is mismatched)');
+}
 console.log(`pairs-master: ${n} checks passed`);

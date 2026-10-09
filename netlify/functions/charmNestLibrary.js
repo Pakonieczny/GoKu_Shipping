@@ -1135,7 +1135,7 @@ const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
 /* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
    take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
-const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize"];
+const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize", "quantity"];
 const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt", "side"];
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
 async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
@@ -1325,6 +1325,9 @@ function poolEvents(ids, p, before, b) {
 }
 
 // ── pool ──
+/** An old piece row of a line made as ONE glued piece (no side, no group size) that is still in play: on a saved sheet, or committed, written, engraved or labelled
+    (taken off or made up again is free to become two pieces). The test poolPut and poolUpdate share before they write left and right rows over it. */
+const legacyLive = cur => !!cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && !!(cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state));
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
   if (!rows.length) return { error: "no pool rows" };
@@ -1354,9 +1357,21 @@ async function op_poolPut(b) {
   /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
      committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
   const legacyLines = new Set();
-  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(Placement.groupOfPool(p.poolId)); });
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && legacyLive(cur)) legacyLines.add(Placement.groupOfPool(p.poolId)); });
+  /* A line already pooled with FEWER pieces than it is sent with (the pair and count rule of 9 Oct 2026 came after it was pooled: a pair is
+     two pieces, a necklace with 3 discs is three) keeps the pieces it has. None of its rows is written, so a piece is never added to a line
+     that is on a sheet or in the pool; the answer says which rows are short and what each holds, and the page notes it on the line.
+     (A row taken off, or superseded by an Etsy change, is not live: the line is then made up new, at the new count.) */
+  const lineOfId = id => String(id).replace(/_\d+$/, ""), shortLines = new Set(), short = [];
+  list.forEach((p, i) => {
+    const cur = found[i] && found[i].exists ? found[i].data() : null; if (!cur || p.custom || Placement.TAKE_OFF_STATES.has(cur.state)) return;
+    const had = Math.floor(+cur.quantity) || 0, wants = Math.floor(+p.quantity) || 0;
+    if (had && wants && had < wants && !legacyLines.has(Placement.groupOfPool(p.poolId))) { shortLines.add(lineOfId(p.poolId)); short.push({ poolId: p.poolId, had, wants }); }
+  });
+  if (short.length) out.short = short;
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
+    if (shortLines.has(lineOfId(p.poolId))) continue;
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
     if (p.side && legacyLines.has(Placement.groupOfPool(p.poolId))) { (out.legacy || (out.legacy = [])).push(p.poolId); continue; }
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
@@ -1414,7 +1429,12 @@ async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
   // a change the order's timeline records (poolEvents) reads the rows first: the sheet a charm leaves, its set, and
   // whether the row already says so (a retry)
-  const p = b.patch && typeof b.patch === "object" ? b.patch : {}, told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
+  let p = b.patch && typeof b.patch === "object" ? b.patch : {};
+  // what a piece IS (side, mirror, bodyIndex, groupKey, groupSize) is written by poolPut, whole or not at all: a patch that carries any of it is
+  // checked the same way (all valid, the group key from the pool id) and a take-off never changes it; what a row already says stays as it is
+  const sent = PoolPieces.FIELDS.filter(k => Object.prototype.hasOwnProperty.call(p, k));
+  if (sent.length && Placement.isTakeOff(p)) { p = Object.assign({}, p); for (const k of sent) delete p[k]; }
+  const told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
   // a take-off (hold, cancel, an order gone from Etsy) is one commit across the pieces' rows AND the sheets that list them
   if (Placement.isTakeOff(p)) {
     const done = await poolTakeOff(ids, p, told), all = ids.concat(done.extended);
@@ -1423,15 +1443,27 @@ async function op_poolUpdate(b) {
     // extended: the other pieces of the same lines that came off with the ones named (a line comes off whole); absent when there were none
     return { ok: true, count: ids.length, sheets: done.edited, ...(done.extended.length ? { extended: done.extended } : {}) };
   }
+  // left and right rows named over a line an older run made as one glued piece, still in play, are not written (poolPut's rule): the page is told (`legacy`)
+  let wrote = ids; const legacy = [];
+  if (sent.length && PoolPieces.cleanFields(Object.assign({ poolId: ids[0] }, p)).side) {
+    const rowsRead = [];
+    for (let i = 0; i < ids.length; i += 100) rowsRead.push(...await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: ["side", "groupSize", "state", "sheetId"] }));
+    const lines = new Set(); ids.forEach((id, i) => { if (legacyLive(rowsRead[i] && rowsRead[i].exists ? rowsRead[i].data() : null)) lines.add(Placement.groupOfPool(id)); });
+    if (lines.size) { wrote = ids.filter(id => !lines.has(Placement.groupOfPool(id))); legacy.push(...ids.filter(id => lines.has(Placement.groupOfPool(id)))); }
+  }
   let before = null;
-  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
+  if (told && wrote.length) try { before = new Map(); for (let i = 0; i < wrote.length; i += 100) (await db.getAll(...wrote.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(wrote[i + j], s.exists ? s.data() : null)); }
   catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
   let batch = db.batch(), n = 0;
-  for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  for (const id of wrote) {
+    const doc = Object.assign({}, p, { updatedAt: FV.serverTimestamp() });
+    if (sent.length) { for (const k of sent) delete doc[k]; Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); delete doc.poolId; }
+    batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
+  }
   if (n) await batch.commit();
-  if (told) await stamp(() => poolEvents(ids, p, before, b), "pool");
-  if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(ids, p, before, b);
-  return { ok: true, count: ids.length };
+  if (told && wrote.length) await stamp(() => poolEvents(wrote, p, before, b), "pool");
+  if (told && wrote.length && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(wrote, p, before, b);
+  return { ok: true, count: wrote.length, ...(legacy.length ? { legacy } : {}) };
 }
 /* A cancelled order's pieces taken off (removedReason "cancelled...", the sheet window's Cancel and AutoCancel): each sheet
    they left is a removal on its cancel record too, with when and who (_orderCancel.noteRemovals; kept for good, 29 Sep).
@@ -2871,12 +2903,15 @@ async function op_optionMapGet(b = {}) {
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
   if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };
-  const m = b.map || {}; const field = ["form", "size", "chain", "ignore", "design"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain, ignore or design" };
+  const m = b.map || {}; const field = ["form", "size", "chain", "ignore", "design", "count"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain, ignore, design or count" };
+  // count: how many separate pieces ONE of this product makes in all when the buyer chose this option value ("2 Disc" is 2; 1 = just one piece, not a count), 1 to 12
+  const count = field === "count" ? Math.floor(+m.value) : 0;
+  if (field === "count" && !(count >= 1 && count <= 12)) return { error: "the count an option gives is a whole number from 1 to 12" };
   // design: the option picks the charm (Zodiac Sign: Pisces), for one listing, a SKU of the master index
   const design = field === "design" ? String(m.value || "").trim().toUpperCase() : "";
   if (field === "design" && (lid === "*" || !Master.isSku(design))) return { error: "the charm an option picks is saved for one listing, as a master SKU" };
   const ref = db.collection(PREFIX + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
-  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
+  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : field === "count" ? String(count) : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
   await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
   return { ok: true };
 }
