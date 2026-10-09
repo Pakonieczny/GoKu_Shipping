@@ -326,7 +326,8 @@
     liveWake = setTimeout(() => { liveWake = 0; livePump(); }, Math.max(250, liveTokenAt + LIVE.every - now));
   }
   const scrub = (v, n) => { const s = clean(v, n); return /^\d+$/.test(s) ? "" : s.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]"); };
-  const livePieces = list => (Array.isArray(list) ? list : []).slice(0, LIVE.pieces).map(p => {
+  const liveCut = (list, n) => { const out = list.slice(0, Math.max(0, n)); while (out.length && out.length < list.length && out[out.length - 1] && out[out.length - 1].side === "L") out.pop(); return out; };   // (never a left without its right)
+  const livePieces = list => liveCut(Array.isArray(list) ? list : [], LIVE.pieces).map(p => {
     if (!p || typeof p !== "object") return null;
     const out = { id: clean(p.id, 40).replace(/[^\w.:-]/g, "_"), label: scrub(p.label, 60) };
     if (pinLike(out.id)) out.id = "";
@@ -334,8 +335,15 @@
     if (sku && !pinLike(sku)) out.sku = sku;
     if (lid.length >= 3 && !pinLike(lid)) out.listingId = lid;
     if (/^[A-Za-z0-9]{1,6}$/.test(size)) out.size = size;
+    // a piece of a pair (Paul, 9 Oct 2026): its side (L | R) and its group (receipt:transaction), its place in the group and the group's size
+    if (p.side === "L" || p.side === "R") out.side = p.side;
+    const grp = String(p.grp == null ? "" : p.grp).slice(0, 41);
+    if (/^\d{3,20}:\d{0,20}$/.test(grp)) { out.grp = grp; const of = Math.round(Number(p.of)), nn = Math.round(Number(p.n)); if (of >= 2 && of <= 500) out.of = of; if (nn >= 1 && nn <= 500) out.n = nn; }
+    if (p.both === true) out.both = true;                  // (a mismatched pair drawn as one picture of its left and its right)
     return out.id || out.label || out.sku || out.listingId ? out : null;
   }).filter(Boolean);
+  /** the pieces cut down to fit the request: never a left without its right (the pair goes in whole or not at all) */
+  const liveTrim = (list, by) => { let out = list.slice(0, Math.max(0, list.length - by)); while (out.length && out[out.length - 1].side === "L") out = out.slice(0, -1); return out; };
   const liveFp = s => JSON.stringify([s.person, s.device, s.station, s.order]);
   const liveUrl = sb => "/.netlify/functions/firebaseOrders" + (sb ? "?sandbox=1" : "");
   function liveBody(s, event) {
@@ -346,7 +354,7 @@
     b.sentAt = Date.now();                       // this computer's clock now: the server shifts the scan time by the difference to its own (a clock that is minutes off)
     if (event === "work") {
       b.order = Object.assign({}, s.order);
-      while (JSON.stringify({ live: b }).length > LIVE.bytes && b.order.pieces.length) b.order.pieces = b.order.pieces.slice(0, Math.max(0, b.order.pieces.length - 4));
+      while (JSON.stringify({ live: b }).length > LIVE.bytes && b.order.pieces.length) b.order.pieces = liveTrim(b.order.pieces, 4);
     } else b.ended = { kind: s.order.kind, rid: s.order.rid, orderNumber: s.order.orderNumber, title: s.order.title, scannedAt: s.order.scannedAt };
     return { live: b };
   }
