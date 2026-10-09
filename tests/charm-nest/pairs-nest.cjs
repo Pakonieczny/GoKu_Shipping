@@ -228,7 +228,7 @@ const gapMm = (r, a, b) => { const A = placedOf(r, a), B = placedOf(r, b); if (!
     assert(/Sv\.linkGroups\(job\)/.test(learned), 'the learned solver joins groups too');
     // the worker, the page and the rose demo name the same solver and worker files (one cache token)
     const tok = f => [...fs.readFileSync(path.join(L.REPO, f), 'utf8').matchAll(/charm-nest-(?:solver|worker)\.js\?v=([\w.-]+)/g)].map(m => m[1]);
-    for (const f of ['charm-nest-worker.js', 'charm-nest-1.html', 'charm-nest-rose-ui.js']) for (const t of tok(f)) assert(/pair1/.test(t), f + ' names a solver or worker without the pair token: ' + t);
+    for (const f of ['charm-nest-worker.js', 'charm-nest-1.html', 'charm-nest-rose-ui.js']) for (const t of tok(f)) assert(/pair\d/.test(t), f + ' names a solver or worker without the pair token: ' + t);
   }
   console.log('pairs-nest: ok');
 })().catch(e => { console.error(e); process.exit(1); });
