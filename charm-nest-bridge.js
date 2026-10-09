@@ -2304,7 +2304,7 @@ const Master = window.Master = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 8000);
     toast("report saved", "ok");
   }
-  async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p); } render(); }
+  async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p, p.upAngle != null ? { upSource: "operator" } : {}); } render(); }
   async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
   /** Every SKU the pulled orders want that no master file holds, newest pull first. */
   function missingSkus() {
@@ -2476,7 +2476,7 @@ const Master = window.Master = (() => {
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
         `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
-        `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
+        `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
         `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
@@ -2626,6 +2626,12 @@ const Pool = window.Pool = (() => {
       Object.assign(j,{view:null,mask:null,fit:null,verify:null,materialVersion:2});
       if(["review","blocked","fitting"].includes(j.state))j.state="ready";
       const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)row.engrave.state=j.state;
+    }
+    // Paul, 9 Oct 2026: long charms lie flat. An undecided placement that nobody has moved and that was fitted before that
+    // rule (a bar can stand almost upright) is fitted again; an approved, written, skipped or hand-moved one is never touched.
+    for(const j of d.jobs || [])if(G.orientStale(j)) {
+      Object.assign(j,{view:null,mask:null,fit:null,verify:null,state:"ready"});
+      const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)row.engrave.state="ready";
     }
     if(keys.size)d.review=(d.review || []).filter(it=>!keys.has(it.jobKey));
     if(repaired.size && d.run && d.run.status!=='complete') {
@@ -4366,7 +4372,7 @@ const Engrave = window.Engrave = (() => {
         lineGap:saved.lineGap ?? .18,lineMode:saved.lineMode || "preserve",lineInput:saved.lineInput || saved.lines, state:"review",text:saved.text || "",lines:saved.lines?.length ? saved.lines.slice() : String(saved.text || "").split("\n"),
         solidBack:!!saved.solidBack,source:saved.source || "personalization",quote:saved.sourceQuote || null,confidence:1,questions:[],requests:{side:"back"},backs:[],t:Date.now(),materialVersion:2};
       await loadFonts(); if(!F_.ok) throw new Error("Engraving font is unavailable");
-      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,solidBack:job.solidBack});
+      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,solidBack:job.solidBack});
       job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm.backKeepOut || []});
       const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
@@ -4605,7 +4611,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20260921-material",fonts:F_.workerFonts});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat",fonts:F_.workerFonts});
     }
     return workerClient;
   }
@@ -4614,7 +4620,7 @@ const Engrave = window.Engrave = (() => {
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),
-      viewOptions:{res:6,upAngle:job.editingBack ? job.editOriginal.upAngle ?? charm?.upAngle : entry.upAngle == null ? undefined : +entry.upAngle,materialVersion:2},
+      viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT}),
       maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm?.backKeepOut || []}};
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
@@ -4656,7 +4662,7 @@ const Engrave = window.Engrave = (() => {
     const {view,mask,fit,lines,check}=result;
     // materialVersion marks a fit made with the current material model; Pool.repairRecoveredGeometry refits only older
     // ones on restore. Without the mark every fit (and every nudge, turn and resize on it) was thrown away on reload.
-    job.view=view; job.mask=mask; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2;
+    job.view=view; job.mask=mask; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
     if(!fit) {
       job.state="review";job.reason=result.reason;job.row.engrave.state="review";
       if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:job.row,job,why:result.reason});
@@ -5230,7 +5236,7 @@ const Engrave = window.Engrave = (() => {
     if (!w || w.approvedAt !== job.approvedAt) throw again("This engraving's placement is not kept — fit the words again");
     if (!F_.ok) throw new Error("Engraving font is unavailable");
     const charm = charmFor(job); if (!charm) throw Object.assign(new Error("The charm is being moved between sheets; retry saving its engraving after nesting finishes"),{engravingPending:true});
-    let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle }); } catch (e) { throw again(`This charm's back could not be read again (${e.message}) — fit the words again`); }
+    let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle, holeOnly: true }); } catch (e) { throw again(`This charm's back could not be read again (${e.message}) — fit the words again`); }
     const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: charm.backKeepOut || [] });
     // the charm's back is not what the words were approved on (its drawing or keep-out changed): a person fits them again
     if (maskKey(mask) !== w.maskKey) throw again("This charm's back changed since the words were approved — fit the words again");

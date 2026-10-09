@@ -1082,11 +1082,29 @@
     return cv.convertToBlob ? await blobToDataUrl(await cv.convertToBlob({ type: "image/png" })) : cv.toDataURL("image/png");
   }
   function drawCharm(ctx, c, tx, scale) {
-    drawSegments(ctx, c.members.map(m => m === c.outline || isCutLine(m)
-      ? {...m, strokeRGB:[0,0,0], fillRGB:[0,0,0]} : m), tx, scale);
+    // a cut silhouette that the master drew as a FILL (text turned to outlines, an expanded shape) is shown as the cut line it is
+    drawSegments(ctx, c.members.map(m => isCutSilhouetteFill(c, m) ? cutLineOf(m)
+      : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:[0,0,0]} : m), tx, scale);
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
-    ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (c.outline.lwPt || .25) * scale); ctx.stroke();
+    ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
   }
+  /* A master can draw a charm's cut silhouette as a black FILL with no stroke on its cut layer: text converted to outlines
+     (every letter earring, LETTER_EARRING-0 …), an expanded shape (CELESTIAL15 - CRESCENT). The grouping rightly takes
+     that fill as the charm's outline, but a fill is ink: drawn as one it reads as a solid black engraving on a charm that
+     has none, and a DXF writes it as a SOLID hatch with no cut line. A fill-only outline, and a fill-only dark cut path that
+     is the same silhouette again (a stroked outline with its filled twin on CUT), are cut lines: shown and exported as a
+     line, never as a fill. Other paths keep their paint: real black engraving stays solid. */
+  const CUT_HAIRLINE_PT = 0.25;
+  function isCutSilhouetteFill(c, m) {
+    if (!c || !c.outline || !m || m.kind !== "path" || !m.fill || m.stroke || !m.closed) return false;
+    if (m === c.outline) return true;
+    if (!isCutLine(m) || !m.fillRGB || !c.outline.bbox || !m.bbox) return false;
+    const f = m.fillRGB; if (Math.max(f[0], f[1], f[2]) - Math.min(f[0], f[1], f[2]) > 0.15 || 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2] > 0.35) return false;
+    const a = c.outline.bbox, b = m.bbox, tol = Math.max(0.5, 0.02 * Math.max(a[2] - a[0], a[3] - a[1]));
+    return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol && Math.abs(a[2] - b[2]) <= tol && Math.abs(a[3] - b[3]) <= tol;
+  }
+  /** The cut line a filled cut silhouette stands for: the same path, stroked black at the cut hairline, not filled. */
+  const cutLineOf = m => ({ ...m, fill: false, stroke: true, paintOp: "S", strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: CUT_HAIRLINE_PT });
   /** Draw segments; `solid` paints everything opaque black (for silhouettes) instead of in colour. */
   function drawSegments(ctx, segs, tx, s, solid) {
     for (const seg of segs) {
@@ -1618,6 +1636,6 @@
     }
     return out;
   }
-  root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);
