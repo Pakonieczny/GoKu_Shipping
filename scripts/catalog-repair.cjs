@@ -101,7 +101,8 @@ async function backup(o, log) {
   if (!o.origin || !o.out) throw new Error("backup needs --origin and --out");
   fs.mkdirSync(o.out, { recursive: true });
   const t0 = Date.now(), { entries, index } = await readIndex(o);
-  log(`read the index: ${entries.length} SKU record(s)${index ? ` (index signature ${JSON.stringify(index)})` : ""}`);
+  const bySource = {}, byMaster = {}; for (const e of entries) { const k = e.labelSource || "text"; bySource[k] = (bySource[k] || 0) + 1; const m = (e.masterName || "?") + " " + String(e.masterHash || "").slice(0, 12); byMaster[m] = (byMaster[m] || 0) + 1; }
+  log(`read the index: ${entries.length} SKU record(s)${index ? ` (index signature ${JSON.stringify(index)})` : ""} · by label source ${JSON.stringify(bySource)} · by master file ${JSON.stringify(byMaster)}`);
   const files = await get(o, "charmNestLibrary", { op: "masterListFiles" });
   fs.writeFileSync(path.join(o.out, "index-all.json"), json({ readAt: new Date().toISOString(), origin: new URL(o.origin).host, count: entries.length, index, entries }));
   fs.writeFileSync(path.join(o.out, "files.json"), json({ readAt: new Date().toISOString(), files: files.files || [], index: files.index || null }));
@@ -154,11 +155,19 @@ async function diff(o, log) {
     if (++n % 100 === 0) log(`  ${n}/${byFile.size} designs compared`);
   });
   const skusChanged = [...new Set(changed.flatMap(x => x.skus))].sort();
-  fs.writeFileSync(path.join(o.stage, "diff.json"), json({ at: new Date().toISOString(), designs: byFile.size, changed, same: same.length, gone, failed, recordChanges: rec }));
+  // live records of this master that the staged run does not carry: SKUs read from the sheet by Claude's vision (not by text), SKUs
+  // the reader no longer labels, SKUs gone from the master. A whole-master stage only (a restricted one says nothing about them).
+  let liveOnly = null;
+  if (!staged.only && !want) {
+    const mine = new Set(staged.entries.map(e => up(e.sku)));
+    liveOnly = entries.filter(e => !mine.has(up(e.sku)) && (up(e.masterHash) === up(staged.masterHash) || (staged.masterName && e.masterName === staged.masterName))).map(e => ({ sku: e.sku, labelSource: e.labelSource || null, masterHash: String(e.masterHash || "").slice(0, 12) }));
+  }
+  fs.writeFileSync(path.join(o.stage, "diff.json"), json({ at: new Date().toISOString(), designs: byFile.size, changed, same: same.length, gone, failed, recordChanges: rec, liveOnly }));
   fs.writeFileSync(path.join(o.stage, "changed-skus.json"), json(skusChanged));
   const reasons = {}; for (const c of changed) reasons[c.why.split(";")[0].replace(/\d+/g, "N")] = (reasons[c.why.split(";")[0].replace(/\d+/g, "N")] || 0) + 1;
   log(`diff: ${byFile.size} design file(s) compared with what the site serves · ${changed.length} differ (${skusChanged.length} SKUs) · ${same.length} already draw the same · ${gone.length} have no live file · ${failed.length} could not be compared`);
   for (const [k, v] of Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8)) log(`  ${v} × ${k}`);
+  if (liveOnly) { const bySrc = {}; for (const x of liveOnly) bySrc[x.labelSource || "text"] = (bySrc[x.labelSource || "text"] || 0) + 1; log(`  ${liveOnly.length} live record(s) of this master are not in the staged run (by label source: ${JSON.stringify(bySrc)}): the vision-labelled ones cannot be rebuilt from this PC, see diff.json liveOnly`); }
   for (const [k, v] of Object.entries(rec)) log(`  record check: ${v.length} design(s) with ${k}${k === "sizeMoved" || k === "engravableChanged" || k === "upAngleChanged" || k === "newlyBlocked" ? " (look at them in diff.json before writing)" : ""}`);
   if (failed.length) { log(`  ! could not compare: ${failed.slice(0, 5).map(x => x.skus[0] + " (" + x.error + ")").join(", ")}`); process.exitCode = 1; }
   return { designs: byFile.size, changed: changed.length, skus: skusChanged.length, same: same.length, gone: gone.length, failed: failed.length };
@@ -182,12 +191,15 @@ async function verify(o, log) {
   // a staged record is the entry as sent to masterPutIndex; sized designs are several records under one SKU
   const bySku = new Map(); for (const e of staged.entries) { const k = up(e.sku); if (only && !only.has(k)) continue; stagedSkus.add(k); if (!bySku.has(k)) bySku.set(k, []); bySku.get(k).push(e); }
   const checked = new Set();
+  // index-master --only keeps the hash a design already has while its size, area and holes are unchanged: the live hash may be the backup's
+  const was = o.backup ? new Map(JSON.parse(fs.readFileSync(path.join(o.backup, "index-all.json"), "utf8")).entries.map(b => [up(b.sku), b])) : new Map();
+  const heldHash = (sku, e, g) => { const b = was.get(sku), t = b && (e.size ? (b.sizes || {})[up(e.size)] : b); return !!(t && t.charmHash && t.charmHash === g.charmHash); };
   for (const [sku, list] of bySku) {
     const l = live.get(sku); if (!l) { bad.push({ sku, why: "not in the live index" }); continue; }
     for (const e of list) {
       const g = e.size ? (l.sizes || {})[up(e.size)] : l; if (!g) { bad.push({ sku, why: `size ${e.size} missing` }); continue; }
       const d = [];
-      for (const k of ["charmHash", "aiPath", "widthPt", "heightPt", "members", "holes"]) if (!same(e[k], g[k])) d.push(`${k}: staged ${JSON.stringify(e[k])} live ${JSON.stringify(g[k])}`);
+      for (const k of ["charmHash", "aiPath", "widthPt", "heightPt", "members", "holes"]) if (!same(e[k], g[k]) && !(k === "charmHash" && heldHash(sku, e, g))) d.push(`${k}: staged ${JSON.stringify(e[k])} live ${JSON.stringify(g[k])}`);
       if (up(l.masterHash) !== up(staged.masterHash)) d.push(`masterHash: staged ${staged.masterHash} live ${l.masterHash}`);
       if (d.length) bad.push({ sku, why: d.join("; ") });
       const f = path.join(o.stage, "files", e.aiPath);

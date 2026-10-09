@@ -22,6 +22,9 @@
  *                        an object with .skus / .offending; or SKUs separated by commas). Implies --all for those charms and
  *                        reads the library for just those SKUs (masterGetMany) instead of the whole index (masterList).
  *                        A charm's other SKUs travel with it (they share one file), so they are rewritten too.
+ *    --new-hash          with --only: write the charm hash the new file computes. By default a rebuilt SKU whose size, area and holes
+ *                        are unchanged keeps the hash it has (the hash counts the members, so dropping a grey box would change it, and
+ *                        a hash that moves makes the protected placements of a cut Rose sheet refuse to save)
  *    --out-dir DIR       STAGE instead of upload: write every per-SKU .ai / .png and records.json (the exact entries that
  *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
  *                        count, the sizes and a few files, then run again without --out-dir to write the same thing.
@@ -53,6 +56,7 @@ function args(argv) {
     else if (a === "--resume") o.resume = true;
     else if (a === "--all") o.all = true;
     else if (a === "--only") { o.only = String(v || ""); i++; }
+    else if (a === "--new-hash") o.newHash = true;
     else if (a === "--out-dir") { o.outDir = String(v || ""); i++; }
     else if (a === "--work-dir") { o.workDir = String(v || ""); i++; }
     else if (a === "--engrave-margin-mm") { o.engraveMarginMm = +v || 0.8; i++; }
@@ -176,7 +180,7 @@ async function main(argv, log = console.log) {
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: g.charms.length, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [];
-  let done = 0, skipped = 0; const total = items.length; const queue = items.slice();
+  let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
     const key = l.size ? `${l.sku}__${l.size}` : l.sku;
     if (progress.done[key]) { const d = progress.done[key]; entries.push(d.entry); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { entries.push(Object.assign({}, d.entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
@@ -201,7 +205,13 @@ async function main(argv, log = console.log) {
       if (!thumb) { const e = held.get(String(l.sku).toUpperCase()), t = e && (l.size ? e.sizes && e.sizes[String(l.size).toUpperCase()] : e); if (t && t.thumbPath) thumb = { path: t.thumbPath, url: t.thumbUrl || "" }; }
     }
     const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push(flipWhy);
+    let hashKept = false;
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
+    if (net && only && !o.newHash) {                                   // the held record's hash stands while the drawing's geometry is the same
+      const h = held.get(String(l.sku).toUpperCase()), t = h && (l.size ? (h.sizes || {})[String(l.size).toUpperCase()] : h), near = (a, b) => Math.abs(a - b) <= Math.max(0.01, 0.001 * Math.max(Math.abs(a), Math.abs(b)));
+      if (t && t.charmHash && near(t.widthPt, entry.widthPt) && near(t.heightPt, entry.heightPt) && near(t.areaPt2, entry.areaPt2) && (t.holes || 0) === (entry.holes || 0)) { if (t.charmHash !== entry.charmHash) hashKept = true; entry.charmHash = t.charmHash; }
+    }
+    if (hashKept) hashesKept++;
     entries.push(entry); skus.push(l.sku); const blk = reasons.length ? { sku: l.sku, reason: reasons.join("; ") } : null; if (blk) blocked.push(blk);
     for (const x of l.extra || []) { entries.push(Object.assign({}, entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
     progress.done[key] = { entry, blocked: blk, extra: l.extra || [] }; done++;
@@ -211,12 +221,13 @@ async function main(argv, log = console.log) {
   saveProgress();
   // a small ring left loose beside a charm blocks it, as the other routes do
   for (const orp of g.orphans || []) { const b = orp.bbox; if (!b || orp.kind !== "path" || !orp.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of g.charms) { if (!c.sku) continue; const ob = c.outline.bbox; if (cx < ob[0] - 4 / MM || cx > ob[2] + 4 / MM || cy < ob[1] - 4 / MM || cy > ob[3] + 4 / MM) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 / MM) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
+  if (hashesKept) log(`${hashesKept} design(s) keep the charm hash they have (same size, area and holes; --new-hash writes the new one)`);
   log(`${entries.length} SKU entr${entries.length === 1 ? "y" : "ies"} ready (${skipped} from the previous run) · ${blocked.length} blocked · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 
   let conflicts = [], sizeMoved = [], written = 0;
   if (stage) {
     written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;
-    fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], entries, blocked }, null, 1));
+    fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], only: only ? [...only] : null, entries, blocked }, null, 1));
     log(`staged ${written} SKU record(s) and ${new Set(entries.map(e => e.aiPath)).size} design file(s) in ${o.outDir} (records.json, files/) — nothing was sent anywhere`);
   }
   if (net) {

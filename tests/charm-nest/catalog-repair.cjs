@@ -50,7 +50,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   // it has a thumbnail the local indexer cannot redraw (no resvg here): the repair must leave it
   const thumbP = 'charmnest/master/BR-TST-01.png', png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
   st.blobs.set(thumbP, { buf: png, generation: 1, meta: { contentType: 'image/png', metadata: { firebaseStorageDownloadTokens: 't' } } });
-  st.put('Charm_Master_Index', 'BR-TST-01', { thumbPath: thumbP, thumbUrl: urlOf(thumbP) });
+  st.put('Charm_Master_Index', 'BR-TST-01', { thumbPath: thumbP, thumbUrl: urlOf(thumbP), charmHash: 'oldhash' });   // (a hash from before: the geometry has not changed, so the repair keeps it)
 
   // two junk records, as an older reader left them: a callout that shares a real design's file, and one with a file of its own
   const mate = idx('BR-TST-05'), frontPath = 'charmnest/master/FRONT.ai';
@@ -106,6 +106,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   assert(sha(st.blobs.get(stalePath).buf) === sha(good) || AC.printDiff(await AC.filePrint(st.blobs.get(stalePath).buf), await AC.filePrint(good)).length === 0, 'BR-TST-01 draws as it should again');
   assert.strictEqual(idx('BR-TST-01').thumbPath, thumbP, 'the thumbnail it held is kept (no resvg here to redraw it)');
   assert.strictEqual(sha(st.blobs.get(thumbP).buf), sha(png), 'and so is the thumbnail file');
+  assert.strictEqual(idx('BR-TST-01').charmHash, 'oldhash', 'the charm hash stands while size, area and holes are the same (a cut Rose sheet compares it)');
   assert(sha(st.blobs.get(otherPath).buf) !== sha(good), 'the other design was not touched');
   // nobody else moved: every other document is as it was
   const before = JSON.parse(fs.readFileSync(path.join(bk, 'index-all.json'), 'utf8')).entries;
@@ -149,6 +150,13 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   assert(st.blobs.has(mate.aiPath) && idx('BR-TST-05'), 'the real design and its file are untouched');
   const rj = await run(CR, ['restore', '--origin', sorterOrigin, '--from', bk, '--skus', '11.4 MM']);
   assert(rj.bad === 0 && idx('11.4 MM'), 'restore brings a pruned record back');
+
+  // ── a whole-master stage: diff finds every design that differs, and names the live records the stage does not carry ──
+  const stageAll = path.join(tmp, 'stage-all'); await run(IM, [file, '--out-dir', stageAll]);
+  const dfa = await run(CR, ['diff', '--origin', sorterOrigin, '--stage', stageAll]);
+  assert(dfa.changed === 1 && dfa.same === 5 && dfa.failed === 0, 'whole sheet: only the stale design differs: ' + JSON.stringify(dfa));
+  const dja = JSON.parse(fs.readFileSync(path.join(stageAll, 'diff.json'), 'utf8'));
+  assert.deepStrictEqual(dja.liveOnly.map(x => x.sku).sort(), ['11.4 MM', 'FRONT'], 'the records the sheet no longer carries are listed');
 
   // ── the audit tool runs on a master and its report names a defect ──
   const dumpFile = path.join(tmp, 'dump.json'), outDir = path.join(tmp, 'audit');
