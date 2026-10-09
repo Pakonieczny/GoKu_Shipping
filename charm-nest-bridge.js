@@ -653,7 +653,7 @@ const CNLive = window.CNLive = (() => {
   }
   return { order, sheet, close, pressed };
 })();
-const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + Math.max(1, Math.floor(+(r && r.line && r.line.quantity) || 1)), 0); } catch (_) { return 0; } };
+const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + O.pieceCountOf(r), 0); } catch (_) { return 0; } };   // (the one count of a line's pieces: CharmNestOrders.pieceCountOf)
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
    asked at the first approval, decision or label), the one every other sorter event carries. Nobody named: by "" with
@@ -1349,6 +1349,7 @@ const Orders = window.Orders = (() => {
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
       const inputs = inputsOf(row), was = readAs.get(row), prev = row.spec;
       if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
+      window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
@@ -1966,7 +1967,7 @@ const Orders = window.Orders = (() => {
       if(key && lines.has(key))continue;if(key)lines.add(key);
       if(r.spec?.noDesign || r.state==="noDesign")continue;
       const qty=Number(r.spec?.quantity ?? r.line?.quantity ?? 1);
-      if(Number.isFinite(qty) && qty>0)charms+=Math.round(qty);
+      if(Number.isFinite(qty) && qty>0)charms+=O.pieceCountOf(r);
     }
     return {orders:receipts.size,charms};
   }
@@ -2727,6 +2728,15 @@ const Pool = window.Pool = (() => {
     }
     return repaired.size;
   }
+  /** A line already pooled keeps the pieces it was pooled with: the number its pool rows say they were made as (a row's `quantity` is the pieces of
+   *  its line at that time; for a line pooled before the pair and count rule it is the Etsy quantity). spec.pieceCount becomes that number and
+   *  spec.pieceNote says in plain words what the rule gives now. Nothing is added to the pool or taken from it. A line changed on Etsy is made up
+   *  new (repoolChanged, changePending), at the new count. */
+  function pinPooled(row) {
+    const sp = row.spec; if (!sp || row.repoolChanged || row.changePending) return;
+    const had = Math.max(0, ...(row.poolIds || []).map(id => +((B.pool.rows.get(id) || {}).quantity) || 0));
+    if (had) O.pinPieces(sp, had);
+  }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
   /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
@@ -2759,20 +2769,34 @@ const Pool = window.Pool = (() => {
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
     if (base.areaPt2 > usable || Math.min(base.widthPt, base.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(base.widthPt * MM).toFixed(1)} × ${(base.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: base.widthPt * MM, heightMm: base.heightPt * MM, material: sp.material }); return null; }
     const pools = [], charms = [];
-    for (let copy = 1; copy <= sp.quantity; copy++) {
+    // how many pieces the line makes: THE count, CharmNestOrders.pieceCountOf (a pair is a Left and a Right per unit, an option that names
+    // discs / charms makes that many, Paul 9 Oct 2026). A line pooled before the rule keeps the pieces it has (never added to silently).
+    pinPooled(row);
+    const count = O.pieceCountOf(sp);
+    if (sp.pieceNote) agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote}`);
+    for (let copy = 1; copy <= count; copy++) {
       const poolId = O.poolId(row.order, row.line, copy);
       const charm = copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
-      charm.name = `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? ` · ${copy}/${sp.quantity}` : ""}`;
-      charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: sp.quantity, form: sp.form, size: sp.size };
+      charm.name = `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
+      charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: sp.quantity, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: count, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
       charms.push(charm);
     }
     return { sp, pools, charms };
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
-  function attachPool(row, run, prep, contended, placed) {
+  function attachPool(row, run, prep, contended, placed, short) {
     const { sp, pools, charms } = prep;
+    // the cloud already holds this line with fewer pieces than the rule now gives (it was pooled before the pair and count rule): its
+    // rows were not written, and none is added; the line is what it was, with a plain note
+    const kept = (short || []).filter(x => pools.some(p => p.poolId === x.poolId));
+    if (kept.length) {
+      const had = Math.max(...kept.map(x => +x.had || 0));
+      O.pinPieces(sp, had); row.poolIds = pools.slice(0, had).map(p => p.poolId); row.state = "pooled"; row.reason = null; delete row.poolTry; delete row.poolError; settle(row);
+      agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote || "kept as it was"}`);
+      return;
+    }
     // a line that went (cancelled, AutoCancel, or gone from Etsy) while it was made up never goes onto a sheet: the run's
     // pool step is not waited for by AutoCancel, and it used to place the cancelled order after it had been taken off
     if (row.state === "gone" || window.Cancelled?.has?.(row.order.receiptId)) { const ids = pools.map(p => p.poolId); if (ids.length && S.cloud.ok) update(ids, { state: "abandoned", sheetId: null, setId: null }).catch(() => {}); return; }
@@ -2819,7 +2843,7 @@ const Pool = window.Pool = (() => {
     try {
       const prep = await preparePool(row, run); if (!prep) return;
       const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
-      attachPool(row, run, prep, r.contended, r.placed);
+      attachPool(row, run, prep, r.contended, r.placed, r.short);
     } finally { free(); }
   }
   /* A line that could not go on a sheet (its SKU in no master file or blocked, a size its design lacks, too big for the
@@ -2903,15 +2927,15 @@ const Pool = window.Pool = (() => {
       try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); else row.poolTry = trySig(row); } catch (e) { hold(row, e, true); }
       if (++n % 5 === 0) { Orders.render(); }
     }
-    let contended = [], placed = [], failure = null;
+    let contended = [], placed = [], short = [], failure = null;
     if (S.cloud.ok && made.length) {
       const all = made.flatMap(([, prep]) => prep.pools);
       // four hundred rows read and written one after another ran past the edge's patience (its "Inactivity Timeout" page,
       // 25 Sep); the server now reads a call's rows together and writes them in a batch, and a call carries two hundred
-      try { for (let i = 0; i < all.length; i += 200) { const r = await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); } }
+      try { for (let i = 0; i < all.length; i += 200) { const r = await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); short = short.concat(r.short || []); } }
       catch (e) { failure = e; }
     }
-    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed); } catch (e) { hold(row, e); } }
+    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed, short); } catch (e) { hold(row, e); } }
     if (bar) bar.end();
     await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
@@ -2954,7 +2978,7 @@ const Pool = window.Pool = (() => {
     row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -4323,7 +4347,7 @@ const Gate = window.Gate = (() => {
     const sp = row.spec; if (!sp || !sp.designSku) return 0;
     const e = Master.entryFor(sp.designSku); if (!e) return 0;
     const g = Pool.sizeEntry(e, sp.size) || e; if (!(g.areaPt2 > 0)) return 0;
-    return CN.inflatedArea({ areaPt2: g.areaPt2, widthPt: g.widthPt || 0, heightPt: g.heightPt || 0 }) * Math.max(1, sp.quantity || 1);
+    return CN.inflatedArea({ areaPt2: g.areaPt2, widthPt: g.widthPt || 0, heightPt: g.heightPt || 0 }) * O.pieceCountOf(sp);
   }
   const capacity = () => Object.fromEntries(METALS.map(m => [m.key, CN.usableArea(S.sheets[m.key]) * (+S.settings.maxFill || 0.80)]));
   /** Plan the lines that could pool now, and mark the ones that wait. Returns the plan. */
@@ -4386,7 +4410,7 @@ const Gate = window.Gate = (() => {
     if (!B.run || ["complete", "stopped", "abandoned"].includes(B.run.status)) { el2.classList.add("hidden"); return; }
     const m = sh.metal, p = R.plan && R.plan.materials[m];
     const waiting = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.material === m);
-    const pieces = waiting.reduce((n, r) => n + Math.max(1, (r.spec && r.spec.quantity) || 1), 0);
+    const pieces = waiting.reduce((n, r) => n + O.pieceCountOf(r), 0);
     let html = "", cls = "shGate";
     if (O_.SLOW_MATERIALS.has(m)) {
       const last = R.lastReleased[m], open = !last || (R.released[m] === today()) || daysUntil(last) <= -(+S.settings.cadenceDays || 2);
@@ -9808,7 +9832,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? `option "${p.optionName}: ${p.optionValue}" not mapped` : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -10030,6 +10054,29 @@ const Review = window.Review = (() => {
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
+    } else if (it.kind === "needsMapping" && p.count) {
+      /* An option that may name how many separate pieces ONE of these makes (letters, initials, "Set of 3", a range), or that the buyer's note
+         disagrees with, is not guessed (Paul, 9 Oct 2026): one press says how many, and the answer is kept for this listing and this value
+         like every other option answer ({ field: "count" }). "Just 1" says the option is no count of pieces. */
+      const lids = [...new Set(group.map(x => String(x.line.listingId)))], g = +p.count.guess || 0;
+      c.innerHTML = head("How many pieces?", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
+        `<div class="ask">How many separate pieces does ONE of these make in all?</div><div class="why">${esc(p.count.why || "")}</div>
+        <div class="fixes pick">${[1, 2, 3, 4, 5, 6].map(n => `<button class="btn ${n === g ? "gold" : "ghost"} sm" data-n="${n}" title="${n === 1 ? "one piece: this option is not a number of pieces" : n + " separate pieces, each cut on its own and kept together as one order line"}">${n === 1 ? "Just 1" : n}</button>`).join("")}<input type="number" min="1" max="12" step="1" data-f="n" placeholder="other"><button class="btn gold sm" data-a="n">Use it</button></div>
+        ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are answered together</label>` : ""}`;
+      const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
+      const say = n => saving(c, async () => {
+        n = Math.floor(+n); if (!(n >= 1 && n <= 12)) { toast("A whole number from 1 to 12", "bad"); return; }
+        const who = by(); if (!who) return;
+        const wide = lids.length > 1 && !oneOnly();
+        await api("charmNestLibrary", { op: "optionMapPut", listingId: wide ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "count", value: String(n) }, by: who });
+        answered(it, "decided", n === 1 ? `“${p.optionValue}” is not a number of pieces (1 piece)` : `“${p.optionValue}” makes ${n} pieces`, { option: p.optionName, value: p.optionValue, field: "count", to: String(n), listing: wide ? "all" : String(p.listingId) }, who);
+        await Orders.loadMaps(true);
+        toast(`“${p.optionValue}” → ${n} piece${n === 1 ? "" : "s"} · remembered for ${wide ? "every listing" : "this listing"}`, "ok");
+        for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
+      })();
+      c.querySelectorAll("[data-n]").forEach(b => { b.onclick = () => say(b.dataset.n); });
+      bindNeeds(c, "n", "n");
+      c.querySelector("[data-a=n]").onclick = () => say(c.querySelector("[data-f=n]").value);
     } else if (it.kind === "needsMapping") {
       /* This was a dropdown, a free-text box, a second dropdown and a button that did nothing at all until you had
          guessed the exact word it wanted. The question only ever has a handful of answers, so they are the buttons:
