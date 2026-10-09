@@ -37,6 +37,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   const calls = (from, name, op) => st.calls.slice(from).filter(c => (!name || c.name === name) && (!op || c.op === op)).length;
   const idx = sku => st.docs.get('Charm_Master_Index/' + sku);
   const urlOf = p => `https://firebasestorage.googleapis.com/v0/b/test-bucket/o/${encodeURIComponent(p)}?alt=media&token=t`;
+  const by2 = from => { const o = {}; for (const c of st.calls.slice(from)) { const k = c.name + ':' + c.op; o[k] = (o[k] || 0) + 1; } return o; };
   const run = (mod, args) => mod.main(['node', 'x', ...args], log);
 
   // ── the library as it stands: the whole fixture indexed, then one design made stale ──
@@ -151,12 +152,38 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   const rj = await run(CR, ['restore', '--origin', sorterOrigin, '--from', bk, '--skus', '11.4 MM']);
   assert(rj.bad === 0 && idx('11.4 MM'), 'restore brings a pruned record back');
 
+  // ── busy: the SKUs on open sheets, read the way the Library reads them ──
+  st.put('Charm_Nest_Sheets', 'sheetAAAAAAAAAA', { id: 'sheetAAAAAAAAAA', day: '2026-10-08', metal: 'gold', status: 'open', fileBase: 'GF Sheet 1', sources: [{ name: 'BR-TST-03 (master)', hash: 'h1' }, { name: 'BR-TST-02 · S (master)', hash: 'h2' }, { name: 'custom-upload.ai', hash: 'h3' }] });
+  st.put('Charm_Nest_Sheets', 'sheetBBBBBBBBBB', { id: 'sheetBBBBBBBBBB', day: '2026-10-07', metal: 'rose', status: 'open', roseStockId: 'stock1', sources: [{ name: 'BR-TST-06 (master)', hash: 'h4' }] });
+  st.put('Charm_Nest_Sheets', 'sheetCCCCCCCCCC', { id: 'sheetCCCCCCCCCC', day: '2026-10-06', metal: 'gold', archived: true, sources: [{ name: 'BR-TST-07 (master)', hash: 'h5' }] });
+  c0 = st.calls.length;
+  const bz = await run(CR, ['busy', '--origin', sorterOrigin, '--out', path.join(tmp, 'busy-skus.json')]);
+  const bj = JSON.parse(fs.readFileSync(path.join(tmp, 'busy-skus.json'), 'utf8'));
+  assert.deepStrictEqual(bj.skus, ['BR-TST-02', 'BR-TST-03', 'BR-TST-06'], 'the SKUs of the open sheets, not the archived one, no custom upload: ' + bj.skus);
+  assert(bj.sheets.find(x => x.id === 'sheetBBBBBBBBBB').rose && bz.sheets === 2, 'a Rose sheet is marked');
+  assert.deepStrictEqual(by2(c0), { 'charmNestLibrary:listSheets': 1 }, 'one call');
+
   // ── a whole-master stage: diff finds every design that differs, and names the live records the stage does not carry ──
   const stageAll = path.join(tmp, 'stage-all'); await run(IM, [file, '--out-dir', stageAll]);
   const dfa = await run(CR, ['diff', '--origin', sorterOrigin, '--stage', stageAll]);
   assert(dfa.changed === 1 && dfa.same === 5 && dfa.failed === 0, 'whole sheet: only the stale design differs: ' + JSON.stringify(dfa));
   const dja = JSON.parse(fs.readFileSync(path.join(stageAll, 'diff.json'), 'utf8'));
   assert.deepStrictEqual(dja.liveOnly.map(x => x.sku).sort(), ['11.4 MM', 'FRONT'], 'the records the sheet no longer carries are listed');
+  // plan: what to write, minus what is on an open sheet
+  const pl = await run(CR, ['plan', '--stage', stageAll, '--exclude', path.join(tmp, 'busy-skus.json')]);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(stageAll, 'rewrite-skus.json'), 'utf8')), ['BR-TST-01'], 'the stale design is the one to write: ' + JSON.stringify(pl));
+  const pl2 = await run(CR, ['plan', '--stage', stageAll, '--hold', 'BR-TST-01']);
+  assert(pl2.skus === 0 && pl2.held === 1 && /held back by name/.test(JSON.parse(fs.readFileSync(path.join(stageAll, 'held-back.json'), 'utf8'))[0].because[0]), 'a held design is not written');
+  fs.writeFileSync(path.join(tmp, 'busy2.json'), '["BR-TST-01"]');
+  const pl3 = await run(CR, ['plan', '--stage', stageAll, '--exclude', path.join(tmp, 'busy2.json')]);
+  assert(pl3.skus === 0 && pl3.held === 1, 'a design on an open sheet is not written');
+  await run(CR, ['plan', '--stage', stageAll]);
+  // diff --save-to: the backup of what it found, from the one read of the index it made
+  c0 = st.calls.length; const bk2 = path.join(tmp, 'backup2');
+  await run(CR, ['diff', '--origin', sorterOrigin, '--stage', stageAll, '--save-to', bk2]);
+  assert.deepStrictEqual(by2(c0), { 'charmNestLibrary:masterList': 1, 'charmNestLibrary:masterListFiles': 1 }, 'one index read and one file-record read: ' + JSON.stringify(by2(c0)));
+  const man2 = JSON.parse(fs.readFileSync(path.join(bk2, 'manifest.json'), 'utf8'));
+  assert(man2.skus.includes('BR-TST-01') && man2.files.some(f => f.path === stalePath) && fs.existsSync(path.join(bk2, 'files', stalePath)), 'the changed design is in the backup');
 
   // ── the audit tool runs on a master and its report names a defect ──
   const dumpFile = path.join(tmp, 'dump.json'), outDir = path.join(tmp, 'audit');

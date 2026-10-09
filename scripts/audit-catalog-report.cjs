@@ -68,6 +68,21 @@ function hoops(fp) {
   return cl.map(x => { const radii = []; for (const q of x.rs.slice().sort((a, b) => a.r - b.r)) if (!radii.length || Math.abs(q.r - radii[radii.length - 1]) > T.sameRadiusTol * q.r) radii.push(q.r); return { cx: x.cx, cy: x.cy, radii, circles: x.rs }; });
 }
 
+/** What a defect needs once the code fixes are on main. rewrite: the per-SKU file or the index record holds it (re-index the SKU);
+ *  read-time: the app decides it every time a file is read (the code fix is enough; thumbnails are the only thing baked);
+ *  prune: a record that is not a catalogue SKU; review: a hint for a person, no automatic fix. */
+const FIX = {
+  "colour-lost-in-file": ["rewrite", "the per-SKU writer dropped the colour the layer's first text object set (isolate)"],
+  "grey-box": ["rewrite", "shading / box members are in the file and in the record's size and silhouette"], "image-member": ["rewrite", "an image is in the file"],
+  "text-member": ["rewrite", "sample or note text is in the file and counted in holes, size and up angle"], "label-text-in-charm": ["rewrite", "label text is a member"], "label-ink": ["rewrite", "outlined label ink is a member"],
+  "detached-ring": ["rewrite", "the hoop is separate from the body in the file and the record"], "extra-ring": ["rewrite", "a doubled hoop circle is in the file"], "ring-orphan": ["rewrite", "a hoop circle was left out of the charm"],
+  "writer-changed-members": ["rewrite", "the file does not read back as the master draws it"], "rings-error": ["review", "ring welding failed on read-back"],
+  "solid-black": ["read-time", "drawn as a cut line now; only the stored thumbnail PNG is still a black body"], "cut-chromatic": ["read-time", "colour role is decided when the file is read"], "hatch-not-blue": ["read-time", "colour role is decided when the file is read"],
+  "engrave-not-red": ["read-time", "colour role is decided when the file is read"], "outline-not-cut-layer": ["read-time", "outline role is decided when the file is read"],
+  "sku-is-dimension": ["prune", "a size note was read as a SKU: remove the record (catalog-repair prune)"],
+  "text-undecodable": ["review", "text the parser cannot read"], "size-outlier": ["review", "far from the family's size"], "family-outlier": ["review", "differs from the family's convention"], "outline-noop": ["review", "the outline draws nothing"]
+};
+const fixOf = defects => { const f = defects.map(d => (FIX[d] || ["review"])[0]); return f.includes("rewrite") ? "rewrite" : f.includes("prune") ? "prune" : f.includes("read-time") ? "read-time" : f.length ? "review" : null; };
 function classify(c, ctx) {
   const fp = c.fp || (c.fp = fingerprint(c)), defects = [], detail = {};
   const add = (code, why) => { if (!defects.includes(code)) defects.push(code); detail[code] = detail[code] ? (detail[code].length < 220 ? detail[code] + "; " + why : detail[code]) : why; };
@@ -189,7 +204,7 @@ function main(argv) {
       if (r.defects.length) s.flaggedDesigns++;
       names.forEach((nm, i) => {
         const sku = nm.replace(/ · [A-Z0-9]{1,3}$/, "");
-        rows.push({ sku: sku.toUpperCase(), name: i === 0 ? (c.label || sku) : sku, master, charmIndex: c.index, defects: r.defects.slice(), detail: r.detail, sharesFileWith: names.filter((_, j) => j !== i).map(x => x.replace(/ · [A-Z0-9]{1,3}$/, "").toUpperCase()), rare: rare.length ? rare : undefined });
+        rows.push({ sku: sku.toUpperCase(), name: i === 0 ? (c.label || sku) : sku, master, charmIndex: c.index, defects: r.defects.slice(), fix: fixOf(r.defects), detail: r.detail, sharesFileWith: names.filter((_, j) => j !== i).map(x => x.replace(/ · [A-Z0-9]{1,3}$/, "").toUpperCase()), rare: rare.length ? rare : undefined });
         if (r.defects.length) s.flaggedSkus++;
       });
     }
@@ -212,16 +227,20 @@ function main(argv) {
   // a SKU read from two masters is one record in the catalogue: whichever master is indexed last owns it (the other is blocked or replaced)
   const mastersOf = new Map(); for (const r of rows) { if (!mastersOf.has(r.sku)) mastersOf.set(r.sku, new Set()); mastersOf.get(r.sku).add(r.master); }
   const multiMaster = [...mastersOf].filter(([, m]) => m.size > 1).map(([sku, m]) => ({ sku, masters: [...m], flagged: flaggedSet.has(sku) })).sort((a, b) => a.sku.localeCompare(b.sku));
+  const byFix = {}; for (const r of offending) { const k = r.fix || "none"; byFix[k] = byFix[k] || { skus: new Set(), lines: 0, designs: new Set() }; byFix[k].skus.add(r.sku); byFix[k].lines++; byFix[k].designs.add(r.master + "#" + r.charmIndex); }
+  const fixCounts = Object.fromEntries(Object.entries(byFix).map(([k, v]) => [k, { skus: v.skus.size, skuLines: v.lines, designs: v.designs.size }]));
   const sorted = offending.sort((a, b) => a.master.localeCompare(b.master) || a.sku.localeCompare(b.sku));
-  fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters (current main code); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, multiMaster, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, detail, sharesFileWith })) }, null, 1));
+  fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters (current main code); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, fixCounts, fixes: FIX, multiMaster, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith })) }, null, 1));
   const L = [];
   L.push("# Catalogue audit (offline, from the three master files)", "", `Generated ${new Date().toISOString()} by scripts/audit-catalog.cjs on the current main code. Nothing was read from the live site.`, "");
   L.push("## Masters", "", "| master | charm outlines | labelled designs | SKU lines | unlabelled outlines | labels with no charm | duplicate labels | loose ink | designs flagged | SKU lines flagged |", "|---|---|---|---|---|---|---|---|---|---|");
   for (const s of Object.values(stats)) L.push(`| ${s.master} | ${s.charms} | ${s.labelled} | ${s.skuLines} | ${s.unlabelled} | ${s.orphanLabels} | ${s.duplicates} | ${s.orphanInk} | ${s.flaggedDesigns} | ${s.flaggedSkus} |`);
   const tl = Object.values(stats).reduce((a, s) => ({ l: a.l + s.labelled, k: a.k + s.skuLines, f: a.f + s.flaggedSkus, d: a.d + s.flaggedDesigns }), { l: 0, k: 0, f: 0, d: 0 });
   L.push("", `Total: ${tl.l} labelled designs, ${tl.k} SKU lines (${new Set(rows.map(r => r.sku)).size} distinct SKUs); ${tl.d} designs and ${flaggedSet.size} distinct SKUs are flagged (${tl.f} SKU lines).`, "");
-  L.push("## Defects per category", "", "| category | SKU lines | designs (files to rewrite) |", "|---|---|---|");
-  for (const [k, v] of Object.entries(cat).sort((a, b) => b[1].skus - a[1].skus)) L.push(`| ${k} | ${v.skus} | ${v.designs.size} |`);
+  L.push("## Defects per category", "", "| category | SKU lines | designs | what it needs | why |", "|---|---|---|---|---|");
+  for (const [k, v] of Object.entries(cat).sort((a, b) => b[1].skus - a[1].skus)) L.push(`| ${k} | ${v.skus} | ${v.designs.size} | ${(FIX[k] || ["review", ""])[0]} | ${(FIX[k] || ["", ""])[1]} |`);
+  L.push("", "By what the repair has to do (a design with several defects counts once, under the strongest):", "");
+  for (const k of ["rewrite", "prune", "read-time", "review"]) if (fixCounts[k]) L.push(`- **${k}**: ${fixCounts[k].designs} design(s), ${fixCounts[k].skuLines} SKU line(s), ${fixCounts[k].skus} distinct SKU(s)`);
   L.push("", "## Paul's examples", "");
   for (const e of ex) { L.push(`- **${e.label}**: ${e.count} SKU line(s)`); for (const r of e.rows.slice(0, 8)) L.push(`  - ${r.sku} (${r.master}): ${r.defects.length ? r.defects.join(", ") : "nothing flagged"}`); }
   L.push("", "## SKUs that sit in more than one master", "", `${multiMaster.length} SKU(s) are labelled in two masters. They are ONE record in the catalogue, and the master indexed last owns it, so a repair run per master must not rewrite them from the wrong one: ${multiMaster.slice(0, 40).map(x => `${x.sku} (${x.masters.map(m => m.replace(/^MASTER SKU_|_MV.*$/g, "")).join(" + ")}${x.flagged ? ", flagged" : ""})`).join(", ")}${multiMaster.length > 40 ? " …" : ""}`);
