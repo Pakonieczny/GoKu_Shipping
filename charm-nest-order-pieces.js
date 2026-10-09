@@ -22,8 +22,13 @@
  *                                                  thumb, listingId, loading, unsure, hand }]
  *       (hand: the custom order's completion record when a person completed the piece by hand (Review → Complete Order, or its QR label printed):
  *        it needs no sheet, is never loading or "not on a sheet yet", and is numbered after the pieces that are cut, as a no-design one)
+ *       (pairs, Paul 9 Oct 2026: every entry also says side 'L'|'R'|null (a mismatched pair's left / right earring), sideLabel 'Left'|'Right'|'', bodyIndex,
+ *        groupKey (receipt:transaction: every piece of one order line), groupSize (pieces in the group) and kind ('mismatched' for a pair of two different charms, else
+ *        the contract's kindOf or null). They are read from the pool row when it has them and derived from the line (input.pairOf) when it has not: an old record works.)
  *   window.OrderPieces.spread(orderId)        -> { multi, sheets:[{sheetId,sheetLabel,setId,metal,pieces:[key]}], unnested:[piece],
- *                                                  spreadAcross, loading, unsure }
+ *                                                  spreadAcross, loading, unsure,
+ *                                                  groups:[{ key, lineKey, kind, size, sides, sheets:[{sheetId,sheetLabel}], placed, unplaced, split }], splitGroups:[group] }
+ *       (a group is split when its pieces sit on two or more sheets, or some are on a sheet and some are not: R3, said plainly by every surface)
  *   window.OrderPieces.ofLine(orderId, lineKey) · nestedOf(orderId, lineKey) · onSheet(sheetId) · ordersOf(setId) · known(orderId)
  *   window.OrderPieces.loadSheet(sheetId) -> Promise: reads that saved sheet whole and the records of every order on it (then onSheet is complete)
  *   window.OrderPieces.load(orderIds, { force }) -> Promise: one read of the sheet records that name the orders' pieces (op
@@ -83,6 +88,10 @@
     const byPool = new Map();
     for (const s of recById.values()) for (const id of s.poolIds || []) { const k = String(id); if (!k.startsWith(prefix)) continue; (byPool.get(k) || byPool.set(k, []).get(k)).push(s); }
     const known = !!input.sheetsKnown, unsure = !!input.failed;
+    // pairs: pairOf(line) -> the pieces the line makes (CharmNestPair.piecesFor) when it is a mismatched pair, else null; kindOf(line) -> the contract's kind. Both are optional and
+    // only ever answer for a mismatched pair, so a line that is not one is resolved exactly as before.
+    const pairOf = typeof input.pairOf === 'function' ? input.pairOf : null, kindOf = typeof input.kindOf === 'function' ? input.kindOf : null;
+    const planOf = l => { if (!pairOf) return null; try { const x = pairOf(l); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
 
     // 1 · the pieces: every copy of every line, then pool rows and sheet entries no line explains (a line lost from the pull)
     const out = [], seen = new Set();
@@ -94,12 +103,13 @@
     // (the order Issues-truth's CharmNestReadiness.pieces counts in, so that "piece 2" is the same piece in the Library's issues panel and here:
     //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
-      const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
+      const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
+      const plan = planOf(l), qty = plan ? Math.max(qty0, plan.length) : qty0;   // (a mismatched pair makes two pieces for every unit bought: its Left and its Right)
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
       for (let n = 1; ids.length < qty; n++) if (!ids.includes(`${key}_${n}`)) ids.push(`${key}_${n}`);
       for (const [id, p] of pools) if (p.lineKey === key && !ids.includes(id) && !GONE.has(p.state)) ids.push(id);
       ids.sort((a, b) => tailNo(a) - tailNo(b));   // (stable: by copy number, so a record that lists _3 before _1 does not change which piece is piece 2)
-      for (const id of ids) add(id, l, { qty: Math.max(qty, ids.length) });
+      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos }));
     }
     // (a pool row a Hold took off its sheet is a held piece, still: an order this page holds no lines of, found by number, says it is on hold)
     for (const [id, p] of pools) if (!seen.has(id) && (!GONE.has(p.state) || (!lines.length && heldRow(p)))) add(id, null, { qty: +p.quantity || 1 });
@@ -141,14 +151,21 @@
       let reason = '';
       if (!nested) reason = hand ? HAND_REASON : loading ? '' : unsureHere ? 'its sheets could not be read just now' : problem ? REASON[problem] : l && l.state === 'pooled' ? 'it is waiting to be placed on a sheet' : 'it is not on a sheet yet';
       const thumb = (page && input.thumbOf && input.thumbOf(id)) || (l && l.thumb) || null;
-      return { key: id, lineKey: o.lineKey, index: 0, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: cleanSku(sku || (l && l.title)) || 'Piece', sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
+      // the pair fields: the pool row's own when it has them (a record written since pairs were tracked), else what the line's plan says of this piece, else none
+      const pp = o.plan && o.plan[o.pos] || null, rowSide = p && (p.side === 'L' || p.side === 'R') ? p.side : null, planSide = pp && (pp.side === 'L' || pp.side === 'R') ? pp.side : null;
+      const side = rowSide || planSide || null, bodyIndex = p && p.bodyIndex != null && Number.isFinite(+p.bodyIndex) ? +p.bodyIndex : pp && pp.bodyIndex != null ? +pp.bodyIndex : null;
+      const groupKey = String((p && p.groupKey) || (pp && pp.groupKey) || `${rid}:${(l && l.transactionId) || o.tx || ''}`);
+      const kind = o.plan ? (kindOf && l ? kindOf(l) || 'mismatched' : 'mismatched') : (side ? 'mismatched' : kindOf && l ? kindOf(l) || null : null);
+      const sideLabel = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
+      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
         problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
     });
     // a line cancelled or gone from the order: its pieces that are still on a sheet are reported (gone), those on none are not
     // numbered as CharmNestReadiness.pieces numbers them: the live pieces 1.. in order; a piece with nothing to cut (no design), or cancelled and still on a sheet, after them
     const shown = pieces.filter(p => !(p.gone && !p.nested)), live = shown.filter(p => !p.gone && !p.noDesign), rest = shown.filter(p => p.gone || p.noDesign);
-    return live.concat(rest).map((p, i) => Object.assign(p, { index: i + 1 }));
+    const size = new Map(); for (const p of shown) if (!p.gone) size.set(p.groupKey, (size.get(p.groupKey) || 0) + 1);
+    return live.concat(rest).map((p, i) => Object.assign(p, { index: i + 1, groupSize: p.groupSize || size.get(p.groupKey) || 1 }));
   }
 
   /** How an order's pieces are spread over sheets. */
@@ -160,7 +177,18 @@
       let s = sheets.get(k); if (!s) sheets.set(k, s = { sheetId: p.sheetId || null, sheetLabel: p.sheetLabel, sheetNo: p.sheetNo, setId: p.setId || null, metal: p.metal || null, pieces: [] });
       s.pieces.push(p.key);
     }
-    return { multi: pieces.length > 1, sheets: [...sheets.values()], unnested, spreadAcross: sheets.size > 1, loading: pieces.some(p => p.loading), unsure: pieces.some(p => p.unsure) };
+    // the groups (one order line's pieces: a pair, n discs, a single): where each group's pieces sit, and whether the group is split (R3: pieces of one group on two or more
+    // sheets, or some on a sheet and some on none): a surface that says "its pair" says it from here
+    const groups = new Map();
+    for (const p of pieces) {
+      const k = p.groupKey || p.lineKey; let g = groups.get(k);
+      if (!g) groups.set(k, g = { key: k, lineKey: p.lineKey, kind: p.kind || null, size: 0, sides: [], sheets: [], placed: 0, unplaced: 0, split: false, _s: new Set() });
+      g.size++; if (p.kind && !g.kind) g.kind = p.kind; if (p.side && !g.sides.includes(p.side)) g.sides.push(p.side);
+      if (p.nested) { g.placed++; const sk = p.sheetId || 'page:' + p.sheetLabel; if (!g._s.has(sk)) { g._s.add(sk); g.sheets.push({ sheetId: p.sheetId || null, sheetLabel: p.sheetLabel || null }); } }
+      else if (!p.hand && !p.loading) g.unplaced++;
+    }
+    const list = [...groups.values()].map(g => { delete g._s; g.split = g.size > 1 && (g.sheets.length > 1 || (g.placed > 0 && g.unplaced > 0)); return g; });
+    return { multi: pieces.length > 1, sheets: [...sheets.values()], unnested, spreadAcross: sheets.size > 1, loading: pieces.some(p => p.loading), unsure: pieces.some(p => p.unsure), groups: list, splitGroups: list.filter(g => g.split) };
   }
 
   /** The page's face of the module: reads what the page holds, learns what the order window reads, asks the server once. */
@@ -197,9 +225,15 @@
     const livePlaced = id => { try { return root.Pool && root.Pool.sheetOf ? root.Pool.sheetOf(id) : null; } catch (_) { return null; } };
     const liveSheet = sid => { if (!sid) return null; for (const p of pages()) if (p.sheetId === sid) return p; return null; };
 
+    // a MISMATCHED pair line (the master record says its design draws two different bodies: entry.pair.mismatched) makes the pieces CharmNestPair.piecesFor says; every other line: null,
+    // so nothing about it changes. Without the shared module (CharmNestPair) or the master record's pair field the page behaves as it always did.
+    const pairEntry = l => { try { const M = root.Master, e = l && l.sku && M && M.entryFor ? M.entryFor(l.sku) : null; return e && e.pair && e.pair.mismatched === true ? e : null; } catch (_) { return null; } };
+    const pairArg = l => ({ receiptId: l.receiptId, transactionId: l.transactionId, sku: l.sku, quantity: Math.max(1, Math.round(+(l.spec && l.spec.quantity || l.quantity) || 1)), form: l.form || '', key: l.key, spec: l.spec || {}, line: l });
+    const pairOf = l => { const CP = root.CharmNestPair, e = CP && typeof CP.piecesFor === 'function' ? pairEntry(l) : null; if (!e) return null; try { const x = CP.piecesFor(pairArg(l), e); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
+    const kindOf = l => { const CP = root.CharmNestPair, e = CP && typeof CP.kindOf === 'function' ? pairEntry(l) : null; if (!e) return null; try { return CP.kindOf(pairArg(l), e) || null; } catch (_) { return null; } };
     function lineOfRow(r) {
       const sp = r.spec || {}, ln = r.line || {};
-      return { key: r.key, transactionId: ln.transactionId, sku: sp.designSku || ln.sku || '', title: ln.title || '', material: r.material || sp.material || r.metal || null,
+      return { key: r.key, receiptId: r.order && r.order.receiptId, form: sp.form || '', transactionId: ln.transactionId, sku: sp.designSku || ln.sku || '', title: ln.title || '', material: r.material || sp.material || r.metal || null,
         quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null }, reason: r.reason || '', listingId: ln.listingId || '' };
     }
     function linesOf(rid) {
@@ -220,8 +254,10 @@
         const mineNewer = stampOf(p) >= stampOf(cur), a = mineNewer ? cur : p, b = mineNewer ? p : cur;
         pools.set(id, Object.assign({}, a, b, { sheetId: GONE.has(b.state) ? (b.sheetId || null) : (b.sheetId || a.sheetId || null) }));
       };
+      // (how many copies a line makes: its quantity, or the pieces of a mismatched pair: two for every unit)
+      const copiesOf = l => { const pl = pairOf(l), n = Math.max(1, Math.round(+l.quantity || 1)); return pl ? Math.max(n, (l.poolIds || []).length, pl.length) : n; };
       if (mem) for (const l of lines) {
-        for (let c = 1; c <= Math.max(1, Math.round(+l.quantity || 1)); c++) { const id = `${l.key}_${c}`, p = mem.get(id); if (p) merge(id, p); }
+        for (let c = 1; c <= copiesOf(l); c++) { const id = `${l.key}_${c}`, p = mem.get(id); if (p) merge(id, p); }
         for (const id of l.poolIds || []) { const p = mem.get(String(id)); if (p) merge(String(id), p); }
       }
       // sheets: what the page holds (Library rows) and what was read for the order, newest copy of each
@@ -232,10 +268,10 @@
       // lists the order on, that the cloud no longer does (a hold, a take-off, a deleted sheet), is not read as a sheet the piece is on.
       if (!(e && e.ok)) {
         for (const s of L.byOrder.get(rid) || []) take(s);
-        for (const l of lines) for (let c = 1; c <= Math.max(1, Math.round(+l.quantity || 1)); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
+        for (const l of lines) for (let c = 1; c <= copiesOf(l); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
       }
       for (const s of (e && e.sheets) || []) take(s);
-      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet,
+      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet, pairOf, kindOf,
         thumbOf: id => { try { const c = root.Pool && root.Pool.charmOf ? root.Pool.charmOf(id) : null; return c && c.thumbUrl || null; } catch (_) { return null; } } };
     }
     function enrich(pieces) {
