@@ -75,10 +75,13 @@ function hoops(fp) {
  *  read-time: the app decides it every time a file is read (the code fix is enough; thumbnails are the only thing baked);
  *  prune: a record that is not a catalogue SKU; review: a hint for a person, no automatic fix. */
 const FIX = {
-  "colour-lost-in-file": ["rewrite", "the per-SKU writer dropped the colour the layer's first text object set (isolate)"],
+  "colour-lost-in-file": ["rewrite", "the per-SKU writer changed the paint of a path by cutting out the text run that set the layer's colour (blue hatching stored black; in CUSTOMS-MISC black stored blue): fixed in isolate, the stored file still holds the wrong paint"],
   "grey-box": ["rewrite", "shading / box members are in the file and in the record's size and silhouette"], "image-member": ["rewrite", "an image is in the file"],
   "text-member": ["rewrite", "sample or note text is in the file and counted in holes, size and up angle"], "label-text-in-charm": ["rewrite", "label text is a member"], "label-ink": ["rewrite", "outlined label ink is a member"],
-  "detached-ring": ["rewrite", "the hoop is separate from the body in the file and the record"], "extra-ring": ["rewrite", "a doubled hoop circle is in the file"], "ring-orphan": ["rewrite", "a hoop circle was left out of the charm"],
+  "detached-ring": ["rewrite", "the hoop is welded to the body at read time now; the record (holes, size, area, hash, up angle) was measured without the weld, so the record is written again (index-master welds now)"], "extra-ring": ["rewrite", "a doubled hoop circle: the app welds it right at read time; the record counted it as a hole, so the record is written again"], "ring-orphan": ["rewrite", "a hoop circle was left out of the charm"],
+  "label-ink-after-fix": ["review", "still a member on the fixed code (outlined label letters or artwork drawn on the LABELS layer): a re-index does not remove it, a person or a code change must"],
+  "extra-ring-after-fix": ["review", "concentric circles the weld leaves as drawn (an eye, a lens, a target): a design feature unless a person says it is a second hoop"],
+  "detached-ring-after-fix": ["review", "a ring-sized circle the weld deliberately leaves alone (the hole of a plate, or too far from the body)"],
   "writer-changed-members": ["rewrite", "the file does not read back as the master draws it"], "rings-error": ["review", "ring welding failed on read-back"],
   "solid-black": ["read-time", "drawn as a cut line now; only the stored thumbnail PNG is still a black body"], "cut-chromatic": ["read-time", "colour role is decided when the file is read"], "hatch-not-blue": ["read-time", "colour role is decided when the file is read"],
   "engrave-not-red": ["read-time", "colour role is decided when the file is read"], "outline-not-cut-layer": ["read-time", "outline role is decided when the file is read"],
@@ -108,8 +111,8 @@ function classify(c, ctx) {
     if (fp.text.some(t => t.undec)) add("text-undecodable", "text that cannot be read back (no ToUnicode)");
   }
   // 3 · ink on the LABELS layer: an outlined label (or a box behind it) the grouping attached to this charm
-  const li = mem.filter(m => m.k === "path" && layerKey(m.L) === "LABELS");
-  if (li.length) add("label-ink", `${li.length} path(s) on the LABELS layer inside the charm`);
+  const li = (c.rings && c.rings.final ? c.rings.final.members : mem).filter(m => m.k === "path" && layerKey(m.L) === "LABELS");   // (a hoop drawn on the LABELS layer is welded away first when the dump has `rings`)
+  if (li.length) add(ctx.fixed ? "label-ink-after-fix" : "label-ink", `${li.length} path(s) on the LABELS layer inside the charm`);
   // 4 · colour against layer: the convention of these masters is CUT black stroke, ENGRAVE red, HATCH blue fill, BACK ENGRAVING black
   const hb = mem.filter(m => m.k === "path" && layerKey(m.L) === "HATCH" && colOf(m) !== "blue" && colOf(m) !== "white" && colOf(m) !== "none" && (m.A == null || m.A > 0.05));
   if (hb.length) add("hatch-not-blue", `${hb.length} HATCH path(s) painted ${[...new Set(hb.map(m => paintKey(m) + " " + colOf(m)))].join(", ")}`);
@@ -124,15 +127,18 @@ function classify(c, ctx) {
   else if (ol && ol.f && darkFill(ol.fc)) add("solid-black", `the outline path is a black fill and stroke (${ol.op})`);
   const body = mem.filter(m => m.k === "path" && m.f && layerKey(m.L) === "CUT" && darkFill(m.fc) && fp.outlineA > 0 && (m.A || 0) >= T.solidFill * fp.outlineA && !(m.circ && m.circ.length && (m.A || 0) < 80));
   if (body.length) add("solid-black", `${body.length} black-filled CUT member(s) cover ${Math.round(100 * Math.max(...body.map(m => m.A)) / fp.outlineA)} % of the outline area`);
-  // 6 · hoops
-  const hp = hoops(fp);
+  // 6 · hoops (judged on what the app sees once the hoop is welded, when the dump carries that: `dump --rings`)
+  const rg = c.rings && c.rings.final ? c.rings : null, fpR = rg ? fingerprint(rg.final) : fp;
+  if (rg && rg.left && rg.left.length) add("rings-error", `a hoop could not join its charm: ${String(rg.left[0]).slice(0, 120)}`);
+  if (c.rings && c.rings.error) add("rings-error", c.rings.error);
+  const hp = hoops(fpR);
   for (const h of hp) {
     if (!h.circles.some(q => isRingSize(q.r)) && !h.radii.some(isRingSize)) continue;
-    if (h.radii.length >= 3) add("extra-ring", `${h.radii.length} concentric circles at (${h.cx.toFixed(1)}, ${h.cy.toFixed(1)}), radii ${h.radii.map(v => v.toFixed(2)).join(" / ")}`);
+    if (h.radii.length >= 3) add(ctx.fixed ? "extra-ring-after-fix" : "extra-ring", `${h.radii.length} concentric circles at (${h.cx.toFixed(1)}, ${h.cy.toFixed(1)}), radii ${h.radii.map(v => v.toFixed(2)).join(" / ")}`);
   }
-  for (const q of fp.circles) {
+  for (const q of fpR.circles) {
     if (!isRingSize(q.r) || q.own === "O") continue;
-    if (q.d != null && q.d > T.detachedD && (q.inside == null || q.inside < 0.5)) add("detached-ring", `a ${(q.r * 2 * MM).toFixed(1)} mm ring ${q.d.toFixed(1)} pt from the outline edge`);
+    if (q.d != null && q.d > T.detachedD && (q.inside == null || q.inside < 0.5)) add(ctx.fixed ? "detached-ring-after-fix" : "detached-ring", `a ${(q.r * 2 * MM).toFixed(1)} mm ring ${q.d.toFixed(1)} pt from the outline edge`);
   }
   // 7 · ring-sized loose ink the grouping left out of the charm (the app only folds what lies in the charm's box back in)
   const lo = (ctx.orphansNear.get(c.index) || []).filter(o => o.k === "path" && o.circ && o.circ.some(q => isRingSize(q.r)) && o.dNear != null && o.dNear <= 12);
@@ -177,13 +183,13 @@ const EXAMPLES = [
 ];
 
 function main(argv) {
-  const files = [], o = { out: ".", findings: "", basis: "" };
-  for (let i = 0; i < argv.length; i++) { if (argv[i] === "--out") o.out = argv[++i]; else if (argv[i] === "--findings") o.findings = argv[++i]; else if (argv[i] === "--basis") o.basis = argv[++i]; else if (!argv[i].startsWith("--")) files.push(argv[i]); }
-  if (!files.length) throw new Error("usage: audit-catalog.cjs report <dump.json>... --out <dir> [--findings <dir>] [--basis <text>]");
+  const files = [], o = { out: ".", findings: "", basis: "", after: "", fixed: false };
+  for (let i = 0; i < argv.length; i++) { if (argv[i] === "--out") o.out = argv[++i]; else if (argv[i] === "--findings") o.findings = argv[++i]; else if (argv[i] === "--basis") o.basis = argv[++i]; else if (argv[i] === "--after") o.after = argv[++i]; else if (argv[i] === "--fixed") o.fixed = true; else if (!argv[i].startsWith("--")) files.push(argv[i]); }
+  if (!files.length) throw new Error("usage: audit-catalog.cjs report <dump.json>... --out <dir> [--findings <dir>] [--basis <text>] [--after <CATALOG-offending.json of a run on the fixed code>] [--fixed]");
   fs.mkdirSync(o.out, { recursive: true });
-  const rows = [], stats = {}, byDesign = [];
+  const rows = [], stats = {}, byDesign = [], codes = new Set();
   for (const f of files) {
-    const d = load(f), master = short(d.master), orphansNear = new Map();
+    const d = load(f), master = short(d.master), orphansNear = new Map(); codes.add(d.code || "unknown");
     for (const x of d.orphans || []) if (x.near != null) { if (!orphansNear.has(x.near)) orphansNear.set(x.near, []); orphansNear.get(x.near).push(x); }
     const s = stats[master] = { master: d.master, charms: d.charms.length, labelled: 0, skuLines: 0, unlabelled: d.charms.filter(c => !c.sku).length, orphanLabels: (d.lab.orphans || []).length, duplicates: (d.lab.duplicates || []).length, undecodable: d.lab.undecodable, orphanInk: (d.orphans || []).length, flaggedDesigns: 0, flaggedSkus: 0 };
     // the master's own convention table: how common is each (layer, paint, colour) among labelled charms' artwork members
@@ -197,7 +203,7 @@ function main(argv) {
     for (const [k, list] of fam) { if (list.length < T.famMin) continue; const m = {}; for (const c of list) { const ft = famFeat(c); for (const [a, b] of Object.entries(ft)) { m[a] = m[a] || {}; m[a][b] = (m[a][b] || 0) + 1; } } const maj = {}; for (const [a, vs] of Object.entries(m)) { const [bv, bn] = Object.entries(vs).sort((x, y) => y[1] - x[1])[0]; if (bn / list.length >= T.famShare) maj[a] = bv; } famMajor.set(k, { n: list.length, maj }); }
     for (const c of d.charms) {
       if (!c.sku) continue; s.labelled++; const names = [c.sku + (c.size ? " · " + c.size : ""), ...(c.extra || [])]; s.skuLines += names.length;
-      const r = classify(c, { orphansNear });
+      const r = classify(c, { orphansNear, fixed: o.fixed });
       // rare combos (information only: they are listed, they do not make a SKU an offender on their own)
       const rare = Object.keys(c.fp.art).filter(k => combo[k] / tot < T.rareShare && combo[k] >= T.rareMin);
       const fm = famMajor.get(familyOf(c.sku)); const famDev = [];
@@ -221,8 +227,10 @@ function main(argv) {
   for (const [name, set] of Object.entries(findings)) {
     if (set.error) { cross[name] = { error: set.error }; continue; }
     const allSkus = new Set(rows.map(r => r.sku)), mine = new Set(offending.map(r => r.sku));
+    const chF0 = path.join(o.out, "CATALOG-changes.json"), changedSet = new Set(); if (fs.existsSync(chF0)) for (const r of JSON.parse(fs.readFileSync(chF0, "utf8")).changed || []) changedSet.add(String(r.sku).toUpperCase().replace(/\s*·\s*[A-Z0-9]{1,3}$/, ""));
     const inCatalogue = [...set].filter(s => allSkus.has(s)), both = inCatalogue.filter(s => mine.has(s));
-    cross[name] = { workerCount: set.size, inMasters: inCatalogue.length, alsoFlaggedHere: both.length, notFlaggedHere: inCatalogue.filter(s => !mine.has(s)).slice(0, 25) };
+    const ch2 = inCatalogue.filter(s => changedSet.has(s)), nei = inCatalogue.filter(s => !mine.has(s) && !changedSet.has(s));
+    cross[name] = { workerCount: set.size, inMasters: inCatalogue.length, alsoFlaggedHere: both.length, alsoChanged: changedSet.size ? ch2.length : null, neither: changedSet.size ? nei.length : null, notFlaggedHere: inCatalogue.filter(s => !mine.has(s)).slice(0, 25), neitherList: nei.slice(0, 25) };
   }
   // Paul's examples
   const ex = EXAMPLES.map(([label, re]) => { const hit = rows.filter(r => re.test(r.sku) || re.test(r.name)).sort((a, b) => (b.defects.length > 0) - (a.defects.length > 0)); return { label, count: hit.length, flagged: hit.filter(r => r.defects.length).length, rows: hit.slice(0, 12).map(r => ({ sku: r.sku, master: r.master, defects: r.defects })) }; });
@@ -233,7 +241,8 @@ function main(argv) {
   const byFix = {}; for (const r of offending) { const k = r.fix || "none"; byFix[k] = byFix[k] || { skus: new Set(), lines: 0, designs: new Set() }; byFix[k].skus.add(r.sku); byFix[k].lines++; byFix[k].designs.add(r.master + "#" + r.charmIndex); }
   const fixCounts = Object.fromEntries(Object.entries(byFix).map(([k, v]) => [k, { skus: v.skus.size, skuLines: v.lines, designs: v.designs.size }]));
   const sorted = offending.sort((a, b) => a.master.localeCompare(b.master) || a.sku.localeCompare(b.sku));
-  fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters (current main code); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, fixCounts, fixes: FIX, multiMaster, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith })) }, null, 1));
+  const afterJ = o.after ? JSON.parse(fs.readFileSync(o.after, "utf8")) : null;
+  fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), dumpCode: [...codes], afterTheFixes: afterJ ? { dumpCode: afterJ.dumpCode, fixCounts: afterJ.fixCounts, counts: afterJ.counts } : undefined, tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters read by the code named in dumpCode (the dumps carry the commit; older dumps carry none); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, fixCounts, fixes: FIX, multiMaster, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith })) }, null, 1));
   const L = [];
   L.push("# Catalogue audit (offline, from the three master files)", "", `Generated ${new Date().toISOString()} by scripts/audit-catalog.cjs from dump files made ${o.basis || "with the code that was checked out when `audit-catalog.cjs dump` ran (the dump header names its commit)"}. Nothing was read from the live site.`, "");
   L.push("## Masters", "", "| master | charm outlines | labelled designs | SKU lines | unlabelled outlines | labels with no charm | duplicate labels | loose ink | designs flagged | SKU lines flagged |", "|---|---|---|---|---|---|---|---|---|---|");
@@ -244,13 +253,85 @@ function main(argv) {
   for (const [k, v] of Object.entries(cat).sort((a, b) => b[1].skus - a[1].skus)) L.push(`| ${k} | ${v.skus} | ${v.designs.size} | ${(FIX[k] || ["review", ""])[0]} | ${(FIX[k] || ["", ""])[1]} |`);
   L.push("", "By what the repair has to do (a design with several defects counts once, under the strongest):", "");
   for (const k of ["rewrite", "prune", "read-time", "review"]) if (fixCounts[k]) L.push(`- **${k}**: ${fixCounts[k].designs} design(s), ${fixCounts[k].skuLines} SKU line(s), ${fixCounts[k].skus} distinct SKU(s)`);
+  if (afterJ) {
+    L.push("", `## After the fixes (a second run of this audit on the fixed code, dumps made with ${(afterJ.dumpCode || ["unknown"]).join(", ")})`, "", "What is still flagged when the same checks run on the masters read by the fixed main code. The fixed code no longer puts these members in a charm, so a count that falls is a defect the new reader removes; a count that stays is a defect in the master drawing itself (or one the audit rule cannot tell from a design), which is for a person to judge.", "", "| category | SKU lines now | SKU lines after | designs now | designs after |", "|---|---|---|---|---|");
+    const norm = k => k.replace(/-after-fix$/, ""), aft = {};
+    for (const [k, v] of Object.entries(afterJ.counts || {})) { const n = norm(k); aft[n] = aft[n] || { skus: 0, designs: 0 }; aft[n].skus += v.skus; aft[n].designs += v.designs; }
+    const names = new Set([...Object.keys(cat), ...Object.keys(aft)]);
+    for (const k of [...names].sort((a, b) => ((cat[b] || { skus: 0 }).skus) - ((cat[a] || { skus: 0 }).skus))) L.push(`| ${k} | ${(cat[k] || { skus: 0 }).skus} | ${(aft[k] || { skus: 0 }).skus} | ${(cat[k] || { designs: new Set() }).designs.size} | ${(aft[k] || { designs: 0 }).designs} |`);
+    const fc = afterJ.fixCounts || {}, nd = k => (fc[k] || { designs: 0 }).designs;
+    L.push("", `On the fixed code ${nd("rewrite") + nd("prune") ? `${nd("rewrite")} design(s) are still in the rewrite class and ${nd("prune")} in the prune class` : "nothing is left in the rewrite or prune classes"}; ${nd("read-time")} design(s) show a raw-drawing defect the reader now handles when the file is read (no write), and ${nd("review")} are for a person to look at (family and size outliers, concentric circles that are probably design features, outlined label letters or artwork on the LABELS layer, plate holes). Which designs the repair really has to write is the diff of step B; the section below is its offline estimate.`);
+  }
+  const chF = path.join(o.out, "CATALOG-changes.json");
+  if (fs.existsSync(chF)) {
+    const ch = JSON.parse(fs.readFileSync(chF, "utf8")), sm = ch.summary, kinds = Object.entries(sm.byKind || {}).map(([k, v]) => `${k} ${v}`).join(", ");
+    L.push("", "## What the fixed code changes, SKU by SKU (offline stand-in for the live diff)", "", `Two offline dumps of the same masters, the code the catalogue was built with (${(sm.oldCode || []).join(", ")}) and the fixed code (${(sm.newCode || []).join(", ")}), compared per SKU line on the size of the welded outline, the through-cuts, the member count and the paint (CATALOG-changes.json). It reads no live data; \`catalog-repair diff\` is the same comparison against the live files and records.`, "", `- ${sm.skuLinesCompared} SKU lines compared; **${sm.changed} change** in ${sm.changedDesigns} designs (${kinds}); ${sm.gone} are no longer SKUs at all (callouts, or a label read differently); ${sm.added} are new.`);
+    if (sm.changedOrAuditRewriteDesigns != null) L.push(`- Designs to write: ${sm.changedDesigns} change, ${sm.auditRewriteDesigns} are flagged "rewrite" by the audit rules; together ${sm.changedOrAuditRewriteDesigns} distinct designs (the best offline estimate of K for the cost table of CATALOG-runbook.md).`);
+    if (sm.flaggedAndChanged != null) L.push(`- Of the ${sm.changed} that change, ${sm.flaggedAndChanged} were flagged by the audit rules above and ${sm.changedButNotFlaggedByAudit} were not: the audit reads the drawing, this reads the effect of the code, so the second number is what the rules above cannot see (a hoop the old weld handled differently, a marker the old grouping kept, a size note).`);
+  }
   L.push("", "## Paul's examples", "");
   for (const e of ex) { L.push(`- **${e.label}**: ${e.count} SKU line(s), ${e.flagged} flagged`); for (const r of e.rows.slice(0, 8)) L.push(`  - ${r.sku} (${r.master}): ${r.defects.length ? r.defects.join(", ") : "nothing flagged"}`); }
   L.push("", "## SKUs that sit in more than one master", "", `${multiMaster.length} SKU(s) are labelled in two masters. They are ONE record in the catalogue, and the master indexed last owns it, so a repair run per master must not rewrite them from the wrong one: ${multiMaster.slice(0, 40).map(x => `${x.sku} (${x.masters.map(m => m.replace(/^MASTER SKU_|_MV.*$/g, "")).join(" + ")}${x.flagged ? ", flagged" : ""})`).join(", ")}${multiMaster.length > 40 ? " …" : ""}`);
-  if (Object.keys(cross).length) { L.push("", "## Cross-check with the five workers", "", "A worker's SKU that is not flagged here has no defect baked into its per-SKU file or record (its fix is read-time, or it changes nothing for that SKU), so it needs no rewrite.", ""); for (const [k, v] of Object.entries(cross)) L.push(v.error ? `- ${k}: unreadable (${v.error})` : `- ${k}: ${v.workerCount} SKUs listed, ${v.inMasters} of them in the masters, ${v.alsoFlaggedHere} also flagged here${v.notFlaggedHere.length ? `; not flagged here: ${v.notFlaggedHere.join(", ")}` : ""}`); }
+  if (Object.keys(cross).length) { L.push("", "## Cross-check with the five workers", "", "\"Flagged\" is the audit rules reading the master's drawing; \"change\" is the effect of the fixed code on that SKU (size, through-cuts, members, lost paint). A worker's SKU in neither list has no defect baked into its per-SKU file or record (its fix is read-time, or it changes nothing for that SKU), so it needs no rewrite.", ""); for (const [k, v] of Object.entries(cross)) L.push(v.error ? `- ${k}: unreadable (${v.error})` : `- ${k}: ${v.workerCount} SKUs listed, ${v.inMasters} of them in the masters, ${v.alsoFlaggedHere} also flagged here${v.alsoChanged != null ? `, ${v.alsoChanged} change when the fixed code reads them (section above)` : ""}${v.neither != null ? `; in neither: ${v.neither}${v.neitherList.length ? ` (${v.neitherList.slice(0, 14).join(", ")}${v.neither > 14 ? ", ..." : ""})` : ""}` : (v.notFlaggedHere.length ? `; not flagged here: ${v.notFlaggedHere.join(", ")}` : "")}`); }
   fs.writeFileSync(path.join(o.out, "CATALOG-report.md"), L.join("\n") + "\n");
   console.log(`designs ${tl.l}, SKU lines ${tl.k}, flagged designs ${tl.d}, flagged distinct SKUs ${flaggedSet.size}`);
   for (const [k, v] of Object.entries(cat).sort((a, b) => b[1].skus - a[1].skus)) console.log(String(v.skus).padStart(6), String(v.designs.size).padStart(6), k);
   return { rows, stats, cat, ex, cross };
 }
-module.exports = { main, classify, fingerprint, hoops, cls, T };
+
+/* ───────── compare: what the FIXED code changes for each SKU (an offline stand-in for step B of the runbook) ─────────
+ *  node scripts/audit-catalog.cjs compare --old <dump.json>... --new <dump.json>... --out <dir> [--offending <CATALOG-offending.json>]
+ *  --old: dumps made with the code the live catalogue was built with; --new: dumps of the same masters made with the fixed code.
+ *  Both with `dump --rings`, so the hoops are compared as the app sees them. Per SKU line it compares what the index record and the
+ *  per-SKU file hold: the size of the (welded) outline, the number of through-cuts, the member count, and the paint the per-SKU writer loses (the leak scan).
+ *  It reads no live data, so it cannot know what the live files hold: that is `catalog-repair diff`. Writes CATALOG-changes.json.   */
+function geomOf(c) {
+  const use = c.rings && c.rings.final ? c.rings.final : { outline: c.outline, ob: c.ob, members: c.members };
+  const ob = use.ob || c.ob, out = use.outline, mem = use.members || [];
+  const w = ob ? ob[2] - ob[0] : 0, h = ob ? ob[3] - ob[1] : 0;
+  const cutOuts = mem.filter(m => m.k === "path" && layerKey(m.L) === "CUT" && m.cl && (m.in || 0) >= 0.5).length;
+  const holes = Math.max(0, ((out && out.ns) || 1) - 1) + cutOuts;
+  const fp = fingerprint({ outline: out, members: mem });
+  return { w: +w.toFixed(2), h: +h.toFixed(2), holes, members: mem.length + 1, paint: "lost=" + (c.leak ? c.leak.n : 0), welded: c.rings && c.rings.welded ? 1 : 0 };
+}
+function byName(files) {
+  const out = {};
+  for (const f of files) {
+    const d = load(f), m = short(d.master); out[m] = out[m] || new Map();
+    for (const c of d.charms) {
+      if (!c.sku) continue; const g = geomOf(c);
+      for (const n of [c.sku + (c.size ? " · " + c.size : ""), ...(c.extra || [])]) { const k = n.toUpperCase().replace(/·/g, " · "); if (!out[m].has(k)) out[m].set(k, Object.assign({ name: n, charm: c.index }, g)); }
+    }
+  }
+  return out;
+}
+function compare(argv) {
+  const o = { old: [], new: [], out: ".", offending: "" }; let cur = null;
+  for (let i = 0; i < argv.length; i++) { const a = argv[i]; if (a === "--old") cur = "old"; else if (a === "--new") cur = "new"; else if (a === "--out") { o.out = argv[++i]; cur = null; } else if (a === "--offending") { o.offending = argv[++i]; cur = null; } else if (cur) o[cur].push(a); }
+  if (!o.old.length || !o.new.length) throw new Error("usage: audit-catalog.cjs compare --old <dump.json>... --new <dump.json>... --out <dir> [--offending <CATALOG-offending.json>]");
+  fs.mkdirSync(o.out, { recursive: true });
+  const A = byName(o.old), B = byName(o.new), rows = [], gone = [], added = [];
+  const flagged = new Set(), rewriteDesigns = new Set(); if (o.offending) for (const r of JSON.parse(fs.readFileSync(o.offending, "utf8")).offending || []) { flagged.add(short(r.master) + "|" + String(r.sku).toUpperCase()); if (r.fix === "rewrite") rewriteDesigns.add(short(r.master) + "#" + r.charmIndex); }
+  const near = (a, b) => Math.abs(a - b) <= Math.max(0.25, 0.02 * Math.max(a, b));
+  for (const m of Object.keys(A)) {
+    for (const [k, a] of A[m]) {
+      const b = (B[m] || new Map()).get(k);
+      if (!b) { gone.push({ sku: a.name, master: m, why: "no longer a labelled SKU (a callout, or its label read differently)" }); continue; }
+      const ch = [];
+      if (!near(a.w, b.w) || !near(a.h, b.h)) ch.push("size");
+      if (a.holes !== b.holes) ch.push("holes");
+      if (a.members !== b.members) ch.push("members");
+      if (a.paint !== b.paint) ch.push("paint");
+      if (ch.length) rows.push({ sku: a.name, master: m, charm: a.charm, changes: ch, old: { w: a.w, h: a.h, holes: a.holes, members: a.members }, new: { w: b.w, h: b.h, holes: b.holes, members: b.members }, welded: b.welded, flaggedByAudit: flagged.has(m + "|" + k) });
+    }
+    for (const [k, b] of (B[m] || new Map())) if (!A[m].has(k)) added.push({ sku: b.name, master: m });
+  }
+  const tot = Object.values(A).reduce((n, x) => n + x.size, 0), by = {};
+  for (const r of rows) for (const c of r.changes) by[c] = (by[c] || 0) + 1;
+  const designs = new Set(rows.map(r => r.master + "#" + r.charm)), union = new Set([...designs, ...rewriteDesigns]);
+  const summary = { skuLinesCompared: tot, changed: rows.length, changedDesigns: designs.size, auditRewriteDesigns: o.offending ? rewriteDesigns.size : null, changedOrAuditRewriteDesigns: o.offending ? union.size : null, byKind: by, gone: gone.length, added: added.length, changedButNotFlaggedByAudit: o.offending ? rows.filter(r => !r.flaggedByAudit).length : null, flaggedAndChanged: o.offending ? rows.filter(r => r.flaggedByAudit).length : null, oldCode: [...new Set(o.old.map(f => load(f).code || "unknown"))], newCode: [...new Set(o.new.map(f => load(f).code || "unknown"))] };
+  fs.writeFileSync(path.join(o.out, "CATALOG-changes.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs compare", note: "what the fixed code changes for each SKU line, from two offline dumps (no live data): size of the welded outline, through-cuts, members, paint. The live equivalent is `catalog-repair diff`.", summary, changed: rows, gone, added }, null, 1));
+  console.log(JSON.stringify(summary));
+  return { summary, rows, gone, added };
+}
+module.exports = { main, compare, classify, fingerprint, hoops, cls, T };

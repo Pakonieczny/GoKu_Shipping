@@ -10,12 +10,17 @@
  *
  *  Two steps (the parse + grouping of a 60 MB master takes 4-5 minutes, so it is done once and kept):
  *
- *    node --max-old-space-size=6000 scripts/audit-catalog.cjs dump "<MASTER.ai>" <dump.json> [--rt REGEX | --rt-all]
+ *    node --max-old-space-size=6000 scripts/audit-catalog.cjs dump "<MASTER.ai>" <dump.json> [--rt REGEX | --rt-all] [--rings]
  *        --rt / --rt-all also write each matching charm's per-SKU file in memory and read it back the way the app does
  *        (the record then carries `rt`: file size, what the app sees after integrateRings), so a defect the writer
  *        or the reader adds, as against one the master already has, shows up. --rt-all is slow (minutes per master).
  *        parse + group + label with the repo's own code (netlify/functions/_charmNestPdf.js: the parser the app and the
  *        indexer use) and write one compact fingerprint per charm. Run it once per master.
+ *
+ *        (report --fixed: mark a run on the fixed code, where what remains of a ring or label defect is for a person to look at,
+ *        because a re-index cannot change it.)
+ *        --rings applies the hoop weld (integrateRings) to a copy of each charm that has a ring-sized circle and records what the
+ *        app sees afterwards (`rings`), so the report judges hoops on the welded charm. Use it for a run on the fixed code.
  *
  *    node scripts/audit-catalog.cjs leak "<MASTER.ai>" <dump.json>
  *        (dump already runs this) adds the paint-lost-by-the-writer check to a dump made without it, in about 30 s: cuts every
@@ -25,6 +30,11 @@
  *    node scripts/audit-catalog.cjs report <dump.json> [<dump.json> ...] --out <dir> [--findings <dir>]
  *        classify every charm, flag the inconsistent ones and write CATALOG-offending.json and CATALOG-report.md
  *        into <dir>. --findings reads the five workers' <NAME>-affected.json files (if present) to confirm categories.
+ *
+ *    node scripts/audit-catalog.cjs compare --old <dump.json>... --new <dump.json>... --out <dir> [--offending <CATALOG-offending.json>]
+ *        two dumps of the same masters (the code the catalogue was built with, and the fixed code; both with `dump --rings`): per SKU
+ *        line what changes in the size of the welded outline, the through-cuts, the members and the paint. Writes CATALOG-changes.json.
+ *        An offline stand-in for step B (diff against the live site) of CATALOG-runbook.md; it cannot know what the live files hold.
  *
  *  Categories (the `defects[]` of an SKU; the exact rules are in audit-catalog-report.cjs classify(), thresholds in T):
  *    colour-lost-in-file   the per-SKU writer cuts out a text object that set the layer's colour, so blue HATCH reads back black
@@ -166,6 +176,15 @@ async function dump(file, outFile, opts) {
       members: c.members.filter(m => m !== c.outline).map(m => member(m, op, ob))
     };
     if (leak && leak.size) { const hit = c.members.filter(m => m.index != null && m.parent == null && m.kind === "path" && leak.has(m.index)); if (hit.length) rec.leak = { n: hit.length, of: c.members.length, first: hit.slice(0, 4).map(m => Object.assign({ i: m.index, L: m.layer || null }, leak.get(m.index))) }; }
+    // --rings: the hoop weld the app and the indexer run before they measure a charm (integrateRings), applied to a copy of the charm
+    // (no file is written: the weld works on the charm's own members, the same ones the per-SKU file carries). The classifier then
+    // judges the hoops on what the app sees, not on the raw drawing.
+    if (opts.rings && l && P.integrateRings && rec.members.some(m => m.circ)) {
+      try {
+        const cc = Object.assign({}, c, { members: c.members.slice() }), ir = P.integrateRings(cc), op2 = G.flatten(cc.outline, 8);
+        rec.rings = { welded: ir.welded, left: ir.left, final: { outline: member(cc.outline, null, null), ob: cc.outline.bbox.map(v => r(v)), members: cc.members.filter(m => m !== cc.outline).map(m => member(m, op2, cc.outline.bbox)) } };
+      } catch (e) { rec.rings = { error: String(e.message || e).slice(0, 200) }; }
+    }
     if ((opts.rtAll || rtRe) && l && (opts.rtAll || [c.sku, ...(c.extraSkus || []).map(x => x.sku)].some(x => rtRe && rtRe.test(x)))) { try { rec.rt = await readBack(c); } catch (e) { rec.rt = { error: String(e.message || e).slice(0, 200) }; } }
     charms.push(rec);
   }
@@ -245,12 +264,14 @@ if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === "dump") {
     if (rest.length < 2) { console.error('usage: node scripts/audit-catalog.cjs dump "<MASTER.ai>" <dump.json>'); process.exit(2); }
-    const opts = {}; for (let i = 2; i < rest.length; i++) { if (rest[i] === "--rt") opts.rt = rest[++i]; else if (rest[i] === "--rt-all") opts.rtAll = true; else if (rest[i] === "--no-leak") opts.noLeak = true; }
+    const opts = {}; for (let i = 2; i < rest.length; i++) { if (rest[i] === "--rt") opts.rt = rest[++i]; else if (rest[i] === "--rt-all") opts.rtAll = true; else if (rest[i] === "--no-leak") opts.noLeak = true; else if (rest[i] === "--rings") opts.rings = true; }
     dump(rest[0], rest[1], opts).catch(e => { console.error("audit-catalog dump:", e.stack || e.message); process.exit(1); });
   } else if (cmd === "leak") {
     if (rest.length < 2) { console.error('usage: node scripts/audit-catalog.cjs leak "<MASTER.ai>" <dump.json>'); process.exit(2); }
     addLeak(rest[0], rest[1]).catch(e => { console.error("audit-catalog leak:", e.stack || e.message); process.exit(1); });
   } else if (cmd === "report") {
     require("./audit-catalog-report.cjs").main(rest);
-  } else { console.error("usage: audit-catalog.cjs dump <master.ai> <dump.json> | report <dump.json>... --out <dir>"); process.exit(2); }
+  } else if (cmd === "compare") {
+    require("./audit-catalog-report.cjs").compare(rest);
+  } else { console.error("usage: audit-catalog.cjs dump <master.ai> <dump.json> | report <dump.json>... --out <dir> | compare --old <dump>... --new <dump>... --out <dir>"); process.exit(2); }
 }
