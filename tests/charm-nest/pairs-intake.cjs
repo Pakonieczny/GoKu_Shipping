@@ -148,7 +148,11 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   const c2 = disc('Options', '2 Disc', { variations: [V('Options', 'ROSEGOLD - 2 Disc'), V('Personalization', 'Tag 1: J, Tag 2: Q')] });
   eq(asks(c2).length, 0, 'the note agrees (Tag 1, Tag 2): nothing to ask'); eq(c2.spec.pieceCount, 2, '2 pieces');
   const c3 = disc('Options', 'x', { variations: [V('Metal Choice', 'Gold'), V('Personalization', 'three discs: A, B, C')] });
-  eq(c3.spec.pieceCount, 1, 'a note alone never counts'); eq(asks(c3).length, 0, 'and asks nothing'); ok(c3.spec.pair.notes.some(x => /note says/.test(x)), 'but the line says so in plain words');
+  eq(c3.spec.pieceCount, 1, 'a note alone never counts by itself'); eq(asks(c3).length, 1, 'but a note that names 3 discs with no option count is ASKED (the line waits, F5)');
+  eq([asks(c3)[0].optionName, asks(c3)[0].optionValue, asks(c3)[0].count.rule], ['Buyer note', 'three discs', 'count:note-only'], 'under the pseudo option "Buyer note", the note\'s own words');
+  { const answered = n => disc('Options', 'x', { variations: [V('Metal Choice', 'Gold'), V('Personalization', 'three discs: A, B, C')] }); const withAns = v => row({ title: 'Initial Disc Necklace', variations: [V('Metal Choice', 'Gold'), V('Personalization', 'three discs: A, B, C')] }, ctx({ optionMaps: { '1718': { 'buyer note': { 'three discs': { field: 'count', value: v } } } } }));
+    eq([withAns('3').spec.pieceCount, asks(withAns('3')).length], [3, 0], 'a person answered 3 for that wording: 3 pieces, nothing left to ask'); eq(withAns('1').spec.pieceCount, 1, 'answered Just 1: one piece'); void answered; }
+  eq(asks(row({ title: 'Disc Stud Earrings', variations: [V('Metal Choice', 'Gold'), V('Personalization', 'two discs please')] })).length, 0, 'a note on an EARRING line is no count of pieces: nothing asked');
   // a person's answer
   const maps = value => ({ '1718': { letters: { '3 letters': { field: 'count', value } } } });
   const a3 = row({ title: 'Initial Disc Necklace', variations: [V('Letters', '3 letters')] }, ctx({ optionMaps: maps('3') }));
@@ -264,6 +268,74 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   for (const m of ['piecesOfRows = rows =>', 'charms+=O.pieceCountOf(r)', '* O.pieceCountOf(sp)', 'waiting.reduce((n, r) => n + O.pieceCountOf(r), 0)']) ok(src.includes(m), 'bridge count site: ' + m);
   ok(/field: "count", value: String\(n\)/.test(src) && /How many pieces\?/.test(src), 'the Review card answers a count question');
   ok(/spec\?\.pieceCount/.test(fs.readFileSync(path.join(root, 'charm-nest-readiness.js'), 'utf8')), 'readiness reads spec.pieceCount');
+}
+
+// ── 9 · the adversarial review's findings (ADVCOUNT F1 to F7): lost pieces, single earrings by any wording, a line that says two designs but names one ─────────────
+{
+  // F1 · "Just 1" on an earring line says the option is no count: the pair stays a Left and a Right
+  const maps1 = (name, value) => ({ '1718': { [name]: { [value]: { field: 'count', value: '1' } } } });
+  const e1 = row({ title: 'Star Studs', variations: [V('Qty', '2 studs')] }, ctx({ optionMaps: maps1('qty', '2 studs') }));
+  eq(counts(e1), { q: 1, pieces: 2, sides: 'LR', kind: 'pair' }, 'F1: "Qty: 2 studs" answered Just 1 on a stud line is still a pair');
+  const e2 = row({ title: 'Cancer Hinged Hoop Earrings', variations: [V('Charms', '2 charms')] }, ctx({ optionMaps: maps1('charms', '2 charms') }));
+  eq(counts(e2).pieces, 2, 'F1: "Charms: 2 charms" on a hoop line answered Just 1 is still a pair');
+  const e3 = row({ title: 'Mismatched Earrings', sku: 'MISMATCHED_7134', variations: [V('Qty', '2 pairs')] }, ctx({ optionMaps: maps1('qty', '2 pairs') }));
+  eq(counts(e3).pieces, 2, 'F1: a mismatched design answered Just 1 is still two pieces');
+  eq(counts(row({ title: 'Initial Disc Necklace', variations: [V('Letters', '3 letters')] }, ctx({ optionMaps: maps1('letters', '3 letters') }))).pieces, 1, 'F1: Just 1 on a necklace is one piece, as before');
+  eq(counts(row({ title: 'Star Studs', variations: [V('Qty', '2 studs')] }, ctx({ optionMaps: { '1718': { qty: { '2 studs': { field: 'count', value: '4' } } } } }))).pieces, 4, 'F1: an answer above 1 is the pieces the line makes in all (4)');
+
+  // F2 · a name that is a piece word and a bare number under it is a count
+  for (const [name, value, want] of [['Discs', '2', 2], ['Disc Count', '2', 2], ['Disc Quantity', '2', 2], ['Charms', '3', 3], ['# of discs', '2', 2], ['Discs (qty)', '2', 2], ['Select Discs', 'Two', 2], ['Tags', 'x3', 3]])
+    eq(row({ title: 'Initial Disc Necklace', variations: [V(name, value)] }).spec.pieceCount, want, `F2: "${name}: ${value}" is ${want}`);
+  eq(asks(row({ title: 'Initial Disc Necklace', variations: [V('Letters', '2')] })).length, 1, 'F2: "Letters: 2" is asked (marks on a disc, or a disc each?)');
+  for (const [name, value] of [['Charm Size', '12'], ['Disc Size', '10'], ['Charm Type', '2'], ['Chain Length', '18']]) eq(row({ title: 'Initial Disc Necklace', variations: [V(name, value)] }).spec.pieceCount, 1, `F2: "${name}: ${value}" is a size or a style, never a count`);
+
+  // F3 · describing words between the number and the unit, double / triple
+  for (const [value, want] of [['3 Gold Discs', 3], ['2 Rose Gold Plated Charms', 2], ['Double Disc', 2], ['Triple Disc', 3], ['Duo Charms', 2]]) eq(row({ title: 'Initial Disc Necklace', variations: [V('Necklace Options', value)] }).spec.pieceCount, want, `F3: "${value}" is ${want}`);
+  eq(row({ title: 'Initial Disc Necklace', variations: [V('Necklace Options', '2 Tone Charm')] }).spec.pieceCount, 1, 'F3: "2 Tone" is not a count');
+  eq(asks(row({ title: 'Initial Disc Necklace', variations: [V('Necklace Options', '2 Initial Discs')] })).length, 1, 'F3: "2 Initial Discs" is still asked');
+
+  // F4 · an option that ADDS a piece, or "2 of 3", is asked
+  const ask1 = (name, value, title) => asks(row({ title: title || 'Initial Disc Necklace', variations: [V(name, value)] }));
+  eq(ask1('Add a second charm', 'Yes +$12')[0].count.rule, 'count:add', 'F4: "Add a second charm: Yes +$12" is asked (count:add)');
+  for (const [name, value] of [['Extra', 'Add Extra Charm'], ['Add another disc', 'Yes +$14'], ['Extras', '2 extra charms +$20'], ['Add Charms', 'Add 2 charms']]) eq(ask1(name, value).length, 1, `F4: "${name}: ${value}" is asked`);
+  eq(ask1('Disc 2 of 3', 'Initial B')[0].count.rule, 'count:ordinal', 'F4: "Disc 2 of 3" is asked (count:ordinal)'); eq(ask1('Disc 2 of 3', 'Initial B')[0].count.guess, 3, 'with 3 as the guess');
+  for (const [name, value] of [['Add a second charm', 'No'], ['Charm Type', 'Add On Charm'], ['Charm Size', 'Extra Small'], ['Gift', 'Add a gift box']]) eq(ask1(name, value).length, 0, `F4: "${name}: ${value}" asks nothing`);
+
+  // F6 · a single earring by any wording
+  const one = (over, sides, tag) => { const r = row(Object.assign({ title: 'Star Stud Earrings' }, over)); eq([r.spec.pieceCount, r.spec.pair.sides.map(x => x || '').join('')], [1, sides], tag); };
+  one({ title: 'Single Cat Huggie Earring' }, '', 'F6: "Single Cat Huggie Earring" is one'); one({ title: 'Single Star Earring' }, '', 'F6: "Single Star Earring"'); one({ title: 'Cat Earring (single)' }, '', 'F6: "Earring (single)"');
+  one({ title: '1 Stud' }, '', 'F6: "1 Stud"'); one({ title: 'Individual earring' }, '', 'F6: "Individual earring"');
+  one({ title: 'Right Earring Replacement' }, 'R', 'F6: "Right Earring Replacement" is one Right'); one({ title: 'Replacement Stud Earring for Left Ear' }, 'L', 'F6: "Replacement Stud Earring for Left Ear" is one Left');
+  one({ variations: [V('Side', 'Left ear only')] }, 'L', 'F6: option "Side: Left ear only"'); one({ variations: [V('Ear', 'Left')] }, 'L', 'F6: option "Ear: Left"'); one({ variations: [V('Choose side', 'Right')] }, 'R', 'F6: option "Choose side: Right"');
+  eq(row({ title: 'Star Stud Earrings', variations: [V('Side', 'Both ears')] }).spec.pieceCount, 2, 'F6: "Both ears" is a pair');
+  eq(row({ title: 'Star Stud Earrings', variations: [V('Left ear', 'Left'), V('Right ear', 'Right')] }).spec.pieceCount, 2, 'F6: a Left option and a Right option together are not a single');
+  eq(row({ title: 'Pair of Single Stone Studs' }).spec.pieceCount, 2, 'F6: a title with Pair or plural studs stays a pair');
+
+  // F7 · a line that says two designs but names one waits; a person's answer settles it, for this line only
+  const mis = (extra, c) => row(Object.assign({ title: 'Mismatched Tennis Ball and Racket Huggie Hoops', sku: 'A', variations: [V('HOOP SIZE', '8.5mm')] }, extra), c);
+  const m0 = mis({}), p0 = m0.spec.problems.find(x => x.pairSecond);
+  ok(p0 && p0.kind === 'needsMapping' && p0.optionName === 'Two designs on this line' && p0.optionValue === '4170000001/5200000001', 'F7: the line waits with a pairSecond question, one per line'); ok(/names one/.test(p0.pairSecond.why), 'in one plain line');
+  eq(m0.spec.pair.second.answered, '', 'asked, not answered'); eq(counts(m0).pieces, 2, 'meanwhile it counts the pair (2)');
+  const same = mis({}, ctx({ optionMaps: { '1718': { 'two designs on this line': { '4170000001/5200000001': { field: 'ignore', value: null } } } } }));
+  eq([same.spec.problems.some(x => x.pairSecond), same.spec.pair.second.answered, counts(same).pieces, counts(same).sides], [false, 'same', 2, 'LR'], 'F7: answered "the same on both ears": nothing left to ask, a matching pair');
+  const named = mis({}, ctx({ optionMaps: { '1718': { 'two designs on this line': { '4170000001/5200000001': { field: 'design', value: 'B' } } } } }));
+  eq([named.spec.problems.some(x => x.pairSecond), named.spec.pair.mismatched, named.spec.pair.source, named.spec.pair.members.map(m => m.side + m.sku).join(','), counts(named).sides], [false, true, 'answer', 'LA,RB', 'LR'], 'F7: a second design named by a person: a mismatched pair, Left A and Right B');
+  const otherLine = mis({ transactionId: '5200000002' }, ctx({ optionMaps: { '1718': { 'two designs on this line': { '4170000001/5200000001': { field: 'ignore', value: null } } } } }));
+  ok(otherLine.spec.problems.some(x => x.pairSecond), 'F7: the answer is for that line only');
+  const z = row({ title: 'Zodiac REVAMP Stud Earrings', sku: 'A', quantity: 2, variations: [V('Options', 'Silver • 2 symbols')], personalization: ['balance et lion'] });
+  ok(z.spec.problems.some(x => x.pairSecond) && counts(z).pieces === 4, 'F7: "2 symbols" on a stud line names one SKU: it waits (4 pieces when answered)');
+  ok(!row({ title: 'Zodiac Symbol Necklace', sku: 'A', variations: [V('Options', 'Silver • 2 symbols')] }).spec.problems.some(x => x.pairSecond), 'F7: a necklace is never asked about a second ear');
+  ok(!mis({ sku: 'MITTENS 1 + MITTENS 2' }).spec.problems.some(x => x.pairSecond), 'F7: two named master designs are a mismatched pair already: nothing to ask');
+  eq(lineMismatchedAll(), [false, false, true, true], 'lineMismatched: a necklace SKU with a plus, "w/" in an earring SKU: not mismatched; two SKUs on an earring line and the word Mismatched are');
+  function lineMismatchedAll() { return [O.lineMismatched(mk({ title: 'Cat Add On Charm', sku: 'CAT(+FISH) - Cat Only' })), O.lineMismatched(mk({ title: 'Triceratops Stud Earrings', sku: 'Cute Triceratops w/ hearts' })), O.lineMismatched(mk({ title: 'Stud Earrings', sku: 'MITTENS 1 + MITTENS 2' })), O.lineMismatched(mk({ title: 'Mismatched Stud Earrings', sku: 'A' }))]; }
+
+  { const lr = row({ title: 'Mix Match Earrings', sku: 'A', variations: [V('Left Ear Charm', 'A'), V('Right Ear Charm', 'B')] });
+    eq([lr.spec.pair.mismatched, lr.spec.pair.source, lr.spec.problems.length, counts(lr).sides], [true, 'options', 0, 'LR'], 'F7: Left and Right options that name two master designs are a mismatched pair: nothing is asked about them');
+    const ln = row({ title: 'Mix Match Earrings', sku: 'A', variations: [V('Left Ear Charm', 'Heart'), V('Right Ear Charm', 'Cat')] });
+    ok(ln.spec.problems.some(x => x.pairSecond) && !ln.spec.pair.mismatched, 'F7: the same options naming designs the master does not have: the line waits for the second design'); }
+  // the run's line record carries the piece count (ADVLIFE): Readiness reads a pair of quantity 1 as 2
+  { const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'); const lr = src.slice(src.indexOf('  function lineRecord(row) {'), src.indexOf('  function lineRecord(row) {') + 3000);
+    ok(/pieceCount: row\.spec \? \(row\.spec\.pieceCount \|\| row\.spec\.quantity\) : 1/.test(lr), 'lineRecord stores pieceCount beside quantity'); }
 }
 
 // ── 8 · the server: a count answer and the old-record guard (the real handler over the in-memory Firestore) ──────────────────────────────
