@@ -1,5 +1,5 @@
 /* Dedicated PDF/geometry worker. No network APIs or production state live here. */
-importScripts('vendor/pdf-lib-1.17.1.min.js','vendor/clipper-6.4.2.js','charm-nest-vector.js','charm-nest-geom.js?v=20261009-flat','charm-nest-pdf.js?v=20261009-cutfill-gt1','charm-nest-rose.js?v=20261007-edges-gc1','charm-nest-export.js?v=20261009-cutfill');
+importScripts('vendor/pdf-lib-1.17.1.min.js','vendor/clipper-6.4.2.js','charm-nest-vector.js','charm-nest-geom.js?v=20261009-flat','charm-nest-pdf.js?v=20261009-cutfill-gt1-bx1','charm-nest-rose.js?v=20261007-edges-gc1','charm-nest-export.js?v=20261009-cutfill');
 const P=self.CharmNestPDF,parsedCache=new Map();
 async function hydrate(parsed){
   if(parsed.doc)return parsed;
