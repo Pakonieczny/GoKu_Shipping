@@ -150,23 +150,27 @@
   }
 
   /** The ears an order's sticker prints (QR Printer.html, dataObj.pieces): [{ side, n, of }], a Left then a Right for every unit of every earring pair line
-   *  (matching or mismatched; the words of the line decide, whatever the count rules say: a sticker is a thing in the hand), n = the pair's number in the order
-   *  and of = how many pairs the order has. [] when the order has no earring pair: the one order sticker it always was. */
+   *  (matching or mismatched; the words of the line decide, whatever the count rules say: a sticker is a thing in the hand), and ONE sticker with its side for
+   *  a single earring whose line names its ear (Paul, 9 Oct: left and right are always kept); n = the unit's number in the order and of = how many units
+   *  (pairs and single ears) the order has. [] when the order has no earring pair and no named ear: the one order sticker it always was. */
   function ears(list) {
     const out = [];
     try {
-      const pairs = [];
+      const units = [];
       for (const t of (Array.isArray(list) ? list : [])) {
         if (!t || typeof t !== "object") continue;
         const d = describe(t);
+        const sided = d.sided && d.list && d.list.length === d.n && d.list.every(p => p && (p.side === "L" || p.side === "R"));
+        const pairs = sided && d.n >= 2 && d.n % 2 === 0 && d.list.every((p, i) => p.side === (i % 2 ? "R" : "L"));
+        if (sided && !pairs) { for (const p of d.list.slice(0, 20)) units.push([p.side]); continue; }   // (a single earring that names its ear: that ear only)
         let k = d.sided && d.n >= 2 ? Math.floor(d.n / 2) : 0;                   // (the pool's own count: a line the pool makes ONE piece of prints no Left / Right, whatever words its title carries)
         if (!k && d.n === d.q) {                                                 // one piece per unit: only a switched-off count rule (or no intake file) leaves the words of an earring line in charge, as before
           const O = ordersLib(), R = O && O.PIECE_RULES, mis = saysMismatched(t);
           if ((!R || (mis ? R.mismatchedMakesTwo === false : R.pairFormsMakeTwo === false)) && (mis || soldAsPair(t))) k = d.q;
         }
-        for (let u = 0; u < Math.min(k, 20); u++) pairs.push(1);
+        for (let u = 0; u < Math.min(k, 20); u++) units.push(["L", "R"]);
       }
-      for (let i = 0; i < pairs.length && out.length + 2 <= 40; i++) { out.push({ side: "L", n: i + 1, of: pairs.length }, { side: "R", n: i + 1, of: pairs.length }); }
+      for (let i = 0; i < units.length && out.length + units[i].length <= 40; i++) for (const side of units[i]) out.push({ side, n: i + 1, of: units.length });
     } catch (_) {}
     return out;
   }

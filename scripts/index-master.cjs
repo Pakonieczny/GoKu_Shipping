@@ -225,59 +225,12 @@ function symLevel(Pair, c) {
   try { const b = Pair && Pair.bodiesOf ? Pair.bodiesOf(c)[0] : null; return b && Pair.symmetryOf ? Pair.symmetryOf(b).level : undefined; } catch (_) { return undefined; }
 }
 
-/** The pair layer (pairs, 9 Oct). A master draws some designs as a ROW of bodies with ONE label centred under the whole row ("Mismatched_7134":
- *  MITTENS 1 beside MITTENS 2). groupCharms reads each body as a charm of its own and only the labelled one was ever indexed, so the library
- *  held half of the design. This reads the rows back from the grouping (charm-nest-pair.js masterPairs; it changes nothing in the grouping) and,
- *  for a row it is sure is a mismatched pair, builds ONE design from it: each body is welded with its own hoop, then the bodies' members are
- *  folded into the labelled charm (the same fold the app does when it reads a per-SKU file that splits in two). Every other design is not
- *  touched: it reaches `one()` as the same charm object it always did. Returns { rows (for the report), fold: Map(charm index → what one()
- *  needs instead of measuring the lone charm) }. A row is folded only when its owner is among the `items` this run builds. */
+/** The pair layer (pairs, 9 Oct): designs a master draws as a ROW of two bodies under ONE label are built as one design. The code lives in charm-nest-pair.js
+ *  (CharmNestPair.pairLayer), so this script and the server indexer (netlify/functions/charmMaster-background.js) read the rows the same way.
+ *  --no-pairs leaves it out; --pair-also (a list or a file, like --only) folds the doubtful one-label rows of those SKUs too. */
 function pairLayer(P, G, Pair, g, lab, items, o, log) {
-  const out = { rows: [], fold: new Map() };
-  if (!Pair || o.noPairs) return out;
-  const byIndex = new Map(g.charms.map(c => [c.index, c])), building = new Set(items.map(it => it.index));
-  const linesOf = c => { const l = lab.labels.get(c.index); return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, bbox: x.bbox })) : []; };
-  const also = o.pairAlso ? onlySet(o.pairAlso) : null;
-  const union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
-  const openOf = c => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); };
-  // the same readings one() takes of a lone charm (up direction, back view, room for an engraving), taken of one body
-  const engraveOf = c => {
-    let engravable = true, upAngle = null, upSource = "drawn", flipOk = true, flipWhy = null;
-    try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: o.engraveMarginMm }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
-    catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
-    return { engravable, upAngle, upSource, flipOk, flipWhy };
-  };
-  for (const r of Pair.masterPairs(g.charms, linesOf)) {
-    const forced = !!also && r.skus.some(s => also.has(String(s).toUpperCase())) && r.labelled.length === 1 && r.kind !== "neighbours";
-    const row = { kind: r.kind, sure: !!r.sure, folded: false, bodies: r.bodies, owner: r.owner, skus: r.skus, charms: r.charms, labelled: r.labelled, offset: r.offset, why: r.why };
-    if (r.linearRatio != null) row.linearRatio = r.linearRatio; if (r.weak) row.weak = r.weak; if (r.partnerSku) row.partnerSku = r.partnerSku;
-    out.rows.push(row);
-    if (!(r.sure || forced)) continue;
-    if (!building.has(r.owner)) { row.note = "not built in this run"; continue; }
-    const bodyCharms = r.charms.map(i => byIndex.get(i)), owner = byIndex.get(r.owner);
-    if (bodyCharms.some(c => !c) || !owner) { row.note = "a body of the row is missing from the grouping"; continue; }
-    try {
-      for (const c of bodyCharms) { const x = P.integrateRings(c); if (x.left.length) log(`  ! ${r.skus[0]}: a hoop could not join its charm: ${x.left[0]}`); }   // each body with its own hoop, before the bodies are folded
-      const charm = Pair.foldRow(owner, bodyCharms.filter(c => c !== owner));
-      const outlines = bodyCharms.map(c => c.outline);
-      const merged = Object.assign({}, owner.outline, { subpaths: [].concat(...outlines.map(x => x.subpaths || [])), bbox: outlines.map(x => x.bbox).reduce(union), closed: outlines.every(x => x.closed) });
-      const eng = bodyCharms.map(engraveOf), first = eng[bodyCharms.indexOf(owner)];   // (the labelled body's up direction is the one the library always held for this SKU)
-      // each body can be written as a form of its own only when no two bodies draw from one top-level group of the master (then the per-SKU file keeps them apart)
-      const parentsOf = c => new Set(c.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null));
-      const par = bodyCharms.map(parentsOf), apart = par.every((a, i) => par.every((b, j) => i === j || ![...a].some(t => b.has(t))));
-      row.folded = true; row.forced = forced && !r.sure; row.partners = bodyCharms.filter(c => c !== owner).map(c => c.index);
-      if (!apart) row.note = "the bodies share a top-level group of the master: written as one group";
-      out.fold.set(r.owner, {
-        rec: r, charm, bodies: apart ? bodyCharms : null, view: Object.assign({}, charm, { outline: merged }),                      // (the merged outline is only what the area and the hash are read from; the charm keeps a real body's outline, so its bodies can be told apart again)
-        open: bodyCharms.some(openOf), holes: bodyCharms.reduce((n, c) => n + P.cutLinesOf(c).length, 0),
-        engrave: { engravable: eng.every(e => e.engravable), upAngle: first.upAngle, upSource: first.upSource, flipOk: eng.every(e => e.flipOk), flipWhy: (eng.find(e => !e.flipOk) || {}).flipWhy || null },
-        field: { v: 1, bodies: r.bodies, mismatched: r.kind === "mismatched" || (forced && r.bodies === 2 && !["twins", "sizes", "sample"].includes(r.kind)) }
-      });
-    } catch (e) { row.folded = false; row.note = "not folded: " + e.message; log(`  ! ${r.skus[0]}: the pair could not be folded: ${e.message}`); }
-  }
-  const folded = out.rows.filter(x => x.folded), unbuilt = out.rows.filter(x => x.sure && x.note === "not built in this run"), doubtful = out.rows.filter(x => !x.folded && !x.sure && !/^(neighbours|sizes|sample)$/.test(x.kind));
-  if (out.rows.length) log(`  pairs: ${out.rows.length} row(s) of touching bodies under one label · ${folded.length} folded into one design (${folded.map(x => x.skus[0]).slice(0, 40).join(", ")}${folded.length > 40 ? " …" : ""})${unbuilt.length ? ` · ${unbuilt.length} sure pair(s) not built in this run` : ""}${doubtful.length ? ` · ${doubtful.length} left as they were because a person has to look (${doubtful.map(x => `${x.skus[0] || "#" + x.owner}: ${x.kind}`).slice(0, 30).join(", ")})` : ""}`);
-  return out;
+  if (!Pair || !Pair.pairLayer || o.noPairs) return { rows: [], fold: new Map(), refused: new Map() };
+  return Pair.pairLayer(P, G, g, lab, items, Object.assign({}, o, { pairAlso: o.pairAlso ? onlySet(o.pairAlso) : null }), log);
 }
 
 async function main(argv, log = console.log) {
@@ -356,7 +309,7 @@ async function main(argv, log = console.log) {
     if (heldCount) log(`${heldCount} charm(s) are already in the library and are left as they are · ${items.length} to index (--all rebuilds every one)`);
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: g.charms.length, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
-  const entries = [], blocked = [], skus = [];
+  const entries = [], blocked = [], skus = [], kept = [];                 // kept: pair designs left as they were (see one())
   const keyOf = fileKeys(items);                                          // one file name per charm, whatever the server does to the characters
   // a row of bodies under one label that is surely a mismatched pair is built as ONE design (both bodies in its file); every other charm is the object it was
   const pairs = pairLayer(P, G, Pair, g, lab, items, o, log);
@@ -365,6 +318,11 @@ async function main(argv, log = console.log) {
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
     const key = keyOf.get(index), pm = pairs.fold.get(index);          // pm: set only for a design folded from a pair; every other design takes the lines it always took
+    // A pair design is never written back as one body: a row that could not be folded, or a design the library holds as a pair that this run drew as one body (--no-pairs, or a changed drawing), is left as it was.
+    if (!pm) {
+      const why = pairs.refused.get(index) || (Pair && Pair.heldPair && [l].concat(l.extra || []).some(x => Pair.heldPair(held.get(String(x.sku).toUpperCase()), x.size)) ? "the library holds it as a pair and this run drew one body" : null);
+      if (why) { log(`  ! ${l.sku}: left as it was, not written as one body (${why})`); kept.push({ sku: l.sku, why }); return; }
+    }
     if (progress.done[key] && !!progress.done[key].entry.pair === !!pm) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
     if (!pm) { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }   // (a pair's bodies were welded before they were folded)
@@ -393,8 +351,7 @@ async function main(argv, log = console.log) {
     let hashKept = false;
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
     if (pm) entry.pair = pm.field;                                       // { v: 1, bodies, mismatched }: only a folded pair carries it (a record without it leaves a stored one alone)
-    if (pm && Pair) { try { const bs = Pair.bodiesOf(c), rel = bs.length === 2 ? Pair.facingOfBody(bs[1], c) : null; if (rel) entry.facings = [null, rel]; } catch (_) {} }   // a pair drawn with the right body as the mirror image of the left: the entry says so (the order window reads it without the drawing); a person's words stand over it
-    { const sym = symLevel(Pair, c); if (sym) entry.sym = sym; }       // does the design look the same in a mirror? (symmetric | slight | directional): the Master tab asks a person which way a directional one faces (charm-nest-pair.js symmetryOf)
+    if (Pair && Pair.entryFields) Object.assign(entry, Pair.entryFields(c, !!pm));   // facings (a folded pair drawn with the right body as the mirror image of the left: the order window reads it without the drawing; a person's words stand over it) and sym (does the design look the same in a mirror: the Master tab asks a person which way a directional one faces), the words the server indexer writes too
     if (net && only && !o.newHash) {                                   // the held record's hash stands while the drawing's geometry is the same
       const h = held.get(String(l.sku).toUpperCase()), t = h && (l.size ? (h.sizes || {})[String(l.size).toUpperCase()] : h), near = (a, b) => Math.abs(a - b) <= Math.max(0.01, 0.001 * Math.max(Math.abs(a), Math.abs(b)));
       if (t && t.charmHash && near(t.widthPt, entry.widthPt) && near(t.heightPt, entry.heightPt) && near(t.areaPt2, entry.areaPt2) && (t.holes || 0) === (entry.holes || 0)) { if (t.charmHash !== entry.charmHash) hashKept = true; entry.charmHash = t.charmHash; }
@@ -411,9 +368,10 @@ async function main(argv, log = console.log) {
   // a small ring left loose beside a charm blocks it, as the other routes do
   for (const orp of g.orphans || []) { const b = orp.bbox; if (!b || orp.kind !== "path" || !orp.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of g.charms) { if (!c.sku) continue; const ob = c.outline.bbox; if (cx < ob[0] - 4 / MM || cx > ob[2] + 4 / MM || cy < ob[1] - 4 / MM || cy > ob[3] + 4 / MM) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 / MM) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
   if (hashesKept) log(`${hashesKept} design(s) keep the charm hash they have (same size, area and holes; --new-hash writes the new one)`);
+  if (kept.length) log(`${kept.length} pair design(s) were NOT written, because this run drew them as one body and the library holds them as a pair: ${kept.slice(0, 40).map(k => k.sku).join(", ")}${kept.length > 40 ? " …" : ""}`);
   log(`${entries.length} SKU entr${entries.length === 1 ? "y" : "ies"} ready (${skipped} from the previous run) · ${blocked.length} blocked · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 
-  let conflicts = [], sizeMoved = [], written = 0;
+  let conflicts = [], sizeMoved = [], keptAtServer = [], written = 0;
   if (stage) {
     written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;
     fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], only: only ? [...only] : null, entries, blocked }, null, 1));
@@ -425,7 +383,7 @@ async function main(argv, log = console.log) {
     const keepPath = masterUp ? masterUp.path : ([...held.values()].find(e => e.masterHash === masterHash && e.masterPath) || {}).masterPath || null;
     for (let i = 0; i < entries.length; i += 150) {
       const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: i === 0 ? [...new Set(o.replaces.concat([...supersede]))] : [] });
-      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []);
+      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []); keptAtServer = keptAtServer.concat(r.pairKept || []);
       log(`  index ${Math.min(i + 150, entries.length)}/${entries.length}`);
     }
     // --only rewrites a few SKUs of a master whose file record is already there: that record (its counts and lists) is left as it is
@@ -434,6 +392,7 @@ async function main(argv, log = console.log) {
       const fileSkus = only ? [...lab.labels.values()].flatMap(l => [l.sku, ...(l.extra || []).map(x => x.sku)]) : skus;
       await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, replaces: o.replaces, indexedBy: "local-indexer" } });
     }
+    if (keptAtServer.length) log(`  ${keptAtServer.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${keptAtServer.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (conflicts.length) log(`  ${conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${conflicts.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (sizeMoved.length) log(`  ${sizeMoved.length} SKU(s) changed size by more than 5 % since the last index: ${sizeMoved.slice(0, 30).map(b => b.sku).join(", ")}`);
     // read the index back: a batch that times out can answer without having stored everything
@@ -452,7 +411,7 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, twins, pairs: pairs.rows, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, pairsKeptAtServer: keptAtServer, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }

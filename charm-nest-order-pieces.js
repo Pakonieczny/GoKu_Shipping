@@ -163,13 +163,14 @@
       const side = rowSide || planSide || null, bodyIndex = p && p.bodyIndex != null && Number.isFinite(+p.bodyIndex) ? +p.bodyIndex : pp && pp.bodyIndex != null ? +pp.bodyIndex : null;
       const groupKey = String((p && p.groupKey) || (pp && pp.groupKey) || `${rid}:${(l && l.transactionId) || o.tx || ''}`);
       const hookKind = kindOf && l ? kindOf(l) || null : null, guess = o.plan || o.wasPlan ? ((o.plan || o.wasPlan).some(x => x && x.bodyIndex === 1) ? 'mismatched' : 'pair') : (side || o.glued) ? (bodyIndex === 1 ? 'mismatched' : 'pair') : null;
-      const kind = hookKind || guess;   // (without the hook the kind is a guess: settled for the whole group below, a Left is of a mismatched pair when its group has a second body)
+      const alone = !!side && !!p && +p.groupSize === 1;   // (a single earring that names its ear: a sided piece of a group of ONE, never half of a pair)
+      const kind = hookKind || (alone ? 'single' : guess);   // (without the hook the kind is a guess: settled for the whole group below, a Left is of a mismatched pair when its group has a second body)
       // (mirror: the pool row's own when it has one, else what the plan says of this piece: the Right is the mirror image of the Left, whichever way the master drawing faces)
       const mirror = side ? (p && typeof p.mirror === 'boolean' ? p.mirror : pp && typeof pp.mirror === 'boolean' ? pp.mirror : side === 'R') : false;
       const sideLabel = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
       return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, mirror, glued: !!o.glued, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
-        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey), kindGuess: !hookKind && !!guess && !(o.plan || o.wasPlan) };
+        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey), kindGuess: !hookKind && !alone && !!guess && !(o.plan || o.wasPlan) };
     });
     // a line cancelled or gone from the order: its pieces that are still on a sheet are reported (gone), those on none are not
     // numbered as CharmNestReadiness.pieces numbers them: the live pieces 1.. in order; a piece with nothing to cut (no design), or cancelled and still on a sheet, after them
