@@ -152,3 +152,13 @@ test('native duplicate and delayed old transcription finals cannot consume anoth
   f.final(rest.input,'Show the rest');f.commit(rest.input);await settle();assert.deepEqual(grid(f),before);assert.equal(f.presentations.length,presented);assert.equal(f.receipts().length,receipts);
   const flowers=await say(f,'Show me flower jewellery');assertShown(f,{expected:FLOWERS});f.final(first.input,'Show the rest');await settle();assertShown(f,{expected:FLOWERS});assertCounts(f,flowers.result,{total:3,shown:3,remaining:0});
 });
+
+test('native continuation retains shown identities through a temporary eligibility gap while admitting new unseen stock',async t=>{
+  const f=await fixture(t,{includeGuardListings:true}),first=await animals(f),missing=first.first[0],old=f.products.find(p=>p.handle===missing),newStock=f.products.find(p=>p.handle==='tiger-hoop-earrings');
+  for(const v of old.variants)v.available=false;await f.refreshInventory();
+  const more=await say(f,'Show more');assertShown(f,{allowed:ANIMALS.filter(h=>!first.first.includes(h)),count:6});assertCounts(f,more.result,{total:17,shown:11,remaining:6});
+  const rest=await say(f,'Show the rest');assertShown(f,{allowed:ANIMALS.filter(h=>h!==missing&&!first.first.includes(h)),count:6});assertCounts(f,rest.result,{total:17,shown:17,remaining:0});
+  for(const v of old.variants)v.available=true;for(const v of newStock.variants)v.available=true;await f.refreshInventory();
+  const returned=await say(f,'Show the rest');assertShown(f,{expected:['tiger-hoop-earrings']});assertCounts(f,returned.result,{total:19,shown:19,remaining:0});
+  const before=grid(f),presented=f.presentations.length,exhausted=await say(f,'Show the rest');assert.deepEqual(grid(f),before);assert.equal(f.presentations.length,presented);assertCounts(f,exhausted.result,{total:19,shown:19,remaining:0});
+});

@@ -36,10 +36,10 @@
   },
   {
     "path": "brites-concierge.js",
-    "bytes": 283720,
+    "bytes": 283905,
     "oldBlob": "49689cd4053497f5dc2c299131a4b61e6f3bd1fe",
-    "newBlob": "cfbac4c65fd8636443398fd169cd1099c9e3a044",
-    "sha256": "51fd26282bce35a60e0982c1dee26af0f6a3a79b8fcea9c25538e608a9942bd2"
+    "newBlob": "855295585e6abf4abeb6b701c8fab85a20f41a18",
+    "sha256": "fb9fd0520dc29bf9d4d4c3f3e0ecc16c0fb6f7a29e88c1070cbb7b03bf33e0be"
   },
   {
     "path": "brites-storefront-bridge.js",
@@ -253,10 +253,10 @@
   },
   {
     "path": "tests/growth/native-search-continuation47.test.cjs",
-    "bytes": 16338,
+    "bytes": 17654,
     "oldBlob": null,
-    "newBlob": "328171f4caff635b3c9a6b54424dd28088b18a1e",
-    "sha256": "2550ecff0d0f842a113840dd5bb4b90d2dc4c2ff342bbb0a50900a4cc67d9264"
+    "newBlob": "ee0124fe81f457a4ae11e8d81a7415d991cc7ddd",
+    "sha256": "ac128162e2a116ed04e560f6d548eb4757a499e6f192279f74ab8e6754b2141e"
   },
   {
     "path": "tests/growth/native-search47-fixture.cjs",
@@ -271,5 +271,12 @@
     "bytes": 963,
     "newBlob": "ddcfc70f40447d3a18037355cac877f40a0d6837",
     "sha256": "62a5e4373fccaff8bfccd5645934f287be76d40b817494cbc75d354c865f3b92"
+  },
+  {
+    "path": "tests/growth/typed-search-refresh47.test.cjs",
+    "oldBlob": null,
+    "bytes": 6459,
+    "newBlob": "2e6214fbc39d6bd1978b7e05483680ae04a3d871",
+    "sha256": "586e9b8ed8635c5302fdbf6eec9e5adee2bbcbbe3999f6b65334ebbcfc1f050d"
   }
 ]
