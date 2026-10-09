@@ -301,6 +301,57 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
     assert.ok(/DIFFERENT charm on each ear/.test(custom) && /regular/.test(custom) && /never custom/.test(custom), 'the custom reading says a mismatched pair is regular, not custom');
   });
 
+  // ═══ 9 · an earring pair cut from the customer's own designs (the page's real CustomSheet helpers, sliced) ═══
+  const cutOut = (from, to) => { const a = bridgeSrc.indexOf(from), b = bridgeSrc.indexOf(to, a); assert.ok(a > 0 && b > a, 'markers: ' + from); return bridgeSrc.slice(a, b); };
+  const customRows = (w, ...rows) => rows.map(r => Object.assign({}, r, { spec: Object.assign({ form: r.spec.form, quantity: r.spec.quantity || 1 }, r.spec), order: r.order, line: r.line }));
+  function customCtx(rows, extra) {
+    const calls = { silhouettes: 0 };
+    const ctx = Object.assign({ window: { CharmNestPair: Pair }, Pair, Orders: { rows: () => rows }, Review: { cardKey: r => 'card:' + r.order.receiptId }, ver: 1, Map, Date, Math, Number, Object, Array, Promise, Error, JSON, String,
+      read: async F => ({ charms: F.charms }), P: { buildSilhouettes: async () => { calls.silhouettes++; } }, S: { settings: {} }, calls }, extra || {});
+    vm.createContext(ctx);
+    vm.runInContext(cutOut('  /* ── an earring pair cut from the customer\'s own designs', '  /** Why the card\'s designs cannot be sent yet'), ctx);
+    vm.runInContext(cutOut('  /** The ear of each piece of an earring-pair line', '  /** preparePool for a line sent from its card'), ctx);
+    return ctx;
+  }
+  const rowOf = (ord, n, over) => { const r = lineRow(W, ord, n); return Object.assign({}, r, { poolIds: [], spec: Object.assign({}, r.spec, over && over.spec), state: 'pulled' }); };
+  await t('9a an earring-pair line needs a Left and a Right per pair; any other line needs what it always needed', () => {
+    const pair = rowOf(1, 10, { spec: { form: 'earrings', quantity: 1 } }), pairs2 = rowOf(5, 50, { spec: { form: 'earrings', quantity: 2 } }), one = rowOf(4, 40, { spec: { form: 'necklace', quantity: 1 } });
+    const ctx = customCtx([pair, pairs2, one]);
+    assert.equal(ctx.pairPlan(pair).length, 2); assert.equal(ctx.pairPlan(pairs2).length, 4); assert.equal(ctx.pairPlan(one), null);
+    assert.deepEqual({ ...ctx.needOf({ ck: 'card:' + pair.order.receiptId }) }, { total: 2, pairs: 2 });
+    assert.deepEqual({ ...ctx.needOf({ ck: 'card:' + one.order.receiptId }) }, { total: 1, pairs: 0 }, 'a single charm: no pair, nothing changes');
+    const p3 = rowOf(1, 10, { spec: { form: 'earrings', quantity: 1, pieceCount: 1 } }); assert.equal(customCtx([p3]).pairPlan(p3), null, 'an explicit count of one piece is a single ear, not a pair');
+  });
+  await t('9b which ear each piece is: one body twice = a Left and its mirror; two bodies of one file by where they sit; two files by the order dropped', async () => {
+    const pair = rowOf(1, 10, { spec: { form: 'earrings', quantity: 1 } }), ctx = customCtx([pair]);
+    const bodyA = { bbox: [0, 0, 20, 30] }, bodyB = { bbox: [30, 0, 50, 30] };
+    const e = { files: [{ id: 'f1', charms: [bodyA] }, { id: 'f2', charms: [bodyA] }, { id: 'f3', charms: [bodyA, bodyB] }, { id: 'f4', charms: [bodyB, bodyA] }] };
+    const same = await ctx.earsOf(pair, e, [{ f: 'f1', i: 0 }, { f: 'f1', i: 0 }]);
+    assert.deepEqual([...same].map(x => [x.side, x.mirror]), [['L', false], ['R', true]]);
+    const two = await ctx.earsOf(pair, e, [{ f: 'f3', i: 0 }, { f: 'f3', i: 1 }]); assert.deepEqual([...two].map(x => [x.side, x.mirror, x.bodyIndex]), [['L', false, 0], ['R', false, 1]], 'the body on the left is the Left, both as drawn');
+    const flipped = await ctx.earsOf(pair, e, [{ f: 'f4', i: 0 }, { f: 'f4', i: 1 }]); assert.deepEqual([...flipped].map(x => x.side), ['R', 'L'], 'by position, not by list order');
+    const files = await ctx.earsOf(pair, e, [{ f: 'f1', i: 0 }, { f: 'f2', i: 0 }]); assert.deepEqual([...files].map(x => [x.side, x.mirror, !!x.assumed]), [['L', false, true], ['R', false, true]], 'two files: drop order is assumed, and said so');
+    assert.equal(await ctx.earsOf(pair, e, [{ f: 'f1', i: 0 }]), null, 'an older send of one piece reads as it was');
+    const single = rowOf(4, 40, { spec: { form: 'necklace', quantity: 1 } }); assert.equal(await ctx.earsOf(single, e, [{ f: 'f1', i: 0 }, { f: 'f1', i: 0 }]), null);
+    const two2 = rowOf(5, 50, { spec: { form: 'earrings', quantity: 2 } }), ctx2 = customCtx([two2]);
+    const four = await ctx2.earsOf(two2, e, [{ f: 'f1', i: 0 }, { f: 'f1', i: 0 }, { f: 'f1', i: 0 }, { f: 'f1', i: 0 }]); assert.deepEqual([...four].map(x => x.side), ['L', 'R', 'L', 'R']);
+  });
+  await t('9c the Right of one body is its mirror image, made once', async () => {
+    const pair = rowOf(1, 10, { spec: { form: 'earrings', quantity: 1 } }), ctx = customCtx([pair]);
+    const base = mitten(), src = { id: 'cust:x', charms: [base], parsed: {} };
+    const a = await ctx.mirroredOf(src, 0), b = await ctx.mirroredOf(src, 0);
+    assert.equal(a, b); assert.equal(ctx.calls.silhouettes, 1, 'its silhouette is traced once'); assert.equal(a.mirrored, true); assert.equal(a.mirror, true); assert.equal(a.id, 'cust:x:0m');
+    assert.deepEqual(base.outline.bbox, [0, 0, 50, 60], 'the Left is untouched'); assert.notDeepEqual(a.outline.subpaths, base.outline.subpaths);
+  });
+  await t('9d Send to Sheet waits, in words, until the designs make a Left and a Right for every pair', () => {
+    const src = cutOut('  function notReady(e) {', '  function tooBig(F)');
+    const ctx = { plural: (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`, tooBig: () => false, labelOf: m => m, needOf: () => ({ total: 2, pairs: 2 }) }; vm.createContext(ctx); vm.runInContext(src, ctx);
+    const F = (pieces, qty) => ({ id: 'f', name: 'ears.ai', state: 'ready', metal: 'gold', pieces, qty });
+    const why = ctx.notReady({ files: [F(1, 1)] }); assert.match(why, /pair of earrings/); assert.match(why, /needs 2 pieces/); assert.match(why, /designs make 1/);
+    assert.equal(ctx.notReady({ files: [F(1, 2)] }), '', 'one body cut twice is a pair'); assert.equal(ctx.notReady({ files: [F(2, 1)] }), '', 'both ears drawn in one file is a pair');
+    ctx.needOf = () => ({ total: 1, pairs: 0 }); assert.equal(ctx.notReady({ files: [F(1, 1)] }), '', 'a card with no earring pair on it is judged exactly as before');
+  });
+
   const bad = results.filter(r => r[1]);
   console.log(`\npairs-engrave: ${results.length - bad.length} of ${results.length} passed`);
   if (failed) process.exitCode = 1;

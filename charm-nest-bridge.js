@@ -1679,11 +1679,18 @@ const Orders = window.Orders = (() => {
         if (opt.after) opt.after(sh, mine);
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is no longer open on Etsy (${row.reason || "gone"})`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
+      // a pair (or n discs) of this line that stays on a sheet that cannot give it up (cut, sent) is said too: the other piece came off, this one is set aside
+      try {
+        if (off.length && window.PairRemove) {
+          const offSet0 = new Set(off), stay = [...ids].filter(id => !offSet0.has(id)).map(id => { const o = allSheets().find(p => (p.charms || []).some(x => x.poolId === id)); return o ? { id, where: sheetName(o) } : null; }).filter(Boolean);
+          if (stay.length) agent({ pool: true }, "warn", `${row.order.receiptId}: ${off.length === 1 ? "1 piece" : off.length + " pieces"} taken off, but ${stay.length === 1 ? "1 piece" : stay.length + " pieces"} of the same line stay on ${[...new Set(stay.map(x => x.where))].join(", ")} (cut or sent): set ${stay.length === 1 ? "it" : "them"} aside`);
+        }
+      } catch (_) { /* a log line only */ }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
       // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
       const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
-      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
+      try { const res = await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); const more = ((res && res.extended) || []).filter(id => !offSet.has(id)); if (more.length) { for (const id of more) B.pool.rows.delete(id); row.poolIds = row.poolIds.filter(id => !more.includes(id)); agent({ pool: true }, "warn", `${row.order.receiptId}: the server took ${more.length === 1 ? "1 more piece" : more.length + " more pieces"} of the same line off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`); } } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
     return out;
@@ -3104,7 +3111,7 @@ const Pool = window.Pool = (() => {
   }
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
   // (the page's row is stamped: a row read from the cloud before this change is older than it, OrderPieces)
-  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); }
+  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } const extended = []; if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) { const res = await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); if (res && Array.isArray(res.extended)) extended.push(...res.extended.map(String)); } return { extended }; }   // (extended: the other pieces of the same lines that the server took off with the ones named, a line comes off whole; [] almost always)
   /* charmOf and sheetOf walked every charm of every sheet at each call (sheetOf every placement against every charm), and
      a classify pass or a restore asks once a line, so an update took longer the more sheets the table held. One index
      answers both, first match first as the walks did; it is made again when a page comes or goes or a sheet's charms or
@@ -9066,6 +9073,30 @@ const CustomSheet = window.CustomSheet = (() => {
   const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
+  /* ── an earring pair cut from the customer's own designs (Paul, 9 Oct 2026, 18:47) ──
+     A pair of earrings is a LEFT and a RIGHT piece for every pair bought (charm-nest-pair.js piecesFor), a custom order too. The customer's file may draw
+     both ears (two bodies: the one on the left is the Left) or one (the Right is then the Left mirrored, as for every other design). The card's Send to
+     Sheet waits until the designs make as many pieces as the order needs, and says so in words. Which ear each piece is stays derived (never stored): the
+     same body twice is a Left and its mirror, two bodies of one file are told apart by where they sit, two files by the order they were dropped in. */
+  const pairLine = row => Object.assign({}, row.line, { receiptId: row.order.receiptId, transactionId: row.line.transactionId, quantity: row.spec && row.spec.quantity, form: row.spec && row.spec.form, spec: row.spec });
+  /** The pieces an earring-pair line makes ([{ side, groupKey, of... }], a Left then a Right per pair), or null for any other line. */
+  function pairPlan(row) {
+    const Pair = window.CharmNestPair; if (!Pair || !Pair.piecesFor || !row || !row.spec || !row.order || !row.line) return null;
+    try { const per = Pair.piecesFor(pairLine(row), null); return per.length >= 2 && per.length % 2 === 0 && per.every(pc => pc.side === "L" || pc.side === "R") ? per : null; } catch (_) { return null; }
+  }
+  /** What a card's designs have to make: `total` pieces over its open lines, `pairs` of them in earring-pair lines (0: nothing changes on this card). */
+  const needMemo = new Map();
+  function needOf(e) {
+    const list = Orders.rows(), hit = needMemo.get(e.ck);
+    if (hit && hit.ver === ver && hit.list === list && hit.n === list.length && Date.now() - hit.t < 2000) return hit.val;
+    const val = needOfNow(e, list); needMemo.set(e.ck, { ver, list, n: list.length, t: Date.now(), val }); return val;
+  }
+  function needOfNow(e, list) {
+    const rows = list.filter(r => r && r.spec && Review.cardKey(r) === e.ck && r.state !== "gone" && !(r.poolIds || []).length && !r.spec.customDone && !["committed", "skipped"].includes(r.state));
+    let total = 0, pairs = 0;
+    for (const r of rows) { const plan = pairPlan(r); if (plan) { total += plan.length; pairs += plan.length; } else total += Math.max(1, Math.round(+r.spec.quantity || 1)); }
+    return { total, pairs };
+  }
   /** Why the card's designs cannot be sent yet, or "" when they can. */
   function notReady(e) {
     if (!e || !e.files.length) return "Drop the order's .ai or .dxf designs on its card first";
@@ -9073,6 +9104,9 @@ const CustomSheet = window.CustomSheet = (() => {
     const bad = e.files.find(F => F.state === "error"); if (bad) return `${bad.name} could not be read — remove it or drop it again`;
     const none = e.files.filter(F => !F.metal); if (none.length) return none.length === 1 ? `Pick the metal for ${none[0].name}` : `Pick a metal for each design (${none.length} have none)`;
     const big = e.files.find(F => tooBig(F)); if (big) return `${big.name} is too big for the ${labelOf(big.metal)} plate`;
+    // a pair of earrings needs a left and a right piece for every pair: fewer pieces than that would leave an ear uncut
+    const need = needOf(e);
+    if (need.pairs) { const have = e.files.reduce((a, F) => a + F.pieces * F.qty, 0); if (have < need.total) return `This order is ${need.pairs === 2 ? "a pair of earrings" : "pairs of earrings"}: it needs ${plural(need.total, "piece")} (a left and a right for each pair) and the designs make ${have}. Raise how many to cut, or add the other ear's design`; }
     return "";
   }
   function tooBig(F) {
@@ -9183,7 +9217,15 @@ const CustomSheet = window.CustomSheet = (() => {
     // each is read once it has landed in its row: tracing a design and drawing its picture are long tasks (50-130 ms)
     // that made the flight jump on its way. Bounded, so one whose flight was cut short (the window closed) is read too.
     const landed = Promise.race([Promise.resolve(flown).catch(() => {}), new Promise(r => setTimeout(r, 2600 + 140 * fresh.length))]);
-    let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F));
+    let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F)).then(() => pairQty(e, F));
+  }
+  /** The one design dropped on an earring-pair card starts at as many copies as the pair needs (one body twice = a Left and its mirror; both ears drawn in one file once). */
+  function pairQty(e, F) {
+    try {
+      if (F.state !== "ready" || e.files.length !== 1 || e.files[0] !== F || all()[e.ck] !== e) return;
+      const need = needOf(e); if (!need.pairs || !F.pieces) return;
+      const qty = Math.max(1, Math.min(99, Math.ceil(need.total / F.pieces))); if (qty !== F.qty) { F.qty = qty; changed(); }
+    } catch (_) { /* the quantity stays as it was */ }
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return;
@@ -9374,6 +9416,34 @@ const CustomSheet = window.CustomSheet = (() => {
       }catch(err){loadedAt=Date.now()-45000;console.warn("Custom design recovery",err);await recover();return 0;}
     })();try{return await loading;}finally{loading=null;}
   }
+  /** The ear of each piece of an earring-pair line sent from its card, worked out from the sent list and the designs (never stored; the same answer each time):
+   *  [{ side, mirror, bodyIndex, assumed? }] parallel to the list, or null when the line is not a pair or the list is not the pair's size (an older send reads as it was). */
+  async function earsOf(row, e, mine) {
+    const plan = pairPlan(row); if (!plan || plan.length !== mine.length) return null;
+    const out = new Array(mine.length).fill(null);
+    for (let u = 0; u < mine.length; u += 2) {
+      const a = mine[u], b = mine[u + 1];
+      if (a.f === b.f && a.i === b.i) { out[u] = { side: "L", mirror: false, bodyIndex: 0 }; out[u + 1] = { side: "R", mirror: true, bodyIndex: 0 }; continue; }   // one body twice: the Right is the Left mirrored
+      if (a.f === b.f) {
+        const F = e.files.find(x => x.id === a.f), cs = F ? (await read(F)).charms : null, ca = cs && cs[a.i], cb = cs && cs[b.i];
+        if (ca && cb && ca.bbox && cb.bbox) { const aLeft = (ca.bbox[0] + ca.bbox[2]) <= (cb.bbox[0] + cb.bbox[2]); out[u] = { side: aLeft ? "L" : "R", mirror: false, bodyIndex: aLeft ? 0 : 1 }; out[u + 1] = { side: aLeft ? "R" : "L", mirror: false, bodyIndex: aLeft ? 1 : 0 }; continue; }   // two bodies of one file: the one on the left is the Left
+      }
+      out[u] = { side: "L", mirror: false, bodyIndex: 0, assumed: true }; out[u + 1] = { side: "R", mirror: false, bodyIndex: 1, assumed: true };   // two files: the first dropped is the Left (a person confirms it, the sheet shows each piece's ear)
+    }
+    return out;
+  }
+  /** One body of a design as its mirror image (CharmNestPair.pieceGeometry): its outline and art reflected, its silhouette traced again, once per body and source. */
+  function mirroredOf(src, i) {
+    src.mirrorTasks ||= {};
+    return src.mirrorTasks[i] ||= (async () => {
+      const Pair = window.CharmNestPair, base = src.charms[i], geoM = Pair && Pair.pieceGeometry ? Pair.pieceGeometry(base, { side: "R", bodyIndex: 0, mirror: true }) : null;
+      if (!geoM || geoM === base) throw new Error("the mirrored (right-hand) piece cannot be made: charm-nest-pair.js has no pieceGeometry");
+      const made = Object.assign({}, base, geoM, { id: `${src.id}:${i}m`, mirror: true });
+      delete made.frontAt; made.pinned = null;
+      await P.buildSilhouettes(src.parsed, [made], +S.settings.silhouetteRes || 6);
+      return made;
+    })().catch(err => { delete src.mirrorTasks[i]; throw err; });
+  }
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
   async function prepare(row, run) {
     const e = sentOf(row), mine = decisionLines(e)[row.key] || [];
@@ -9381,18 +9451,22 @@ const CustomSheet = window.CustomSheet = (() => {
     if(e?.sendIntent && !e.sendIntent.pressed)return null; // background intake waits until the original press has lifted
     if (!mine.length) { row.state = "noDesign"; row.reason = "made with its order's other piece"; return null; }
     const sp = row.spec, rid = row.order.receiptId, pools = [], charms = [];
+    const ears = await earsOf(row, e, mine).catch(() => null), gk = window.CharmNestPair && CharmNestPair.groupKey ? CharmNestPair.groupKey(pairLine(row)) : `${rid}:${row.line.transactionId}`;   // (an earring pair: each piece's ear, and the Right a mirror when it is one body twice)
     for (const [n, pc] of mine.entries()) {
       if(pc.removed)continue;
       const owner=all();
       const F = e.files.find(x => x.id === pc.f); if (!F) throw new Error("a design sent for it is missing");
       if (tooBig(F)) { row.state = "oversize"; row.reason = `${F.name} does not fit the ${labelOf(F.metal)} plate`; return null; }
-      const src = await sourceOf(e, F); if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null; const base = src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
+      const src = await sourceOf(e, F); if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null; const ear = ears && ears[n], base = ear && ear.mirror ? await mirroredOf(src, pc.i) : src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
+      if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null;
+      const mineFields = ear && window.CharmNestPoolPieces ? CharmNestPoolPieces.fieldsOf({ side: ear.side, mirror: ear.mirror, bodyIndex: ear.bodyIndex, groupKey: gk, groupSize: mine.length }) : null;
       const copy = n + 1, poolId = O.poolId(row.order, row.line, copy);
       const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null });
       Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}),
         orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
         poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name, ...(mineFields || {}) });
+      if (mineFields) Object.assign(c, mineFields);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
       charms.push(c);
     }
     if(!charms.length){row.state="noDesign";row.reason="its sent designs were removed from the sheets";return null;}
@@ -15375,6 +15449,14 @@ const Cleanups = window.Cleanups = (() => {
     const charmIds = new Set([...(sh.charms || []).filter(off).map(x => x.id), ...(c.removedCharmIds || [])]);
     const poolIds = new Set([...(sh.charms || []).filter(off).map(x => x.poolId).filter(Boolean), ...(c.removedPoolIds || [])]);
     const onIt = (sh.charms || []).filter(off).length + (sh.placements || []).filter(p => p && charmIds.has(p.id)).length;
+    // a pair (or n discs) with a piece taken off here and another piece left on a sheet is said in the log, never in silence (PairRemove: the cleanup names pieces, not groups)
+    try {
+      if (window.PairRemove && poolIds.size) {
+        const where = id => { const o = allSheets().find(p => p !== sh && (p.charms || []).some(x => x.poolId === id)); return o ? nameOf(o) : ""; };
+        const left = PairRemove.partnersOutside([...poolIds], { rows: (B.orders && B.orders.rows) || [], pools: B.pool.rows, charms: allSheets().flatMap(p => p.charms || []) }, where).filter(x => x.where);
+        if (left.length) agent({ metal: sh.metal, run: sh.runId || null }, "warn", `${nameOf(sh)}: the cloud's cleanup ${c.id} took ${poolIds.size === 1 ? "1 piece" : poolIds.size + " pieces"} off, and ${left.length === 1 ? "1 piece" : left.length + " pieces"} of the same pair or group stay on ${[...new Set(left.map(x => x.where))].join(", ")}`);
+      }
+    } catch (_) { /* a log line only */ }
     // 1 · the sheet: the pieces taken off leave it, and whatever of this page still names them
     const keep = p => !(p && charmIds.has(p.id));
     sh.charms = (sh.charms || []).filter(x => !off(x));
