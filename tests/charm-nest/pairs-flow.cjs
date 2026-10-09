@@ -30,7 +30,7 @@ const ctxFor = (extra) => {
 
 // 1 · a charm's group: the same string the contract's groupKey gives, from the order fields or the pool id, none for a file dropped by hand
 {
-  const c = ctxFor(); vm.runInContext(policy + ';this.groupOf = groupOf; this.sideWord = sideWord;', c);
+  const c = ctxFor(); vm.runInContext(policy + ';this.groupOf = groupOf; this.sideWord = sideWord; this.isPairLine = isPairLine;', c);
   assert.equal(c.groupOf(piece(1001, 77, 1)), '1001:77', 'from orderInfo');
   assert.equal(c.groupOf({ poolId: '1001_77_2' }), '1001:77', 'from the pool id alone (an old record)');
   assert.equal(c.groupOf(piece(1001, 77, 2)), c.groupOf(piece(1001, 77, 1)), 'every piece of a line has one group');
@@ -39,7 +39,25 @@ const ctxFor = (extra) => {
   assert.equal(c.groupOf(null), null);
   assert.equal(c.sideWord({ side: 'L' }), 'Left'); assert.equal(c.sideWord({ side: 'R' }), 'Right'); assert.equal(c.sideWord({}), '');
   if (Pair) { const x = piece(1001, 77, 1); assert.equal(c.groupOf(x), Pair.groupKey(x), 'agrees with CharmNestPair.groupKey'); const c2 = ctxFor({ CharmNestPair: Pair }); vm.runInContext(policy + ';this.groupOf = groupOf;', c2); assert.equal(c2.groupOf(x), Pair.groupKey(x), 'and uses it when the page has loaded it'); }
+  const mL = piece(1002, 1, 1, { side: 'L' }), mR = piece(1002, 1, 2, { side: 'R' });
+  assert.equal(c.isPairLine([mL, mR]), true, 'a Left and a Right are a pair (matching pairs carry sides too)');
+  assert.equal(c.isPairLine([piece(1003, 1, 1), piece(1003, 1, 2)]), false, 'two discs with no side and no earring form are a group, not a pair');
+  assert.equal(c.isPairLine([piece(1004, 1, 1, { orderInfo: { receiptId: '1004', transactionId: '1', form: 'earrings' } }), piece(1004, 1, 2, { orderInfo: { receiptId: '1004', transactionId: '1', form: 'earrings' } })]), true, 'an older record with no sides: its form says earrings');
+  assert.equal(c.isPairLine([mL]), false); assert.equal(c.isPairLine([mL, mR, piece(1002, 1, 3)]), false, 'three pieces are a group');
   ok.push('a charm\'s group is its order line (receipt:transaction), read from its order fields or its pool id; a hand-dropped file has none');
+}
+
+// 1b · the saved sheet's charm descriptor carries a piece's side, mirror and group (the sheet window draws each piece in its own direction), and nothing for a normal charm
+{
+  const c = ctxFor(); vm.runInContext(policy + ';this.pairDescriptor = pairDescriptor;', c);
+  const d = plain(c.pairDescriptor(piece(1100, 3, 2, { side: 'R', mirror: true, bodyIndex: 1, groupSize: 2 })));
+  assert.deepEqual(d, { side: 'R', mirror: true, bodyIndex: 1, groupSize: 2, groupKey: '1100:3' });
+  assert.equal(plain(c.pairDescriptor(piece(1100, 3, 1, { side: 'L', mirror: false, groupSize: 2 }))).mirror, false, 'mirror false is said, not left out');
+  assert.deepEqual(plain(c.pairDescriptor(piece(1101, 1, 1))), {}, 'a normal charm: nothing added');
+  assert.deepEqual(plain(c.pairDescriptor({ id: 'file', order: 'file' })), {}, 'a hand-dropped file: nothing added');
+  assert.deepEqual(plain(c.pairDescriptor(piece(1102, 1, 1, { side: 'X', mirror: true, groupSize: 1 }))), {}, 'an unsound side is not written');
+  noNested(plain(d), 'charm descriptor');
+  ok.push('the saved sheet charm descriptor carries side, mirror, bodyIndex, groupKey and groupSize for a pair piece and nothing for any other charm');
 }
 
 // 2 · splitGroups and its words
@@ -123,6 +141,10 @@ const ctxFor = (extra) => {
   assert.deepEqual(plain(sh.placements.map(p => p.id)), [other.id], 'the saved mate is lifted with its late piece: a pair is never left half on a sheet');
   assert.deepEqual(plain(sh.rejects).sort(), [L.id, R.id].sort());
   assert(/saved piece\(s\) of 1 pair\/line/.test(c.log.at(-1).t), 'the log says why a saved piece came off: ' + c.log.at(-1).t);
+  // (b2) a MATCHING pair is the same: Left and Right of one design carry sides now, and it moves whole just as a mismatched one
+  { const ML = piece(8110, 1, 1, { side: 'L' }), MR = piece(8110, 1, 2, { side: 'R' });
+    sh = { metal: 'gold', appendOnly: true, nestInitial: [placement(ML), placement(other)], placements: [placement(ML), placement(other)], rejects: [MR.id] };
+    c.keepOrdersWhole(sh, byId([ML, MR, other])); assert.deepEqual(plain(sh.placements.map(p => p.id)), [other.id], 'a matching pair: the saved Left comes off with its late Right'); assert.deepEqual(plain(sh.rejects).sort(), [ML.id, MR.id].sort()); }
   // (c) the same without a group (older records, a hand-dropped file): the saved charm stays, as before
   const A = { id: 'A', order: 'o1' }, B = { id: 'B', order: 'o1' };
   sh = { metal: 'gold', appendOnly: true, nestInitial: [placement(A)], placements: [placement(A)], rejects: ['B'] };
@@ -156,7 +178,7 @@ const ctxFor = (extra) => {
   assert.deepEqual(plain(next.charms.map(x => x.id)), [L.id, R.id], 'the pair moves together'); assert.equal(s1.movedOn.split, undefined, 'a pair that moved whole is not a split');
   assert.deepEqual(plain(c.toasts.filter(t => t.k === 'bad')), [], 'no warning');
   assert(/1 pair\(s\)/.test(c.orderSummary([L, R]).text), 'the move says it carried a pair: ' + c.orderSummary([L, R]).text);
-  assert.equal(c.orderSummary([L, R]).pairs, 1); assert.equal(c.orderSummary([keep]).pairs, 0); assert.equal(c.orderSummary([keep]).text, '1 order(s)', 'a single keeps its text');
+  assert.equal(c.orderSummary([L, R]).pairs, 1); assert.equal(c.orderSummary([piece(9400, 1, 1), piece(9400, 1, 2)]).pairs, 0, 'two discs are not counted as a pair'); assert.equal(c.orderSummary([piece(9500, 1, 1, { side: 'L' }), piece(9500, 1, 2, { side: 'R' })]).pairs, 1, 'a matching pair is'); assert.equal(c.orderSummary([keep]).pairs, 0); assert.equal(c.orderSummary([keep]).text, '1 order(s)', 'a single keeps its text');
   // (b) only the Right body moved on (its Left is protected on this sheet): split on the card, in the log and in a toast
   c = mkPages(); s1 = { metal: 'gold', page: 1, charms: [keep, L, R], placements: [placement(keep), placement(L)], rejects: [R.id], status: 'complete', verification: { ok: true } };
   c.S.sheets.gold.pages.push(s1); next = c.overflowToNextSheet(s1);
@@ -173,6 +195,9 @@ const ctxFor = (extra) => {
   let s2 = { metal: 'gold', page: 1, charms: [L, R], placements: [], rejects: [L.id, R.id], status: 'partial' }; c.S.sheets.gold.pages.push(s2);
   assert.equal(c.overflowToNextSheet(s2), null); assert(/cannot fit on an empty sheet at these settings\. It holds a pair that must stay on one sheet, so it is not split\./.test(s2.problem), s2.problem);
   assert.equal(s2.charms.length, 2, 'nothing moved'); assert(stuck[0] && stuck[0].sheetPending);
+  const two = [1, 2].map(i => piece(9350, 1, i)); c = mkPages(); c.RunCtl = c.window.RunCtl = { onSheetDone() {} };
+  s2 = { metal: 'gold', page: 1, charms: two, placements: [], rejects: two.map(x => x.id) }; c.S.sheets.gold.pages.push(s2); c.overflowToNextSheet(s2);
+  assert(/a line of 2 pieces that must stay on one sheet/.test(s2.problem), 'two discs are a line, not a pair: ' + s2.problem);
   const D = [1, 2, 3].map(i => piece(9300, 1, i)); c = mkPages(); c.RunCtl = c.window.RunCtl = { onSheetDone() {} };
   s2 = { metal: 'gold', page: 1, charms: D, placements: [], rejects: D.map(x => x.id) }; c.S.sheets.gold.pages.push(s2); c.overflowToNextSheet(s2);
   assert(/a line of 3 pieces that must stay on one sheet/.test(s2.problem), 'a disc necklace of three: ' + s2.problem);
@@ -195,6 +220,28 @@ const ctxFor = (extra) => {
   const big = [mkc('a', 'o1', 300), mkc('p1', 'pair', 450), mkc('p2', 'pair', 450)];
   assert.equal(c.sheetFull({ rejects: ['p1', 'p2'], verification: { ok: true }, placements: [{}] }, { endedBy: 'stalled', density: .5, usablePt2: usable, placedPt2: 300, timedOut: false }, big), false, 'a pair that fits no empty sheet does not make a sheet full');
   ok.push('sheetFull: a pair counts both pieces (a pair that fits an empty sheet makes a full sheet full, one that fits none does not)');
+}
+
+// 7b · a batch of earring pairs, each unit now a Left and a Right (twice the size of one charm), on a sheet that fills up: the decision chain of finishNest
+{
+  const S = { settings: { maxFill: .8, clearancePt: 0 }, sheets: { gold: { pages: [] } } };
+  const c = ctxFor({ S, SimClock: null, addPage: m => { const pg = { metal: m, page: S.sheets[m].pages.length + 1, charms: [], placements: [], rejects: [], status: 'idle' }; S.sheets[m].pages.push(pg); return pg; } });
+  vm.runInContext(policy + ';' + slice(html, 'function inflatedArea(', 'const TOPUP') + ';' + slice(html, 'const untriedIds', 'function topupSettle(') + ';this.sheetFull = sheetFull; this.keepOrdersWhole = keepOrdersWhole; this.overflowToNextSheet = overflowToNextSheet;', c);
+  const area = 100, mk = (r, copy, side) => piece(r, 1, copy, { side, areaPt2: area, widthPt: 0, heightPt: 0, orderDate: r });
+  // five pair orders, oldest first; the sheet takes eight of the ten pieces, the solver seats the Left of the fifth pair and turns its Right away
+  const orders = [1, 2, 3, 4, 5].map(r => [mk(r, 1, 'L'), mk(r, 2, 'R')]), all = orders.flat();
+  const sh = { metal: 'gold', page: 1, charms: all.slice(), placements: all.slice(0, 9).map(placement), rejects: [all[9].id], verification: { ok: true }, status: 'complete' };
+  S.sheets.gold.pages.push(sh);
+  const byId = new Map(all.map(x => [x.id, x]));
+  c.keepOrdersWhole(sh, byId);
+  assert.deepEqual(plain(sh.placements.map(p => p.id)).sort(), all.slice(0, 8).map(x => x.id).sort(), 'the fifth pair\'s Left comes off with its Right: eight pieces, four whole pairs, stay');
+  assert.deepEqual(plain(sh.rejects).sort(), [all[8].id, all[9].id].sort());
+  const result = { endedBy: 'stalled', density: .78, usablePt2: 1000, placedPt2: 9 * area, timedOut: false };
+  assert.equal(c.sheetFull(sh, result, all), true, 'a pair that missed makes the sheet full (the ceiling is 800 of 1000)');
+  const next = c.overflowToNextSheet(sh, false);
+  assert.deepEqual(plain(next.charms.map(x => x.id)).sort(), [all[8].id, all[9].id].sort(), 'both pieces of the fifth pair go to the next sheet together');
+  assert.equal(sh.movedOn.split, undefined, 'no pair is split');
+  ok.push('a batch of earring pairs on a filling sheet: the pair that missed leaves whole (Left and Right), the four before it stay whole, the sheet is full');
 }
 
 // 8 · Pool.attachPool + LiveNest.intakePage: a late piece goes to its mate's sheet when it is open, and is reported when it cannot
@@ -263,14 +310,20 @@ const ctxFor = (extra) => {
   rows[0] = row('a', 11, 1, { spec: { designSku: 'MIS_7134', material: 'gold', quantity: 1, pair: { kind: 'mismatched', mismatched: true }, pieceCount: 2 }, poolIds: ['7000_11_1', '7000_11_2'] });
   plan = await OH.releasePlan('7000');
   assert.deepEqual(plain(plan.pieces[0].sides), ['Left', 'Right']); assert.equal(plan.pieces[0].pieces, 2);
-  assert(plan.effects.some(t => /MIS_7134: its 2 pieces \(Left and Right of one pair\) go on the same sheet, together\./.test(t)), JSON.stringify(plan.effects));
+  assert(plan.effects.some(t => /MIS_7134: the pair \(Left and Right\) goes on the same sheet, together\./.test(t)), JSON.stringify(plan.effects));
   assert(plan.effects.some(t => /^2 pieces go on /.test(t)), 'the sheet sentence counts the two pieces: ' + JSON.stringify(plan.effects));
   // (c) one piece of the pair stays on a sheet already cut: split, said plainly, kept on the plan
-  cut.charms.push({ id: 'c1', order: '7000', poolId: '7000_11_1', orderInfo: { receiptId: '7000', transactionId: '11' } });
+  cut.charms.push({ id: 'c1', order: '7000', poolId: '7000_11_2', side: 'R', orderInfo: { receiptId: '7000', transactionId: '11' } });
   plan = await OH.releasePlan('7000');
   assert.equal(plan.split.length, 1); assert.equal(plan.split[0].groupKey, '7000:11'); assert.deepEqual(plain(plan.split[0].stays), ['GF Sheet 1']);
-  assert(plan.effects.some(t => /1 piece of MIS_7134 stays on GF Sheet 1, so this pair is on two sheets \(both sheets must go in one set\)\./.test(t)), JSON.stringify(plan.effects));
+  assert(plan.effects.some(t => /its Right piece of MIS_7134 stays on GF Sheet 1, so this pair is on two sheets \(both sheets must go in one set\)\./.test(t)), JSON.stringify(plan.effects));
   assert(plan.stays.length === 1, 'the existing stays line is still there');
+  // (d) a MATCHING pair line is a pair too: Paul (amendment 2) every earring unit is a Left and a Right; two units are four pieces, two pairs
+  cut.charms.length = 0;
+  rows[0] = row('a', 11, 2, { spec: { designSku: 'STUD_1', material: 'gold', quantity: 2, pair: { kind: 'pair', mismatched: false }, pieceCount: 4 }, poolIds: ['7000_11_1', '7000_11_2', '7000_11_3', '7000_11_4'] });
+  plan = await OH.releasePlan('7000');
+  assert.equal(plan.pieces[0].kind, 'pair'); assert.equal(plan.pieces[0].pieces, 4); assert.deepEqual(plain(plan.pieces[0].sides), ['Left', 'Right']);
+  assert(plan.effects.some(t => /STUD_1: its 2 pairs \(each a Left and a Right\) go on the same sheet, together\./.test(t)) && plan.effects.some(t => /^4 pieces go on /.test(t)), JSON.stringify(plan.effects));
   ok.push('Release hold preview: a mismatched pair is two pieces going on one sheet together; a piece that stays on a cut sheet is said plainly as a split; ordinary lines read as before');
 })().then(() => {
   console.log('Pairs flow OK:\n  ' + ok.join('\n  '));
