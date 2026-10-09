@@ -1678,11 +1678,18 @@ const Orders = window.Orders = (() => {
         if (opt.after) opt.after(sh, mine);
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is no longer open on Etsy (${row.reason || "gone"})`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
+      // a pair (or n discs) of this line that stays on a sheet that cannot give it up (cut, sent) is said too: the other piece came off, this one is set aside
+      try {
+        if (off.length && window.PairRemove) {
+          const offSet0 = new Set(off), stay = [...ids].filter(id => !offSet0.has(id)).map(id => { const o = allSheets().find(p => (p.charms || []).some(x => x.poolId === id)); return o ? { id, where: sheetName(o) } : null; }).filter(Boolean);
+          if (stay.length) agent({ pool: true }, "warn", `${row.order.receiptId}: ${off.length === 1 ? "1 piece" : off.length + " pieces"} taken off, but ${stay.length === 1 ? "1 piece" : stay.length + " pieces"} of the same line stay on ${[...new Set(stay.map(x => x.where))].join(", ")} (cut or sent): set ${stay.length === 1 ? "it" : "them"} aside`);
+        }
+      } catch (_) { /* a log line only */ }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
       // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
       const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
-      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
+      try { const res = await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); const more = ((res && res.extended) || []).filter(id => !offSet.has(id)); if (more.length) { for (const id of more) B.pool.rows.delete(id); row.poolIds = row.poolIds.filter(id => !more.includes(id)); agent({ pool: true }, "warn", `${row.order.receiptId}: the server took ${more.length === 1 ? "1 more piece" : more.length + " more pieces"} of the same line off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`); } } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
     return out;
@@ -2126,8 +2133,37 @@ const Master = window.Master = (() => {
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
-  let previewObserver=null, previewQueue=[], previewRunning=0;
+  /* A design's stored picture as a small <img>, for the lists that offer designs (the SKU picker). The page's COEP (require-corp) blocks
+     a plain <img> of the Storage address (no CORP header), so it goes through the same-origin asset function, kept on this computer and
+     asked for only when near the screen (charm-nest-thumbs.js, mountPictures); without the module it is the plain image through `cors`. */
+  const pictureTag = e => {
+    const u = e && thumbOf(e); if (!u) return "";
+    const T = window.CharmNestThumbs, via = typeof cors === "function" ? cors(u) : u;
+    return T ? `<img alt="" crossorigin="anonymous" data-pic="${esc(via)}" data-pic-key="${esc(T.weeklyKey("s|" + (e.thumbPath || e.sku) + "|" + (e.indexedAt || "")))}">` : `<img alt="" crossorigin="anonymous" src="${esc(via)}">`;
+  };
+  const picMounts = new WeakMap();
+  const mountPictures = host => { try { picMounts.get(host)?.stop(); if (window.CharmNestThumbs) picMounts.set(host, CharmNestThumbs.mountImages(host)); } catch (_) { /* the pictures stay as they are */ } };
+  /* The tiles' pictures (charm-nest-thumbs.js): only what is on screen and a little way ahead is asked for, the nearest first
+     (a tile scrolled past is never asked for), a finished picture is kept on this computer under the design's file, its
+     indexing time and the drawing code, so a refresh draws nothing and asks for nothing. The picture itself is still drawn by
+     Pool.masterPreview, the tile's look is unchanged. Without the module the plain loader below runs as it always did. */
+  let previewMount=null;
   function mountMasterPreviews(grid) {
+    const T=window.CharmNestThumbs;
+    previewMount?.stop();previewMount=null;
+    if(!T||typeof T.mount!=="function")return mountMasterPreviewsPlain(grid);
+    const sizeOf=entry=>entry?.sizes && Object.keys(entry.sizes)[0] || null;
+    previewMount=T.mount(grid,{
+      selector:'[data-preview-sku]',concurrency:6,keep:false,   // (Pool.masterPreview keeps the picture itself, under this same key, for every list that draws a design)
+      // (a design the pool already holds is drawn from that copy at once, no download: nothing to keep, and its picture stays as it was)
+      keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath,geom.charmHash||entry.charmHash,entry.indexedAt):"";},
+      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry)):null;},
+      paint:(host,thumb)=>{const img=document.createElement("img");img.alt="";img.src=thumb;host.replaceChildren(img);},
+      fail:host=>{if(host.isConnected&&entryFor(host.dataset.previewSku))host.textContent="Preview unavailable";}
+    });
+  }
+  let previewObserver=null, previewQueue=[], previewRunning=0;
+  function mountMasterPreviewsPlain(grid) {
     previewObserver?.disconnect();previewQueue=[];
     const paint=async host=>{
       const entry=entryFor(host.dataset.previewSku);
@@ -2603,7 +2639,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
-  return { entryFor, looseFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -2698,7 +2734,11 @@ const Pool = window.Pool = (() => {
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
     const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
-    const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
+    // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
+    const T=window.CharmNestThumbs,geom=sizeEntry(entry,size),keep=T&&T.designKey?T.designKey(key,geom.charmHash||entry.charmHash,entry.indexedAt):"";
+    const make=()=>readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    const task=keep?T.picture(keep,make):make();
     masterPreviewCache.set(key,task);
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
@@ -3047,7 +3087,7 @@ const Pool = window.Pool = (() => {
   }
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
   // (the page's row is stamped: a row read from the cloud before this change is older than it, OrderPieces)
-  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); }
+  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } const extended = []; if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) { const res = await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); if (res && Array.isArray(res.extended)) extended.push(...res.extended.map(String)); } return { extended }; }   // (extended: the other pieces of the same lines that the server took off with the ones named, a line comes off whole; [] almost always)
   /* charmOf and sheetOf walked every charm of every sheet at each call (sheetOf every placement against every charm), and
      a classify pass or a restore asks once a line, so an update took longer the more sheets the table held. One index
      answers both, first match first as the walks did; it is made again when a page comes or goes or a sheet's charms or
@@ -10370,9 +10410,10 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
-        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.thumbOf(Master.entryFor(k) || {}) ? `<img alt="" src="${esc(Master.thumbOf(Master.entryFor(k)))}">` : ""}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
+        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.pictureTag(Master.entryFor(k))}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
+      Master.mountPictures(c);
       const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
       const put = async (field, value) => {
         const who = by(); if (!who) return;
@@ -15361,6 +15402,14 @@ const Cleanups = window.Cleanups = (() => {
     const charmIds = new Set([...(sh.charms || []).filter(off).map(x => x.id), ...(c.removedCharmIds || [])]);
     const poolIds = new Set([...(sh.charms || []).filter(off).map(x => x.poolId).filter(Boolean), ...(c.removedPoolIds || [])]);
     const onIt = (sh.charms || []).filter(off).length + (sh.placements || []).filter(p => p && charmIds.has(p.id)).length;
+    // a pair (or n discs) with a piece taken off here and another piece left on a sheet is said in the log, never in silence (PairRemove: the cleanup names pieces, not groups)
+    try {
+      if (window.PairRemove && poolIds.size) {
+        const where = id => { const o = allSheets().find(p => p !== sh && (p.charms || []).some(x => x.poolId === id)); return o ? nameOf(o) : ""; };
+        const left = PairRemove.partnersOutside([...poolIds], { rows: (B.orders && B.orders.rows) || [], pools: B.pool.rows, charms: allSheets().flatMap(p => p.charms || []) }, where).filter(x => x.where);
+        if (left.length) agent({ metal: sh.metal, run: sh.runId || null }, "warn", `${nameOf(sh)}: the cloud's cleanup ${c.id} took ${poolIds.size === 1 ? "1 piece" : poolIds.size + " pieces"} off, and ${left.length === 1 ? "1 piece" : left.length + " pieces"} of the same pair or group stay on ${[...new Set(left.map(x => x.where))].join(", ")}`);
+      }
+    } catch (_) { /* a log line only */ }
     // 1 · the sheet: the pieces taken off leave it, and whatever of this page still names them
     const keep = p => !(p && charmIds.has(p.id));
     sh.charms = (sh.charms || []).filter(x => !off(x));
