@@ -64,12 +64,15 @@ async function upload(origin, passcode, p, buf, contentType) {
   const fin = await api(origin, passcode, "charmNestOutput", { op: "finalize", path: signed.path, token: signed.token, contentType });
   return { path: fin.path, url: fin.url };
 }
-function thumbnailPng(Geom, charm, size) {
+function thumbnailPng(Geom, charm, size, PDF) {
   let Resvg = null; try { ({ Resvg } = require("@resvg/resvg-js")); } catch (_) { return null; }
   const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h);
   const css = c => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
   const parts = [];
-  for (const m of charm.members) { if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue; const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; parts.push(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
+  for (const m of charm.members) { if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue;
+    // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
+    if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
+    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; parts.push(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
   parts.push(`<path d="${Geom.svgPathOf(charm.outline)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(8, Math.round(w * s))}" height="${Math.max(8, Math.round(h * s))}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#ece7dc"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)">${parts.join("")}</g></svg>`;
   try { return new Resvg(svg, { fitTo: { mode: "width", value: Math.max(8, Math.round(w * s)) } }).render().asPng(); } catch (_) { return null; }
@@ -146,7 +149,7 @@ async function main(argv, log = console.log) {
     if (!o.dry) {
       const ai = await P.buildSingleCharm(c, parsed);
       aiUp = await upload(o.origin, o.passcode, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
-      const png = thumbnailPng(G, c, 168); if (png) thumb = await upload(o.origin, o.passcode, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
+      const png = thumbnailPng(G, c, 168, P); if (png) thumb = await upload(o.origin, o.passcode, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
     }
     const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push(flipWhy);
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
