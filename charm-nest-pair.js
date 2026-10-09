@@ -322,7 +322,7 @@
       const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
       const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
-      if (side && (opts && opts.facing || !readsOneWay(charm))) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (a design that reads one way, letters and numbers, is cut as drawn on both sides)
+      if (side && (opts && opts.facing || !readsOneWay(charm))) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : mis ? facingSetFor({ index: bodyIndex }, charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (an index entry with no geometry: the words it holds for each body)   // (a design that reads one way, letters and numbers, is cut as drawn on both sides)
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
     }
     return out;
