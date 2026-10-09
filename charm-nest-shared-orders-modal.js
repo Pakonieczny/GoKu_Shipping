@@ -274,7 +274,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       if (!orderId) continue;
       // (the engine says `here` as "GF Sheet 1 + GF Sheet 2" when a set with several sheets moves, and hereIds with the sheets' ids)
       const hereL = new Set([...here, ...[].concat(o.here || []).flatMap(h => String(h).split(' + ').map(x => x.trim()))].filter(Boolean)), hereIds = new Set(arr(o.hereIds).map(String));
-      let pieces = arr(o.pieces).filter(p => p && typeof p === 'object').map((p, i) => ({ key: String(p.key || p.poolId || ''), index: p.index != null ? +p.index : i + 1, label: p.label || '', sheetId: p.sheetId || '', sheetLabel: String(p.sheetLabel || ''), setId: p.setId || '', thumb: p.thumb || null }));
+      let pieces = arr(o.pieces).filter(p => p && typeof p === 'object').map((p, i) => ({ key: String(p.key || p.poolId || ''), index: p.index != null ? +p.index : i + 1, label: p.label || '', sheetId: p.sheetId || '', sheetLabel: String(p.sheetLabel || ''), setId: p.setId || '', thumb: p.thumb || null, side: p.side === 'L' || p.side === 'R' ? p.side : '' }));
       pieces.forEach(p => { p.here = !!((ctx.kind !== 'set' && p.sheetId && String(p.sheetId) === String(ctx.id)) || (p.sheetId && hereIds.has(String(p.sheetId))) || (p.sheetLabel && hereL.has(p.sheetLabel))); });
       // no pieces told: the sheets are (here, there)
       if (!pieces.length) {
@@ -285,13 +285,13 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       const customer = String(o.customer || o.buyer || o.name || '').trim(), thumb = typeof o.thumb === 'string' ? o.thumb : null;
       // a sheet that cannot give its piece up (already cut, completed, its set committed): said on the card before anything is pressed
       const locked = arr(o.locked).filter(l => l && typeof l === 'object' && (l.sheetLabel || l.why)).map(l => ({ sheetId: String(l.sheetId || ''), sheetLabel: String(l.sheetLabel || ''), why: String(l.why || '').trim().replace(/[.\s]+$/, '') }));
-      out.push({ orderId, label: String(o.label || ''), customer, thumb, pieces, locked, sig: JSON.stringify([orderId, customer, thumb ? 1 : 0, pieces.map(p => [p.index, p.sheetId, p.sheetLabel, p.here ? 1 : 0, p.thumb ? 1 : 0]), locked.map(l => [l.sheetId, l.why])]) });
+      out.push({ orderId, label: String(o.label || ''), customer, thumb, pieces, locked, sig: JSON.stringify([orderId, customer, thumb ? 1 : 0, pieces.map(p => [p.index, p.sheetId, p.sheetLabel, p.here ? 1 : 0, p.thumb ? 1 : 0, p.side]), locked.map(l => [l.sheetId, l.why])]) });
     }
     return out;
   }
   const signature = list => list.map(o => o.sig).join('|');
   const orderNo = o => digits(o.orderId) || o.label || o.orderId;
-  const rawOf = o => ({ orderId: o.orderId, label: o.label, customer: o.customer, thumb: o.thumb, locked: o.locked.map(l => Object.assign({}, l)), pieces: o.pieces.map(p => ({ key: p.key, index: p.index, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: p.setId, thumb: p.thumb })), here: (o.pieces.find(p => p.here) || {}).sheetLabel || '', there: o.pieces.filter(p => !p.here).map(p => p.sheetLabel) });
+  const rawOf = o => ({ orderId: o.orderId, label: o.label, customer: o.customer, thumb: o.thumb, locked: o.locked.map(l => Object.assign({}, l)), pieces: o.pieces.map(p => ({ key: p.key, index: p.index, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: p.setId, thumb: p.thumb, side: p.side })), here: (o.pieces.find(p => p.here) || {}).sheetLabel || '', there: o.pieces.filter(p => !p.here).map(p => p.sheetLabel) });
 
   /* ── words ── */
   function words(M, n) {
@@ -341,7 +341,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
   /** A set is named by its short name here ("Set 2"), never by its long label ("Set 2 · Oct 3"), which reads like a typo in a sentence. */
   const setShort = l => String(l || '').split(/\s+[\u00b7\u2022|]\s+/)[0].trim();
   function pieceHtml(o, p, i) {
-    return `<span class="soPiece ${p.here ? 'here' : 'there'}"><span class="soTileWrap">${i ? `<span class="soJoin" aria-hidden="true">${ICON.link}</span>` : ''}${tileHtml(o, p)}</span><span class="soChip" style="--dot:${dotOf(p.sheetLabel)}"><i></i><span>${esc(shortOf(p.sheetLabel))}</span></span><span class="soWhere">${p.here ? 'here' : 'there'}</span></span>`;
+    return `<span class="soPiece ${p.here ? 'here' : 'there'}"><span class="soTileWrap">${i ? `<span class="soJoin" aria-hidden="true">${ICON.link}</span>` : ''}${tileHtml(o, p)}</span><span class="soChip" style="--dot:${dotOf(p.sheetLabel)}"><i></i><span>${esc(shortOf(p.sheetLabel))}</span></span><span class="soWhere">${p.side ? (p.side === 'L' ? 'Left' : 'Right') + ' · ' : ''}${p.here ? 'here' : 'there'}</span></span>`;
   }
   function piecesHtml(o) {
     const shown = o.pieces.slice(0, o.pieces.length > SHOWN_PIECES ? SHOWN_PIECES - 1 : SHOWN_PIECES), rest = o.pieces.length - shown.length;
@@ -350,7 +350,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     return parts.join('');
   }
   function aria(o) {
-    const ps = o.pieces.map(p => `${p.sheetLabel || 'no sheet yet'}${p.here ? ' (this sheet)' : ''}`);
+    const ps = o.pieces.map(p => `${p.side ? (p.side === 'L' ? 'left earring on ' : 'right earring on ') : ''}${p.sheetLabel || 'no sheet yet'}${p.here ? ' (this sheet)' : ''}`);
     return `Open order ${orderNo(o)}${o.customer ? ', ' + o.customer : ''}. ${plural(o.pieces.length, 'piece')}: ${ps.join(', ')}.`;
   }
   /** "Stays on RG Sheet 1: its Rose Gold cut is recorded." (the plain reason the engine gives, after the sheet's name) */

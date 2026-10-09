@@ -3217,7 +3217,9 @@ const Gate = window.Gate = (() => {
   const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
   const SOrd = () => (window.SharedOrders && window.SharedOrders.fromPage && window.SharedOrders.core) ? window.SharedOrders : null;
   const sheetNameOf = p => `${labelOf(p.metal)} Sheet ${p.page}`;
-  const ordersWords = os => os.length === 1 ? `order ${os[0]}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
+  const ordersWords = (os, tell) => os.length === 1 ? `order ${os[0]}${tell && tell(os[0]) ? ` (${tell(os[0])})` : ""}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
+  /** What an order's pieces are, for the one line a held or pulled sheet says: only a mismatched pair (a left and a right earring on the group's sheets) is told; every other order keeps its plain words. */
+  const tellOf = (V, ids) => oid => { const sd = new Set(); for (const id of ids) { const n = V.norm.get(id); for (const p of (n && n.pieces) || []) if (p.orderId === oid && p.side) sd.add(p.side); } return sd.has("L") && sd.has("R") ? "its left and right earrings" : ""; };
   /** The run's pages as the rule reads them: { sheets: [core sheets], page: id -> page, id: page -> id }. */
   function cardinalView(run) {
     const SO = SOrd(); if (!SO || !run) return null;
@@ -3242,29 +3244,29 @@ const Gate = window.Gate = (() => {
     const ready = new Set(pages), seq = set ? set.seq : 2, wants = p => basePolicy(p, seq, choices).include, inSetNow = p => !!set && p.setId === set.setId && !p.draft;
     const out = [];
     for (const g of V.SO.core.groups(V.sheets)) {
-      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed);
+      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed), tell = tellOf(V, g.ids);
       if (fixed.length) {
         // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
         // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
         const why = fixed.map(f => `${V.norm.get(f).label}: ${V.norm.get(f).fixed}`).join("; ");
-        for (const p of members) if (!fixed.includes(V.idOf.get(p))) p.cardinalNote = `${ordersWords(orders)} also on ${why}, so ${members.length > 2 ? "they cannot" : "it cannot"} be in the same set`;
+        for (const p of members) if (!fixed.includes(V.idOf.get(p))) p.cardinalNote = `${ordersWords(orders, tell)} also on ${why}, so ${members.length > 2 ? "they cannot" : "it cannot"} be in the same set`;
         out.push({ ids: g.ids, orders, state: "fixed", why });
         continue;
       }
       const wanting = members.filter(wants); if (!wanting.length) continue;
       const need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: cannotJoin(p, ready) })).filter(x => x.w);
-      const together = o => `Shares ${ordersWords(orders)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
+      const together = o => `Shares ${ordersWords(orders, tell)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
       if (!stuck.length) { for (const p of need) p.cardinalPull = together(p); out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
       const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; ");
       if (wanting.some(inSetNow)) {
         // the set is started: the sheets that can come do, the rest are told about
         for (const p of need) if (!stuck.some(x => x.p === p)) p.cardinalPull = together(p);
-        for (const p of members) p.cardinalNote = `${ordersWords(orders)} also on ${stuck.map(x => sheetNameOf(x.p)).join(", ")}, which cannot join the set yet: ${stuck.map(x => x.w).join("; ")}`;
+        for (const p of members) p.cardinalNote = `${ordersWords(orders, tell)} also on ${stuck.map(x => sheetNameOf(x.p)).join(", ")}, which cannot join the set yet: ${stuck.map(x => x.w).join("; ")}`;
         out.push({ ids: g.ids, orders, state: "partial", why: waits });
         continue;
       }
       // nothing of it is in the set yet: nobody starts a split; the sheets that want in wait for the others
-      for (const p of wanting) p.cardinalHold = `Waits for ${waits}: sheets that share ${ordersWords(orders)} go into the set together`;
+      for (const p of wanting) p.cardinalHold = `Waits for ${waits}: sheets that share ${ordersWords(orders, tell)} go into the set together`;
       out.push({ ids: g.ids, orders, state: "waiting", why: waits });
     }
     return out;
@@ -7034,7 +7036,7 @@ const Sets = window.Sets = (() => {
     // the set record
     if (!set.sheetIds.includes(sh.sheetId)) set.sheetIds.push(sh.sheetId);
     if (!set.materials.includes(sh.metal)) set.materials.push(sh.metal);
-    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null }); }
+    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) { const sd = c.side || c.orderInfo.side; ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null, ...(sd === "L" || sd === "R" ? { side: sd } : {}) }); } }   // (a piece of a mismatched pair keeps its side in the set's copy list)
     set.labelFiles = set.labelFiles.filter(f => f.sheetId !== sh.sheetId).concat(sh.label.files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
     set.labels = null; // A previously collected PDF/manifest no longer describes these sheet labels.
     if (!labelsOnly) set.status = "nesting";
@@ -7071,6 +7073,7 @@ const Sets = window.Sets = (() => {
     const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
     if (split.length) {
       const there = [...new Set(split.flatMap(i => i.there))], os = split.map(i => i.orderId);
+      if (split.length === 1 && split[0].words) throw pendingRelease(`Order ${split[0].orderId} ${split[0].words}, and ${there.join(", ")} ${there.length === 1 ? "is" : "are"} not in this set: sheets that share a multi-piece order go into the same set`);   // (a mismatched pair says which ear is where)
       throw pendingRelease(`${os.length === 1 ? "Order " + os[0] + " is" : "Orders " + os.slice(0, 3).join(", ") + (os.length > 3 ? " and more are" : " are")} also on ${there.join(", ")}, which ${there.length === 1 ? "is" : "are"} not in this set: sheets that share a multi-piece order go into the same set`);
     }
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
@@ -7123,7 +7126,10 @@ const Sets = window.Sets = (() => {
     const line = (t, opts = {}) => { if (y < 48) { page = man.addPage([612, 792]); y = 756; } page.drawText(ansi(t).slice(0, 110), Object.assign({ x: 36, y, size: 9.5, font }, opts)); y -= opts.size ? opts.size + 4 : 13; };
     line(`${set.name} · ${set.day} · run ${set.runId}`, { size: 15, font: bold }); line(`${set.sheetIds.length} sheet(s) · materials ${set.materials.map(m => labelOf(m)).join(", ")} · ${Object.keys(set.orders).length} order(s) · ${ev.committable.length} committable · ${Object.keys(ev.held).length} held · ${ev.gone.length} gone`); y -= 6;
     line("Orders and sheets", { font: bold, size: 11 });
-    for (const [rid, o] of Object.entries(set.orders).sort()) { const copies = Object.values(o.lines).flatMap(l => l.copies.map(c => `${l.sku}${l.copies.length > 1 ? "#" + c.copy : ""}→${c.sheet}`)); line(`${rid}  ${ev.held[rid] ? "HELD: " + (ev.held[rid].why || "") + "  " : ""}${copies.join("  ")}`); }
+    for (const [rid, o] of Object.entries(set.orders).sort()) { const copies = Object.values(o.lines).flatMap(l => l.copies.map(c => `${l.sku}${l.copies.length > 1 ? "#" + c.copy : ""}${c.side === "L" ? " (Left)" : c.side === "R" ? " (Right)" : ""}→${c.sheet}`)); line(`${rid}  ${ev.held[rid] ? "HELD: " + (ev.held[rid].why || "") + "  " : ""}${copies.join("  ")}`); }
+    // an order whose pieces (a pair, a mismatched pair, n discs) sit on more than one sheet of the set is said again on its own, so the person at the laser sees it (nothing is added to a set without one)
+    const spans = window.SetEdit && SetEdit.spanLines ? SetEdit.spanLines(set.orders) : [];
+    if (spans.length) { y -= 6; line("Orders on more than one sheet (they stay in one set)", { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line("Engraving", { font: bold, size: 11 });
     const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");

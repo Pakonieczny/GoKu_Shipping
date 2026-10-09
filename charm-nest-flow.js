@@ -530,7 +530,7 @@
     const page = SO && typeof SO.between === 'function' ? safe(() => SO.between(item.id, to.set || (to.leave ? null : 'new'), { kind: item.kind, together }), []) || [] : [];
     const by = new Map();
     for (const it of state.shared || []) by.set(it.orderId, it);
-    for (const it of page) { const sv = by.get(it.orderId); by.set(it.orderId, sv ? { ...sv, customer: it.customer || sv.customer || '', thumb: it.thumb || sv.thumb || null, pieces: it.pieces && it.pieces.length ? it.pieces : sv.pieces, locked: sv.locked && sv.locked.length ? sv.locked : it.locked || [] } : it); }
+    for (const it of page) { const sv = by.get(it.orderId); by.set(it.orderId, sv ? { ...sv, customer: it.customer || sv.customer || '', thumb: it.thumb || sv.thumb || null, pieces: it.pieces && it.pieces.length ? it.pieces : sv.pieces, locked: sv.locked && sv.locked.length ? sv.locked : it.locked || [], kind: it.kind || sv.kind || '', words: it.words || sv.words || '', groups: it.groups || sv.groups } : it); }   // (what the pieces ARE, left/right earrings or discs: the page knows it better than the records)
     const items = [...by.values()].sort(byOrderId);
     if (SO && typeof SO.enrich === 'function') safe(() => SO.enrich(items.filter(i => !i.customer && !i.thumb)), null);
     let group = state.group || null;
@@ -574,7 +574,7 @@
     if (joining && !stuck.length) {
       plan.confirm = plan.confirm.filter(c => c.key !== 'splitOrders');
       plan.confirm.push({ key: 'together', label: mates.length === 1 ? `${mates[0].label} joins ${target} with ${together}` : mates.length <= 3 ? `${mates.slice(0, -1).map(m => m.label).join(', ')} and ${mates[mates.length - 1].label} join ${target} with ${together}` : `${count(mates.length, 'sheet')} join ${target} with ${together}`,
-        detail: `${orderWords} ${items.length === 1 ? 'has' : 'have'} pieces on ${mates.length === 1 ? 'both sheets' : 'these sheets'}, so they go in together.` });
+        detail: items.length === 1 && items[0].words ? `Order ${items[0].orderId} ${items[0].words}, so they go in together.` : `${orderWords} ${items.length === 1 ? 'has' : 'have'} pieces on ${mates.length === 1 ? 'both sheets' : 'these sheets'}, so they go in together.` });
       for (const m of mates) plan.auto.push({ key: 'membership:' + m.id, label: `${m.label} added to ${target}`, detail: `It shares ${items.length === 1 ? 'an order' : 'orders'} with ${v.label}, so it joins with it, with its QR label.` });
       const st = plan.steps.find(x => x.type === 'include'); if (st) st.with = mates.map(m => m.id);
       return finish(plan);

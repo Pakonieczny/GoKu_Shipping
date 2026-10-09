@@ -76,7 +76,7 @@ function seed(st) {
       const before = JSON.stringify([rec('sheet-pr-a'), rec('sheet-pr-b'), st.doc('Charm_Nest_Sets', SET)]);
       const r = await call({ op: 'flowApply', by: 'Paul', device: 'charm-nest-1', via: 'Library move', steps: [{ type: 'setMember', moves: [{ sheetId: 'sheet-pr-a', to: null }] }] });
       assert.equal(r.status, 409, JSON.stringify(r.body));
-      assert(new RegExp(`Order ${MIS.rid} has pieces on GF Sheet 1 and GF Sheet 2`).test(r.body.error), r.body.error);
+      assert(new RegExp(`Order ${MIS.rid} has (pieces on GF Sheet 1 and GF Sheet 2|its left earring on GF Sheet 1 and its right earring on GF Sheet 2)`).test(r.body.error), r.body.error);   // (PAIRSETS: a refusal says what the pieces are when the pool rows tell the side)
       assert(/stay in one set/.test(r.body.error));
       assert.equal(JSON.stringify([rec('sheet-pr-a'), rec('sheet-pr-b'), st.doc('Charm_Nest_Sets', SET)]), before, 'nothing was written');
     });
