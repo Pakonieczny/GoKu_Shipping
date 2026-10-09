@@ -43,9 +43,9 @@
   },
   {
     "path": "brites-concierge.js",
-    "bytes": 292138,
-    "newBlob": "65a2412e833c52b41665b121dc56b267e3f159d5",
-    "sha256": "acf06ad01b323629bbd1bb8ddd75fb300d364517eaa30211703d95d9eeddee19",
+    "bytes": 294218,
+    "newBlob": "99fc0cbbe443b9386b03bdd0f12ea3c6eabc346b",
+    "sha256": "61617a9d9503e73d1e605c2a392dadbaae71630eddb351fce06e4a75fb052ae4",
     "oldBlob": "855295585e6abf4abeb6b701c8fab85a20f41a18"
   },
   {
@@ -71,9 +71,9 @@
   },
   {
     "path": "concierge-sandbox.js",
-    "bytes": 184047,
-    "newBlob": "6929fd1383405296150c5582ef8b9f24be593a24",
-    "sha256": "cde0857f0118b9640e6c5bba77fb2f8aa5b6ce2e0abcfc5d31ff680524eecbec",
+    "bytes": 184892,
+    "newBlob": "5fc39fb706f06a527edfcc1bea9bcacecbc1dcfb",
+    "sha256": "91e7d5c51b1d040abb4545055fa294341132221e0cc9e68824820c877233ac40",
     "oldBlob": "41624b0f3ab97468816bddc48f9200e0cfa6c888"
   },
   {
@@ -204,9 +204,9 @@
   },
   {
     "path": "tests/growth/native-continuity48.test.cjs",
-    "bytes": 12580,
-    "newBlob": "d2b179201c3809182635cdca7cf5ae0fae944007",
-    "sha256": "d94e13d421ff2ddb29bcb65d68e537a6888cf7add75196262a6e4b799181d45e",
+    "bytes": 15379,
+    "newBlob": "7cc28685ac975e9cc581dfd3ef0533fdff567682",
+    "sha256": "fc9b17b4c5283facd81cb92ac362123973a6f68072ae655de3741c56a4e9a674",
     "oldBlob": null
   },
   {

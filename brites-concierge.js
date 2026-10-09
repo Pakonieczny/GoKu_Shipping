@@ -854,7 +854,18 @@
     if(!topics.includes('prices')&&!topics.includes('availability'))scoped.selectedVariant=null;
     return scoped;
   }
+  function currentSelectionAnswer(text,context){
+    var question=String(text||'').trim().replace(/^(?:(?:please|can you|could you|would you|will you)\s+)*/i,'').replace(/[.!?]+$/,'').toLowerCase(),quantity=/^(?:what quantity have i (?:selected|chosen)|how many have i (?:selected|chosen)|what is (?:my|the) (?:current )?quantity)$/.test(question),choices=/^(?:what (?:have|did) i (?:select|selected|choose|chosen|pick|picked)|which (?:options|choices) have i (?:selected|chosen|picked)|what (?:is|are) my (?:current )?(?:selection|selections|choices|selected options))$/.test(question);
+    if(!quantity&&!choices)return null;
+    var page=storefrontContext(),pc=page?.productControls;
+    if(context?.signal?.aborted||!state.open||document.hidden||context?.native===true&&(!(voiceActive||voiceStarting)||context.currentTurn!==true||context.inputItemId!==voiceInputItemId||context.turnVersion!==voiceInputTurnVersion))return {handled:true,ok:false,reply:'Please ask again for the page you’re viewing now.',actions:[]};
+    if(!pc||page.loading||page.pageKind!=='product'||page.currentHandle!==pc.handle)return {handled:true,ok:false,reply:'Open a piece to check its current choices.',products:[],preserveSelection:true,actions:[]};
+    if(context?.native===true&&voiceInputStorefrontContext?.currentHandle!==pc.handle)return {handled:true,ok:false,reply:'The page changed. Please ask again for the piece you’re viewing now.',products:[],preserveSelection:true,actions:[]};
+    var selected=pc.selectedOptions.filter(function(option){return pc.optionGroups.some(function(group){return group.name===option.name&&group.values.includes(option.value);});}),reply=quantity?'Quantity '+pc.quantity+'.':(selected.length?selected.map(function(option){return option.name+': '+option.value;}).join('; ')+'.':'No options are selected yet.')+' Quantity '+pc.quantity+'.';
+    return {handled:true,ok:true,reply:boundedText(reply,1200),products:[],preserveSelection:true,actions:[]};
+  }
   async function cachedProductQuestion(text,context){
+    var currentChoices=currentSelectionAnswer(text,context);if(currentChoices)return currentChoices;
     var topics=productQuestionTopics(text),connected=connectedStorefront();if(!topics.length||!connected||typeof connected.readProduct!=='function'||!state.open||document.hidden||context?.signal?.aborted)return {handled:false};
     if(topics.includes('dimensions')&&typeof window.BritesConciergeShoppingGuide?.productMeasurements!=='function')return {handled:false};
     var page=storefrontContext(),bridge=await ensureStorefrontBridge();if(!page||!bridge||typeof window.BritesStorefrontBridge?.resolveKnowledgeTarget!=='function')return {handled:false};
