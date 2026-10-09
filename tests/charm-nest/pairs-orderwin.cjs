@@ -89,6 +89,34 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
   assert.ok(base.filter(p => p.lineKey === `${rid}_${tx2}`).every(p => p.groupSize === 3)); ok('A8b every disc knows its group has 3');
 }
 
+/* ── Amendment 2 (Paul, 9 Oct 18:47): every EARRING pair, matching or mismatched, is a Left and a Right piece per unit, the Right the mirror image; the real shared module decides ── */
+{
+  const CP = require(path.join(root, 'charm-nest-pair.js'));
+  const rid = '4200000020', tx = '9201';
+  const real = l => { const mis = /^MISMATCHED/.test(l.sku); const x = CP.piecesFor({ receiptId: l.key.split('_')[0], transactionId: l.transactionId, quantity: l.quantity, form: l.form || '', spec: l.spec || {} }, mis ? { sku: l.sku, pair: { v: 1, bodies: 2, mismatched: true } } : null); return x.some(p => p.side) ? x : null; };
+  const kindReal = l => { const mis = /^MISMATCHED/.test(l.sku); const arg = { receiptId: l.key.split('_')[0], transactionId: l.transactionId, quantity: l.quantity, form: l.form || '', spec: l.spec || {} }; return real(l) ? CP.kindOf(arg, mis ? { sku: l.sku, pair: { v: 1, bodies: 2, mismatched: true } } : null) : null; };
+  // 10 · a matching stud pair, nothing pooled yet: a Left and a Right, the Right turned over
+  let ps = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'HEART_STUD', 1, { form: 'earrings' })], pools: [], sheets: [], sheetsKnown: true, pairOf: real, kindOf: kindReal });
+  assert.deepEqual(ps.map(p => p.side), ['L', 'R']); assert.deepEqual(ps.map(p => p.mirror), [false, true]); assert.ok(ps.every(p => p.kind === 'pair' && p.groupSize === 2 && p.bodyIndex === 0));
+  assert.deepEqual(ps.map(p => p.label), ['HEART STUD · Left', 'HEART STUD · Right']); ok('A10 a matching earring pair makes a Left and a Right, the Right a mirror image');
+  ps = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'HEART_STUD', 2, { form: 'huggie' })], pools: [], sheets: [], sheetsKnown: true, pairOf: real, kindOf: kindReal });
+  assert.deepEqual(ps.map(p => p.side), ['L', 'R', 'L', 'R']); assert.equal(ps[0].kind, 'multi'); ok('A10b quantity 2 makes two Lefts and two Rights');
+  // 10c · the pool rows' own side and mirror win; a Right with the mirror flag false (the drawing faces right) is kept
+  const pr = [row(rid, tx, 1, { sku: 'HEART_STUD', side: 'R', mirror: false, bodyIndex: 0 }), row(rid, tx, 2, { sku: 'HEART_STUD', side: 'L', mirror: true, bodyIndex: 0 })];
+  ps = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'HEART_STUD', 1, { form: 'earrings', poolIds: pr.map(p => p.poolId) })], pools: pr, sheets: [], sheetsKnown: true, pairOf: real, kindOf: kindReal });
+  assert.deepEqual(ps.map(p => [p.side, p.mirror]), [['R', false], ['L', true]]); ok('A10c the pool row says its side and its direction');
+  // 10d · an OLD matching record (one pool piece, no side) is one piece, never a false split, and says no side
+  const old = [row(rid, tx, 1, { sku: 'HEART_STUD', sheetId: SHEET.a })];
+  ps = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'HEART_STUD', 1, { form: 'earrings', poolIds: [`${rid}_${tx}_1`] })], pools: old, sheets: [sheet(SHEET.a, 'gold', 1, [`${rid}_${tx}_1`])], sheetsKnown: true, pairOf: real, kindOf: kindReal });
+  assert.equal(ps.length, 1); assert.equal(ps[0].glued, true); assert.equal(ps[0].side, null); assert.equal(Core.spread(ps).splitGroups.length, 0); ok('A10d an old one-piece record of a pair is not split');
+  // 10e · necklaces, letters, a single earring: no side, no mirror, as before
+  for (const form of ['necklace', 'charm', 'earring-single', '']) {
+    ps = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'DISC_X', 3, { form })], pools: [], sheets: [], sheetsKnown: true, pairOf: real, kindOf: kindReal });
+    assert.equal(ps.length, 3, form); assert.ok(ps.every(p => p.side === null && p.mirror === false && p.kind === null), form);
+  }
+  ok('A10e discs, letters, charms and a single earring have no side and no mirror');
+}
+
 /* ── B · the real order window (needs playwright; skipped without) ── */
 async function partB() {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
@@ -97,13 +125,13 @@ async function partB() {
   const srv = await start({ receipts: [] });
   const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 12, 17) / 1000);
   const S = { gf1: 'sheet-pow-gf1', gf2: 'sheet-pow-gf2' }, SET = 'set-pow-1';
-  const P = { rid: '4200000010', tx: '9101' }, Q = { rid: '4200000011', tx: '9102' }, R = { rid: '4200000012', tx: '9103', tx2: '9104' }, M = { rid: '4200000013', tx: '9105' };
+  const P = { rid: '4200000010', tx: '9101' }, Q = { rid: '4200000011', tx: '9102' }, R = { rid: '4200000012', tx: '9103', tx2: '9104' }, M = { rid: '4200000013', tx: '9105' }, E = { rid: '4200000014', tx: '9106' };
   const id = (o, tx, c) => `${o.rid}_${tx}_${c}`;
   const sheetDocs = () => ({
-    [S.gf1]: { id: S.gf1, metal: 'gold', sheetIndex: 1, setId: SET, setSeq: 1, folder: '2026-10-09_GF_Set-1_Sheet-1', fileBase: '2026-10-09_GF_Set-1_Sheet-1', day: '2026-10-09', status: 'written', stock: { wPt: 300, hPt: 150 }, orders: [P.rid, Q.rid, R.rid, M.rid],
-      poolIds: [id(P, P.tx, 1), id(Q, Q.tx, 1), id(Q, Q.tx, 2), id(R, R.tx, 1), id(M, M.tx, 1)] },
-    [S.gf2]: { id: S.gf2, metal: 'gold', sheetIndex: 2, setId: SET, setSeq: 1, folder: '2026-10-09_GF_Set-1_Sheet-2', fileBase: '2026-10-09_GF_Set-1_Sheet-2', day: '2026-10-09', status: 'written', stock: { wPt: 300, hPt: 150 }, orders: [P.rid, M.rid],
-      poolIds: [id(P, P.tx, 2), id(M, M.tx, 2)] }
+    [S.gf1]: { id: S.gf1, metal: 'gold', sheetIndex: 1, setId: SET, setSeq: 1, folder: '2026-10-09_GF_Set-1_Sheet-1', fileBase: '2026-10-09_GF_Set-1_Sheet-1', day: '2026-10-09', status: 'written', stock: { wPt: 300, hPt: 150 }, orders: [P.rid, Q.rid, R.rid, M.rid, E.rid],
+      poolIds: [id(P, P.tx, 1), id(Q, Q.tx, 1), id(Q, Q.tx, 2), id(R, R.tx, 1), id(M, M.tx, 1), id(E, E.tx, 1)] },
+    [S.gf2]: { id: S.gf2, metal: 'gold', sheetIndex: 2, setId: SET, setSeq: 1, folder: '2026-10-09_GF_Set-1_Sheet-2', fileBase: '2026-10-09_GF_Set-1_Sheet-2', day: '2026-10-09', status: 'written', stock: { wPt: 300, hPt: 150 }, orders: [P.rid, M.rid, E.rid],
+      poolIds: [id(P, P.tx, 2), id(M, M.tx, 2), id(E, E.tx, 2)] }
   });
   const prow = (o, tx, copy, sku, side, sheetId, extra) => Object.assign({ poolId: id(o, tx, copy), orderId: o.rid, transactionId: tx, lineKey: `${o.rid}_${tx}`, sku, material: 'gold', copy, state: sheetId ? 'written' : 'ready', sheetId: sheetId || null, setId: sheetId ? SET : null, updatedAt: Date.now() },
     side ? { side, bodyIndex: side === 'L' ? 0 : 1, groupKey: `${o.rid}:${tx}`, groupSize: 2 } : {}, extra || {});
@@ -111,15 +139,17 @@ async function partB() {
     prow(P, P.tx, 1, 'MISMATCHED_7134', 'L', S.gf1), prow(P, P.tx, 2, 'MISMATCHED_7134', 'R', S.gf2),
     prow(Q, Q.tx, 1, 'MISMATCHED_7134', 'L', S.gf1), prow(Q, Q.tx, 2, 'MISMATCHED_7134', 'R', S.gf1),
     prow(R, R.tx, 1, 'MISMATCHED_7134', 'L', S.gf1), prow(R, R.tx, 2, 'MISMATCHED_7134', 'R', null), prow(R, R.tx2, 1, 'FEMALE_SYMBOL', null, null),
-    prow(M, M.tx, 1, 'FEMALE_SYMBOL', null, S.gf1), prow(M, M.tx, 2, 'FEMALE_SYMBOL', null, S.gf2)
+    prow(M, M.tx, 1, 'FEMALE_SYMBOL', null, S.gf1), prow(M, M.tx, 2, 'FEMALE_SYMBOL', null, S.gf2),
+    prow(E, E.tx, 1, 'HEART_STUD', 'L', S.gf1, { bodyIndex: 0, mirror: false }), prow(E, E.tx, 2, 'HEART_STUD', 'R', S.gf2, { bodyIndex: 0, mirror: true })
   ];
   const orderOf = (o, buyer, lines) => ({ receiptId: o.rid, orderNumber: o.rid, createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
-    lines: lines.map(([tx, sku, qty]) => ({ transactionId: tx, listingId: '19000' + tx.slice(-5), sku, title: sku === 'MISMATCHED_7134' ? 'Mismatched mittens earrings' : 'Female symbol charm', quantity: qty || 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: '14k Gold Filled' })) });
+    lines: lines.map(([tx, sku, qty]) => ({ transactionId: tx, listingId: '19000' + tx.slice(-5), sku, title: sku === 'MISMATCHED_7134' ? 'Mismatched mittens earrings' : sku === 'HEART_STUD' ? 'Heart stud earrings' : 'Female symbol charm', quantity: qty || 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }].concat(sku === 'HEART_STUD' || sku === 'MISMATCHED_7134' ? [{ name: 'Style', value: 'Earrings' }] : []), metalKey: 'gold', metalLabel: '14k Gold Filled' })) });
   const orders = [
     [orderOf(P, 'Split Pair', [[P.tx, 'MISMATCHED_7134']]), [[id(P, P.tx, 1), id(P, P.tx, 2)]]],
     [orderOf(Q, 'Together Pair', [[Q.tx, 'MISMATCHED_7134']]), [[id(Q, Q.tx, 1), id(Q, Q.tx, 2)]]],
     [orderOf(R, 'Pair Plus One', [[R.tx, 'MISMATCHED_7134'], [R.tx2, 'FEMALE_SYMBOL']]), [[id(R, R.tx, 1), id(R, R.tx, 2)], [id(R, R.tx2, 1)]]],
-    [orderOf(M, 'Matching Two', [[M.tx, 'FEMALE_SYMBOL', 2]]), [[id(M, M.tx, 1), id(M, M.tx, 2)]]]
+    [orderOf(M, 'Matching Two', [[M.tx, 'FEMALE_SYMBOL', 2]]), [[id(M, M.tx, 1), id(M, M.tx, 2)]]],
+    [orderOf(E, 'Studs Pair', [[E.tx, 'HEART_STUD']]), [[id(E, E.tx, 1), id(E, E.tx, 2)]]]
   ];
   const seed = () => {
     srv.st.docs.clear(); let n = 0;
@@ -155,7 +185,7 @@ async function partB() {
       await page.waitForTimeout(1200);
       return page.evaluate(() => {
         const txt = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : '';
-        return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), name: txt(r.querySelector('.owPcName')) })),
+        return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), mirror: !!r.querySelector('.owSidePic[data-pc-mirror]'), name: txt(r.querySelector('.owPcName')) })),
           head: txt(document.getElementById('owPcSum')?.querySelector('.owPcHd')), sub: txt(document.getElementById('owSub')), sku: txt(document.getElementById('owSku')), meta: txt(document.getElementById('owMeta')), split: txt(document.querySelector('#owNowCard .owSplit')), chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(txt),
           caption: [...document.querySelectorAll('#owPhoto, .owPics figcaption')].map(txt).join('|') };
       });
@@ -183,6 +213,24 @@ async function partB() {
     // 4 · a matching quantity-2 line stays as it was: one row, no sides, no split sentence
     w = await open(M, M.tx);
     assert.equal(w.rows.filter(r => r.side).length, 0); assert.ok(!/Left|Right/.test(w.sku + w.meta + w.sub), JSON.stringify(w)); assert.equal(w.split, ''); ok('B4 a matching line (quantity 2, two sheets) is drawn exactly as before: no side rows, no pair words');
+    // 5 · a MATCHING pair of stud earrings (Paul 9 Oct 18:47: every earring pair is a Left and a Right, the Right the Left turned over): the same rows, each piece with its own direction
+    w = await open(E, E.tx);
+    const es = w.rows.filter(r => r.side);
+    assert.deepEqual(es.map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 2']], JSON.stringify(w));
+    assert.deepEqual(es.map(r => r.mirror), [false, true], 'the Right picture is the one turned over');
+    assert.match(w.sub, /2 pieces/); assert.match(w.sku, /Left \+ Right/); assert.match(w.meta, /Pair.*Matching/); assert.ok(!/Mismatched/.test(w.meta));
+    assert.match(w.split, /Its pair is split: Left on GF Sheet 1, Right on GF Sheet 2/); ok('B5 a matching earring pair: a Left and a Right row, the Right drawn turned over, the pair said to be matching');
+    // 6 · the run banner counts PIECES: a pair is two (PAIRFLOW's hand-over), a charm or a disc line as many as it always counted
+    const ban = await page.evaluate(() => ({ pull: RunCtl.stepDetail({ step: 'pull' }), pool: RunCtl.stepDetail({ step: 'pool' }), lines: Orders.rows().filter(x => x.state !== 'gone').length, per: Orders.rows().map(x => [x.key, x.state, RunCtl.bannerPieces(x), x.spec && x.spec.form]) }));
+    assert.equal(ban.lines, 6, JSON.stringify(ban)); assert.deepEqual(ban.per.map(x => x[3]), ['earrings', 'earrings', 'earrings', null, null, 'earrings'], JSON.stringify(ban)); assert.equal(ban.pull, ' \u00b7 10 pieces', JSON.stringify(ban)); assert.equal(ban.pool, ' \u00b7 10 of 10 pieces', JSON.stringify(ban)); ok('B6 the run banner counts pieces: four pair lines and two other lines make 10 pieces, not 6');
+    // 7 · a seal written for the pair LINE (ONE welded or printed event: "Left + Right", PAIRLABELS item 43) shows on both rows; an event for one piece only on its own row
+    const tl = await page.evaluate(({ rid, tx }) => {
+      const line = `${rid}_${tx}`, mk = (side, pid) => ({ key: `${line}#${side}`, lineKey: line, side, tid: tx, qty: 1, pools: [pid], sheets: [], line: {}, name: 'X' });
+      const L = mk('L', `${line}_1`), R = mk('R', `${line}_2`), all = [L, R], f = UI => ev => [UI.ofPiece(ev, L, all), UI.ofPiece(ev, R, all)];
+      const U = OrderTimelineUI, one = f(U);
+      return { lineEv: one({ type: 'welded', lineKey: line, transactionId: tx, at: 1 }), bothIds: one({ type: 'welded', data: { poolIds: [`${line}_1`, `${line}_2`] }, lineKey: line, at: 1 }), leftOnly: one({ type: 'qr-printed', data: { poolId: `${line}_1` }, lineKey: line, at: 1 }), rightOnly: one({ type: 'qr-printed', data: { poolId: `${line}_2` }, lineKey: line, at: 1 }) };
+    }, { rid: E.rid, tx: E.tx });
+    assert.deepEqual(tl.lineEv, [true, true], JSON.stringify(tl)); assert.deepEqual(tl.bothIds, [true, true]); assert.deepEqual(tl.leftOnly, [true, false]); assert.deepEqual(tl.rightOnly, [false, true]); ok('B7 one seal for the pair line shows on the Left and the Right row; a seal for one piece only on its own');
     await context.close();
   } finally { await browser.close(); srv.close(); }
   assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));

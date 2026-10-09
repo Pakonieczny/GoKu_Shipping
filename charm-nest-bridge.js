@@ -248,34 +248,21 @@ const ListMedia = (() => {
   const catalog=new Map();
   // (`px`, from the picture viewer, draws the same design large from the same source: never the thumbnail enlarged)
   // (an earring's direction, Paul 9 Oct 18:47: the Right is the Left turned over about the vertical axis. A picture asked for ONE piece of a matching pair (opts.side "L" | "R", opts.mirror: true for the
-  //  piece that is the mirror image of the drawing) is the design as drawn, turned over for the mirror piece; a charm already held mirrored (charm.mirror) is not turned twice)
-  async function flipPicture(out) {
-    if(!out)return out;
-    try{
-      let src=out;if(typeof out==='string')src=await new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=out;});
-      const w=src.naturalWidth || src.width,h=src.naturalHeight || src.height;if(!w || !h)return out;
-      const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.translate(w,0);g.scale(-1,1);g.drawImage(src,0,0);
-      return typeof out==='string'?c.toDataURL('image/png'):c;
-    }catch(_){return out;}
-  }
+  //  piece that is the mirror image of the drawing) is the design as drawn, turned over by the renderers' own `mirror` option for the mirror piece (a charm already held mirrored is not turned twice);
+  //  a mismatched pair's piece is the pair picture with the other body washed out (opts.highlight), each body already facing its own side)
   async function vector(row,px,opts) {
-    const st={drawnMirrored:false},out=await vector0(row,px,opts,st);
-    const turn=!!out && !!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !st.drawnMirrored;
-    return turn?flipPicture(out):out;
-  }
-  async function vector0(row,px,opts,st) {
     if(!row || row.spec?.noDesign)return null;
     // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
     const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
     const charm=(pairRow(row) || sideOne)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
-    if(charm && opts?.side && charm.mirror)st.drawnMirrored=true;
-    // (opts.highlight "L" | "R": a mismatched pair's picture with the other body washed out, for ONE piece of the pair: the pair component's own option, passed on as it is asked for)
-    if(charm)return P.frontPreview ? (opts?.highlight ? P.frontPreview(charm,px || 220,opts) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
+    const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
+    const ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
+    if(charm)return P.frontPreview ? (ro ? P.frontPreview(charm,px || 220,ro) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
-    if(opts?.highlight)return px ? Pool.masterFront(entry,row.spec?.size,px,opts) : Pool.masterPreview(entry,row.spec?.size,true,opts);
+    if(ro)return px ? Pool.masterFront(entry,row.spec?.size,px,ro) : Pool.masterPreview(entry,row.spec?.size,true,ro);
     return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
   }
   /** A line's vector design drawn large on white (about 1600 px) for the picture viewer, as an address the viewer's picture
@@ -7951,11 +7938,22 @@ const RunCtl = window.RunCtl = (() => {
   let bannerDrawing = false;
   const bannerNow = () => { bannerDrawing = true; try { renderBanner(); } finally { bannerDrawing = false; } };
   const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
+  /** How many PIECES an order row counts for on the banner (Paul, 9 Oct: "a pair is two"): an earring pair makes a Left and a Right for every unit (CharmNestPair.pieceCountOf, the one count),
+   *  any other row one, as the banner always counted. */
+  function bannerPieces(x) {
+    try {
+      const CP = window.CharmNestPair; if (!x || !CP || typeof CP.isEarringPair !== "function") return 1;
+      const sp = x.spec || {}, sku = sp.designSku || (x.line && x.line.sku) || "", e = sku && window.Master && Master.entryFor ? Master.entryFor(sku) : null;
+      const arg = { form: sp.form || "", spec: sp, quantity: sp.quantity || (x.line && x.line.quantity) || 1 };
+      return CP.isEarringPair(arg, e) ? Math.max(1, CP.pieceCountOf(arg, e) || 1) : 1;
+    } catch (_) { return 1; }
+  }
   function stepDetail(r) {
     const sh = allSheets().filter(p => p.runId === r.runId);
     if (r.step === "nest" && sh.length) return ` · sheet ${Math.min(sh.filter(p => ["complete", "partial"].includes(p.status)).length + 1, sh.length)} of ${sh.length}`;
-    if (r.step === "pool") return ` · ${Orders.rows().filter(x => x.poolIds && x.poolIds.length).length} of ${Orders.rows().filter(x => x.state !== "gone").length} pieces`;
-    if (r.step === "pull" || r.step === "claim") return ` · ${Orders.rows().filter(x => x.state !== "gone").length} pieces`;
+    const pcs = list => list.reduce((n, x) => n + bannerPieces(x), 0);   // (pieces, not lines: a pair is two)
+    if (r.step === "pool") return ` · ${pcs(Orders.rows().filter(x => x.poolIds && x.poolIds.length))} of ${pcs(Orders.rows().filter(x => x.state !== "gone"))} pieces`;
+    if (r.step === "pull" || r.step === "claim") return ` · ${pcs(Orders.rows().filter(x => x.state !== "gone"))} pieces`;
     return "";
   }
   /* In Auto nobody may be at the bench. A run stopped by a passing failure (the network after a wake, a function's 5xx, a
@@ -8092,7 +8090,7 @@ const RunCtl = window.RunCtl = (() => {
     const outside = (r.lineArchive && r.lineArchive.base) || {}, nSheets = Object.keys(r.sheets || {}).length + (+outside.sheets || 0);   // with what a resumed run's record left out
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
-      `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} pieces`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+      `${(Object.keys(r.lines || {}).length ? Object.keys(r.lines).reduce((n, k) => n + (B.orders.byKey.get(k) ? bannerPieces(B.orders.byKey.get(k)) : 1), 0) : Orders.rows().filter(x => x.state !== "gone").reduce((n, x) => n + bannerPieces(x), 0)) + (+outside.lines || 0)} pieces`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
     return { tone, short, lead, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
       acts: `${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${sign ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`,
       more: `${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory" title="every run on record">Run history…</button>${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give up this run — the sheets and files already saved are kept">Abandon run…</button>` : ""}` };
@@ -8168,7 +8166,7 @@ const RunCtl = window.RunCtl = (() => {
     const open = rev ? `\n\n${rev} review item${rev === 1 ? " still waits" : "s still wait"} for a decision.` : "";
     if (confirm(`Give up run ${r.runId.slice(-8)}?${lost}${open}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
   }
-  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
+  return { bannerPieces, stepDetail, optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
 })();
 
 /* ═══ 23c · Custom Orders' QR sticker — the sorting station's own label, printed the sorting station's way ═══════════

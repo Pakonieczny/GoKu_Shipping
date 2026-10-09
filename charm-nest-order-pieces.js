@@ -104,7 +104,7 @@
     //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
       const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
-      let plan = planOf(l), glued = false;
+      let plan = planOf(l), glued = false; const wasPlan = plan;
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
       // an OLD record of a mismatched pair (pooled before pairs were tracked) is ONE glued piece per unit that carries both bodies: it is on a sheet whole, with nothing to split.
       // It is told by what the line already holds: some pool rows, fewer than the pair makes now, none with a side. A line not pooled yet, or pooled since, makes the two pieces.
@@ -116,7 +116,7 @@
       for (let n = 1; ids.length < qty; n++) if (!ids.includes(`${key}_${n}`)) ids.push(`${key}_${n}`);
       for (const [id, p] of pools) if (p.lineKey === key && !ids.includes(id) && !GONE.has(p.state)) ids.push(id);
       ids.sort((a, b) => tailNo(a) - tailNo(b));   // (stable: by copy number, so a record that lists _3 before _1 does not change which piece is piece 2)
-      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos, glued }));
+      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos, glued, wasPlan }));
     }
     // (a pool row a Hold took off its sheet is a held piece, still: an order this page holds no lines of, found by number, says it is on hold)
     for (const [id, p] of pools) if (!seen.has(id) && (!GONE.has(p.state) || (!lines.length && heldRow(p)))) add(id, null, { qty: +p.quantity || 1 });
@@ -162,19 +162,21 @@
       const pp = o.plan && o.plan[o.pos] || null, rowSide = p && (p.side === 'L' || p.side === 'R') ? p.side : null, planSide = pp && (pp.side === 'L' || pp.side === 'R') ? pp.side : null;
       const side = rowSide || planSide || null, bodyIndex = p && p.bodyIndex != null && Number.isFinite(+p.bodyIndex) ? +p.bodyIndex : pp && pp.bodyIndex != null ? +pp.bodyIndex : null;
       const groupKey = String((p && p.groupKey) || (pp && pp.groupKey) || `${rid}:${(l && l.transactionId) || o.tx || ''}`);
-      const kind = o.plan ? (kindOf && l ? kindOf(l) || 'pair' : 'pair') : (side || o.glued ? (kindOf && l ? kindOf(l) || 'pair' : 'pair') : kindOf && l ? kindOf(l) || null : null);
+      const hookKind = kindOf && l ? kindOf(l) || null : null, guess = o.plan || o.wasPlan ? ((o.plan || o.wasPlan).some(x => x && x.bodyIndex === 1) ? 'mismatched' : 'pair') : (side || o.glued) ? (bodyIndex === 1 ? 'mismatched' : 'pair') : null;
+      const kind = hookKind || guess;   // (without the hook the kind is a guess: settled for the whole group below, a Left is of a mismatched pair when its group has a second body)
       // (mirror: the pool row's own when it has one, else what the plan says of this piece: the Right is the mirror image of the Left, whichever way the master drawing faces)
       const mirror = side ? (p && typeof p.mirror === 'boolean' ? p.mirror : pp && typeof pp.mirror === 'boolean' ? pp.mirror : side === 'R') : false;
       const sideLabel = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
       return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, mirror, glued: !!o.glued, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
-        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
+        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey), kindGuess: !hookKind && !!guess && !(o.plan || o.wasPlan) };
     });
     // a line cancelled or gone from the order: its pieces that are still on a sheet are reported (gone), those on none are not
     // numbered as CharmNestReadiness.pieces numbers them: the live pieces 1.. in order; a piece with nothing to cut (no design), or cancelled and still on a sheet, after them
     const shown = pieces.filter(p => !(p.gone && !p.nested)), live = shown.filter(p => !p.gone && !p.noDesign), rest = shown.filter(p => p.gone || p.noDesign);
     const size = new Map(); for (const p of shown) if (!p.gone) size.set(p.groupKey, (size.get(p.groupKey) || 0) + 1);
-    return live.concat(rest).map((p, i) => Object.assign(p, { index: i + 1, groupSize: p.groupSize || size.get(p.groupKey) || 1 }));
+    const second = new Set(); for (const p of shown) if (p.kindGuess && p.bodyIndex === 1) second.add(p.groupKey);
+    return live.concat(rest).map((p, i) => { const q = Object.assign(p, { index: i + 1, groupSize: p.groupSize || size.get(p.groupKey) || 1 }); if (q.kindGuess) { if (q.kind) q.kind = second.has(q.groupKey) ? 'mismatched' : 'pair'; } delete q.kindGuess; return q; });
   }
 
   /** How an order's pieces are spread over sheets. */
