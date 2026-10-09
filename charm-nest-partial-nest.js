@@ -80,15 +80,31 @@
     try{
       for(const p of (C.allSheets?C.allSheets():[])){
         if(p===sh)continue;
-        for(const c of (C.activeCharms?C.activeCharms(p):(p.charms||[]))){const k=groupKey(c);if(!mine.has(k))continue;const o=there.get(k)||{n:0,sheets:new Set()};o.n++;o.sheets.add(label(p));there.set(k,o);}
+        for(const c of (C.activeCharms?C.activeCharms(p):(p.charms||[]))){const k=groupKey(c);if(!mine.has(k))continue;const o=there.get(k)||{n:0,sheets:new Set(),ids:new Set()};o.n++;o.sheets.add(label(p));if(p.sheetId)o.ids.add(p.sheetId);there.set(k,o);}
       }
     }catch(_){return [];}
-    return [...there].map(([k,o])=>({group:k,order:String(k).split(':')[0],here:mine.get(k),elsewhere:o.n,sheets:[...o.sheets]}));
+    return [...there].map(([k,o])=>({group:k,order:String(k).split(':')[0],here:mine.get(k),elsewhere:o.n,sheets:[...o.sheets],sheetIds:[...o.ids]}));
   }
   const sharedWords=list=>{
     if(!list||!list.length)return '';
     if(list.length===1){const o=list[0];return `Order ${o.order} also has ${o.elsewhere} ${plural(o.elsewhere,'piece')} on ${o.sheets.join(' and ')}. A piece of it that does not fit here moves to another sheet, so the order would sit on more sheets than before.`;}
     const o=list[0];return `${list.length} orders on this sheet also have pieces on other sheets (for example order ${o.order} on ${o.sheets.join(' and ')}). Pieces that do not fit here move to another sheet, so those orders would sit on more sheets than before.`;
+  };
+
+  /* A committed set is frozen: a sheet in it that is nested again here keeps its place, but the pieces that do not fit go to a NEW page, which is outside that set. An order whose other
+     pieces sit on another sheet of the same set would then be split between the set and that new page (rule A / R3), and the set could never be finished. So: which of the groups that
+     would move on (`goes`: their ids) have pieces on another sheet of the committed set this sheet is in. */
+  const committedSetOf=sh=>{try{const sets=(window.Sets&&window.Sets.ofRun&&window.Sets.ofRun(sh.runId))||[];return sets.find(x=>x&&x.committedAt&&(x.sheetIds||[]).includes(sh.sheetId))||null;}catch(_){return null;}};
+  function setSplitsOf(sh,shared,goes){
+    const cs=committedSetOf(sh);if(!cs||!shared||!shared.length||!goes||!goes.length)return [];
+    const moving=new Set(goes.map(groupKey)),inSetIds=cs.sheetIds||[];
+    return shared.filter(o=>moving.has(o.group)&&(o.sheetIds||[]).some(id=>inSetIds.includes(id)));
+  }
+  const setSplitWords=list=>{
+    if(!list||!list.length)return '';
+    const o=list[0],tail='and a pair is never split between a committed set and a sheet outside it. Choose a bigger partial sheet, one that holds every piece of the order.';
+    if(list.length===1)return `Order ${o.order} has ${o.elsewhere} ${plural(o.elsewhere,'piece')} on ${o.sheets.join(' and ')}, in the same committed set. Its ${o.here} ${plural(o.here,'piece')} here would move on to a new sheet outside the set, ${tail}`;
+    return `${list.length} orders here have pieces on other sheets of the same committed set (for example order ${o.order} on ${o.sheets.join(' and ')}). Their pieces here would move on to a new sheet outside the set, ${tail}`;
   };
 
   /* ── the policy (PartialSheets.policy: PS3's cache; auto when it is not loaded) ── */
@@ -299,6 +315,7 @@
       // pairs (R3): what the partials could hold only part of, and the orders of this sheet that already have pieces on another sheet, said plainly
       if(splits.length){out.splits=splits;out.splitWords=sw;if(!links.length)out.words+=' '+sw;}
       if(shared.length){out.shared=shared;out.sharedWords=hw;}
+      {const ss=left?setSplitsOf(sh,shared,rest):[];if(ss.length){out.setSplit=ss;out.setSplitWords=setSplitWords(ss);out.words+=' '+out.setSplitWords;}}
       out.continues.words=left?out.words.replace(/^[^;]*; /,''):'';
       // a sheet with a recorded cut (not Completed) is told what the move does to it, before it is pressed
       if(cutOf(sh)){
@@ -354,6 +371,13 @@
       // whole, and an order is never split across sheets (a refusal here is certain: the estimate's upper bound is the generous one)
       {const unit=smallestUnit(pieces),e=unit>1?estimateOf(first,pieces):null;
         if(e&&e.high<unit)return fail('pairs',`This partial sheet can hold about ${e.high} ${plural(e.high,'piece')} at most, and every order on this sheet has ${unit} or more pieces that are never split across sheets. Choose a bigger partial sheet.`);}
+      // the committed-set rule (R3): moving on to a page outside the set must not split an order the set shares with another of its sheets. Only asked when the sheet is in a committed set
+      // and shares an order at all; the trial that says what moves on is the previewed one, or one made now.
+      if(committedSetOf(sh)&&sharedOf(sh,pieces).length){
+        let pv=shown&&shown.ok&&shown.links&&shown.links[0]&&shown.links[0].partialId===first.id?shown:null;
+        if(!pv){sh._partialBusy=false;try{pv=await preview(sh,order.map(c=>c.id),{maxMs:o.maxMs,onStep:o.onStep});}finally{sh._partialBusy=true;}}
+        if(pv&&pv.ok&&pv.setSplit&&pv.setSplit.length)return fail('setpair',pv.setSplitWords);
+      }
       const chain=[];for(const c of order.slice(1))chain.push({id:c.id,stock:await stockOf(c)});
       // (what the sheet is in, before it moves: for the history line below)
       const sets=(window.Sets&&window.Sets.ofRun&&window.Sets.ofRun(sh.runId))||[],committed=sets.some(x=>x.committedAt&&(x.sheetIds||[]).includes(sh.sheetId)),inCurrent=inSet(sh)&&!committed;
@@ -402,7 +426,15 @@
       const open=p=>!p.roseCutAt&&!p.recalled&&!p.laserDoneAt&&!p.releaseFull&&!p.intakeFinalized;
       let tail=sh;
       for(let guard=0;guard<1000;guard++){const nx=tail._partialNext;if(!nx||!prim.pages.includes(nx))break;if(open(nx))return nx;tail=nx;}
-      let step=tail._partialChain&&tail._partialChain.shift();
+      // a pair needs two places (PAIRFLOW): a partial of the chain that cannot hold even the smallest order still to move is passed over, not claimed, and stays available for others
+      const known=(cache[sh.metal]&&cache[sh.metal].items)||[],unit=moving&&moving.length?smallestUnit(moving):0;
+      const holds=st=>{if(!(unit>1))return true;const c=known.find(x=>x.id===st.id),e=c?estimateOf(c,moving):null;return !e||e.high>=unit;};
+      let step=null;
+      while(tail._partialChain&&tail._partialChain.length){
+        const cand=tail._partialChain.shift();
+        if(holds(cand)){step=cand;break;}
+        try{C.agent({metal:sh.metal},'nest',`Partial sheet: a listed partial sheet was passed over for the pieces moving on from ${label(sh)}: it cannot hold even one whole order of them (${pieceWords(moving)}), and a pair is never split across sheets`);}catch(_){}
+      }
       if(!step&&policy(sh.metal).mode==='auto'){   // the listed partials are used up: automatic takes the best fit of the others, if the list is known
         const cards=(cache[sh.metal]&&cache[sh.metal].items)||[],taken=new Set(prim.pages.map(partialOf).filter(Boolean)),c=cards.length&&moving&&moving.length?bestFit(cards,moving,taken):null;
         // (the page is made with the partial's id and size; the claim at its nest start brings the stock with its profile, which is what the solver packs against)
@@ -461,7 +493,7 @@
       if(!pv||!pv.ok)return {ok:false,reason:(pv&&pv.why)||'This sheet cannot move to a partial sheet.',code:pv&&pv.code};
       const chainRows=pv.links.map(l=>{const c=cardOf(sh.metal,l.partialId);return {partialId:l.partialId,name:nameOf(c)||l.label,wMm:l.wMm,hMm:l.hMm,areaMm2:l.areaMm2,fits:l.placed};});
       const own=ids.length?pv.links.find(l=>l.partialId===ids[0]):pv.links[0],fits=own&&pv.links[0]===own?own.placed:0;   // (a partial that takes nothing is not in the links: 0 fit on it)
-      return {ok:true,pieces:pv.pieces,fitsAll:pv.fitsAll,fits,rest:pv.pieces-fits,chain:chainRows,then:pv.continues.n?(pv.continues.next==='partial'?'wait':'new'):null,note:pv.note,words:pv.words,...(pv.splitWords?{splitWords:pv.splitWords}:{}),...(pv.sharedWords?{sharedWords:pv.sharedWords}:{})};
+      return {ok:true,pieces:pv.pieces,fitsAll:pv.fitsAll,fits,rest:pv.pieces-fits,chain:chainRows,then:pv.continues.n?(pv.continues.next==='partial'?'wait':'new'):null,note:pv.note,words:pv.words,...(pv.splitWords?{splitWords:pv.splitWords}:{}),...(pv.sharedWords?{sharedWords:pv.sharedWords}:{}),...(pv.setSplitWords?{setSplitWords:pv.setSplitWords}:{})};
     },
     async useOn(sh,partialId,o={}){
       const ids=(Array.isArray(partialId)?partialId:[partialId]).filter(Boolean),pv=seen.get(sigOf(sh,ids))||null;

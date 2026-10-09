@@ -64,11 +64,11 @@
   const EAR = /ear|stud|hoop|huggie/i;   // (a 2-piece line of these forms is a pair; a 2-piece line of any other form, two pendants, is a 2-piece order)
   function groupKeyOf(p) {
     if (!p) return '';
-    try { const X = (typeof self !== 'undefined' && self.CharmNestPair) || null; if (X && typeof X.groupKey === 'function') { const k = X.groupKey(p); if (k && !/undefined|null|NaN/.test(String(k))) return String(k); } } catch (_) { /* the local reading below */ }
+    try { const X = (typeof self !== 'undefined' && self.CharmNestPair) || null; if (X && typeof X.groupKey === 'function') { const k = X.groupKey(p); if (k && /^[^:\s]+:/.test(String(k)) && !/undefined|null|NaN/.test(String(k))) return String(k); } } catch (_) { /* the local reading below */ }   // (":" alone is the module's "no key")
     if (p.groupKey) return String(p.groupKey);
     const i = p.orderInfo;
     if (i && i.receiptId != null && i.transactionId != null && String(i.transactionId) !== '') return String(i.receiptId) + ':' + String(i.transactionId);
-    const m = /^(\d{1,30})_(\d{1,30})_/.exec(String(p.poolId || ''));
+    const m = /^(\d{1,30})_([^_]*)_\d{1,3}$/.exec(String(p.poolId || ''));
     if (m) return m[1] + ':' + m[2];
     return String(p.order != null ? p.order : p.id != null ? p.id : '');
   }

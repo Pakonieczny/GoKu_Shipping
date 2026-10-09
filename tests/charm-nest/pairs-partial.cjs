@@ -93,8 +93,8 @@ function partA() {
   assert.equal(P.groupKeyOf({ poolId: '1001_5001_1' }), P.groupKeyOf({ poolId: '1001_5001_2' }), 'both pieces of a pair are one group');
   assert.notEqual(P.groupKeyOf({ poolId: '1001_5001_1' }), P.groupKeyOf({ poolId: '1001_5002_1' }), 'two lines of one receipt are two groups');
   assert.equal(P.groupKeyOf({ order: 'A', id: 'z' }), 'A'); assert.equal(P.groupKeyOf({ id: 'z' }), 'z'); assert.equal(P.groupKeyOf(null), '');
-  global.self = { CharmNestPair: { groupKey: p => 'pair-' + p.id } };
-  try { assert.equal(P.groupKeyOf({ id: 'q' }), 'pair-q', 'the shared module wins when it is there'); global.self.CharmNestPair.groupKey = () => 'undefined:undefined'; assert.equal(P.groupKeyOf({ poolId: '7_8_1' }), '7:8', 'a key that is not usable falls back to the local reading'); global.self.CharmNestPair.groupKey = () => { throw new Error('boom'); }; assert.equal(P.groupKeyOf({ poolId: '7_8_1' }), '7:8', 'and so does a module that throws'); } finally { delete global.self; }
+  global.self = { CharmNestPair: { groupKey: p => 'pair:' + p.id } };
+  try { assert.equal(P.groupKeyOf({ id: 'q' }), 'pair:q', 'the shared module wins when it is there'); global.self.CharmNestPair.groupKey = () => ':'; assert.equal(P.groupKeyOf({ order: 'A', id: 'z' }), 'A', 'its "no key" (a bare colon) is no key: the order stands in'); global.self.CharmNestPair.groupKey = () => 'undefined:undefined'; assert.equal(P.groupKeyOf({ poolId: '7_8_1' }), '7:8', 'a key that is not usable falls back to the local reading'); global.self.CharmNestPair.groupKey = () => { throw new Error('boom'); }; assert.equal(P.groupKeyOf({ poolId: '7_8_1' }), '7:8', 'and so does a module that throws'); } finally { delete global.self; }
 
   // A3. what a group is, read from its pieces
   assert.equal(P.kindOfGroup([pl('a', 1, 1, 1)]), 'single');
@@ -262,6 +262,56 @@ async function partB() {
     assert.equal(pv.sharedWords, 'Order 1001 also has 1 piece on 14K Sheet 2. A piece of it that does not fit here moves to another sheet, so the order would sit on more sheets than before.');
     assert.equal(PN.cutNote(sh), 'Order 1001: 1 piece of it is cut on this sheet, the other 1 is on 14K Sheet 2.');
     const y = world('gold14k'), alone = seated(y, [grp('s0', 1003, 5003, 1)]); assert.equal(y.w.PartialNest.cutNote(alone), '', 'no order shared with another sheet: nothing to say');
+  }
+
+  // B6b. the page's overflow asks for the next sheet of the chain (PAIRFLOW: a pair needs two places there too): a listed partial that cannot hold even one whole order of what moves on is
+  //      passed over (not claimed, still free for others); single pieces still take it, as before
+  {
+    const x = world('gold14k'), { w, log, docs } = x, PN = w.PartialNest, tiny = outlined(x, 'rgs-tiny', 135), roomy = outlined(x, 'rgs-roomy', 20); x.setCards([tiny, roomy]);
+    await PN._cards('gold14k');   // (the list the panel read: the page keeps it)
+    const stepOf = c => ({ id: c.id, stock: { id: c.stockId, metal: 'gold14k', wPt: W, hPt: H, revision: 1, profileJson: docs.get(c.stockId).profileJson } });
+    const sh = seated(x, [grp('z', 99, 1, 1)]); sh._partialId = 'rgs-old-1';
+    sh._partialChain = [stepOf(tiny), stepOf(roomy)];
+    const moving = [grp('a0', 1001, 5001, 1, { side: 'L' }), grp('a1', 1001, 5001, 2, { side: 'R' })];
+    const pg = PN.nextPage(sh, moving);
+    assert(pg && pg._partialId === roomy.id, 'the pair goes to the partial that can hold a pair: ' + (pg && pg._partialId));
+    assert.equal(docs.get('rgs-tiny').owner, null, 'the one-piece partial was not claimed'); assert.equal(sh._partialChain.length, 0);
+    assert(log.agent.some(a => /passed over/.test(a[2]) && /2 pieces \(1 pair\)/.test(a[2])), 'and the history says why: ' + JSON.stringify(log.agent.map(a => a[2])));
+    // single pieces: the first listed partial, as always
+    const y = world('gold14k'), t2 = outlined(y, 'rgs-tiny', 135), r2 = outlined(y, 'rgs-roomy', 20); y.setCards([t2, r2]); await y.w.PartialNest._cards('gold14k');
+    const sh2 = seated(y, [grp('z', 99, 1, 1)]); sh2._partialId = 'rgs-old-1'; sh2._partialChain = [{ id: t2.id, stock: { id: t2.stockId, metal: 'gold14k', wPt: W, hPt: H, revision: 1, profileJson: y.docs.get(t2.stockId).profileJson } }];
+    const pg2 = y.w.PartialNest.nextPage(sh2, [grp('s', 98, 1, 1)]); assert(pg2 && pg2._partialId === t2.id, 'a single piece takes the one-piece partial as before');
+  }
+
+  // B6c. a sheet of a COMMITTED set is nested again on a partial: what does not fit goes to a new page OUTSIDE the set. An order the set shares with another of its sheets must not be
+  //      split that way (rule A / R3): the preview says so, and Use this one refuses before anything is claimed. Otherwise the move works exactly as it did.
+  {
+    const build = (sets, placeIds) => {
+      const x = world('gold14k'), { w, docs } = x, p = outlined(x, 'rgs-p', 20); x.setCards([p]);
+      const sh = seated(x, [grp('a0', 1001, 5001, 1, { side: 'L' }), grp('s0', 1003, 5003, 1)]); sh.setId = 'set-1'; sh.draft = false; sh.runId = 'run-1';
+      const other = x.page(2); other.sheetId = 'g14-s2'; other.charms = [grp('a1', 1001, 5001, 2, { side: 'R' })]; x.S.sheets.gold14k.pages.push(other);
+      docs.set('rgs-fresh', { id: 'rgs-fresh', metal: 'gold14k', wPt: W, hPt: H, revision: 0, profileJson: null, owner: 'g14-s1', available: false }); sh.roseStock = { ...docs.get('rgs-fresh') };
+      w.Sets.ofRun = () => sets; canned(x, placeIds); return { x, p, sh };
+    };
+    const committed = [{ setId: 'set-1', committedAt: 5, sheetIds: ['g14-s1', 'g14-s2'] }];
+    // the Left earring would not fit: it moves on to a page outside the set while the Right stays on Sheet 2 of the set
+    {
+      const { x, p, sh } = build(committed, ['s0']), PN = x.w.PartialNest;
+      const pv = await PN.preview(sh, [p.id], { maxMs: 1500 });
+      assert(pv.ok && !pv.fitsAll && pv.continues.n === 1, JSON.stringify({ ...pv, links: undefined }));
+      assert.deepEqual(plain(pv.setSplit.map(o => [o.order, o.here, o.elsewhere, o.sheets])), [['1001', 1, 1, ['14K Sheet 2']]]);
+      assert.equal(pv.setSplitWords, 'Order 1001 has 1 piece on 14K Sheet 2, in the same committed set. Its 1 piece here would move on to a new sheet outside the set, and a pair is never split between a committed set and a sheet outside it. Choose a bigger partial sheet, one that holds every piece of the order.');
+      assert(pv.words.endsWith(pv.setSplitWords), 'the words say it too');
+      x.log.api.length = 0; const r = await PN.seat(sh, [p.id]);
+      assert(!r.ok && r.code === 'setpair' && r.why === pv.setSplitWords, JSON.stringify(r)); assert.equal(x.log.api.length, 0, 'nothing was claimed or released'); assert.equal(x.log.started.length, 0); assert.equal(x.docs.get('rgs-fresh').owner, 'g14-s1', 'the sheet still holds what it held');
+      const again = await PN.seat(sh, [p.id], { preview: pv }); assert(!again.ok && again.code === 'setpair', 'with the previewed answer in hand, the same');
+    }
+    // everything fits: no page outside the set is needed, the move works
+    { const { x, p, sh } = build(committed, ['a0', 's0']), r = await x.w.PartialNest.seat(sh, [p.id]); assert(r.ok && r.started, JSON.stringify(r)); }
+    // the same sheet in a set that is not committed yet (its sets are made again as sheets change): not refused
+    { const { x, p, sh } = build([{ setId: 'set-1', sheetIds: ['g14-s1', 'g14-s2'] }], ['s0']), pv = await x.w.PartialNest.preview(sh, [p.id], { maxMs: 1500 }); assert.equal(pv.setSplit, undefined); const r = await x.w.PartialNest.seat(sh, [p.id]); assert(r.ok, JSON.stringify(r)); }
+    // an order that sits on a sheet OUTSIDE the set is not this rule's business (it was split before)
+    { const { x, p, sh } = build([{ setId: 'set-1', committedAt: 5, sheetIds: ['g14-s1'] }], ['s0']), pv = await x.w.PartialNest.preview(sh, [p.id], { maxMs: 1500 }); assert.equal(pv.setSplit, undefined); assert.equal(pv.shared.length, 1, 'but it is still said that the order sits on another sheet'); }
   }
 
   // B7. nothing of this touches a sheet without pairs: the same words, no extra keys

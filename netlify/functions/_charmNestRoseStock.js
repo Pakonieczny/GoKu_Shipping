@@ -28,7 +28,7 @@ function assertProtected(guard,placements,metal){
    rid_tid_copy; a charm saved with `groupKey` says it itself). The saved sheet record keeps `order` and `poolId` for each charm, so an old record reads the same way. */
 const groupOf=c=>{
   if(c&&c.groupKey)return String(c.groupKey);
-  const m=/^(\d{1,30})_(\d{1,30})_/.exec(String(c&&c.poolId||''));
+  const m=/^(\d{1,30})_([^_]*)_\d{1,3}$/.exec(String(c&&c.poolId||''));
   return m?m[1]+':'+m[2]:String(c&&c.order!=null?c.order:c&&c.id);
 };
 const orderIdOf=c=>String(c&&c.order!=null?c.order:'').split('/')[0];
