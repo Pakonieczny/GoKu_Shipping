@@ -2126,8 +2126,37 @@ const Master = window.Master = (() => {
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
-  let previewObserver=null, previewQueue=[], previewRunning=0;
+  /* A design's stored picture as a small <img>, for the lists that offer designs (the SKU picker). The page's COEP (require-corp) blocks
+     a plain <img> of the Storage address (no CORP header), so it goes through the same-origin asset function, kept on this computer and
+     asked for only when near the screen (charm-nest-thumbs.js, mountPictures); without the module it is the plain image through `cors`. */
+  const pictureTag = e => {
+    const u = e && thumbOf(e); if (!u) return "";
+    const T = window.CharmNestThumbs, via = typeof cors === "function" ? cors(u) : u;
+    return T ? `<img alt="" crossorigin="anonymous" data-pic="${esc(via)}" data-pic-key="${esc(T.weeklyKey("s|" + (e.thumbPath || e.sku) + "|" + (e.indexedAt || "")))}">` : `<img alt="" crossorigin="anonymous" src="${esc(via)}">`;
+  };
+  const picMounts = new WeakMap();
+  const mountPictures = host => { try { picMounts.get(host)?.stop(); if (window.CharmNestThumbs) picMounts.set(host, CharmNestThumbs.mountImages(host)); } catch (_) { /* the pictures stay as they are */ } };
+  /* The tiles' pictures (charm-nest-thumbs.js): only what is on screen and a little way ahead is asked for, the nearest first
+     (a tile scrolled past is never asked for), a finished picture is kept on this computer under the design's file, its
+     indexing time and the drawing code, so a refresh draws nothing and asks for nothing. The picture itself is still drawn by
+     Pool.masterPreview, the tile's look is unchanged. Without the module the plain loader below runs as it always did. */
+  let previewMount=null;
   function mountMasterPreviews(grid) {
+    const T=window.CharmNestThumbs;
+    previewMount?.stop();previewMount=null;
+    if(!T||typeof T.mount!=="function")return mountMasterPreviewsPlain(grid);
+    const sizeOf=entry=>entry?.sizes && Object.keys(entry.sizes)[0] || null;
+    previewMount=T.mount(grid,{
+      selector:'[data-preview-sku]',concurrency:6,keep:false,   // (Pool.masterPreview keeps the picture itself, under this same key, for every list that draws a design)
+      // (a design the pool already holds is drawn from that copy at once, no download: nothing to keep, and its picture stays as it was)
+      keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath,geom.charmHash||entry.charmHash,entry.indexedAt):"";},
+      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry)):null;},
+      paint:(host,thumb)=>{const img=document.createElement("img");img.alt="";img.src=thumb;host.replaceChildren(img);},
+      fail:host=>{if(host.isConnected&&entryFor(host.dataset.previewSku))host.textContent="Preview unavailable";}
+    });
+  }
+  let previewObserver=null, previewQueue=[], previewRunning=0;
+  function mountMasterPreviewsPlain(grid) {
     previewObserver?.disconnect();previewQueue=[];
     const paint=async host=>{
       const entry=entryFor(host.dataset.previewSku);
@@ -2603,7 +2632,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
-  return { entryFor, looseFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -2698,7 +2727,11 @@ const Pool = window.Pool = (() => {
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
     const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
-    const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
+    // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
+    const T=window.CharmNestThumbs,geom=sizeEntry(entry,size),keep=T&&T.designKey?T.designKey(key,geom.charmHash||entry.charmHash,entry.indexedAt):"";
+    const make=()=>readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    const task=keep?T.picture(keep,make):make();
     masterPreviewCache.set(key,task);
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
@@ -10303,9 +10336,10 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
-        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.thumbOf(Master.entryFor(k) || {}) ? `<img alt="" src="${esc(Master.thumbOf(Master.entryFor(k)))}">` : ""}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
+        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.pictureTag(Master.entryFor(k))}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
+      Master.mountPictures(c);
       const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
       const put = async (field, value) => {
         const who = by(); if (!who) return;
