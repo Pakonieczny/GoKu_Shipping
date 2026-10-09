@@ -151,9 +151,7 @@
         const m = /^(\d{1,30})_(\d{1,30})_(\d{1,4})$/.exec(key); if (!m) continue;
         const [, rid, tid, copy] = m, o = orders[rid] = orders[rid] || { held: null, lines: [] };
         let line = o.lines.find(l => str(l.transactionId) === tid); if (!line) { line = { transactionId: tid, sku: skus[tid] || skus[key] || '', copies: [] }; o.lines.push(line); }
-        // a piece of a mismatched pair keeps its side (the pool row says it): the set's copy list is how the station's archive and the manifest see the pieces
-        const sd = sides[key] && (sides[key].side === 'L' || sides[key].side === 'R') ? sides[key] : null;
-        if (!line.copies.some(c => c.poolId === key)) line.copies.push({ copy: +copy, sheetId: idOf(j), sheet: name, poolId: key, backPoolId: null, ...(sd ? { side: sd.side, ...(Number.isFinite(+sd.bodyIndex) ? { bodyIndex: +sd.bodyIndex } : {}) } : {}) });
+        if (!line.copies.some(c => c.poolId === key)) line.copies.push({ copy: +copy, sheetId: idOf(j), sheet: name, poolId: key, backPoolId: null, ...(sides[key] ? { side: sides[key] } : {}) });
       }
     }
     const labelFiles = (doc.labelFiles || []).filter(f => !gone.has(str(f.sheetId))).concat(join.flatMap(j => ((j.label && j.label.files) || []).map(f => Object.assign({ sheetId: idOf(j), sheet: j.fileBase || f.sheet || null, metal: j.metal || null }, f))));

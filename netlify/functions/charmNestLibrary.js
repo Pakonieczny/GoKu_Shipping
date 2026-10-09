@@ -152,7 +152,7 @@ function slim(d) {
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
@@ -727,7 +727,7 @@ async function op_listCharms(b) {
    manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
    picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
    per back used to count toward the sheet document's 1 MiB. */
-const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion"];
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "bodyIndex", "groupKey"];   // (side: the ear of a mismatched pair this back is for, "L" or "R"; absent on every other back)
 function sheetBack(bk) {
   if (!bk || typeof bk !== "object") return bk;
   const out = {};
@@ -942,8 +942,9 @@ async function op_deleteSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
   if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
   const ref = col(SHEETS).doc(b.id);
-  let cleared = [];
+  let cleared = [], splits = [];
   const d = await db.runTransaction(async tx => {
+    splits = [];
     const snap = await tx.get(ref); if (!snap.exists) return null;
     const sheet = snap.data();
     if (!sheet.roseCutAt && (sheet.rosePlanJson || sheet.roseProtectedJson)) throw new Error('A planned or protected ' + CutLine.cutWord(sheet.metal) + ' contour cannot be deleted');
@@ -951,12 +952,17 @@ async function op_deleteSheet(b) {
     // state and take-off marks are theirs and stay), and an open set stops listing it. A sheet gone with its pointers left behind
     // read "on sheet X" from the pool row and from the set, for a sheet nobody could open (the sheet-gone drift).
     const [pools, sets] = await Promise.all([
-      tx.get(col(POOL).where("sheetId", "==", b.id).select("state", "setId", "orderId").limit(400)),
+      tx.get(col(POOL).where("sheetId", "==", b.id).select("state", "setId", "orderId", "groupSize").limit(400)),
       tx.get(col(SETS).where("sheetIds", "array-contains", b.id).select("sheetIds", "committedAt", "laserDoneAt", "status").limit(20))]);
     const at = FV.serverTimestamp();
     tx.delete(ref);
     cleared = [];
-    for (const p of pools.docs) { const r = p.data(); tx.set(p.ref, Object.assign({ sheetId: null, sheetName: null, sheetIdWas: b.id, updatedAt: at }, r.setId && r.setId === sheet.setId ? { setId: null } : {}), { merge: true }); cleared.push(p.id); }
+    const here = new Map();   // group -> { pieces here, pieces the group has }: a pair whose other piece is elsewhere is told to the page (the rows already read; none are read for it)
+    for (const p of pools.docs) {
+      const r = p.data(); tx.set(p.ref, Object.assign({ sheetId: null, sheetName: null, sheetIdWas: b.id, updatedAt: at }, r.setId && r.setId === sheet.setId ? { setId: null } : {}), { merge: true }); cleared.push(p.id);
+      const g = Placement.groupOfPool(p.id); if (g && num(r.groupSize) > 1 && !Placement.TAKE_OFF_STATES.has(r.state)) { const x = here.get(g) || here.set(g, { groupKey: g, here: 0, of: num(r.groupSize) }).get(g); x.here++; }
+    }
+    splits = [...here.values()].filter(x => x.here < x.of);
     // a set that was committed or cut keeps its record of what went to the laser; only an open one is edited
     for (const s of sets.docs) { const r = s.data(); if (r.committedAt || num(r.laserDoneAt) > 0) continue; tx.update(s.ref, { sheetIds: (r.sheetIds || []).filter(x => x !== b.id), updatedAt: at }); }
     return sheet;
@@ -970,7 +976,7 @@ async function op_deleteSheet(b) {
     for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(bk.poolId)))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
     await archiveFiles(backs.flatMap(bk => ["ai", "png"].map(k => bk.outputs && bk.outputs[k] && bk.outputs[k].path)).filter(p => p && !named.has(p)).map(from => ({ from, to: archivePath(from) })));
   }
-  return { ok: true, deleted: !!d, unlinked: cleared.length };
+  return { ok: true, deleted: !!d, unlinked: cleared.length, ...(splits.length ? { splits } : {}) };
 }
 /** A sheet's own five files, and the .pdf beside its .ai, which is written only when the sheet is final (op_sheetPdf). */
 const outputPaths = d => { const o = d.outputs || {}, ai = o.ai && o.ai.path; return [...new Set(["ai", "pdf", "labelled", "report", "preview"].map(k => o[k] && o[k].path).concat(ai && /\.ai$/.test(ai) ? [ai.replace(/\.ai$/, ".pdf")] : []).filter(Boolean))]; };
@@ -1185,6 +1191,8 @@ async function op_masterPatch(b) {
   if (Array.isArray(p.backKeepOut)) doc.backKeepOut = p.backKeepOut.slice(0, 50);
   if (p.blocked === null) { doc.blocked = FV.delete(); doc.conflict = FV.delete(); }
   if (p.labelSource) doc.labelSource = str(p.labelSource, 20);
+  // a person's decision on a doubtful design (charm-nest-pair.js): `pair` {bodies 2 to 8, mismatched}, or null for "one charm"; a re-index keeps it (putIndex)
+  if (p.pair !== undefined) { const x = Master.cleanPair(p.pair); if (x !== undefined) { doc.pair = x === null ? FV.delete() : x; doc.pairBy = "operator"; } }
   if (p.confirmedBy) { doc.confirmedBy = str(p.confirmedBy, 80); doc.confirmedAt = FV.serverTimestamp(); }
   const ref = db.collection(Master.INDEX).doc(sku); if (!(await ref.get()).exists) return { error: "not indexed: " + sku };   // a patch never creates a shell entry
   await ref.set(doc, { merge: true });
@@ -1337,7 +1345,8 @@ async function op_poolPut(b) {
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
-    const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
+    // (a piece of a pair carries side / bodyIndex / groupKey / groupSize: kept when they are sound, left out when not; a row without them is written as it always was)
+    const doc = Placement.cleanPiece(Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() })); if (!cur) doc.createdAt = FV.serverTimestamp();
     // a row taken off on purpose (held, cancelled) that is made up again is live again: its take-off marks stay (the order's history
     // reads them), so the row says when it was made live, and no reader takes the old marks for a take-off still in force
     if (cur && p.state && !Placement.TAKE_OFF_STATES.has(p.state) && Placement.takenOff(cur)) doc[Placement.REPOOLED] = FV.serverTimestamp();
@@ -1358,24 +1367,32 @@ async function op_poolPut(b) {
    `before` even when its row never named one (a piece on a sheet still filling), so "taken off GF Sheet 1" names the sheet. */
 const TAKE_OFF_SHEET_FIELDS = ["poolIds", "orders", "backPool", "placedCount", "charmCount", "archived", "laserDoneAt", "roseCutAt", "setId", "metal", "fileBase", "folder", "sheetIndex", "page"];
 async function poolTakeOff(ids, patch, told) {
-  let before = told ? new Map() : null; const edited = [];
+  let before = told ? new Map() : null; const edited = [], extended = [];
   for (let i = 0; i < ids.length; i += 200) {
-    const part = ids.slice(i, i + 200), want = new Set(part);
+    const part = ids.slice(i, i + 200);
     const made = await db.runTransaction(async tx => {
+      const want = new Set(part), more = [];
       // (every read first: a transaction writes after it has read)
-      const rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS) : [], sheets = new Map();
+      let rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS) : [];
+      const sheets = new Map();
       for (let j = 0; j < part.length; j += 30) for (const d of (await tx.get(col(SHEETS).where("poolIds", "array-contains-any", part.slice(j, j + 30)).select(...TAKE_OFF_SHEET_FIELDS))).docs) sheets.set(d.id, Object.assign(d.data(), { id: d.id }));
+      /* A LINE comes off whole (R4: a pair, a mismatched pair and an order of discs are one group, receiptId:transactionId; the page's own plan
+         keeps a line's copies together, and a stale tab or a half list must not take half of one off): the rest of a line that one of the
+         pieces named is listed on, and that this take-off may edit, comes off with it, in this same commit. Only the sheets already read
+         above are looked at (no extra read), and a sheet that was cut or archived is a record of what was made: its pieces stay. */
+      for (const s of sheets.values()) if (Placement.editable(s)) for (const id of Placement.groupMates(s, want)) if (!want.has(id)) { want.add(id); more.push(id); }
+      if (told && more.length) rows = rows.concat(await txGetAll(tx, more.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS));
       const at = FV.serverTimestamp(), where = new Map(), seen = new Map(), touched = [];
       for (const s of sheets.values()) for (const id of s.poolIds || []) if (want.has(String(id)) && !where.has(String(id))) where.set(String(id), s);
       for (const r of rows) { const prev = r.exists ? r.data() : null, s = where.get(r.id); seen.set(r.id, prev && !prev.sheetId && s ? Object.assign({}, prev, { sheetId: s.id, sheetName: s.fileBase || s.folder || null, setId: prev.setId || s.setId || null, material: prev.material || s.metal || null }) : prev); }
-      for (const id of part) tx.set(col(POOL).doc(id), Object.assign({}, patch, { updatedAt: at, [Placement.REPOOLED]: null }), { merge: true });
+      for (const id of part.concat(more)) tx.set(col(POOL).doc(id), Object.assign({}, patch, { updatedAt: at, [Placement.REPOOLED]: null }), { merge: true });
       for (const s of sheets.values()) { const t = Placement.takeOffUpdate(s, want, at); if (!t) continue; tx.update(col(SHEETS).doc(s.id), t.update); touched.push({ sheetId: s.id, pieces: t.removed.length }); }
-      return { seen, touched };   // (a retried attempt answers afresh: only the committed one is used)
+      return { seen, touched, more };   // (a retried attempt answers afresh: only the committed one is used)
     });
     if (before) for (const [k, v] of made.seen) before.set(k, v);
-    edited.push(...made.touched);
+    edited.push(...made.touched); extended.push(...made.more);
   }
-  return { before, edited };
+  return { before, edited, extended };
 }
 async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
@@ -1384,10 +1401,11 @@ async function op_poolUpdate(b) {
   const p = b.patch && typeof b.patch === "object" ? b.patch : {}, told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
   // a take-off (hold, cancel, an order gone from Etsy) is one commit across the pieces' rows AND the sheets that list them
   if (Placement.isTakeOff(p)) {
-    const done = await poolTakeOff(ids, p, told);
-    if (told) await stamp(() => poolEvents(ids, p, done.before, b), "pool");
-    if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(ids, p, done.before, b);
-    return { ok: true, count: ids.length, sheets: done.edited };
+    const done = await poolTakeOff(ids, p, told), all = ids.concat(done.extended);
+    if (told) await stamp(() => poolEvents(all, p, done.before, b), "pool");
+    if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(all, p, done.before, b);
+    // extended: the other pieces of the same lines that came off with the ones named (a line comes off whole); absent when there were none
+    return { ok: true, count: ids.length, sheets: done.edited, ...(done.extended.length ? { extended: done.extended } : {}) };
   }
   let before = null;
   if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
@@ -1534,7 +1552,8 @@ async function readOrderPieces(rd, ids, sheetIds) {
     parts.push(...mineRev);
     // pools: the rows as the answer shows them (a row naming a sheet that is gone or does not list it says it is on none)
     // (an order the records know nothing of is answered as it always was: no pieces, no sheets)
-    orders[rid] = rec.pools.length || mine.length ? { pools: rec.pools, sheets: mine, placement: rec.placement, repaired: rec.repaired.slice(0, 40), summary: rec.summary, rev: Placement.digest(mineRev) } : { pools: rec.pools, sheets: mine };
+    // splits (only when there are some): the order lines whose pieces are not all in one place, so a page can say plainly that the other ear of a pair is on another sheet
+    orders[rid] = rec.pools.length || mine.length ? { pools: rec.pools, sheets: mine, placement: rec.placement, repaired: rec.repaired.slice(0, 40), summary: rec.summary, ...(rec.splits ? { splits: rec.splits.slice(0, 40) } : {}), rev: Placement.digest(mineRev) } : { pools: rec.pools, sheets: mine };
   }
   return { ok: true, orders, sheets: bySheet, rev: Placement.digest(parts) };
 }
@@ -1862,7 +1881,7 @@ async function op_backPut(b) {
     // (the caption is one line: the back's lines joined as the seal and the derived history show them)
     const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
     return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
-      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, id: `${x.poolId}-${num(x.approvedAt)}` };
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: Object.assign({ text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, x.side === "L" || x.side === "R" ? { side: x.side } : {}), id: `${x.poolId}-${num(x.approvedAt)}` };
   }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
@@ -3574,9 +3593,9 @@ async function applySetMembers(step, by, device, via) {
     if (!v.ok) return { error: SetEdit.sayWhy(v), status: 409, reasons: v.reasons, shared: v.shared };
     if (v.noop) return { ok: true, noop: true, changed: [], at };
     // the pieces' SKUs, for the order lines of the sheets that join (one small read of their pool rows)
-    const joinIds = moves.filter(m => m.to && SetEdit.inSetOf(rec.get(m.id)) !== m.to).map(m => m.id), skus = {};
-    const pools = [...new Set(joinIds.flatMap(id => (rec.get(id).poolIds || []).map(String)))].filter(k => /^\d{1,30}_\d{1,30}_\d{1,4}$/.test(k)).slice(0, 600), sides = {};
-    for (let i = 0; i < pools.length; i += 100) for (const d of await txGetAll(tx, pools.slice(i, i + 100).map(id => col(POOL).doc(id)), ["sku", "side", "bodyIndex"])) if (d.exists) { const x = d.data(); if (x.sku) skus[d.id] = String(x.sku); if (x.side === "L" || x.side === "R") sides[d.id] = { side: x.side, ...(Number.isFinite(+x.bodyIndex) ? { bodyIndex: +x.bodyIndex } : {}) }; }
+    const joinIds = moves.filter(m => m.to && SetEdit.inSetOf(rec.get(m.id)) !== m.to).map(m => m.id), skus = {}, sides = {};
+    const pools = [...new Set(joinIds.flatMap(id => (rec.get(id).poolIds || []).map(String)))].filter(k => /^\d{1,30}_\d{1,30}_\d{1,4}$/.test(k)).slice(0, 600);
+    for (let i = 0; i < pools.length; i += 100) for (const d of await txGetAll(tx, pools.slice(i, i + 100).map(id => col(POOL).doc(id)), ["sku", "side"])) if (d.exists) { if (d.data().sku) skus[d.id] = String(d.data().sku); if (d.data().side === "L" || d.data().side === "R") sides[d.id] = d.data().side; }
     // ── every read is made: the writes follow ──
     const process = [], membership = { sheets: [], sets: [] }, changed = [], setPatch = new Map(), leaveOf = new Map(), joinOf = new Map(), doneSets = [];
     const setWord = id => SetEdit.setWord(setDoc.get(id) || {});

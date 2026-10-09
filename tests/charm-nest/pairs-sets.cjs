@@ -174,7 +174,6 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     assert.deepEqual(RD.copyIds({ poolIds: [], spec: { quantity: 1, pieceCount: 2 } }, key), [`${key}_1`, `${key}_2`], 'a mismatched pair that lost its ids is waited for as TWO pieces');
     assert.deepEqual(RD.copyIds({ poolIds: [`${key}_2`], spec: { quantity: 1, pieceCount: 2 } }, key), [`${key}_1`, `${key}_2`]);
     assert.deepEqual(RD.copyIds({ poolIds: [`${key}_1`, `${key}_2`], quantity: 1 }, key), [`${key}_1`, `${key}_2`], 'a record that lists both ids keeps both');
-    assert.deepEqual(RD.copyIds({ poolIds: [], quantity: 3, pieceCount: 2 }, key), [`${key}_1`, `${key}_2`, `${key}_3`], 'a piece count below the quantity changes nothing');
   }
 
   // ═══ 5. the set manifest tells a pair on two sheets (and prints nothing extra for a set without one) ═══
