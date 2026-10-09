@@ -114,11 +114,16 @@ known('F6', 'a side-only option, or a "Replacement ... Left Ear" title, is a sin
 
 /* ── 7 · a line that says two different designs but names one waits ─────────────────────────────────────────────────────────── */
 known('F7', 'mismatched in the words, one SKU: held for a person', () => {
-  for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
+  for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Heart'), V('Right Ear Charm', 'Cat')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
     const r = read(over);
-    ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
+    ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.pairSecond || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
   }
 });
+
+{   // (Left and Right options whose values ARE two master designs are a resolved mismatched pair: nothing to ask, the Left is the first design and the Right the second)
+  const r = read(S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]));
+  eq([r.spec.pieceCount, r.spec.pair.mismatched, r.spec.pair.members.map(m => m.side + ':' + m.sku), r.spec.problems.length], [2, true, ['L:STAR', 'R:MOON'], 0], 'Left Star / Right Moon (both master designs) is a mismatched pair and waits for nobody');
+}
 
 /* ── 8 · the station pages: Left / Right only for an earring pair ───────────────────────────────────────────────────────────── */
 {
@@ -171,6 +176,59 @@ known('F7', 'mismatched in the words, one SKU: held for a person', () => {
   eq(J(c.livePairOf(rowOf(S('Star Stud Earrings')), '4170000001')).map(p => p.side), ['L', 'R'], 'an earring pair is still a Left and a Right');
   eq(J(c.livePairOf(rowOf(S('Star Charm', [], { quantity: 2 })), '4170000001')), [], 'a plain quantity-2 charm is told exactly as before (the count did not change)');
   eq(J(c.livePairOf(rowOf(S('Initial Disc Necklace', [V('Necklace Options', '2 Disc')], { quantity: 2 })), '4170000001')).map(p => [p.of, p.n]), [[4, 1], [4, 2], [4, 3], [4, 4]], 'two 2-disc necklaces are 4 pieces of one group');
+}
+
+/* ── 10 · the sticker module and the efficiency record count with the pool's count ──────────────────────────────────────────── */
+{
+  const PL = require(path.join(root, 'charm-nest-pair-labels.js'));
+  global.CharmNestPair = Pair;   // (the module reads the globals the page has)
+  const rowOf = (over, c) => { const line = mk(over); return { order, line, spec: O.interpretLine(order, line, c || ctx()) }; };
+  const pairRow = rowOf(S('Star Stud Earrings')), disc3 = rowOf(S('Initial Disc Necklace', [V('Number of Discs', '3')])), many = rowOf(S('Star Charm', [], { quantity: 25 }));
+  eq(PL.pieceCount([pairRow, disc3], () => null), 5, 'a card with a pair and a 3-disc necklace is 2 + 3 pieces, as the pool counts it (it said 3)');
+  eq(PL.pieceCount([pairRow, many], () => null), 27, 'a quantity of 25 charms is 25 pieces, not the 20 the sticker module capped it at');
+  eq(PL.pieceCount([disc3], () => null), null, 'no pair on the card: null, the page counts as it always did');
+  eq(PL.stickerPieces([pairRow, disc3], () => null).map(s => s.side), ['L', 'R'], 'the necklace beside a pair prints no sticker of its own');
+  const sticky = (over, c) => { const r = rowOf(over, c); return { stickers: (PL.stickerPieces([r], () => null) || []).length, pool: O.pieceCountOf(r.spec) }; };
+  eq(sticky(S('Star Stud Earrings', [], { quantity: 3 })), { stickers: 6, pool: 6 }, 'sticker count = pool count: 3 pairs');
+  eq(sticky(S('Star Stud Earrings', [V('Qty', '2 studs')]), ctx(answer('Qty', '2 studs', 4))), { stickers: 4, pool: 4 }, 'sticker count = pool count: an answered 4');
+}
+
+/* ── 11 · a single earring that names its ear: one piece with that side (pool, stations, stickers agree); one that names none has no side ─────── */
+{
+  const src = fs.readFileSync(path.join(root, 'station-live-order.js'), 'utf8');
+  const win = { CharmNestOrders: O, StationActivity: null };
+  vm.runInContext(src, vm.createContext({ window: win, document: { addEventListener() {} }, console, Math, Date, String, Number, Array, Object, JSON, RegExp, Set, Map, Promise }));
+  const L = win.StationLiveOrder, J = x => JSON.parse(JSON.stringify(x));
+  global.CharmNestPair = Pair; const PL = require(path.join(root, 'charm-nest-pair-labels.js'));
+  const tx = (title, vars, extra) => Object.assign({ transaction_id: 5200000001, listing_id: 1718, title, sku: 'A', quantity: 1, variations: (vars || []).map(([n, v]) => ({ formatted_name: n, formatted_value: v })) }, extra || {});
+  const rowOf = (title, vars, extra) => { const line = mk(Object.assign({ title, variations: [V('Metal Choice', 'Gold')].concat((vars || []).map(([n, v]) => V(n, v))) }, extra || {})); return { order, line, spec: O.interpretLine(order, line, ctx()) }; };
+  const stickers = (title, vars, extra) => { const r = rowOf(title, vars, extra); return { pool: Pair.piecesFor(r).filter(p => p.side).map(p => p.side).join(''), labels: (PL.stickerPieces([r], () => null) || []).map(s => s.side).join(''), station: L.ears([tx(title, vars, extra)]).map(s => s.side).join(''), pieces: O.pieceCountOf(r.spec) }; };
+  for (const [title, vars, want] of [
+    ['Custom Single Replacement Silver Cat Huggie Earring Left Ear', [], 'L'], ['Single Star Earring, Right Ear', [], 'R'], ['Star Stud Earrings', [['Side', 'Left ear only']], 'L'], ['Star Stud Earrings', [['Ear', 'Right']], 'R'],
+    ['Single Star Earring', [], ''], ['Star Stud Earrings', [['Type', 'Single']], ''], ['Star Stud Earrings', [], 'LR'], ['Star Charm Necklace', [], ''],
+  ]) { const t = stickers(title, vars); eq([t.pool, t.labels, t.station], [want, want, want], JSON.stringify(title) + ' ' + JSON.stringify(vars) + ': the pool, the stickers and the station pages agree (' + (want || 'no ear') + ')'); }
+  eq(stickers('Star Stud Earrings', [], { quantity: 2 }).station, 'LRLR', 'a pair x2 is as before');
+  eq(J(L.ears([tx('Star Stud Earrings'), tx('Single Star Earring, Left Ear', [], { transaction_id: 5200000002 })])), [{ side: 'L', n: 1, of: 2 }, { side: 'R', n: 1, of: 2 }, { side: 'L', n: 2, of: 2 }], 'a pair and a single Left on one order: three stickers, the single numbered after the pair');
+  eq(J(L.ears([tx('Single Star Earring, Left Ear')])), [{ side: 'L', n: 1, of: 1 }], 'one ear: n/of of 1/1 (the printer prints no number)');
+  eq(PL.pieceCount([rowOf('Single Star Earring, Left Ear')], () => null), 1, 'the card counts the one piece');
+  ok(L.sides(tx('Single Star Earring, Left Ear'), '4170000001').every(p => p.side === 'L') && L.sides(tx('Single Star Earring, Left Ear'), '4170000001').length === 1, 'the station page tells that piece as Left');
+}
+
+/* ── 12 · a custom order says the pieces it asks for: an earring pair is 2 per unit, a necklace or charm what its quantity says (ADVCOUNT F11) ─── */
+{
+  const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
+  const a = src.indexOf('const defaultQty = it =>'), b = src.indexOf('const needMemo = new Map();', a);
+  ok(a > 0 && b > a, 'the custom order helpers are in the bridge');
+  const c = vm.createContext({ window: { CharmNestPair: Pair }, linesOf: it => it.rows, Math, Number, Array, Object, String });
+  vm.runInContext(src.slice(a, b) + ';this.defaultQty = defaultQty; this.piecesOrdered = piecesOrdered; this.pairPlan = pairPlan;', c);
+  const rowOf = (title, vars, extra) => { const line = mk(Object.assign({ title, variations: [V('Metal Choice', 'Gold')].concat((vars || []).map(([n, v]) => V(n, v))) }, extra || {})); return { order, line, key: 'k', spec: O.interpretLine(order, line, ctx()) }; };
+  const card = (...rows) => ({ rows });
+  eq([c.piecesOrdered(card(rowOf('Custom Star Stud Earrings'))), c.defaultQty(card(rowOf('Custom Star Stud Earrings')))], [2, 1], 'a custom earring pair is 2 pieces ordered (a Left and a Right); the copies a dropped design starts at are unchanged');
+  eq(c.piecesOrdered(card(rowOf('Custom Star Stud Earrings', [], { quantity: 2 }))), 4, 'two custom pairs are 4');
+  eq(c.piecesOrdered(card(rowOf('Custom Initial Necklace'))), 1, 'a custom necklace is as before');
+  eq(c.piecesOrdered(card(rowOf('Custom Star Charm', [], { quantity: 3 }))), 3, 'a custom charm x3 is as before');
+  eq(c.piecesOrdered(card(rowOf('Custom Single Star Earring, Left Ear'))), 1, 'a custom single earring is one piece');
+  eq(c.piecesOrdered(card(rowOf('Custom Star Stud Earrings'), rowOf('Custom Initial Necklace'))), 3, 'a pair and a necklace on one card');
 }
 
 console.log(`\npairs-adv-count: ${n} checks passed${open.length ? `, ${open.length} OPEN findings (${open.join(' ')}) for other owners` : ''}`);

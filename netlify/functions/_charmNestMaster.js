@@ -66,7 +66,7 @@ const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair,
 async function putIndex(db, FV, body) {
   const entries = (body.entries || []).filter(e => e && isSku(String(e.sku || "").toUpperCase()));
   const masterHash = str(body.masterHash, 80), replaces = new Set((body.replaces || []).map(String).concat([masterHash]));
-  const out = { written: 0, blocked: [], sizeMoved: [] };
+  const out = { written: 0, blocked: [], sizeMoved: [], pairKept: [] };
   // group sized designs under one SKU
   const bySku = new Map();
   for (const e of entries) { const sku = String(e.sku).toUpperCase(); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(e); }
@@ -76,13 +76,16 @@ async function putIndex(db, FV, body) {
   for (let i = 0; i < skus.length; i += 200) {
     const part = skus.slice(i, i + 200);
     // (only what the rules below look at of an entry already there: its master, its size, its operator overrides)
-    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pairBy", "facingBy"] });
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pair", "pairBy", "facingBy"] });
     snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
   }
   let batch = db.batch(), pending = 0;
   const flush = async () => { if (pending) { await batch.commit(); batch = db.batch(); pending = 0; } };
   for (const [sku, list] of bySku) {
     const ref = db.collection(INDEX).doc(sku); const ex = existing.get(sku) || null;
+    // A design the library holds as a PAIR is never written back as one body. An entry that says nothing of `pair` (an indexer that read only the labelled body of a row of two) would put one body's
+    // file and size over a record that still says two bodies; it is left as it was and the answer names it (`pairKept`). `pair: null` (a person's word, or a deliberate re-index) still takes it away.
+    if (ex && (cleanPair(ex.pair) || Object.values(ex.sizes || {}).some(z => z && cleanPair(z.pair))) && !list.some(e => cleanPair(e.pair) !== undefined)) { out.pairKept.push({ sku, reason: "the library holds " + sku + " as a pair and this entry draws one body: left as it was (set pair to null first to make it one charm)" }); continue; }
     // a stable base whatever order the entries arrived in: the unsized entry, else the smallest size
     const LADDER = ["XS", "S", "M", "L", "XL"];
     const base = list.find(e => !e.size) || list.slice().sort((a, b) => {
@@ -93,8 +96,9 @@ async function putIndex(db, FV, body) {
     // (`pair` goes with the geometry of the design, and of each size: only when the entry sent one, or null to take it away)
     const pairOf = e => { const x = cleanPair(e.pair); return x === undefined ? {} : { pair: x === null ? FV.delete() : x }; };
     const facingOf = e => { const x = cleanFacing(e.facing); return x === undefined ? {} : { facing: x === null ? FV.delete() : x }; };
+    const facingsOf = e => { const x = cleanFacings(e.facings); return x === undefined ? {} : { facings: x === null ? FV.delete() : x }; };   // (what the indexer read from a folded pair: the second body drawn as the mirror image of the first; a person's words stand over it)
     const symOf = e => { const x = cleanSym(e.sym); return x === undefined ? {} : { sym: x }; };   // (measured, not a person's word: a re-index writes it again)
-    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) }, pairOf(e), facingOf(e), symOf(e));
+    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) }, pairOf(e), facingOf(e), facingsOf(e), symOf(e));
     Object.assign(doc, geom(base));
     const sized = list.filter(e => e.size);
     if (sized.length) { doc.sizes = {}; for (const e of sized) doc.sizes[String(e.size).toUpperCase()] = geom(e); if (!list.find(e => !e.size)) { doc.charmHash = null; doc.aiPath = ""; doc.thumbPath = ""; doc.aiUrl = ""; doc.thumbUrl = ""; } }
@@ -102,7 +106,7 @@ async function putIndex(db, FV, body) {
     // a person's decision about a doubtful design (masterPatch `pair`, pairBy "operator") stands over what a re-index reads from the drawing
     if (ex && ex.pairBy === "operator") { delete doc.pair; for (const z of Object.values(doc.sizes || {})) delete z.pair; }
     // so does a person's `facing` (masterPatch, facingBy "operator"): a re-index never overwrites the way a person said the drawing faces
-    if (ex && ex.facingBy === "operator") { delete doc.facing; for (const z of Object.values(doc.sizes || {})) delete z.facing; }
+    if (ex && ex.facingBy === "operator") { delete doc.facing; delete doc.facings; for (const z of Object.values(doc.sizes || {})) { delete z.facing; delete z.facings; } }
     // derived defaults, kept when an operator already overrode them
     if (!(ex && ex.engravableBy === "operator")) { doc.engravable = base.engravable !== false; doc.engravableBy = "index"; }
     if (!(ex && ex.upSource === "operator")) { doc.upAngle = base.upAngle == null ? null : num(base.upAngle); doc.upSource = str(base.upSource || "index", 20); }

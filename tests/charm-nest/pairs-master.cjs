@@ -182,4 +182,115 @@ ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0
   }
   ok(Pair.kindOf(cases[1], null) === 'mismatched' && Pair.kindOf(cases[0], null) === 'multi' && Pair.kindOf(cases[3], null) === 'mismatched' && Pair.kindOf(cases[6], null) === 'pair', 'kindOf follows the intake facts (quantity-2 pair is multi, one glued copy is mismatched)');
 }
-console.log(`pairs-master: ${n} checks passed`);
+
+// ── item 8: the pair layer is ONE shared function (CharmNestPair.pairLayer), and no writer turns a pair design back into one body ──
+{
+  const Pst = { integrateRings: () => ({ left: [] }), cutLinesOf: c => c.members.filter(m => m !== c.outline && m.layer === 'CUT') };
+  const Gst = { flatten: o => [[[o.bbox[0], o.bbox[1]], [o.bbox[2], o.bbox[1]], [o.bbox[2], o.bbox[3]], [o.bbox[0], o.bbox[3]], [o.bbox[0], o.bbox[1]]]], upAngleOf: () => ({ angle: 90, source: 'drawn' }), backView: () => ({}), engraveMask: () => ({}), largestRectangles: () => [{ wPt: 40, hPt: 40 }] };
+  const mk = () => {
+    const a = rowCharm(1, 0, [1, 0, 0]), b = rowCharm(2, 22, [0, 0, 1]), lone = rowCharm(7, 200, [1, 0, 0]);
+    const g = { charms: [a, b, lone] }, lab = { labels: new Map([[1, { sku: 'MISMATCHED_9', bbox: [10, -12, 32, -4], extra: [] }], [7, { sku: 'LONE_1', bbox: [200, -12, 220, -4], extra: [] }]]) };
+    return { g, lab, items: [...lab.labels].map(([index, l]) => ({ index, l, c: g.charms.find(x => x.index === index) })) };
+  };
+  ok(typeof Pair.pairLayer === 'function' && typeof Pair.entryFields === 'function' && typeof Pair.keepPairs === 'function' && typeof Pair.heldPair === 'function', 'the module exports pairLayer, entryFields, keepPairs, heldPair');
+  let w = mk(); const IM = require('../../scripts/index-master.cjs');
+  const direct = Pair.pairLayer(Pst, Gst, w.g, w.lab, w.items, {}, () => {}), wrapped = IM.pairLayer(Pst, Gst, Pair, mk().g, w.lab, w.items, {}, () => {});
+  ok(direct.fold.size === 1 && direct.fold.has(1) && JSON.stringify(direct.rows) === JSON.stringify(wrapped.rows) && JSON.stringify(direct.fold.get(1).field) === JSON.stringify(wrapped.fold.get(1).field) && direct.refused.size === 0 && wrapped.refused instanceof Map, 'the script\'s pairLayer is the module\'s: same rows, same field');
+  // --pair-also / pairAlso: a Set, a list or a comma list
+  const tw = () => { const a = rowCharm(1, 0, [1, 0, 0]), b = rowCharm(2, 22, [1, 0, 0]); const l = { sku: 'TWINS_1', bbox: [10, -12, 32, -4], extra: [] }; return { g: { charms: [a, b] }, lab: { labels: new Map([[1, l]]) }, items: [{ index: 1, l, c: a }] }; };
+  for (const also of [new Set(['TWINS_1']), ['twins_1'], 'X_1, twins_1']) { const t = tw(); ok(Pair.pairLayer(Pst, Gst, t.g, t.lab, t.items, { pairAlso: also }, () => {}).fold.size === 1, 'pairAlso as ' + (typeof also === 'string' ? 'a comma list' : also instanceof Set ? 'a Set' : 'a list')); }
+  { const t = tw(); ok(Pair.pairLayer(Pst, Gst, t.g, t.lab, t.items, {}, () => {}).fold.size === 0, 'without pairAlso a doubtful row stays as it was'); }
+  // a row that is surely a pair but cannot be folded is refused, never written as its lone body
+  { w = mk(); const lg = [], r = Pair.pairLayer({ integrateRings: c => { if (c.index === 2) throw new Error('boom'); return { left: [] }; }, cutLinesOf: Pst.cutLinesOf }, Gst, w.g, w.lab, w.items, {}, m => lg.push(m));
+    ok(r.fold.size === 0 && r.refused.has(1) && /boom/.test(r.refused.get(1)) && r.rows[0].folded === false && lg.some(m => /could not be folded/.test(m)), 'a pair that cannot be folded is refused and named'); }
+  { w = mk(); w.g.charms.splice(1, 1); w.lab.labels.set(1, w.lab.labels.get(1)); const r = Pair.pairLayer(Pst, Gst, w.g, w.lab, w.items, {}, () => {}); ok(r.refused.size === 0 && r.fold.size === 0, 'a row that is no longer a row (one body left) is nothing to refuse'); }
+  // entryFields: sym for every design, facings only for a folded pair drawn as mirror images, never throws
+  ok(['symmetric', 'slight', 'directional'].includes(Pair.entryFields(w.g.charms[0], false).sym) && !('facings' in Pair.entryFields(w.g.charms[0], false)) && Object.keys(Pair.entryFields(null, true)).length === 0 && Object.keys(Pair.entryFields({}, false)).length === 0, 'entryFields: sym; nothing for a missing charm; no throw');
+  // heldPair / keepPairs: what the browser indexer must leave alone
+  const P2 = { sku: 'X', pair: { v: 1, bodies: 2, mismatched: true } };
+  ok(Pair.heldPair(P2) && !Pair.heldPair({ sku: 'X' }) && !Pair.heldPair(null) && !Pair.heldPair({ pair: { bodies: 1 } }) && Pair.heldPair({ sku: 'X', sizes: { S: { pair: { v: 1, bodies: 2 } } } }, 's') && !Pair.heldPair({ sku: 'X', sizes: { S: {} }, pair: null }, 'S') , 'heldPair reads the pair field of the entry or of its size');
+  { w = mk(); const lab = c => { const l = w.lab.labels.get(c.index); return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, size: x.size, bbox: x.bbox })) : []; };
+    const none = Pair.keepPairs(w.g.charms, lab, new Map());
+    ok(none.size === 1 && none.get(1).kind === 'row' && none.get(1).skus[0] === 'MISMATCHED_9' && /mismatched pair/.test(none.get(1).why) && !none.has(7) && !none.has(2), 'a sure row is held back (its owner), nothing else');
+    const known = new Map([['LONE_1', P2]]); const held = Pair.keepPairs(w.g.charms, lab, known);
+    ok(held.get(7).kind === 'held' && /holds LONE_1 as a pair of 2 bodies/.test(held.get(7).why) && held.get(1).kind === 'row', 'a SKU the library holds as a pair is held back when the drawing shows one body');
+    const both = rowCharm(7, 200, [1, 0, 0]), second = rowCharm(8, 222, [0, 0, 1]); const folded = Pair.foldRow(both, [second]);
+    ok(!Pair.keepPairs([folded], c => [{ sku: 'LONE_1', bbox: [210, -12, 232, -4] }], known).has(7), 'a charm that already shows both bodies is not held back');
+    ok(Pair.keepPairs(w.g.charms, lab, null).size === 1, 'without the library\'s entries only the rows are held back');
+    const sized = new Map([['LONE_1', { sku: 'LONE_1', sizes: { S: { pair: { v: 1, bodies: 2, mismatched: true } } } }]]);
+    ok(!Pair.keepPairs(w.g.charms, c => c.index === 7 ? [{ sku: 'LONE_1', size: 'M', bbox: [200, -12, 220, -4] }] : [], sized).has(7) && Pair.keepPairs(w.g.charms, c => c.index === 7 ? [{ sku: 'LONE_1', size: 'S', bbox: [200, -12, 220, -4] }] : [], sized).has(7), 'a size is held back only when that size holds the pair'); }
+  // the browser indexer asks before it uploads anything
+  const bridge = require('fs').readFileSync(require('path').join(__dirname, '../../charm-nest-bridge.js'), 'utf8'), wi = bridge.slice(bridge.indexOf('async function writeIndex(job)'));
+  ok(wi.indexOf('keepPairs(') > 0 && wi.indexOf('keepPairs(') < wi.indexOf('P.buildSingleCharm(c, parsed)') && /!keep\.has\(c\.index\)/.test(wi) && /were NOT written/.test(wi), 'writeIndex asks keepPairs before it builds or uploads a file, and says what it left');
+}
+
+// ── the indexers end to end on a synthetic master (one mismatched pair, one lone charm): the script and the server route write the same records ──
+(async () => {
+  const fs = require('fs'), os = require('os'), pth = require('path');
+  const { start } = require('./bridge-server.cjs');
+  const { PDFDocument, PDFName, rgb, StandardFonts } = require(pth.join(__dirname, '../../vendor/pdf-lib-1.17.1.min.js'));
+  const IM = require('../../scripts/index-master.cjs');
+  const { CharmNestPDF: PDF } = require('../../netlify/functions/_charmNestPdf.js');
+  async function pairMaster() {
+    const doc = await PDFDocument.create(), page = doc.addPage([420, 300]), font = await doc.embedFont(StandardFonts.Helvetica);
+    const f = v => (+v).toFixed(3), poly = pts => pts.map((p, i) => `${f(p[0])} ${f(p[1])} ${i ? 'l' : 'm'}`).join(' ') + ' h';
+    const circle = (cx, cy, r) => { const k = 0.5523 * r; return `${f(cx + r)} ${f(cy)} m ${f(cx + r)} ${f(cy + k)} ${f(cx + k)} ${f(cy + r)} ${f(cx)} ${f(cy + r)} c ${f(cx - k)} ${f(cy + r)} ${f(cx - r)} ${f(cy + k)} ${f(cx - r)} ${f(cy)} c ${f(cx - r)} ${f(cy - k)} ${f(cx - k)} ${f(cy - r)} ${f(cx)} ${f(cy - r)} c ${f(cx + k)} ${f(cy - r)} ${f(cx + r)} ${f(cy - k)} ${f(cx + r)} ${f(cy)} c h`; };
+    const house = (x, y, w, h) => [[x, y], [x + w, y], [x + w, y + .7 * h], [x + w / 2, y + h], [x, y + .7 * h]], notch = (x, y, w, h) => [[x, y], [x + w, y], [x + w, y + h], [x + .3 * w, y + h], [x, y + .6 * h]];
+    const ops = [], body = (pts, x, y, w, h, ink) => { ops.push(`q 0.05 0.05 0.05 RG 0.5 w ${poly(pts)} S Q`, `q ${ink} rg ${f(x + w * .3)} ${f(y + h * .2)} ${f(w * .3)} ${f(h * .2)} re f Q`, `q 0 0 0 RG 0.4 w ${circle(x + w * .7, y + h * .75, 2.4)} S Q`); };
+    body(house(100, 150, 45, 45), 100, 150, 45, 45, '0.2 0.35 0.85'); body(notch(147, 150, 45, 45), 147, 150, 45, 45, '0.85 0.2 0.2'); body(house(300, 150, 45, 45), 300, 150, 45, 45, '0.2 0.6 0.3');
+    page.node.set(PDFName.of('Contents'), doc.context.obj([doc.context.register(doc.context.flateStream(ops.join('\n') + '\n'))]));
+    const label = (t, cx) => { const w = font.widthOfTextAtSize(t, 6); page.drawText(t, { x: cx - w / 2, y: 150 - 4 - 6 * .75, size: 6, font, color: rgb(.1, .1, .1) }); };
+    label('MISMATCHED_9001', 146); label('LONE_9002', 322.5);
+    return Buffer.from(await doc.save({ useObjectStreams: false }));
+  }
+  const noDates = buf => Buffer.from(buf).toString('latin1').replace(/\(D:\d{14}Z\)/g, '(D:0)');
+  const tmp = fs.mkdtempSync(pth.join(os.tmpdir(), 'cn-pairix-')), file = pth.join(tmp, 'PAIR-master.ai'), bytes = await pairMaster(); fs.writeFileSync(file, bytes);
+  const srv = await start({ receipts: [] }), { st, sorterOrigin } = srv, lines = [], log = l => lines.push(String(l)), call = (b) => IM.api(sorterOrigin, '', 'charmNestLibrary', b);
+  const SKU = 'MISMATCHED_9001', LONE = 'LONE_9002', pairAi = `charmnest/master/${SKU}.ai`, loneAi = `charmnest/master/${LONE}.ai`;
+  try {
+    // the script, staged: the reference
+    await IM.main(['node', 'x', file, '--out-dir', pth.join(tmp, 'stage')], log);
+    const rec = JSON.parse(fs.readFileSync(pth.join(tmp, 'stage', 'records.json'), 'utf8')).entries, sPair = rec.find(e => e.sku === SKU), sLone = rec.find(e => e.sku === LONE);
+    ok(sPair && sPair.pair && sPair.pair.bodies === 2 && sPair.pair.mismatched === true && !sLone.pair && sPair.widthPt === 95 && sPair.members === 6, 'the script folds the pair into one design of two bodies and leaves the lone charm alone');
+    // the server route (the background function), over the same bytes
+    st.blobs.set('charmnest/uploads/pair.ai', { buf: bytes, generation: 1, meta: { contentType: 'application/pdf', metadata: {} } });
+    const runJob = async id => { st.put('Charm_Nest_Jobs', id, { id, kind: 'master', status: 'pending', path: 'charmnest/uploads/pair.ai', name: 'PAIR-master.ai', opts: {} }); const out = await st.handlers['charmMaster-background'].handler({ body: JSON.stringify({ id }) }); return { out, job: st.doc('Charm_Nest_Jobs', id) }; };
+    const j1 = await runJob('job-1');
+    ok(j1.out.statusCode === 200 && j1.job.status === 'done' && j1.job.result.pairs.length === 1 && j1.job.result.pairs[0].folded === true && j1.job.result.pairs[0].sku === SKU && j1.job.result.pairsKept.length === 0, 'the server route builds the pair and says so in its result');
+    const vPair = st.doc('Charm_Master_Index', SKU), vLone = st.doc('Charm_Master_Index', LONE);
+    for (const k of ['charmHash', 'widthPt', 'heightPt', 'areaPt2', 'members', 'holes', 'engravable', 'upAngle', 'upSource', 'open', 'sym']) { ok(JSON.stringify(vPair[k]) === JSON.stringify(sPair[k]), `server and script agree on the pair's ${k}`); ok(JSON.stringify(vLone[k]) === JSON.stringify(sLone[k]), `server and script agree on the lone charm's ${k}`); }
+    ok(JSON.stringify(vPair.pair) === JSON.stringify(sPair.pair) && vLone.pair === undefined, 'server and script agree on the pair field');
+    ok(noDates(st.blobs.get(pairAi).buf) === noDates(fs.readFileSync(pth.join(tmp, 'stage', 'files', pairAi))) && noDates(st.blobs.get(loneAi).buf) === noDates(fs.readFileSync(pth.join(tmp, 'stage', 'files', loneAi))), 'and write the same per-SKU files (PDF dates apart)');
+    const charmsIn = async key => { const pr = await PDF.parseSource(new Uint8Array(st.blobs.get(key).buf), 'x.ai'); return PDF.groupCharms(pr, { minPt: 6 }).charms.length; };
+    ok(await charmsIn(pairAi) === 2 && await charmsIn(loneAi) === 1, 'the pair\'s file holds two bodies as separate forms, the lone charm\'s one');
+    // browser indexer's guard on the real grouping of this master
+    { const pr = await PDF.parseSource(new Uint8Array(bytes), 'x.ai'), g = PDF.groupCharms(pr, { minPt: 6 }), lab = PDF.labelCharms(pr, g.charms, { pattern: PDF.SKU_PATTERN_DEFAULT, gapPt: 6.4 / (25.4 / 72), widen: .25 });
+      const labelsOf = c => { const l = lab.labels.get(c.index); return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, size: x.size, bbox: x.bbox })) : []; };
+      const known = new Map([[SKU, vPair], [LONE, vLone]]), kept = Pair.keepPairs(g.charms, labelsOf, known);
+      ok(kept.size === 1 && kept.get(0).skus[0] === SKU && kept.get(0).kind === 'row' && !kept.has(2), 'on the real grouping the browser indexer holds back the pair and nothing else'); }
+    // re-running the server route over the stored pair leaves the record as it is
+    const before = JSON.stringify(st.doc('Charm_Master_Index', SKU)), j2 = await runJob('job-2');
+    ok(j2.job.status === 'done' && st.doc('Charm_Master_Index', SKU).pair.bodies === 2 && st.doc('Charm_Master_Index', SKU).widthPt === 95 && before.length > 0, 'a second server run over the pair keeps it a pair of two bodies');
+    // a pair the server cannot fold is left as it was, and says so (the lone body must not take its place)
+    const realRings = PDF.integrateRings, snapBlob = Buffer.from(st.blobs.get(pairAi).buf), snapRec = JSON.stringify(st.doc('Charm_Master_Index', SKU).pair) + st.doc('Charm_Master_Index', SKU).widthPt;
+    PDF.integrateRings = c => { if (c.index === 1) throw new Error('forced failure'); return realRings(c); };
+    let j3; try { j3 = await runJob('job-3'); } finally { PDF.integrateRings = realRings; }
+    ok(j3.job.status === 'done' && j3.job.result.pairsKept.length === 1 && j3.job.result.pairsKept[0].sku === SKU && /forced failure/.test(j3.job.result.pairsKept[0].why), 'a pair the server could not fold is named in the job result');
+    ok(Buffer.compare(st.blobs.get(pairAi).buf, snapBlob) === 0 && JSON.stringify(st.doc('Charm_Master_Index', SKU).pair) + st.doc('Charm_Master_Index', SKU).widthPt === snapRec, 'the pair\'s file and record are exactly what they were');
+    // the stand-in library refuses to put one body over a pair (the server backstop), and null still takes the pair away
+    const one = { sku: SKU, masterHash: 'ffeedd11', charmHash: 'x1', widthPt: 48, heightPt: 48, areaPt2: 1700, members: 3, holes: 1 };
+    const r1 = await call({ op: 'masterPutIndex', entries: [one], masterHash: 'ffeedd11', masterName: 'other.ai' });
+    ok(r1.pairKept && r1.pairKept.length === 1 && r1.pairKept[0].sku === SKU && /holds MISMATCHED_9001 as a pair/.test(r1.pairKept[0].reason) && r1.written === 0, 'the library names a SKU it left as a pair instead of writing one body over it');
+    ok(st.doc('Charm_Master_Index', SKU).widthPt === 95 && st.doc('Charm_Master_Index', SKU).pair.bodies === 2, 'and the record is unchanged');
+    const rOk = await call({ op: 'masterPutIndex', entries: [Object.assign({}, one, { sku: LONE })], masterHash: 'ffeedd11', masterName: 'other.ai' });
+    ok(rOk.pairKept.length === 0 && rOk.written === 1, 'a design that is not a pair is written as always');
+    // the script over the stored pair: --no-pairs would draw one body, so the pair is left as it was
+    const blobBefore = Buffer.from(st.blobs.get(pairAi).buf), recBefore = JSON.stringify(st.doc('Charm_Master_Index', SKU).pair);
+    const np = await IM.main(['node', 'x', file, '--origin', sorterOrigin, '--all', '--no-pairs'], log);
+    ok(np.pairsKept.length === 1 && np.pairsKept[0].sku === SKU && Buffer.compare(st.blobs.get(pairAi).buf, blobBefore) === 0 && JSON.stringify(st.doc('Charm_Master_Index', SKU).pair) === recBefore && st.doc('Charm_Master_Index', SKU).widthPt === 95, '--no-pairs over a stored pair leaves its file and record, and the report names it');
+    ok(lines.some(l => /NOT written, because this run drew them as one body/.test(l)), 'and the run says so in plain words');
+    const yes = await IM.main(['node', 'x', file, '--origin', sorterOrigin, '--all'], log);
+    ok(yes.pairsKept.length === 0 && st.doc('Charm_Master_Index', SKU).pair.bodies === 2 && st.doc('Charm_Master_Index', SKU).widthPt === 95, 'the same run with the pair layer writes the pair again');
+  } finally { srv.close(); }
+  console.log(`pairs-master: ${n} checks passed`);
+})().catch(e => { console.error(e); process.exit(1); });
