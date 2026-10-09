@@ -24,7 +24,8 @@
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
     for(const row of rows || [])for(const id of copyIds(row,lineKeyOf(row))) {
-      const e=row.engrave;
+      // (a line that splits its engraving per ear, `engrave.pieces[poolId] = {needed,state,approved}`: this piece's own decision; every other line: the line's, as always)
+      const e=row.engrave && row.engrave.pieces && typeof row.engrave.pieces[id]==='object' && row.engrave.pieces[id] ? row.engrave.pieces[id] : row.engrave;
       // a cancelled order's piece left on a released sheet is cut and set aside, so it waits on no engraving decision
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
       // The page reads that from the row's reading, the server from the run's line record.

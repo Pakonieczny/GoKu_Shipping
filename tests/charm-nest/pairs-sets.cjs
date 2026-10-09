@@ -209,6 +209,14 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     assert.deepEqual(RD.copyIds({ poolIds: [`${key}_1`, `${key}_2`], quantity: 1 }, key), [`${key}_1`, `${key}_2`], 'a record that lists both ids keeps both');
   }
 
+  // a line that splits its engraving per ear: each piece is read by its own decision; a line that does not keeps the line's
+  {
+    const a = `${MIS}_${MIS_T}_1`, b = `${MIS}_${MIS_T}_2`, line = { key: `${MIS}_${MIS_T}`, poolIds: [a, b], spec: { quantity: 1, pieceCount: 2 }, state: 'written', engrave: { needed: true, state: 'written', approved: false, pieces: { [a]: { needed: true, state: 'approved', approved: true }, [b]: { needed: false, state: 'none', approved: true } } } };
+    assert.deepEqual(RD.decisions([line]), { [a]: { needed: true, state: 'approved', approved: true }, [b]: { needed: false, state: 'none', approved: true } }, 'the left ear is approved on its own, the right needs nothing');
+    const whole = { ...line, engrave: { needed: true, state: 'written', approved: false } };
+    assert.deepEqual(RD.decisions([whole]), { [a]: { needed: true, state: 'written', approved: false }, [b]: { needed: true, state: 'written', approved: false } }, 'a line with no per-ear decisions: the line\'s own, as before');
+  }
+
   // ═══ 5. the set manifest tells a pair on two sheets (and prints nothing extra for a set without one) ═══
   {
     const orders = { [MIS]: { lines: [{ transactionId: MIS_T, sku: 'MISMATCHED_7134', copies: [{ copy: 1, sheet: 'GF Sheet 1', sheetId: 'a', side: 'L' }, { copy: 2, sheet: 'GF Sheet 2', sheetId: 'b', side: 'R' }] }] },
