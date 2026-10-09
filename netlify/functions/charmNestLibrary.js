@@ -1202,6 +1202,8 @@ async function op_masterPatch(b) {
   if (p.pair !== undefined) { const x = Master.cleanPair(p.pair); if (x !== undefined) { doc.pair = x === null ? FV.delete() : x; doc.pairBy = "operator"; } }
   // the way the drawing faces, "L" or "R", as a person says it (amendment 2); null gives the decision back to the indexer; a re-index keeps it (putIndex)
   if (p.facing !== undefined) { const x = Master.cleanFacing(p.facing); if (x !== undefined) { if (x === null) { doc.facing = FV.delete(); doc.facingBy = FV.delete(); } else { doc.facing = x; doc.facingBy = "operator"; } } }
+  // the same for each body of a MISMATCHED design (a flat list of L, R or null, body 0 first); the person's word, kept through a re-index
+  if (p.facings !== undefined) { const x = Master.cleanFacings(p.facings); if (x !== undefined) { if (x === null) doc.facings = FV.delete(); else { doc.facings = x; doc.facingBy = "operator"; } } }
   if (p.confirmedBy) { doc.confirmedBy = str(p.confirmedBy, 80); doc.confirmedAt = FV.serverTimestamp(); }
   const ref = db.collection(Master.INDEX).doc(sku); if (!(await ref.get()).exists) return { error: "not indexed: " + sku };   // a patch never creates a shell entry
   await ref.set(doc, { merge: true });

@@ -120,6 +120,9 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   ok(sideWord(Pair.piecesFor(line(), same)) === 'L,Rm', 'D2 both bodies drawn thumb-left (Paul\'s picture): the left body is the Left as drawn, the right body is the Right turned');
   ok(sideWord(Pair.piecesFor(line(), mirr)) === 'L,R', 'D3 the right body already drawn as the mirror image of the left: nothing is turned');
   ok(sideWord(Pair.piecesFor(line(), Object.assign(mk(THUMB_LEFT), { facing: 'R' }))) === 'Lm,R', 'D4 a person says the first body faces right and the second is drawn the same way: both face right, so the left body is turned and the right body is as drawn');
+  // an index entry with no geometry (the order window asks piecesFor with the entry): the words it holds for each body decide, as the drawing would
+  const entryMis = { sku: 'M', pair: { v: 1, bodies: 2, mismatched: true } };
+  ok(sideWord(Pair.piecesFor(line(), entryMis)) === 'L,Rm' && sideWord(Pair.piecesFor(line(), Object.assign({ facings: [null, 'R'] }, entryMis))) === 'L,R' && sideWord(Pair.piecesFor(line(), Object.assign({ facings: ['R', 'R'] }, entryMis))) === 'Lm,R' && sideWord(Pair.piecesFor(line(), Object.assign({ facing: 'R' }, entryMis))) === 'Lm,Rm', 'D3b a mismatched entry with no drawing: unknown = Left as drawn, Right turned; the words for each body (facings, or facing for body 0) decide');
   const gL = Pair.pieceGeometry(same, { side: 'L', bodyIndex: 0, mirror: false }), gR = Pair.pieceGeometry(same, { side: 'R', bodyIndex: 1, mirror: true });
   ok(gL.bbox.join() === '0,0,24,30' && gR.bbox.join() === '40,0,64,30', 'D5 each piece is its own body (not the pair)');
   const rx = ptsOf(gR.outline), lx = ptsOf(gL.outline);
@@ -155,6 +158,11 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   const mk = (rightPts, over) => { const a = body(THUMB_LEFT, 10, [1, 0, 0], 0), b = body(rightPts, 20, [0, 0, 1], 40); return Object.assign({ outline: a[0], members: a.concat(b), bbox: [0, 0, 64, 30], extras: [] }, over || {}); };
   const mirr = mk(flipPts(THUMB_LEFT, 24)), alike = mk(THUMB_LEFT);
   ok(Pair.facingInfo(Pair.bodiesOf(mirr)[1], mirr).facing === 'R' && Pair.facingInfo(Pair.bodiesOf(mirr)[1], mirr).source === 'mirror-of-first', 'E6 a body drawn as the mirror image of the first faces the other way');
+  // a mirror pair drawn a little differently (the live HEART_2206 pair overlaps its mirror image by 0.88 and its own drawing by 0.65) is still read as a mirror pair
+  const nearMirror = mk(flipPts([[6, 0], [24, 0], [24, 30], [6, 30], [6, 24], [1, 24], [1, 21], [6, 21]], 24)), farMirror = mk(flipPts([[6, 0], [24, 0], [24, 30], [6, 30], [6, 25], [3, 25], [3, 20], [6, 20]], 24));
+  const simNear = Pair.shapeSimilarity(Pair.bodiesOf(nearMirror)[0], Pair.bodiesOf(nearMirror)[1]);
+  ok(simNear.mirrored < Pair.PAIR_DEFAULTS.sameShapeIoU && simNear.mirrored >= .85 && simNear.same < .7 && Pair.facingOfBody(Pair.bodiesOf(nearMirror)[1], nearMirror) === 'R', 'E6b a pair drawn as near mirror images (overlap 0.88 against 0.65) is read as a mirror pair: ' + JSON.stringify(simNear));
+  ok(Pair.facingOfBody(Pair.bodiesOf(farMirror)[1], farMirror) === null, 'E6c bodies that are only loosely alike are not guessed at');
   ok(Pair.facingOfBody(Pair.bodiesOf(alike)[1], alike) === null && Pair.facingOfBody(Pair.bodiesOf(Object.assign(mk(THUMB_LEFT), { facing: 'R' }))[1], Object.assign(mk(THUMB_LEFT), { facing: 'R' })) === 'R', 'E7 drawn the same way as the first: unknown, or the first\'s way once a person said it');
   ok(Pair.facingOfBody(Pair.bodiesOf(alike)[0], Object.assign({}, alike, { facings: ['R', 'L'] })) === 'R' && Pair.facingOfBody(Pair.bodiesOf(alike)[1], Object.assign({}, alike, { facings: ['R', 'L'] })) === 'L', 'E8 facings[i] says each body\'s way');
 }
@@ -295,21 +303,47 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
     ok(none === '' && /<option value="R" selected>/.test(set) && /data-faces="A\|A2"/.test(set), 'H6 a symmetric design gets nothing, one a person set shows the word (the box saves for every SKU of the charm)');
     ok(M.facesBox({ sku: 'E' }, 'E') !== '' && M.facesBox({ sku: 'Q' }, 'Q') === '', 'H7 a design with no measure yet is judged from the copy the page already holds (a mitten is directional), and shown nothing when there is none');
     // the handler: saves through patchMany for every SKU, tells the held copy, says "from now on"; a failure puts the old word back and says so
-    const hs = bridge.indexOf('    each("faces"'), he = bridge.indexOf('\n', hs), line = bridge.slice(hs, he);
-    ok(/patchMany\(skus, \{ facing: v2 === "" \? null : v2 \}\)/.test(line) && /applies to orders made up from now on/.test(line), 'H8 the box saves { facing } (null gives the word back) for every SKU and says it applies from now on');
+    const hs = bridge.indexOf('    each("faces"'), he = bridge.indexOf('    each("unblock"', hs), line = bridge.slice(hs, he);
+    ok(/patchMany\(skus, patch\)/.test(line) && /\{ facing: v2 === "" \? null : v2 \}/.test(line) && /applies to orders made up from now on/.test(line), 'H8 the box saves { facing } (null gives the word back) for every SKU and says it applies from now on');
     const run = async (patchMany) => {
-      const toasts = [], sel = { value: 'L', disabled: false }, fake = { each: (attr, fn) => fn(sel, ['A', 'A2']), patchMany, toast: (m, k) => toasts.push([m, k]), facingLive: (...a) => { toasts.live = a; } };
+      const toasts = [], sel = { value: 'L', disabled: false, dataset: {} }, fake = { each: (attr, fn) => fn(sel, ['A', 'A2']), patchMany, toast: (m, k) => toasts.push([m, k]), facingLive: (...a) => { toasts.live = a; } };
       new Function('each', 'patchMany', 'toast', 'facingLive', line)(fake.each, fake.patchMany, fake.toast, fake.facingLive);
       sel.value = 'R'; sel.onchange(); await new Promise(r => setTimeout(r, 5)); return { sel, toasts };
     };
     const calls = []; const good = await run(async (skus, p) => { calls.push([skus.slice(), p]); });
-    ok(calls.length === 1 && calls[0][0].join() === 'A,A2' && calls[0][1].facing === 'R' && good.toasts[0][1] === 'ok' && /faces right/.test(good.toasts[0][0]) && good.toasts.live[1] === 'R' && good.sel.disabled === false, 'H9 choosing "faces right" saves { facing: "R" } for both SKUs and says so');
+    ok(calls.length === 1 && calls[0][0].join() === 'A,A2' && calls[0][1].facing === 'R' && good.toasts[0][1] === 'ok' && /faces right/.test(good.toasts[0][0]) && good.toasts.live[1].facing === 'R' && good.sel.disabled === false, 'H9 choosing "faces right" saves { facing: "R" } for both SKUs and says so');
     const bad = await run(async () => { throw new Error('offline'); });
     ok(bad.toasts[0][1] === 'bad' && /not saved — offline/.test(bad.toasts[0][0]) && bad.sel.value === 'L' && bad.sel.disabled === false, 'H10 a save that fails says so and puts the old word back');
     // a copy the page already holds hears the change; one it does not hold is left alone
-    M.facingLive(['A', 'D'], 'L'); ok(holder.charms[0].facing === 'L' && holder.bodies[0].facing === 'L', 'H11 the page\'s held copy of the design (and its bodies) takes the new word');
-    M.facingLive(['A'], ''); ok(!('facing' in holder.charms[0]) && !('facing' in holder.bodies[0]), 'H12 and gives it back when the word is cleared');
-    M.facingLive(['C'], 'X'); ok(holder.charms[0].facing === 'X', 'H13 every size of the design is told');
+    M.facingLive(['A', 'D'], { facing: 'L' }); ok(holder.charms[0].facing === 'L' && holder.bodies[0].facing === 'L', 'H11 the page\'s held copy of the design (and its bodies) takes the new word');
+    M.facingLive(['A'], { facing: null }); ok(!('facing' in holder.charms[0]) && !('facing' in holder.bodies[0]), 'H12 and gives it back when the word is cleared');
+    M.facingLive(['C'], { facing: 'X' }); ok(holder.charms[0].facing === 'X', 'H13 every size of the design is told');
+    // a MISMATCHED pair (a left body and a right body): one box per body, saved together, body 0 also as `facing`
+    const mis = { sku: 'M', pair: { v: 1, bodies: 2, mismatched: true }, facings: [null, 'R'] }, mc = Pair.facingControl(mis);
+    ok(mc.show && mc.mismatched && mc.bodies.length === 2 && mc.bodies[0].value === '' && mc.bodies[1].value === 'R' && mc.bodies[1].options.map(o => o[0]).join() === ',L,R' && Pair.facingControl({ sku: 'M', pair: { v: 1, bodies: 2, mismatched: true }, facing: 'L' }).bodies[0].value === 'L', 'H14 a mismatched pair always gets one box per body, each with its own word');
+    const mhtml = M.facesBox(mis, 'M');
+    ok((mhtml.match(/<select data-faces="M" data-body="/g) || []).length === 2 && /data-body="1"[\s\S]*<option value="R" selected>Right faces right/.test(mhtml) && /Left: not set/.test(mhtml), 'H15 and draws both boxes: ' + mhtml.slice(0, 160));
+    {
+      const mk2 = v => ({ value: v, dataset: { body: '' } }); const s0 = Object.assign(mk2(''), { dataset: { body: '0' } }), s1 = Object.assign(mk2('R'), { dataset: { body: '1' } });
+      s0.parentNode = s1.parentNode = { querySelectorAll: () => [s1, s0] };
+      const calls2 = []; const toasts2 = [];
+      new Function('each', 'patchMany', 'toast', 'facingLive', line)((attr, fn) => fn(s1, ['M', 'M2']), async (skus, p) => { calls2.push([skus, p]); }, (m, k) => toasts2.push([m, k]), () => {});
+      s0.value = 'L'; s1.onchange(); await new Promise(r => setTimeout(r, 5));
+      ok(calls2.length === 1 && JSON.stringify(calls2[0][1]) === JSON.stringify({ facing: 'L', facings: ['L', 'R'] }) && /left body faces left, right body faces right/.test(toasts2[0][0]), 'H16 changing a body saves both words together, body 0 also as facing: ' + JSON.stringify(calls2[0] && calls2[0][1]));
+      s0.value = ''; s1.value = ''; s1.onchange(); await new Promise(r => setTimeout(r, 5));
+      ok(JSON.stringify(calls2[1][1]) === JSON.stringify({ facing: null, facings: null }), 'H17 both boxes cleared gives the words back');
+    }
+  }
+
+  /* ── I · the list for Paul (scripts/facing-report.cjs) ── */
+  {
+    const FR = require('../../scripts/facing-report.cjs');
+    const rep = FR.report([{ skus: ['MITTEN (HUGGIE)'], level: 'directional', cut: .3, art: null, mm: [9, 9] }, { skus: ['HEART'], level: 'symmetric', cut: 0, art: 0 }, { skus: ['INITIAL LETTER STUD'], level: 'directional', cut: .4, art: null },
+      { skus: ['DOG'], level: 'directional', cut: .2, art: null, facing: 'R' }, { skus: ['WOBBLE'], level: 'slight', cut: .05, art: null }, { skus: ['HUGGIE HOOPS- GIRAFFE', 'GIRAFFE (HUGGIE)'], level: 'directional', cut: .1, art: .2 }, { skus: ['GIRAFFE_2069'], level: 'directional', cut: .09, art: null }]);
+    ok(rep.counts.needAWord === 3 && rep.counts.wordSet === 1 && rep.counts.readsOneWayByName === 1 && rep.counts.symmetric === 1 && rep.counts.slight === 1, 'I1 the list asks for a word only for directional designs with none: ' + JSON.stringify(rep.counts));
+    ok(rep.designs.every(d => d.guess === null) && rep.readsOneWayByName.length === 1 && rep.slight.length === 1, 'I2 no side is guessed; letters and nearly-symmetric designs are listed apart');
+    ok(rep.designs[0].skus[0] === 'MITTEN (HUGGIE)' && rep.designs[0].use === 'earring' && rep.bySku['MITTEN (HUGGIE)'] === 1 && FR.familyOf(['HUGGIE HOOPS- GIRAFFE', 'GIRAFFE (HUGGIE)']) === 'GIRAFFE' && FR.familyOf(['GIRAFFE_2069']) === 'GIRAFFE', 'I3 earring SKUs come first, strongest first, by SKU; huggie and plain versions of one animal are one family');
+    ok(rep.families.some(f => f.family === 'GIRAFFE' && f.designs.length === 2) && FR.levelOf(.07, null) === 'directional' && FR.levelOf(.01, null) === 'symmetric' && FR.levelOf(.05, null) === 'slight', 'I4 the same bars as the module (0.065 / 0.04 for the cut line)');
   }
 
   console.log('pairs-mirror: ' + n + ' checks passed');

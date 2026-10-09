@@ -152,6 +152,11 @@
     if (P && typeof P.isMismatched === "function") { try { return !!P.isMismatched(entry); } catch (_) { return false; } }
     return !!(entry.pair && entry.pair.mismatched && +entry.pair.bodies === 2);
   }
+  const orders = () => {
+    if (root && root.CharmNestOrders) return root.CharmNestOrders;
+    try { if (typeof require === "function") return require("./charm-nest-orders.js"); } catch (_) { /* the quantity below is enough */ }
+    return null;
+  };
   const quantityOf = line => { const q = Math.floor(+(line && ((line.spec && line.spec.quantity) || line.quantity || line.qty || (line.line && line.line.quantity))) || 1); return q > 0 ? Math.min(q, 20) : 1; };
 
   /** The pieces of an earring pair row (CharmNestPair.piecesFor: Left, Right, Left, Right ... every piece with its side, matching pairs too: Paul, 9 Oct 18:47),
@@ -179,13 +184,18 @@
     for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const p = labelPieces(r, e); if (p) out.push(...p); }
     return out.length ? out : null;
   }
-  /** Pieces behind a card's lines: an earring pair line makes two per unit, every other line what its quantity says (as the page counted before). null when no line is a pair. */
+  /** The pieces a line that is not an earring pair makes: the one count of the app (CharmNestOrders.pieceCountOf: 3 discs are 3, a counted answer, an old line's own pieces), the Etsy quantity only when that is not at hand. */
+  function otherPieces(row) {
+    try { const O = orders(); if (O && typeof O.pieceCountOf === "function") { const n = Math.floor(+O.pieceCountOf(row)); if (n >= 1) return n; } } catch (_) { /* the quantity says it */ }
+    return quantityOf(row);
+  }
+  /** Pieces behind a card's lines: an earring pair line makes two per unit, every other line what the one count says (3 discs are 3; the Etsy quantity when the count is not at hand). null when no line is a pair. */
   function pieceCount(rows, entryOf) {
     let n = 0, any = false;
     for (const r of rows || []) {
       let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; }
       const list = earPieces(r, e);
-      if (list) { any = true; n += list.length; } else n += quantityOf(r);
+      if (list) { any = true; n += list.length; } else n += otherPieces(r);
     }
     return any ? n : null;
   }

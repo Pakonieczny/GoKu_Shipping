@@ -33,14 +33,24 @@ function cleanFacing(f) {
   return f === "L" || f === "R" || f === "X" ? f : undefined;   // "X": a person says the design reads one way (letters, numbers, words) and is never turned over
 }
 
+/** The optional `facings` of a MISMATCHED design (a left body and a right body under one SKU): the way each body faces as a person said it, a flat list of "L" | "R" | null (null = not said),
+    at most 8. undefined = says nothing, null (or a list with nothing in it) = take it away, anything that is not a list is ignored. A re-index never writes it. */
+function cleanFacings(v) {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (!Array.isArray(v) || v.length > 8) return undefined;
+  const out = v.map(x => (x === "L" || x === "R" ? x : null));
+  return out.some(Boolean) ? out : null;
+}
+
 /** The optional `sym` of a design (PAIRMIRROR): how far the design is from its own mirror image, measured at indexing by charm-nest-pair.js symmetryOf:
     "symmetric" (the mirror image looks the same: nothing to decide), "slight", or "directional" (it differs: a person says which way it faces). Anything else is ignored. */
 function cleanSym(v) { return v === "symmetric" || v === "slight" || v === "directional" ? v : undefined; }
 
 function slimEntry(d) {
   if (!d) return null;
-  const pair = cleanPair(d.pair), facing = cleanFacing(d.facing), sym = cleanSym(d.sym);
-  return { ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes),
+  const pair = cleanPair(d.pair), facing = cleanFacing(d.facing), facings = cleanFacings(d.facings), sym = cleanSym(d.sym);
+  return { ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(Array.isArray(facings) ? { facings } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes),
     engravable: d.engravable !== false, engravableBy: d.engravableBy || null, upAngle: d.upAngle == null ? null : num(d.upAngle), upSource: d.upSource || null, backKeepOut: d.backKeepOut || [], aiPath: d.aiPath || null, thumbPath: d.thumbPath || null, aiUrl: d.aiUrl || null, thumbUrl: d.thumbUrl || null,
     sizes: d.sizes || null, blocked: d.blocked || null, conflict: d.conflict || null, sizeMoved: d.sizeMoved || null, labelSource: d.labelSource || "text", confirmedBy: d.confirmedBy || null, open: !!d.open, indexedAt: d.indexedAt && d.indexedAt.toMillis ? d.indexedAt.toMillis() : (num(d.indexedAtMs) || null), hashSource: d.hashSource || "browser" };
 }
@@ -83,8 +93,9 @@ async function putIndex(db, FV, body) {
     // (`pair` goes with the geometry of the design, and of each size: only when the entry sent one, or null to take it away)
     const pairOf = e => { const x = cleanPair(e.pair); return x === undefined ? {} : { pair: x === null ? FV.delete() : x }; };
     const facingOf = e => { const x = cleanFacing(e.facing); return x === undefined ? {} : { facing: x === null ? FV.delete() : x }; };
+    const facingsOf = e => { const x = cleanFacings(e.facings); return x === undefined ? {} : { facings: x === null ? FV.delete() : x }; };   // (what the indexer read from a folded pair: the second body drawn as the mirror image of the first; a person's words stand over it)
     const symOf = e => { const x = cleanSym(e.sym); return x === undefined ? {} : { sym: x }; };   // (measured, not a person's word: a re-index writes it again)
-    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) }, pairOf(e), facingOf(e), symOf(e));
+    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) }, pairOf(e), facingOf(e), facingsOf(e), symOf(e));
     Object.assign(doc, geom(base));
     const sized = list.filter(e => e.size);
     if (sized.length) { doc.sizes = {}; for (const e of sized) doc.sizes[String(e.size).toUpperCase()] = geom(e); if (!list.find(e => !e.size)) { doc.charmHash = null; doc.aiPath = ""; doc.thumbPath = ""; doc.aiUrl = ""; doc.thumbUrl = ""; } }
@@ -92,7 +103,7 @@ async function putIndex(db, FV, body) {
     // a person's decision about a doubtful design (masterPatch `pair`, pairBy "operator") stands over what a re-index reads from the drawing
     if (ex && ex.pairBy === "operator") { delete doc.pair; for (const z of Object.values(doc.sizes || {})) delete z.pair; }
     // so does a person's `facing` (masterPatch, facingBy "operator"): a re-index never overwrites the way a person said the drawing faces
-    if (ex && ex.facingBy === "operator") { delete doc.facing; for (const z of Object.values(doc.sizes || {})) delete z.facing; }
+    if (ex && ex.facingBy === "operator") { delete doc.facing; delete doc.facings; for (const z of Object.values(doc.sizes || {})) { delete z.facing; delete z.facings; } }
     // derived defaults, kept when an operator already overrode them
     if (!(ex && ex.engravableBy === "operator")) { doc.engravable = base.engravable !== false; doc.engravableBy = "index"; }
     if (!(ex && ex.upSource === "operator")) { doc.upAngle = base.upAngle == null ? null : num(base.upAngle); doc.upSource = str(base.upSource || "index", 20); }
@@ -131,4 +142,4 @@ async function putFile(db, FV, body) {
   return { ok: true, masterHash: hash };
 }
 
-module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanPair, cleanFacing, cleanSym, putIndex, putFile };
+module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanPair, cleanFacing, cleanFacings, cleanSym, putIndex, putFile };
