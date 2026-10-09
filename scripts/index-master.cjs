@@ -178,6 +178,20 @@ function settleTwins(lab, charms, pins) {
   return out;
 }
 
+/** The storage name of each charm's file (charmnest/master/<key>.ai). The server turns every run of characters other than
+ *  letters, digits, _ . - into one "_" (safePath), so two different SKUs can name one file ("BOWLING_PIN+BALL" and "BOWLING PIN + BALL"
+ *  both become BOWLING_PIN_BALL.ai) and the second upload replaced the first. The first charm in drawing order keeps the plain
+ *  name; a later charm whose name collides gets "__<charm index>" after it. Returns Map(charm index → key). */
+function fileKeys(items) {
+  const safe = k => String(k).replace(/[^\w.\-\/]+/g, "_").replace(/\.\.+/g, ".").toLowerCase(), taken = new Set(), out = new Map();
+  for (const { index, l } of items.slice().sort((a, b) => a.index - b.index)) {
+    const base = l.size ? `${l.sku}__${l.size}` : l.sku; let key = base;
+    if (taken.has(safe(key))) key = `${base}__${index}`;
+    taken.add(safe(key)); out.set(index, key);
+  }
+  return out;
+}
+
 async function main(argv, log = console.log) {
   const o = args(argv);
   if (!o.file) throw new Error('usage: node scripts/index-master.cjs "<master.ai>" --origin <sorter site> [--dry] [--passcode …]');
@@ -254,10 +268,11 @@ async function main(argv, log = console.log) {
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: g.charms.length, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [];
+  const keyOf = fileKeys(items);                                          // one file name per charm, whatever the server does to the characters
   const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
-    const key = l.size ? `${l.sku}__${l.size}` : l.sku;
+    const key = keyOf.get(index);
     if (progress.done[key]) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
     { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }
@@ -345,5 +360,5 @@ async function main(argv, log = console.log) {
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet, settleTwins, pinMap, thumbnailPng };
+module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });
