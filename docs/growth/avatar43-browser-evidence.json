@@ -1,0 +1,2077 @@
+{
+  "schema": 1,
+  "initialSourceCommit": "da870088d67a9e99850c0cd9e278d6cd4cee1241",
+  "initialDeploy": "6ac820c52dcc1900070c7aa1",
+  "scope": "actual browser UI; synthetic checkout and authored expression fixtures; no physical microphone or live Shopify write",
+  "latencyMeaning": "Elapsed harness times include automation overhead; incomplete and stale receipt entries are not latency evidence.",
+  "entries": [
+    {
+      "message": "Do you have butterfly earrings?",
+      "elapsedHarnessMs": 529,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Something small.Something you."
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.",
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [
+        {
+          "handle": "butterfly-cutout-stud-earrings-4",
+          "title": "Butterfly Cutout Stud Earrings"
+        }
+      ],
+      "reply": "Found 1 matches in 120 checked loaded listings. Published stock and prices are as of each product’s checked timestamp; adding requires a new check. The checked selection is displayed in the boutique.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+    },
+    {
+      "message": "What animal earrings do you have?",
+      "elapsedHarnessMs": 604,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Something small.Something you."
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.",
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [
+        {
+          "handle": "flying-eagle-stud-earrings-1",
+          "title": "Flying Eagle Stud Earrings"
+        },
+        {
+          "handle": "eating-otter-stud-earrings",
+          "title": "Eating Otter Stud Earrings"
+        },
+        {
+          "handle": "butterfly-cutout-stud-earrings-4",
+          "title": "Butterfly Cutout Stud Earrings"
+        },
+        {
+          "handle": "gecko-lizard-stud-earrings",
+          "title": "Gecko Lizard Stud Earrings"
+        },
+        {
+          "handle": "wolf-head-stud-earrings-2",
+          "title": "Wolf Head Stud Earrings"
+        },
+        {
+          "handle": "chinese-dragon-charm-stud-earrings",
+          "title": "Chinese Dragon Charm Stud Earrings"
+        }
+      ],
+      "reply": "Found 6 matches in 120 checked loaded listings. Published stock and prices are as of each product’s checked timestamp; adding requires a new check. The checked selection is displayed in the boutique.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+    },
+    {
+      "message": "More like that",
+      "elapsedHarnessMs": 935,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Something small.Something you."
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.",
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [
+        {
+          "handle": "flying-eagle-stud-earrings-1",
+          "title": "Flying Eagle Stud Earrings"
+        },
+        {
+          "handle": "eating-otter-stud-earrings",
+          "title": "Eating Otter Stud Earrings"
+        },
+        {
+          "handle": "butterfly-cutout-stud-earrings-4",
+          "title": "Butterfly Cutout Stud Earrings"
+        },
+        {
+          "handle": "gecko-lizard-stud-earrings",
+          "title": "Gecko Lizard Stud Earrings"
+        },
+        {
+          "handle": "wolf-head-stud-earrings-2",
+          "title": "Wolf Head Stud Earrings"
+        },
+        {
+          "handle": "chinese-dragon-charm-stud-earrings",
+          "title": "Chinese Dragon Charm Stud Earrings"
+        }
+      ],
+      "reply": "Which of the checked pieces shown here do you mean? Name or open one, and I can compare similar designs while keeping your material and budget.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+    },
+    {
+      "message": "Anything cheaper?",
+      "elapsedHarnessMs": 978,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Something small.Something you."
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.",
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [
+        {
+          "handle": "flying-eagle-stud-earrings-1",
+          "title": "Flying Eagle Stud Earrings"
+        },
+        {
+          "handle": "eating-otter-stud-earrings",
+          "title": "Eating Otter Stud Earrings"
+        },
+        {
+          "handle": "butterfly-cutout-stud-earrings-4",
+          "title": "Butterfly Cutout Stud Earrings"
+        },
+        {
+          "handle": "gecko-lizard-stud-earrings",
+          "title": "Gecko Lizard Stud Earrings"
+        },
+        {
+          "handle": "wolf-head-stud-earrings-2",
+          "title": "Wolf Head Stud Earrings"
+        },
+        {
+          "handle": "chinese-dragon-charm-stud-earrings",
+          "title": "Chinese Dragon Charm Stud Earrings"
+        }
+      ],
+      "reply": "Which piece or price should I compare against? These are low-priced available choices in the checked collection shown here: Eating Otter Stud Earrings: From USD 45.00 · Sterling Silver. Flying Eagle Stud Earrings: From USD 45.00 · Sterling Silver. I’ll confirm a lower price against your chosen piece in the same material and currency.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+    },
+    {
+      "message": "Not those",
+      "elapsedHarnessMs": 1022,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Something small.Something you."
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.",
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [
+        {
+          "handle": "flying-eagle-stud-earrings-1",
+          "title": "Flying Eagle Stud Earrings"
+        },
+        {
+          "handle": "eating-otter-stud-earrings",
+          "title": "Eating Otter Stud Earrings"
+        },
+        {
+          "handle": "butterfly-cutout-stud-earrings-4",
+          "title": "Butterfly Cutout Stud Earrings"
+        },
+        {
+          "handle": "gecko-lizard-stud-earrings",
+          "title": "Gecko Lizard Stud Earrings"
+        },
+        {
+          "handle": "wolf-head-stud-earrings-2",
+          "title": "Wolf Head Stud Earrings"
+        },
+        {
+          "handle": "chinese-dragon-charm-stud-earrings",
+          "title": "Chinese Dragon Charm Stud Earrings"
+        }
+      ],
+      "reply": "Let’s try a different direction. What would you prefer instead—a different motif, size, or material? I’ll keep your current collection and budget while we narrow it down.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+    },
+    {
+      "message": "What am I looking at?",
+      "elapsedHarnessMs": 569,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.Help me chooseNo thanks",
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Following your request…",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4",
+      "excludedFromAcceptance": true,
+      "reason": "Intermediate receipt; request had not completed."
+    },
+    {
+      "message": "Help me choose this piece",
+      "elapsedHarnessMs": 1271,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.Sterling SilverFrom $48.00 USDAbout Sterling SilverSterling silver is a silver alloy. It can develop tarnish over time.FTC: Precious-metal jewelryCanadian Conservation Institute: Silver tarnish14k Gold FilledFrom $52.00 USDAbout 14k Gold FilledGold-filled has a mechanically applied gold layer over a base metal.FTC: Precious-metal jewelryHelp me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The Metal Choice menu is open. Next, choose Metal Choice — Sterling Silver or 14k Gold Filled or 14k Rose Gold Filled or 10k Solid Gold.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Add this piece to my cart",
+      "elapsedHarnessMs": 767,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.Sterling SilverFrom $48.00 USDAbout Sterling SilverSterling silver is a silver alloy. It can develop tarnish over time.FTC: Precious-metal jewelryCanadian Conservation Institute: Silver tarnish14k Gold FilledFrom $52.00 USDAbout 14k Gold FilledGold-filled has a mechanically applied gold layer over a base metal.FTC: Precious-metal jewelryHelp me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "Preparing product knowledge · 118 of 120",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Next, choose Metal Choice — Sterling Silver or 14k Gold Filled or 14k Rose Gold Filled or 10k Solid Gold.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Highlight the options for this piece",
+      "elapsedHarnessMs": 888,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.Sterling SilverFrom $48.00 USDAbout Sterling SilverSterling silver is a silver alloy. It can develop tarnish over time.FTC: Precious-metal jewelryCanadian Conservation Institute: Silver tarnish14k Gold FilledFrom $52.00 USDAbout 14k Gold FilledGold-filled has a mechanically applied gold layer over a base metal.FTC: Precious-metal jewelryHelp me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "Preparing product knowledge · 118 of 120",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The options section is highlighted and in view.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Select Sterling Silver for Metal Choice then set quantity to 2 then highlight the price",
+      "elapsedHarnessMs": 358,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseAdd to test bagNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Sterling Silver · quantity 1 · $48.00 USD item subtotal. Ready when you are. Say “add it to my bag” when you are ready. Sterling Silver · quantity 2 · $96.00 USD item subtotal. Ready when you are. The price section is highlighted and in view.",
+      "selected": "Sterling Silver · $48.00 USD",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Add this exact piece to my cart",
+      "elapsedHarnessMs": 487,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseAdd to test bagNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Name the exact current piece and quantity before adding it.",
+      "selected": "Sterling Silver · $48.00 USD",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Take me to my cart",
+      "elapsedHarnessMs": 871,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review.No thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Your session-only test bag is open.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Add this piece to my cart",
+      "elapsedHarnessMs": 2389,
+      "bagButton": "Bag 2",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseAdd to test bagNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Added Butterfly Cutout Stud Earrings · Sterling Silver · quantity 2 to your test bag. $96.00 USD item subtotal.",
+      "selected": "Sterling Silver · $48.00 USD",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Take me to my cart",
+      "elapsedHarnessMs": 360,
+      "bagButton": "Bag 2",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Your session-only test bag is open.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Set Butterfly Cutout Stud Earrings quantity to 3 in my cart",
+      "elapsedHarnessMs": 1519,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The exact test-bag line quantity is updated. This does not reserve shop inventory.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Remove Butterfly Cutout Stud Earrings from my cart",
+      "elapsedHarnessMs": 1002,
+      "bagButton": "Bag 0",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review.No thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "That exact line was removed from your test bag.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Undo my last change",
+      "elapsedHarnessMs": 1745,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Your last bag remove change is undone. Your earlier choice is visible.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Open checkout",
+      "elapsedHarnessMs": 1454,
+      "bagButton": "Bag 3",
+      "headings": [
+        "A thoughtful finishing touch."
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+      "helperVisible": false,
+      "inventory": "Preparing product knowledge · 0 of 0",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The checked test checkout is ready. No real order or payment is possible.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+    },
+    {
+      "message": "Show checkout shipping step then select express shipping then show checkout confirmation step",
+      "elapsedHarnessMs": 3752,
+      "bagButton": "Bag 3",
+      "headings": [
+        "A thoughtful finishing touch."
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+      "helperVisible": false,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The shipping step of the test checkout is in view. Demo express is selected. The shop still confirms real shipping availability, rates and timing. The confirm step of the test checkout is in view.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+    },
+    {
+      "message": "Complete test checkout",
+      "elapsedHarnessMs": 4157,
+      "bagButton": "Bag 3",
+      "headings": [
+        "A thoughtful finishing touch."
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+      "helperVisible": false,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Review the simulation, tick its acknowledgement and click Complete test checkout yourself. No order or payment is possible.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+    },
+    {
+      "kind": "manual-test-checkout",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1",
+      "visibleReceipt": "← Return to test bagA COMPLETE SIMULATION\nA thoughtful finishing touch.\n\nTry the checkout experience without creating an order or providing payment, contact or address details.\n\nReview exact pieces\nDemo shipping & gifts\nConfirm the simulation\nYour exact choices\n\nButterfly Cutout Stud Earrings · Sterling Silver · quantity 3\n\n$144.00 USD\n\nShipping & gifting\n\nProduction normally takes 2–3 days according to Brites. Shipping choices, shipping time and final charges are confirmed by the shop.\n\nThese two shipping labels demonstrate the interface only. They are not live services, rates or delivery promises.\n\nDemo standard\nDemo express\n\nNo gift wrapping enquiry saved.\n\nNo gift package enquiry saved.\n\nNo test gift note saved.\n\nAdjust gift preferences\nComplete the test only\nI understand this completes a test only. No order, payment or message will be sent.\nComplete test checkout\nTHE BRITES MAKING & GIFTING EXPERIENCE\nA little extra thought.\n\nThe Brites studio says production takes 2–3 days. Shipping transit is separate; a custom design and a requested deadline need confirmation with the studio.\n\nThe Brites studio says its materials are ethically sourced from the United States. The exact materials and finishes for a piece come from that piece’s published options and description. Merchant-provided guidance; not an independent sourcing certification.\n\nThe studio offers a variety of shipping options. Available services, prices and transit estimates depend on the destination and are confirmed at checkout.\n\nConfirm current production guidance\n\nThe studio’s current guidance is 2–3 days for production.\n\nThe published shipping policy lists standard production of 3–5 business days. Confirm the current timing and any expedited option with the studio before ordering.\n\nShipping policy ↗\nConfirm current sourcing guidance\n\nThe studio’s current guidance says its materials are ethically sourced from the United States.\n\nThe published storefront describes materials sourced from the United States and Italy. Confirm the current source for the selected piece with the studio.\n\nBrites storefront ↗\nMake it a gift\n\nThe studio offers gift packages, gift notes and gift wrapping. Confirm the package, availability and any charge for the selected order.\n\nThis test view saves your preferences only.\n\nAsk for gift wrapping\nAsk about a gift package\nYour test gift note\nSave test gift preferences\nMake it yours\n\nThe studio can help with customization, engraving and new pieces based on a customer’s design. Compatibility, design requirements, cost and timing need studio review for the selected piece.\n\nYour test design idea\nSave test design brief\n\nThese notes stay in this browser session. No contact, address, payment or upload information is requested.\n\nPublished offers\n\nOnly an offer currently published by Brites will be shown here. An offer’s eligibility and final discount are confirmed in the real shop.\n\nThe storefront publishes free shipping on orders over $75. Checkout confirms currency, service and destination eligibility.\n\nPublished offer · eligibility, expiry and any combination with other discounts must be confirmed at checkout.\n\nBrites storefront ↗\n\nThe storefront publishes code BRITES10 for 10% off. Checkout confirms the applicable terms.\n\nPublished offer · eligibility, expiry and any combination with other discounts must be confirmed at checkout.\n\nBrites storefront ↗\n\nThe storefront publishes a newsletter signup offer of 20% off a first order, with code BRITES20 shown after signup. Checkout confirms the applicable terms.\n\nPublished offer · eligibility, expiry and any combination with other discounts must be confirmed at checkout.\n\nBrites storefront ↗\nTEST COMPLETE\nYour selection came together.\n\nThis was a local checkout simulation. Your test bag is preserved. No order was placed, no payment was taken and no details were sent."
+    },
+    {
+      "message": "Can you suggest a matching necklace for this piece?",
+      "elapsedHarnessMs": 828,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found a checked matching necklace for this design.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "I haven’t found a checked matching necklace for this design.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Show me similar earrings",
+      "elapsedHarnessMs": 623,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "More like that",
+      "elapsedHarnessMs": 891,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Not those",
+      "elapsedHarnessMs": 887,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Help me choose",
+      "elapsedHarnessMs": 767,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.Sterling SilverFrom $48.00 USDAbout Sterling SilverSterling silver is a silver alloy. It can develop tarnish over time.FTC: Precious-metal jewelryCanadian Conservation Institute: Silver tarnish14k Gold FilledFrom $52.00 USDAbout 14k Gold FilledGold-filled has a mechanically applied gold layer over a base metal.FTC: Precious-metal jewelryHelp me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "Preparing product knowledge · 114 of 120",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The Metal Choice menu is open. Next, choose Metal Choice — Sterling Silver or 14k Gold Filled or 14k Rose Gold Filled or 10k Solid Gold.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Show next image then enlarge the image of this piece",
+      "elapsedHarnessMs": 915,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "Let’s choose Metal Choice for Butterfly Cutout Stud Earrings.Sterling SilverFrom $48.00 USDAbout Sterling SilverSterling silver is a silver alloy. It can develop tarnish over time.FTC: Precious-metal jewelryCanadian Conservation Institute: Silver tarnish14k Gold FilledFrom $52.00 USDAbout 14k Gold FilledGold-filled has a mechanically applied gold layer over a base metal.FTC: Precious-metal jewelryHelp me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "Preparing product knowledge · 114 of 120",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Product image 2 is shown. The live product image is enlarged.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Take me to my cart",
+      "elapsedHarnessMs": 1167,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Your session-only test bag is open.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Open checkout then show checkout shipping step then select express shipping",
+      "elapsedHarnessMs": 1958,
+      "bagButton": "Bag 3",
+      "headings": [
+        "A thoughtful finishing touch."
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+      "helperVisible": false,
+      "inventory": "Preparing product knowledge · 0 of 0",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "The checked test checkout is ready. No real order or payment is possible. The shipping step of the test checkout is in view. Demo express is selected. The shop still confirms real shipping availability, rates and timing.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+    },
+    {
+      "message": "Complete test checkout",
+      "elapsedHarnessMs": 1003,
+      "bagButton": "Bag 3",
+      "headings": [
+        "A thoughtful finishing touch."
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+      "helperVisible": false,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Review the simulation, tick its acknowledgement and click Complete test checkout yourself. No order or payment is possible.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+    },
+    {
+      "check": "checkout_acknowledgement_and_explicit_click",
+      "completed": true,
+      "cartQuantity": 3,
+      "subtotalUSD": 144,
+      "orderPlaced": false,
+      "nativeMicUsed": false
+    },
+    {
+      "message": "Take me to my cart",
+      "elapsedHarnessMs": 1164,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Your sandbox bag"
+      ],
+      "helper": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Your session-only test bag is open.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+    },
+    {
+      "message": "Show me a matching necklace",
+      "elapsedHarnessMs": 1224,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found a checked matching necklace for this design.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "I haven’t found a checked matching necklace for this design.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "More like this",
+      "reply": "These available pieces connect with animal.",
+      "currentProduct": "Butterfly Cutout Stud Earrings",
+      "classification": "browser defect: remote old-search fallback; correction pending"
+    },
+    {
+      "message": "Not those",
+      "elapsedHarnessMs": 843,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Anything cheaper?",
+      "elapsedHarnessMs": 908,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found a confirmed lower-priced alternative in this material and currency.Help me chooseNo thanks",
+      "helperVisible": true,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "I haven’t found a confirmed lower-priced alternative in this material and currency.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Show next image then enlarge the image of this piece",
+      "elapsedHarnessMs": 1025,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found a confirmed lower-priced alternative in this material and currency.",
+      "helperVisible": false,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Product image 2 is shown. The live product image is enlarged.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+    },
+    {
+      "message": "Close the enlarged image then show me all pieces",
+      "elapsedHarnessMs": 771,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Butterfly Cutout Stud Earrings"
+      ],
+      "helper": "I haven’t found a confirmed lower-priced alternative in this material and currency.",
+      "helperVisible": false,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [],
+      "reply": "Product image 2 is shown. The live product image is enlarged.",
+      "selected": "Select an option…",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4",
+      "excludedFromAcceptance": true,
+      "reason": "The console was covered by the image viewer; stale prior receipt. The visible close control was used before the next verified request."
+    },
+    {
+      "message": "Show me all pieces",
+      "elapsedHarnessMs": 1127,
+      "bagButton": "Bag 3",
+      "headings": [
+        "Something small.Something you."
+      ],
+      "helper": "I haven’t found a confirmed lower-priced alternative in this material and currency.",
+      "helperVisible": false,
+      "inventory": "120 products ready for your guide",
+      "openMenus": [],
+      "pieces": [
+        {
+          "handle": "snowshoe-winter-sport-charm",
+          "title": "Snowshoe Winter Sport Charm"
+        },
+        {
+          "handle": "celestial-moon-star-necklace-charm",
+          "title": "Celestial Moon Star Necklace Charm"
+        },
+        {
+          "handle": "sea-otter-necklace-charm",
+          "title": "Sea Otter Necklace Charm"
+        },
+        {
+          "handle": "dainty-rhinoceros-necklace-charm",
+          "title": "Dainty Rhinoceros Necklace Charm"
+        },
+        {
+          "handle": "texas-flag-necklace-charm",
+          "title": "Texas Flag Necklace Charm"
+        },
+        {
+          "handle": "leaping-deer-necklace-charm",
+          "title": "Leaping Deer Necklace Charm"
+        }
+      ],
+      "reply": "The 120 checked listings include necklaces, earrings, charms. I can show a theme, compare materials, or help you put a matching pair together. The checked selection is displayed in the boutique.",
+      "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+    },
+    {
+      "check": "rendered_fallback_thinking",
+      "renderer": "animated_svg_2d",
+      "initialBrows": [
+        "M115 91.50Q130 86.80 145 90.62",
+        "M175 89.95Q190 85.46 205 89.48"
+      ],
+      "laterBrows": [
+        "M115 91.53Q130 86.80 145 90.66",
+        "M175 90.00Q190 85.48 205 89.54"
+      ],
+      "pauseRetainsFace": true,
+      "gpuVerified": false,
+      "nativeSpeechVerified": false
+    },
+    {
+      "check": "reduced_motion_fixture",
+      "results": [
+        {
+          "result": "source-check-passed-visible-coverage-incomplete",
+          "failedInvariants": [],
+          "invariants": {
+            "beforePlaybackNoSpeechCue": true,
+            "noSyntheticPaidCalls": true,
+            "closedCurveWithoutOpeningEllipse": true,
+            "quietSignalClearsRipple": true,
+            "productSelectionKeepsVoiceSignal": null,
+            "interruptionStopsMouth": null,
+            "listeningMouthClosed": null,
+            "analysisUnavailableNoFakeMouth": null,
+            "reducedNoMovingMouth": true,
+            "finalInquiryCueReached": null,
+            "finalOutputRmsZero": true
+          },
+          "rendererMode": "fallback",
+          "providerCalls": 0,
+          "microphoneRequests": 0,
+          "visibleTrajectoryCoverage": "incomplete-sparse-observations"
+        }
+      ]
+    },
+    {
+      "check": "held_memorial_support_pose",
+      "fixture": "authored synthetic input/output",
+      "controllerCue": {
+        "kind": "support",
+        "intensity": 0.369
+      },
+      "facePose": {
+        "faceBrowLift": 0.413,
+        "faceBrowTilt": -0.068,
+        "eyeSmile": 0.098,
+        "eyeOpen": 1.08,
+        "eyeRoundness": 1.005,
+        "eyeAsymmetry": 0,
+        "smileCurve": 0.369,
+        "cheekGlow": 0.436,
+        "mouthOpen": 0,
+        "mouthCurve": 0.01,
+        "speechEnergy": 0.12,
+        "inputEnergy": 0,
+        "headRoll": -0.006
+      },
+      "providerCalls": 0,
+      "microphoneRequests": 0,
+      "nativeSpeechVerified": false
+    }
+  ],
+  "correctedPublications": [
+    {
+      "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+      "tree": "66fdc0edc9c84b71db9a056352827390799e8864",
+      "deployId": "6ac82b26a7a21300079f8497",
+      "state": "ready",
+      "publishedAt": "2026-10-08T23:46:17.048Z",
+      "entries": [
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "What animal earrings do you have?",
+          "elapsedHarnessMs": 1375,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Something small.Something you."
+          ],
+          "help": "",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [
+            {
+              "handle": "eating-otter-stud-earrings",
+              "title": "Eating Otter Stud Earrings"
+            },
+            {
+              "handle": "flying-eagle-stud-earrings-1",
+              "title": "Flying Eagle Stud Earrings"
+            },
+            {
+              "handle": "butterfly-cutout-stud-earrings-4",
+              "title": "Butterfly Cutout Stud Earrings"
+            },
+            {
+              "handle": "sea-otter-charm-stud-earrings-1",
+              "title": "Sea Otter Charm Stud Earrings"
+            },
+            {
+              "handle": "chinese-dragon-charm-stud-earrings",
+              "title": "Chinese Dragon Charm Stud Earrings"
+            },
+            {
+              "handle": "gecko-lizard-stud-earrings",
+              "title": "Gecko Lizard Stud Earrings"
+            }
+          ],
+          "reply": "Found 6 matches in 120 checked loaded listings. Published stock and prices are as of each product’s checked timestamp; adding requires a new check. The checked selection is displayed in the boutique.",
+          "summary": "6 of 6 loaded pieces matching “show animal earrings” · earrings",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Manual Silver selection and quantity 2 after older animal discovery",
+          "bag": "Bag 3",
+          "cards": 0,
+          "choices": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            }
+          ],
+          "help": "Sterling Silver · quantity 1 · item subtotal $48.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "optionsOpen": "false",
+          "price": "$48.00 USD",
+          "quantity": "2",
+          "selected": "Sterling Silver · $48.00 USD",
+          "title": "Butterfly Cutout Stud Earrings",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4",
+          "excludedFromAcceptance": "Native quantity edit still focused; change committed on blur in next receipt."
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Committed manual exact Silver quantity 2",
+          "bag": "Bag 3",
+          "cards": 0,
+          "choices": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            }
+          ],
+          "help": "Sterling Silver · quantity 1 · item subtotal $48.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "optionsOpen": "false",
+          "price": "$48.00 USD",
+          "quantity": "2",
+          "selected": "Sterling Silver · $48.00 USD",
+          "title": "Butterfly Cutout Stud Earrings",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4",
+          "excludedFromAcceptance": "Quantity input showed 2 while the guide subtotal had not yet settled. Subsequent literal price and exact-add receipts establish committed quantity 2 / USD96."
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "What am I looking at?",
+          "elapsedHarnessMs": 455,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "Butterfly Cutout Stud Earrings. Light and whimsical, these butterfly cutout stud earrings bring a nature-inspired touch to everyday style. A sweet choice for gifting or adding a little charm to your own collection. Available in your choice of metals and handcrafted in small batches, these studs are made with care for a polished, wearable finish.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "What size is this piece?",
+          "elapsedHarnessMs": 1000,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "Butterfly Cutout Stud Earrings. The published details do not confirm the piece’s measurements. I can help you ask the studio for the exact size.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "How much is this?",
+          "elapsedHarnessMs": 1012,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "Butterfly Cutout Stud Earrings. Your selected Sterling Silver is USD 48.00 each; quantity 2 totals USD 96.00. Item prices exclude shipping and any applicable taxes.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "What metals can I choose?",
+          "elapsedHarnessMs": 1018,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "Butterfly Cutout Stud Earrings. Metal Choice: Sterling Silver; 14k Gold Filled; 14k Rose Gold Filled; 10k Solid Gold; 14k Solid Gold.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "All literal current questions retain exact Silver quantity 2 and bag 3",
+          "bag": "Bag 3",
+          "cards": 0,
+          "choices": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            }
+          ],
+          "help": "Sterling Silver · quantity 2 · item subtotal $96.00 USD. Add it when you’re happy with your choices.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "optionsOpen": "false",
+          "price": "$48.00 USD",
+          "quantity": "2",
+          "selected": "Sterling Silver · $48.00 USD",
+          "title": "Butterfly Cutout Stud Earrings",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "A matching necklace?",
+          "elapsedHarnessMs": 3411,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "I haven’t found checked matching necklaces for this design.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "I haven’t found checked matching necklaces for this design.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "More like this",
+          "elapsedHarnessMs": 734,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Not those",
+          "elapsedHarnessMs": 1034,
+          "bagButton": "Bag 3",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Current-product matching, alternatives and rejection preserve Silver quantity 2",
+          "bag": "Bag 3",
+          "cards": 0,
+          "choices": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            }
+          ],
+          "help": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "optionsOpen": "false",
+          "price": "$48.00 USD",
+          "quantity": "2",
+          "selected": "Sterling Silver · $48.00 USD",
+          "title": "Butterfly Cutout Stud Earrings",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Add this exact piece to my cart",
+          "elapsedHarnessMs": 2202,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Butterfly Cutout Stud Earrings"
+          ],
+          "help": "After excluding those pieces, I haven’t found another checked alternative that shares this piece’s motif within your current preferences. We can keep this selection or adjust a preference.Help me chooseMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "Added Butterfly Cutout Stud Earrings · Sterling Silver · quantity 2 to your test bag. $96.00 USD item subtotal.",
+          "selected": "Sterling Silver · $48.00 USD",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=butterfly-cutout-stud-earrings-4"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Take me to my cart",
+          "elapsedHarnessMs": 879,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Your sandbox bag"
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "Your session-only test bag is open.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Show me all pieces",
+          "elapsedHarnessMs": 1324,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Something small.Something you."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [
+            {
+              "handle": "custom-name-necklace",
+              "title": "Script Name Necklace"
+            },
+            {
+              "handle": "strawberry-charm-beady-necklace-1",
+              "title": "Strawberry Charm Beady Necklace"
+            },
+            {
+              "handle": "treble-clef-charm-stud-earrings",
+              "title": "Treble Clef Charm Stud Earrings"
+            },
+            {
+              "handle": "gold-hoop-earrings",
+              "title": "Gold Huggie Hoop Earrings"
+            },
+            {
+              "handle": "snowshoe-winter-sport-charm",
+              "title": "Snowshoe Winter Sport Charm"
+            },
+            {
+              "handle": "lowercase-initial",
+              "title": "Lowercase Initial Necklace"
+            },
+            {
+              "handle": "padlock-charm-beady-necklace",
+              "title": "Padlock Charm Beady Necklace"
+            },
+            {
+              "handle": "rhino-profile-stud-earrings",
+              "title": "Rhino Profile Stud Earrings"
+            },
+            {
+              "handle": "banana-bunch-charm",
+              "title": "Banana Bunch Hoop Earring"
+            },
+            {
+              "handle": "heart-flame-necklace-charm-1",
+              "title": "Heart Flame Necklace Charm"
+            },
+            {
+              "handle": "team-charm-necklace-for-everyday-layering",
+              "title": "Cable Chain Necklace"
+            },
+            {
+              "handle": "microphone-charm-beady-necklace-1",
+              "title": "Microphone Charm Beady Necklace"
+            },
+            {
+              "handle": "butterfly-cutout-stud-earrings-4",
+              "title": "Butterfly Cutout Stud Earrings"
+            },
+            {
+              "handle": "huggie-hoop-earrings",
+              "title": "Flower Huggie Hoop Earrings"
+            },
+            {
+              "handle": "celestial-moon-star-necklace-charm",
+              "title": "Celestial Moon Star Necklace Charm"
+            },
+            {
+              "handle": "tiny-moon-necklace",
+              "title": "Crescent Moon Pendant Necklace"
+            },
+            {
+              "handle": "sunburst-medallion-charm-necklace",
+              "title": "Cheerleader Pom Pom Beady Necklace"
+            },
+            {
+              "handle": "fox-hunter-stud-earrings",
+              "title": "Fox Hunter Stud Earrings"
+            },
+            {
+              "handle": "mini-hawk-huggie",
+              "title": "Hawk Pendant Huggie Hoop Earrings"
+            },
+            {
+              "handle": "sea-otter-necklace-charm",
+              "title": "Sea Otter Necklace Charm"
+            },
+            {
+              "handle": "leaf-necklace-dainty",
+              "title": "Leaf Pendant Cable Necklace"
+            },
+            {
+              "handle": "film-reel-beady-necklace",
+              "title": "Film Reel Beady Necklace"
+            },
+            {
+              "handle": "sea-otter-charm-stud-earrings-1",
+              "title": "Sea Otter Charm Stud Earrings"
+            },
+            {
+              "handle": "hand-heart-charm",
+              "title": "Hand Heart Hoop Earrings"
+            }
+          ],
+          "reply": "The 120 checked listings include necklaces, earrings, charms. I can show a theme, compare materials, or help you put a matching pair together. The full loaded collection is ready.",
+          "summary": "24 of 120 loaded pieces",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Full browse restored to 120 identities with 24 displayed and bag 5",
+          "bag": "Bag 5",
+          "cards": 24,
+          "choices": [],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "summary": "24 of 120 loaded pieces",
+          "title": "Something small.Something you.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Native Explore more displays 48 of 120 without changing bag 5",
+          "bag": "Bag 5",
+          "cards": 48,
+          "choices": [],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "summary": "48 of 120 loaded pieces",
+          "title": "Something small.Something you.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "What do you have?",
+          "elapsedHarnessMs": 4805,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Something small.Something you."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [
+            {
+              "handle": "snowshoe-winter-sport-charm",
+              "title": "Snowshoe Winter Sport Charm"
+            },
+            {
+              "handle": "celestial-moon-star-necklace-charm",
+              "title": "Celestial Moon Star Necklace Charm"
+            },
+            {
+              "handle": "sea-otter-necklace-charm",
+              "title": "Sea Otter Necklace Charm"
+            },
+            {
+              "handle": "dainty-rhinoceros-necklace-charm",
+              "title": "Dainty Rhinoceros Necklace Charm"
+            },
+            {
+              "handle": "baby-elephant-necklace-charm-4",
+              "title": "Baby Elephant Necklace Charm"
+            },
+            {
+              "handle": "dainty-squirrel-necklace-charm",
+              "title": "Dainty Squirrel Necklace Charm"
+            }
+          ],
+          "reply": "The 120 checked listings include necklaces, earrings, charms. I can show a theme, compare materials, or help you put a matching pair together. The checked selection is displayed in the boutique.",
+          "summary": "6 of 6 loaded pieces matching “show all pieces”",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Show me all pieces",
+          "elapsedHarnessMs": 3044,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Something small.Something you."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [
+            {
+              "handle": "custom-name-necklace",
+              "title": "Script Name Necklace"
+            },
+            {
+              "handle": "strawberry-charm-beady-necklace-1",
+              "title": "Strawberry Charm Beady Necklace"
+            },
+            {
+              "handle": "treble-clef-charm-stud-earrings",
+              "title": "Treble Clef Charm Stud Earrings"
+            },
+            {
+              "handle": "gold-hoop-earrings",
+              "title": "Gold Huggie Hoop Earrings"
+            },
+            {
+              "handle": "snowshoe-winter-sport-charm",
+              "title": "Snowshoe Winter Sport Charm"
+            },
+            {
+              "handle": "lowercase-initial",
+              "title": "Lowercase Initial Necklace"
+            },
+            {
+              "handle": "padlock-charm-beady-necklace",
+              "title": "Padlock Charm Beady Necklace"
+            },
+            {
+              "handle": "rhino-profile-stud-earrings",
+              "title": "Rhino Profile Stud Earrings"
+            },
+            {
+              "handle": "banana-bunch-charm",
+              "title": "Banana Bunch Hoop Earring"
+            },
+            {
+              "handle": "heart-flame-necklace-charm-1",
+              "title": "Heart Flame Necklace Charm"
+            },
+            {
+              "handle": "team-charm-necklace-for-everyday-layering",
+              "title": "Cable Chain Necklace"
+            },
+            {
+              "handle": "microphone-charm-beady-necklace-1",
+              "title": "Microphone Charm Beady Necklace"
+            },
+            {
+              "handle": "butterfly-cutout-stud-earrings-4",
+              "title": "Butterfly Cutout Stud Earrings"
+            },
+            {
+              "handle": "huggie-hoop-earrings",
+              "title": "Flower Huggie Hoop Earrings"
+            },
+            {
+              "handle": "celestial-moon-star-necklace-charm",
+              "title": "Celestial Moon Star Necklace Charm"
+            },
+            {
+              "handle": "tiny-moon-necklace",
+              "title": "Crescent Moon Pendant Necklace"
+            },
+            {
+              "handle": "sunburst-medallion-charm-necklace",
+              "title": "Cheerleader Pom Pom Beady Necklace"
+            },
+            {
+              "handle": "fox-hunter-stud-earrings",
+              "title": "Fox Hunter Stud Earrings"
+            },
+            {
+              "handle": "mini-hawk-huggie",
+              "title": "Hawk Pendant Huggie Hoop Earrings"
+            },
+            {
+              "handle": "sea-otter-necklace-charm",
+              "title": "Sea Otter Necklace Charm"
+            },
+            {
+              "handle": "leaf-necklace-dainty",
+              "title": "Leaf Pendant Cable Necklace"
+            },
+            {
+              "handle": "film-reel-beady-necklace",
+              "title": "Film Reel Beady Necklace"
+            },
+            {
+              "handle": "sea-otter-charm-stud-earrings-1",
+              "title": "Sea Otter Charm Stud Earrings"
+            },
+            {
+              "handle": "hand-heart-charm",
+              "title": "Hand Heart Hoop Earrings"
+            }
+          ],
+          "reply": "The 120 checked listings include necklaces, earrings, charms. I can show a theme, compare materials, or help you put a matching pair together. The full loaded collection is ready.",
+          "summary": "24 of 120 loaded pieces",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Settled manual entry into ordinary Sea Otter charm after catalogue paging",
+          "bag": "Bag 5",
+          "cards": 0,
+          "choices": [],
+          "help": "Let’s choose Metal Choice for Sea Otter Necklace Charm.Help me chooseSimilar piecesNo thanks",
+          "helpHidden": false,
+          "optionsOpen": "false",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "No thanks",
+          "elapsedHarnessMs": 1077,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Sea Otter Necklace Charm"
+          ],
+          "help": "Let’s choose Metal Choice for Sea Otter Necklace Charm.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "Of course—take your time.",
+          "selected": "Select an option…",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "What earrings would go with this?",
+          "elapsedHarnessMs": 1008,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Sea Otter Necklace Charm"
+          ],
+          "help": "I haven’t found checked matching earrings for this design.Help me chooseSimilar piecesNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "optionsOpen": "false",
+          "pieces": [],
+          "reply": "I haven’t found checked matching earrings for this design.",
+          "selected": "Select an option…",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm",
+          "status": "historical failure; corrected and observed in S2"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Ordinary charm pairing after dismissal preserves current product and bag 5",
+          "bag": "Bag 5",
+          "cards": 0,
+          "choices": [],
+          "help": "I haven’t found checked matching earrings for this design.Help me chooseSimilar piecesNo thanks",
+          "helpHidden": false,
+          "optionsOpen": "false",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Actual 360×720 compact Metal menu geometry",
+          "assist": "true",
+          "bag": "Bag 0",
+          "bodyWidth": 345,
+          "guideChoices": [
+            {
+              "rect": {
+                "bottom": 642.59375,
+                "height": 44,
+                "width": 90.90625,
+                "x": 28,
+                "y": 598.59375
+              },
+              "text": "Sterling Silver"
+            },
+            {
+              "rect": {
+                "bottom": 642.59375,
+                "height": 44,
+                "width": 95.640625,
+                "x": 140.046875,
+                "y": 598.59375
+              },
+              "text": "14k Gold Filled"
+            },
+            {
+              "rect": {
+                "bottom": 729.59375,
+                "height": 44,
+                "width": 103.03125,
+                "x": 28,
+                "y": 685.59375
+              },
+              "text": "Help me choose"
+            },
+            {
+              "rect": {
+                "bottom": 729.59375,
+                "height": 44,
+                "width": 90.984375,
+                "x": 137.03125,
+                "y": 685.59375
+              },
+              "text": "Similar pieces"
+            }
+          ],
+          "input": {
+            "bottom": 676.5,
+            "height": 44,
+            "width": 236.84375,
+            "x": 19,
+            "y": 632.5
+          },
+          "inputFont": "16px",
+          "nativeChoices": [
+            {
+              "hit": "Sterling Silver",
+              "rect": {
+                "bottom": 168.40625,
+                "height": 46.140625,
+                "width": 140.5,
+                "x": 28,
+                "y": 122.265625
+              },
+              "value": "Sterling Silver"
+            },
+            {
+              "hit": "14k Gold Filled",
+              "rect": {
+                "bottom": 168.40625,
+                "height": 46.140625,
+                "width": 140.5,
+                "x": 176.5,
+                "y": 122.265625
+              },
+              "value": "14k Gold Filled"
+            },
+            {
+              "hit": "14k Solid Gold",
+              "rect": {
+                "bottom": 222.546875,
+                "height": 46.140625,
+                "width": 140.5,
+                "x": 28,
+                "y": 176.40625
+              },
+              "value": "14k Solid Gold"
+            },
+            {
+              "rect": {
+                "bottom": 0,
+                "height": 0,
+                "width": 0,
+                "x": 0,
+                "y": 0
+              },
+              "value": "8.5mm"
+            },
+            {
+              "rect": {
+                "bottom": 0,
+                "height": 0,
+                "width": 0,
+                "x": 0,
+                "y": 0
+              },
+              "value": "11mm"
+            }
+          ],
+          "panel": {
+            "bottom": 712,
+            "height": 388.796875,
+            "width": 329,
+            "x": 8,
+            "y": 323.203125
+          },
+          "quantity": "1",
+          "scrollWidth": 345,
+          "selection": "",
+          "send": {
+            "bottom": 676.5,
+            "height": 44,
+            "width": 52.15625,
+            "x": 263.84375,
+            "y": 632.5
+          },
+          "width": 345
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Mobile next size menu visibly above compact guide, Silver retained",
+          "assist": "true",
+          "choices": [
+            {
+              "bottom": 207.40625,
+              "height": 46.140625,
+              "hit": "8.5mm",
+              "top": 161.265625,
+              "value": "8.5mm"
+            },
+            {
+              "bottom": 207.40625,
+              "height": 46.140625,
+              "hit": "11mm",
+              "top": 161.265625,
+              "value": "11mm"
+            }
+          ],
+          "panelTop": 323.203125,
+          "quantity": "1",
+          "scrollWidth": 345,
+          "selectedValues": [
+            "Sterling Silver"
+          ],
+          "width": 345
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Mobile exact Silver/8.5mm/quantity1 addition completed; keyboard native activation",
+          "assist": "true",
+          "bag": "Bag 1",
+          "caption": "Your AI gift guideAdded Gold Huggie Hoop Earrings · Sterling Silver / 8.5mm · quantity 1 to your test bag. $51.00 USD item subtotal.",
+          "quantity": "1",
+          "receipt": "Added Gold Huggie Hoop Earrings · Sterling Silver / 8.5mm · quantity 1 to your test bag. $51.00 USD item subtotal.",
+          "selected": "Sterling Silver / 8.5mm · $51.00 USD",
+          "title": "Gold Huggie Hoop Earrings"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Mobile native menu close restores full guide without selection/cart changes",
+          "assist": "false",
+          "bag": "Bag 1",
+          "menuExpanded": "false",
+          "panel": {
+            "bottom": 655,
+            "height": 638,
+            "top": 17
+          },
+          "quantity": "1",
+          "scrollWidth": 345,
+          "selected": "Sterling Silver / 8.5mm · $51.00 USD",
+          "width": 345
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Independent new-tab ordinary charm matching without prior saved conversation",
+          "bag": "Bag 0",
+          "help": "I have 2 pieces that share this design’s motif for a possible pairing.Eating Otter Stud EarringsFrom USD 45.00 · Sterling SilverShares the otter motif with this piece · A suggested pairing; each piece is sold separatelyView pieceSea Otter Charm Stud EarringsFrom USD 48.00 · Sterling SilverShares the otter motif with this piece · A suggested pairing; each piece is sold separatelyView pieceNo thanks",
+          "inventory": "Preparing product knowledge · 102 of 120",
+          "quantity": "1",
+          "reply": "I have 2 pieces that share this design’s motif for a possible pairing. Eating Otter Stud Earrings: From USD 45.00 · Sterling Silver. Shares the otter motif with this piece · A suggested pairing; each piece is sold separately. Sea Otter Charm Stud Earrings: From USD 48.00 · Sterling Silver. Shares the otter motif with this piece · A suggested pairing; each piece is sold separately.",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Take me to my cart",
+          "elapsedHarnessMs": 448,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Your sandbox bag"
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "Your session-only test bag is open.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Open checkout",
+          "elapsedHarnessMs": 1741,
+          "bagButton": "Bag 5",
+          "headings": [
+            "Your sandbox bag"
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.Continue to checkoutNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "The live selection could not be checked.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?cart=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Open checkout",
+          "elapsedHarnessMs": 1590,
+          "bagButton": "Bag 5",
+          "headings": [
+            "A thoughtful finishing touch."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "The checked test checkout is ready. No real order or payment is possible.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Show checkout shipping step",
+          "elapsedHarnessMs": 517,
+          "bagButton": "Bag 5",
+          "headings": [
+            "A thoughtful finishing touch."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "The shipping step of the test checkout is in view.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Select express shipping",
+          "elapsedHarnessMs": 997,
+          "bagButton": "Bag 5",
+          "headings": [
+            "A thoughtful finishing touch."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "Demo express is selected. The shop still confirms real shipping availability, rates and timing.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "message": "Complete test checkout",
+          "elapsedHarnessMs": 3477,
+          "bagButton": "Bag 5",
+          "headings": [
+            "A thoughtful finishing touch."
+          ],
+          "help": "Your bag is ready to review. Continue to checkout when you’re happy with your choices.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "literalMenus": [],
+          "pieces": [],
+          "reply": "Review the simulation, tick its acknowledgement and click Complete test checkout yourself. No order or payment is possible.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Completion command leaves actual acknowledgement unchecked and completion disabled",
+          "ackChecked": false,
+          "bag": "Bag 5",
+          "checkoutText": "← Return to test bagA COMPLETE SIMULATIONA thoughtful finishing touch.Try the checkout experience without creating an order or providing payment, contact or address details.Review exact piecesDemo shipping & giftsConfirm the simulationYour exact choicesButterfly Cutout Stud Earrings · Sterling Silver · quantity 3$144.00 USDButterfly Cutout Stud Earrings · Sterling Silver · quantity 2$96.00 USDShipping & giftingProduction normally takes 2–3 days according to Brites. Shipping choices, shipping time and final charges are confirmed by the shop.These two shipping labels demonstrate the interface only. They are not live services, rates or delivery promises.Demo standardDemo expressNo gift wrapping enquiry saved.No gift package enquiry saved.No test gift note saved.Adjust gift preferencesComplete the test onlyI understand this completes a test only. No order, payment or message will be sent.Complete test checkoutTHE BRITES MAKING & GIFTING EXPERIENCEA little extra thought.The Brites studio says production takes 2–3 days. Shipping transit is separate; a custom design and a requested deadline need confirmation with the studio.The Brites studio says its materials are ethically sourced from the United States. The exact materials and finishes for a piece come from that piece’s published options and description. Merchant-provided guidance; not an independent sourcing certification.The studio offers a variety of shipping options. Available services, prices and transit estimates depend on the destination and are confirmed at checkout.Confirm current production guidanceThe studio’s current guidance is 2–3 days for production.The published shipping policy lists standard production of 3–5 business days. Confirm the current timing and any expedited option with the studio before ordering.Shipping policy ↗Confirm current sourcing guidanceThe studio’s current guidance says its materials are ethically sourced from the United States.The published storefront describes materials sourced from the United States and Italy. Confirm the current source for the selected piece with the studio.Brites storefront ↗Make it a giftThe studio offers gift packages, gift notes and gift wrapping. Confirm the package, availability and any charge for the selected order.This test view saves your preferences only.Ask for gift wrappingAsk about a gift packageYour test gift noteSave test gift preferencesMak",
+          "completionDisabled": true,
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+        },
+        {
+          "sourceCommit": "346497b3822692577fe81095b67a32e75f3f6e31",
+          "observation": "Settled local checkout completion after explicit checkbox and button; two earlier failed public reads preserved bag",
+          "acknowledgementChecked": true,
+          "acknowledgementDisabled": true,
+          "bag": "Bag 5",
+          "notice": "Test checkout complete. No real purchase was made.",
+          "receipt": "TEST COMPLETEYour selection came together.This was a local checkout simulation. Your test bag is preserved. No order was placed, no payment was taken and no details were sent.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?checkout=1"
+        }
+      ],
+      "screenshots": {
+        "cart": "avatar43-cart.jpg",
+        "checkout": "avatar43-checkout.jpg"
+      },
+      "limits": [
+        "Elapsed request times include browser automation overhead and do not measure native speech.",
+        "Mobile native size and add controls were activated with keyboard; rendered geometry and DOM hit tests passed, while iframe pointer automation timed out or had no effect. Physical touch remains unverified.",
+        "Microphone, real recognition/audio, GPU rendering, human aesthetic approval and live Shopify commerce remain unverified."
+      ],
+      "historicalFinding": "Ordinary-charm matching passed in a fresh conversation but failed in the prior conversation. The recorded public-product source reproduction showed inherited positive butterfly interests vetoing the exact current otter motif. Browser stored preferences were not inspected. S2 resolves the exact-current-motif cause and passes in the original prior conversation.",
+      "checkoutRecovery": {
+        "initialFailure": "Fresh public selection could not be checked; bag 5 preserved. Earlier browser HTTP status and cause were unobserved.",
+        "recovery": "Exact butterfly-cutout-stud-earrings-4 endpoint later returned the exact USD48 available Silver variant; one meaningful UI retry opened exact checkout and explicit acknowledgement plus button produced the local test-only receipt.",
+        "priceDrift": "Not established; an initially inspected unsuffixed handle was a different product and is not evidence of a price change."
+      }
+    },
+    {
+      "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+      "tree": "0e28a3020b410bed8e3676e613215bea308ce5f1",
+      "deployId": "6ac82eff2a43000008726770",
+      "state": "ready",
+      "branch": "codex/brites-growth-2026-10",
+      "publishedAt": "2026-10-09T00:02:38.785Z",
+      "error": null,
+      "entries": [
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "Show me all pieces",
+          "elapsedHarnessMs": 476,
+          "bag": "Bag 5",
+          "cards": 24,
+          "help": "",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "reply": "The 120 checked listings include necklaces, earrings, charms. I can show a theme, compare materials, or help you put a matching pair together. The full loaded collection is ready.",
+          "summary": "24 of 120 loaded pieces",
+          "title": "Something small.Something you.",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "No thanks",
+          "elapsedHarnessMs": 98,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Let’s choose Metal Choice for Sea Otter Necklace Charm.",
+          "helpHidden": true,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "false",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "reply": "Of course—take your time.",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "What earrings would go with this?",
+          "elapsedHarnessMs": 71,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "I have 2 pieces that share this design’s motif for a possible pairing.Eating Otter Stud EarringsFrom USD 45.00 · Sterling SilverShares the otter motif with this piece · A suggested pairing; each piece is sold separatelyView pieceSea Otter Charm Stud EarringsFrom USD 48.00 · Sterling SilverShares the otter motif with this piece · A suggested pairing; each piece is sold separatelyView pieceNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "false",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "reply": "I have 2 pieces that share this design’s motif for a possible pairing. Eating Otter Stud Earrings: From USD 45.00 · Sterling Silver. Shares the otter motif with this piece · A suggested pairing; each piece is sold separately. Sea Otter Charm Stud Earrings: From USD 48.00 · Sterling Silver. Shares the otter motif with this piece · A suggested pairing; each piece is sold separately.",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "Help me choose this",
+          "elapsedHarnessMs": 200,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Let’s choose Metal Choice for Sea Otter Necklace Charm.Sterling SilverFrom $28.00 USDAbout Sterling SilverSterling silver is a silver alloy. It can develop tarnish over time.FTC: Precious-metal jewelryCanadian Conservation Institute: Silver tarnish14k Gold FilledFrom $33.00 USDAbout 14k Gold FilledGold-filled has a mechanically applied gold layer over a base metal.FTC: Precious-metal jewelryHelp me chooseSimilar piecesMatching piecesNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "true",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "reply": "The Metal Choice menu is open. Next, choose Metal Choice — Sterling Silver or 14k Gold Filled or 14k Rose Gold Filled or 10k Solid Gold.",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "Choose Sterling Silver",
+          "elapsedHarnessMs": 137,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Let’s choose Charm Type for Sea Otter Necklace Charm.Help me chooseSimilar piecesMatching piecesNo thanks",
+          "helpHidden": false,
+          "inventory": "Preparing product knowledge · 115 of 120",
+          "optionsOpen": "true",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "reply": "Next, choose Charm Type — Necklace Charm or Huggie Charm.",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "Choose Necklace Charm",
+          "elapsedHarnessMs": 121,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Let’s choose Engraving for Sea Otter Necklace Charm.Help me chooseSimilar piecesMatching piecesNo thanks",
+          "helpHidden": false,
+          "inventory": "Preparing product knowledge · 115 of 120",
+          "optionsOpen": "true",
+          "price": "From $28.00 USD",
+          "quantity": "1",
+          "reply": "Next, choose Engraving — No or Yes.",
+          "selected": "Select an option…",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "Choose No for Engraving",
+          "elapsedHarnessMs": 207,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Sterling Silver / Necklace Charm / No · quantity 1 · item subtotal $28.00 USD. Add it when you’re happy with your choices.Help me chooseSimilar piecesMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "true",
+          "price": "$28.00 USD",
+          "quantity": "1",
+          "reply": "Sterling Silver / Necklace Charm / No · quantity 1 · $28.00 USD item subtotal. Ready when you are. Say “add it to my bag” when you are ready.",
+          "selected": "Sterling Silver / Necklace Charm / No · $28.00 USD",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "What am I looking at?",
+          "elapsedHarnessMs": 85,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Sterling Silver / Necklace Charm / No · quantity 1 · item subtotal $28.00 USD. Add it when you’re happy with your choices.Help me chooseSimilar piecesMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "Preparing product knowledge · 114 of 120",
+          "optionsOpen": "true",
+          "price": "$28.00 USD",
+          "quantity": "1",
+          "reply": "Sea Otter Necklace Charm. Celebrate a love for the sea with this sea otter charm, a sweet little tribute to a playful ocean animal and coastal critter. This charm is made for easy styling with your favorite chain or hoop earrings, and it arrives ready to give as a thoughtful gift. Available in sterling silver, 14k gold filled, 14k rose gold filled, 10k solid gold, and 14k solid gold Handmade in small batches with careful attention to detail Personalization or engraving available when applicable to a charms listing Arrives gift-ready for easy giving Use the published charm/component format; a chain or earrings are not assumed included.",
+          "selected": "Sterling Silver / Necklace Charm / No · $28.00 USD",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "What size is this piece?",
+          "elapsedHarnessMs": 79,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Sterling Silver / Necklace Charm / No · quantity 1 · item subtotal $28.00 USD. Add it when you’re happy with your choices.Help me chooseSimilar piecesMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "Preparing product knowledge · 114 of 120",
+          "optionsOpen": "true",
+          "price": "$28.00 USD",
+          "quantity": "1",
+          "reply": "Sea Otter Necklace Charm. The published details do not confirm the piece’s measurements. I can help you ask the studio for the exact size. Use the published charm/component format; a chain or earrings are not assumed included.",
+          "selected": "Sterling Silver / Necklace Charm / No · $28.00 USD",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "What is the price of this piece?",
+          "elapsedHarnessMs": 73,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Sterling Silver / Necklace Charm / No · quantity 1 · item subtotal $28.00 USD. Add it when you’re happy with your choices.Help me chooseSimilar piecesMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "Preparing product knowledge · 114 of 120",
+          "optionsOpen": "true",
+          "price": "$28.00 USD",
+          "quantity": "1",
+          "reply": "Sea Otter Necklace Charm. Your selected Sterling Silver / Necklace Charm / No is USD 28.00. Use the published charm/component format; a chain or earrings are not assumed included. Item prices exclude shipping and any applicable taxes.",
+          "selected": "Sterling Silver / Necklace Charm / No · $28.00 USD",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "What earrings would go with this?",
+          "elapsedHarnessMs": 77,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "I have 2 pieces that share this design’s motif for a possible pairing.Eating Otter Stud EarringsFrom USD 45.00 · Sterling SilverShares the otter motif with this piece · Available Sterling Silver · A suggested pairing; each piece is sold separatelyView pieceSea Otter Charm Stud EarringsFrom USD 48.00 · Sterling SilverShares the otter motif with this piece · Available Sterling Silver · A suggested pairing; each piece is sold separatelyView pieceNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "true",
+          "price": "$28.00 USD",
+          "quantity": "1",
+          "reply": "I have 2 pieces that share this design’s motif for a possible pairing. Eating Otter Stud Earrings: From USD 45.00 · Sterling Silver. Shares the otter motif with this piece · Available Sterling Silver · A suggested pairing; each piece is sold separately. Sea Otter Charm Stud Earrings: From USD 48.00 · Sterling Silver. Shares the otter motif with this piece · Available Sterling Silver · A suggested pairing; each piece is sold separately.",
+          "selected": "Sterling Silver / Necklace Charm / No · $28.00 USD",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "What am I looking at?",
+          "elapsedHarnessMs": 239,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Let’s choose Metal Choice for Eating Otter Stud Earrings.Help me chooseSimilar piecesMatching piecesNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "false",
+          "price": "From $45.00 USD",
+          "quantity": "1",
+          "reply": "Eating Otter Stud Earrings. Playful otter stud earrings inspired by nature and the water's edge. A sweet everyday pair for animal lovers and wildlife fans. Choose from Sterling Silver, 14k Gold Filled, 14k Rose Gold Filled, 10k Solid Gold, or 14k Solid Gold.",
+          "selected": "Select an option…",
+          "title": "Eating Otter Stud Earrings",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=eating-otter-stud-earrings",
+          "precedingAction": "Keyboard Enter on the actual first View piece recommendation for Eating Otter Stud Earrings"
+        },
+        {
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "message": "Go back",
+          "elapsedHarnessMs": 201,
+          "bag": "Bag 5",
+          "cards": 0,
+          "help": "Sterling Silver / Necklace Charm / No · quantity 1 · item subtotal $28.00 USD. Add it when you’re happy with your choices.Help me chooseSimilar piecesMatching piecesAdd to test bagNo thanks",
+          "helpHidden": false,
+          "inventory": "120 products ready for your guide",
+          "optionsOpen": "true",
+          "price": "$28.00 USD",
+          "quantity": "1",
+          "reply": "The previous view is restored.",
+          "selected": "Sterling Silver / Necklace Charm / No · $28.00 USD",
+          "title": "Sea Otter Necklace Charm",
+          "url": "https://brites-growth-sandbox.netlify.app/concierge-sandbox.html?product=sea-otter-necklace-charm"
+        },
+        {
+          "assist": "true",
+          "bag": "Bag 1",
+          "bodyWidth": 345,
+          "input": {
+            "bottom": 676.5,
+            "height": 44,
+            "left": 19,
+            "top": 632.5,
+            "width": 236.84375
+          },
+          "inputFont": "16px",
+          "nativeChoices": [
+            {
+              "hit": "Sterling Silver",
+              "rect": {
+                "bottom": 168,
+                "height": 46.140625,
+                "left": 28,
+                "top": 121.859375,
+                "width": 140.5
+              },
+              "value": "Sterling Silver"
+            },
+            {
+              "hit": "14k Gold Filled",
+              "rect": {
+                "bottom": 168,
+                "height": 46.140625,
+                "left": 176.5,
+                "top": 121.859375,
+                "width": 140.5
+              },
+              "value": "14k Gold Filled"
+            },
+            {
+              "hit": "14k Solid Gold",
+              "rect": {
+                "bottom": 222.140625,
+                "height": 46.140625,
+                "left": 28,
+                "top": 176,
+                "width": 140.5
+              },
+              "value": "14k Solid Gold"
+            }
+          ],
+          "observation": "Final S2 actual 360x720 menu and composer geometry; keyboard opening only",
+          "panel": {
+            "bottom": 712,
+            "height": 388.796875,
+            "left": 8,
+            "top": 323.203125,
+            "width": 329
+          },
+          "quantity": "1",
+          "scrollWidth": 345,
+          "selected": "Select an option…",
+          "sourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+          "viewportLabel": "360 × 720 mobile viewport",
+          "width": 345
+        }
+      ],
+      "screenshots": {
+        "pairing": "avatar43-pairing.jpg",
+        "options": "avatar43-options.jpg",
+        "mobile": "avatar43-mobile.jpg"
+      },
+      "result": "All seven published source/browser findings resolved. Original carryover conversation exact-current Otter pairing passed, then native three-axis choice progression, exact identity/unknown size/price, real recommendation navigation and Go back choice restoration passed.",
+      "limits": [
+        "Only source S2 guide matching changed relative to S1; the controller, native host, bridge and compact CSS assets exercised by S1 exact-add/cart/checkout remain byte-identical.",
+        "Measured mobile menu geometry and keyboard opening establish visible control access; physical pointer/touch remain unverified.",
+        "Harness times include automation overhead; no native speech latency is established.",
+        "Actual physical microphone, recognition, audible output, GPU rendering, human aesthetic approval and live Shopify theme/cart/checkout remain unverified."
+      ]
+    }
+  ],
+  "finalSourceCommit": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+  "screenshotSources": {
+    "thinking": "da870088d67a9e99850c0cd9e278d6cd4cee1241",
+    "cart": "346497b3822692577fe81095b67a32e75f3f6e31",
+    "checkout": "346497b3822692577fe81095b67a32e75f3f6e31",
+    "pairing": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+    "options": "20549c85190634b3e888b4e567a79c6ad645e4bf",
+    "mobile": "20549c85190634b3e888b4e567a79c6ad645e4bf"
+  }
+}
