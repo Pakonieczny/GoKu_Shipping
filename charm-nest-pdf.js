@@ -108,6 +108,8 @@
   const bbArea = b => b ? Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]) : 0;
   const bbInter = (a, b) => { const r = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]; return r[2] > r[0] && r[3] > r[1] ? r : null; };
 
+  /** Operators that change the graphics state a later object paints with (colour, line style, extended state). */
+  const STATE_OPS = new Set(["g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN", "w", "J", "j", "M", "d", "ri", "i", "gs"]);
   function colorFrom(args, space, spaces) {
     const nums = args.filter(a => typeof a === "number");
     if (args.some(a => a && a.name)) return [0.5, 0.5, 0.5];      // pattern → unknown mid-grey
@@ -137,10 +139,16 @@
     let path = null, pathStart = -1, pendingClip = false, clipBox = null;
     let inText = false, textStart = -1, tm = null, tlm = null, fontSize = 1, textPts = [], textChars = 0;
     let textPieces = [], piece = null;
+    // Graphics-state operators written INSIDE a segment's own byte range (Illustrator opens a layer with a text run that
+    // carries `/CS0 cs 0 0 1 scn` for every object after it). The writer blanks that range for every charm that does not
+    // own the segment, so the ranges are recorded on the segment and written back (see isolate): without them the
+    // layer's colour is lost and a blue hatching fill is read back as the default black.
+    let held = [];
     const startPath = (i) => { if (!path) { path = { sub: [], cur: null, start: null, pts: [] }; pathStart = ins[i].start; } };
     const addPt = (p) => path.pts.push(p);
     for (let i = 0; i < ins.length; i++) {
       const { op, args } = ins[i];
+      if ((inText || path) && STATE_OPS.has(op)) held.push(ins[i].start, ins[i].end);
       switch (op) {
         case "q": stack.push({ ctm: ctm.slice(), fill, stroke, lw, fillSpace, strokeSpace, clipBox }); break;
         case "Q": { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; stroke = s.stroke; lw = s.lw; fillSpace = s.fillSpace; strokeSpace = s.strokeSpace; clipBox = s.clipBox; } break; }
@@ -192,13 +200,15 @@
             stroke: doStroke, fill: doFill, strokeRGB: stroke.slice(), fillRGB: fill.slice(), lwPt: lw * scaleOf(ctm),
             closed: allClosed, subpaths: path.sub.map(s => s.segs), bbox, depth
           };
+          if (held.length) seg.held = held;
+          held = [];
           if (pendingClip) clipBox = bbox;
           if (seg.kind === "clip") { seg.clipBox = bbox; }
           push(depth === 0 ? segs : inner, seg);
           path = null; pathStart = -1; pendingClip = false; break;
         }
         // ── text ──
-        case "BT": inText = true; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; textPieces = []; piece = null; break;
+        case "BT": inText = true; held = []; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; textPieces = []; piece = null; break;
         case "Tf": fontSize = Math.abs(+args[1]) || 1; fontName = args[0] && args[0].name || null; break;
         case "Tm": if (args.length >= 6) { tm = args.slice(0, 6).map(Number); tlm = tm; } piece = null; break;
         case "Td": case "TD": tlm = mul([1, 0, 0, 1, +args[0], +args[1]], tlm); tm = tlm; piece = null; break;
@@ -225,8 +235,9 @@
             const bbox = bboxOf(textPts);
             const decoded = textStrs.every(t => t && t.ok) ? textStrs.map(t => t.text).join("") : null;
             const pieces = textPieces.length > 1 ? textPieces.map(p => { const d = p.strs.every(t => t && t.ok) ? p.strs.map(t => t.text).join("") : null; return { bbox: bboxOf(p.pts), chars: p.chars, str: d, raw: p.raw, font: p.font, undecodable: d == null && p.chars > 0 }; }) : null;
-            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces });
+            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces, held: held.length ? held : undefined });
           }
+          held = [];
           inText = false; break;
         }
         case "BI": push(depth === 0 ? segs : inner, { kind: "image", start: ins[i].start, end: ins[i].end, bbox: bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]), depth }); break;
@@ -551,6 +562,64 @@
   const insideFrac = (pts, polys) => pts.length ? pts.filter(p => pointInPolys(p[0], p[1], polys)).length / pts.length : 0;
   const minDist = (pts, polys) => { let d = Infinity; for (const p of pts) { const v = distToPolys(p[0], p[1], polys); if (v < d) d = v; } return d; };
 
+  /* ═══ 5-marker · marker content: what the artist drew BESIDE a charm, not ON it ═════════════════════════════════
+     A master carries notes for people next to each charm: a size badge (a gradient chip with the hoop size written on it,
+     LABELS layer), a dimension callout (a grey "12 mm" with the two thin grey bracket lines that measure it), a remark
+     ("necklace + choker", "FRONT", "OPTION A"), an example name beside a font choice. None of it is on the piece: it can
+     never be cut or engraved. The grouping used to take whatever sat within a few points of an outline as that charm's
+     detail, and the viewers have no font or gradient to paint, so each such object was drawn as a grey placeholder box,
+     stretched the charm's size and silhouette, took room on the sheet and was written into the per-SKU file and the sheet.
+     The rule: a text, gradient (`sh`) or image object whose box lies wholly outside the piece (the outline's box joined with
+     its closed cut-outs and attached rings) is a marker, and so is such an object that only grazes the piece (under half of
+     its own box over it) when it is a measurement, a grey or pale-cyan note, on the LABELS layer, or too long to be written on it; a thin grey open bracket outside
+     the piece is a dimension line. Text and drawings that are on the piece (engraving text, an image engraved inside) stay. */
+  const MEASURE = /\d\s*(?:mm|cm)(?![a-z])|(?:^|[\s(])\d+(?:\.\d+)?\s*(?:in|inch|inches)(?![a-z])/i;
+  const greyRGB = c => !!c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.03;
+  /** The colours these masters write notes in: mid and light greys, and the pale cyan of the ring marks (engraving text is blue or black). */
+  const noteRGB = c => !!c && ((greyRGB(c) && c[0] >= 0.4 && c[0] <= 0.92) || (c[0] >= 0.25 && c[0] <= 0.45 && c[1] >= 0.74 && c[1] <= 0.9 && c[2] >= 0.78 && c[2] <= 0.92));
+  function overlapFrac(a, b) {          // share of box a that lies over box b (a box with no area counts by its centre)
+    const w = a[2] - a[0], h = a[3] - a[1];
+    if (w <= 1e-6 || h <= 1e-6) { const cx = (a[0] + a[2]) / 2, cy = (a[1] + a[3]) / 2; return cx >= b[0] && cx <= b[2] && cy >= b[1] && cy <= b[3] ? 1 : 0; }
+    const iw = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), ih = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+    return iw > 0 && ih > 0 ? (iw * ih) / (w * h) : 0;
+  }
+  /** A dimension line: one thin, grey, open stroke of at most four straight segments (a bracket or a tick), short sided. */
+  function isDimensionLine(s) {
+    if (s.kind !== "path" || !s.stroke || s.fill || s.closed || !s.subpaths || s.subpaths.length !== 1 || !s.bbox) return false;
+    const sub = s.subpaths[0]; if (sub.some(x => x[0] === "c" || x[0] === "h") || sub.filter(x => x[0] !== "m").length > 4) return false;
+    const c = s.strokeRGB; if (!greyRGB(c) || c[0] < 0.4 || c[0] > 0.95) return false;
+    return (s.lwPt || 0) <= 0.4 && Math.min(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]) <= 6;
+  }
+  /** Why a member of a charm is marker content, or null when it belongs to the piece. `piece` is the box of the piece and
+      `polys` the flattened outline, which decides a dimension line (it lies against the edge of the box, never inside). */
+  function markerReason(m, piece, polys) {
+    if (!m.bbox) return null;
+    const grazing = overlapFrac(m.bbox, piece), onLabels = /^labels?$/i.test(String(m.layer || ""));
+    if (m.kind === "text") {
+      const str = String(m.str || ""), measure = MEASURE.test(str);
+      const note = measure || onLabels || noteRGB(m.fillRGB);
+      const longer = Math.max(m.bbox[2] - m.bbox[0], m.bbox[3] - m.bbox[1]) > 1.5 * Math.max(piece[2] - piece[0], piece[3] - piece[1]);   // too long to be written on the piece
+      if (grazing < 0.1 || (grazing < 0.5 && (note || longer))) return measure ? "dimension text" : onLabels && /^[\d\s.]*$/.test(str) ? "size badge text" : "note text";
+      return null;
+    }
+    if (m.kind === "shading") return grazing < 0.5 ? (onLabels ? "size badge (gradient)" : "gradient object") : null;
+    if (m.kind === "image" || (m.kind === "xobj" && !(m.children && m.children.length))) return grazing < 0.5 ? "image or form object" : null;
+    if (isDimensionLine(m)) { const pts = samples(m, new Map()); if (!polys || insideFrac(pts, polys) < 0.5) return "dimension line"; }
+    return null;
+  }
+  /** Take every marker out of a charm's members and out of its box; returns the markers taken. */
+  function takeMarkers(c) {
+    const b = c.outline.bbox; let piece = b.slice();
+    for (const m of c.members) if (m !== c.outline && m.kind === "path" && m.closed && m.bbox && isCutLine(m)) piece = bbUnion(piece, m.bbox);
+    const polys = flatten(c.outline, 8), taken = [], keep = [];
+    for (const m of c.members) { const why = m === c.outline ? null : markerReason(m, piece, polys); if (why) { m.marker = why; taken.push({ seg: m, charm: c.index, why }); } else keep.push(m); }
+    if (taken.length) {
+      c.members = keep; c.extras = (c.extras || []).filter(x => keep.includes(x));
+      c.bbox = keep.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
+    }
+    return taken;
+  }
+
   /**
    * opts: { minPt (default 6), darkMax (0.35 luminance), framePct (0.8), touchPt (2.5) }
    * A charm = one outline segment + every other segment assigned to it.
@@ -715,6 +784,12 @@
       for (const c of charms) { const d = distToPolys(cx, cy, polysOf(c.outline)); if (d < nd) { nd = d; nearC = c; } }
       if (nearC) { nearC.members.push(s); nearC.bbox = bbUnion(nearC.bbox, s.bbox); nearC.extras.push(s); } else orphans.push(s);
     }
+    // Marker content (size badges, dimension callouts, notes) lies beside a charm, never on it: not a member, not in its box.
+    const markers = [];
+    if (!opts.keepMarkers) for (const c of charms) for (const t of takeMarkers(c)) markers.push(t);
+    // Sample text on a piece (live text and its outlined letters) is not the design: not a member, not in the charm's box.
+    const sampleText = [];
+    if (!opts.keepSampleText) for (const c of charms) for (const t of takeSampleText(c)) sampleText.push(t);
     // Top-level membership: a nested segment brings its whole Do; a Do goes to the charm holding most of its children
     for (const c of charms) {
       const tops = new Map();
@@ -726,7 +801,60 @@
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
-    return { charms, frame, frames, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
+    return { charms, frame, frames, orphans, markers, sampleText, rule, outlineCount: outlines.length, mergedCount: merged.size };
+  }
+
+  /* ═══ 5a′ · sample text ON a piece ════════════════════════════════════
+     A master is also the artists' workbook: beside and ON a charm they type the customer's example words (a belt's
+     "Taekwondo Black Belt 2015", "Aun así nos levantamos", "Summerfest Milwaukee, WI", a "Your Name" placeholder, a jersey
+     name), as live text, usually one text object per letter along a curve, and then outline it and keep the live copy.
+     Both copies were taken for the charm's own detail: the live copy drew as a grey placeholder box (a smear of overlapping
+     boxes along the curve, "blurred writing"), every outlined letter on the CUT layer counted as a through-cut (a belt
+     "had 22 holes", and the hanging-hole search took the letter nearest the edge, so the card said "up 103°"), the boxes
+     stretched the charm's size and silhouette, and the per-SKU file and every sheet carried the text, the letters to be cut.
+     Rule: a live text object is an editable sample or note, never the design; a charm's design that is words is outlined
+     artwork. So a live text object ON a piece, and the outlined letters on the same layer that sit in its box (its twin,
+     closed and letter-sized, never a hoop ring), are sample text and are taken out of the piece. Words that exist only
+     as outlined artwork (a script "Cheer", a monogram) have no live copy, are not touched and keep their text. */
+  /** Why a member of a charm is sample text (a live text object, or the outlined twin of one), or null. */
+  function sampleTextOf(c) {
+    // ON the piece = at least half of the text's own box lies over the outline's box. Text beside it, or only grazing it, is a
+    // callout, a badge, a note or a label: the marker and label rules take those.
+    const ob = c.outline.bbox, onPiece = t => {
+      const b = t.bbox, w = b[2] - b[0], h = b[3] - b[1];
+      if (w <= 1e-6 || h <= 1e-6) return (b[0] + b[2]) / 2 >= ob[0] && (b[0] + b[2]) / 2 <= ob[2] && (b[1] + b[3]) / 2 >= ob[1] && (b[1] + b[3]) / 2 <= ob[3];
+      const iw = Math.min(b[2], ob[2]) - Math.max(b[0], ob[0]), ih = Math.min(b[3], ob[3]) - Math.max(b[1], ob[1]);
+      return iw > 0 && ih > 0 && iw * ih >= 0.5 * w * h;
+    };
+    const live = c.members.filter(m => m.kind === "text" && m.bbox && onPiece(m));
+    const why = new Map();
+    for (const t of live) why.set(t, "live text");
+    if (!live.length) return why;
+    const boxesOf = t => (t.pieces && t.pieces.length > 1 ? t.pieces.map(p => p.bbox).filter(Boolean) : [t.bbox]);
+    for (const m of c.members) {
+      if (m === c.outline || m.kind !== "path" || !m.closed || !m.bbox || why.has(m) || ringLike(m)) continue;
+      const mw = m.bbox[2] - m.bbox[0], mh = m.bbox[3] - m.bbox[1], cx = (m.bbox[0] + m.bbox[2]) / 2, cy = (m.bbox[1] + m.bbox[3]) / 2;
+      twin: for (const t of live) {
+        if ((t.layer || null) !== (m.layer || null)) continue;
+        for (const b of boxesOf(t)) {
+          const h = Math.max(Math.min(b[2] - b[0], b[3] - b[1]), 3), pad = 0.8 * h;     // the box of a rotated string is only its baseline's box
+          if (cx < b[0] - pad || cx > b[2] + pad || cy < b[1] - pad || cy > b[3] + pad) continue;
+          if (Math.max(mw, mh) > 1.6 * h) continue;                                  // letter-sized only
+          why.set(m, "outlined letter of live text"); break twin;
+        }
+      }
+    }
+    return why;
+  }
+  /** Take every sample text out of a charm's members and out of its box; returns what was taken. */
+  function takeSampleText(c) {
+    const why = sampleTextOf(c), taken = [];
+    if (!why.size) return taken;
+    const keep = [];
+    for (const m of c.members) { const w = why.get(m); if (w) { m.sample = w; taken.push({ seg: m, charm: c.index, why: w }); } else keep.push(m); }
+    c.members = keep; c.extras = (c.extras || []).filter(x => keep.includes(x));
+    c.bbox = keep.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
+    return taken;
   }
 
   /** Chain open strokes by coincident endpoints into closed synthetic outlines. */
@@ -767,11 +895,16 @@
   // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
   const SKU_PATTERN_DEFAULT = /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/;
   const SKU_PATTERN_LEGACY = "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$";
+  /** A string an artist writes beside a charm that is not its SKU: a measurement ("11.4 mm", "1 in", "14MM") or a view / option
+      word ("FRONT", "BACK", "FRONT BACK", "OPTION A", "ORIGINAL SIZE"). The SKU pattern is free text, so each such callout was read
+      as the SKU of the charm it stood under: 136 of the 412 labelled charms of the customs master carry only one, and each became a
+      junk library entry ("11.4 MM", "OPTION B", "FRONT") whose card shows the callout's own box, bracket lines and sample text. */
+  const NOT_SKU = /^(?:[\d.,]+\s*(?:mm|cm|in|inch|inches|")|(?:front|back)(?:\s*(?:\/|&|AND)?\s*(?:front|back))?|option(?:\s+[a-z])?|orig(?:inal)?\s*size)$/i;
   /** "BR-CMP-01 · S" → { sku, size } or null. A size rides after " · " (or "•"); with a strict pattern a plain space works too. */
   function parseSkuLabel(str, pattern) {
     pattern = pattern || SKU_PATTERN_DEFAULT;
     const s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
-    if (!s) return null;
+    if (!s || NOT_SKU.test(s)) return null;                                       // a measurement or a view word is a callout, never a SKU
     const sep = /^(.+?)\s*[·•]\s*([A-Z0-9]{1,3})$/.exec(s);
     if (sep && pattern.test(sep[1])) return { sku: sep[1], size: sep[2] };
     if (pattern.test(s)) return { sku: s, size: null };
@@ -1072,18 +1205,28 @@
       it with spaces was, only without carrying the whole sheet's coordinates in every per-SKU file. */
   function isolate(content, segments, keep) {
     const keepSet = new Set(keep);
+    // `held`: the graphics-state operators a removed segment wrote inside its own range (a layer's colour is set by the
+    // text run that opens it). They stay, in order, so every kept object paints with the state it had in the master.
     const drop = segments
       .filter(s => !keepSet.has(s.index) && s.kind !== "clip" && s.kind !== "noop" && s.start >= 0 && s.end > s.start)
-      .map(s => [s.start, s.end]).sort((a, b) => a[0] - b[0]);
+      .map(s => [s.start, s.end, s.held || null]).sort((a, b) => a[0] - b[0]);
     const runs = [];
-    for (const r of drop) { const last = runs[runs.length - 1]; if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else runs.push([r[0], r[1]]); }
+    for (const r of drop) {
+      const last = runs[runs.length - 1];
+      if (last && r[0] <= last[1]) { last[1] = Math.max(last[1], r[1]); if (r[2]) last[2] = last[2] ? last[2].concat(r[2]) : r[2]; }
+      else runs.push([r[0], r[1], r[2]]);
+    }
     let size = 0, pos = 0;
-    for (const [a, b] of runs) { if (a > pos) size += a - pos; size += 1; pos = b; }
+    for (const [a, b, held] of runs) {
+      if (a > pos) size += a - pos; size += 1; pos = b;
+      if (held) for (let k = 0; k < held.length; k += 2) size += held[k + 1] - held[k] + 1;
+    }
     size += Math.max(0, content.length - pos);
     const out = new Uint8Array(size); let o = 0; pos = 0;
-    for (const [a, b] of runs) {
+    for (const [a, b, held] of runs) {
       if (a > pos) { out.set(content.subarray(pos, a), o); o += a - pos; }
       out[o++] = 0x20; pos = b;
+      if (held) for (let k = 0; k < held.length; k += 2) { out.set(content.subarray(held[k], held[k + 1]), o); o += held[k + 1] - held[k]; out[o++] = 0x20; }
     }
     if (pos < content.length) out.set(content.subarray(pos), o);
     return out;
@@ -1452,10 +1595,9 @@
      A master draws a jump ring as its own small circle beside the body (cyan, usually), which the laser would cut as a
      loose washer. On a finished sheet the hoop is part of the cut line: one outline that runs around the body and over
      the top of the ring, and the ring's inner circle cut as a hole. That is what this does, for every small closed
-     circle a charm carries: the ring is moved to touch the body if it does not, the outer circle is welded into the
-     outline (curves are flattened within 0.002 mm), and the inner circle becomes a
-     black cut line. All contacts are united and all resulting apertures are retained. */
-  const ringLike = m => { if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.stroke || !m.closed) return false; const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1]; return Math.abs(w - h) < 1 && w >= 3.5 && w <= 8 && (m.subpaths || []).length >= 1 && (m.subpaths || []).length <= 2 && m.subpaths.every(sp => sp.length <= 8); };
+     circle a charm carries: the ring is united with the body where it touches it and joined to it by a short neck where it does
+     not (it is never moved), the outer circle is welded into the outline (curves are flattened within 0.002 mm), and the
+     inner circle becomes a black cut line. All contacts are united and all resulting apertures are retained. */
   function circlePath(cx, cy, r) {
     const k = 0.5522847498 * r;
     return [["m", [cx + r, cy]], ["c", [cx + r, cy + k], [cx + k, cy + r], [cx, cy + r]], ["c", [cx - k, cy + r], [cx - r, cy + k], [cx - r, cy]], ["c", [cx - r, cy - k], [cx - k, cy - r], [cx, cy - r]], ["c", [cx + k, cy - r], [cx + r, cy - k], [cx + r, cy]], ["h"]];
@@ -1511,45 +1653,127 @@
     out.push(["h"]);
     return out;
   }
-  /** Boolean union handles every body/ring contact, including separate lobes of
-   * a compound outline. Authored overlapping rings keep their original centre.
-   * Detached rings are seated once; the aperture is subtracted after the union. */
+  /* A hoop is found by its SHAPE, not by one size. The shop's masters draw it in two sizes and four ways:
+       6.5 pt outside / 3.7 pt hole   (the standard ring)         9.35 pt outside / 5.85 pt hole   (the HUGGIE ring)
+       one path holding both circles (cyan or black), or two separate circles (cyan or black), on CUT or LABELS.
+     An earlier rule accepted only a circle of 3.5 to 8 pt. The standard ring passed it; the HUGGIE ring's 9.35 pt
+     outside circle did not, so (a) a ring drawn as one path was never welded and stayed a loose, unattached washer, and
+     (b) a ring drawn as two circles had its 5.85 pt HOLE taken for the whole ring: that hole was welded into the outline
+     as a solid disc, and the real 9.35 pt outside circle was left behind as a big loose circle around it (and counted as
+     a second "hole"). Concentric circles are therefore grouped first: the largest is the hoop, the next one inside it is
+     its hole, an exact duplicate of either is the same hoop drawn twice. The hoop is then ALWAYS attached to the body:
+     united with it where it overlaps or touches, and joined by a short neck to the nearest point of the body edge where
+     it does not (the ring stays where the artist drew it; it is never moved). */
+  const HOOP_OUTER_MAX_PT = 13.6, HOOP_LONE_MIN_PT = 3.5, HOOP_LONE_MAX_PT = 8, HOOP_REACH_PT = 14, HOOP_LONE_REACH_PT = 3;
+  const vec = () => root.CharmNestVector || (typeof require === "function" ? require("./charm-nest-vector.js") : null);
+  /** A closed subpath that is a circle (four Béziers, a polygon, anything round): { cx, cy, r }, or null. */
+  function circleOf(sp, V) {
+    let pts; try { pts = V.flatten(sp).points; } catch (_) { return null; }
+    if (!pts || pts.length < 8) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+    const w = x1 - x0, h = y1 - y0, r = (w + h) / 4, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (!(r > 0) || Math.abs(w - h) > 0.08 * r + 0.1) return null;
+    let dev = 0; for (const p of pts) dev = Math.max(dev, Math.abs(Math.hypot(p[0] - cx, p[1] - cy) - r));
+    return dev <= 0.04 * r + 0.05 ? { cx, cy, r } : null;
+  }
+  /** A path that could be (part of) a hoop: closed, stroked, not artwork, hoop-sized and round by its box. */
+  const ringLike = m => {
+    if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.stroke || !m.closed) return false;
+    const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1], subs = m.subpaths || [];
+    return Math.abs(w - h) < 1 && w >= HOOP_LONE_MIN_PT && w <= HOOP_OUTER_MAX_PT && subs.length >= 1 && subs.length <= 3 && subs.every(sp => sp.length <= 8);
+  };
+  /** Every hoop a charm carries, from its concentric circles: [{ outer, aperture|null, members, items }], largest first. */
+  function findHoops(c, V) {
+    const items = [];
+    for (const m of c.members) {
+      if (!m || m === c.outline || !ringLike(m)) continue;
+      const cs = m.subpaths.map(sp => circleOf(sp, V)); if (cs.some(x => !x)) continue;   // one path holding anything but circles is not a hoop
+      cs.forEach((x, i) => items.push(Object.assign({ m, i }, x)));
+    }
+    items.sort((a, b) => b.r - a.r);
+    const clusters = [];
+    for (const it of items) {
+      const g = clusters.find(k => Math.hypot(k.cx - it.cx, k.cy - it.cy) <= 0.5);
+      if (g) g.items.push(it); else clusters.push({ cx: it.cx, cy: it.cy, items: [it] });
+    }
+    const same = (a, b) => Math.abs(a - b) <= Math.max(0.15, 0.03 * a);
+    const hoops = [];
+    for (const g of clusters) {
+      const outer = g.items[0];
+      const aperture = g.items.find(i => i !== outer && !same(i.r, outer.r) && i.r < outer.r * 0.92 && i.r > outer.r * 0.2) || null;
+      const d = outer.r * 2;
+      if (aperture ? d < HOOP_LONE_MIN_PT : (d < HOOP_LONE_MIN_PT || d > HOOP_LONE_MAX_PT)) continue;   // a lone circle keeps the old size window; a pair may be the larger HUGGIE ring (9.35 pt)
+      const used = g.items.filter(i => i === outer || i === aperture || same(i.r, outer.r) || (aperture && same(i.r, aperture.r)));
+      const members = [...new Set(used.map(i => i.m))];
+      // a path is replaced whole: every circle it holds must belong to this hoop
+      if (members.some(m => g.items.filter(i => i.m === m).length !== used.filter(i => i.m === m).length || m.subpaths.length !== used.filter(i => i.m === m).length)) continue;
+      hoops.push({ outer, aperture, members, cx: outer.cx, cy: outer.cy });
+    }
+    return hoops;
+  }
+  const polyArea = ps => Math.abs(ps.reduce((v, p, i) => v + p[0] * ps[(i + 1) % ps.length][1] - p[1] * ps[(i + 1) % ps.length][0], 0)) / 2;
+  /** Boolean union handles every body/hoop contact, including separate lobes of a compound outline. A hoop keeps the
+   * centre the artist gave it: where it overlaps the body it is united with it; where it only touches or stands clear a
+   * neck is added from the hoop wall to the nearest point of the body edge. The aperture is subtracted after the union. */
   function integrateRings(c) {
-    const res={welded:0,left:[]};if(!c?.outline?.subpaths)return res;
-    const V=root.CharmNestVector || (typeof require==='function'?require('./charm-nest-vector.js'):null);
+    const res={welded:0,left:[],bridged:[],skipped:[]};if(!c?.outline?.subpaths)return res;
+    const V=vec();
     if(!V)throw new Error("Vector geometry library is unavailable. Refresh the page.");
-    for(const ring of c.members.filter(m=>m!==c.outline&&ringLike(m))) {
-      if(!c.members.includes(ring))continue;
+    for(const hoop of findHoops(c,V)) {
+      if(hoop.members.some(m=>!c.members.includes(m)))continue;
       const original=c.outline, polys=original.subpaths.map(sp=>V.flatten(sp).points);
-      const ro=(ring.bbox[2]-ring.bbox[0])/2,cx0=(ring.bbox[0]+ring.bbox[2])/2,cy0=(ring.bbox[1]+ring.bbox[3])/2;
-      const near=nearestOnPolys(cx0,cy0,polys);
-      // Already enclosed circles are cut-outs, not loose jump rings.
-      if(pointInPolys(cx0,cy0,polys)&&near.d>=ro-.01)continue;
+      const ro=hoop.outer.r,cx=hoop.cx,cy=hoop.cy;
+      const near=nearestOnPolys(cx,cy,polys);
       if(!near.p){res.left.push("ring has no body outline");continue;}
-      let cx=cx0,cy=cy0;
-      if(near.d>=ro-.01) {
-        const distance=near.d-Math.max(.1,ro-Math.min(1,ro*.3));
-        cx+=(near.p[0]-cx)/Math.max(near.d,1e-9)*distance;
-        cy+=(near.p[1]-cy)/Math.max(near.d,1e-9)*distance;
-      }
-      const translate=sp=>sp.map(op=>[op[0],...op.slice(1).map(p=>[p[0]+cx-cx0,p[1]+cy-cy0])]);
-      const subs=ring.subpaths.map(sp=>({sp,points:V.flatten(sp).points}));
-      const area=ps=>Math.abs(ps.reduce((v,p,i)=>v+p[0]*ps[(i+1)%ps.length][1]-p[1]*ps[(i+1)%ps.length][0],0));
-      subs.sort((a,b)=>area(b.points)-area(a.points));
-      const outer=translate(subs[0].sp);
-      // Some masters store the inner aperture as a separate concentric circle.
-      const innerMember=c.members.find(m=>m!==ring&&m!==original&&ringLike(m)&&
-        Math.hypot((m.bbox[0]+m.bbox[2])/2-cx0,(m.bbox[1]+m.bbox[3])/2-cy0)<.15&&m.bbox[2]-m.bbox[0]<ro*1.8);
-      const inner=translate(subs[1]?.sp || innerMember?.subpaths[0] || circlePath(cx0,cy0,ro*.565));
-      const united=V.boolean(polys,[V.flatten(outer).points],'union',original.fill&&!original.paintOp?.endsWith('*')?'nonzero':'evenodd');
+      // Already enclosed circles are cut-outs, not loose jump rings.
+      const inside=pointInPolys(cx,cy,polys);
+      if(inside&&near.d>=ro-.01)continue;
+      // A circle that sits inside another piece of the same file (a plate beside the body, drawn with its own hole) is that
+      // piece's hole, not a hoop. A closed piece is tested by its shape; a plate drawn as open strokes by its box.
+      if(c.members.some(m=>{
+        if(!m||m===original||hoop.members.includes(m)||m.kind!=="path"||!m.stroke||!m.bbox||pathRole(m)==="artwork")return false;
+        const b=m.bbox;if(cx<b[0]+ro-.01||cx>b[2]-ro+.01||cy<b[1]+ro-.01||cy>b[3]-ro+.01)return false;
+        const sp=m.subpaths.map(s=>V.flatten(s).points).filter(p=>p.length>3);
+        if(!sp.length)return false;
+        if(!m.closed&&sp.every(p=>Math.hypot(p[0][0]-p[p.length-1][0],p[0][1]-p[p.length-1][1])>=1.5))return b[2]-b[0]>=ro*5&&b[3]-b[1]>=ro*3;
+        return pointInPolys(cx,cy,sp)&&nearestOnPolys(cx,cy,sp).d>=ro-.01;
+      }))continue;
+      // a circle well clear of the body is not this charm’s hoop (a plate’s hole, a stray mark): left as it is, never bridged across the sheet
+      if(near.d-ro>(hoop.aperture?HOOP_REACH_PT:HOOP_LONE_REACH_PT)){res.skipped.push({gapPt:+(near.d-ro).toFixed(2),lone:!hoop.aperture});continue;}
+      const outerPts=V.flatten(hoop.outer.m.subpaths[hoop.outer.i]).points;
+      const ri=hoop.aperture?hoop.aperture.r:ro*.565;
+      const innerPts=hoop.aperture?V.flatten(hoop.aperture.m.subpaths[hoop.aperture.i]).points:V.flatten(circlePath(cx,cy,ri)).points;
+      const rule=original.fill&&!original.paintOp?.endsWith('*')?'nonzero':'evenodd';
+      let united=V.boolean(polys,[outerPts],'union',rule);
       if(!united.length){res.left.push("ring union produced no material");continue;}
-      const cut=V.boolean(united.map(p=>p.points),[V.flatten(inner).points],'difference');
+      // The hoop's exterior must hold body material as well: a lone disc means it is not attached.
+      const attached=u=>{const e=u.filter(p=>!p.hole).find(p=>insidePoly(cx,cy,p.points));return !!e&&polyArea(e.points)>Math.PI*ro*ro*1.02+.5;};
+      const wall=Math.max(ro-ri,.5);
+      if(!inside&&(!attached(united)||2*Math.sqrt(Math.max(0,ro*ro-near.d*near.d))<1)) {
+        // the hoop stands clear of the body or only grazes it: a neck from the middle of the hoop wall, along the line to the
+        // nearest body-edge point, a little way into the body
+        const ux=(near.p[0]-cx)/near.d,uy=(near.p[1]-cy)/near.d,vx=-uy,vy=ux,s=ri+wall/2;
+        let done=false;
+        for(const [w,pen] of [[Math.max(1.4,Math.min(wall,2.4)),.8],[2.8,2],[4,4]]) {
+          const t=near.d+pen,h=w/2;
+          const neck=[[cx+ux*s+vx*h,cy+uy*s+vy*h],[cx+ux*t+vx*h,cy+uy*t+vy*h],[cx+ux*t-vx*h,cy+uy*t-vy*h],[cx+ux*s-vx*h,cy+uy*s-vy*h]];
+          const u2=V.boolean(united.map(p=>p.points),[neck],'union');
+          if(!u2.length)continue;
+          if(attached(u2)){united=u2;done=true;break;}
+        }
+        if(!done){res.left.push("ring could not be attached to its charm");continue;}
+        res.bridged.push({gapPt:+(near.d-ro).toFixed(3),sku:c.sku||null});
+      } else if(!attached(united)){res.left.push("ring could not be attached to its charm");continue;}
+      const cut=V.boolean(united.map(p=>p.points),[innerPts],'difference');
       if(!cut.length){res.left.push("ring aperture removes the entire body");continue;}
-      const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole);
-      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||ring.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
+      // a sliver the laser cannot cut (under 0.1 pt2, about 0.035 mm2) is not a hole: a hoop touching the body at a point leaves a
+      // zero-area one, a body path that touches itself leaves hair-thin ones along its edge. Real pockets between hoop and body stay.
+      const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole&&polyArea(p.points)>=.1);
+      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||hoop.outer.m.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
       const outline={...original,...base,subpaths:exteriors.map(p=>V.subpath(p.points)),bbox:bboxOf(exteriors.flatMap(p=>p.points)),welded:(original.welded||0)+1};
       const apertures=holes.map(p=>({...base,subpaths:[V.subpath(p.points)],bbox:bboxOf(p.points)}));
-      const replaced=new Set([original,ring,innerMember,...(original.parts||[])].filter(Boolean));
+      const replaced=new Set([original,...hoop.members,...(original.parts||[])].filter(Boolean));
       // A replaced path inside a Form must suppress that Form, not a local
       // child index which may name unrelated top-level artwork. Redraw its
       // remaining vector members in their already-transformed coordinates.
@@ -1575,6 +1799,8 @@
     }
     return out;
   }
-  root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
-    parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+  root.CharmNestPDF = { markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
+    takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+  // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
+  root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
 })(typeof window !== "undefined" ? window : self);

@@ -2092,6 +2092,8 @@ const Master = window.Master = (() => {
   async function strayInkUnder(parsed, group, charms, gapPt, onTick) {
     const owned = new Set();
     for (const c of group.charms) { owned.add(c.outline); for (const m of c.members) owned.add(m); }
+    // sample text and markers taken out of a charm are still its own writing, not an outlined label to be read
+    for (const t of (group.sampleText || []).concat(group.markers || [])) if (t && t.seg) owned.add(t.seg);
     const cand = parsed.segments.concat(parsed.nested).filter(s => s.bbox && !owned.has(s) && (s.kind === "path" || s.kind === "text" || s.kind === "image"));
     const out = [];
     for (let i = 0; i < charms.length; i++) {
@@ -4609,7 +4611,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat",fonts:F_.workerFonts});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col",fonts:F_.workerFonts});
     }
     return workerClient;
   }
