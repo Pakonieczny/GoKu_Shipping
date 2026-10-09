@@ -113,34 +113,34 @@
   }
   const piecesOnSheets = rid => { const out = []; for (const sh of allSheets()) for (const c of sh.charms || []) if (c.poolId && ridOfCharm(c) === str(rid)) out.push({ sh, c }); return out; };
 
-  /* ── pairs (Paul, 9 Oct 2026): a line makes one piece, a pair or n pieces; a mismatched pair is a Left and a Right. A line is one GROUP
-     (charm-nest-pair.js: receipt + transaction) and goes back on a sheet whole; one whose other pieces stay on a sheet already cut is
-     split (rule R3), and the preview and the order's timeline say so in plain words. Everything here is additive: a line that is a
-     single piece, or a matching pair with every piece on hold, reads and writes exactly what it did. ── */
+  /* ── pairs (Paul, 9 Oct 2026, amendment 2): every earring pair line makes TWO pieces for each unit, one Left and one Right (matching or
+     mismatched, mirror images), and a necklace with a count (discs, letters, charms) makes that many pieces of one group. A line is one
+     GROUP (charm-nest-pair.js: receipt + transaction) and goes back on a sheet whole; one whose other pieces stay on a sheet already cut
+     is split (rule R3), and the preview and the order's timeline say so in plain words. The intake's own reading of the line (spec.pair,
+     spec.pieceCount, CharmNestOrders.pieceCountOf) is the one source; a line it does not call a pair reads and writes exactly what it did. ── */
   const PAIR = () => G.CharmNestPair || null;
-  /** What the pair module and the intake say a line is: { kind: 'single'|'pair'|'mismatched'|'multi', pieces }. The intake's own reading (spec.pair, spec.pieceCount) first. */
+  /** What the intake says a line is: { pair: an earring pair line, mismatched, pieces }. */
   function lineKind(r) {
-    const sp = (r && r.spec) || {}, P = PAIR(), qty = Math.max(1, +sp.quantity || +(r && r.line && r.line.quantity) || 1);
-    let kind = sp.pair && sp.pair.kind ? String(sp.pair.kind) : '';
-    if (!kind && P && P.kindOf) { try { kind = P.kindOf(r, null) || ''; } catch (_) { kind = ''; } }
-    if (!kind) kind = qty > 2 ? 'multi' : qty === 2 ? 'pair' : 'single';
-    const mis = kind === 'mismatched' || !!(sp.pair && sp.pair.mismatched);
-    return { kind, mismatched: mis, pieces: +sp.pieceCount || (mis ? 2 * qty : qty) };
+    const sp = (r && r.spec) || {}, qty = Math.max(1, +sp.quantity || +(r && r.line && r.line.quantity) || 1), pr = sp.pair && sp.pair.kind ? sp.pair : null;
+    let n = 0; try { const O = G.CharmNestOrders; n = O && O.pieceCountOf ? +O.pieceCountOf(r) || 0 : 0; } catch (_) { n = 0; }
+    n = n || +sp.pieceCount || qty;
+    return { pair: !!pr && (pr.kind === 'pair' || pr.kind === 'mismatched'), mismatched: !!pr && (pr.kind === 'mismatched' || !!pr.mismatched), pieces: n };
   }
-  /** The lines of the order whose pieces are partly on a sheet already cut and partly to be placed now: [{ lineKey, groupKey, label, stays:[sheet label], fresh:n }]. */
+  /** The lines of the order whose pieces are partly on a sheet already cut and partly to be placed now: [{ lineKey, groupKey, label, stays:[sheet label], sides:[Left|Right], fresh, stayed }]. */
   function splitLines(rid, rows, stayIds, freshIds) {
     const fresh = new Set(freshIds), on = piecesOnSheets(rid), out = [];
     for (const r of rows) {
       const ids = (r.poolIds || []).map(String); if (ids.length < 2) continue;
       const stayHere = ids.filter(id => stayIds.has(id)), go = ids.filter(id => fresh.has(id));
       if (!stayHere.length || !go.length) continue;
-      const where = [...new Set(on.filter(x => stayHere.includes(String(x.c.poolId))).map(x => label(x.sh)))];
+      const here = on.filter(x => stayHere.includes(String(x.c.poolId))), where = [...new Set(here.map(x => label(x.sh)))];
+      const sides = here.map(x => (x.c.side === 'L' ? 'Left' : x.c.side === 'R' ? 'Right' : '')).filter(Boolean);
       const P = PAIR(); let key = ''; try { key = P && P.groupKey ? P.groupKey(r) : ''; } catch (_) { key = ''; }
-      out.push({ lineKey: r.key, groupKey: key || `${rid}:${str(r.line && r.line.transactionId)}`, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), stays: where, fresh: go.length, stayed: stayHere.length });
+      out.push({ lineKey: r.key, groupKey: key || `${rid}:${str(r.line && r.line.transactionId)}`, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), stays: where, sides: sides.length === stayHere.length ? sides : [], fresh: go.length, stayed: stayHere.length });
     }
     return out;
   }
-  const splitWords = x => `${word(x.stayed, 'piece', 'pieces')} of ${x.label} stay${x.stayed === 1 ? 's' : ''} on ${x.stays.join(' and ') || 'a sheet already cut'}, so ${x.stayed + x.fresh === 2 ? 'this pair is' : 'these pieces are'} on two sheets (both sheets must go in one set)`;
+  const splitWords = x => `${x.sides.length ? `its ${x.sides.join(' and ')} ${x.sides.length === 1 ? 'piece' : 'pieces'}` : word(x.stayed, 'piece', 'pieces')} of ${x.label} stay${x.stayed === 1 ? 's' : ''} on ${x.stays.join(' and ') || 'a sheet already cut'}, so ${x.stayed + x.fresh === 2 ? 'this pair is' : 'these pieces are'} on two sheets (both sheets must go in one set)`;
 
   /* ── the plan: read only ── */
   function planOf(rid) {
@@ -156,10 +156,10 @@
     for (const r of mine) {
       const m = metalOf(r), qty = Math.max(1, +(r.spec && r.spec.quantity) || +(r.line && r.line.quantity) || 1);
       const lk = lineKind(r), pc = { lineKey: r.key, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), metal: m, qty };
-      // (a mismatched pair makes two pieces for each unit, a Left and a Right; every other line keeps the count it had)
-      if (lk.mismatched) { pc.kind = lk.kind; pc.pieces = lk.pieces; pc.sides = ['Left', 'Right']; pairs.push(pc); }
+      // (an earring pair line makes a Left and a Right for each unit, so it is counted by its pieces; every other line keeps the count it had)
+      if (lk.pair) { pc.kind = lk.mismatched ? 'mismatched' : 'pair'; pc.pieces = lk.pieces; pc.sides = ['Left', 'Right']; pairs.push(pc); }
       base.pieces.push(pc);
-      if (m) byMetal.set(m, (byMetal.get(m) || 0) + (lk.mismatched ? lk.pieces : qty));
+      if (m) byMetal.set(m, (byMetal.get(m) || 0) + (lk.pair ? lk.pieces : qty));
     }
     const open = runOpen(), fx = base.effects;
     fx.push(`Order ${rid} goes to the front of the queue, ahead of the orders coming in from Etsy.`);
@@ -174,7 +174,7 @@
       fx.push(t.inSet ? `The QR label of ${t.label} is made again.` : `${t.label} is still filling, so its QR label is made when it is released to its set.`);
     }
     base.target = base.targets[0] || null;
-    for (const pc of pairs) fx.push(`${pc.label}: its ${word(pc.pieces, 'piece', 'pieces')} (Left and Right of one pair) go on the same sheet, together.`);
+    for (const pc of pairs) fx.push(`${pc.label}: ${pc.pieces > 2 && pc.pieces % 2 === 0 ? `its ${pc.pieces / 2} pairs (each a Left and a Right) go` : 'the pair (Left and Right) goes'} on the same sheet, together.`);
     // pieces of the order that stay where they are: on a sheet already cut
     const had = new Map(), stayIds = new Set();
     for (const { sh, c } of piecesOnSheets(rid)) if (cutSheet(sh)) { had.set(label(sh), (had.get(label(sh)) || 0) + 1); stayIds.add(String(c.poolId)); }

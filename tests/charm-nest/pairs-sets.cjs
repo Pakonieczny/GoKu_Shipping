@@ -16,7 +16,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
 // ── the orders (receipt ids and transaction ids are long enough for the server's pool id test) ──
 const MIS = '6100000001', MIS_T = '3100000001';         // MISMATCHED_7134: MITTENS 1 (left) + MITTENS 2 (right), TWO DIFFERENT DESIGNS, one line
 const MIS2 = '6100000011', MIS2_T = '3100000011';        // a second mismatched pair, for a joining sheet
-const PAIR = '6100000002', PAIR_T = '3100000002';        // a matching pair of studs (two pieces of one design)
+const PAIR = '6100000002', PAIR_T = '3100000002';        // a matching pair of studs (a Left and a Right piece of one design: Paul's 9 Oct 18:47 amendment)
+const OLDP = '6100000007', OLDP_T = '3100000007';        // a matching pair as an OLD record has it: two pieces, no side on either
 const DISC = '6100000003', DISC_T = '3100000003';        // a necklace with three discs
 const MIX = '6100000004';                                // one order: studs pair (line A), huggie pair (line B), three discs (line C), and a single (line D)
 const [A_T, B_T, C_T, D_T] = ['3100000041', '3100000042', '3100000043', '3100000044'];
@@ -38,7 +39,7 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     assert.deepEqual(C.groups([l, sh('l2', null, [id(MIS, MIS_T, 1)], { pieceSides: { [id(MIS, MIS_T, 1)]: 'L' } })]), [], 'two left pieces of one id are one piece');
     // what the item says: nothing told -> the old plain words; sides told -> left and right
     const plain = C.between([a1, b2], ['b2'], 'new'); assert.equal(plain.length, 1); assert.equal(plain[0].words, '', 'no one told what the pieces are: the plain words stay'); assert.equal(plain[0].kind, '');
-    const meta = k => (k === id(MIS, MIS_T, 1) ? { side: 'L', form: 'earrings' } : k === id(MIS, MIS_T, 2) ? { side: 'R', form: 'earrings' } : null);
+    const meta = k => (k === id(MIS, MIS_T, 1) ? { side: 'L', form: 'earrings', bodyIndex: 0 } : k === id(MIS, MIS_T, 2) ? { side: 'R', form: 'earrings', bodyIndex: 1 } : null);
     const told = C.between([a1, b2], ['b2'], 'new', { meta });
     assert.equal(told[0].kind, 'mismatched'); assert.equal(told[0].words, 'has its left earring on GF Sheet 1 and its right earring on GF Sheet 2');
     assert.deepEqual(told[0].pieces.map(p => [p.side, p.sideLabel, p.sheetLabel, p.groupKey]), [['L', 'Left', 'GF Sheet 1', `${MIS}:${MIS_T}`], ['R', 'Right', 'GF Sheet 2', `${MIS}:${MIS_T}`]]);
@@ -46,7 +47,17 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     // a matching pair (two pieces of one design) and three discs
     const p1 = sh('p1', 'set-1', [id(PAIR, PAIR_T, 1)]), p2 = sh('p2', null, [id(PAIR, PAIR_T, 2)]);
     const pair = C.between([p1, p2], ['p2'], 'new', { meta: () => ({ form: 'earrings', kind: 'pair' }) });
-    assert.equal(pair[0].kind, 'pair'); assert.equal(pair[0].words, 'has its two earrings on GF Sheet 1 and GF Sheet 2');
+    assert.equal(pair[0].kind, 'pair'); assert.equal(pair[0].words, 'has its two earrings on GF Sheet 1 and GF Sheet 2', 'an old record (no side on either piece) keeps its words');
+    // a matching pair as the amendment makes it: one Left and one Right piece of the SAME body (a side alone never says "mismatched")
+    const sidesOnly = k => ({ side: k === id(PAIR, PAIR_T, 1) ? 'L' : 'R', form: 'earrings', bodyIndex: 0 });
+    const lr = C.between([p1, p2], ['p2'], 'new', { meta: sidesOnly });
+    assert.equal(lr[0].kind, 'pair'); assert.equal(lr[0].words, 'has its left earring on GF Sheet 1 and its right earring on GF Sheet 2'); assert.deepEqual(lr[0].pieces.map(x => x.side), ['L', 'R']);
+    assert.equal(lr[0].total, 2, 'both pieces of a matching pair are counted');
+    assert.deepEqual(C.groups([p1, p2]).map(g => g.ids.sort()), [['p1', 'p2']], 'a matching pair on two sheets ties them, with or without sides');
+    assert.equal(C.between([p1, p2], ['p2'], 'new', { meta: k => ({ side: k === id(PAIR, PAIR_T, 1) ? 'L' : 'R', kind: 'mismatched' }) })[0].kind, 'mismatched', 'the caller\'s own kind wins');
+    // one id listed with both sides is two bodies; an id listed with one side on one sheet and none on a stale record is still ONE piece
+    const stale = [C.sheetOf({ id: 'z1', metal: 'gold', page: 1, poolIds: [id(PAIR, PAIR_T, 1)], pieceSides: { [id(PAIR, PAIR_T, 1)]: 'L' } }), C.sheetOf({ id: 'z2', metal: 'gold', page: 2, poolIds: [id(PAIR, PAIR_T, 1)] })];
+    assert.deepEqual(C.groups(stale), [], 'a stale copy of a piece without its side is the same piece, not a second one');
     const nk = C.between([p1, p2], ['p2'], 'new', { meta: () => ({ kind: 'pair', form: 'necklace' }) });
     assert.equal(nk[0].kind, 'multi'); assert.equal(nk[0].words, 'has its 2 pieces on GF Sheet 1 and GF Sheet 2', 'two necklaces of one line are two pieces, never two earrings');
     const d1 = sh('d1', 'set-1', [id(DISC, DISC_T, 1)]), d2 = sh('d2', 'set-1', [id(DISC, DISC_T, 2)]), d3 = sh('d3', null, [id(DISC, DISC_T, 3)]);
@@ -107,7 +118,7 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const mkSet = (setId, sheetIds, extra = {}) => st.put(SET, setId, { setId, seq: +setId.replace(/\D/g, ''), day, runId: 'run-x', sheetIds, materials: ['gold'], orders: {}, status: 'complete', committedAt: now - 9000, committed: [], labelFiles: sheetIds.map(i => file(i, setId)),
       labels: { pdf: { path: 'x.pdf', url: 'u' } }, processSeals: [{ how: 'approved', by: 'Ann', at: now - 5000 }], updatedAt: ts, createdAt: ts, ...extra });
     const seal = { processSeals: [{ how: 'approved', by: 'Ann', at: now - 6000 }], processReady: true };
-    const pool = (key, side, sku, extra = {}) => st.put(POOL, key, { poolId: key, orderId: key.split('_')[0], transactionId: key.split('_')[1], copy: +key.split('_')[2], sku, form: 'earrings', quantity: 1, state: 'written', ...(side ? { side, bodyIndex: side === 'L' ? 0 : 1 } : {}), updatedAt: ts, ...extra });
+    const pool = (key, side, sku, extra = {}) => st.put(POOL, key, { poolId: key, orderId: key.split('_')[0], transactionId: key.split('_')[1], copy: +key.split('_')[2], sku, form: 'earrings', quantity: 1, state: 'written', ...(side ? { side, bodyIndex: 0 } : {}), updatedAt: ts, ...extra });
 
     // Set 1 (committed): the mismatched pair MIS on GF Sheet 1 (left, MITTENS 1) and GF Sheet 2 (right, MITTENS 2), the matching pair PAIR across Sheets 1 and 2, and a free sheet.
     mkSet('set-1', ['pg-1', 'pg-2', 'pg-3']);
@@ -116,6 +127,8 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     // Set 3 (committed): the matching pair PAIR on two sheets
     mkSet('set-3', ['mp-1', 'mp-2']);
     mk('mp-1', 'gold', [id(PAIR, PAIR_T, 1)], { setId: 'set-3', setSeq: 3, sheetIndex: 1, ...seal }); mk('mp-2', 'gold', [id(PAIR, PAIR_T, 2)], { setId: 'set-3', setSeq: 3, sheetIndex: 2, ...seal });
+    mkSet('set-5', ['op-1', 'op-2']);
+    mk('op-1', 'gold', [id(OLDP, OLDP_T, 1)], { setId: 'set-5', setSeq: 5, sheetIndex: 1, ...seal }); mk('op-2', 'gold', [id(OLDP, OLDP_T, 2)], { setId: 'set-5', setSeq: 5, sheetIndex: 2, ...seal });
     mk('pg-3', 'gold', [id(PLAIN, '3100000061', 1)], { setId: 'set-1', setSeq: 1, sheetIndex: 3, ...seal });
     mkSet('set-2', ['x-1'], { setId: 'set-2' }); mk('x-1', 'gold', [id('6100000090', '3100000090', 1)], { setId: 'set-2', setSeq: 2, sheetIndex: 1, ...seal });
     // a draft sheet holding the right earring of a second mismatched pair whose left earring is in Set 1
@@ -123,9 +136,10 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     st.put(S, 'pg-4', { ...st.doc(S, 'pg-4') });
     mk('dr-1', 'gold', [id(MIS2, MIS2_T, 2)]);
     st.doc(SET, 'set-1').sheetIds.push('pg-4'); st.doc(SET, 'set-1').labelFiles.push(file('pg-4', 'set-1'));
-    pool(id(MIS, MIS_T, 1), 'L', 'MISMATCHED_7134'); pool(id(MIS, MIS_T, 2), 'R', 'MISMATCHED_7134');
-    pool(id(PAIR, PAIR_T, 1), null, 'MITTENS_1'); pool(id(PAIR, PAIR_T, 2), null, 'MITTENS_1');
-    pool(id(MIS2, MIS2_T, 1), 'L', 'MISMATCHED_6849'); pool(id(MIS2, MIS2_T, 2), 'R', 'MISMATCHED_6849');
+    pool(id(MIS, MIS_T, 1), 'L', 'MISMATCHED_7134'); pool(id(MIS, MIS_T, 2), 'R', 'MISMATCHED_7134', { bodyIndex: 1 });
+    pool(id(PAIR, PAIR_T, 1), 'L', 'MITTENS_1'); pool(id(PAIR, PAIR_T, 2), 'R', 'MITTENS_1');     // a matching pair: a Left and a Right piece of ONE body
+    pool(id(OLDP, OLDP_T, 1), null, 'MITTENS_1'); pool(id(OLDP, OLDP_T, 2), null, 'MITTENS_1');   // the same pair as an old record has it: no side
+    pool(id(MIS2, MIS2_T, 1), 'L', 'MISMATCHED_6849'); pool(id(MIS2, MIS2_T, 2), 'R', 'MISMATCHED_6849', { bodyIndex: 1 });
     st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines: {} });
     const all = () => new Map([...st.docs.entries()].map(([k, v]) => [k, JSON.stringify(v)]));
     const refused = async (what, moves, re) => {
@@ -140,7 +154,8 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     let r = await refused('out: the sheet with the right earring', [['pg-2', null]], /^Order 6100000001 has its left earring on GF Sheet 1 and its right earring on GF Sheet 2: they stay in one set/);
     assert.equal(r.reasons[0].key, 'sharedOrders'); assert(r.shared.some(x => x.orderId === MIS && x.kind === 'mismatched'), JSON.stringify(r.shared));
     r = await refused('out: the sheet with the left earring', [['pg-1', null]], /^Order 6100000001 has its left earring on GF Sheet 1 and its right earring on GF Sheet 2: they stay in one set/);
-    await refused('out: a matching pair (two earrings of one design)', [['mp-2', null]], new RegExp(`^Order ${PAIR} has its two earrings on GF Sheet 1 and GF Sheet 2: they stay in one set`));
+    await refused('out: a matching pair (a Left and a Right piece of one design)', [['mp-2', null]], new RegExp(`^Order ${PAIR} has its left earring on GF Sheet 1 and its right earring on GF Sheet 2: they stay in one set`));
+    await refused('out: a matching pair an old record has (no side)', [['op-2', null]], new RegExp(`^Order ${OLDP} has its two earrings on GF Sheet 1 and GF Sheet 2: they stay in one set`));
     // adding the draft sheet: the left earring stays in Set 1, so Set 2 is refused and Set 1 is allowed
     await refused('in: the right earring to a set without the left', [['dr-1', 'set-2']], new RegExp(`^Order ${MIS2} has its left earring on GF Sheet 4.*they go into one set together`));
     r = await edit([['dr-1', 'set-1']]); assert.equal(r.status, 200, JSON.stringify(r));
@@ -157,6 +172,21 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     st.doc(SET, 'set-2').sheetIds.push('qq-1', 'qq-2');
     await refused('out: two single lines of one order, no pool rows', [['qq-2', null]], /^Order 6100000100 has pieces on GF Sheet 3 and GF Sheet 2: they stay in one set$/);
 
+    // the server's last net: a set is not recorded complete while the other earring sits in another set, and the refusal says which ear is where (one small read, only on the refusal)
+    {
+      const PS = '6100000020', PS_T = '3100000020', lab = (sid, os) => ({ label: { files: [{ path: sid + '-qr.png', url: image, payload: os[0], orders: os }], orders: os } });
+      pool(id(PS, PS_T, 1), 'L', 'MISMATCHED_7134'); pool(id(PS, PS_T, 2), 'R', 'MISMATCHED_7134', { bodyIndex: 1 });
+      st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: { [`${PS}_${PS_T}`]: { orderId: PS, state: 'written', quantity: 1, poolIds: [id(PS, PS_T, 1), id(PS, PS_T, 2)], engraveCandidate: false } } });
+      const put = (setId, sheetIds) => st.put(SET, setId, { setId, seq: +setId.replace(/\D/g, ''), day, runId: 'run-live', sheetIds, materials: ['gold'], orders: {}, status: 'labelled', updatedAt: ts, createdAt: ts });
+      put('set-8', ['sx-1']); put('set-9', ['sx-2']);
+      mk('sx-1', 'gold', [id(PS, PS_T, 1)], { runId: 'run-live', setId: 'set-8', setSeq: 8, page: 11, sheetIndex: 11, draft: false, ...lab('sx-1', [PS]) });
+      mk('sx-2', 'gold', [id(PS, PS_T, 2)], { runId: 'run-live', setId: 'set-9', setSeq: 9, page: 12, sheetIndex: 12, draft: false, ...lab('sx-2', [PS]) });
+      const was = JSON.stringify(st.doc(SET, 'set-8'));
+      const done = await post({ op: 'setUpdate', setId: 'set-8', patch: { status: 'complete' } });
+      assert.notEqual(done.status, 200, JSON.stringify(done));
+      assert.match(done.error || '', new RegExp(`^Set cannot be completed: order ${PS} has its left earring on GF Sheet 11 and its right earring on GF Sheet 12, and GF Sheet 12 is not in this set\\. Sheets that share a multi-piece order stay in the same set`), done.error);
+      assert.equal(JSON.stringify(st.doc(SET, 'set-8')), was, 'refused: the set is as it was');
+    }
     // ═══ 3. LibraryFlow's plan says it too (the page's own pieces tell the words; the records' answer is merged) ═══
     const pageSheets = () => ['pg-1', 'pg-2'].map(i => C.sheetOf(st.doc(S, i), { label: SE.wordOf(st.doc(S, i)), fixed: '' }));
     LF.configure({ api: post, employee: () => 'Paul', rows: () => [], live: () => null, remakeLabel: async () => {}, include: async () => {}, relabelSet: async () => {}, setFiles: async () => {}, applyMembership: async () => {},
@@ -172,8 +202,19 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const key = `${MIS}_${MIS_T}`;
     assert.deepEqual(RD.copyIds({ poolIds: [], spec: { quantity: 1 } }, key), [`${key}_1`], 'a line that states no piece count: its quantity, as before');
     assert.deepEqual(RD.copyIds({ poolIds: [], spec: { quantity: 1, pieceCount: 2 } }, key), [`${key}_1`, `${key}_2`], 'a mismatched pair that lost its ids is waited for as TWO pieces');
-    assert.deepEqual(RD.copyIds({ poolIds: [`${key}_2`], spec: { quantity: 1, pieceCount: 2 } }, key), [`${key}_1`, `${key}_2`]);
+    assert.deepEqual(RD.copyIds({ poolIds: [`${key}_1`], spec: { quantity: 1, pieceCount: 2 } }, key), [`${key}_1`], 'a line pooled before pairs made two pieces per unit (one id) is not missing a Right piece');
+    assert.deepEqual(RD.copyIds({ poolIds: [`${key}_1`], spec: { quantity: 3 } }, key), [`${key}_1`, `${key}_2`, `${key}_3`], 'ids are still invented up to the quantity, as before');
+    assert.deepEqual(RD.copyIds({ poolIds: [], spec: { quantity: 2, pieceCount: 4 } }, key), [1, 2, 3, 4].map(n => `${key}_${n}`), 'two pairs not pooled yet: four pieces are waited for');
+    assert.deepEqual(RD.copyIds({ poolIds: [], spec: { quantity: 1, pieceCount: 3 } }, key), [1, 2, 3].map(n => `${key}_${n}`), 'a necklace of three discs not pooled yet: three pieces');
     assert.deepEqual(RD.copyIds({ poolIds: [`${key}_1`, `${key}_2`], quantity: 1 }, key), [`${key}_1`, `${key}_2`], 'a record that lists both ids keeps both');
+  }
+
+  // a line that splits its engraving per ear: each piece is read by its own decision; a line that does not keeps the line's
+  {
+    const a = `${MIS}_${MIS_T}_1`, b = `${MIS}_${MIS_T}_2`, line = { key: `${MIS}_${MIS_T}`, poolIds: [a, b], spec: { quantity: 1, pieceCount: 2 }, state: 'written', engrave: { needed: true, state: 'written', approved: false, pieces: { [a]: { needed: true, state: 'approved', approved: true }, [b]: { needed: false, state: 'none', approved: true } } } };
+    assert.deepEqual(RD.decisions([line]), { [a]: { needed: true, state: 'approved', approved: true }, [b]: { needed: false, state: 'none', approved: true } }, 'the left ear is approved on its own, the right needs nothing');
+    const whole = { ...line, engrave: { needed: true, state: 'written', approved: false } };
+    assert.deepEqual(RD.decisions([whole]), { [a]: { needed: true, state: 'written', approved: false }, [b]: { needed: true, state: 'written', approved: false } }, 'a line with no per-ear decisions: the line\'s own, as before');
   }
 
   // ═══ 5. the set manifest tells a pair on two sheets (and prints nothing extra for a set without one) ═══

@@ -28,6 +28,11 @@
  *   PiecePlacement.ofRow(row)                page: the Placement of the piece an order row (the pull's, the order window's) is
  *   PiecePlacement.subscribe(fn)             page: fn() when anything it reads changed (OrderPieces' reads); returns the unsubscribe
  *   PiecePlacement.STATES                    ['sheet','waiting','hold','hand','cancelled','loading']
+ *   PiecePlacement.groups(pieces)            pure: the pieces of an order (OrderPieces entries, or a Placement's `parts`) folded into their GROUPS (one order line: receipt:transaction),
+ *                                            each { key, n, kind, known, pieces, sheets, on, off, split, setState, hasSides, pairs, ... } (pairs, mismatched pairs, discs; `known`: the pieces said their kind or their ears, it was not guessed from the count)
+ *   PiecePlacement.pairWords(group, here)    pure: what a person should read of a group from one sheet's side: { text, lines, away, here, set, sheets }, "Right piece is on RG Sheet 2, in the same set"; `sheets` = the other sheets to link to ({ id, label, key, side })
+ *   PiecePlacement.placeWords(group)         pure: the same without a viewpoint: "Left on GF Sheet 1, Right on RG Sheet 2"
+ *   PiecePlacement.sideWord(side)            "Left" | "Right" | ""
  *
  * facts (every field optional; nothing is read from the page here):
  *   { key, name, metal, qty,
@@ -37,6 +42,7 @@
  *     sheets:    [{ id, label, metal, setId, cut, sent, pools }]   the sheets that hold a copy of it now (the sheets' own records first: OrderPieces)
  *     copies, copiesOn: how many copies it has and how many sit on a sheet (omit: all, or none, by `sheets`)
  *     loading, unsure: the sheet records are not read yet / could not be read: nothing is said about a missing sheet
+ *     parts:     [{ key, side, groupKey, copy, on, sheetId, sheetLabel, setId, cut, hold, hand, gone, loading }] one per piece (copy) of the line, when it has two or more
  *     why:       plain reason it is on no sheet ("it has no SKU")  }
  *
  * Placement (the answer):
@@ -56,7 +62,12 @@
  *     fence:   true when the steps from Nested on must be hollow (waiting, or held and on no sheet): timeline-ui's derive clamps to it unless the history is past the laser
  *     floor:   1 when on a sheet (Nested is done at least), else 0
  *     since, by, wasOn   from the history (withHistory): when and by whom it came to be in this state, and the sheet it was taken off ({ label, sheetId, at, until, by, how })
- *     sig:     a short string that changes whenever the answer does (every surface repaints on it) }
+ *     sig:     a short string that changes whenever the answer does (every surface repaints on it)
+ *     parts, groups, sides, split, splitGroups, words   (only for a line of two or more pieces; additive: `text` and every field above are the same as without them)
+ *              parts   the pieces, normalised; groups  PiecePlacement.groups(parts); sides  { L: part | null, R: part | null } when the pieces know their ear;
+ *              split   true when the pieces of the group are on different sheets (or some on a sheet and some on none): the R3 fact;
+ *              splitGroups  how many groups are split; words  placeWords of the split group ("Left on GF Sheet 1, Right on RG Sheet 2"), '' when none is
+ *              For a line whose pieces know their ear, `say` and `why` name the piece ("Right piece is not on a sheet yet") instead of "1 of 2 copies". }
  *
  * Never throws; never writes anything; synchronous and cheap. */
 (function (root, factory) { const api = factory(); if (typeof module === 'object' && module.exports) module.exports = api; else { root.CharmNestPiecePlacement = api; root.PiecePlacement = api.makePage(root); } })(typeof self !== 'undefined' ? self : this, function () {
@@ -66,6 +77,89 @@
   const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 400);
   const WAIT_TEXT = 'Waiting for a sheet';
   const NEXT_TEXT = 'be placed on a sheet';
+
+  // ── pairs, mismatched pairs, discs (Paul, 9 Oct 2026): the pieces of one order line are ONE group, and it must be possible to say plainly where each piece is ──
+  // (a piece is a pool id `receipt_transaction_copy`; its group is the line `receipt:transaction` (CharmNestPair.groupKey); its side is "L" | "R" when the design
+  //  draws two different bodies, else null. A record that carries none of these still works: the group is read from the pool id or the line key, the side is absent.)
+  const SIDE_WORD = { L: 'Left', R: 'Right' };
+  const sideWord = s => SIDE_WORD[s] || '';
+  const POOL_RE = /^(\d{4,20})_([^_]*)_(\d{1,3})$/, LINE_RE = /^(\d{4,20})_([^_]*)$/;
+  function groupKeyOf(p) {
+    if (!p) return '';
+    if (p.groupKey && String(p.groupKey) !== ':') return String(p.groupKey);
+    if (+p.groupSize === 1) return '';                                   // (a piece its line says is alone: no group)
+    const m = LINE_RE.exec(String(p.lineKey || '')) || POOL_RE.exec(String(p.poolId || p.key || ''));
+    return m ? m[1] + ':' + m[2] : '';
+  }
+  /** One piece as the group helpers read it, from an OrderPieces entry (`nested`, `sheetLabel`) or from a Placement's `parts` (`on`). */
+  function partOf(p) {
+    p = p || {};
+    return { key: str(p.key != null ? p.key : p.poolId, 80), gk: groupKeyOf(p), side: p.side === 'L' || p.side === 'R' ? p.side : null, copy: +p.copy || 0, kind: str(p.kind, 12),
+      on: p.on != null ? !!p.on : !!p.nested, sheetId: p.sheetId || null, sheetLabel: str(p.sheetLabel, 80), setId: p.setId || null, cut: !!p.cut || p.state === 'cut',
+      hold: !!p.hold || p.problem === 'held', hand: !!p.hand, gone: !!p.gone, loading: !!p.loading };
+  }
+  const placeKey = p => p.sheetId || p.sheetLabel || '';
+  function describeGroup(key, ps) {
+    const n = ps.length, hasSides = ps.some(p => p.side), sheets = [], seen = new Map();
+    for (const p of ps) if (p.on && placeKey(p)) {
+      let s = seen.get(placeKey(p)); if (!s) { s = { id: p.sheetId, label: p.sheetLabel || 'a sheet', setId: p.setId || null, keys: [], sides: [] }; seen.set(placeKey(p), s); sheets.push(s); }
+      s.keys.push(p.key); if (p.side) s.sides.push(p.side);
+    }
+    const on = ps.filter(p => p.on), off = ps.filter(p => !p.on && !p.hand && !p.loading);
+    const told = ps.find(p => p.kind); const kind = n < 2 ? 'single' : told ? told.kind : hasSides ? 'pair' : n === 2 ? 'pair' : 'multi';   // (amendment 2: a piece that knows its ear belongs to an earring pair, matching or mismatched)
+    const lefts = ps.filter(p => p.side === 'L').length, rights = ps.filter(p => p.side === 'R').length;
+    const split = n >= 2 && (sheets.length > 1 || (sheets.length >= 1 && off.length > 0));
+    // do the sheets a group sits on share a set? (R3: "an order split across sheets says whether the sheets are in one set")
+    let setState = ''; if (sheets.length > 1) { const ids = sheets.map(s => s.setId); setState = ids.every(x => x && x === ids[0]) ? 'same' : ids.every(x => !x) ? 'none' : 'other'; }
+    return { key, n, kind, known: !!told || hasSides, hasSides, pieces: ps, sheets, on, off, hold: ps.filter(p => p.hold), split, setState, lefts, rights, pairs: (told || hasSides) && (kind === 'pair' || kind === 'mismatched') ? (hasSides ? Math.min(lefts, rights) : Math.floor(n / 2)) : 0, halves: (told || hasSides) && (kind === 'pair' || kind === 'mismatched') ? (hasSides ? Math.abs(lefts - rights) : n % 2) : 0 };
+  }
+  /** The groups of a list of pieces (see the header). A piece with no group is its own group of one. Pure. */
+  function groups(list) {
+    const by = new Map();
+    for (const raw of Array.isArray(list) ? list : []) {
+      if (!raw) continue; const p = partOf(raw); if (p.gone && !p.on) continue;
+      const k = p.gk || 'alone:' + p.key; (by.get(k) || by.set(k, []).get(k)).push(p);
+    }
+    return [...by].map(([k, ps]) => describeGroup(k, ps.map((p, i) => [p, i]).sort((a, b) => (a[0].copy || 0) - (b[0].copy || 0) || a[1] - b[1]).map(x => x[0])));
+  }
+  const capital = t => t ? t[0].toUpperCase() + t.slice(1) : t;
+  const pieceName = (g, p) => sideWord(p.side) ? sideWord(p.side) + ' piece' : g.n === 2 ? 'The other piece' : 'A piece';
+  const where = p => p.hold && !p.on ? 'on hold' : p.on ? 'on ' + (p.sheetLabel || 'a sheet') : p.hand ? 'completed by hand' : p.loading ? 'being read' : 'not on a sheet yet';
+  /** What to say of a group standing on one sheet (hereSheetId): the pieces that are NOT on it, each told plainly, with whether their sheet shares a set with this one.
+   *  { text, lines, away: [part], here: [part], set: 'same' | 'other' | 'none' | '' }. A group wholly here says nothing (text ''). Pure. */
+  function pairWords(g, hereSheetId) {
+    const out = { text: '', lines: [], away: [], here: [], set: '', sheets: [] };
+    if (!g || g.n < 2) return out;
+    const here = g.pieces.filter(p => p.on && hereSheetId && p.sheetId === hereSheetId), away = g.pieces.filter(p => !here.includes(p) && !p.hand && !p.loading);   // (a piece whose sheets are not read yet is neither here nor away: nothing is said of it)
+    out.here = here; out.away = away; if (!away.length) return out;
+    for (const p of away) if (p.on && p.sheetId && !out.sheets.some(x => x.id === p.sheetId)) out.sheets.push({ id: p.sheetId, label: p.sheetLabel || 'a sheet', key: p.key, side: p.side });   // (the other sheets to open, one link each)
+    const mine = g.sheets.find(s => s.id && s.id === hereSheetId), shares = s => !mine ? '' : s.id === mine.id ? '' : mine.setId && s.setId === mine.setId ? 'same' : !mine.setId && !s.setId ? 'none' : 'other';
+    const SET = { same: ', in the same set', other: ', in another set', none: ', in no set' };
+    if (g.n === 2 || g.hasSides) {
+      for (const p of away) {
+        const s = p.on && g.sheets.find(x => placeKey(p) === (x.id || x.label)), rel = s ? shares(s) : '';
+        out.lines.push(`${pieceName(g, p)} is ${where(p)}${rel ? SET[rel] : ''}`);
+        if (rel && !out.set) out.set = rel;
+      }
+    } else {
+      // (a group of three or more: told by place, "2 of its 3 pieces are on RG Sheet 2")
+      const byPlace = new Map(); for (const p of away) { const k = p.on ? placeKey(p) : p.hold ? '~hold' : '~off'; (byPlace.get(k) || byPlace.set(k, []).get(k)).push(p); }
+      for (const [k, ps] of byPlace) {
+        const s = ps[0].on && g.sheets.find(x => k === (x.id || x.label)), rel = s ? shares(s) : '';
+        out.lines.push(`${ps.length === 1 ? '1' : ps.length} of its ${g.n} pieces ${ps.length === 1 ? 'is' : 'are'} ${where(ps[0])}${rel ? SET[rel] : ''}`);
+        if (rel && !out.set) out.set = rel;
+      }
+    }
+    out.text = out.lines.map(capital).join('. ') + '.';
+    return out;
+  }
+  /** The same group told with no sheet in mind: "Left on GF Sheet 1, Right on RG Sheet 2" (a pair with no sides: "one piece on GF Sheet 1, one on RG Sheet 2"). Pure. */
+  function placeWords(g) {
+    if (!g || g.n < 2) return '';
+    if (g.hasSides || g.n === 2) return g.pieces.map(p => (sideWord(p.side) || (p === g.pieces[0] ? 'One piece' : 'the other')) + ' ' + (p.on ? 'on ' + (p.sheetLabel || 'a sheet') : p.hold ? 'on hold' : p.hand ? 'completed by hand' : 'not on a sheet yet')).join(', ').replace(/^([a-z])/, c => c.toUpperCase());
+    const by = new Map(); for (const p of g.pieces) { const k = where(p); by.set(k, (by.get(k) || 0) + 1); }
+    return [...by].map(([k, c]) => `${c} ${k}`).join(', ');
+  }
 
   function sheetsOf(list) {
     const out = [], seen = new Set();
@@ -83,7 +177,7 @@
     if (typeof h === 'object') return { reason: str(h.reason || h.text || h.why || '', 200), at: +h.at || 0, by: str(h.by, 80) };
     return { reason: '', at: 0, by: '' };
   };
-  const sigOf = p => [p.key || '', p.state, p.onSheet ? 1 : 0, p.partial ? 1 : 0, p.sheets.map(s => (s.id || s.label) + (s.cut ? '!' : '')).join('+'), p.text, p.why, p.how || '', p.since || 0, p.wasOn ? (p.wasOn.sheetId || p.wasOn.label) + '@' + (p.wasOn.until || 0) : ''].join('~');
+  const sigOf = p => [p.key || '', p.state, p.onSheet ? 1 : 0, p.partial ? 1 : 0, p.sheets.map(s => (s.id || s.label) + (s.cut ? '!' : '')).join('+'), p.text, p.why, p.how || '', p.since || 0, p.wasOn ? (p.wasOn.sheetId || p.wasOn.label) + '@' + (p.wasOn.until || 0) : ''].join('~') + (p.pairSig ? '~' + p.pairSig : '');
 
   /** The answer for a piece a person's stop is on (a hold takes it off its sheet; a sheet that is already cut keeps it, and then it is both: held, and physically there). */
   function holdAnswer(hold, onSheet, on) {
@@ -119,7 +213,25 @@
       p = { state: 'waiting', text: WAIT_TEXT, say: WAIT_TEXT, why: str(f.why, 200) || 'it is waiting to be placed', next: 'sheet', nextText: NEXT_TEXT, fence: true, floor: 0 };
     }
     const out = Object.assign(base, p, { since: p.since || 0, by: p.by || '' });
+    pairFacts(out, f.parts);
     out.sig = sigOf(out);
+    return out;
+  }
+  /** The pair facts of a line of two or more pieces, added to its Placement (nothing existing changes, except the words of a line whose pieces know their ear). */
+  function pairFacts(out, rawParts) {
+    const parts = Array.isArray(rawParts) ? rawParts.filter(Boolean).map(partOf) : [];
+    if (parts.length < 2) return out;
+    const gs = groups(parts), bad = gs.filter(g => g.split), sides = { L: null, R: null }, hasSides = parts.some(x => x.side);
+    for (const x of parts) if (x.side && !sides[x.side]) sides[x.side] = x;
+    out.parts = parts; out.groups = gs; out.split = bad.length > 0; out.splitGroups = bad.length; out.words = bad.length ? placeWords(bad[0]) : '';
+    if (hasSides) out.sides = sides;
+    if (hasSides && out.state === 'sheet') {
+      // a pair that knows its ears says which ear is where, and which is not on a sheet yet, instead of "1 of 2 copies"
+      const off = parts.filter(x => !x.on && !x.hand && !x.loading);
+      if (out.partial && off.length) { const w = off.map(x => (sideWord(x.side) || 'A') + ' piece').join(' and '); out.why = `${w} ${off.length === 1 ? 'is' : 'are'} not on a sheet yet`; out.say = `On ${out.sheets[0] ? out.sheets[0].label || 'a sheet' : 'a sheet'}${out.sheets.length > 1 ? ` and ${out.sheets.length - 1} more` : ''}; ${out.why}`; }
+      else if (bad.length) out.say = out.words;
+    }
+    if (out.split || hasSides) out.pairSig = [out.split ? 'x' : '', parts.map(x => (x.side || '-') + (x.on ? ':' + (x.sheetId || x.sheetLabel || '?') : '') + (x.hold ? 'h' : '')).join(',')].join('');
     return out;
   }
 
@@ -140,6 +252,8 @@
     const out = { key: null, name: '', metal: null, qty: all.reduce((a, p) => a + (p.qty || 1), 0), state, text, say, why, onSheet: live.length > 0 && live.every(p => p.onSheet || p.state === 'loading') && live.some(p => p.onSheet), anyOnSheet: all.some(p => p.onSheet), partial: live.some(p => p.onSheet) && off.length > 0,
       sheets, more: Math.max(0, sheets.length - 1), copies: all.reduce((a, p) => a + p.copies, 0), copiesOn: all.reduce((a, p) => a + p.copiesOn, 0), how: '', since: 0, by: '', wasOn: null,
       next: off.length ? 'sheet' : null, nextText: off.length ? NEXT_TEXT : '', fence: off.length > 0, floor: live.length && live.every(p => p.onSheet) ? 1 : 0, counts, pieces: all };
+    // (pairs, mismatched pairs and discs: how many of the order's lines have their pieces on different sheets; only said when there is one)
+    const splitN = all.reduce((a, p) => a + (p.splitGroups || 0), 0); if (splitN) { out.splitPairs = splitN; out.words = all.map(p => p.split && p.words).filter(Boolean).join('; '); }
     out.sig = [state, text, why, counts.pieces, all.map(p => p.sig).join('|')].join('~');
     return out;
   }
@@ -202,6 +316,7 @@
       const sk = mine[0] || {}, hand = !lineHold && row ? handOfRow(row) : (!lineHold && mine.length && mine.every(c => c && c.hand) ? mine[0].hand : null);
       return { key: row ? row.key : sk.lineKey || null, name: sk.label || '', metal: (row && (row.material || (row.spec && row.spec.material))) || sk.metal || null, qty: Math.max(mine.length, 1),
         cancelled: (o && o.cancelled) || (row && row.state === 'gone') || (!row && mine.length > 0 && mine.every(c => c && c.gone)), hold: lineHold, hand,
+        parts: mine.length > 1 ? mine.map(c => ({ key: c.poolId || c.key, lineKey: c.lineKey, groupKey: c.groupKey, groupSize: c.groupSize, kind: c.kind, side: c.side, copy: c.copy, on: !!c.nested, sheetId: c.sheetId || null, sheetLabel: c.sheetLabel || '', setId: c.setId || null, cut: c.state === 'cut', hold: !!(c.hold || c.problem === 'held'), hand: !!c.hand, gone: !!c.gone, loading: !!c.loading })) : undefined,
         sheets, copies: Math.max(mine.length, 1), copiesOn: mine.filter(c => c && c.nested).length, loading: mine.some(c => c && c.loading), unsure: mine.some(c => c && c.unsure), why: (mine.find(c => c && !c.nested && c.reason) || {}).reason || '' };
     }
     function ofOrder(orderId, opts) {
@@ -221,7 +336,7 @@
     }
     const of = (orderId, lineKey, opts) => { const o = ofOrder(orderId, opts); return lineKey ? o.byKey.get(lineKey) || null : o.order; };
     function ofRow(row, opts) { const rid = row && row.order ? ridOf(row.order.receiptId) : ''; return rid && row.key ? of(rid, row.key, opts) : null; }
-    return { of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, STATES };
+    return { of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, STATES };
   }
-  return { resolve, roll, history, withHistory, makePage, STATES, WAIT_TEXT, NEXT_TEXT };
+  return { resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, makePage, STATES, WAIT_TEXT, NEXT_TEXT };
 });
