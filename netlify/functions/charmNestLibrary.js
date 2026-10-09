@@ -1351,6 +1351,10 @@ async function op_poolPut(b) {
   const sheetIds = [...new Set([...want.values()].map(c => String(c.sheetId)).filter(isId))], sheetsRead = new Map();
   for (let i = 0; i < sheetIds.length; i += 100) for (const s of await db.getAll(...sheetIds.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["poolIds", "archived", "fileBase"] })) if (s.exists) sheetsRead.set(s.id, s.data());
   for (const [id, cur] of want) { const sh = sheetsRead.get(String(cur.sheetId)); if (sh && !sh.archived && (sh.poolIds || []).includes(id)) onSheet.set(id, { poolId: id, sheetId: cur.sheetId, sheetName: cur.sheetName || sh.fileBase || null, state: cur.state || null, setId: cur.setId || null }); }
+  /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
+     committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
+  const legacyLines = new Set();
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(Placement.groupOfPool(p.poolId)); });
   /* A line already pooled with FEWER pieces than it is sent with (the pair and count rule of 9 Oct 2026 came after it was pooled: a pair is
      two pieces, a necklace with 3 discs is three) keeps the pieces it has. None of its rows is written, so a piece is never added to a line
      that is on a sheet or in the pool; the answer says which rows are short and what each holds, and the page notes it on the line.
@@ -1359,13 +1363,9 @@ async function op_poolPut(b) {
   list.forEach((p, i) => {
     const cur = found[i] && found[i].exists ? found[i].data() : null; if (!cur || p.custom || Placement.TAKE_OFF_STATES.has(cur.state)) return;
     const had = Math.floor(+cur.quantity) || 0, wants = Math.floor(+p.quantity) || 0;
-    if (had && wants && had < wants) { shortLines.add(lineOfId(p.poolId)); short.push({ poolId: p.poolId, had, wants }); }
+    if (had && wants && had < wants && !legacyLines.has(Placement.groupOfPool(p.poolId))) { shortLines.add(lineOfId(p.poolId)); short.push({ poolId: p.poolId, had, wants }); }
   });
   if (short.length) out.short = short;
-  /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
-     committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
-  const legacyLines = new Set();
-  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(Placement.groupOfPool(p.poolId)); });
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     if (shortLines.has(lineOfId(p.poolId))) continue;

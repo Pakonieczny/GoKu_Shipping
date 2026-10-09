@@ -238,6 +238,10 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   eq(changed.spec.pieceCount, 2, 'a line changed on Etsy is made up new, at the new count');
   const half = mkrow({ title: 'Crab Charm Stud Earrings', quantity: 1, transactionId: '5200000004' }, ['4170000001_5200000004_2'], 2); c.pinPooled(half);
   eq(half.spec.pieceCount, 2, 'a pair with one piece taken off on purpose is still a pair (the rows\' own quantity says 2)'); ok(!half.spec.pieceNote, 'not an old record');
+  const off = mkrow({ title: 'Crab Charm Stud Earrings', quantity: 1, transactionId: '5200000005' }, ['4170000001_5200000005_1'], 1); rows.get(off.poolIds[0]).state = 'abandoned'; c.pinPooled(off);
+  eq(off.spec.pieceCount, 2, 'an old line taken off its sheet (abandoned) is made up new, at the rule\'s count'); ok(!off.spec.pieceNote, 'with no note');
+  const sup = mkrow({ title: 'Crab Charm Stud Earrings', quantity: 1, transactionId: '5200000006' }, ['4170000001_5200000006_1'], 1); rows.get(sup.poolIds[0]).state = 'superseded'; c.pinPooled(sup);
+  eq(sup.spec.pieceCount, 2, 'and one superseded by an Etsy change likewise');
 }
 
 // ── 7 · the bridge reads ONE count (static: nothing counts a line's pieces any other way) ────────────────────────────────────────

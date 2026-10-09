@@ -2827,7 +2827,8 @@ const Pool = window.Pool = (() => {
    *  new (repoolChanged, changePending), at the new count. */
   function pinPooled(row) {
     const sp = row.spec; if (!sp || row.repoolChanged || row.changePending) return;
-    const had = Math.max(0, ...(row.poolIds || []).map(id => +((B.pool.rows.get(id) || {}).quantity) || 0));
+    // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
+    const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
     if (had) O.pinPieces(sp, had);
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
