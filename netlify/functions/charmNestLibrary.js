@@ -152,7 +152,7 @@ function slim(d) {
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.slot ? { slot: bk.slot, side: bk.side || null } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
@@ -727,7 +727,7 @@ async function op_listCharms(b) {
    manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
    picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
    per back used to count toward the sheet document's 1 MiB. */
-const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion"];
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "slot", "side", "groupKey"];
 function sheetBack(bk) {
   if (!bk || typeof bk !== "object") return bk;
   const out = {};
@@ -1840,6 +1840,11 @@ async function putBacks(tx, sheetId, list, expected) {
   for (const id of leaving) tx.set(col(SHEETS).doc(id), {backPool:formers.get(id), updatedAt:FV.serverTimestamp()}, {merge:true});
   return out;
 }
+/* One ear of a mismatched pair (or one disc of a necklace) says so on its approval's seal, as the page's own event does (Engrave.timelineApproved:
+   whichever writes the event first lands on the same key, so the two must read alike). A back of a line that is not cut into slots says nothing more. */
+const earWords = slot => (slot === "L" ? "Left ear" : slot === "R" ? "Right ear" : /^D\d{1,2}$/.test(slot || "") ? "Disc " + slot.slice(1) : "");
+const earCaption = (x, joined) => { const w = earWords(str(x && x.slot, 4)); return w ? (joined ? " · " : "") + w : ""; };
+const pieceData = x => { const slot = str(x && x.slot, 4); return earWords(slot) ? { slot, ...(x.side === "L" || x.side === "R" ? { side: x.side } : {}) } : {}; };
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
   const bySheet = new Map(), errors = [], moved = [], labels = new Map(); let written = 0, skipped = 0;
@@ -1862,7 +1867,7 @@ async function op_backPut(b) {
     // (the caption is one line: the back's lines joined as the seal and the derived history show them)
     const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
     return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
-      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, id: `${x.poolId}-${num(x.approvedAt)}` };
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: (words ? `“${words}”` : "") + earCaption(x, !!words), data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by, ...pieceData(x) }, id: `${x.poolId}-${num(x.approvedAt)}` };
   }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
