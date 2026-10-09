@@ -137,6 +137,32 @@ const R = n => F.rid(n), T = n => F.tx(n);
     });
     m.done();
   }
+  {
+    const m = mount({ orders: [{ rid: R(8), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(8), T(10))] });
+    const [L, Rr] = m.idsOf(R(8), T(10), 2);
+    m.fsx.put('Charm_Nest_Sheets', 'sh-gf1', Object.assign({}, m.rec('sh-gf1'), { laserDoneAt: NOW - 600000, laserDoneBy: 'Laser Lee' }));
+    await t('6d CANCEL naming both ears, the Left on a cut sheet: the Right comes off and is told to the timeline; the cut Left is left alone and is not told as removed', async () => {
+      const r = await m.fns.lib('poolUpdate', { poolIds: [L, Rr], patch: m.CANCEL(), by: 'Paul' }); assert(!r.error, JSON.stringify(r));
+      assert.deepEqual(r.kept, [L]); assert.equal(m.row(L).state, 'written'); assert.equal(m.row(Rr).state, 'abandoned'); assert.equal(m.row(Rr).removedReason, 'cancelled: buyer');
+      const ev = m.fsx.list('Order_Timeline').filter(e => e.orderId === R(8) && e.type === 'removed');
+      assert(ev.length >= 1 && ev.every(e => !(e.data.poolIds || []).includes(L)), JSON.stringify(ev.map(e => e.data)));
+    });
+    m.done();
+  }
+  // ═══ 7 · a stale tab saves a sheet that puts a held ear back ═══
+  {
+    const m = mount({ orders: [{ rid: R(9), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(9), T(10))] });
+    const [L, Rr] = m.idsOf(R(9), T(10), 2);
+    await m.fns.lib('poolUpdate', { poolIds: [L, Rr], patch: m.HOLD() });
+    await t('7a the refusal of a save that would put a held ear back names the ear and the sheet as the Library calls it; the sheet is not written', async () => {
+      const before = JSON.stringify(m.rec('sh-gf2'));
+      const r = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf2', poolIds: [Rr] } });
+      assert.equal(r.status, 409, JSON.stringify(r)); assert(/GF Sheet 2/.test(r.error) && /right earring/.test(r.error), r.error);
+      assert.equal(JSON.stringify(m.rec('sh-gf2')), before);
+      const l = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L] } }); assert(/GF Sheet 1/.test(l.error) && /left earring/.test(l.error), l.error);
+    });
+    m.done();
+  }
   const bad = results.filter(r => r[1]);
   console.log(`\npairs-adv-life: ${results.length - bad.length} passed, ${bad.length} failed`);
   process.exit(bad.length ? 1 : 0);

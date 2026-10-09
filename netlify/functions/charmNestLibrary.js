@@ -794,9 +794,11 @@ async function op_putSheet(b) {
     // (poolTakeOff), so the piece is a NEW name here; Release re-pools the row first, which is the only way back. A piece the
     // record already lists is never in question, so a save of a sheet as it stands is never refused by this.
     if (Array.isArray(s.poolIds)) {
-      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [];
-      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) off.push(r.id);
-      if (off.length) return { error: `Sheet ${s.id} was not saved: it would put back ${off.length === 1 ? "piece " + off[0] : `${off.length} pieces (${off.slice(0, 3).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20) };
+      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [], sideOf = new Map();
+      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", "side", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) { off.push(r.id); sideOf.set(r.id, r.data().side); }
+      // (a person reads the sheet as the Library names it and an earring as left or right, not a document id: ADVLIFE 8, 9 Oct 2026)
+      const what = id => (sideOf.get(id) === "L" ? "the left earring " : sideOf.get(id) === "R" ? "the right earring " : "piece ") + id, name = Placement.labelOf(Object.assign({}, old, s)) || `Sheet ${s.id}`;
+      if (off.length) return { error: `${name} was not saved: it would put back ${off.length === 1 ? what(off[0]) : `${off.length} pieces (${off.slice(0, 3).map(what).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20) };
     }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
