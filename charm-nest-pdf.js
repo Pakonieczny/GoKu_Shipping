@@ -1294,7 +1294,7 @@
   const HATCH_BLUE = [0, 0, 1];
   const BLACK_SILHOUETTE_COVER = 0.9;          // a black twin that covers this share of the outline's area is the silhouette again
   const BLACK_DISC_MIN_HOLES = 2;              // a round black fill with at least this many inner holes is art on a disc
-  const isBlackFill = m => !!m && m.kind === "path" && !!m.closed && !!m.fill && !m.stroke && !!m.fillRGB &&
+  const isBlackFill = m => !!m && m.kind === "path" && !!m.fill && !m.stroke && !!m.fillRGB &&     // (a fill closes its subpaths itself: a path painted `f` with no closepath is a filled area too)
     (Math.max(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2]) - Math.min(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2])) <= 0.15 && lum(m.fillRGB) <= 0.35;
   /** What a closed filled path covers, by its own fill rule: area filled, area inside its outer boundary, inner holes, outer subpaths. */
   function fillFacts(m) {
@@ -1315,7 +1315,7 @@
   /** A round body drawn only as a black fill with art in it (see rule 2): the circle's subpath index, else -1. */
   function engravedDiscOf(c) {
     const o = c && c.outline;
-    if (!isBlackFill(o) || (o.subpaths || []).length < 1 + BLACK_DISC_MIN_HOLES) return -1;
+    if (!isBlackFill(o) || (o.subpaths || []).length < 1 + BLACK_DISC_MIN_HOLES || /^labels?$/i.test(String(o.layer || "").trim())) return -1;   // (a note or badge on the LABELS layer is not a charm)
     const f = fillFacts(o); if (f.outers.length !== 1 || f.holes < BLACK_DISC_MIN_HOLES) return -1;
     const V = vec(); if (!V) return -1;
     let disc = null; try { disc = circleOf(o.subpaths[f.outers[0]], V); } catch (_) { disc = null; }
