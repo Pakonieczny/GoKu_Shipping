@@ -1664,6 +1664,7 @@ const Orders = window.Orders = (() => {
         try {
           const r = await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: opt.by, at: opt.at, cancel: !!opt.cancel });
           if (r && r.changed) lines.set(sh, r.removedLines || []);
+          if (r && r.partialGroups && r.partialGroups.length) agent({ metal: sh.metal, run: sh.runId }, "warn", `${row.order.receiptId}: on ${sheetName(sh)} only part of a group came off the green lines (${r.partialGroups.map(g => g.taken + " of " + (g.taken + g.left)).join(", ")}); check the rest`);
         } catch (e) {
           skip.add(sh); if (opt.failed) opt.failed.push(sh);
           agent({ metal: sh.metal, run: sh.runId }, "warn", `${row.order.receiptId}: the green lines of ${sheetName(sh)} could not give up its pieces yet (${e.message}); they come off at the next check`);

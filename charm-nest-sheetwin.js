@@ -2533,6 +2533,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const fateExtra = (ids, groups, memo) => { try { const g = (groups || []).filter(z => z.kind === "pair" || z.kind === "mismatched"), mine = (ids || []).filter(id => g.some(z => z.items.some(i => i.id === id))); if (!mine.length) return {}; const sides = [...new Set(mine.map(id => memo && memo.get(id)).filter(Boolean))].sort().join(","); return Object.assign({ pieces: mine.length }, sides ? { sides } : {}); } catch (_) { return {}; } };
   // what a removal's timeline event keeps of the group (additive data: kind, how many pieces, their sides)
   const pairData = plan => { const g = ((plan && plan.groups) || []).find(z => z.text); return g ? { group: { kind: g.kind, pieces: g.size, sides: g.items.map(i => i.side || "-").join(",") } } : {}; };
+  /** The server's roseTakeOff says `partialGroups` when only some pieces of a group on that sheet were asked to leave (it should never be, every piece of a group is named): said, never silent. */
+  function roseParts(res, sh, rid) {
+    try {
+      const parts = (res && res.partialGroups) || [];
+      if (parts.length) agent({ pool: true }, "warn", `${rid || "an order"}: on ${sheetName(sh)} only ${parts.map(g => `${g.taken} of ${g.taken + g.left} pieces of ${g.order || "a group"}`).join(", ")} came off its green lines; the rest of the group is still there, check it`);
+    } catch (_) { /* a log line only */ }
+    return res;
+  }
   /** The pieces the server took off beyond the ones this page named (poolUpdate answers `extended`: a line comes off whole, also when this page's
    *  plan was out of date). They join the take-off here too: out of the pool rows, the order's lines and the engraving lists; said plainly. [] almost always. */
   function serverExtra(res, ids, rid) {
@@ -2830,7 +2838,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       // a Rose Gold sheet's saved green lines give up the pieces inside them first, on the server (a line with nothing left
       // inside it goes with them, one that keeps a piece stays as saved): nothing has changed yet if that cannot be done
-      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel });
+      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) roseParts(await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel }), sh, rid);
       changed = true;
       holdRelease(pages);
       off.state = "now"; paint();
