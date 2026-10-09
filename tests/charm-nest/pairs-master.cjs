@@ -129,4 +129,36 @@ ok(Pair.masterPairs([cA, cB], c => c.index === 1 ? [{ sku: 'X_1', bbox: [28, -12
 ok(Pair.masterPairs([cA, cB], c => c.index === 1 ? [{ sku: 'V1 V2', bbox: [10, -12, 32, -4] }] : [])[0].sure === false, 'a label of short words ("V1 V2") is not sure');
 ok(Pair.masterPairs([cA, cB], c => [{ sku: 'ONE_' + c.index, bbox: [c.index === 1 ? 0 : 22, -12, c.index === 1 ? 20 : 42, -4] }]).every(r => !r.sure), 'two bodies with a label each are neighbours, not a pair');
 ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0].kind === 'twins', 'two identical bodies are twins, not a mismatched pair');
+
+// the indexer's pair layer (scripts/index-master.cjs pairLayer) on synthetic charms, with the geometry readers stubbed
+{
+  const IM = require('../../scripts/index-master.cjs');
+  const Pst = { integrateRings: () => ({ left: [] }), cutLinesOf: c => c.members.filter(m => m !== c.outline && m.layer === 'CUT') };
+  const Gst = { flatten: o => [[[o.bbox[0], o.bbox[1]], [o.bbox[2], o.bbox[1]], [o.bbox[2], o.bbox[3]], [o.bbox[0], o.bbox[3]], [o.bbox[0], o.bbox[1]]]], upAngleOf: () => ({ angle: 90, source: 'drawn' }), backView: () => ({}), engraveMask: () => ({}), largestRectangles: () => [{ wPt: 40, hPt: 40 }] };
+  const mk = () => {
+    const a = rowCharm(1, 0, [1, 0, 0]), b = rowCharm(2, 22, [0, 0, 1]), lone = rowCharm(7, 200, [1, 0, 0]);
+    const g = { charms: [a, b, lone] }, lab = { labels: new Map([[1, { sku: 'MISMATCHED_9', bbox: [10, -12, 32, -4], extra: [{ sku: 'EXTRA_9', size: null, bbox: [10, -20, 32, -14] }] }], [7, { sku: 'LONE_1', bbox: [200, -12, 220, -4], extra: [] }]]) };
+    return { g, lab, items: [...lab.labels].map(([index, l]) => ({ index, l, c: g.charms.find(x => x.index === index) })) };
+  };
+  let w = mk(); const before = JSON.stringify(w.g.charms);
+  const lg = [], r1 = IM.pairLayer(Pst, Gst, Pair, w.g, w.lab, w.items, { engraveMarginMm: .8 }, m => lg.push(m));
+  ok(r1.fold.size === 1 && r1.fold.has(1) && !r1.fold.has(7), 'pairLayer folds the sure row and nothing else');
+  const pm = r1.fold.get(1);
+  ok(pm.field.v === 1 && pm.field.bodies === 2 && pm.field.mismatched === true && pm.charm.members.length === 4 && pm.charm.bbox.join() === '0,0,42,26', 'the folded design: pair field, both bodies, the box of both');
+  ok(pm.view.outline.bbox.join() === '0,0,42,26' && pm.view.outline.subpaths.length === 2 && pm.charm.outline === w.g.charms[0].outline, 'the silhouette view has both outlines, the charm keeps a real body outline');
+  ok(pm.holes === 0 && pm.open === false && pm.engrave.engravable === true, 'holes, open and engravable are read from the bodies');
+  ok(JSON.stringify(w.g.charms) === before, 'the grouping\'s charms are left as they were');
+  ok(r1.rows.length === 1 && r1.rows[0].folded === true && r1.rows[0].sure === true && r1.rows[0].skus.join() === 'MISMATCHED_9,EXTRA_9', 'the report row says folded and names every SKU line');
+  w = mk(); ok(IM.pairLayer(Pst, Gst, Pair, w.g, w.lab, w.items, { noPairs: true }, () => {}).rows.length === 0, '--no-pairs: no rows, nothing folded');
+  w = mk(); ok(IM.pairLayer(Pst, Gst, Pair, w.g, w.lab, w.items.filter(i => i.index === 7), {}, () => {}).fold.size === 0, 'a row whose owner is not built in this run is not folded');
+  w = mk(); ok(IM.pairLayer(null, null, null, w.g, w.lab, w.items, {}, () => {}).fold.size === 0, 'without the module the layer does nothing');
+  // a doubtful row (identical bodies) is reported, not folded, unless a person names it
+  const twinCharms = () => { const a = rowCharm(1, 0, [1, 0, 0]), b = rowCharm(2, 22, [1, 0, 0]); return { g: { charms: [a, b] }, lab: { labels: new Map([[1, { sku: 'TWINS_1', bbox: [10, -12, 32, -4], extra: [] }]]) } }; };
+  let t = twinCharms(); let ti = [{ index: 1, l: t.lab.labels.get(1), c: t.g.charms[0] }];
+  const rt = IM.pairLayer(Pst, Gst, Pair, t.g, t.lab, ti, {}, () => {});
+  ok(rt.rows.length === 1 && rt.rows[0].kind === 'twins' && !rt.rows[0].folded && rt.fold.size === 0, 'identical twins are listed, not folded');
+  t = twinCharms(); ti = [{ index: 1, l: t.lab.labels.get(1), c: t.g.charms[0] }];
+  const rf = IM.pairLayer(Pst, Gst, Pair, t.g, t.lab, ti, { pairAlso: 'TWINS_1' }, () => {});
+  ok(rf.fold.size === 1 && rf.fold.get(1).field.mismatched === false && rf.fold.get(1).field.bodies === 2 && rf.rows[0].forced === true, '--pair-also folds a doubtful row a person named, as a matching pair drawn twice');
+}
 console.log(`pairs-master: ${n} checks passed`);
