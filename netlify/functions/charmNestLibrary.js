@@ -46,6 +46,7 @@ const CutLine = require("../../charm-nest-rose.js");   // which metals have a gr
 
 const Activity = require("../../charm-nest-activity.js");
 const EngravingSeals = require("../../charm-nest-engraving-seals.js");
+const PoolPieces = require("../../charm-nest-pool-pieces.js");   // the four fields a piece of a mismatched pair carries (side, bodyIndex, groupKey, groupSize) and how an old row is read
 // the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
 const Placement = require("./_charmNestPlacement");
 // A run's archived lines keep the readiness policy's decisions as they were when written (op_runArchive); a part written
@@ -1134,8 +1135,8 @@ const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
 /* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
    take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
-const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy"];
-const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt"];
+const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize"];
+const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt", "side"];
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
 async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
 
@@ -1298,7 +1299,8 @@ function poolEvents(ids, p, before, b) {
   for (const [orderId, rows] of groups) {
     const lines = [...new Set(rows.map(r => r.prev.lineKey || lineOfCopy(r.id)))], tids = [...new Set(rows.map(r => String(r.prev.transactionId || r.id.split("_")[1])))];
     const was = [...new Set(rows.map(r => r.prev.sheetId).filter(Boolean))], wasNames = [...new Set(rows.map(r => sheetLabel(null, r.prev.sheetName) || r.prev.sheetId).filter(Boolean))];
-    const e = { orderId, type: kind, by, station: "sorter", device: str(b.device, 40), lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: Object.assign({ copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) }, nobody ? { signedIn: false } : {}, b.employeeId ? { employeeId: str(b.employeeId, 60) } : {}) };
+    const sides = [...new Set(rows.map(r => r.prev.side).filter(s => s === "L" || s === "R"))];   // (a mismatched pair's ears, when the rows say them)
+    const e = { orderId, type: kind, by, station: "sorter", device: str(b.device, 40), lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: Object.assign({ copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) }, sides.length ? { sides } : {}, nobody ? { signedIn: false } : {}, b.employeeId ? { employeeId: str(b.employeeId, 60) } : {}) };
     // a cancel's removal (Paul, 29 Sep 00:26): each sheet (or the pool, for pieces not placed yet) its own step, "Removed
     // from GF Sheet 1 (Set 2)", with the outcome; id: the removal time and the place, which AutoCancel's own event uses too
     if (kind === "removed" && /^cancel/i.test(String(p.removedReason || ""))) {
@@ -1337,6 +1339,9 @@ async function op_poolPut(b) {
      Timeout" page came back as the reason the orders were held (25 Sep). A row sent twice is written once, merged. */
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()], found = [];
+  // the four fields of a piece of a mismatched pair are all there and valid, or none are stored (a plain piece never has them)
+  // (groupKey alone is what the pool id says, as Placement.cleanPiece writes it; the other three come with it or not at all)
+  for (const p of list) { const keep = PoolPieces.cleanFields(p), gk = Object.prototype.hasOwnProperty.call(p, "groupKey") ? Placement.groupOfPool(p.poolId) : ""; for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); if (gk && !keep.groupKey) p.groupKey = gk; }
   for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), { fieldMask: POOL_PUT_FIELDS }));
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
@@ -1346,9 +1351,14 @@ async function op_poolPut(b) {
   const sheetIds = [...new Set([...want.values()].map(c => String(c.sheetId)).filter(isId))], sheetsRead = new Map();
   for (let i = 0; i < sheetIds.length; i += 100) for (const s of await db.getAll(...sheetIds.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["poolIds", "archived", "fileBase"] })) if (s.exists) sheetsRead.set(s.id, s.data());
   for (const [id, cur] of want) { const sh = sheetsRead.get(String(cur.sheetId)); if (sh && !sh.archived && (sh.poolIds || []).includes(id)) onSheet.set(id, { poolId: id, sheetId: cur.sheetId, sheetName: cur.sheetName || sh.fileBase || null, state: cur.state || null, setId: cur.setId || null }); }
+  /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
+     committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
+  const legacyLines = new Set();
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(Placement.groupOfPool(p.poolId)); });
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
+    if (p.side && legacyLines.has(Placement.groupOfPool(p.poolId))) { (out.legacy || (out.legacy = [])).push(p.poolId); continue; }
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
     // (a piece of a pair carries side / bodyIndex / groupKey / groupSize: kept when they are sound, left out when not; a row without them is written as it always was)
@@ -1972,6 +1982,8 @@ async function op_setUpdate(b) {
         const split=await splitOfSet(id,ids);
         if(split.length){
           const there=[...new Set(split.flatMap(it=>it.there))];
+          // (a pair, a mismatched pair or an order of discs says what its pieces are: one read of at most 24 pool rows, only on this refusal)
+          if(split.length===1){const meta=await pieceMeta(tx,split).catch(()=>null);if(meta){SharedRule.describe(split,meta);if(split[0].words)throw new Error(`Set cannot be completed: order ${split[0].orderId} ${split[0].words}, and ${there.join(', ')} ${there.length===1?'is':'are'} not in this set. Sheets that share a multi-piece order stay in the same set: put them in one set, or take the order off one of the sheets.`);}}
           throw new Error(`Set cannot be completed: ${split.length===1?'order '+split[0].orderId+' also has pieces':split.length+' orders ('+split.slice(0,4).map(it=>it.orderId).join(', ')+(split.length>4?', ...':'')+') also have pieces'} on ${there.join(', ')}, which ${there.length===1?'is':'are'} not in this set. Sheets that share a multi-piece order stay in the same set: put them in one set, or take the order off one of the sheets.`);
         }
       }
@@ -3115,6 +3127,8 @@ async function op_customPut(b) {
   const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
   const now = Date.now(), ref = col(CUSTOM).doc(key), snap = await ref.get(), cur = snap.exists ? snap.data() : null;
   const button = b.how === "button", who = str(b.by || "operator", 80);
+  // a mismatched pair's sticker is a Left and a Right page (the label's `pieces`): the seal on the timeline says so (pairs, 9 Oct)
+  const ears = label && Array.isArray(label.pieces) ? label.pieces.filter(p => p && (p.side === "L" || p.side === "R")).length : 0;
   const doc = { key, receiptId: str(b.receiptId, 40), transactionId: str(b.transactionId, 40), sku: str(b.sku, 60), title: str(b.title, 200),
     category: str(b.category, 60), kind: str(b.kind, 40), state: "completed", updatedAtMs: now, updatedAt: FV.serverTimestamp() };
   if (!cur || cur.state !== "completed" || !cur.completedAt) Object.assign(doc, { completedAt: now, completedBy: who, how: button ? "button" : "print" });
@@ -3129,7 +3143,7 @@ async function op_customPut(b) {
   await ref.set(doc, { merge: true });
   // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
   await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
-    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120), ...pressedIn(b) }, id: `${key}-${now}` }), "custom seal");
+    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`, ears ? "Left + Right" : ""].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120), ...(ears ? { pieces: ears } : {}), ...pressedIn(b) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 const STAMPS_MAX = 2000;
@@ -3570,7 +3584,7 @@ async function pieceMeta(tx, items) {
   const ids = [...new Set((items || []).flatMap(i => (i.pieces || []).map(p => str(p && p.key, 80))).filter(isPoolId))].slice(0, 24);
   if (!ids.length) return null;
   const map = new Map();
-  for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "" }); }
+  for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "", bodyIndex: x.bodyIndex != null && Number.isFinite(+x.bodyIndex) ? +x.bodyIndex : null }); }
   return map.size ? (k => map.get(String(k)) || null) : null;
 }
 async function applySetMembers(step, by, device, via) {

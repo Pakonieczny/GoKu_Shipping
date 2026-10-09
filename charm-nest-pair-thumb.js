@@ -14,10 +14,12 @@
  *  Which bodies a charm has, which side each is and whether the design is a mismatched pair come from CharmNestPair
  *  (charm-nest-pair.js, PAIRMASTER): bodiesOf, isMismatched, sideOf, sideLabel. This file never re-detects them.
  *
- *    plan(charm)                         null, or { bodies:[{ index, side, label, short, bbox, outline, members }] } left to right
+ *    plan(charm)                         null, or { bodies:[{ index, side, label, short, bbox, outline, members, facing, mirror }] } left to right
  *    layout(plan, bbox, {size,padPt})    the picture's pixel layout: { s, W, H, H0, band, fontPx, chipH, chips:[...] }
- *    canvasFor(P, charm, opts)           the finished canvas (null when not a pair): opts { size, padPt, bg, makeCanvas, highlight, body }
- *                                        highlight "L" | "R": both bodies, the other washed out. body 0 | 1: that ear alone, at its scale in the pair
+ *    canvasFor(P, charm, opts)           the finished canvas, or null when the maker should run its old code: opts { size, padPt, bg, makeCanvas, highlight, body, mirror, side }
+ *                                        highlight "L" | "R": both bodies, the other washed out. body 0 | 1: that ear alone, at its scale in the pair.
+ *                                        mirror true: a one-body charm drawn as the Right piece of a pair (turned over left to right); side "L" | "R" adds its chip.
+ *                                        In a mismatched pair each body is drawn facing its own side (CharmNestPair.facingOf): the one facing the wrong way is mirrored
  *    paintTags(ctx, plan, tx, k, opts)   only the chips, on a canvas the caller already owns (a placed charm's drawing)
  *    svgPicture(plan, opts)              the same picture as an SVG string for the stored PNG (Resvg), opts { bbox, padPt, size, bg, inner }
  *    chipHtml(side, {short, px})         the same chip as markup, for pages that show the two ears as two pictures or rows
@@ -51,7 +53,16 @@
   const okBox = b => Array.isArray(b) && b.length === 4 && b.every(num);
 
   /** null for every charm that is not a mismatched pair (the caller then runs its old code, unchanged). */
-  const memo = typeof WeakMap === "function" ? new WeakMap() : null;
+  let memo = typeof WeakMap === "function" ? new WeakMap() : null;
+  /** Which way a body faces ("L" | "R" | null = symmetric or unknown), from CharmNestPair.facingOf when it exists. */
+  function facingOfBody(P, charm, b) {
+    // the real per-body reader first (a person's facing / facings[] on the record win, then the shape heuristic); the whole-design reader on a one-body charm as a fallback
+    try {
+      const f = typeof P.facingOfBody === "function" ? P.facingOfBody(b, charm)
+        : typeof P.facingOf === "function" ? P.facingOf({ id: charm.id, facing: charm.facing, outline: b.outline, members: b.members, bbox: b.bbox }) : null;
+      return f === "L" || f === "R" ? f : null;
+    } catch (_) { return null; }
+  }
   function plan(charm) {
     if (!charm || !okBox(charm.bbox)) return null;
     const P = pairApi(); if (!P || typeof P.isMismatched !== "function" || typeof P.bodiesOf !== "function") return null;
@@ -66,7 +77,10 @@
           out = { bodies: sorted.map((b, i) => {
             const side = typeof P.sideOf === "function" ? P.sideOf(i, 2) : (i === 0 ? "L" : "R");
             const label = (typeof P.sideLabel === "function" ? P.sideLabel(side) : "") || (i === 0 ? "Left" : "Right");
-            return { index: b.index != null ? b.index : i, side, label, short: label.charAt(0).toUpperCase(), bbox: b.bbox.slice(), outline: b.outline || null, members: b.members || null };
+            // each ear faces its own side (Paul, 9 Oct 18:47): the Left ear is the Left earring, the Right ear the Right earring; a body that faces the
+            // wrong way is drawn mirrored left to right about its own centre. facing null (symmetric or unknown): drawn as it is.
+            const facing = facingOfBody(P, charm, b), mirror = !!facing && ((side === "L" && facing === "R") || (side === "R" && facing === "L"));
+            return { index: b.index != null ? b.index : i, side, label, short: label.charAt(0).toUpperCase(), bbox: b.bbox.slice(), outline: b.outline || null, members: b.members || null, facing, mirror };
           }) };
         }
       }
@@ -129,33 +143,63 @@
     return { x: (other.bbox[0] - bbox[0] + L.pad) * k - 1, w: (other.bbox[2] - other.bbox[0]) * k + 2, side: other.side };
   }
 
-  /** The finished canvas of a mismatched pair, or null for any other charm. `P` is CharmNestPDF (its drawCharm draws the charm exactly as every other picture does). */
+  /** Draw with the picture turned over left to right about the vertical line at px x = cx (the same as turning the piece 180 degrees about its
+      vertical axis). A canvas transform, so every segment (outline, holes, hoop, engraving art, hatching, boxes) is mirrored together. */
+  function drawMirrored(ctx, mirror, cx, draw) {
+    if (!mirror) return draw();
+    ctx.save(); ctx.translate(2 * cx, 0); ctx.scale(-1, 1); try { return draw(); } finally { ctx.restore(); }
+  }
+  const bodyCharm = (charm, bd) => Object.assign({}, charm, { outline: bd.outline || charm.outline, members: bd.members && bd.members.length ? bd.members : charm.members, bbox: bd.bbox.slice() });
+
+  /** The finished canvas for a design picture that needs more than the old code draws, or null (then the maker runs its old code, unchanged):
+      · a mismatched pair (two different bodies under one SKU): both bodies side by side at one scale, each facing its own side, a Left and a Right chip;
+        opts.highlight "L" | "R" washes the other body out; opts.body 0 | 1 draws that ear alone at its scale in the pair;
+      · any other charm asked for as ONE PIECE of an earring pair: opts.mirror true draws it turned over left to right (the Right piece of a pair),
+        opts.side "L" | "R" adds that chip. With neither, null: a plain design is shown once, as drawn.
+      `P` is CharmNestPDF (its drawCharm draws the charm exactly as every other picture does). */
   function canvasFor(P, charm, o) {
-    o = o || {}; const pl = plan(charm); if (!pl) return null;
-    if (!P || typeof P.drawCharm !== "function" || typeof o.makeCanvas !== "function") return null;
+    o = o || {}; if (!P || typeof P.drawCharm !== "function" || typeof o.makeCanvas !== "function" || !charm || !okBox(charm.bbox)) return null;
+    const pl = plan(charm); if (!pl) return singleCanvas(P, charm, o);
     if (o.body === 0 || o.body === 1) return bodyCanvas(P, charm, pl, o);
     const b = charm.bbox, L = layout(pl, b, o), cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
     ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(0, 0, L.W, L.H);
-    P.drawCharm(ctx, charm, (x, y) => [(x - b[0] + L.pad) * L.s, (b[3] + L.pad - y) * L.s], L.s);
+    const tx = (x, y) => [(x - b[0] + L.pad) * L.s, (b[3] + L.pad - y) * L.s];
+    if (!pl.bodies.some(bd => bd.mirror)) P.drawCharm(ctx, charm, tx, L.s);   // (both ears face their own side as drawn: one drawing, as before)
+    else for (const bd of pl.bodies) drawMirrored(ctx, bd.mirror, ((bd.bbox[0] + bd.bbox[2]) / 2 - b[0] + L.pad) * L.s, () => P.drawCharm(ctx, bodyCharm(charm, bd), tx, L.s));
     const wash = washRect(pl, b, L, o.highlight);
     if (wash) { ctx.save(); ctx.globalAlpha = WASH_ALPHA; ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(wash.x, 0, wash.w, L.H0); ctx.restore(); }
     paintChips(ctx, L, wash ? wash.side : null);
     return cv;
   }
 
+  /** One piece of an earring pair drawn from a one-body charm: turned over when it is the Right piece (opts.mirror), with its chip when opts.side says which ear. */
+  function singleCanvas(P, charm, o) {
+    const mirror = o.mirror === true, side = o.side === "L" || o.side === "R" ? o.side : null;
+    if (!mirror && !side) return null;
+    const b = charm.bbox, pad = o.padPt != null ? +o.padPt : 2, size = +o.size || 168;
+    let L;
+    if (side) L = layout({ bodies: [{ index: 0, side, label: side === "L" ? "Left" : "Right", short: side, bbox: b.slice() }] }, b, o);
+    else { const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h); L = { s, W: Math.max(8, Math.round(w * s)), H: Math.max(8, Math.round(h * s)), pad, chips: [] }; }
+    const cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
+    ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(0, 0, L.W, L.H);
+    const k = L.s, tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k];
+    drawMirrored(ctx, mirror, ((b[0] + b[2]) / 2 - b[0] + pad) * k, () => P.drawCharm(ctx, charm, tx, k));
+    if (L.chips.length) paintChips(ctx, L, null);
+    return cv;
+  }
+
   /** ONE ear alone (opts.body 0 = Left, 1 = Right): that body at the scale it has in the pair's own picture of this size (so a left and a right picture
-      shown beside each other keep the true relative size of the two bodies), with its one chip under it. */
+      shown beside each other keep the true relative size of the two bodies), facing its own side (opts.mirror true | false overrides), with its one chip. */
   function bodyCanvas(P, charm, pl, o) {
     const one = pl.bodies[o.body]; if (!one || !okBox(one.bbox)) return null;
-    const lp = layout(pl, charm.bbox, o), pad = lp.pad, k = lp.s, bb = one.bbox;
+    const lp = layout(pl, charm.bbox, o), pad = lp.pad, k = lp.s, bb = one.bbox, mirror = o.mirror === true || (o.mirror !== false && !!one.mirror);
     const words = chipsText({ bodies: [one] }, lp.size), chipW = textEm(words[0]) * lp.fontPx + 2 * lp.fontPx * .55;
     const bw = (bb[2] - bb[0] + 2 * pad) * k, W = Math.max(8, Math.round(Math.max(bw, chipW + 2))), H0 = Math.max(8, Math.round((bb[3] - bb[1] + 2 * pad) * k)), offX = (W - bw) / 2;
     const L = { s: k, W, H: H0 + lp.band, H0, band: lp.band, fontPx: lp.fontPx, chipH: lp.chipH, gap: lp.gap, pad, size: lp.size, y: H0 + lp.gap, baseline: H0 + lp.gap + lp.chipH / 2 + lp.fontPx * .35,
       chips: [{ text: words[0], side: one.side, w: chipW, x: (W - chipW) / 2 }] };
-    const one1 = Object.assign({}, charm, { outline: one.outline || charm.outline, members: one.members && one.members.length ? one.members : charm.members, bbox: bb.slice() });
     const cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
     ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(0, 0, L.W, L.H);
-    P.drawCharm(ctx, one1, (x, y) => [(x - bb[0] + pad) * k + offX, (bb[3] + pad - y) * k], k);
+    drawMirrored(ctx, mirror, W / 2, () => P.drawCharm(ctx, bodyCharm(charm, one), (x, y) => [(x - bb[0] + pad) * k + offX, (bb[3] + pad - y) * k], k));
     paintChips(ctx, L, null);
     return cv;
   }
@@ -184,6 +228,8 @@
 
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const f2 = v => (Math.round(v * 100) / 100).toString();
+  /** The SVG transform that turns a body's markup over left to right about its own centre (the caller's point units, y up): wrap the body in <g transform="...">. */
+  const mirrorSvg = bbox => `translate(${f2(bbox[0] + bbox[2])} 0) scale(-1 1)`;
   /** The stored PNG's picture as SVG: o.inner is the caller's already-built body markup in POINT units with y UP (the caller's own
       `<g transform="scale(1 -1)">` content); this wraps it with the pair layout (one scale, a band, the chips). Font: Source Sans 3. */
   function svgPicture(pl, o) {
@@ -194,6 +240,5 @@
       `<g transform="translate(${f2(tx)} ${f2(ty)}) scale(${f2(L.s)} ${f2(-L.s)})">${o.inner || ""}</g>${chips}</svg>` };
   }
 
-  return { plan, layout, canvasFor, paintTags, svgPicture, chipHtml, chipsText: (pl, size) => chipsText(pl, size), use: p => { injected = p; memoClear(); }, _const: { SHORT_BELOW_PX, FONT_FRAC, INK } };
-  function memoClear() { /* the WeakMap cannot be cleared; a stand-in change is rare (tests) and plan() re-checks the signature per charm object */ }
+  return { plan, layout, canvasFor, paintTags, svgPicture, mirrorSvg, chipHtml, chipsText: (pl, size) => chipsText(pl, size), use: p => { injected = p; memo = typeof WeakMap === "function" ? new WeakMap() : null; }, _const: { SHORT_BELOW_PX, FONT_FRAC, INK } };
 });

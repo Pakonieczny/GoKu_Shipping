@@ -100,4 +100,33 @@ ok(Pair.pieceGeometry(mismatchedCharm, mmp[1]) === gR && Pair.pieceGeometry(mism
 const whole = Pair.pieceGeometry(mCharm, { bodyIndex: 0, mirror: false }), flipped = Pair.pieceGeometry(mCharm, { bodyIndex: 0, mirror: true });
 ok(whole === mCharm && flipped !== mCharm && flipped.mirrored === true, 'a one-body design: as drawn is the charm itself, the mirror is a separate variant');
 ok(Pair.splitAcross([{ poolId: '3912345678_4455_1', s: 'A' }, { poolId: '3912345678_4455_2', s: 'B' }, { poolId: '3912345678_9999_1', s: 'A' }], p => p.s).length === 1, 'a group on two sheets is found');
+// the intake's own answer (charm-nest-orders.js spec.pair): earring / glued / legacy / sides win over the form
+const ln = pr => ({ receiptId: 5, transactionId: 6, spec: { quantity: 2, pieceCount: pr.count, pair: pr } });
+const sd = l => Pair.piecesFor(l, null).map(x => x.side || '-').join('');
+ok(sd(ln({ count: 4, earring: true, kind: 'multi', sides: ['L', 'R', 'L', 'R'] })) === 'LRLR', 'a quantity-2 earring pair (kind multi) is four pieces, L R L R');
+ok(sd(ln({ count: 2, earring: false, kind: 'multi', sides: [null, null] })) === '--', 'a 2-disc necklace (kind multi, not an earring) has no sides');
+ok(sd(ln({ count: 1, earring: true, single: true, sides: ['R'] })) === 'R', 'a single earring that names its ear keeps it');
+ok(sd(ln({ count: 2, earring: true, glued: true, kind: 'mismatched' })) === '--', 'a mismatched design counted as one glued copy has no sides');
+ok(sd(ln({ count: 2, earring: true, legacy: true, kind: 'pair' })) === '--', 'an old line pinned to the pieces it had has no sides');
+ok(sd(ln({ count: 2, earring: true, kind: 'pair' })) === 'LR', 'an earring pair without sides alternates L R');
+ok(Pair.isEarringPair({ spec: { pair: { earring: false, kind: 'pair' } } }) === false && Pair.isEarringPair({ spec: { pair: { earring: true, kind: 'multi' } } }) === true, 'spec.pair.earring wins over spec.pair.kind');
+const mm2 = Pair.piecesFor(ln({ count: 1, earring: true, single: true, sides: ['R'] }), mismatchedCharm);
+ok(mm2.length === 1 && mm2[0].side === 'R' && mm2[0].bodyIndex === 1, 'a single Right earring of a mismatched design is its right body');
+
+// master side: a row of two touching bodies with one label centred under it
+const rowCharm = (idx, x0, ink, label) => { const o = rect(x0, 0, x0 + 20, 26); o.index = idx * 10; const i = eng(x0 + 4, 8, x0 + 12, 14, ink); i.index = idx * 10 + 1; return { index: idx, outline: o, members: [o, i], bbox: [x0, 0, x0 + 20, 26], topIndices: [idx * 10], extras: [], strokePt: 0.5 }; };
+const cA = rowCharm(1, 0, [1, 0, 0]), cB = rowCharm(2, 22, [0, 0, 1]);
+const lab1 = c => c.index === 1 ? [{ sku: 'MISMATCHED_9', bbox: [10, -12, 32, -4] }] : [];
+const rows = Pair.masterPairs([cA, cB], lab1);
+ok(rows.length === 1 && rows[0].kind === 'mismatched' && rows[0].sure && rows[0].owner === 1 && rows[0].charms.join() === '1,2', 'masterPairs: two touching bodies, one centred label, different engraving: a sure mismatched pair');
+ok(Pair.pairField(rows[0]).mismatched === true && Pair.pairField(rows[0]).bodies === 2 && Pair.pairField(rows[0]).v === 1, 'pairField is { v: 1, bodies: 2, mismatched: true }');
+const beforeA = JSON.stringify(cA), beforeB = JSON.stringify(cB);
+const fc = Pair.foldRow(cA, [cB]);
+ok(fc !== cA && fc.members.length === 4 && fc.bbox.join() === '0,0,42,26' && fc.outline === cA.outline && fc.topIndices.length === 2, 'foldRow: a new charm with both bodies, the box of both, the owner outline kept');
+ok(JSON.stringify(cA) === beforeA && JSON.stringify(cB) === beforeB, 'foldRow leaves the grouping alone');
+ok(Pair.bodiesOf(fc).length === 2 && Pair.isMismatched(fc), 'the folded charm reads back as two bodies');
+ok(Pair.masterPairs([cA, cB], c => c.index === 1 ? [{ sku: 'X_1', bbox: [28, -12, 50, -4] }] : []).every(r => !r.sure), 'a label that is not under the middle of the row makes no pair');
+ok(Pair.masterPairs([cA, cB], c => c.index === 1 ? [{ sku: 'V1 V2', bbox: [10, -12, 32, -4] }] : [])[0].sure === false, 'a label of short words ("V1 V2") is not sure');
+ok(Pair.masterPairs([cA, cB], c => [{ sku: 'ONE_' + c.index, bbox: [c.index === 1 ? 0 : 22, -12, c.index === 1 ? 20 : 42, -4] }]).every(r => !r.sure), 'two bodies with a label each are neighbours, not a pair');
+ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0].kind === 'twins', 'two identical bodies are twins, not a mismatched pair');
 console.log(`pairs-master: ${n} checks passed`);
