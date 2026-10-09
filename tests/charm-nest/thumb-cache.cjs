@@ -242,8 +242,9 @@ async function partC() {
     const first = asked.filter(x => /\.ai$/.test(x));
     ok(v1.total === 150 && v1.vis >= 10, 'the Master tab draws the tiles on screen (' + v1.vis + ' of ' + v1.total + ')');
     ok(first.length >= v1.vis && first.length <= v1.vis * 3 + 10, 'first visit: only the screen and a margin asked the asset function (' + first.length + ' files for ' + v1.vis + ' on screen, of 150)');
-    const kept = await page.evaluate(() => CharmNestThumbs.stats());
-    ok(kept.disk && kept.entries >= first.length - 2, 'every picture drawn is kept on this computer (' + kept.entries + ' kept for ' + first.length + ' drawn)');
+    let kept = null;   // (a busy computer finishes the tiles ahead of the screen later: wait for what was asked for to be drawn and kept)
+    for (let i = 0; i < 150; i++) { kept = await page.evaluate(() => CharmNestThumbs.stats()); if (kept.entries >= new Set(asked.filter(x => /\.ai$/.test(x))).size) break; await sleep(200); }
+    ok(kept.disk && kept.entries >= new Set(asked.filter(x => /\.ai$/.test(x))).size, 'every picture drawn is kept on this computer (' + kept.entries + ' kept for ' + new Set(asked.filter(x => /\.ai$/.test(x))).size + ' drawn)');
     ok(!asked.some(x => /\.png$/.test(x)), 'the stored PNGs are not what the tiles are drawn from (the live drawing is), so none is fetched');
     // a fast scroll
     const n0 = asked.length;
