@@ -76,7 +76,8 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
 {
   const rid = '4200000002', tx = '9002', tx2 = '9003';
   const lines = [line(rid, tx, 'STUD_HEART', 1), line(rid, tx2, 'DISC_NECKLACE', 3)];
-  const pools = [row(rid, tx, 1, { sku: 'STUD_HEART' }), row(rid, tx2, 1, { sku: 'DISC_NECKLACE' }), row(rid, tx2, 2, { sku: 'DISC_NECKLACE' }), row(rid, tx2, 3, { sku: 'DISC_NECKLACE' })];
+  const dg = { groupKey: `${rid}:${tx2}`, groupSize: 3 };   // (a counted-option necklace: the pool stamps its pieces with the group and its size, no side; a plain quantity-3 line carries none)
+  const pools = [row(rid, tx, 1, { sku: 'STUD_HEART' }), row(rid, tx2, 1, Object.assign({ sku: 'DISC_NECKLACE' }, dg)), row(rid, tx2, 2, Object.assign({ sku: 'DISC_NECKLACE' }, dg)), row(rid, tx2, 3, Object.assign({ sku: 'DISC_NECKLACE' }, dg))];
   const sheets = [sheet(SHEET.a, 'gold', 1, [`${rid}_${tx}_1`, `${rid}_${tx2}_1`, `${rid}_${tx2}_2`]), sheet(SHEET.b, 'gold', 2, [`${rid}_${tx2}_3`])];
   const base = Core.resolve({ orderId: rid, lines, pools, sheets, sheetsKnown: true });
   const hooked = Core.resolve({ orderId: rid, lines, pools, sheets, sheetsKnown: true, pairOf, kindOf: () => null });
@@ -87,6 +88,13 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
   const sp = Core.spread(base); const disc = sp.groups.find(g => g.lineKey === `${rid}_${tx2}`);
   assert.equal(disc.size, 3); assert.equal(disc.split, true); assert.equal(sp.groups.find(g => g.lineKey === `${rid}_${tx}`).split, false); assert.equal(sp.splitGroups.length, 1); ok('A8 a disc necklace on two sheets is a split group, a single is not');
   assert.ok(base.filter(p => p.lineKey === `${rid}_${tx2}`).every(p => p.groupSize === 3)); ok('A8b every disc knows its group has 3');
+  // the same line as a plain quantity-3 line (no group fields on its rows, nothing from the intake): three independent pieces, no group, nothing split
+  const plainPools = pools.map(r => { const q = Object.assign({}, r); delete q.groupKey; delete q.groupSize; return q; });
+  const plain = Core.resolve({ orderId: rid, lines, pools: plainPools, sheets, sheetsKnown: true });
+  assert.ok(plain.every(p => p.groupSize === 1)); assert.equal(Core.spread(plain).splitGroups.length, 0); ok('A8c a plain quantity-3 line is three independent pieces, never a split group');
+  // and a line the intake marks multi-piece (the groupLine hook) is a group of its quantity even before any row exists
+  const hookedGroup = Core.resolve({ orderId: rid, lines, pools: plainPools, sheets, sheetsKnown: true, groupLine: l => l.sku === 'DISC_NECKLACE' });
+  assert.ok(hookedGroup.filter(p => p.lineKey === `${rid}_${tx2}`).every(p => p.groupSize === 3)); assert.ok(hookedGroup.filter(p => p.lineKey === `${rid}_${tx}`).every(p => p.groupSize === 1)); ok('A8d the intake hook (groupLine) makes the disc line a group of 3 and leaves the stud alone');
 }
 
 /* ── Amendment 2 (Paul, 9 Oct 18:47): every EARRING pair, matching or mismatched, is a Left and a Right piece per unit, the Right the mirror image; the real shared module decides ── */

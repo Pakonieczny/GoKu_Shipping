@@ -84,8 +84,11 @@
   const SIDE_WORD = { L: 'Left', R: 'Right' };
   const sideWord = s => SIDE_WORD[s] || '';
   const POOL_RE = /^(\d{4,20})_([^_]*)_(\d{1,3})$/, LINE_RE = /^(\d{4,20})_([^_]*)$/;
+  // only a GROUP has a group (Paul 9 Oct, after ADVCOMPAT 2; charm-nest-pair.js inGroup says the same): the copies of a plain quantity-N line each stand alone. A piece is in a group when its
+  // groupSize says 2 or more, or, when it says none, when it has an ear (L / R: the half of a pair).
+  const inGroup = p => { if (!p) return false; const n = p.groupSize != null && p.groupSize !== '' ? +p.groupSize : NaN; return Number.isFinite(n) && n > 0 ? n >= 2 : p.side === 'L' || p.side === 'R'; };
   function groupKeyOf(p) {
-    if (!p) return '';
+    if (!p || !inGroup(p)) return '';
     if (p.groupKey && String(p.groupKey) !== ':') return String(p.groupKey);
     if (+p.groupSize === 1) return '';                                   // (a piece its line says is alone: no group)
     const m = LINE_RE.exec(String(p.lineKey || '')) || POOL_RE.exec(String(p.poolId || p.key || ''));
@@ -240,7 +243,7 @@
   /** The pair facts of a line of two or more pieces, added to its Placement (nothing existing changes, except the words of a line whose pieces know their ear). */
   function pairFacts(out, rawParts) {
     const parts = Array.isArray(rawParts) ? rawParts.filter(Boolean).map(partOf) : [];
-    if (parts.length < 2) return out;
+    if (parts.length < 2 || !parts.some(x => x.gk)) return out;   // (a line whose copies are not a group has no pair facts: its Placement is what it was)
     const gs = groups(parts), bad = gs.filter(g => g.split), sides = { L: null, R: null }, hasSides = parts.some(x => x.side);
     for (const x of parts) if (x.side && !sides[x.side]) sides[x.side] = x;
     out.parts = parts; out.groups = gs; out.split = bad.length > 0; out.splitGroups = bad.length; out.words = bad.length ? placeWords(bad[0]) : '';

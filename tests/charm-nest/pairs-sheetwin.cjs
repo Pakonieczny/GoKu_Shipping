@@ -39,19 +39,23 @@ t('a pair together on one sheet says nothing and is not split', () => {
   assert.equal(g.split, false); assert.equal(PP.pairWords(g, 's1').text, ''); assert.equal(g.pairs, 1);
 });
 t('a MATCHING pair (no side) split over two sheets is told too, without inventing a side', () => {
-  const [g] = PP.groups([on(1, 's1', 'GF Sheet 1', 'set-1'), on(2, 's2', 'GF Sheet 2', 'set-1')]);
+  const [g] = PP.groups([on(1, 's1', 'GF Sheet 1', 'set-1', { groupSize: 2 }), on(2, 's2', 'GF Sheet 2', 'set-1', { groupSize: 2 })]);
   assert.equal(g.kind, 'pair'); assert.equal(g.hasSides, false); assert.equal(g.split, true);
   assert.equal(PP.pairWords(g, 's1').text, 'The other piece is on GF Sheet 2, in the same set.');
 });
 t('discs: three pieces, two on another sheet, are told by place', () => {
-  const [g] = PP.groups([on(1, 's1', 'SS Sheet 1', 'set-1'), on(2, 's2', 'SS Sheet 2', 'set-1'), on(3, 's2', 'SS Sheet 2', 'set-1')]);
+  const [g] = PP.groups([on(1, 's1', 'SS Sheet 1', 'set-1', { groupSize: 3 }), on(2, 's2', 'SS Sheet 2', 'set-1', { groupSize: 3 }), on(3, 's2', 'SS Sheet 2', 'set-1', { groupSize: 3 })]);
   assert.equal(g.kind, 'multi'); assert.equal(g.pairs, 0); assert.equal(PP.pairWords(g, 's1').text, '2 of its 3 pieces are on SS Sheet 2, in the same set.');
 });
-t('a piece its line says is alone (groupSize 1) is no group; old records with no fields group by pool id', () => {
+t('a piece its line says is alone (groupSize 1) is no group; plain records with no fields are no group either (a plain quantity-N line is not a group); an old earring (ear, no size) still is', () => {
   const gs = PP.groups([on(1, 's1', 'GF Sheet 1', null, { groupSize: 1 }), on(2, 's2', 'GF Sheet 2', null, { groupSize: 1 })]);
   assert.equal(gs.length, 2); assert.ok(gs.every(g => g.n === 1 && !g.split));
   const old = PP.groups([{ poolId: `${RID}_${TX}_1`, nested: true, sheetId: 'a', sheetLabel: 'GF Sheet 1' }, { poolId: `${RID}_${TX}_2`, nested: true, sheetId: 'b', sheetLabel: 'GF Sheet 2' }]);
-  assert.equal(old.length, 1); assert.equal(old[0].key, `${RID}:${TX}`); assert.equal(old[0].split, true);
+  assert.equal(old.length, 2); assert.ok(old.every(g => g.n === 1 && !g.split));
+  const sized = PP.groups([{ poolId: `${RID}_${TX}_1`, nested: true, sheetId: 'a', sheetLabel: 'GF Sheet 1', groupSize: 2 }, { poolId: `${RID}_${TX}_2`, nested: true, sheetId: 'b', sheetLabel: 'GF Sheet 2', groupSize: 2 }]);
+  assert.equal(sized.length, 1); assert.equal(sized[0].key, `${RID}:${TX}`); assert.equal(sized[0].split, true);
+  const ears = PP.groups([{ poolId: `${RID}_${TX}_1`, side: 'L', nested: true, sheetId: 'a', sheetLabel: 'GF Sheet 1' }, { poolId: `${RID}_${TX}_2`, side: 'R', nested: true, sheetId: 'b', sheetLabel: 'GF Sheet 2' }]);
+  assert.equal(ears.length, 1); assert.equal(ears[0].split, true);
 });
 t('two lines of one order are two groups; a quantity-2 mismatched line (L,R,L,R) is one group of 4 with 2 pairs', () => {
   const two = PP.groups([on(1, 's1', 'GF Sheet 1'), on(1, 's1', 'GF Sheet 1', null, { key: `${RID}_5000000012_1`, poolId: `${RID}_5000000012_1`, lineKey: `${RID}_5000000012` })]);
@@ -85,7 +89,7 @@ t('resolve: half of a mismatched pair on a sheet says which piece is not on one 
 t('resolve: a line with no sides reads exactly as before (words, sig), with or without parts', () => {
   const cs = [on(1, 's1', 'GF Sheet 1', 'set-1'), on(2, 's1', 'GF Sheet 1', 'set-1')];
   const a = PP.resolve(facts(cs, { sheets: sheetsOf(cs) })), b = PP.resolve(facts(cs, { sheets: sheetsOf(cs), parts: undefined }));
-  assert.equal(a.sig, b.sig); assert.equal(a.say, b.say); assert.equal(a.why, b.why); assert.equal(a.text, b.text); assert.equal(a.split, false);
+  assert.equal(a.sig, b.sig); assert.equal(a.say, b.say); assert.equal(a.why, b.why); assert.equal(a.text, b.text); assert.ok(!a.split); assert.ok(!('parts' in a) && !a.sides);
   const half = [on(1, 's1', 'GF Sheet 1', 'set-1'), piece(2)];
   const c = PP.resolve(facts(half, { sheets: sheetsOf(half), copiesOn: 1 })), d = PP.resolve(facts(half, { sheets: sheetsOf(half), copiesOn: 1, parts: undefined }));
   assert.equal(c.say, d.say); assert.equal(c.why, d.why); assert.equal(c.sig, d.sig === c.sig ? c.sig : d.sig + '~' + c.pairSig);

@@ -20,7 +20,10 @@ const policy = slice(html, 'function groupOf(', 'function inflatedArea(');
 const feed = slice(html, 'const FEED_ORDERS = 3;', '/* A stopped run starts none of its sheets');
 
 // a charm of an order line: the pool id is `receipt_transaction_copy`, as Pool.makePool writes it
-const piece = (receipt, tx, copy, extra) => Object.assign({ id: `${receipt}_${tx}_${copy}`, poolId: `${receipt}_${tx}_${copy}`, order: String(receipt), orderDate: +receipt, orderInfo: { receiptId: String(receipt), transactionId: String(tx), copy, quantity: 2 } }, extra);
+// (a piece of a GROUP, an earring pair or counted discs: groupSize 2; Paul 9 Oct, ruling after ADVCOMPAT 1 and 2: only a group has a group)
+const piece = (receipt, tx, copy, extra) => Object.assign({ id: `${receipt}_${tx}_${copy}`, poolId: `${receipt}_${tx}_${copy}`, order: String(receipt), orderDate: +receipt, groupSize: 2, orderInfo: { receiptId: String(receipt), transactionId: String(tx), copy, quantity: 2 } }, extra);
+// (a copy of a PLAIN quantity-N line: no group size, no ear; it stands alone)
+const plainPiece = (receipt, tx, copy, extra) => { const c = piece(receipt, tx, copy, extra); delete c.groupSize; return c; };
 const placement = c => ({ id: c.id, cxPt: 5, cyPt: 5, angle: 0 });
 const ctxFor = (extra) => {
   const log = [], toasts = [], ctx = Object.assign({ Set, Map, Math, JSON, Object, Array, String, Number, window: {}, agent: (a, k, t) => log.push({ k, t }), toast: (t, k) => toasts.push({ t, k }), labelOf: m => m, renderCard() {}, renderRail() {}, updateTopSub() {}, computeSaturation() {}, manualSheetClosed: () => false,
@@ -32,7 +35,11 @@ const ctxFor = (extra) => {
 {
   const c = ctxFor(); vm.runInContext(policy + ';this.groupOf = groupOf; this.sideWord = sideWord; this.isPairLine = isPairLine;', c);
   assert.equal(c.groupOf(piece(1001, 77, 1)), '1001:77', 'from orderInfo');
-  assert.equal(c.groupOf({ poolId: '1001_77_2' }), '1001:77', 'from the pool id alone (an old record)');
+  assert.equal(c.groupOf({ poolId: '1001_77_2', groupSize: 3 }), '1001:77', 'from the pool id alone, when the piece says it is in a group of 3');
+  assert.equal(c.groupOf({ poolId: '1001_77_2' }), null, 'an old record with no group fields is alone (a plain line: Paul 9 Oct, ADVCOMPAT 2)');
+  assert.equal(c.groupOf(plainPiece(1001, 77, 1)), null, 'a copy of a plain quantity-N line has no group');
+  assert.equal(c.groupOf(piece(1001, 77, 1, { groupSize: 1, side: 'L' })), null, 'a single earring that names its ear is a group of ONE: none');
+  assert.equal(c.groupOf(plainPiece(1001, 77, 1, { side: 'L' })), '1001:77', 'an older sided piece with no size is the half of a pair');
   assert.equal(c.groupOf(piece(1001, 77, 2)), c.groupOf(piece(1001, 77, 1)), 'every piece of a line has one group');
   assert.notEqual(c.groupOf(piece(1001, 78, 1)), c.groupOf(piece(1001, 77, 1)), 'another line of the same order is another group');
   assert.equal(c.groupOf({ id: 'file:3', order: 'file/Layer 1' }), null, 'artwork dropped by hand has no group');
@@ -53,7 +60,8 @@ const ctxFor = (extra) => {
   const d = plain(c.pairDescriptor(piece(1100, 3, 2, { side: 'R', mirror: true, bodyIndex: 1, groupSize: 2 })));
   assert.deepEqual(d, { side: 'R', mirror: true, bodyIndex: 1, groupSize: 2, groupKey: '1100:3' });
   assert.equal(plain(c.pairDescriptor(piece(1100, 3, 1, { side: 'L', mirror: false, groupSize: 2 }))).mirror, false, 'mirror false is said, not left out');
-  assert.deepEqual(plain(c.pairDescriptor(piece(1101, 1, 1))), {}, 'a normal charm: nothing added');
+  assert.deepEqual(plain(c.pairDescriptor(plainPiece(1101, 1, 1))), {}, 'a normal charm: nothing added');
+  assert.deepEqual(plain(c.pairDescriptor(piece(1101, 1, 1, { groupSize: 3 }))), { groupSize: 3, groupKey: '1101:1' }, 'a piece of a counted necklace group (no ear): its size and key');
   assert.deepEqual(plain(c.pairDescriptor({ id: 'file', order: 'file' })), {}, 'a hand-dropped file: nothing added');
   assert.deepEqual(plain(c.pairDescriptor(piece(1102, 1, 1, { side: 'X', mirror: true, groupSize: 1 }))), {}, 'an unsound side is not written');
   noNested(plain(d), 'charm descriptor');

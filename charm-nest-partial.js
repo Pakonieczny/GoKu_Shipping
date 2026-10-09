@@ -62,8 +62,11 @@
 
   /* ── groups: the pieces of one order line (R3: a pair or a disc necklace is one unit) ── */
   const EAR = /ear|stud|hoop|huggie/i;   // (a 2-piece line of these forms is a pair; a 2-piece line of any other form, two pendants, is a 2-piece order)
+  // Only a GROUP has a group (Paul 9 Oct, after ADVCOMPAT 2): an earring pair, a necklace of counted discs / letters / charms, a line the intake marks multi. A piece says it with groupSize 2 or
+  // more, or, when it says no size, with an ear (L / R). The copies of a plain quantity-N line each stand alone: no key (''), so they are planned and worded as single pieces, as they always were.
+  const groupedP = p => { if (!p || typeof p !== 'object') return false; const n = +(p.groupSize != null && p.groupSize !== '' ? p.groupSize : p.orderInfo && p.orderInfo.groupSize); return Number.isFinite(n) && n > 0 ? n >= 2 : p.side === 'L' || p.side === 'R'; };
   function groupKeyOf(p) {
-    if (!p) return '';
+    if (!p || !groupedP(p)) return '';
     try { const X = (typeof self !== 'undefined' && self.CharmNestPair) || null; if (X && typeof X.groupKey === 'function') { const k = X.groupKey(p); if (k && /^[^:\s]+:/.test(String(k)) && !/undefined|null|NaN/.test(String(k))) return String(k); } } catch (_) { /* the local reading below */ }   // (":" alone is the module's "no key")
     if (p.groupKey) return String(p.groupKey);
     const i = p.orderInfo;
@@ -88,8 +91,8 @@
   function pairsIn(list) { const s = sidesOf(list); return s.l && s.r ? Math.min(s.l, s.r) : kindOfGroup(list) === 'pair' ? 1 : 0; }
   /* pieces -> Map groupKey -> [piece, ...] in first-seen order */
   function groupsOf(pieces, keyFn) {
-    const k = keyFn || groupKeyOf, out = new Map();
-    for (const p of pieces || []) { const key = k(p); if (!out.has(key)) out.set(key, []); out.get(key).push(p); }
+    const k = keyFn || groupKeyOf, out = new Map(); let alone = 0;
+    for (const p of pieces || []) { let key = k(p); if (key === '' || key == null) key = '#' + alone++; if (!out.has(key)) out.set(key, []); out.get(key).push(p); }   // (a piece that is in no group is a group of one)
     return out;
   }
   /* { pieces, groups, singles, pairs, mismatched, multi, minGroup, maxGroup }: pairs counts matching AND mismatched pairs (mismatched is the part that has two different bodies);

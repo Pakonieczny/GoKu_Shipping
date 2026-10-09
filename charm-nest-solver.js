@@ -331,8 +331,11 @@
     const oi = c.orderInfo || null;
     const usable = k => k != null && String(k) !== "" && String(k).split(":")[0] !== "";   // (":" is the pair module's "no key": it must never join pieces of different orders)
     const given = usable(c.groupKey) ? c.groupKey : usable(c.group) ? c.group : null;   // (a charm's groupKey, or a job piece's own group, which this passes on unchanged)
-    const group = given != null ? String(given) : oi && oi.receiptId != null && oi.transactionId != null ? String(oi.receiptId) + ":" + String(oi.transactionId) : null;
     const side = c.side === "L" || c.side === "R" ? c.side : null;
+    // only a piece of a GROUP is told its group from its order line (an earring pair, counted discs / letters / charms of one necklace: groupSize 2 or more, or an ear when it says no size);
+    // the copies of a plain quantity-N line each stand alone and are handed to the nester as they always were (Paul 9 Oct, after ADVCOMPAT 2)
+    const size = c.groupSize != null && Number.isFinite(+c.groupSize) && +c.groupSize > 0 ? +c.groupSize : 0, grouped = size ? size >= 2 : !!side;
+    const group = given != null ? String(given) : grouped && oi && oi.receiptId != null && oi.transactionId != null ? String(oi.receiptId) + ":" + String(oi.transactionId) : null;
     if (group == null && !side) return {};
     const out = {};
     if (group != null) out.group = group;

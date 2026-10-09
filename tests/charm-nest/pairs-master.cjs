@@ -46,9 +46,24 @@ ok(Pair.groupKey(line) === '3912345678:4455', 'groupKey of a line');
 ok(Pair.groupKey({ orderId: 3912345678, transactionId: 4455, poolId: '3912345678_4455_2' }) === '3912345678:4455', 'groupKey of a pool row');
 ok(Pair.groupKey('3912345678_4455_2') === '3912345678:4455', 'groupKey of a pool id');
 ok(Pair.groupKey({ poolId: '3912345678_4455_1' }) === '3912345678:4455', 'groupKey from the pool id alone');
-ok(Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_4455_2' }), 'two copies of one line share a sheet');
-ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_9999_1' }), 'two lines of one order do not');
-ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_4455_1' }), 'a piece is not its own sibling');
+ok(Pair.mustShareSheet({ poolId: '3912345678_4455_1', groupSize: 2 }, { poolId: '3912345678_4455_2', groupSize: 2 }), 'two pieces of one GROUP (a pair, counted discs) share a sheet');
+ok(Pair.mustShareSheet({ poolId: '3912345678_4455_1', side: 'L' }, { poolId: '3912345678_4455_2', side: 'R' }), 'a Left and a Right of an older record that has no size share a sheet');
+ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_4455_2' }), 'two copies of a PLAIN quantity-N line (no group size, no ear) each stand alone (Paul 9 Oct, ADVCOMPAT 2)');
+ok(!Pair.mustShareSheet('3912345678_4455_1', '3912345678_4455_2'), 'two bare pool ids say nothing of a group');
+ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1', groupSize: 1, side: 'L' }, { poolId: '3912345678_4455_2', groupSize: 1, side: 'L' }), 'two single earrings that each name their ear are not a group (group size 1)');
+ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1', groupSize: 2 }, { poolId: '3912345678_9999_1', groupSize: 2 }), 'two lines of one order do not');
+ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1', groupSize: 2 }, { poolId: '3912345678_4455_1', groupSize: 2 }), 'a piece is not its own sibling');
+// which LINES are groups (Paul 9 Oct, ruling after ADVCOMPAT 1 and 2): an earring pair, counted discs / letters / charms, a line the intake marks multi; a plain quantity-N line is not
+{
+  const L = (quantity, spec, extra) => Object.assign({ receiptId: 5, transactionId: 6, quantity, spec: Object.assign({ quantity }, spec || {}) }, extra || {});
+  ok(!Pair.isGroupLine(L(1)) && !Pair.isGroupLine(L(4)), 'a plain line of quantity 1 or 4 is not a group');
+  ok(Pair.isGroupLine(L(1, { form: 'earrings' })) && Pair.isGroupLine(L(3, { form: 'stud' })), 'an earring pair line is a group, whatever the quantity');
+  ok(Pair.isGroupLine(L(1, { pieceCount: 3 })) && Pair.isGroupLine(L(2, { pieceCount: 6 })), 'a line the intake counts as several pieces per unit (3 discs) is a group');
+  ok(!Pair.isGroupLine(L(4, { pieceCount: 4 })), 'four pieces for quantity four is four plain pieces');
+  ok(!Pair.isGroupLine(L(1, { form: 'earrings', pair: { glued: true, earring: true } })) && !Pair.isGroupLine(L(1, { form: 'earrings', pieceCount: 2, pair: { legacy: true, earring: true } })), 'a glued mismatched copy and an old line pinned to the pieces it has are plain');
+  ok(!Pair.isGroupLine(L(2, { form: 'single' })) && !Pair.isGroupLine(null), 'single earrings bought twice are not a group; nothing is not a line');
+  ok(Pair.inGroup({ groupSize: 3, poolId: '3912345678_4455_1' }) && !Pair.inGroup({ groupSize: 1, side: 'L', poolId: '3912345678_4455_1' }) && !Pair.inGroup({ poolId: '3912345678_4455_1' }) && Pair.sharedKey({ groupSize: 2, poolId: '3912345678_4455_1' }) === '3912345678:4455' && Pair.sharedKey({ poolId: '3912345678_4455_1' }) === '', 'inGroup / sharedKey');
+}
 
 // pieces (Paul, 9 Oct 18:46-18:47: an earring pair is always a Left and a Right, quantity q = q of each; a mismatched design's bodies are its Left and Right)
 const one = { outline: o1, members: [o1, e1], bbox: [0, 0, 20, 26] };
@@ -104,7 +119,8 @@ ok(gR.outline.bbox.join() === '25,0,45,26' && gR.mirrored === true && gR.outline
 ok(Pair.pieceGeometry(mismatchedCharm, mmp[1]) === gR && Pair.pieceGeometry(mismatchedCharm, mmp[0]) === gL, 'pieceGeometry is cached by body and mirror');
 const whole = Pair.pieceGeometry(mCharm, { bodyIndex: 0, mirror: false }), flipped = Pair.pieceGeometry(mCharm, { bodyIndex: 0, mirror: true });
 ok(whole === mCharm && flipped !== mCharm && flipped.mirrored === true, 'a one-body design: as drawn is the charm itself, the mirror is a separate variant');
-ok(Pair.splitAcross([{ poolId: '3912345678_4455_1', s: 'A' }, { poolId: '3912345678_4455_2', s: 'B' }, { poolId: '3912345678_9999_1', s: 'A' }], p => p.s).length === 1, 'a group on two sheets is found');
+ok(Pair.splitAcross([{ poolId: '3912345678_4455_1', groupSize: 2, s: 'A' }, { poolId: '3912345678_4455_2', groupSize: 2, s: 'B' }, { poolId: '3912345678_9999_1', s: 'A' }], p => p.s).length === 1, 'a group on two sheets is found');
+ok(Pair.splitAcross([{ poolId: '3912345678_4455_1', s: 'A' }, { poolId: '3912345678_4455_2', s: 'B' }], p => p.s).length === 0, 'a plain quantity-2 line on two sheets is two pieces, not a split group');
 // the intake's own answer (charm-nest-orders.js spec.pair): earring / glued / legacy / sides win over the form
 const ln = pr => ({ receiptId: 5, transactionId: 6, spec: { quantity: 2, pieceCount: pr.count, pair: pr } });
 const sd = l => Pair.piecesFor(l, null).map(x => x.side || '-').join('');

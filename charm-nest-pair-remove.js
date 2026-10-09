@@ -53,6 +53,22 @@
   };
   const keyOfRow = r => (r && r.order && r.order.receiptId != null ? keyOf({ receiptId: r.order.receiptId, transactionId: r.line && r.line.transactionId }) : "");
 
+  /* Only a GROUP is filed (Paul 9 Oct, after ADVCOMPAT 1 and 2): an earring pair, a necklace of counted discs / letters / charms, a line the intake marks multi. The copies of a plain
+     quantity-N line each stand alone: a removal naming one takes one, and no pair words are said of them. A piece says it is in a group with groupSize 2 or more (a pool row, a charm,
+     an item), or, when it says no size, with an ear (L / R). An Orders row is a group when its pieces say so (groupSize) or its line makes several pieces per unit (isGroupLine). */
+  const pieceGrouped = x => {
+    if (!x || typeof x !== "object") return false;
+    const P = CP();
+    if (x.grouped === true || x.grouped === false) return x.grouped;
+    if (P && typeof P.inGroup === "function") return P.inGroup(x);
+    const n = +x.groupSize; return Number.isFinite(n) && n > 0 ? n >= 2 : x.side === "L" || x.side === "R";
+  };
+  const rowGrouped = r => {
+    if (!r || typeof r !== "object") return false;
+    if (+r.groupSize >= 2) return true;
+    const P = CP(); if (!P || typeof P.isGroupLine !== "function") return false;
+    try { const spec = r.spec || {}, line = r.line || {}; return !!P.isGroupLine({ spec, quantity: Math.max(1, Math.round(+spec.quantity || +line.quantity || 1)), sku: spec.designSku || line.sku || "", form: spec.form || "", poolIds: arrOf(r.poolIds).filter(Boolean) }); } catch (_) { return false; }
+  };
   /** The pieces the page knows of, filed by group: { byKey: Map(groupKey → Set(piece ids)), idKey: Map(id → groupKey) }. Built once from the sources (rows, pools,
    *  charms; see the top); pass the result to expand / partnersOutside / splitBy instead of the sources when many questions are asked of the same state. */
   function index(src) {
@@ -60,9 +76,9 @@
     src = src || {};
     const byKey = new Map(), idKey = new Map();
     const note = (k, id) => { if (!k || !id) return; let set = byKey.get(k); if (!set) byKey.set(k, set = new Set()); set.add(id); if (!idKey.has(id)) idKey.set(id, k); };
-    for (const r of arrOf(src.rows)) { const k = keyOfRow(r); for (const id of arrOf(r && r.poolIds)) { const x = str(id); if (x) note(k || keyOf(x), x); } }
-    for (const p of arrOf(src.pools)) { if (!p || !p.poolId || GONE.has(p.state)) continue; const x = str(p.poolId); note(keyOf(p) || keyOf(x), x); }
-    for (const c0 of arrOf(src.charms)) { const c = (c0 && c0.charm) || c0; if (!c || !c.poolId) continue; const x = str(c.poolId); note(keyOfCharm(c), x); }
+    for (const r of arrOf(src.rows)) { if (!rowGrouped(r)) continue; const k = keyOfRow(r); for (const id of arrOf(r && r.poolIds)) { const x = str(id); if (x) note(k || keyOf(x), x); } }
+    for (const p of arrOf(src.pools)) { if (!p || !p.poolId || GONE.has(p.state) || !pieceGrouped(p)) continue; const x = str(p.poolId); note(keyOf(p) || keyOf(x), x); }
+    for (const c0 of arrOf(src.charms)) { const c = (c0 && c0.charm) || c0; if (!c || !c.poolId || !pieceGrouped(c)) continue; const x = str(c.poolId); note(keyOfCharm(c), x); }
     return { byKey, idKey };
   }
 
@@ -127,7 +143,7 @@
    *  A group of one piece is left out, so an order whose groups are all single gets no new words at all. */
   function groupsOf(items) {
     const by = new Map();
-    for (const it of arrOf(items)) { if (!it) continue; const k = it.groupKey || keyOf(it.id) || ("alone:" + str(it.id)); if (!by.has(k)) by.set(k, []); by.get(k).push(it); }
+    for (const it of arrOf(items)) { if (!it) continue; const k = pieceGrouped(it) ? (it.groupKey || keyOf(it.id) || ("alone:" + str(it.id))) : ("alone:" + str(it.id)); if (!by.has(k)) by.set(k, []); by.get(k).push(it); }
     const join = l => l.length < 2 ? l.join("") : l.length === 2 ? l.join(" and ") : l.slice(0, -1).join(", ") + " and " + l[l.length - 1];
     const out = [];
     for (const [key, list] of by) {
@@ -175,7 +191,7 @@
     return arrOf(ids).map(str).filter(Boolean).map(id => {
       const p = pools.get(id) || { poolId: id };
       const mis = typeof mismatched === "function" ? !!mismatched(id, p) : !!mismatched;
-      return Object.assign({ id, groupKey: keyOf(p) || keyOf(id), side: sideOfPiece(p, mis), form: str(p.form), where: typeof whereOf === "function" ? str(whereOf(id)) : "" }, mis ? { mismatched: true } : null);
+      return Object.assign({ id, groupKey: keyOf(p) || keyOf(id), side: sideOfPiece(p, mis), form: str(p.form), where: typeof whereOf === "function" ? str(whereOf(id)) : "" }, +p.groupSize > 0 ? { groupSize: +p.groupSize } : null, mis ? { mismatched: true } : null);
     });
   }
 
@@ -217,5 +233,5 @@
     });
   }
 
-  return { GONE, deletedSplits, keyOf, keyOfCharm, keyOfRow, index, expand, isMismatchedSku, partnersOutside, splitBy, lineInfo, sideLabel, sideWord, sideOfPiece, kindOfPieces, groupsOf, describe, pieceLabel, itemsFor };
+  return { GONE, pieceGrouped, rowGrouped, deletedSplits, keyOf, keyOfCharm, keyOfRow, index, expand, isMismatchedSku, partnersOutside, splitBy, lineInfo, sideLabel, sideWord, sideOfPiece, kindOfPieces, groupsOf, describe, pieceLabel, itemsFor };
 });

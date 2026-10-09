@@ -3193,8 +3193,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-progress.js?v=20260924-topline"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1"></script>
-<script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1"></script>
-<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1"></script>
+<script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4"></script>
@@ -3202,9 +3202,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-motion.js?v=20261007-cutseal1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col"></script>
-<script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9"></script>
+<script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2"></script>
-<script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2"></script>
+<script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1"></script>
@@ -3221,12 +3221,12 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3"></script>
-<script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2"></script>
-<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2"></script>
-<script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2"></script>
+<script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1"></script>
+<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1"></script>
+<script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2"></script>
-<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1"></script>
+<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4175,12 +4175,20 @@ function removePage(pg) {
    whenever its order is (R2). The group is the second guard for the rare ways one line still comes apart (a copy that arrives
    after its mates were saved, a mate dragged alone, a mate that stays on a cut sheet) and the name a split is reported by (R3).
    The key is charm-nest-pair.js groupKey; a page that has not loaded it reads the same string from the charm's own order fields.
-   null: a charm with no receipt (artwork dropped by hand) has no group, and every rule below leaves it exactly as it was. */
-function groupOf(c) {
+   Only a GROUP has a group (Paul 9 Oct, after ADVCOMPAT 2): an earring pair, a necklace of counted discs / letters / charms, a line the intake marks multi (its pieces carry
+   groupSize 2 or more, or a side). The copies of a plain quantity-N line of one charm each stand alone: no group, so they move, lift and split as they always did.
+   null: a plain piece, and a charm with no receipt (artwork dropped by hand), have no group, and every rule below leaves them exactly as they were. */
+function groupOf(c) { return inGroup(c) ? lineKeyOf(c) : null; }
+function lineKeyOf(c) {
   if (!c) return null;
   let k = typeof CharmNestPair !== "undefined" && CharmNestPair.groupKey ? CharmNestPair.groupKey(c) : "";
   if (!k || /^:/.test(k)) { const oi = c.orderInfo, m = /^(\d{4,20})_([^_]*)_\d{1,3}$/.exec(String(c.poolId || "")); k = oi && oi.receiptId != null && oi.transactionId != null ? `${oi.receiptId}:${oi.transactionId}` : m ? `${m[1]}:${m[2]}` : ""; }
   return k && k.length > 1 && !/^:/.test(k) ? k : null;
+}
+function inGroup(c) {
+  if (!c) return false;
+  if (typeof CharmNestPair !== "undefined" && CharmNestPair.inGroup) return CharmNestPair.inGroup(c);
+  const n = Number(c.groupSize); return Number.isFinite(n) && c.groupSize != null && n > 0 ? n >= 2 : c.side === "L" || c.side === "R";
 }
 /** "Left" / "Right" for a charm whose side is known (a mismatched pair), else "". */
 const sideWord = c => (c && c.side === "L" ? "Left" : c && c.side === "R" ? "Right" : "");
@@ -4199,7 +4207,7 @@ function pairDescriptor(c) {
   if (typeof c.mirror === "boolean" && out.side) out.mirror = c.mirror;
   if (Number.isInteger(c.bodyIndex) && c.bodyIndex >= 0) out.bodyIndex = c.bodyIndex;
   if (Number.isInteger(c.groupSize) && (c.groupSize > 1 || (c.groupSize === 1 && out.side))) out.groupSize = c.groupSize;   // (a single earring that names its ear: a sided piece of a group of one)
-  if (out.side || out.groupSize) { const g = c.groupKey && String(c.groupKey).length > 1 ? String(c.groupKey) : groupOf(c); if (g) out.groupKey = g; }
+  if (out.side || out.groupSize) { const g = c.groupKey && String(c.groupKey).length > 1 ? String(c.groupKey) : lineKeyOf(c); if (g) out.groupKey = g; }
   return out;
 }
 /** The laid outline of a sided piece for its saved sheet charm: `shapeJson`, a JSON STRING (a list of polygons is an array in an array, which Firestore refuses), read by
@@ -4549,7 +4557,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -7022,7 +7030,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -7154,7 +7162,7 @@ async function boot() {
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
@@ -7171,7 +7179,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7218,20 +7226,20 @@ try {
   try { if (roleOn()) CNRole.start(); } catch (_) {}
 } catch (_) {}
 </script>
-<script src="charm-nest-pair-remove.js?v=20261009-pr1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2"></script>
+<script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1-cg1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
-<script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1"></script>
+<script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2"></script>

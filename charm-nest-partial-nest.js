@@ -75,7 +75,7 @@
   };
   /* the groups of this sheet that also have pieces on ANOTHER sheet (a pair already split, R3): [{ group, order, here, elsewhere, sheets }] */
   function sharedOf(sh,all){
-    const mine=new Map();for(const c of all){const k=groupKey(c);mine.set(k,(mine.get(k)||0)+1);}
+    const mine=new Map();for(const c of all){const k=groupKey(c);if(!k)continue;mine.set(k,(mine.get(k)||0)+1);}
     const there=new Map();
     try{
       for(const p of (C.allSheets?C.allSheets():[])){

@@ -74,7 +74,7 @@
     if (on.length) out.push(`${plural(on.length, "piece")} of this order ${on.length === 1 ? "comes" : "come"} off ${joinAnd(where)}.`);
     // a pair, a mismatched pair or n discs is said as one group: where each piece is, and that they come off together (nothing is added for a single piece)
     if (on.length && W.PairRemove) {
-      try { for (const g of W.PairRemove.groupsOf(on.map(p => ({ id: p.poolId, groupKey: p.groupKey || "", side: p.side || null, form: p.form || "", where: p.sheetLabel || "" })))) if (g.text) out.push(g.kind === "pair" || g.kind === "mismatched" ? (g.size === 2 ? `Its pair comes off together: ${g.phrase}.` : `Its ${g.size} earrings come off together: ${g.phrase}.`) : g.text); }
+      try { for (const g of W.PairRemove.groupsOf(on.map(p => ({ id: p.poolId, groupKey: p.groupKey || "", side: p.side || null, form: p.form || "", ...(+p.groupSize > 0 ? { groupSize: +p.groupSize } : {}), where: p.sheetLabel || "" })))) if (g.text) out.push(g.kind === "pair" || g.kind === "mismatched" ? (g.size === 2 ? `Its pair comes off together: ${g.phrase}.` : `Its ${g.size} earrings come off together: ${g.phrase}.`) : g.text); }
       catch (e) { console.warn("[OrderHold] pair words", e); }
     }
     if (loose.length) out.push(`${plural(loose.length, "piece")} ${loose.length === 1 ? "is" : "are"} not on a sheet yet and simply ${loose.length === 1 ? "waits" : "wait"} under On hold.`);
@@ -181,7 +181,7 @@
       // a piece of a pair: its side (a mismatched pair reads "MITTENS · left earring"), its group and its form; any other piece reads "name · 1 of 2" as before
       const side = W.PairRemove ? W.PairRemove.sideOfPiece(pr || { poolId: o.id }, misSku((pr && pr.sku) || name)) : null;
       snap.pieces.push({ poolId: o.id, lineKey: (r && r.key) || (c && c.lineKey) || "", label: side ? W.PairRemove.pieceLabel(name, side) : qty > 1 && ro ? `${name} · ${ro.i + 1} of ${qty}` : name,
-        ...(side ? { side } : null), ...(W.PairRemove && (W.PairRemove.keyOf(pr || o.id) || W.PairRemove.keyOf(o.id)) ? { groupKey: W.PairRemove.keyOf(pr || o.id) || W.PairRemove.keyOf(o.id) } : null), ...((pr && pr.form) || (r && r.spec && r.spec.form) ? { form: (pr && pr.form) || r.spec.form } : null), metal: (sh && sh.metal) || (r && r.material) || (pr && pr.material) || "",
+        ...(side ? { side } : null), ...(W.PairRemove && (W.PairRemove.keyOf(pr || o.id) || W.PairRemove.keyOf(o.id)) ? { groupKey: W.PairRemove.keyOf(pr || o.id) || W.PairRemove.keyOf(o.id) } : null), ...((pr && pr.form) || (r && r.spec && r.spec.form) ? { form: (pr && pr.form) || r.spec.form } : null), ...((pr && +pr.groupSize > 0) || (c && +c.groupSize > 0) ? { groupSize: +((pr && pr.groupSize) || c.groupSize) } : null), metal: (sh && sh.metal) || (r && r.material) || (pr && pr.material) || "",
         status, why: o.why || "", sheetId: (sh && sh.sheetId) || (pr && pr.sheetId) || null, sheetLabel: o.where && o.where !== "not on a sheet yet" ? o.where : (sh ? K.word(sh) : ""), setId: set.id, setLabel: set.label,
         placed: !!(c && sh.placements.some(p => p.id === c.id)) });
     };

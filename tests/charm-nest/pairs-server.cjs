@@ -133,6 +133,21 @@ function seed(st) {
       st.put('Charm_Nest_Sheets', 'sheet-pr-t4a', { poolIds: [SPLIT.L], orders: [SPLIT.rid] }); st.put('Charm_Nest_Sheets', 'sheet-pr-t4b', { poolIds: [SPLIT.R], orders: [SPLIT.rid] });
       st.put('Charm_Pool', SPLIT.L, { state: 'written', sheetId: 'sheet-pr-t4a', heldAt: null, heldBy: null, heldReason: null, repooledAt: NOW }); st.put('Charm_Pool', SPLIT.R, { state: 'written', sheetId: 'sheet-pr-t4b', heldAt: null, heldBy: null, heldReason: null, repooledAt: NOW });
     });
+    await t('3b2 Paul 9 Oct: a hold that names ONE copy of a PLAIN quantity-4 line (rows carry no group size) takes only that copy; counted discs (a group of 3, no ear) still come off whole', async () => {
+      const P4 = line('4200000041', '9100000041'), D3 = line('4200000042', '9100000042');
+      const ids4 = [1, 2, 3, 4].map(n => `${P4.key}_${n}`), ids3 = [1, 2, 3].map(n => `${D3.key}_${n}`);
+      st.put('Charm_Nest_Sheets', 'sheet-pr-t5', sheet('sheet-pr-t5', 6, ids4.concat(ids3), { charmCount: 7, placedCount: 7 }));
+      ids4.forEach((id, i) => st.put('Charm_Pool', id, { poolId: id, orderId: P4.rid, transactionId: P4.tid, lineKey: P4.key, sku: 'HEART 1', material: 'gold', copy: i + 1, quantity: 4, state: 'written', runId: 'run-pr', createdAt: NOW - 120000, sheetId: 'sheet-pr-t5' }));
+      ids3.forEach((id, i) => st.put('Charm_Pool', id, { poolId: id, orderId: D3.rid, transactionId: D3.tid, lineKey: D3.key, sku: 'DISC 14', material: 'gold', copy: i + 1, quantity: 1, state: 'written', runId: 'run-pr', createdAt: NOW - 120000, sheetId: 'sheet-pr-t5', groupKey: D3.group, groupSize: 3 }));
+      const r = await call({ op: 'poolUpdate', poolIds: [ids4[1]], patch: HOLD() });
+      assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal('extended' in r.body, false, 'nothing extra comes off a plain line: ' + JSON.stringify(r.body));
+      assert.equal(row(ids4[1]).state, 'abandoned'); for (const id of [ids4[0], ids4[2], ids4[3]]) assert.equal(row(id).state, 'written', id + ' stays');
+      assert.deepEqual(rec('sheet-pr-t5').poolIds, [ids4[0], ids4[2], ids4[3]].concat(ids3));
+      const d = await call({ op: 'poolUpdate', poolIds: [ids3[1]], patch: HOLD() });
+      assert.equal(d.status, 200, JSON.stringify(d.body)); assert.deepEqual([...d.body.extended].sort(), [ids3[0], ids3[2]].sort());
+      for (const id of ids3) assert.equal(row(id).state, 'abandoned', id);
+      assert.deepEqual(rec('sheet-pr-t5').poolIds, [ids4[0], ids4[2], ids4[3]], 'the plain copies are still on the sheet');
+    });
     await t('3c a sibling on a CUT sheet stays (a cut sheet is a record of what was made); only what the server may edit comes off', async () => {
       const r = await call({ op: 'poolUpdate', poolIds: [CUTP.L], patch: HOLD() });
       assert.equal(r.status, 200); assert.equal('extended' in r.body, false);
@@ -196,10 +211,20 @@ function seed(st) {
     });
     await t('5c cleanPiece / groupOfPool / groupMates / splitsOf (the pure helpers) agree with charm-nest-pair.js groupKey', () => {
       assert.equal(Placement.groupOfPool(MIS.L), Pair.groupKey(MIS.L)); assert.equal(Placement.groupOfPool('not a pool id'), '');
-      assert.deepEqual(Placement.groupMates({ poolIds: [MIS.L, MIS.R, SOLO.L] }, new Set([MIS.L])), [MIS.R]);
-      assert.deepEqual(Placement.groupMates({ poolIds: [SOLO.L] }, new Set([MIS.L])), []);
+      const gk = Pair.groupKey(MIS.L);
+      assert.deepEqual(Placement.groupMates({ poolIds: [MIS.L, MIS.R, SOLO.L] }, new Set([MIS.L]), new Set([gk])), [MIS.R], 'a GROUP (the rows say groupSize 2 or more): its mate comes with it');
+      assert.deepEqual(Placement.groupMates({ poolIds: [MIS.L, MIS.R, SOLO.L] }, new Set([MIS.L]), k => k === gk), [MIS.R], 'the group may be told by a function');
+      assert.deepEqual(Placement.groupMates({ poolIds: [MIS.L, MIS.R, SOLO.L] }, new Set([MIS.L])), [], 'a line nothing says is a group: its copies each stand alone (Paul 9 Oct, ADVCOMPAT 1)');
+      assert.deepEqual(Placement.groupMates({ poolIds: [MIS.L, MIS.R, SOLO.L] }, new Set([MIS.L]), new Set()), [], 'no group: no mates');
+      assert.deepEqual(Placement.groupMates({ poolIds: [MIS.L, MIS.R, SOLO.L] }, new Set([MIS.L]), true), [MIS.R], 'true: every line is a candidate (the caller then asks the rows)');
+      assert.deepEqual(Placement.groupMates({ poolIds: [SOLO.L] }, new Set([MIS.L]), new Set([gk])), []);
       assert.deepEqual(Placement.splitsOf({ [MIS.L]: { state: 'sheet', sheetId: 'a' }, [MIS.R]: { state: 'sheet', sheetId: 'a' } }, []), []);
       assert.equal(Placement.splitsOf({ [MIS.L]: { state: 'superseded' }, [MIS.R]: { state: 'sheet', sheetId: 'a' } }, []).length, 0, 'a piece made up again is history, not a split');
+      // only a group is split: the rows say it (groupSize 2 or more); the copies of a plain line on two sheets are not
+      const on2 = { [MIS.L]: { state: 'sheet', sheetId: 'a' }, [MIS.R]: { state: 'sheet', sheetId: 'b' } };
+      assert.equal(Placement.splitsOf(on2, [{ poolId: MIS.L, groupSize: 2 }, { poolId: MIS.R, groupSize: 2 }]).length, 1, 'a pair on two sheets is a split');
+      assert.equal(Placement.splitsOf(on2, [{ poolId: MIS.L }, { poolId: MIS.R }]).length, 0, 'two plain copies on two sheets are no split');
+      assert.equal(Placement.splitsOf(on2, []).length, 0, 'no rows: no group');
     });
 
     // ═══ 6 · the master index keeps `pair` ═══

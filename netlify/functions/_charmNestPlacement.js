@@ -108,9 +108,13 @@ function cleanPieceSides(m) {
   return out;
 }
 /** The pieces of `sheet` that belong to a group one of `ids` (a Set of pool ids) belongs to, and are not in `ids` themselves: the rest of a
-    line that a take-off named only part of. (R4: a line comes off whole; the page's own plan keeps its copies together, and so does the server.) */
-function groupMates(sheet, ids) {
-  const groups = new Set(); for (const id of ids) { const g = groupOfPool(id); if (g) groups.add(g); }
+    line that a take-off named only part of. (R4: a line comes off whole; the page's own plan keeps its copies together, and so does the server.)
+    Only a GROUP comes off whole (Paul 9 Oct, after ADVCOMPAT 1: an earring pair, a necklace of counted discs or charms, a line the intake marks multi); the copies
+    of a plain quantity-N line each stand alone and a take-off naming one takes one. `grouped` says which lines are groups: a Set of group keys, a function
+    (groupKey) => boolean, or `true` for "every line" (the candidates, before the rows are asked). Without it nothing is a group. */
+function groupMates(sheet, ids, grouped) {
+  const isGroup = grouped === true ? () => true : typeof grouped === "function" ? grouped : grouped && typeof grouped.has === "function" ? k => grouped.has(k) : () => false;
+  const groups = new Set(); for (const id of ids) { const g = groupOfPool(id); if (g && isGroup(g)) groups.add(g); }
   if (!groups.size || !sheet || !Array.isArray(sheet.poolIds)) return [];
   return sheet.poolIds.map(String).filter(id => !ids.has(id) && groups.has(groupOfPool(id)));
 }
@@ -130,6 +134,7 @@ function splitsOf(placement, pools) {
   for (const [groupKey, list] of groups) {
     // a pair always has two pieces: the rows of a group say its size (groupSize), and when they agree and fewer pieces are left, that is said
     const sizes = new Set(list.map(([id]) => num((row.get(id) || {}).groupSize)).filter(n => n > 1)), of = sizes.size === 1 ? [...sizes][0] : 0, missing = of > list.length ? of - list.length : 0;
+    if (!sizes.size) continue;   // (only a group is split: the rows of a plain quantity-N line carry no group size, and its copies each stand alone)
     if (list.length < 2 && !missing) continue;
     const sheets = [...new Set(list.filter(([, pl]) => pl.state === "sheet" && pl.sheetId).map(([, pl]) => pl.sheetId))], off = list.filter(([, pl]) => pl.state !== "sheet").length;
     if (sheets.length < 2 && !(sheets.length === 1 && off) && !missing) continue;

@@ -169,9 +169,15 @@
    *  set without one prints exactly as before). spanLines: one line per order whose pieces sit on more than one sheet of the set, the pieces told apart by side. */
   const sideTag = c => c && c.side === 'L' ? ' (Left)' : c && c.side === 'R' ? ' (Right)' : '';
   const linesOf = od => Array.isArray(od && od.lines) ? od.lines : Object.values((od && od.lines) || {});
+  // only a GROUP is listed (Paul 9 Oct, after ADVCOMPAT 2): an earring pair, a necklace of counted discs / letters / charms, a line the intake marks multi. A copy says it with groupSize 2 or more, or,
+  // when it says none, with an ear. The copies of a plain quantity-N line, and an order of plain lines on two sheets, print exactly as they did.
+  const groupedCopy = c => { if (!c) return false; const n = +c.groupSize; return Number.isFinite(n) && c.groupSize != null && n > 0 ? n >= 2 : c.side === 'L' || c.side === 'R'; };
   function spanLines(orders, nameOf) {
     const out = [];
+    const sheetOf = c => c.sheet || (nameOf && nameOf(c.sheetId)) || str(c.sheetId);
     for (const [rid, od] of Object.entries(orders || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      const ofGroups = linesOf(od).filter(l => (l.copies || []).some(groupedCopy));
+      if (new Set(ofGroups.flatMap(l => (l.copies || []).map(sheetOf))).size < 2) continue;
       const pieces = linesOf(od).flatMap(l => (l.copies || []).map(c => ({ sku: l.sku || '', copy: c.copy, side: c.side || null, sheet: c.sheet || (nameOf && nameOf(c.sheetId)) || str(c.sheetId), n: (l.copies || []).length })));
       if (new Set(pieces.map(p => p.sheet)).size < 2) continue;
       out.push(`${rid}  ${pieces.map(p => `${p.sku}${p.n > 1 ? '#' + p.copy : ''}${sideTag(p)} ${p.sheet}`).join('  ')}`);

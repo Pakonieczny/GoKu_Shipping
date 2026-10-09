@@ -109,7 +109,9 @@ const gapMm = (r, a, b) => { const A = placedOf(r, a), B = placedOf(r, b); if (!
     assert.equal(r0.pairing, undefined, 'no group, no pairing report');
     assert(r1.pairing && r1.pairing.near.n === 0, 'a report, and no group asked to be near');
     assert.deepEqual(S.pairFields({ id: 'x' }), {}, 'a charm without a group gives nothing');
-    assert.deepEqual(S.pairFields({ orderInfo: { receiptId: 5, transactionId: 9 } }), { group: '5:9' });
+    assert.deepEqual(S.pairFields({ orderInfo: { receiptId: 5, transactionId: 9 } }), {}, 'a plain piece (no group size, no ear) is no group');
+    assert.deepEqual(S.pairFields({ groupSize: 3, orderInfo: { receiptId: 5, transactionId: 9 } }), { group: '5:9', groupSize: 3 }, 'a counted group piece is');
+    assert.deepEqual(S.pairFields({ side: 'L', orderInfo: { receiptId: 5, transactionId: 9 } }), { group: '5:9', side: 'L', near: true }, 'an ear with no size is half of a pair');
   }
 
   /* 4. `near`: the second body goes by the first. Seeded streams of rectangles, a pair in the middle of each; same pieces, near on and off. */

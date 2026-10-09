@@ -20,9 +20,10 @@
  *    groupKey(rowOrPiece)       → "receiptId:transactionId" (also read from a pool id "receipt_transaction_copy")
  *    piecesFor(line, charm)     → [{ side, bodyIndex, groupKey, n, of }]
  *    kindOf(line, charm)        → "single" | "pair" | "mismatched" | "multi"
- *    mustShareSheet(a, b)       → true when two different pieces are of one group
+ *    mustShareSheet(a, b)       → true when two different pieces are of one GROUP (see inGroup: a plain quantity-N line is not one)
  *  Added to the contract (never renamed): describe(charm), sameBody(a, b), sideForPiece(piece, bodies), pieceFields(line, charm),
  *  groupOf(pieces), siblingsOf(piece, pieces), splitAcross(pieces, sheetOf), designPair(entry), pieceCountOf(line, charm), discsOf(line).
+ *  Which lines are groups (Paul's ruling, 9 Oct, after ADVCOMPAT findings 1 and 2): isGroupLine(line, charm), groupSizeOf(piece), inGroup(piece), sharedKey(piece).
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -350,10 +351,46 @@
    *  anything that moves, removes or completes one must know about the other. */
   function mustShareSheet(a, b) {
     if (!a || !b || a === b) return false;
-    const ka = groupKey(a), kb = groupKey(b);
-    if (!keyOk(ka) || ka !== kb) return false;
+    const ka = sharedKey(a), kb = sharedKey(b);
+    if (!ka || ka !== kb) return false;
     const ida = a.poolId || a.id || (typeof a === "string" ? a : null), idb = b.poolId || b.id || (typeof b === "string" ? b : null);
     return !(ida != null && ida === idb);
+  }
+
+  /* ═══ 4a · which lines are GROUPS (Paul's ruling, 9 Oct 2026, after ADVCOMPAT findings 1 and 2) ═══════════════════════════════
+     A line that is NOT a pair behaves exactly as it did before the pairs work: a plain quantity-4 line of one charm is FOUR INDEPENDENT pieces (a take-off
+     naming one copy takes one, one copy can be moved by hand, a top-up may lift one, no pair words, no split notes). Only these lines are GROUPS, whose pieces
+     travel together on one sheet and one metal and come off together:
+       an earring PAIR line (stud, hoop, huggie, matching or mismatched: a Left and a Right per unit),
+       a necklace whose chosen option names how many discs / letters / charms it carries (n pieces of ONE necklace),
+       and any line the intake marks as several pieces per unit (pieceCount above the quantity).
+     A glued mismatched copy and an old line pinned to the pieces it already has (spec.pair.glued / legacy) are plain. A single earring that names its ear is a group of one.
+     The line says it (isGroupLine); its pieces carry it from then on, as the one contract field they already had: groupSize 2 or more on the pool row, the charm, the saved
+     sheet's charm and the placement. A piece that carries none (every old record, every plain line) is alone. */
+  /** The group size a piece says it has (a pool row, a charm, a placement, a sheet-record charm, a piece), or null when it says none. */
+  function groupSizeOf(x) {
+    if (!x || typeof x !== "object") return null;
+    for (const v of [x.groupSize, x.orderInfo && x.orderInfo.groupSize, x.piece && x.piece.groupSize, x.pool && x.pool.groupSize, x.row && x.row.groupSize]) {
+      const n = +v; if (v != null && v !== "" && Number.isFinite(n) && n > 0) return Math.floor(n);
+    }
+    return null;
+  }
+  /** Is this piece one of several pieces that must stay together? Its own groupSize says (2 or more); a sided piece (L / R) of a record that carries no size is the half of a pair. */
+  function inGroup(x) {
+    if (!x || typeof x !== "object" || !keyOk(groupKey(x))) return false;
+    const n = groupSizeOf(x);
+    if (n != null) return n >= 2;
+    return [x.side, x.orderInfo && x.orderInfo.side, x.piece && x.piece.side, x.pool && x.pool.side].some(v => v === "L" || v === "R");
+  }
+  /** The group key of a piece that is in a group, else "" (a plain piece has no group). */
+  const sharedKey = x => (inGroup(x) ? groupKey(x) : "");
+  /** Is this order LINE a group? (see above). True when it makes more than one piece per unit bought: an earring pair, a counted-option necklace, a line the intake marks multi. */
+  function isGroupLine(line, charm) {
+    if (!line || typeof line !== "object") return false;
+    const pr = pairSpecOf(line);
+    if (pr && (pr.glued || pr.legacy)) return false;
+    const total = pieceCountOf(line, charm);
+    return total >= 2 && total > quantityOf(line);
   }
 
   /* ═══ 5 · helpers for the callers (added; the names above are the contract) ═══ */
@@ -377,13 +414,13 @@
     return m;
   }
   /** The other pieces of this piece's group, from a list. */
-  function siblingsOf(piece, pieces) { const k = groupKey(piece); return keyOk(k) ? (pieces || []).filter(p => p !== piece && groupKey(p) === k) : []; }
+  function siblingsOf(piece, pieces) { const k = sharedKey(piece); return k ? (pieces || []).filter(p => p !== piece && sharedKey(p) === k) : []; }
   /** Given pieces and a function giving each one's sheet id (or null), the groups whose pieces are on more than one sheet (or on a sheet and off every sheet):
    *  [{ groupKey, pieces, sheets:[sheetId], unplaced:[piece] }]. The R3 question every set builder and remover asks. */
   function splitAcross(pieces, sheetOf) {
     const out = [];
     for (const [k, list] of groupOf(pieces)) {
-      if (!keyOk(k) || list.length < 2) continue;
+      if (!keyOk(k) || list.length < 2 || !list.some(inGroup)) continue;   // (a plain line's copies are not a group)
       const sheets = [...new Set(list.map(p => sheetOf(p)).filter(Boolean))], unplaced = list.filter(p => !sheetOf(p));
       if (sheets.length > 1 || (sheets.length === 1 && unplaced.length)) out.push({ groupKey: k, pieces: list, sheets, unplaced });
     }
@@ -843,7 +880,7 @@
 
   return {
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
-    bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
+    bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet, isGroupLine, groupSizeOf, inGroup, sharedKey,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, entryFields, heldPair, keepPairs,

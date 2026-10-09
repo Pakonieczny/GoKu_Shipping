@@ -48,22 +48,26 @@ let g;
   assert.deepEqual(PL.manifestEntries(split), ['PAIR-STUD#1->GF Sheet 1', 'PAIR-STUD#2->GF Sheet 2'], 'a pair without sides: the old words (the set editor\'s span lines say the split, R3)');
   assert.deepEqual(PL.manifestEntries(split, c => 'X' + c.copy).slice(0, 2), ['PAIR-STUD#1->X1', 'PAIR-STUD#2->X2']);
   // split notes
-  const P = (rid, tid, copy, sheetId, sheet, side) => ({ rid, tid, sku: 'S', copy, poolId: `${rid}_${tid}_${copy}`, sheetId, sheet, side: side || null });
+  // (grouped: the piece is one of several that stay together, an ear of a pair or a counted necklace's piece; the copies of a plain quantity-N line are not: Paul 9 Oct, ADVCOMPAT 2)
+  const P = (rid, tid, copy, sheetId, sheet, side, grouped) => ({ rid, tid, sku: 'S', copy, poolId: `${rid}_${tid}_${copy}`, sheetId, sheet, side: side || null, grouped: grouped == null ? !!side : !!grouped });
   assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'GF_x_Set-1_Sheet-1', 'L'), P('1', 't', 2, 's2', 'GF_x_Set-1_Sheet-2', 'R')]), ['1 Left here, Right on Sheet 2']);
   assert.deepEqual(PL.splitNotes('s2', [P('1', 't', 1, 's1', 'GF_x_Set-1_Sheet-1', 'L'), P('1', 't', 2, 's2', 'GF_x_Set-1_Sheet-2', 'R')]), ['1 Right here, Left on Sheet 1']);
-  assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'A_Sheet-1'), P('1', 't', 2, 's2', 'A_Sheet-2')]), ['1 1 of 2 here, 1 on Sheet 2'], 'matching pair');
-  const discs = [P('9', 'd', 1, 's1', 'A_Sheet-1'), P('9', 'd', 2, 's2', 'A_Sheet-2'), P('9', 'd', 3, 's3', 'A_Sheet-3')];
+  assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'A_Sheet-1', null, true), P('1', 't', 2, 's2', 'A_Sheet-2', null, true)]), ['1 1 of 2 here, 1 on Sheet 2'], 'a group of two with no ears (counted discs)');
+  assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'A_Sheet-1'), P('1', 't', 2, 's2', 'A_Sheet-2')]), [], 'two copies of a PLAIN quantity-2 line on two sheets: no note (they each stand alone)');
+  const discs = [P('9', 'd', 1, 's1', 'A_Sheet-1', null, true), P('9', 'd', 2, 's2', 'A_Sheet-2', null, true), P('9', 'd', 3, 's3', 'A_Sheet-3', null, true)];
   assert.deepEqual(PL.splitNotes('s2', discs), ['9 1 of 3 here, 1 on Sheet 1, 1 on Sheet 3'], 'discs on three sheets');
-  assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'A_Sheet-1'), P('1', 't', 2, 's1', 'A_Sheet-1')]), [], 'a group wholly on this sheet says nothing');
+  assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'A_Sheet-1', null, true), P('1', 't', 2, 's1', 'A_Sheet-1', null, true)]), [], 'a group wholly on this sheet says nothing');
   assert.deepEqual(PL.splitNotes('s3', discs.slice(0, 2)), [], 'a sheet that holds none of the group says nothing');
   assert.deepEqual(PL.splitNotes('s1', [P('1', 't', 1, 's1', 'A_Sheet-1', 'L'), P('1', 't', 2, 's2', 'A_Sheet-2', 'R')], ['7']), [], 'only: the orders of one label part');
-  const many = Array.from({ length: 6 }, (_, i) => [P(String(100 + i), 't', 1, 's1', 'A_Sheet-1'), P(String(100 + i), 't', 2, 's2', 'A_Sheet-2')]).flat();
+  const many = Array.from({ length: 6 }, (_, i) => [P(String(100 + i), 't', 1, 's1', 'A_Sheet-1', null, true), P(String(100 + i), 't', 2, 's2', 'A_Sheet-2', null, true)]).flat();
   const nl = PL.splitNotes('s1', many); assert.equal(nl.length, PL.MAX_NOTES); assert.match(nl[nl.length - 1], /^\+3 more split orders$/);
   // reconcile: a live sheet is the truth about itself
   const base = [P('1', 't', 1, 's1', 'A_Sheet-1', 'L'), P('1', 't', 2, 's2', 'A_Sheet-2', 'R')];
   assert.deepEqual(PL.splitNotes('s1', PL.reconcile(base, [{ sheetId: 's2', sheet: 'A_Sheet-2', pieces: [] }, { sheetId: 's1', sheet: 'A_Sheet-1', pieces: [P('1', 't', 1, 'x', 'x', 'L'), P('1', 't', 2, 'x', 'x', 'R')] }])), [], 'the right ear moved onto sheet 1: no split any more');
   // a charm with no order info is read from its pool id
-  assert.deepEqual(PL.piecesOfCharms([{ poolId: '4190000009_5000000010_2', order: '4190000009', side: 'R' }, { id: 'no pool id' }]), [{ rid: '4190000009', tid: '5000000010', sku: '', copy: 2, poolId: '4190000009_5000000010_2', side: 'R' }]);
+  assert.deepEqual(PL.piecesOfCharms([{ poolId: '4190000009_5000000010_2', order: '4190000009', side: 'R' }, { id: 'no pool id' }]), [{ rid: '4190000009', tid: '5000000010', sku: '', copy: 2, poolId: '4190000009_5000000010_2', side: 'R', grouped: true }]);
+  assert.deepEqual(PL.piecesOfCharms([{ poolId: '4190000009_5000000010_1', order: '4190000009' }, { poolId: '4190000009_5000000010_2', order: '4190000009', groupSize: 3 }]).map(x => x.grouped), [false, true], 'a plain copy is not grouped; a piece of a counted necklace (group size 3) is');
+  assert.deepEqual(PL.piecesOfOrders({ 4190000009: { lines: { t: { transactionId: 't', copies: [{ copy: 1, poolId: 'p1', sheetId: 's1' }, { copy: 2, poolId: 'p2', sheetId: 's2', groupSize: 2 }] } } } }).map(x => x.grouped), [false, true]);
   ok('helper words: sides, manifest entries (old text kept), split notes, reconcile');
 
   /* ── 2-4 · the real Sets code over the fixture's mismatched pair split over two sheets of one set ── */

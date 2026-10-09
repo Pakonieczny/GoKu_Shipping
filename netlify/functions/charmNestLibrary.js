@@ -1145,7 +1145,7 @@ const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
 /* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
    take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
 const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize", "quantity"];
-const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt", "side"];
+const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt", "side", "groupSize"];
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
 async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
 
@@ -1340,6 +1340,8 @@ function poolEvents(ids, p, before, b) {
 // ── pool ──
 /** An old piece row of a line made as ONE glued piece (no side, no group size) that is still in play: on a saved sheet, or committed, written, engraved or labelled
     (taken off or made up again is free to become two pieces). The test poolPut and poolUpdate share before they write left and right rows over it. */
+/** What a piece IS, as a row may carry it: an ear piece's four fields (side, bodyIndex, groupKey, groupSize, and mirror), or, for a piece of a necklace group with no ear, its group key and size. {} for a plain piece. */
+const pieceFieldsOf = o => { const sided = PoolPieces.cleanFields(o); return sided.side ? sided : PoolPieces.cleanGroupFields(o); };
 const legacyLive = cur => !!cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && !!(cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state));
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
@@ -1357,7 +1359,7 @@ async function op_poolPut(b) {
   const list = [...byId.values()], found = [];
   // the four fields of a piece of a mismatched pair are all there and valid, or none are stored (a plain piece never has them)
   // (groupKey alone is what the pool id says, as Placement.cleanPiece writes it; the other three come with it or not at all)
-  for (const p of list) { const keep = PoolPieces.cleanFields(p), gk = Object.prototype.hasOwnProperty.call(p, "groupKey") ? Placement.groupOfPool(p.poolId) : ""; for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); if (gk && !keep.groupKey) p.groupKey = gk; }
+  for (const p of list) { const keep = pieceFieldsOf(p), gk = Object.prototype.hasOwnProperty.call(p, "groupKey") ? Placement.groupOfPool(p.poolId) : ""; for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); if (gk && !keep.groupKey) p.groupKey = gk; }
   for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), { fieldMask: POOL_PUT_FIELDS }));
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
@@ -1420,11 +1422,24 @@ async function poolTakeOff(ids, patch, told) {
       let rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS) : [];
       const sheets = new Map();
       for (let j = 0; j < part.length; j += 30) for (const d of (await tx.get(col(SHEETS).where("poolIds", "array-contains-any", part.slice(j, j + 30)).select(...TAKE_OFF_SHEET_FIELDS))).docs) sheets.set(d.id, Object.assign(d.data(), { id: d.id }));
+      /* Only a GROUP comes off whole (an earring pair, counted discs or charms of one necklace, a line the intake marks multi): its pieces' rows say so (groupSize 2 or more).
+         The copies of a plain quantity-N line each stand alone, so naming one takes one (Paul 9 Oct, ADVCOMPAT 1). The rows are asked only when a sheet lists a piece of
+         a line that the take-off names only part of (a stale tab, a half list), and then for ONE named piece of each such line; the rows already read for the timeline are used first. */
+      const groupedKeys = new Set();
+      {
+        const cand = new Set(); for (const s of sheets.values()) if (Placement.editable(s)) for (const id of Placement.groupMates(s, want, true)) cand.add(Placement.groupOfPool(id));
+        if (cand.size) {
+          const sizeOf = new Map(rows.filter(r => r.exists).map(r => [r.id, +(r.data() || {}).groupSize || 0])), ask = new Map();
+          for (const id of part) { const g = Placement.groupOfPool(id); if (g && cand.has(g) && !ask.has(g) && !(told && sizeOf.has(id))) ask.set(g, id); }
+          if (ask.size) for (const r of await txGetAll(tx, [...ask.values()].map(id => col(POOL).doc(id)), ["groupSize"])) if (r.exists) sizeOf.set(r.id, +(r.data() || {}).groupSize || 0);
+          for (const id of part) { const g = Placement.groupOfPool(id); if (g && cand.has(g) && (sizeOf.get(id) || 0) >= 2) groupedKeys.add(g); }
+        }
+      }
       /* A LINE comes off whole (R4: a pair, a mismatched pair and an order of discs are one group, receiptId:transactionId; the page's own plan
          keeps a line's copies together, and a stale tab or a half list must not take half of one off): the rest of a line that one of the
          pieces named is listed on, and that this take-off may edit, comes off with it, in this same commit. Only the sheets already read
          above are looked at (no extra read), and a sheet that was cut or archived is a record of what was made: its pieces stay. */
-      for (const s of sheets.values()) if (Placement.editable(s)) for (const id of Placement.groupMates(s, want)) if (!want.has(id)) { want.add(id); more.push(id); }
+      for (const s of sheets.values()) if (Placement.editable(s)) for (const id of Placement.groupMates(s, want, groupedKeys)) if (!want.has(id)) { want.add(id); more.push(id); }
       if (told && more.length) rows = rows.concat(await txGetAll(tx, more.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS));
       const at = FV.serverTimestamp(), where = new Map(), seen = new Map(), touched = [];
       for (const s of sheets.values()) for (const id of s.poolIds || []) if (want.has(String(id)) && !where.has(String(id))) where.set(String(id), s);
@@ -1487,7 +1502,7 @@ async function op_poolUpdate(b) {
   let batch = db.batch(), n = 0;
   for (const id of wrote) {
     const doc = Object.assign({}, p, { updatedAt: FV.serverTimestamp() });
-    if (sent.length) { for (const k of sent) delete doc[k]; if (!wrongWay.has(id)) { Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); } delete doc.poolId; }
+    if (sent.length) { for (const k of sent) delete doc[k]; if (!wrongWay.has(id)) { Object.assign(doc, pieceFieldsOf(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); } delete doc.poolId; }
     batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
   }
   if (n) await batch.commit();

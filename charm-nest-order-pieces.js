@@ -91,6 +91,9 @@
     // pairs: pairOf(line) -> the pieces the line makes (CharmNestPair.piecesFor) when it is a mismatched pair, else null; kindOf(line) -> the contract's kind. Both are optional and
     // only ever answer for a mismatched pair, so a line that is not one is resolved exactly as before.
     const pairOf = typeof input.pairOf === 'function' ? input.pairOf : null, kindOf = typeof input.kindOf === 'function' ? input.kindOf : null;
+    // groupLine(line) -> true when the line is a GROUP (an earring pair, a necklace of counted discs / letters / charms, a line the intake marks multi: CharmNestPair.isGroupLine). The copies of a plain
+    // quantity-N line each stand alone (Paul 9 Oct, after ADVCOMPAT 2): no group, no pair words, no split. Optional: without it only a pair's plan or a pool row's own groupSize makes a group.
+    const groupLine = typeof input.groupLine === 'function' ? input.groupLine : null;
     const planOf = l => { if (!pairOf) return null; try { const x = pairOf(l); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
 
     // 1 · the pieces: every copy of every line, then pool rows and sheet entries no line explains (a line lost from the pull)
@@ -164,11 +167,14 @@
       const groupKey = String((p && p.groupKey) || (pp && pp.groupKey) || `${rid}:${(l && l.transactionId) || o.tx || ''}`);
       const hookKind = kindOf && l ? kindOf(l) || null : null, guess = o.plan || o.wasPlan ? ((o.plan || o.wasPlan).some(x => x && x.bodyIndex === 1) ? 'mismatched' : 'pair') : (side || o.glued) ? (bodyIndex === 1 ? 'mismatched' : 'pair') : null;
       const alone = !!side && !!p && +p.groupSize === 1;   // (a single earring that names its ear: a sided piece of a group of ONE, never half of a pair)
+      // is this piece one of several that stay together? the pool row's own groupSize says (2 or more: a group; 1: alone); a row that says none (an old row) is told by the line
+      const said = p && p.groupSize != null && p.groupSize !== '' && Number.isFinite(+p.groupSize) ? Math.max(0, Math.floor(+p.groupSize)) : null;
+      const grouped = said != null && said > 0 ? said >= 2 : !o.glued && !!(o.plan || side || (groupLine && l && (() => { try { return !!groupLine(l); } catch (_) { return false; } })()));
       const kind = hookKind || (alone ? 'single' : guess);   // (without the hook the kind is a guess: settled for the whole group below, a Left is of a mismatched pair when its group has a second body)
       // (mirror: the pool row's own when it has one, else what the plan says of this piece: the Right is the mirror image of the Left, whichever way the master drawing faces)
       const mirror = side ? (p && typeof p.mirror === 'boolean' ? p.mirror : pp && typeof pp.mirror === 'boolean' ? pp.mirror : side === 'R') : false;
       const sideLabel = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
-      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, mirror, glued: !!o.glued, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
+      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, mirror, glued: !!o.glued, bodyIndex, groupKey, groupSize: grouped ? ((p && +p.groupSize > 1) ? +p.groupSize : 0) : 1, grouped, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
         problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey), kindGuess: !hookKind && !alone && !!guess && !(o.plan || o.wasPlan) };
     });
@@ -177,7 +183,7 @@
     const shown = pieces.filter(p => !(p.gone && !p.nested)), live = shown.filter(p => !p.gone && !p.noDesign), rest = shown.filter(p => p.gone || p.noDesign);
     const size = new Map(); for (const p of shown) if (!p.gone) size.set(p.groupKey, (size.get(p.groupKey) || 0) + 1);
     const second = new Set(); for (const p of shown) if (p.kindGuess && p.bodyIndex === 1) second.add(p.groupKey);
-    return live.concat(rest).map((p, i) => { const q = Object.assign(p, { index: i + 1, groupSize: p.groupSize || size.get(p.groupKey) || 1 }); if (q.kindGuess) { if (q.kind) q.kind = second.has(q.groupKey) ? 'mismatched' : 'pair'; } delete q.kindGuess; return q; });
+    return live.concat(rest).map((p, i) => { const q = Object.assign(p, { index: i + 1, groupSize: p.groupSize || (p.grouped ? Math.max(2, size.get(p.groupKey) || 2) : 1) }); if (q.kindGuess) { if (q.kind) q.kind = second.has(q.groupKey) ? 'mismatched' : 'pair'; } delete q.kindGuess; return q; });
   }
 
   /** How an order's pieces are spread over sheets. */
@@ -193,7 +199,7 @@
     // sheets, or some on a sheet and some on none): a surface that says "its pair" says it from here
     const groups = new Map();
     for (const p of pieces) {
-      const k = p.groupKey || p.lineKey; let g = groups.get(k);
+      const k = p.groupSize >= 2 ? (p.groupKey || p.lineKey) : 'alone:' + (p.key || p.poolId); let g = groups.get(k);   // (a piece that is not in a group is a group of its own, never split)
       if (!g) groups.set(k, g = { key: k, lineKey: p.lineKey, kind: p.kind || null, size: 0, sides: [], sheets: [], placed: 0, unplaced: 0, split: false, _s: new Set() });
       g.size++; if (p.kind && !g.kind) g.kind = p.kind; if (p.side && !g.sides.includes(p.side)) g.sides.push(p.side);
       if (p.nested) { g.placed++; const sk = p.sheetId || 'page:' + p.sheetLabel; if (!g._s.has(sk)) { g._s.add(sk); g.sheets.push({ sheetId: p.sheetId || null, sheetLabel: p.sheetLabel || null }); } }
@@ -244,6 +250,7 @@
     const pairArg = l => ({ receiptId: l.receiptId, transactionId: l.transactionId, sku: l.sku, quantity: Math.max(1, Math.round(+(l.spec && l.spec.quantity || l.quantity) || 1)), form: l.form || '', key: l.key, spec: l.spec || {}, line: l });
     const earringLine = l => { const CP = root.CharmNestPair; try { return !!(CP && l && typeof CP.piecesFor === 'function' && (typeof CP.isEarringPair === 'function' ? CP.isEarringPair(pairArg(l), entryOf(l)) : CP.isMismatched(entryOf(l)))); } catch (_) { return false; } };
     const pairOf = l => { const CP = root.CharmNestPair; if (!earringLine(l)) return null; try { const x = CP.piecesFor(pairArg(l), entryOf(l)); return Array.isArray(x) && x.length > 1 && x.some(p => p.side) ? x : null; } catch (_) { return null; } };
+    const groupLine = l => { const CP = root.CharmNestPair; try { return !!(CP && l && typeof CP.isGroupLine === 'function' && CP.isGroupLine(pairArg(l), entryOf(l))); } catch (_) { return false; } };
     const kindOf = l => { const CP = root.CharmNestPair; if (!earringLine(l) || typeof CP.kindOf !== 'function') return null; try { return CP.kindOf(pairArg(l), entryOf(l)) || null; } catch (_) { return null; } };
     function lineOfRow(r) {
       const sp = r.spec || {}, ln = r.line || {};
@@ -285,7 +292,7 @@
         for (const l of lines) for (let c = 1; c <= copiesOf(l); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
       }
       for (const s of (e && e.sheets) || []) take(s);
-      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet, pairOf, kindOf,
+      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet, pairOf, kindOf, groupLine,
         thumbOf: id => { try { const c = root.Pool && root.Pool.charmOf ? root.Pool.charmOf(id) : null; return c && c.thumbUrl || null; } catch (_) { return null; } } };
     }
     function enrich(pieces) {

@@ -2962,6 +2962,9 @@ const Pool = window.Pool = (() => {
     if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
+    /* Only a GROUP carries a group (Paul 9 Oct, after ADVCOMPAT 1 and 2): an earring pair (sided pieces), a necklace of counted discs, letters or charms (n pieces of ONE necklace), a line
+       the intake marks as several pieces per unit. Each of its pieces says so with groupSize 2 or more (and the group key); the copies of a plain quantity-N line say nothing, each stands alone. */
+    const grouped = !!(Pair && Pair.isGroupLine && Pair.isGroupLine(pairLine(row), base)), loose = grouped && !plan && count >= 2 && count <= PoolPieces.MAX_PIECES;
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
     for (const b of plan ? [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i)) : [base]) {
@@ -2971,12 +2974,14 @@ const Pool = window.Pool = (() => {
     if (plan) { try { for (const pp of plan) await ensureBase(src, pp); } catch (e) { row.state = "held"; row.reason = `its right-hand earring could not be mirrored: ${e.message}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${row.reason}`); return null; } }
     const pools = [], charms = [];
     for (let copy = 1; copy <= count; copy++) {
-      const poolId = O.poolId(row.order, row.line, copy), pp = plan ? plan[copy - 1] : null, mine = pp ? PoolPieces.fieldsOf(pp) : null;
+      const poolId = O.poolId(row.order, row.line, copy), pp = plan ? plan[copy - 1] : null;
+      // (an ear piece of a line that is not a group, a single earring that names its ear: a group of ONE, however many are bought; discs, letters, charms of a counted necklace: group fields, no ear)
+      const mine = pp ? PoolPieces.fieldsOf(grouped ? pp : Object.assign({}, pp, { groupSize: 1 })) : loose ? PoolPieces.cleanGroupFields({ poolId, groupSize: count }) : null;
       const charm = pp ? cloneCharm(baseFor(src, pp), `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
       charm.name = `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
-      if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
+      if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them (a counted necklace's pieces: groupKey and groupSize)
       pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: count, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}) });
       charms.push(charm);
     }
@@ -7465,7 +7470,7 @@ const Sets = window.Sets = (() => {
     // the set record
     if (!set.sheetIds.includes(sh.sheetId)) set.sheetIds.push(sh.sheetId);
     if (!set.materials.includes(sh.metal)) set.materials.push(sh.metal);
-    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) { const sd = c.side || c.orderInfo.side; ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null, ...(sd === "L" || sd === "R" ? { side: sd } : {}) }); } }   // (a piece of a mismatched pair keeps its side in the set's copy list)
+    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) { const sd = c.side || c.orderInfo.side; const gs = +c.groupSize; ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null, ...(sd === "L" || sd === "R" ? { side: sd } : {}), ...(gs >= 2 || (gs === 1 && (sd === "L" || sd === "R")) ? { groupSize: Math.floor(gs) } : {}) }); } }   // (a piece of a mismatched pair keeps its side in the set's copy list; a piece of a GROUP says how big its group is, a plain piece nothing)
     set.labelFiles = set.labelFiles.filter(f => f.sheetId !== sh.sheetId).concat(sh.label.files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
     set.labels = null; // A previously collected PDF/manifest no longer describes these sheet labels.
     if (!labelsOnly) set.status = "nesting";

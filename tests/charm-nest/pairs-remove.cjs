@@ -25,14 +25,15 @@ const pid = (rid, tx, copy) => `${rid}_${tx}_${copy}`;
 const MIS = { rid: '4190000009', tx: '5000000010' }, DISC = { rid: '4190000011', tx: '5000000012' }, ONE = { rid: '4190000013', tx: '5000000014' }, TWO = { rid: '4190000015', tx: '5000000016' };
 const row = (o, ids, spec) => ({ key: `${o.rid}_${o.tx}`, order: { receiptId: o.rid }, line: { transactionId: o.tx, quantity: 1 }, poolIds: ids, spec: spec || {} });
 const pools = [
-  { poolId: pid(MIS.rid, MIS.tx, 1), orderId: MIS.rid, transactionId: MIS.tx, side: 'L', form: 'earrings', state: 'written', sheetId: 'sh-1' },
-  { poolId: pid(MIS.rid, MIS.tx, 2), orderId: MIS.rid, transactionId: MIS.tx, side: 'R', form: 'earrings', state: 'written', sheetId: 'sh-3' },
-  { poolId: pid(DISC.rid, DISC.tx, 1), orderId: DISC.rid, transactionId: DISC.tx, state: 'written' }, { poolId: pid(DISC.rid, DISC.tx, 2), orderId: DISC.rid, transactionId: DISC.tx, state: 'written' },
-  { poolId: pid(DISC.rid, DISC.tx, 3), orderId: DISC.rid, transactionId: DISC.tx, state: 'written' },
+  { poolId: pid(MIS.rid, MIS.tx, 1), orderId: MIS.rid, transactionId: MIS.tx, side: 'L', form: 'earrings', groupSize: 2, state: 'written', sheetId: 'sh-1' },
+  { poolId: pid(MIS.rid, MIS.tx, 2), orderId: MIS.rid, transactionId: MIS.tx, side: 'R', form: 'earrings', groupSize: 2, state: 'written', sheetId: 'sh-3' },
+  // (a counted necklace, 3 discs of ONE necklace: its pieces say they are a group of 3, no ear; Paul 9 Oct, ruling after ADVCOMPAT 1 and 2)
+  { poolId: pid(DISC.rid, DISC.tx, 1), orderId: DISC.rid, transactionId: DISC.tx, groupSize: 3, state: 'written' }, { poolId: pid(DISC.rid, DISC.tx, 2), orderId: DISC.rid, transactionId: DISC.tx, groupSize: 3, state: 'written' },
+  { poolId: pid(DISC.rid, DISC.tx, 3), orderId: DISC.rid, transactionId: DISC.tx, groupSize: 3, state: 'written' },
   { poolId: pid(ONE.rid, ONE.tx, 1), orderId: ONE.rid, transactionId: ONE.tx, state: 'written' },
   { poolId: pid(TWO.rid, TWO.tx, 1), orderId: TWO.rid, transactionId: TWO.tx, form: 'pendant', state: 'written' }, { poolId: pid(TWO.rid, TWO.tx, 2), orderId: TWO.rid, transactionId: TWO.tx, form: 'pendant', state: 'written' },
 ];
-const rows = [row(MIS, [pid(MIS.rid, MIS.tx, 1), pid(MIS.rid, MIS.tx, 2)]), row(DISC, [1, 2, 3].map(c => pid(DISC.rid, DISC.tx, c))), row(ONE, [pid(ONE.rid, ONE.tx, 1)]), row(TWO, [1, 2].map(c => pid(TWO.rid, TWO.tx, c)))];
+const rows = [row(MIS, [pid(MIS.rid, MIS.tx, 1), pid(MIS.rid, MIS.tx, 2)], { form: 'earrings', pieceCount: 2 }), row(DISC, [1, 2, 3].map(c => pid(DISC.rid, DISC.tx, c)), { pieceCount: 3 }), row(ONE, [pid(ONE.rid, ONE.tx, 1)]), Object.assign(row(TWO, [1, 2].map(c => pid(TWO.rid, TWO.tx, c)), { form: 'pendant' }), { line: { transactionId: TWO.tx, quantity: 2 } })];
 const where = { [pid(MIS.rid, MIS.tx, 1)]: 'GF Sheet 1', [pid(MIS.rid, MIS.tx, 2)]: 'GF Sheet 3', [pid(DISC.rid, DISC.tx, 1)]: 'GF Sheet 1', [pid(DISC.rid, DISC.tx, 2)]: 'GF Sheet 1', [pid(DISC.rid, DISC.tx, 3)]: 'GF Sheet 2',
   [pid(ONE.rid, ONE.tx, 1)]: 'GF Sheet 1', [pid(TWO.rid, TWO.tx, 1)]: 'GF Sheet 2', [pid(TWO.rid, TWO.tx, 2)]: 'GF Sheet 2' };
 const whereOf = id => where[id] || '';
@@ -56,10 +57,16 @@ const items = ids => PR.itemsFor(ids, { pools }, whereOf, false);
     assert.deepEqual([...PR.expand([pid(DISC.rid, DISC.tx, 3)], src).ids].sort(), [1, 2, 3].map(c => pid(DISC.rid, DISC.tx, c)));
     assert.deepEqual([...PR.expand([pid(ONE.rid, ONE.tx, 1)], src).added], [], 'a single piece adds nothing');
     assert.deepEqual([...PR.expand([pid(MIS.rid, MIS.tx, 1), pid(MIS.rid, MIS.tx, 2)], src).added], [], 'asking for the whole group adds nothing');
+    // two copies of a PLAIN quantity-2 line (a pendant bought twice) each stand alone: naming one takes one (Paul 9 Oct, ADVCOMPAT 1 and 2)
+    assert.deepEqual([...PR.expand([pid(TWO.rid, TWO.tx, 1)], src).added], [], 'a plain copy adds nothing');
+    assert.deepEqual([...PR.expand([pid(TWO.rid, TWO.tx, 1)], { pools }).added], [], 'a plain copy adds nothing, from the pool rows alone');
+    assert.deepEqual([...PR.expand([pid(DISC.rid, DISC.tx, 3)], { rows }).ids].sort(), [1, 2, 3].map(c => pid(DISC.rid, DISC.tx, c)), 'counted discs: the Orders row says the line makes 3 pieces for 1 unit, a group');
   });
   await t('the group is read from the charms on the sheets too (no Orders row, no pool row)', () => {
-    const charms = [{ poolId: pid(MIS.rid, MIS.tx, 1) }, { poolId: pid(MIS.rid, MIS.tx, 2) }];
+    const charms = [{ poolId: pid(MIS.rid, MIS.tx, 1), groupSize: 2, side: 'L' }, { poolId: pid(MIS.rid, MIS.tx, 2), groupSize: 2, side: 'R' }];
     assert.deepEqual([...PR.expand([pid(MIS.rid, MIS.tx, 2)], { charms }).ids].sort(), charms.map(c => c.poolId));
+    const plain = [{ poolId: pid(TWO.rid, TWO.tx, 1) }, { poolId: pid(TWO.rid, TWO.tx, 2) }];
+    assert.deepEqual([...PR.expand([pid(TWO.rid, TWO.tx, 2)], { charms: plain }).ids], [pid(TWO.rid, TWO.tx, 2)], 'charms of a plain line: one stands alone');
   });
   await t('gone pieces (abandoned, superseded) are never members', () => {
     const gone = pools.map(p => p.poolId === pid(MIS.rid, MIS.tx, 2) ? Object.assign({}, p, { state: 'abandoned' }) : p);
@@ -72,6 +79,8 @@ const items = ids => PR.itemsFor(ids, { pools }, whereOf, false);
     const cut = PR.splitBy([pid(DISC.rid, DISC.tx, 1), pid(DISC.rid, DISC.tx, 2)], { pools }, whereOf);
     assert.equal(cut.length, 1); assert.deepEqual(cut[0].outside, [{ id: pid(DISC.rid, DISC.tx, 3), where: 'GF Sheet 2' }]);
     assert.deepEqual(PR.splitBy([pid(ONE.rid, ONE.tx, 1)], { pools }, whereOf), [], 'a single piece splits nothing');
+    assert.deepEqual(PR.partnersOutside([pid(TWO.rid, TWO.tx, 1)], { pools, rows }, whereOf), [], 'one copy of a plain line leaves nobody behind');
+    assert.deepEqual(PR.splitBy([pid(TWO.rid, TWO.tx, 1)], { pools, rows }, whereOf), [], 'one copy of a plain line splits nothing');
   });
   await t('plain words: a pair names its sides and sheets', () => {
     const ids = [pid(MIS.rid, MIS.tx, 1), pid(MIS.rid, MIS.tx, 2)];
@@ -91,7 +100,9 @@ const items = ids => PR.itemsFor(ids, { pools }, whereOf, false);
     assert.deepEqual(PR.describe(oneSheet), []);
     assert.deepEqual(PR.describe(items([1, 2].map(c => pid(TWO.rid, TWO.tx, c)))), [], 'two copies of a pendant are not "a pair"');
     assert.deepEqual(PR.describe(items([pid(ONE.rid, ONE.tx, 1)])), []);
-    assert.equal(PR.groupsOf(items([1, 2].map(c => pid(TWO.rid, TWO.tx, c))))[0].kind, 'multi');
+    assert.deepEqual(PR.groupsOf(items([1, 2].map(c => pid(TWO.rid, TWO.tx, c)))), [], 'the copies of a plain line are no group, so no words at all');
+    const spread = items([1, 2].map(c => pid(TWO.rid, TWO.tx, c))).map((i, k) => Object.assign({}, i, { where: 'GF Sheet ' + (k + 1) }));
+    assert.deepEqual(PR.describe(spread), [], 'two plain copies on two sheets: nothing is said (they each stand alone)');
   });
   await t('sides: a stored side wins; a mismatched design or earrings that are one of several fall back to the copy number; anything else has none', () => {
     assert.equal(PR.sideOfPiece({ poolId: pid(ONE.rid, ONE.tx, 1), side: 'R' }, false), 'R');

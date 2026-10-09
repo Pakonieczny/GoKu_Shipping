@@ -18,7 +18,7 @@ const pass = name => console.log('  ✓', name);
 // the real charm-nest-pair.js (amendment 2: an earring pair always makes a Left and a Right per unit, copies alternating; the Right is the mirror image
 // of the drawing; a mismatched pair's pieces are its two bodies) and, below, a module that calls every line plain (what the app did before pairs)
 // a pair module that calls every line plain (what the app did before pairs)
-const PairPlain = Object.assign({}, Pair, { piecesFor: line => { const q = Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)); return Array.from({ length: q }, (_, i) => ({ side: null, bodyIndex: 0, groupKey: Pair.groupKey(line), n: i + 1, of: q, mirror: false })); }, pieceCountOf: line => Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)) });
+const PairPlain = Object.assign({}, Pair, { piecesFor: line => { const q = Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)); return Array.from({ length: q }, (_, i) => ({ side: null, bodyIndex: 0, groupKey: Pair.groupKey(line), n: i + 1, of: q, mirror: false })); }, pieceCountOf: line => Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)), isGroupLine: () => false });
 const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and objects come from another realm: compare by value
 
 (async () => {
@@ -126,6 +126,22 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     assert(!w.logs.some(l => /bod(y|ies)/i.test(l)), sku + ': nothing said about bodies');
   }
   pass('a single charm, discs, and any line the pair module calls plain: the pool rows and charms are exactly what they were');
+
+  // counted-option necklaces (3 discs, 5 letters: the intake's pieceCount above the quantity) ARE a group of that many pieces: every row carries the group and its size, no ear;
+  // the same piece count as a plain quantity (above, 'DISC-14' x 3) is not (Paul 9 Oct, after ADVCOMPAT 1: a plain quantity-N line is not a group)
+  for (const [qty, count] of [[1, 3], [2, 6], [1, 5]]) {
+    const w = world(['DISC-14']); w.use('DISC-14');
+    const row = lineRow('4190000103', '5000000103', 'DISC-14', qty, { form: 'necklace', pieceCount: count });
+    await w.Pool.poolAdd(row, null);
+    const put = w.calls.find(x => x.body.op === 'poolPut'), pools = put.body.pools, gk = '4190000103:5000000103';
+    assert.strictEqual(pools.length, count, 'a necklace of ' + count + ' discs makes ' + count + ' pieces');
+    pools.forEach(pl => { assert.strictEqual(pl.groupKey, gk); assert.strictEqual(pl.groupSize, count); assert(!('side' in pl) && !('mirror' in pl) && !('bodyIndex' in pl), 'no ear on a disc'); });
+    const charms = w.pages.gold.charms; assert.strictEqual(charms.length, count);
+    for (const ch of charms) { assert.strictEqual(ch.groupKey, gk, 'the sheet charm carries the group'); assert.strictEqual(ch.groupSize, count); assert(!('side' in ch)); }
+    assert.deepStrictEqual(J(PP.cleanGroupFields(pools[0])), { groupKey: gk, groupSize: count }, 'the server keeps exactly these two fields');
+    assert.deepStrictEqual(J(PP.cleanFields(pools[0])), {}, 'and a sideless piece is not a sided one');
+  }
+  pass('counted discs / letters (pieceCount above the quantity): a group of that many pieces, each row with the group key and size and no ear');
 
   // a mismatched pair: two bodies, two pieces per unit
   for (const qty of [1, 2]) {

@@ -68,12 +68,20 @@
     return out;
   }
 
-  /** The flat pieces of a set's `orders` map: { rid: { lines: { tid: line } | [line] } } → [{ rid, tid, sku, copy, poolId, sheetId, sheet, side }]. */
+  /** Is this piece one of several that stay together? Only a GROUP has split notes (Paul 9 Oct, after ADVCOMPAT 2; charm-nest-pair.js inGroup says the same): its groupSize is 2 or more,
+   *  or, when it says no size, it has an ear. The copies of a plain quantity-N line each stand alone and get no note. */
+  function groupedOf(x) {
+    if (!x || typeof x !== "object") return false;
+    for (const v of [x.groupSize, x.orderInfo && x.orderInfo.groupSize]) { const n = +v; if (v != null && v !== "" && Number.isFinite(n) && n > 0) return n >= 2; }
+    return !!sideOf(x);
+  }
+
+  /** The flat pieces of a set's `orders` map: { rid: { lines: { tid: line } | [line] } } → [{ rid, tid, sku, copy, poolId, sheetId, sheet, side, grouped }]. */
   function piecesOfOrders(orders) {
     const out = [];
     for (const [rid, o] of Object.entries(orders || {})) {
       const lines = Array.isArray(o && o.lines) ? o.lines : Object.values((o && o.lines) || {});
-      for (const l of lines) for (const c of (l && l.copies) || []) out.push({ rid: str(rid), tid: str(l.transactionId), sku: str(l.sku), copy: c.copy, poolId: str(c.poolId), sheetId: str(c.sheetId), sheet: str(c.sheet), side: sideOf(c) });
+      for (const l of lines) for (const c of (l && l.copies) || []) out.push({ rid: str(rid), tid: str(l.transactionId), sku: str(l.sku), copy: c.copy, poolId: str(c.poolId), sheetId: str(c.sheetId), sheet: str(c.sheet), side: sideOf(c), grouped: groupedOf(c) });
     }
     return out;
   }
@@ -87,7 +95,7 @@
       const oi = c.orderInfo || {}, m = POOL_PARTS.exec(String(c.poolId || ""));
       const rid = str(c.order || oi.receiptId || (m && m[1])).split("/")[0], tid = str(oi.transactionId || (m && m[2]));
       if (!rid || !tid) continue;
-      out.push({ rid, tid, sku: str(oi.sku), copy: oi.copy || (m && +m[3]) || 1, poolId: str(c.poolId), side: sideOf(c) });
+      out.push({ rid, tid, sku: str(oi.sku), copy: oi.copy || (m && +m[3]) || 1, poolId: str(c.poolId), side: sideOf(c), grouped: groupedOf(c) });
     }
     return out;
   }
@@ -130,7 +138,7 @@
     const lines = [];
     for (const k of [...groups.keys()].sort()) {
       const g = groups.get(k);
-      if (g.length < 2) continue;
+      if (g.length < 2 || !g.some(p => p.grouped)) continue;   // (a line whose copies are not a group has no note)
       const here = g.filter(p => p.sheetId === id);
       if (!here.length || here.length === g.length) continue;
       const elsewhere = new Map();
@@ -208,5 +216,5 @@
     return any ? n : null;
   }
 
-  return { sideOf, wordOf, copyWord, manifestEntries, piecesOfOrders, piecesOfCharms, reconcile, splitNotes, shortSheet, backWord, mismatchedDesign, earPieces, labelPieces, stickerPieces, pieceCount, MAX_NOTES };
+  return { sideOf, groupedOf, wordOf, copyWord, manifestEntries, piecesOfOrders, piecesOfCharms, reconcile, splitNotes, shortSheet, backWord, mismatchedDesign, earPieces, labelPieces, stickerPieces, pieceCount, MAX_NOTES };
 });

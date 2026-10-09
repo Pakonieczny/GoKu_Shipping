@@ -87,14 +87,19 @@ function partA() {
   assert.deepEqual(P.estimateFit([], T, {}), { pieces: 0, low: 0, high: 0, pairs: 0, pairsLow: 0, pairsHigh: 0, packedPct: 0, usableMm2: 0, packMm2: 0 }, 'nothing left, no pairs');
 
   // A2. a group is one order line: the contract's key when the page has it, else the line's own receipt:transaction (orderInfo, then the pool id), else the order
-  assert.equal(P.groupKeyOf({ groupKey: '1:2' }), '1:2');
-  assert.equal(P.groupKeyOf({ orderInfo: { receiptId: 1001, transactionId: 5001 }, order: 'x' }), '1001:5001');
-  assert.equal(P.groupKeyOf({ poolId: '1001_5001_2', order: '1001' }), '1001:5001', 'a saved sheet keeps only order and poolId: the line is read from the pool id');
-  assert.equal(P.groupKeyOf({ poolId: '1001_5001_1' }), P.groupKeyOf({ poolId: '1001_5001_2' }), 'both pieces of a pair are one group');
-  assert.notEqual(P.groupKeyOf({ poolId: '1001_5001_1' }), P.groupKeyOf({ poolId: '1001_5002_1' }), 'two lines of one receipt are two groups');
-  assert.equal(P.groupKeyOf({ order: 'A', id: 'z' }), 'A'); assert.equal(P.groupKeyOf({ id: 'z' }), 'z'); assert.equal(P.groupKeyOf(null), '');
+  assert.equal(P.groupKeyOf({ groupKey: '1:2', groupSize: 2 }), '1:2'); assert.equal(P.groupKeyOf({ groupKey: '1:2' }), '', 'a key with no group size is a plain piece');
+  assert.equal(P.groupKeyOf({ orderInfo: { receiptId: 1001, transactionId: 5001 }, order: 'x', groupSize: 2 }), '1001:5001');
+  assert.equal(P.groupKeyOf({ poolId: '1001_5001_2', order: '1001', groupSize: 2 }), '1001:5001', 'a saved sheet keeps order, poolId and the group size: the line is read from the pool id');
+  assert.equal(P.groupKeyOf({ poolId: '1001_5001_1', groupSize: 2 }), P.groupKeyOf({ poolId: '1001_5001_2', groupSize: 2 }), 'both pieces of a pair are one group');
+  assert.notEqual(P.groupKeyOf({ poolId: '1001_5001_1', groupSize: 2 }), P.groupKeyOf({ poolId: '1001_5002_1', groupSize: 2 }), 'two lines of one receipt are two groups');
+  // only a GROUP has a key (Paul 9 Oct, ruling after ADVCOMPAT 2): the copies of a plain quantity-N line, a piece alone and a record with no group fields each stand alone
+  assert.equal(P.groupKeyOf({ poolId: '1001_5001_2', order: '1001' }), '', 'a plain copy has no group');
+  assert.equal(P.groupKeyOf({ orderInfo: { receiptId: 1001, transactionId: 5001 }, order: 'x' }), '', 'a plain copy read from its order fields has none either');
+  assert.equal(P.groupKeyOf({ poolId: '1001_5001_1', groupSize: 1, side: 'L' }), '', 'a single earring that names its ear is a group of one');
+  assert.equal(P.groupKeyOf({ poolId: '1001_5001_1', side: 'R' }), '1001:5001', 'an older sided piece with no size is the half of a pair');
+  assert.equal(P.groupKeyOf({ order: 'A', id: 'z', groupSize: 2 }), 'A'); assert.equal(P.groupKeyOf({ id: 'z', groupSize: 2 }), 'z'); assert.equal(P.groupKeyOf(null), '');
   global.self = { CharmNestPair: { groupKey: p => 'pair:' + p.id } };
-  try { assert.equal(P.groupKeyOf({ id: 'q' }), 'pair:q', 'the shared module wins when it is there'); global.self.CharmNestPair.groupKey = () => ':'; assert.equal(P.groupKeyOf({ order: 'A', id: 'z' }), 'A', 'its "no key" (a bare colon) is no key: the order stands in'); global.self.CharmNestPair.groupKey = () => 'undefined:undefined'; assert.equal(P.groupKeyOf({ poolId: '7_8_1' }), '7:8', 'a key that is not usable falls back to the local reading'); global.self.CharmNestPair.groupKey = () => { throw new Error('boom'); }; assert.equal(P.groupKeyOf({ poolId: '7_8_1' }), '7:8', 'and so does a module that throws'); } finally { delete global.self; }
+  try { assert.equal(P.groupKeyOf({ id: 'q', groupSize: 2 }), 'pair:q', 'the shared module wins when it is there'); global.self.CharmNestPair.groupKey = () => ':'; assert.equal(P.groupKeyOf({ order: 'A', id: 'z', groupSize: 2 }), 'A', 'its "no key" (a bare colon) is no key: the order stands in'); global.self.CharmNestPair.groupKey = () => 'undefined:undefined'; assert.equal(P.groupKeyOf({ poolId: '7_8_1', groupSize: 2 }), '7:8', 'a key that is not usable falls back to the local reading'); global.self.CharmNestPair.groupKey = () => { throw new Error('boom'); }; assert.equal(P.groupKeyOf({ poolId: '7_8_1', groupSize: 2 }), '7:8', 'and so does a module that throws'); } finally { delete global.self; }
 
   // A3. what a group is, read from its pieces
   assert.equal(P.kindOfGroup([pl('a', 1, 1, 1)]), 'single');
@@ -114,11 +119,13 @@ function partA() {
   assert.deepEqual(P.describe(six), { pieces: 6, groups: 4, singles: 2, pairs: 2, mismatched: 1, multi: 0, minGroup: 1, maxGroup: 2 });
   assert.equal(P.pieceWords(six), '6 pieces (2 pairs and 2 single pieces)');
   assert.equal(P.pieceWords([pl('a0', 1, 1, 1), pl('c0', 3, 3, 1)]), '2 pieces'); assert.equal(P.pieceWords([pl('a0', 1, 1, 1)]), '1 piece'); assert.equal(P.pieceWords([]), '0 pieces');
-  assert.equal(P.pieceWords([pl('a0', 1, 1, 1), pl('a1', 1, 1, 2)]), '2 pieces (1 pair)');
+  assert.equal(P.pieceWords([pl('a0', 1, 1, 1, { groupSize: 2 }), pl('a1', 1, 1, 2, { groupSize: 2 })]), '2 pieces (1 pair)');
+  assert.equal(P.pieceWords([pl('a0', 1, 1, 1), pl('a1', 1, 1, 2)]), '2 pieces', 'two copies of a PLAIN quantity-2 line are two single pieces, not a pair (Paul 9 Oct, ADVCOMPAT 2)');
+  assert.equal(P.describe([pl('a0', 1, 1, 1), pl('a1', 1, 1, 2), pl('a2', 1, 1, 3)]).singles, 3, 'three plain copies: three single pieces');
   const q2 = [1, 2, 3, 4].map(i => pl('e' + i, 8, 8, i, { side: i % 2 ? 'L' : 'R' }));
   assert.equal(P.pieceWords(q2), '4 pieces (2 pairs)', 'a quantity-2 earring line is two pairs, not "an order of 4 pieces"'); assert.equal(P.describe(q2).pairs, 2);
   assert.equal(P.pieceWords([pl('a0', 1, 1, 1, { side: 'L' }), pl('s', 3, 3, 1)]), '2 pieces', 'a Left whose partner is on another sheet is a single piece here: nothing to say about pairs'); assert.equal(P.describe([pl('a0', 1, 1, 1, { side: 'L' })]).singles, 1);
-  assert.equal(P.pieceWords([1, 2, 3, 4, 5].map(i => pl('d' + i, 9, 9, i)).concat(pl('s', 3, 3, 1))), '6 pieces (1 order of 3 or more pieces and 1 single piece)');
+  assert.equal(P.pieceWords([1, 2, 3, 4, 5].map(i => pl('d' + i, 9, 9, i, { groupSize: 5 })).concat(pl('s', 3, 3, 1))), '6 pieces (1 order of 3 or more pieces and 1 single piece)');
 
   // A5. the plan places WHOLE groups: a card takes a pair or leaves it for the next card, never half of it
   const big = stripOf(10).card('big'), mid = stripOf(50).card('mid'), one = stripOf(70).card('one'), cards = [big, mid, one];

@@ -78,6 +78,15 @@
     if (!keyOk(key)) return {};
     return typeof o.mirror === "boolean" ? { side, mirror: o.mirror, bodyIndex, groupKey: key, groupSize: size } : { side, bodyIndex, groupKey: key, groupSize: size };
   }
+  /** The fields of a piece of a GROUP that has no ear (n discs, letters or charms of ONE necklace, Paul 9 Oct: "individual charms that are part of just one necklace"): its group key
+   *  and the number of pieces the group has (2 or more), else {}. A plain piece (a quantity-N line of one charm, whose copies each stand alone) carries none, and neither does
+   *  a piece alone in its group: it is what it was before the pairs work. Written beside the sided fields in the pool row, the page's charm and the sheet record's charm. */
+  function cleanGroupFields(o) {
+    if (!o || typeof o !== "object" || (o.side != null && o.side !== "")) return {};
+    const size = o.groupSize, pid = typeof o.poolId === "string" ? parsePoolId(o.poolId) : null, key = pid ? pid.groupKey : o.groupKey;
+    if (!Number.isInteger(size) || size < 2 || size > MAX_PIECES || !keyOk(key)) return {};
+    return { groupKey: key, groupSize: size };
+  }
   /** The record fields of one piece from CharmNestPair.piecesFor ({ side, mirror, bodyIndex, groupKey, n, of }), or from a stored piece: {} unless it is a left or right piece. */
   function fieldsOf(piece) {
     if (!piece) return {};
@@ -135,5 +144,5 @@
     return typeof live === "function" ? mine.some(r => live(r)) : mine.some(r => !!r.sheetId);
   }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued };
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued };
 });

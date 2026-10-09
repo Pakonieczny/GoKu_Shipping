@@ -124,7 +124,7 @@
   function landedWords(ids) {
     try {
       const P = G.PairRemove; if (!P) return [];
-      const items = [...locate(new Set(ids))].map(([id, x]) => { const pr = (G.B && G.B.pool && G.B.pool.rows.get(id)) || { poolId: id }; return { id, groupKey: P.keyOf(pr) || P.keyOf(x.c) || P.keyOf(id), side: P.sideOfPiece(pr, P.isMismatchedSku(pr.sku)), form: str(pr.form), where: label(x.sh) }; });
+      const items = [...locate(new Set(ids))].map(([id, x]) => { const pr = (G.B && G.B.pool && G.B.pool.rows.get(id)) || { poolId: id }; return { id, groupKey: P.keyOf(pr) || P.keyOf(x.c) || P.keyOf(id), side: P.sideOfPiece(pr, P.isMismatchedSku(pr.sku)), form: str(pr.form), ...(+pr.groupSize > 0 ? { groupSize: +pr.groupSize } : {}), where: label(x.sh) }; });
       return P.groupsOf(items).filter(g => g.sheets.length > 1).map(g => ((g.kind === 'pair' || g.kind === 'mismatched') && g.size === 2 ? `Its pair is on two sheets: ${g.phrase}.` : g.text));
     } catch (_) { return []; }
   }
@@ -146,6 +146,7 @@
     const fresh = new Set(freshIds), on = piecesOnSheets(rid), out = [];
     for (const r of rows) {
       const ids = (r.poolIds || []).map(String); if (ids.length < 2) continue;
+      if (G.PairRemove && G.PairRemove.rowGrouped && !G.PairRemove.rowGrouped(r)) continue;   // (the copies of a plain quantity-N line each stand alone: nothing is said of a split)
       const stayHere = ids.filter(id => stayIds.has(id)), go = ids.filter(id => fresh.has(id));
       if (!stayHere.length || !go.length) continue;
       const here = on.filter(x => stayHere.includes(String(x.c.poolId))), where = [...new Set(here.map(x => label(x.sh)))];
