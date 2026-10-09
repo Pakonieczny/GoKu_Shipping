@@ -3450,7 +3450,7 @@ async function op_flowState(b) {
    hold pieces of the moving sheets' orders (one query by order for each step outwards, a few steps at most), their sets for
    the reasons a sheet cannot change set (cut, completed, set committed), and the core's answer. `to` is {set} or {newSet}. ── */
 const SharedRule = require("../../charm-nest-shared-orders.js").core;
-const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase"];
+const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase", "pieceSides"];   // (pieceSides: a record that says which side each piece is, when two bodies of a mismatched pair share an id)
 const sharedOrdersOf = d => [...new Set((Array.isArray(d.orders) ? d.orders.map(String) : []).concat((Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey)).filter(x => /^\d{1,30}$/.test(x)))];
 /** The sheets that share orders with `seedIds`, outwards (a sheet that shares with a sheet that shares): { sheets: [core sheets], more: true when a cap cut it short }. */
 async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {
@@ -3558,6 +3558,15 @@ const SetEdit = require("../../charm-nest-set-edit.js");
 const EDIT_SHEET = SHARED_FIELDS.concat(["laserDoneBy", "laserHold", "flowHistory", "fileBase", "folder", "setSeq", "label"]);
 const EDIT_MEMBER = SHARED_FIELDS.concat(["laserDoneBy"]);
 const isSolid = m => m === "gold10k" || m === "gold14k";
+/** What the pieces of the shared orders in a refusal ARE, from their pool rows (side, form, sku), as SharedOrders' `meta`: key -> {side, form, sku}. At most 24 rows, read inside the
+ *  caller's transaction before it writes; null when there is nothing to read. */
+async function pieceMeta(tx, items) {
+  const ids = [...new Set((items || []).flatMap(i => (i.pieces || []).map(p => str(p && p.key, 80))).filter(isPoolId))].slice(0, 24);
+  if (!ids.length) return null;
+  const map = new Map();
+  for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "" }); }
+  return map.size ? (k => map.get(String(k)) || null) : null;
+}
 async function applySetMembers(step, by, device, via) {
   const moves = [], seen = new Set();
   for (const m of (Array.isArray(step.moves) ? step.moves : []).slice(0, 12)) {
@@ -3582,7 +3591,10 @@ async function applySetMembers(step, by, device, via) {
     await readSheets(near.filter(id => !rec.has(id)), SHARED_FIELDS);
     for (const m of moves) { const e = expect[m.id]; if (e && typeof e === "object" && Object.prototype.hasOwnProperty.call(e, "setId") && (e.setId || null) !== (SetEdit.inSetOf(rec.get(m.id)) || null)) return { error: "The sheet changed since this move was planned: nothing was changed. Try the move again", status: 409 }; }
     const sets = {}; for (const [id, d] of setDoc) sets[id] = { doc: d, members: d ? (Array.isArray(d.sheetIds) ? d.sheetIds : []).map(i => rec.get(String(i))).filter(r => r && !r.archived) : [] };
-    const v = SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean) });
+    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), ...(meta ? { meta } : {}) });
+    let v = verify();
+    // a refusal for shared orders says WHAT the pieces are (a left and a right earring, two earrings, n discs): one small read of at most 24 pool rows, only here (never on a move that goes through)
+    if (!v.ok && v.shared && v.shared.length) { const meta = await pieceMeta(tx, v.shared); if (meta) v = verify(meta); }
     if (!v.ok) return { error: SetEdit.sayWhy(v), status: 409, reasons: v.reasons, shared: v.shared };
     if (v.noop) return { ok: true, noop: true, changed: [], at };
     // the pieces' SKUs, for the order lines of the sheets that join (one small read of their pool rows)

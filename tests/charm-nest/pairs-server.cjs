@@ -76,7 +76,7 @@ function seed(st) {
       const before = JSON.stringify([rec('sheet-pr-a'), rec('sheet-pr-b'), st.doc('Charm_Nest_Sets', SET)]);
       const r = await call({ op: 'flowApply', by: 'Paul', device: 'charm-nest-1', via: 'Library move', steps: [{ type: 'setMember', moves: [{ sheetId: 'sheet-pr-a', to: null }] }] });
       assert.equal(r.status, 409, JSON.stringify(r.body));
-      assert(new RegExp(`Order ${MIS.rid} has pieces on GF Sheet 1 and GF Sheet 2`).test(r.body.error), r.body.error);
+      assert(new RegExp(`Order ${MIS.rid} has (pieces on GF Sheet 1 and GF Sheet 2|its left earring on GF Sheet 1 and its right earring on GF Sheet 2)`).test(r.body.error), r.body.error);   // (PAIRSETS: a refusal says what the pieces are when the pool rows tell the side)
       assert(/stay in one set/.test(r.body.error));
       assert.equal(JSON.stringify([rec('sheet-pr-a'), rec('sheet-pr-b'), st.doc('Charm_Nest_Sets', SET)]), before, 'nothing was written');
     });
@@ -182,7 +182,7 @@ function seed(st) {
     // ═══ 5 · pool rows ═══
     await t('5a poolPut keeps the pair fields it can vouch for, rewrites groupKey from the pool id, drops what is not sound', async () => {
       const P = line('4200000010', '9100000010');
-      const r = await call({ op: 'poolPut', pools: [Object.assign(pool(P, 1), { sheetId: null, side: 'X', bodyIndex: 9, groupSize: 99, groupKey: 'zzz' }), Object.assign(pool(P, 2), { sheetId: null, groupKey: 'zzz' })] });
+      const r = await call({ op: 'poolPut', pools: [Object.assign(pool(P, 1), { sheetId: null, side: 'X', bodyIndex: 12, groupSize: 999, groupKey: 'zzz' }), Object.assign(pool(P, 2), { sheetId: null, groupKey: 'zzz' })] });
       assert.equal(r.status, 200, JSON.stringify(r.body)); const a = row(P.L), b = row(P.R);
       assert.equal('side' in a, false); assert.equal('bodyIndex' in a, false); assert.equal('groupSize' in a, false); assert.equal(a.groupKey, P.group);
       assert.equal(b.side, 'R'); assert.equal(b.bodyIndex, 1); assert.equal(b.groupSize, 2); assert.equal(b.groupKey, P.group);
