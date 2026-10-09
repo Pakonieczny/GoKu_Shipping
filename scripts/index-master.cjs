@@ -119,16 +119,19 @@ function thumbnailPng(Geom, charm, size, PDF) {
     // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving.
     // A black fill INSIDE the charm (m.hatchBlue, stamped by the grouping: charm-nest-pdf.js "a black FILL is blue hatching") is hatching: filled blue below.
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { emit(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
-    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; emit(`<path d="${d}" fill="${m.fill ? (m.hatchBlue && !m.stroke ? "rgb(0,0,255)" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
-  // (the cut outline in red: both bodies' outlines for a pair, the charm's own for every other design)
-  const redOutline = o => `<path d="${Geom.svgPathOf(o)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`;
-  for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(redOutline(o));
+    // a cut line is drawn black, as the app's canvas does (charm-nest-pdf.js drawCharm: the outline and every cut-line member get a black pen whatever colour the master gave them)
+    const cutPen = m === charm.outline || (Geom.isCutLine && Geom.isCutLine(m));
+    const st = m.stroke ? (cutPen ? "#000" : Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; emit(`<path d="${d}" fill="${m.fill ? (m.hatchBlue && !m.stroke ? "rgb(0,0,255)" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
+  // (the cut outline in black, as the app's canvas draws it (charm-nest-pdf.js drawCharm: pen #000, the outline's own width, the cut hairline for a silhouette the master filled): both bodies'
+  //  outlines for a pair, the charm's own for every other design. It used to be a red overlay, so a stored picture showed a thick red ring that the Library's own drawing never had.)
+  const blackOutline = o => `<path d="${Geom.svgPathOf(o)}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, PDF && PDF.isCutSilhouetteFill && PDF.isCutSilhouetteFill(charm, o) ? 0.25 : o.lwPt || 0.25)}"/>`;
+  for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(blackOutline(o));
   if (pair) {
     // each ear faces its own side: a body the master drew facing the wrong way is turned over left to right about its own centre (the same as the app's pictures)
     let inner = parts.join("");
     if (pair.bodies.some(x => x.mirror)) {
       const used = new Set();
-      inner = pair.bodies.map(bd => { const g = (bd.members || []).map(m => { used.add(m); return (partOf.get(m) || []).join(""); }).join("") + (bd.outline ? redOutline(bd.outline) : ""); return `<g${bd.mirror ? ` transform="${PT.mirrorSvg(bd.bbox)}"` : ""}>${g}</g>`; }).join("")
+      inner = pair.bodies.map(bd => { const g = (bd.members || []).map(m => { used.add(m); return (partOf.get(m) || []).join(""); }).join("") + (bd.outline ? blackOutline(bd.outline) : ""); return `<g${bd.mirror ? ` transform="${PT.mirrorSvg(bd.bbox)}"` : ""}>${g}</g>`; }).join("")
         + [...partOf.entries()].filter(([m]) => !used.has(m)).map(([, l]) => l.join("")).join("");
     }
     const pic = PT.svgPicture(pair, { bbox: b, padPt: pad, size, bg: "#ece7dc", inner });
