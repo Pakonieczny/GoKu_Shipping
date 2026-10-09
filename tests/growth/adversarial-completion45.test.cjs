@@ -237,6 +237,47 @@ for (const phrase of [
   assert.equal(h.requests.filter(r => r.url.pathname === '/api/concierge' && JSON.parse(r.init.body || '{}').message).length, 0, 'A current-product setter must not fall through to motif discovery');
 });
 
+test('native three-group option flow narrates final choices and edits the published cart length without stale prompts', async t => {
+  const p = necklace({ id: 74503, engraving: true }); p.title = 'Leaf Pendant Cable Necklace';
+  p.options[1] = { name: 'Necklace Length', values: ['16 Inch', '18 Inch'] };
+  p.options[2].values = ['None', 'Engraved'];
+  p.variants.forEach(variant => {
+    variant.options = variant.options.map(option => option.name === 'Chain Length' ? { name: 'Necklace Length', value: option.value === '16 inches' ? '16 Inch' : '18 Inch' } : option.name === 'Engraving' && option.value === 'No Engraving' ? { name: 'Engraving', value: 'None' } : option);
+    variant.title = variant.options.map(option => option.value).join(' / ');
+    if (variant.options[0].value === '14k Solid Gold' && variant.options[2].value === 'Engraved') variant.price = variant.options[1].value === '16 Inch' ? 316 : 322;
+  });
+  const h = await fixture(t, { rows: [p], nativeVoice: true }); await h.open(p);
+  const result = await h.say('Select a 16 inch solid gold necklace for me'), reply = shopperCopy(result), controls = h.store.snapshot().productControls;
+  assert.equal(result.ok, true); assert.deepEqual(clone(controls.selectedOptions), [{ name: 'Metal Choice', value: '14k Solid Gold' }, { name: 'Necklace Length', value: '16 Inch' }]);
+  assert.equal(controls.variantId, null); assert.equal(h.d.querySelector('#piece-variant').value, '');
+  assert.deepEqual(clone(controls.requiredOptionGroups).map(group => group.name), ['Engraving']);
+  assert.equal(controls.selectedOptions.some(option => option.name === 'Engraving'), false, 'A length/material request cannot silently choose published Engraving None');
+  const add = [...h.d.querySelectorAll('.product-layout button')].find(button => button.textContent === 'Choose an option to add');
+  assert.ok(add, 'The actual product add control must still request the missing choice'); assert.equal(add.disabled, true); assert.deepEqual(h.cart(), []);
+  assert.match(reply, /(?:choose|select)\s+(?:the\s+)?engraving\b/i);
+  assert.doesNotMatch(reply, /(?:choose|select)\s+(?:the\s+)?(?:(?:necklace|chain)\s+)?length\b/i, 'Intermediate prompts must not ask again for a length already selected by this same completed request');
+  assert.equal(result.completedActions.length, 2); assert.deepEqual(clone(result.completedActions).map(action => action.type), ['select-option', 'select-option']);
+  assert.equal(result.completedActions[0].optionValue, '14k Solid Gold'); assert.equal(result.completedActions[1].optionValue, '16 Inch');
+  assert.match(h.d.querySelector('.selection-help').textContent, /next,?\s+choose\s+engraving/i);
+  assert.equal(h.spokenResult.reply, reply, 'The requested native sentence must use the final remaining-choice prompt');
+  const follow = await h.say('Select Engraved for this piece then set quantity to 2'), followReply = shopperCopy(follow), final = h.store.snapshot().productControls, exact = p.variants.find(variant => variant.title === '14k Solid Gold / 16 Inch / Engraved');
+  assert.equal(follow.ok, true); assert.equal(final.variantId, exact.id); assert.deepEqual(sortedChoices(h), expectedChoices(p, exact));
+  assert.equal(final.quantity, 2); assert.equal(h.d.querySelector('[aria-label="Quantity of this exact piece"]').value, '2'); assert.equal(h.d.querySelector('#piece-variant').value, exact.id);
+  assert.equal(final.selectedVariant.price, 316); assert.equal(final.selectedVariant.currency, 'USD'); assert.equal(final.itemTotalPrice, 632); assert.equal(final.selectedVariant.subtotal, 632);
+  assert.match(followReply, /\bquantity\s+2\b/i); assert.match(followReply, /\b632(?:\.00)?(?:\s+USD)?\s+item subtotal\b/i);
+  assert.doesNotMatch(followReply, /\bquantity\s+1\b|\b316(?:\.00)?(?:\s+USD)?\s+item subtotal\b/i, 'The final reply must not replay the intermediate quantity-one price');
+  assert.deepEqual(clone(follow.completedActions).map(action => action.type), ['select-option', 'product-quantity']); assert.equal(follow.completedActions[1].quantity, 2);
+  assert.equal(h.spokenResult.reply, followReply); assert.deepEqual(h.cart(), []);
+  assert.equal((await h.say('Add this exact piece to my cart')).ok, true); assert.equal(h.cart().length, 1); assert.equal(h.cart()[0].variantId, exact.numericId); assert.equal(h.cart()[0].quantity, 2);
+  assert.equal((await h.say('Open my cart')).ok, true); const lineId = h.store.snapshot().bagControls.lines[0].lineId;
+  const changed = await h.say('Change the chain length of the first item in my cart to 18 inches'), target = p.variants.find(variant => variant.title === '14k Solid Gold / 18 Inch / Engraved');
+  assert.equal(changed.ok, true, JSON.stringify(changed)); shopperCopy(changed);
+  assert.equal(h.store.snapshot().bagControls.lines[0].lineId, lineId); assert.equal(h.store.snapshot().bagControls.lines[0].variantId, target.id);
+  assert.equal(h.cart()[0].variantId, target.numericId); assert.equal(h.cart()[0].quantity, 2); assert.equal(h.cart()[0].price, target.price);
+  assert.deepEqual(h.cart()[0].variantOptions.sort((a, b) => a.name.localeCompare(b.name)), expectedChoices(p, target));
+  assert.equal(h.d.querySelector('[data-bag-option="Necklace Length"]').value, '18 Inch'); assert.equal(h.d.querySelector('[data-bag-line] input[type="number"]').value, '2');
+});
+
 test('two published solid-gold karats require a shopper clarification, preserving current selections and cart', async t => {
   const p = necklace({ materials: ['Sterling Silver', '10k Solid Gold', '14k Solid Gold'] }), h = await fixture(t, { rows: [p], nativeVoice: true });
   await h.open(p); await h.select(p, p.variants[0]);

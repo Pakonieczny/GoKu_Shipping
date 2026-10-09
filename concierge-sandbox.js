@@ -344,7 +344,7 @@
       if(ok)lastChange=null;
     }finally{restoringChange=false;}
     if(ok&&change.scope.kind==='product')currentProductUI()?.revealSelection(change.kind==='product-quantity'?'quantity':undefined);
-    publish();status(ok?'Your last '+change.kind.replace(/-/g,' ')+' change is undone. Your earlier choice is visible.':'That earlier choice is no longer available.');return controlResult('undo',ok,notice.textContent,{cartChanged:ok&&change.scope.kind==='bag'});
+    publish();status(ok?'Your last change is undone. Your earlier choice is visible.':'That earlier choice is no longer available.');return controlResult('undo',ok,notice.textContent,{cartChanged:ok&&change.scope.kind==='bag'});
   }
   function captureView(){
     const view={kind:state.pageKind,handle:state.currentHandle,activeSection:state.activeSection,scroll:Number.isFinite(window.scrollY)?window.scrollY:0};
