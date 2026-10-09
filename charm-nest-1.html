@@ -4202,6 +4202,14 @@ function pairDescriptor(c) {
   if (out.side || out.groupSize) { const g = c.groupKey && String(c.groupKey).length > 1 ? String(c.groupKey) : groupOf(c); if (g) out.groupKey = g; }
   return out;
 }
+/** The laid outline of a sided piece for its saved sheet charm: `shapeJson`, a JSON STRING (a list of polygons is an array in an array, which Firestore refuses), read by
+    CharmNestSolver.laidOutline from the bits the nester was given and the angle it placed them at (a turn, never a reflection). It lets the placement oracle see which way the
+    NESTER laid a Left and a Right, not which way the master says they should lie. Only a sided piece with its bits, its placement and the sheet's height has one ({} for every
+    other charm, for a piece the page holds no bits for, or for an unplaced one: the oracle then does not judge it). ADVNEST 5, 9 Oct 2026. */
+function shapeFieldOf(c, pl, hPt) {
+  if (!c || (c.side !== "L" && c.side !== "R") || !pl || !c.bits || !(hPt > 0) || typeof CharmNestSolver === "undefined" || typeof CharmNestSolver.laidOutline !== "function") return {};
+  try { const polys = CharmNestSolver.laidOutline(c, pl, { sheetHPt: hPt }); return polys.length ? { shapeJson: JSON.stringify(polys) } : {}; } catch (e) { return {}; }
+}
 /** The groups (of `only`, a Set of group keys, or all) with pieces on two or more of these sheets (pages of one metal: a group never
     spans metals). Pure: reads the pages it is given, no cloud call. [{ group, pieces:[{c, sh}], pages:[sh] }] */
 function splitGroups(pages, only) {
@@ -5340,6 +5348,7 @@ async function persistSheet(sh, items, context) {
   sh.folderPath = base;
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
+  const shapes = (() => { const hPt = stockFor(sh.metal, sh).hPt, at = new Map(sh.placements.map(p => [p.id, p])); return new Map(items.map(c => [c.id, shapeFieldOf(c, at.get(c.id), hPt)])); })();   // (once per save: record() is built three times)
   // a label made by hand for a sheet outside any set (the sheet window's Make QR label) names the orders it was made for:
   // once they change it goes, rather than stay on record wrong
   if (sh.label?.own && [...new Set(sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => String(c.order || c.id).split("/")[0]))].sort().join() !== (sh.label.orders || []).map(String).sort().join()) sh.label = null;
@@ -5353,7 +5362,7 @@ async function persistSheet(sh, items, context) {
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}) })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), ...(shapes.get(c.id) || {}) })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
