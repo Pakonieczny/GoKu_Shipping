@@ -1323,7 +1323,7 @@
           blue in every picture and the DXF, never counted as a hole or a cut line, never a black body. (Candy_20812
           (Huggie)'s stripes, the BIRTHFLOWER flowers, the black bars of CHEVRON_7834 (Huggie), black fills on HATCH and
           ENGRAVE layers.) The one exception is the twin of the outline: a black fill with the outline's own box that
-          covers at least 90 % of the outline's area is the charm's silhouette again (WOLF_89694: stroked outline plus its
+          covers at least 85 % of the cut silhouette's area (the outline with its windows) is the charm's silhouette again, in the master and in a welded per-SKU file alike (WOLF_89694: stroked outline plus its
           filled twin) and stays a cut line (isCutSilhouetteFill).
        2. a charm that is ONLY a black fill (no other outline: WOLF + MOON, MAPLE_4007, MALE SYMBOL, every letter) is a plain
           charm: the fill is its cut silhouette, drawn as a hairline, no engraving (the earlier decision, adfa46dd). A fill
@@ -1337,7 +1337,7 @@
      groups the same drawing (a per-SKU file read back, a sheet, the DXF) reaches the same answer; the master's own
      operators in the files are not touched. */
   const HATCH_BLUE = [0, 0, 1];
-  const BLACK_SILHOUETTE_COVER = 0.9;          // a black twin that covers this share of the outline's area is the silhouette again
+  const BLACK_SILHOUETTE_COVER = 0.85;         // a black twin that covers this share of the cut silhouette's area is the silhouette again (a welded hoop adds a little area the fill never had)
   const BLACK_DISC_MIN_HOLES = 2;              // a round black fill with at least this many inner holes is art on a disc
   const isBlackFill = m => !!m && m.kind === "path" && !!m.fill && !m.stroke && !!m.fillRGB &&     // (a fill closes its subpaths itself: a path painted `f` with no closepath is a filled area too)
     (Math.max(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2]) - Math.min(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2])) <= 0.15 && lum(m.fillRGB) <= 0.35;
@@ -1371,18 +1371,23 @@
     const stamped = [], cache = new Map();
     for (const c of charms || []) {
       if (!c || !c.outline || !Array.isArray(c.members) || !c.outline.bbox) continue;
-      const disc = engravedDiscOf(c);
+      const disc = engravedDiscOf(c); let discFill = null;
       if (disc >= 0) {                                         // rule 2: the circle is the cut outline, the fill becomes hatching below
+        discFill = c.outline;
         const o = c.outline, sp = o.subpaths[disc], pts = []; for (const s of sp) for (let i = 1; i < s.length; i++) pts.push(s[i]);
         // (no index, parent or byte range: the writer keeps the master's fill by its own index and adds this line, and a later weld cannot drop that fill)
         const ring = { kind: "path", layer: o.layer || null, subpaths: [sp], bbox: bboxOf(pts), closed: true, stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: CUT_HAIRLINE_PT, paintOp: "S", depth: o.depth || 0, manufacturingRole: "cut", synthetic: true, start: -1, end: -1, discOf: true };
         c.members.push(ring); c.outline = ring;
       }
-      const o = c.outline, body = fillFacts({ subpaths: o.subpaths, paintOp: "f*" }).filled, polys = flatten(o, 8), ob = o.bbox, tol = Math.max(0.5, 0.02 * Math.max(ob[2] - ob[0], ob[3] - ob[1]));
+      // The cut silhouette's own area: the outline with the windows cut in it. A master draws the windows as the outline's own subpaths; a per-SKU file that was welded
+      // (a hoop joined to the body) carries them as separate cut lines, so both are counted, or the same wolf would be a twin in the master and hatching in its file.
+      const o = c.outline, cutSubs = []; for (const k of c.members) if (k !== o && k.kind === "path" && k.stroke && !k.fill && isCutLine(k)) for (const sp of k.subpaths) cutSubs.push(sp);
+      const body = fillFacts({ subpaths: o.subpaths.concat(cutSubs), paintOp: "f*" }).filled, polys = flatten(o, 8), ob = o.bbox, tol = Math.max(0.5, 0.02 * Math.max(ob[2] - ob[0], ob[3] - ob[1]));
       for (const m of c.members) {
         if (m === o || m.synthetic || m.manufacturingRole || !isBlackFill(m) || !m.bbox || /^labels?$/i.test(String(m.layer || "").trim())) continue;
-        const twin = Math.abs(ob[0] - m.bbox[0]) <= tol && Math.abs(ob[1] - m.bbox[1]) <= tol && Math.abs(ob[2] - m.bbox[2]) <= tol && Math.abs(ob[3] - m.bbox[3]) <= tol;
-        if (twin && body > 0 && fillFacts(m).filled >= BLACK_SILHOUETTE_COVER * body) continue;   // the silhouette again
+        // the silhouette again: inside the outline's box (a welded hoop makes the outline taller than the fill) and covering the cut silhouette's area; never the disc fill of rule 2
+        const twin = m !== discFill && m.bbox[0] >= ob[0] - tol && m.bbox[1] >= ob[1] - tol && m.bbox[2] <= ob[2] + tol && m.bbox[3] <= ob[3] + tol;
+        if (twin && body > 0 && fillFacts(m).filled >= BLACK_SILHOUETTE_COVER * body) continue;
         if (ringLike(m) && insideFrac(samples(m, cache), polys) < 0.95) continue;                  // rule 3: a hoop drawn as a filled washer
         m.hatchBlue = true; m.manufacturingRole = "hatch"; stamped.push(m);
       }
@@ -2077,5 +2082,5 @@
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
   // the black-fill rule (kept off the long list for the same reason)
-  root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE;
+  root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE; root.CharmNestPDF.hatchCopies = hatchCopies;
 })(typeof window !== "undefined" ? window : self);
