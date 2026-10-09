@@ -613,6 +613,9 @@ const livePairOf = (r, rid) => {
     const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
     if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
     if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+    // a line the count rules make into several separate pieces (a 3-disc necklace) is one group of n pieces with no side, as the stations tell it (ADVCOUNT); a plain quantity-2 line is told as before
+    const q = Math.max(1, Math.round(+(r.spec && r.spec.quantity) || +r.line.quantity || 1));
+    if (list.length >= 2 && list.length > q) return list.map((p, i) => ({ grp, of: list.length, n: i + 1 }));
   } catch (_) {}
   return [];
 };
