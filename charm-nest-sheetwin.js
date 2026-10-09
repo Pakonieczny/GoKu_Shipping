@@ -1377,29 +1377,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (tok !== W.token) return;
     for (const x of W.pieces) {
       const g = got.get(x.sourceId); if (!g) continue;
-      if (g.pool) { const c = Pool.cloneCharm(await pieceBase(g, x), x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
+      if (g.pool) { const b = await pieceBase(g, x); if (!b) continue; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
       else { const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash); if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name }); }
     }
     if (failed.length) toast(`${failed.length} design${failed.length === 1 ? "" : "s"} could not be read (${failed.slice(0, 3).join(", ")}); ${failed.length === 1 ? "it shows" : "they show"} as outlines`, "bad", 7000);
     geometryReady(tok);
   }
-  /** The drawing of THIS piece, from the design's master geometry (amendment 2: left and right earrings are mirror images). A piece that is the mirror image of the drawn
-      design (`mirror: true` on its saved descriptor) is drawn mirrored, and a body of a mismatched design is drawn alone (bodyIndex), by CharmNestPair.pieceGeometry, the one
-      place that turns geometry over. A piece whose record says neither, an old sheet, a page without that module, or a geometry that will not mirror is drawn exactly as it was
-      cut: the base, never guessed from the ear (a sheet cut before this was never mirrored). One answer per design, body and mirror, so a sheet of forty ears turns each once. */
-  const PIECE_BASES = new WeakMap();
+  /** The charm to draw THIS piece from (amendment 2: left and right earrings are mirror images). A piece that carries an ear and a body (an earring pair's piece, matching or mismatched)
+      is drawn from its own body, turned left to right when its saved descriptor says `mirror: true`: Pool.ensureBase makes it once per design and body (the one place that turns geometry
+      over, CharmNestPair.pieceGeometry). Every other piece, and an old sheet that never recorded an ear, is drawn from the design's one charm exactly as before; the mirror is never
+      guessed from the ear (a sheet cut before this was never mirrored). null when its own body cannot be made: the piece then shows as an outline, never from the wrong body or the wrong way. */
   async function pieceBase(g, x) {
-    const base = g && g.base, CP = window.CharmNestPair;
-    if (!base || !(x.mirror === true || x.bodyIndex != null) || !CP || typeof CP.pieceGeometry !== "function" || !base.outline) return base;
-    const key = (x.bodyIndex != null ? "b" + (+x.bodyIndex || 0) : "w") + (x.mirror === true ? "m" : "");
-    let m = PIECE_BASES.get(base); if (!m) PIECE_BASES.set(base, m = new Map());
-    if (!m.has(key)) m.set(key, (async () => {
-      const pg = CP.pieceGeometry(base, { bodyIndex: +x.bodyIndex || 0, mirror: x.mirror === true });
-      // (one body of a mismatched design has no silhouette of its own yet: traced once from the design's source)
-      if (pg && pg !== base && pg.needsSilhouette && g.src && g.src.parsed && window.CharmNestPDF && CharmNestPDF.buildSilhouettes) await CharmNestPDF.buildSilhouettes(g.src.parsed, [pg], +S.settings.silhouetteRes || 6);
-      return pg || base;
-    })().catch(e => { console.warn("sheet window: piece geometry", e); return base; }));
-    return m.get(key);
+    const base = g && g.base;
+    if (!base || !g.src || !(x.side === "L" || x.side === "R") || x.bodyIndex == null || !Number.isInteger(+x.bodyIndex) || !window.Pool || typeof Pool.ensureBase !== "function") return base;
+    try { return (await Pool.ensureBase(g.src, { side: x.side, bodyIndex: +x.bodyIndex, mirror: x.mirror === true })) || null; }
+    catch (e) { console.warn("sheet window: piece geometry", x.poolId, e); return null; }
   }
   async function sourceGeom(s) {
     // Custom uploads share the pool, but have their own saved artwork rather than a master SKU. Older sheets kept
@@ -4379,7 +4371,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
     charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "" })) });
   async function attachGeom(x, g, rec) {
-    if (g.pool) { const c = Pool.cloneCharm(await pieceBase(g, x), x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
+    if (g.pool) { const b = await pieceBase(g, x); if (!b) return; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
     const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
     if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
   }

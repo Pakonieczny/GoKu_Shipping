@@ -180,19 +180,21 @@ if (process.argv.includes('--pure') || process.exitCode) return;
     const dn = await page.evaluate(() => { const n = document.querySelector('.swPairNote'); return { hidden: !n || n.hidden, rows: [...document.querySelectorAll('.swTrail li')].map(li => li.innerText.replace(/\s+/g, ' ').trim()) }; });
     assert.equal(dn.hidden, true, 'a pair whose ears are both on this sheet says nothing about another sheet'); assert.ok(dn.rows.length === 2 && /Left/.test(dn.rows.join('|')) && /Right/.test(dn.rows.join('|')), 'both ears listed: ' + JSON.stringify(dn.rows));
     console.log('ok   strip: "1 pair" (D, both ears here) and "1 half pair" (A); a matching pair names Left and Right, and says nothing when both are here; mirror flags read from the saved charms');
-    // the drawing of a piece: a mirrored piece is the design turned over (CharmNestPair.pieceGeometry), once per design; unmirrored and old pieces are the base itself
+    // the drawing of a piece: an ear with a body is drawn from Pool.ensureBase (its own body, mirrored when the saved charm says mirror true); everything else from the base itself
     const pb = await page.evaluate(async () => {
-      const seg = { kind: 'path', index: 0, closed: true, subpaths: [[['m', [0, 0]], ['l', [10, 0]], ['l', [10, 4]], ['l', [0, 10]]]], bbox: [0, 0, 10, 10] };
-      const base = { id: 'x', outline: seg, members: [seg], bbox: [0, 0, 10, 10], bits: new Uint8Array([1, 0, 1, 1]), w: 2, h: 2, areaPt2: 70 }, g = { pool: true, base };
-      const same = await SheetWin.pieceBase(g, { mirror: false }), old = await SheetWin.pieceBase(g, {});
-      const m1 = await SheetWin.pieceBase(g, { mirror: true, bodyIndex: 0 }), m2 = await SheetWin.pieceBase(g, { mirror: true, bodyIndex: 0 });
-      const off = window.CharmNestPair; window.CharmNestPair = undefined; const noMod = await SheetWin.pieceBase(g, { mirror: true }); window.CharmNestPair = off;
-      return { same: same === base, old: old === base, noMod: noMod === base, m1base: m1 === base, cached: m1 === m2, first: m1.outline.subpaths[0][2][1], mirrored: !!m1.mirrored, bits: [...m1.bits], baseFirst: base.outline.subpaths[0][2][1], baseBits: [...base.bits] };
+      const base = { id: 'base' }, own = { id: 'own' }, g = { pool: true, base, src: { id: 'src' } }, calls = [], real = Pool.ensureBase;
+      Pool.ensureBase = async (src, piece) => { calls.push([src.id, piece.side, piece.bodyIndex, piece.mirror]); if (piece.side === 'R' && piece.bodyIndex === 9) throw new Error('no body'); return own; };
+      try {
+        const plain = await SheetWin.pieceBase(g, {}), old = await SheetWin.pieceBase(g, { side: 'L' }), noSrc = await SheetWin.pieceBase({ pool: true, base }, { side: 'L', bodyIndex: 0 });
+        const left = await SheetWin.pieceBase(g, { side: 'L', bodyIndex: 0, mirror: false }), right = await SheetWin.pieceBase(g, { side: 'R', bodyIndex: 1, mirror: true }), bad = await SheetWin.pieceBase(g, { side: 'R', bodyIndex: 9, mirror: true });
+        Pool.ensureBase = undefined; const noPool = await SheetWin.pieceBase(g, { side: 'R', bodyIndex: 0, mirror: true });
+        return { plain: plain === base, old: old === base, noSrc: noSrc === base, left: left === own, right: right === own, bad, noPool: noPool === base, calls };
+      } finally { Pool.ensureBase = real; }
     });
-    assert.ok(pb.same && pb.old && pb.noMod, 'an unmirrored piece, an old piece and a page without the pair module draw the base itself: ' + JSON.stringify(pb));
-    assert.ok(!pb.m1base && pb.cached && pb.mirrored, 'a mirrored piece is its own geometry, made once: ' + JSON.stringify(pb));
-    assert.deepEqual(pb.first, [0, 4], 'the point (10,4) turns to (0,4) about the design\'s own centre'); assert.deepEqual(pb.baseFirst, [10, 4], 'the base is never touched'); assert.deepEqual(pb.bits, [0, 1, 1, 1]); assert.deepEqual(pb.baseBits, [1, 0, 1, 1]);
-    console.log('ok   piece drawing: a Right (mirror true) piece is the design turned left to right once, the base and old pieces are untouched');
+    assert.ok(pb.plain && pb.old && pb.noSrc && pb.noPool, 'an unsided piece, an old piece with no body, and a page without Pool.ensureBase draw the base itself: ' + JSON.stringify(pb));
+    assert.ok(pb.left && pb.right && pb.bad === null, 'an ear with a body asks Pool.ensureBase, and a body that cannot be made is an outline (null), never the wrong body: ' + JSON.stringify(pb));
+    assert.deepEqual(pb.calls, [['src', 'L', 0, false], ['src', 'R', 1, true], ['src', 'R', 9, true]], 'it asks for exactly the ear, body and mirror the saved charm says');
+    console.log('ok   piece drawing: an ear with a body is drawn from its own (mirrored) body by Pool.ensureBase; unsided and old pieces from the base, as before');
     // the orders list and the strip: the pair row names its ear, the normal order reads as before
     await page.evaluate(() => SheetWin.close()); await page.waitForTimeout(700);
     await page.evaluate(() => SheetWin.open('gold-open-1'));
