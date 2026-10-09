@@ -34,6 +34,8 @@ const assets = [
   "concierge-storefront-qa.html",
   "concierge-storefront-qa.js",
   "brites-concierge.js",
+  "brites-concierge-memory-config.js",
+  "brites-concierge-memory.js",
   "brites-concierge-voice.js",
   "brites-concierge-expression.js",
   "concierge-expression-qa.html",

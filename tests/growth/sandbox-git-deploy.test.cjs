@@ -77,11 +77,11 @@ test('the actual Git build removes stale output and retains only the complete is
   assert.equal(fs.existsSync(staleAsset), false);
   assert.equal(fs.existsSync(staleFunction), false);
   const entries = fs.readdirSync(path.join(out, 'netlify/production-functions')).sort();
-  assert.deepEqual(entries, ['britesConcierge.js', 'britesConciergeDemoTurn.js', 'britesConciergeVoice.js',
+  assert.deepEqual(entries, ['britesConcierge.js', 'britesConciergeDemoTurn.js', 'britesConciergeMemory.js', 'britesConciergeVoice.js',
     'britesConciergeVoiceDeadline-background.js', 'britesConciergeVoiceReaper.js', 'britesGrowthAds.js',
     'britesGrowthApi.js', 'britesGrowthCatalogue-background.js', 'britesGrowthCorrections.js', 'britesGrowthTick.js']);
   for (const file of ['concierge-sandbox.html', 'brites-concierge-avatar.js',
-    'brites-concierge-voice.js', 'brites-concierge-guide.js', 'assets/brites-concierge-avatar-scene.mjs']) {
+    'brites-concierge-voice.js', 'brites-concierge-memory-config.js', 'brites-concierge-memory.js', 'brites-concierge-guide.js', 'assets/brites-concierge-avatar-scene.mjs']) {
     assert.deepEqual(fs.readFileSync(path.join(out, 'public-site', file)), fs.readFileSync(path.join(root, file)));
   }
   for (const [file, schedule] of [['britesConciergeVoiceReaper.js', "'* * * * *'"], ['britesGrowthTick.js', "'@hourly'"]]) {
@@ -89,6 +89,11 @@ test('the actual Git build removes stale output and retains only the complete is
       || fs.readFileSync(path.join(out, 'netlify/production-functions', file), 'utf8').includes('schedule: ' + schedule));
   }
   assert.equal(fs.existsSync(path.join(out, 'public-site/netlify')), false);
+  const memoryRoute = fs.readFileSync(path.join(out, 'netlify/production-functions/britesConciergeMemory.js'), 'utf8');
+  assert.match(memoryRoute, /path:\s*['"]\/api\/concierge-memory['"]/);
+  assert.deepEqual(fs.readFileSync(path.join(out, 'netlify/functions/_britesConciergeMemory.js')),
+    fs.readFileSync(path.join(root, 'netlify/functions/_britesConciergeMemory.js')));
+  assert.equal(fs.existsSync(path.join(out, 'public-site/_britesConciergeMemory.js')), false);
   const revisionModule = path.join(out, 'netlify/functions/_britesGrowthKeywordRevision.js');
   assert.equal(typeof require(revisionModule).createKeywordRevision, 'function',
     'the protected revision route needs its runtime dependency in the deployed stage');

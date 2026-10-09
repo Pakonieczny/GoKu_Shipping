@@ -93,6 +93,7 @@ async function fixture(t, nativeVoice, suppliedRows, savedPreferences) {
     command: text => w.BritesConcierge.sendShopperCommand(text),
     cart: () => clone(JSON.parse(w.sessionStorage.getItem('brites-sandbox-cart') || '[]')),
     async startVoice() {
+      if (['listening','thinking','speaking'].includes(client?.state)) { assert.equal([...root.querySelectorAll('button')].find(button => button.textContent === 'End voice')?.getAttribute('aria-pressed'), 'true', 'Typed shop requests preserve the connected native session'); return; }
       [...root.querySelectorAll('button')].find(button => button.textContent === 'Talk to me').click(); await settle();
       root.querySelector('script[src$="brites-concierge-voice.js"]')?.dispatchEvent(new w.Event('load'));
       await settle(); assert.equal(client?.state, 'listening');

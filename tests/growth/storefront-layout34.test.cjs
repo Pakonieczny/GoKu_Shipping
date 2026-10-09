@@ -63,6 +63,9 @@ test('boutique template retains functional landmarks/actions and one lazy guide 
   assert.equal(h.d.querySelector('.skip-link').getAttribute('href'),'#shop-content');
   assert.equal(h.d.body.dataset.catalogueSeed,'balanced','only this isolated boutique opts in to the validated expanded seed');
   assert.equal(h.d.querySelectorAll('script[src="/brites-concierge.js"]').length,1);
+  const guideScripts=[...h.d.querySelectorAll('script[src]')].map(node=>node.getAttribute('src'));
+  for(const helper of ['/brites-catalogue-intents.js','/brites-concierge-shopping-guide.js','/concierge-sandbox.js','/brites-storefront-bridge.js','/brites-concierge-voice-actions.js','/brites-concierge-memory-config.js','/brites-concierge-memory.js']){assert.equal(guideScripts.filter(src=>src===helper).length,1,helper+' loads exactly once');assert.ok(guideScripts.indexOf(helper)<guideScripts.indexOf('/brites-concierge.js'),helper+' is ready before the widget');}
+  assert.ok(guideScripts.indexOf('/brites-concierge-memory-config.js')<guideScripts.indexOf('/brites-concierge-memory.js'),'Existing account configuration precedes its helper');
   assert.equal(h.d.querySelectorAll('script[src*="avatar"]').length,0,'avatar stays on demand');
   assert.deepEqual([...h.d.querySelectorAll('.shop-head nav button')].map(b=>b.dataset.storeAction),['collection','gifts','customize']);
   assert.equal(h.d.querySelector('#result-summary').getAttribute('aria-live'),'polite');

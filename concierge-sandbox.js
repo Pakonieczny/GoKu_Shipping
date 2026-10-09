@@ -354,24 +354,36 @@
     else if(state.pageKind==='checkout'){const choice=checkoutChoice();if(choice)view.checkout=choice;}
     return view;
   }
-  const tabViewKey='brites-sandbox-view-v1';let savedTabView=null,tabViewFingerprint='';
+  const tabViewKey='brites-sandbox-view-v1';let savedTabView=null,savedCollectionView=null,tabViewFingerprint='';
   function savedPublicSelection(value){if(!value||typeof value!=='object'||!validQuantity(value.quantity)||typeof value.variantId!=='string'||value.variantId&&!VARIANT.test(value.variantId)||!Array.isArray(value.choices)||value.choices.length>12)return null;const choices=value.choices.filter(o=>typeof o?.name==='string'&&o.name.length<=120&&typeof o.value==='string'&&o.value.length<=300);if(choices.length!==value.choices.length||new Set(choices.map(o=>o.name)).size!==choices.length)return null;return {variantId:value.variantId,quantity:value.quantity,choices:choices.map(o=>({name:o.name,value:o.value})),selectedImage:Number.isInteger(value.selectedImage)&&value.selectedImage>=0&&value.selectedImage<50?value.selectedImage:0,opened:value.opened===true,openedOption:typeof value.openedOption==='string'&&value.openedOption.length<=120?value.openedOption:null};}
   try{const saved=JSON.parse(sessionStorage.getItem(tabViewKey)||'null');if(saved?.schema===1&&['home','catalogue','product','bag','checkout'].includes(saved.kind)&&typeof saved.handle==='string'&&(saved.handle===''||HANDLE.test(saved.handle))&&saved.handle.length<=180&&typeof saved.search==='string'&&saved.search.length<=180&&FILTERS.has(saved.filter)&&SORTS.has(saved.sort)&&Array.isArray(saved.handles)&&saved.handles.length<=500&&saved.handles.every(h=>typeof h==='string'&&h.length<=180&&HANDLE.test(h)))savedTabView={...saved,selection:savedPublicSelection(saved.selection)};}catch{}
-  function persistTabView(view){if(!state.verifiedAt&&view.kind==='catalogue'||view.kind==='product'&&!state.current)return;const value={schema:1,kind:view.kind,handle:view.handle||'',search:state.search.slice(0,180),filter:state.filter,sort:state.sort,handles:view.kind==='catalogue'?filtered().slice(0,Math.min(state.limit,500)).map(p=>p.handle):[],selection:view.kind==='product'?savedPublicSelection(view.selection):null},stamp=JSON.stringify(value);if(stamp===tabViewFingerprint)return;tabViewFingerprint=stamp;try{sessionStorage.setItem(tabViewKey,stamp);}catch{}}
+  try{const saved=JSON.parse(sessionStorage.getItem(tabViewKey+'-collection')||'null');if(saved?.schema===1&&saved.kind==='catalogue'&&typeof saved.search==='string'&&saved.search.length<=180&&FILTERS.has(saved.filter)&&SORTS.has(saved.sort)&&Array.isArray(saved.handles)&&saved.handles.length<=500&&saved.handles.every(h=>typeof h==='string'&&h.length<=180&&HANDLE.test(h)))savedCollectionView=saved;}catch{}
+  function persistTabView(view){if(!state.verifiedAt&&view.kind==='catalogue'||view.kind==='product'&&!state.current)return;const value={schema:1,kind:view.kind,handle:view.handle||'',search:state.search.slice(0,180),filter:state.filter,sort:state.sort,handles:view.kind==='catalogue'?filtered().slice(0,Math.min(state.limit,500)).map(p=>p.handle):[],selection:view.kind==='product'?savedPublicSelection(view.selection):null},stamp=JSON.stringify(value);if(stamp===tabViewFingerprint)return;tabViewFingerprint=stamp;try{sessionStorage.setItem(tabViewKey,stamp);if(view.kind==='catalogue'){sessionStorage.setItem(tabViewKey+'-collection',stamp);savedCollectionView=value;}}catch{}}
   function saveCurrentView(){if(state.loading||restoringHistory)return;const view=captureView(),key=navigationKeys[navigationIndex];if(key)historyViews.set(key,view);if(view.kind==='catalogue')collectionView=view;persistTabView(view);}
   function restoreScroll(value){if(!document.hidden&&Number.isFinite(value)&&value>=0)try{window.scrollTo?.({top:value,behavior:'instant'});}catch{}}
-  async function restoreSavedView(view,{save=true}={}){
-    if(!view)return false;restoringHistory=true;
-    try{cancelPending();if(view.kind==='catalogue'){if(!view.products.length&&!view.search&&view.collectionSource==='browse'&&!state.browseVerifiedAt){const result=await searchCatalogue('',{push:false},{filter:view.filter,sort:view.sort});if(!result.ok)return false;}else{state.products=(!view.products.length&&!view.search&&view.collectionSource==='browse'?state.browse:view.products).map(p=>known.get(p.handle)||p);Object.assign(state,{search:view.search,checkedSearch:view.checkedSearch,collectionSource:view.collectionSource,sort:view.sort,filter:view.filter,limit:view.limit,pageInfo:{...view.pageInfo},verifiedAt:view.verifiedAt||state.browseVerifiedAt});restoreCollection();reviseDiscovery();commitPage('catalogue','',false);}}
-      else if(view.kind==='product'){if(view.selection)productViews.set(view.handle,view.selection);if(!await openProduct(view.handle,{push:false}))return false;}
-      else if(view.kind==='bag')renderBag({push:false});else if(view.kind==='checkout'){const result=await renderCheckout({push:false});if(!result.ok)return false;if(view.checkout?.bag===JSON.stringify(readCart()))restoreCheckoutChoice(view.checkout);}else return false;
+  async function restoreSavedView(view,{save=true,signal}={}){
+    if(!view||signal?.aborted)return false;restoringHistory=true;
+    try{cancelPending();if(view.kind==='catalogue'){if(!view.products.length&&!view.search&&view.collectionSource==='browse'&&!state.browseVerifiedAt){const result=await searchCatalogue('',{push:false,signal},{filter:view.filter,sort:view.sort});if(!result.ok)return false;}else{state.products=(!view.products.length&&!view.search&&view.collectionSource==='browse'?state.browse:view.products).map(p=>known.get(p.handle)||p);Object.assign(state,{search:view.search,checkedSearch:view.checkedSearch,collectionSource:view.collectionSource,sort:view.sort,filter:view.filter,limit:view.limit,pageInfo:{...view.pageInfo},verifiedAt:view.verifiedAt||state.browseVerifiedAt});restoreCollection();reviseDiscovery();commitPage('catalogue','',false);}}
+      else if(view.kind==='product'){if(view.selection)productViews.set(view.handle,view.selection);if(!await openProduct(view.handle,{push:false,signal}))return false;}
+      else if(view.kind==='bag')renderBag({push:false});else if(view.kind==='checkout'){const result=await renderCheckout({push:false,signal});if(!result.ok)return false;if(view.checkout?.bag===JSON.stringify(readCart()))restoreCheckoutChoice(view.checkout);}else return false;
       state.activeSection=view.activeSection||state.activeSection;restoreScroll(view.scroll);publish();return true;
     }finally{restoringHistory=false;if(save)saveCurrentView();}
   }
-  async function navigateHistory(delta){
+  async function navigateHistory(delta,options={}){
     if(historyTraversal)await historyTraversal.promise;
+    if(options.signal?.aborted)return controlResult(delta<0?'back':'forward',false,'That action was cancelled.');
+    if(delta<0&&navigationIndex===0&&savedCollectionView&&state.pageKind!=='catalogue'){
+      const saved=savedCollectionView,version=navigationVersion;
+      await preloadInventory();
+      if(options.signal?.aborted||version!==navigationVersion)return controlResult('back',false,'The page changed. Please ask again.');
+      const rows=saved.handles.map(handle=>checkedInventory.get(handle));
+      if(rows.some(row=>!row||Date.now()-row.checkedAt>300000))return controlResult('back',false,'I couldn’t check the earlier results. Please try again.');
+      const products=rows.map(row=>({...publicCopy(row.product),checkedAt:row.checkedAt}));
+      const result=presentProducts(products,{searchQuery:saved.search,filter:saved.filter,sort:saved.sort,paging:{schema:1,mode:'rest',query:saved.search,displayCount:products.length,keepCurrent:false}});
+      return controlResult('back',result.ok===true,result.ok?'Your earlier results are back.':result.message);
+    }
     const index=navigationIndex+delta;if(index<0||index>=navigationKeys.length)return controlResult(delta<0?'back':'forward',false,'There is no earlier '+(delta<0?'view':'next view')+' in this test visit.');
-    saveCurrentView();const prior=navigationIndex;navigationIndex=index;const restored=await restoreSavedView(historyViews.get(navigationKeys[index]));if(!restored){navigationIndex=prior;return controlResult(delta<0?'back':'forward',false,'That saved view could not be restored.');}
+    saveCurrentView();const prior=navigationIndex;navigationIndex=index;const restored=await restoreSavedView(historyViews.get(navigationKeys[index]),{signal:options.signal});if(!restored){navigationIndex=prior;return controlResult(delta<0?'back':'forward',false,'That saved view could not be restored.');}
     let done,timer;const traversal={key:navigationKeys[index],version:navigationVersion,promise:new Promise(resolve=>{done=resolve;})};traversal.finish=()=>{clearTimeout(timer);if(historyTraversal===traversal)historyTraversal=null;done();};historyTraversal=traversal;timer=setTimeout(traversal.finish,400);try{history.go(delta);}catch{traversal.finish();}await traversal.promise;
     return controlResult(delta<0?'back':'forward',true,delta<0?'The previous view is restored.':'The next view is restored.');
   }
@@ -884,7 +896,7 @@
     }
     if(type==='undo')return undoLastChange(options);
     if(type==='close-image'){const closed=retireImage({notify:true,restoreFocus:true});return controlResult(type,closed,closed?'The enlarged image is closed. Your gallery and options are preserved.':'There is no enlarged image open.');}
-    if(type==='back'||type==='forward')return navigateHistory(type==='back'?-1:1);
+    if(type==='back'||type==='forward')return navigateHistory(type==='back'?-1:1,options);
     if(type==='gallery'){if(!Number.isInteger(action.index)||action.index<1||action.index>50||action.handle!==undefined&&!validHandle(action.handle))return controlResult(type,false,'Choose one exact published image number.');if(action.handle&&action.handle!==state.currentHandle&&!await openProduct(action.handle,{signal:options.signal}))return controlResult(type,false,'That exact product gallery could not be opened.');const ui=currentProductUI(),ok=!options.signal?.aborted&&!!ui&&(!action.handle||action.handle===ui.product.handle)&&ui.selectImage(action.index);return controlResult(type,ok,ok?'Product image '+action.index+' is shown.':'That image is not in the current published gallery.');}
     if(type==='scroll'&&action.direction!==undefined){if(action.section!==undefined||action.handle!==undefined||!['up','down','top','bottom'].includes(action.direction)||document.hidden)return controlResult(type,false,'Choose up, down, top or bottom for this current page.');const viewport=window.innerHeight||800,height=Math.max(document.documentElement.scrollHeight||0,document.body.scrollHeight||0),now=window.scrollY||0,target=action.direction==='top'?0:action.direction==='bottom'?Math.max(0,height-viewport):Math.max(0,now+(action.direction==='up'?-1:1)*Math.max(240,viewport*.75));try{window.scrollTo?.({top:target,behavior:'instant'});}catch{return controlResult(type,false,'This page could not be scrolled.');}publish();return controlResult(type,true,'The page has scrolled '+action.direction+'.');}
     if(['options','close-options','select-option','product-quantity','set-engraving','add','review-add'].includes(type))return runProductControl(action,options);
@@ -962,7 +974,7 @@
   updateBag();const params=new URLSearchParams(location.search);
   if(params.has('cart')){renderBag({push:false});return;}
   if(params.has('checkout')){await renderCheckout({push:false});return;}
-  if(params.has('product')){const handle=params.get('product');if(savedTabView?.kind==='product'&&savedTabView.handle===handle&&savedTabView.selection)productViews.set(handle,savedTabView.selection);await openProduct(handle,{push:false});return;}
+  if(params.has('product')){if(savedTabView?.kind==='product'){state.search=savedTabView.search;state.filter=savedTabView.filter;state.sort=savedTabView.sort;}const handle=params.get('product');if(savedTabView?.kind==='product'&&savedTabView.handle===handle&&savedTabView.selection)productViews.set(handle,savedTabView.selection);await openProduct(handle,{push:false});return;}
   controls();
   const initialVersion=navigationVersion;
   try{

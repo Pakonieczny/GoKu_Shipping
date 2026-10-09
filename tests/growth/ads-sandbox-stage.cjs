@@ -4,7 +4,11 @@ const {build}=require('../../scripts/build-growth-ads-sandbox.cjs');
 const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(path.dirname(root),'growth-ads-stage-test-'));
 try{
   const result=build(out),html=fs.readFileSync(path.join(out,'public-site/brites-adwords.html'),'utf8');
-  assert.deepEqual(result.entries,['britesConcierge.js','britesGrowthAds.js','britesGrowthApi.js','britesGrowthCatalogue-background.js','britesGrowthCorrections.js','britesGrowthTick.js']);
+  assert.deepEqual(result.entries,['britesConcierge.js','britesConciergeDemoTurn.js','britesConciergeMemory.js','britesConciergeVoice.js','britesConciergeVoiceDeadline-background.js','britesConciergeVoiceReaper.js','britesGrowthAds.js','britesGrowthApi.js','britesGrowthCatalogue-background.js','britesGrowthCorrections.js','britesGrowthTick.js']);
+  assert.deepEqual(fs.readFileSync(path.join(out,'public-site/brites-concierge-memory.js')),fs.readFileSync(path.join(root,'brites-concierge-memory.js')));
+  assert.deepEqual(fs.readFileSync(path.join(out,'public-site/brites-concierge-memory-config.js')),fs.readFileSync(path.join(root,'brites-concierge-memory-config.js')));
+  assert.match(fs.readFileSync(path.join(out,'netlify/production-functions/britesConciergeMemory.js'),'utf8'),/path:\s*['"]\/api\/concierge-memory['"]/);
+  assert.ok(fs.existsSync(path.join(out,'netlify/functions/_britesConciergeMemory.js')),'the account memory contract is staged privately');
   assert.ok(fs.existsSync(path.join(out,'public-site/brites-growth-corrections.js')),'the correction review UI is staged');
   assert.ok(fs.existsSync(path.join(out,'netlify/functions/_britesGrowthCorrectionRead.js')),'the paginated read-only product reader is staged');
   assert.ok(fs.existsSync(path.join(out,'netlify/functions/_britesGrowthCorrectionReview.js')),'the deterministic correction review contract is staged');

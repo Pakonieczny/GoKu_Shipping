@@ -175,7 +175,8 @@
     "britesConciergeVoiceReaper.js",
     "britesGrowthCatalogue-background.js",
     "britesGrowthCorrections.js",
-    "britesGrowthTick.js"
+    "britesGrowthTick.js",
+    "britesConciergeMemory.js"
   ],
   "modules": [
     "_adsCheckGate.js",
@@ -380,6 +381,7 @@
     "googleAdsVersionSnapshots.js",
     "googleAdsVideoUpload.js",
     "index.js",
-    "usps.js"
+    "usps.js",
+    "_britesConciergeMemory.js"
   ]
 }

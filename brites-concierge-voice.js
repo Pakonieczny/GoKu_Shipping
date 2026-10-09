@@ -786,7 +786,7 @@
     const onHidden=()=>{if(doc?.hidden)void stop('hidden');},onPageHide=()=>void stop('pagehide');
     doc?.addEventListener('visibilitychange',onHidden);rt.addEventListener?.('pagehide',onPageHide);
     async function dispose(){disposed=true;doc?.removeEventListener('visibilitychange',onHidden);rt.removeEventListener?.('pagehide',onPageHide);await stop('disposed');}
-    return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get currentOutput(){return nativeOutput();},get currentInput(){return nativeInput();},get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;},get outputMeterState(){return outputMeterState;}};
+    return {start,stop,cancel:stop,interrupt,dispose,updateContext,updateMemory,resumeAudio,get currentOutput(){return nativeOutput();},get currentInput(){return nativeInput();},get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;},get outputMeterState(){return outputMeterState;}};
   }
   return {create,rms,measureOutputSignal,hasVoiceNetworkRoute,validateToolArguments,publicContext,publicMemory,serviceGuidanceResult,shopperReply,MESSAGES,publicFailure};
 });

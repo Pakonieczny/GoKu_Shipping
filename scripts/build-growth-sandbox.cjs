@@ -14,6 +14,7 @@ if(out===root||!out.startsWith(path.dirname(root)+path.sep))throw Error('Choose 
 fs.mkdirSync(out,{recursive:true});
 const assets=['brites-growth.html','brites-growth.js','brites-growth.css','brites-growth-ad-integration.js','brites-growth-corrections.js','concierge-sandbox.html','concierge-sandbox.js','concierge-sandbox.css','brites-storefront-bridge.js','concierge-storefront-qa.html','concierge-storefront-qa.js','brites-concierge.js','brites-concierge-voice.js','brites-concierge-expression.js','concierge-expression-qa.html','concierge-expression-qa.js','brites-concierge-voice-actions.js','brites-concierge-guide.js','brites-concierge-guide.css','brites-concierge.css','brites-concierge-avatar.js','brites-concierge-avatar.css','assets/brites-concierge-avatar-scene.mjs','concierge-avatar-qa.html','concierge-avatar-qa.js','concierge-avatar-checklist.html','concierge-voice-qa.html','concierge-voice-qa.js','concierge-layout-qa.html','concierge-actions-qa.html','concierge-actions-qa.js','ads-export-qa.html','ads-export-qa.js'];
 assets.push('brites-shopify-storefront-adapter.js');
+assets.push('brites-concierge-memory-config.js','brites-concierge-memory.js');
 assets.push('brites-catalogue-intents.js','brites-concierge-shopping-guide.js');
 for(const file of assets){const target=path.join(out,'public-site',file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(path.join(root,file),target);}
 // The same canonical catalogue matcher is used in the browser and server.
@@ -21,11 +22,13 @@ fs.copyFileSync(path.join(root,'brites-catalogue-intents.js'),path.join(out,'bri
 fs.copyFileSync(path.join(root,'brites-concierge-shopping-guide.js'),path.join(out,'brites-concierge-shopping-guide.js'));
 fs.writeFileSync(path.join(out,'public-site','index.html'),'<meta http-equiv="refresh" content="0;url=/concierge-sandbox.html">');
 const endpoints=['britesGrowthApi.js','britesGrowthCorrections.js','britesConcierge.js','britesConciergeDemoTurn.js','britesConciergeVoice.js','britesConciergeVoiceDeadline-background.js','britesConciergeVoiceReaper.js','britesGrowthCatalogue-background.js','britesGrowthTick.js'];
+endpoints.push('britesConciergeMemory.js');
 const modules=['_britesMilestoneDiscovery.js','_britesGrowth.js','_britesStorefront.js','_britesGrowthDemandStore.js','_britesGrowthKeywordRevision.js','_britesGrowthController.js','_britesGrowthReceiptReconciliation.js','_britesGrowthReceiptSandboxCheck.js','_britesGrowthEtsyCacheReadOnly.js','_britesGrowthHistoricalLookup.js','_britesGrowthCorrectionRead.js','_britesGrowthCorrectionReview.js','_britesConciergeDiagnostics.js','_britesConcierge.js','_britesConciergeDemoTurn.js','_britesConciergeVoice.js','_britesConciergeVoiceDeadline.js','_googleAdsClaude.js','_editPasscode.js'];
 modules.push('_britesStorefrontSeed.js');
+modules.push('_britesConciergeMemory.js');
 fs.mkdirSync(path.join(out,'netlify/functions'),{recursive:true});fs.mkdirSync(path.join(out,'netlify/production-functions'),{recursive:true});
 for(const file of [...endpoints,...modules])fs.copyFileSync(path.join(root,'netlify/functions',file),path.join(out,'netlify/functions',file));
 for(const file of endpoints){const source=fs.readFileSync(path.join(root,'netlify/functions',file),'utf8'),config=source.match(/^export const config\s*=\s*(\{[\s\S]*?\});/m);fs.writeFileSync(path.join(out,'netlify/production-functions',file),`import handler from '../functions/${file}';\nexport default handler;\n`+(config?config[0]+'\n':''));}
-fs.writeFileSync(path.join(out,'package.json'),JSON.stringify({name:'brites-growth-sandbox',version:'1.0.0',private:true,dependencies:{'@google-cloud/firestore':'^6.8.0','node-fetch':'^2.6.1'}},null,2)+'\n');
+fs.writeFileSync(path.join(out,'package.json'),JSON.stringify({name:'brites-growth-sandbox',version:'1.0.0',private:true,dependencies:{'firebase-admin':'^11.11.1','@google-cloud/firestore':'^6.8.0','node-fetch':'^2.6.1'}},null,2)+'\n');
 fs.writeFileSync(path.join(out,'netlify.toml'),'[build]\n publish="public-site"\n functions="netlify/production-functions"\n[functions]\n node_bundler="esbuild"\n external_node_modules=["@google-cloud/firestore"]\n[[headers]]\n for="/*"\n [headers.values]\n  X-Robots-Tag="noindex, nofollow, noarchive"\n  Cache-Control="max-age=0, no-cache, must-revalidate"\n[[headers]]\n for="/assets/brites-concierge-avatar-scene.mjs"\n [headers.values]\n  Access-Control-Allow-Origin="*"\n');
 console.log('Prepared isolated growth sandbox source at '+out);

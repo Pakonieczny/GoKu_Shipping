@@ -437,8 +437,10 @@ test('search moves from thinking to recommendation without automatic speech', as
 
 test('start fresh resets the guide and aborts a pending answer', async t => {
   const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
-  h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
-  const pending = h.ask('Second request'); const signal = h.network.findLast(r => r.body?.message).init.signal;
+  async function pendingReply(count) { const deadline=Date.now()+3000; while(replies.length<count&&Date.now()<deadline)await settle(); assert.equal(replies.length,count,'The actual pending concierge fetch must exist before resolving or cancelling it'); }
+  h.open(); const first = h.ask(); await pendingReply(1); replies[0].resolve(response(fixtureAnswer)); await first;
+  const readyDeadline=Date.now()+3000; while(h.button('Send').disabled&&Date.now()<readyDeadline)await settle(); assert.equal(h.button('Send').disabled,false,'The first response must complete before sending the second request');assert.equal(h.root.querySelectorAll('.card').length,1);
+  const pending = h.ask('Second request'); await pendingReply(2); const signal = h.network.findLast(r => r.body?.message).init.signal;
   h.button('Start fresh').click(); assert.equal(signal.aborted, true); assert.equal(h.avatar.state, 'idle');
   assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0);
   replies[1].resolve(response(fixtureAnswer)); await pending;
