@@ -86,6 +86,7 @@ const whys = r => r.markers.map(m => m.why).sort().join(',');
   assert.strictEqual(P.markerReason(text([2, 22, 10, 26], { str: '12.5 mm', fillRGB: [0.47, 0.47, 0.47] }), piece), 'dimension text');
   assert.strictEqual(P.markerReason(text([2, 16, 10, 28], { fillRGB: [0.47, 0.47, 0.47] }), piece), 'note text', 'grazing grey text is a note');
   assert.strictEqual(P.markerReason(text([2, 16, 10, 28], { fillRGB: [0, 0, 1], layer: 'HATCH' }), piece), null, 'grazing blue engraving text is left to the text rule');
+  assert.strictEqual(P.markerReason(text([6, -30, 12, 18], { fillRGB: [0, 0, 1], layer: 'HATCH' }), piece), 'note text', 'a run longer than the piece cannot be written on it');
   assert.strictEqual(P.markerReason({ kind: 'shading', bbox: [5, 22, 15, 32], layer: 'LABELS' }, piece), 'size badge (gradient)');
   assert.strictEqual(P.markerReason({ kind: 'shading', bbox: [5, 5, 15, 15], layer: 'CUT' }, piece), null, 'a gradient inside the piece is artwork');
   const bracket = { kind: 'path', stroke: true, fill: false, closed: false, strokeRGB: [0.8, 0.8, 0.8], lwPt: 0.14, bbox: [0, -3, 20, -1], subpaths: [[['m', [0, -1]], ['l', [0, -3]], ['l', [20, -3]], ['l', [20, -1]]]] };

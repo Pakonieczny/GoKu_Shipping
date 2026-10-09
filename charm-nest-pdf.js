@@ -560,7 +560,7 @@
      stretched the charm's size and silhouette, took room on the sheet and was written into the per-SKU file and the sheet.
      The rule: a text, gradient (`sh`) or image object whose box lies wholly outside the piece (the outline's box joined with
      its closed cut-outs and attached rings) is a marker, and so is such an object that only grazes the piece (under half of
-     its own box over it) when it is a measurement, a grey note or on the LABELS layer; a thin light-grey open bracket outside
+     its own box over it) when it is a measurement, a grey or pale-cyan note, on the LABELS layer, or too long to be written on it; a thin grey open bracket outside
      the piece is a dimension line. Text and drawings that are on the piece (engraving text, an image engraved inside) stay. */
   const MEASURE = /\d\s*(?:mm|cm)(?![a-z])|(?:^|[\s(])\d+(?:\.\d+)?\s*(?:in|inch|inches)(?![a-z])/i;
   const greyRGB = c => !!c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.03;
@@ -587,7 +587,8 @@
     if (m.kind === "text") {
       const str = String(m.str || ""), measure = MEASURE.test(str);
       const note = measure || onLabels || noteRGB(m.fillRGB);
-      if (grazing < 0.1 || (grazing < 0.5 && note)) return measure ? "dimension text" : onLabels && /^[\d\s.]*$/.test(str) ? "size badge text" : "note text";
+      const longer = Math.max(m.bbox[2] - m.bbox[0], m.bbox[3] - m.bbox[1]) > 1.5 * Math.max(piece[2] - piece[0], piece[3] - piece[1]);   // too long to be written on the piece
+      if (grazing < 0.1 || (grazing < 0.5 && (note || longer))) return measure ? "dimension text" : onLabels && /^[\d\s.]*$/.test(str) ? "size badge text" : "note text";
       return null;
     }
     if (m.kind === "shading") return grazing < 0.5 ? (onLabels ? "size badge (gradient)" : "gradient object") : null;
