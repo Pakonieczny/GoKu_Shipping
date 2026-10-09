@@ -1373,6 +1373,21 @@
       else resRef = out.context.register(out.context.obj({}));
       copies.set(sid, { copied, content, resRef, parsed });
     }
+    // The optional-content key a layer name has in a source's resources: a MIRRORED piece (the Right earring) is drawn from its geometry, and is put inside the
+    // same layer as the as-drawn one, so the .ai and the DXF name its cut and its engraving as the master does (pairs, 9 Oct). null: no such layer, nothing wrapped.
+    const layerKeys = new Map();
+    const layerKeyOf = (src, name) => {
+      if (!name) return null;
+      let m = layerKeys.get(src);
+      if (!m) {
+        m = new Map(); layerKeys.set(src, m);
+        try {
+          const rd = out.context.lookup(src.resRef), pd = rd instanceof PDFDict ? out.context.lookup(rd.get(PDFName.of("Properties"))) : null;
+          if (pd instanceof PDFDict) for (const [k, v] of pd.entries()) { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null, text = nm && nm.decodeText ? nm.decodeText() : null; if (text != null && !m.has(text)) m.set(text, PDFName.of(k.decodeText()).toString()); }
+        } catch (_) { /* a source with unreadable layers: the piece stays on its charm's layer */ }
+      }
+      return m.get(name) || null;
+    };
     const font = spec.labelled ? await out.embedFont(StandardFonts.Helvetica) : null;
     const usedNames = new Set(["SHEET (do not cut)"]);
     spec.placements.forEach((pl, i) => {
@@ -1388,7 +1403,7 @@
       const keep = c.dropIndices ? c.topIndices.filter(i => !c.dropIndices.has(i)) : c.topIndices;
       let bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, keep));
       // members the source never held (a welded outline, a ring's hole) are written after the copied bytes, in the same space
-      { const extra = syntheticOps(c.members || []); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
+      { const extra = syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
       const pad = c.strokePt / 2 + 1;
       const bb = [c.bbox[0] - pad, c.bbox[1] - pad, c.bbox[2] + pad, c.bbox[3] + pad];
       const trimmed = trimResources(out, out.context.lookup(src.resRef), bytes, 0) || src.resRef;
@@ -1850,13 +1865,15 @@
     c.ringGeometryVersion=3;return res;
   }
   /** Content-stream operators for members that have no bytes in the source, in the source's own coordinates. */
-  function syntheticOps(members) {
+  function syntheticOps(members, keyOf) {
     const f = v => (Math.round(v * 1000) / 1000).toString(); let out = "";
     for (const m of members) {
       if (!m || !m.synthetic) continue; const rgb = m.strokeRGB || [0, 0, 0], fill = m.fillRGB || [0, 0, 0];
+      const lk = m.mirrored === true && keyOf ? keyOf(m.layer) : null;   // a mirrored member goes back into the layer it was drawn on (only those: a welded ring is written as before)
+      if (lk) out += `/OC ${lk} BDC `;
       out += `q ${f(rgb[0])} ${f(rgb[1])} ${f(rgb[2])} RG ${f(fill[0])} ${f(fill[1])} ${f(fill[2])} rg ${f(m.lwPt || 0.25)} w `;
       for (const sp of m.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") out += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") out += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") out += "h "; }
-      out += (m.fill ? (m.stroke ? "B" : "f") + (m.paintOp?.endsWith("*") ? "*" : "") : "S") + " Q\n";
+      out += (m.fill ? (m.stroke ? "B" : "f") + (m.paintOp?.endsWith("*") ? "*" : "") : "S") + " Q" + (lk ? " EMC" : "") + "\n";
     }
     return out;
   }

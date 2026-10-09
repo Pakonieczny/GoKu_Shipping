@@ -192,6 +192,32 @@ ${setsSrc}
   const composed2 = await Ex.compose(front2, plainRec, [{ poolId: ch2.poolId, bytes: back }]);
   assert(!('side' in composed2.layout[0]) && Ex.leaves(await PDF.parseSource(composed2.ai, 'c')).map(p => p.layer).some(n => /^BACK 4190000001_5000000010_1 \/ /.test(n)), 'a back with no side: the old layer and the old layout entry');
   ok('export: the back layer and the layout name the ear; a back with no side is as before');
+  // the Right earring is the Left turned over (Paul, 9 Oct 18:47): the sheet writes it MIRRORED, as it is cut, on the same layers as the as-drawn one
+  {
+    const mitten = await PDF.parseSource(await vector('Artwork', 60, 40, '1 0 0 RG 0.5 w 10 5 m 40 5 l 40 30 l 10 30 l 10 20 l 2 20 l 2 14 l 10 14 h S'), 'mitten');   // a box with its thumb on the LEFT
+    const seg = mitten.segments[0];
+    const left = { id: 'e1', sourceId: 's', name: '4190000001 · PAIR-STUD · 1/2', side: 'L', bbox: seg.bbox.slice(), outline: seg, members: [seg], topIndices: [seg.index], centerPt: [(seg.bbox[0] + seg.bbox[2]) / 2, (seg.bbox[1] + seg.bbox[3]) / 2], strokePt: .5, extras: [] };
+    const right = Object.assign(Pair.mirrorOf(left), { id: 'e2', sourceId: 's', name: '4190000001 · PAIR-STUD · 2/2', side: 'R' });   // what pieceGeometry gives the solver for the Right
+    assert(right.mirrored === true && right.dropIndices.has(seg.index), 'the mirrored charm drops the as-drawn bytes and brings its own geometry');
+    const earBytes = await PDF.buildSheet({ sheet: { wPt: 200, hPt: 100 }, sources: new Map([['s', mitten]]), placements: [place(left, 50, 50), place(right, 130, 50)], title: 't' });
+    const earSheet = await PDF.parseSource(earBytes, 'ears'), earNames = Ex.layerNames(earSheet);
+    assert(earNames.includes('4190000001  PAIR-STUD  1/2 Left') && earNames.includes('4190000001  PAIR-STUD  2/2 Right'), 'the two ears have their own layers: ' + JSON.stringify(earNames));
+    const cuts = Ex.productionPaths(earSheet).filter(p => p.layer !== 'SHEET (do not cut)');
+    assert.equal(cuts.length, 2, 'one cut outline per ear'); assert(cuts.every(p => p.layer === 'Artwork'), 'the mirrored ear is drawn on the layer the master draws it on: ' + JSON.stringify(cuts.map(p => p.layer)));
+    const bx = p => p.bbox; const [bl, br] = cuts.sort((a, b) => a.bbox[0] - b.bbox[0]);
+    assert(Math.abs((bx(bl)[2] - bx(bl)[0]) - (bx(br)[2] - bx(br)[0])) < 1e-6, 'the same size');
+    // the thumb (the narrow part, 2..10 of the 2..40 box) is on the LEFT of the Left ear and on the RIGHT of the Right ear
+    const centre = p => (p.bbox[0] + p.bbox[2]) / 2;
+    const xsOf = p => p.subpaths[0].filter(o => o[0] !== 'h').map(o => o[1][0]);
+    const thumbSide = p => { const xs = xsOf(p), lo = Math.min(...xs), hi = Math.max(...xs); const lowCount = xs.filter(x => x < lo + 9).length, highCount = xs.filter(x => x > hi - 9).length; return lowCount > highCount ? 'L' : 'R'; };
+    assert.equal(thumbSide(bl), 'L', 'the Left ear faces left (thumb on its left)'); assert.equal(thumbSide(br), 'R', 'the Right ear faces right (thumb on its right): ' + JSON.stringify(br.subpaths[0]));
+    assert(Math.abs(centre(bl) - 50) < 1e-6 && Math.abs(centre(br) - 130) < 1e-6, 'each ear is centred where the nester put it');
+    const earDxf = Ex.dxf(Ex.productionPaths(earSheet), earNames); assert((earDxf.text.match(/LWPOLYLINE/g) || []).length >= 2, 'both ears are in the DXF');
+    // an as-drawn charm is written as it always was (the byte-level proof is production-export.cjs, which passes unchanged)
+    const plainSheet = await PDF.parseSource(await PDF.buildSheet({ sheet: { wPt: 200, hPt: 100 }, sources: new Map([['s', mitten]]), placements: [place(Object.assign({}, left, { side: undefined }), 50, 50)], title: 't' }), 'plain');
+    assert.deepEqual(Ex.productionPaths(plainSheet).filter(p => p.layer !== 'SHEET (do not cut)').map(p => p.layer), ['Artwork']);
+  }
+  ok('laser export: the Right ear is written mirrored (thumb on the right), on the same layer as the Left; an as-drawn charm is written as before');
   const ui = read('charm-nest-export-ui.js');
   assert(/pairPieces:earPieces/.test(ui) && /A layer ending Left or Right is one ear/.test(ui) && /files\.some\(f=>f\.metadata\.pairPieces\)/.test(ui), 'IMPORT.txt explains the layers only for a sheet with such a piece');
 
@@ -199,11 +225,19 @@ ${setsSrc}
   const entryMis = F.entryOf('MITTENS-MIS'), entryStud = F.entryOf('PAIR-STUD');
   assert.deepEqual(PL.labelPieces({ quantity: 1 }, entryMis), [{ side: 'L', n: 1, of: 1 }, { side: 'R', n: 1, of: 1 }]);
   assert.deepEqual(PL.labelPieces({ quantity: 2 }, entryMis).map(p => p.side + p.n + '/' + p.of), ['L1/2', 'R1/2', 'L2/2', 'R2/2']);
-  assert.equal(PL.labelPieces({ quantity: 1 }, entryStud), null, 'a matching pair: no pieces, the one sticker'); assert.equal(PL.labelPieces({ quantity: 1 }, null), null);
-  assert.equal(PL.stickerPieces([{ line: { quantity: 1 } }], () => entryStud), null);
-  assert.equal(PL.stickerPieces([{ line: { quantity: 1 } }, { line: { quantity: 1 } }], r => (r === undefined ? null : entryMis)).length, 4);
-  assert.equal(PL.pieceCount([{ line: { quantity: 1 } }, { line: { quantity: 3 } }], r => r.line.quantity === 1 ? entryMis : entryStud), 5, 'a mismatched pair makes two, any other line what its quantity says');
-  assert.equal(PL.pieceCount([{ line: { quantity: 3 } }], () => entryStud), null, 'no pair: null, so the page counts as it always did');
+  const row = (form, q, extra) => ({ spec: Object.assign({ form, quantity: q }, extra || {}), line: { quantity: q } });
+  // Paul, 9 Oct 18:47: EVERY earring pair is a Left and a Right, matching ones too; a single earring, a necklace, a charm and a line with no form are not
+  assert.deepEqual(PL.labelPieces(row('earrings', 1), entryStud), [{ side: 'L', n: 1, of: 1 }, { side: 'R', n: 1, of: 1 }], 'a matching pair of studs prints a Left and a Right sticker');
+  assert.deepEqual(PL.labelPieces(row('earrings', 2), null).map(p => p.side + p.n + '/' + p.of), ['L1/2', 'R1/2', 'L2/2', 'R2/2']);
+  assert.deepEqual(PL.labelPieces(row('huggie', 1), null).map(p => p.side), ['L', 'R'], 'huggies are pairs');
+  assert.equal(PL.labelPieces(row('earring-single', 1), entryStud), null, 'a single earring: the one sticker'); assert.equal(PL.labelPieces(row('charm', 1), entryStud), null); assert.equal(PL.labelPieces(row(null, 1), entryStud), null, 'no form: as before');
+  assert.equal(PL.labelPieces({ quantity: 1 }, null), null);
+  assert.equal(PL.stickerPieces([row('charm', 1)], () => entryStud), null);
+  assert.equal(PL.stickerPieces([{ line: { quantity: 1 } }, { line: { quantity: 1 } }], () => entryMis).length, 4, 'two mismatched lines: four stickers');
+  assert.equal(PL.stickerPieces([row('earrings', 1), row('charm', 1), row('earrings', 1)], () => null).length, 4);
+  assert.equal(PL.pieceCount([row('earrings', 1), row('charm', 3)], () => null), 5, 'an earring pair makes two per unit, any other line what its quantity says');
+  assert.equal(PL.pieceCount([row('charm', 3)], () => entryStud), null, 'no pair: null, so the page counts as it always did');
+  assert.equal(PL.pieceCount([row('earrings', 1, { pieceCount: 1 })], () => null), null, 'an explicit piece count of one (the intake\'s interim rule) is one piece: no stickers per ear yet');
   // QR Printer.html's own functions
   const html = read('QR Printer.html'), script = html.slice(html.indexOf('<script>\n') + 9, html.lastIndexOf('</script>'));
   const pr = vm.createContext({ window: { addEventListener() {}, parent: null }, document: { createElement: () => ({ style: {} }), body: { appendChild() {} } }, location: { hash: '' }, localStorage: { getItem: () => null }, console, setTimeout, pdfMake: {}, QRCode: {} });

@@ -280,12 +280,21 @@
      mirrored. The intake says what a line is (spec.pair.kind, spec.pieceCount); a line without them is read by its form. */
   const PAIR_FORMS = new Set(["earrings", "earring", "pair", "pair of earrings", "stud", "studs", "stud earrings", "hoop", "hoops", "hoop earrings", "huggie", "huggies", "huggie earrings", "huggie hoops", "huggie charm set"]);
   const formOf = line => String((line && ((line.spec && line.spec.form) || line.form || (line.row && line.row.spec && line.row.spec.form))) || "").toLowerCase().trim();
-  /** Is this line an earring PAIR (its pieces are a Left and a Right)? spec.pair.kind wins; else a mismatched design is; else the form decides. */
+  const pairSpecOf = line => line && ((line.spec && line.spec.pair) || line.pair || (line.row && line.row.spec && line.row.spec.pair)) || null;
+  /** Is this line an earring PAIR (its pieces are a Left and a Right)? The intake's own answer wins (spec.pair.earring, which is true only for an earring pair line
+   *  that is not a mismatched design counted as one glued copy and not an old line pinned to the pieces it already has); else spec.pair.kind; else a mismatched
+   *  design is; else the form decides. */
   function isEarringPair(line, charm) {
-    const pr = line && ((line.spec && line.spec.pair) || line.pair || (line.row && line.row.spec && line.row.spec.pair));
+    const pr = pairSpecOf(line);
+    if (pr && typeof pr.earring === "boolean") return pr.earring === true && !pr.glued && !pr.legacy;
     if (pr && pr.kind) return pr.kind === "pair" || pr.kind === "mismatched";
     if (charm && isMismatched(charm)) return true;
     return PAIR_FORMS.has(formOf(line));
+  }
+  /** The side the intake gave each piece, in order (spec.pair.sides: "L" | "R" | null each, a flat array), or null when the line carries none. */
+  function sidesSaid(line) {
+    const pr = pairSpecOf(line);
+    return pr && Array.isArray(pr.sides) && pr.sides.length ? pr.sides.map(x => x === "L" || x === "R" ? x : null) : null;
   }
   /** How many pieces one order line makes. An explicit count wins (the intake sets spec.pieceCount: one source of truth in charm-nest-orders.js; a
    *  row's pool ids are the fact). Without one: an earring pair (or a mismatched design) makes two per unit, anything else one per unit. */
@@ -303,10 +312,11 @@
    *  Anything that is not an earring pair (a necklace of discs, a single earring): side null, mirror false. */
   function piecesFor(line, charm, opts) {
     const key = groupKey(line), total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm), out = [];
-    const pair = total >= 2 && isEarringPair(line, charm);
+    const pair = total >= 2 && isEarringPair(line, charm), said = sidesSaid(line);   // (the intake's own sides win; without them the pieces alternate L, R)
     const bodies = mis ? bodiesOf(charm) : null;
     for (let i = 0; i < total; i++) {
-      const side = pair ? (i % 2 === 0 ? "L" : "R") : null, bodyIndex = mis ? i % 2 : 0;
+      const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
+      const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
       if (side) { const f = (opts && opts.facing) || (bodies ? facingOfBody(bodies[bodyIndex], charm) : facingOf(charm)); mirror = side !== (f || "L"); }
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
@@ -573,7 +583,8 @@
       else if (sameShape && sameBody(A, B)) { rec.kind = "twins"; rec.why = "two identical bodies, cut line and engraving"; }
       else if (!sameShape && sim.mirrored >= opts.sameShapeIoU) { rec.kind = "mirror"; rec.why = "the second body is the first one flipped (a front and a back view, or a left and a right of one design)"; rec.mirrored = true; }
       else { rec.kind = "mismatched"; rec.why = sameShape ? "one cut shape, different engraving" : "two different shapes"; rec.mirrored = false; }
-      const weak = (rec.skus[0] || "").replace(/[^A-Z0-9]/gi, "").length < 4;   // a label of one or two characters ("V1 V2") is a note, not a SKU
+      const lab0 = rec.skus[0] || "", words = lab0.split(/[^A-Za-z0-9]+/).filter(Boolean);
+      const weak = lab0.replace(/[^A-Z0-9]/gi, "").length < 4 || (words.length > 0 && words.every(w => w.length <= 2));   // a label of a few characters, or of short words only ("V1 V2", "L R"), is a note, not a SKU
       if (weak) rec.weak = "the label \"" + (rec.skus[0] || "") + "\" is too short to be a SKU";
       rec.sure = rec.kind === "mismatched" && Math.abs(rec.offset) <= opts.off && !weak;
       out.push(rec);
@@ -603,7 +614,7 @@
   return {
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
-    describe, sameBody, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
+    describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
