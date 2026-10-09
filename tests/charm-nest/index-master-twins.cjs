@@ -56,5 +56,19 @@ const { main, fileKeys } = require('../../scripts/index-master.cjs');
   // 6. two SKUs the server would store under one file name get two names (the first charm keeps the plain one)
   const ks = fileKeys([{ index: 864, l: { sku: 'BOWLING_PIN+BALL' } }, { index: 2227, l: { sku: 'BOWLING PIN + BALL' } }, { index: 5, l: { sku: 'RING', size: 'S' } }, { index: 6, l: { sku: 'RING', size: 'M' } }]);
   assert.strictEqual(ks.get(864), 'BOWLING_PIN+BALL'); assert.strictEqual(ks.get(2227), 'BOWLING PIN + BALL__2227'); assert.strictEqual(ks.get(5), 'RING__S'); assert.strictEqual(ks.get(6), 'RING__M');
-  console.log('index-master twins OK · default owner, determinism, pin by position and by index, elsewhere, file names');
+  // 7. a pin may name the charm whose line labelCharms dropped (the SKU is written ONCE under it, and the other charm was first on the page):
+  //    that charm gets the line back and becomes the owner, the SKU is not lost
+  const file2 = path.join(tmp, 'BRITES-twins-single.ai');
+  const fx2 = await buildMaster(file2, { count: 8, edge: false, twins: 'single' });
+  const stage2 = async (name, extra = []) => { const dir = path.join(tmp, name); const rep = await main(['node', 'x', file2, '--out-dir', dir, '--concurrency', '4'].concat(extra), log); return { rep, rec: JSON.parse(fs.readFileSync(path.join(dir, 'records.json'), 'utf8')) }; };
+  const d0 = await stage2('s0');
+  assert.strictEqual(rows(d0.rec, 'BR-TST-01').length, 1, 'single: default keeps the SKU once');
+  const c7s = fx2.charms[6];
+  fs.writeFileSync(path.join(tmp, 'pin5.json'), JSON.stringify({ 'BR-TST-01': { at: [c7s.cx, c7s.cy] } }));
+  const d1 = await stage2('s1', ['--pin', path.join(tmp, 'pin5.json')]);
+  assert.strictEqual(rows(d1.rec, 'BR-TST-01').length, 1, 'single: pinned to the charm that lost the line, the SKU is still recorded once (not lost)');
+  assert(Math.abs(rows(d1.rec, 'BR-TST-01')[0].widthPt - rows(d0.rec, 'BR-TST-01')[0].widthPt) > 1, 'single: and it is that charm\'s record');
+  assert.strictEqual(rows(d1.rec, 'BR-TWN-07')[0].aiPath, rows(d1.rec, 'BR-TST-01')[0].aiPath, 'single: both SKUs on the owner\'s file');
+  assert.strictEqual(d1.rep.twins[0].rule, 'pinned'); assert.strictEqual(d1.rec.entries.length, d0.rec.entries.length, 'single: same number of records');
+  console.log('index-master twins OK · default owner, determinism, pin by position and by index (also to a charm that lost the line), elsewhere, file names');
 })().catch(e => { console.error(e); process.exit(1); });
