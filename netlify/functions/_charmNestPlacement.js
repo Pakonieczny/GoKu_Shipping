@@ -33,6 +33,7 @@
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const crypto = require("crypto");
+const Pair = require("../../charm-nest-pair.js");   // the one definition of a group (receiptId:transactionId) and of the sides of a pair
 
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const ms = v => (v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : typeof v === "number" ? v : 0);
@@ -66,6 +67,59 @@ function takenOff(p) {
 const REPOOLED = "repooledAt";
 /** A sheet record a take-off may edit: saved, not archived, not cut. */
 const editable = s => !!s && !s.archived && !(num(s.laserDoneAt) > 0) && !(num(s.roseCutAt) > 0);
+
+/* ── pairs, mismatched pairs and multi-piece orders (Paul, 9 Oct 2026) ───────────────────────────────────────────────────────
+   Every rule on this page is by POOL ID and by ORDER, never by SKU or design: a mismatched pair's two pieces are different
+   designs, so a check that matched pieces by what they show would miss them. A GROUP is every piece of one order line
+   (receiptId:transactionId, charm-nest-pair.js groupKey); a pool id "receipt_transaction_copy" names its group by itself, so
+   nothing here needs a field an older record does not have. */
+const POOL_ID = /^\d{4,20}_\d{1,20}_\d{1,3}$/;
+/** The group a pool id belongs to ("receiptId:transactionId"), or "" for anything that is not a pool id. */
+const groupOfPool = id => (POOL_ID.test(String(id == null ? "" : id)) ? Pair.groupKey(String(id)) : "");
+/** The pair fields of a pool row (side, bodyIndex, groupKey, groupSize: PAIRPOOL) made safe, on the row given (a copy the caller owns):
+    side is "L", "R" or null; bodyIndex and groupSize are small whole numbers; groupKey is what the pool id says. What is not one of
+    those is left out (never an error: a row is still written, with the fields it can vouch for). A row without them is left alone. */
+function cleanPiece(row) {
+  if (!row || typeof row !== "object") return row;
+  const has = k => Object.prototype.hasOwnProperty.call(row, k);
+  if (has("side") && row.side !== "L" && row.side !== "R" && row.side !== null) delete row.side;
+  if (has("bodyIndex")) { const n = Number(row.bodyIndex); if (Number.isInteger(n) && n >= 0 && n <= 9) row.bodyIndex = n; else delete row.bodyIndex; }
+  if (has("groupSize")) { const n = Number(row.groupSize); if (Number.isInteger(n) && n >= 1 && n <= 400) row.groupSize = n; else delete row.groupSize; }
+  if (has("groupKey")) { const k = groupOfPool(row.poolId); if (k) row.groupKey = k; else delete row.groupKey; }
+  return row;
+}
+/** The pieces of `sheet` that belong to a group one of `ids` (a Set of pool ids) belongs to, and are not in `ids` themselves: the rest of a
+    line that a take-off named only part of. (R4: a line comes off whole; the page's own plan keeps its copies together, and so does the server.) */
+function groupMates(sheet, ids) {
+  const groups = new Set(); for (const id of ids) { const g = groupOfPool(id); if (g) groups.add(g); }
+  if (!groups.size || !sheet || !Array.isArray(sheet.poolIds)) return [];
+  return sheet.poolIds.map(String).filter(id => !ids.has(id) && groups.has(groupOfPool(id)));
+}
+/** Which groups (order lines of more than one piece) are NOT all in one place, from a reconcile's `placement` and the pool rows:
+    their pieces on two or more sheets, or some on a sheet and some on none (waiting, held, taken off). One entry per group:
+    { groupKey, pieces: [{ poolId, side, state, sheetId, sheetLabel, setId, cut }], sheets: [sheetId], offSheet: n }. A group whose pieces
+    are all on one sheet, or all on none, is not listed; neither is a single piece or a piece that was made up again (superseded). */
+function splitsOf(placement, pools) {
+  const row = new Map((pools || []).map(p => [String(p.poolId), p]));
+  const groups = new Map();
+  for (const [id, pl] of Object.entries(placement || {})) {
+    if (!pl || pl.state === "superseded") continue;
+    const g = groupOfPool(id); if (!g) continue;
+    (groups.get(g) || groups.set(g, []).get(g)).push([id, pl]);
+  }
+  const out = [];
+  for (const [groupKey, list] of groups) {
+    if (list.length < 2) continue;
+    const sheets = [...new Set(list.filter(([, pl]) => pl.state === "sheet" && pl.sheetId).map(([, pl]) => pl.sheetId))], off = list.filter(([, pl]) => pl.state !== "sheet").length;
+    if (sheets.length < 2 && !(sheets.length === 1 && off)) continue;
+    const tail = id => num((/_(\d+)$/.exec(id) || [])[1]);
+    out.push({ groupKey, sheets, offSheet: off, pieces: list.sort((a, b) => tail(a[0]) - tail(b[0])).map(([id, pl]) => {
+      const p = row.get(id) || {};
+      return { poolId: id, side: p.side === "L" || p.side === "R" ? p.side : null, state: pl.state, sheetId: pl.state === "sheet" ? pl.sheetId || null : null, sheetLabel: pl.state === "sheet" ? pl.sheetLabel || null : null, setId: pl.setId || null, cut: !!pl.cut };
+    }) });
+  }
+  return out.sort((a, b) => (a.groupKey < b.groupKey ? -1 : a.groupKey > b.groupKey ? 1 : 0));
+}
 
 /** The writes that take `ids` (a Set of pool ids) off one sheet record, as one update: its piece list, the orders it still names,
     the engraving backs of the pieces that left, its counts, and dirty: true (the record's own flag for "the layout changes: write
@@ -164,11 +218,14 @@ function reconcile(input) {
       placement[id] = { state: "waiting", sheetId: null, setId: null, since: p ? ms(p.updatedAt) || null : null, why: "not on a sheet yet" };
     }
     if (row && row.repaired) placement[id].repaired = row.repaired;
+    // which ear of a mismatched pair this piece is (stored on its row by the intake: absent on every other piece and on older rows)
+    if (p && (p.side === "L" || p.side === "R")) placement[id].side = p.side;
     if (p && p.state === "committed") placement[id].committed = true;
   }
   const vals = Object.values(placement), count = k => vals.filter(x => x.state === k).length;
   const summary = { pieces: vals.length, onSheet: count("sheet"), waiting: count("waiting"), held: count("held"), removed: count("removed"), cancelling: vals.filter(x => x.state === "removed" && x.cancel).length };
-  return { pools: [...pools.values()], sheets, placement, repaired, summary };
+  const splits = splitsOf(placement, [...pools.values()]);
+  return { pools: [...pools.values()], sheets, placement, repaired, summary, ...(splits.length ? { splits } : {}) };
 }
 
 /** A pool row list as a poolList answers it: a row whose sheet record is deleted or archived says it is on no sheet any more.
@@ -177,4 +234,4 @@ function repairPoolRows(rows, gone) {
   return rows.map(r => (r && r.sheetId && gone.has(String(r.sheetId)) && !TAKE_OFF_STATES.has(r.state) ? Object.assign({}, r, { sheetId: null, sheetName: null, setId: null, sheetIdWas: r.sheetId, repaired: ["sheetGone"] }) : r));
 }
 
-module.exports = { isTakeOff, takenOff, editable, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES };
+module.exports = { isTakeOff, takenOff, editable, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES, groupOfPool, cleanPiece, groupMates, splitsOf };

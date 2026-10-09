@@ -1,5 +1,5 @@
 /* Dedicated PDF/geometry worker. No network APIs or production state live here. */
-importScripts('vendor/pdf-lib-1.17.1.min.js','vendor/clipper-6.4.2.js','charm-nest-vector.js','charm-nest-geom.js?v=20261009-flat-col','charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71','charm-nest-rose.js?v=20261007-edges-gc1','charm-nest-export.js?v=20261009-cutfill');
+importScripts('vendor/pdf-lib-1.17.1.min.js','vendor/clipper-6.4.2.js','charm-nest-vector.js','charm-nest-geom.js?v=20261009-flat-col','charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1','charm-nest-rose.js?v=20261007-edges-gc1','charm-nest-export.js?v=20261009-cutfill','charm-nest-pair.js?v=20261009-pr1','charm-nest-pair-thumb.js?v=20261009-pt2');
 const P=self.CharmNestPDF,parsedCache=new Map();
 async function hydrate(parsed){
   if(parsed.doc)return parsed;
@@ -20,6 +20,9 @@ async function compute(type,a,progress){
   }
   if(type==='thumbnail')return P.thumbnail(a.charm,a.size);
   if(type==='front'){
+    // a mismatched pair design: both bodies side by side, Left / Right chips (charm-nest-pair-thumb.js); a highlight ("L" or "R") washes the other body out, body 0 | 1 draws that ear alone. Any other charm: the drawing below, unchanged.
+    const PT=self.CharmNestPairThumb,pairCv=PT?PT.canvasFor(P,a.charm,{size:a.size,padPt:3*72/25.4,bg:'#fff',highlight:a.opts&&a.opts.highlight,body:a.opts&&a.opts.body,makeCanvas:(w,h)=>new OffscreenCanvas(w,h)}):null;
+    if(pairCv)return new FileReaderSync().readAsDataURL(await pairCv.convertToBlob({type:'image/png'}));
     const c=a.charm,b=c.bbox,pad=3*72/25.4,w=b[2]-b[0]+2*pad,h=b[3]-b[1]+2*pad,k=a.size/Math.max(w,h),cv=new OffscreenCanvas(Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k))),ctx=cv.getContext('2d');
     ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);P.drawCharm(ctx,c,(x,y)=>[(x-b[0]+pad)*k,(b[3]+pad-y)*k],k);
     return new FileReaderSync().readAsDataURL(await cv.convertToBlob({type:'image/png'}));

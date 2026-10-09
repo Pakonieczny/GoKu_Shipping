@@ -27,7 +27,8 @@
  *                        a hash that moves makes the protected placements of a cut Rose sheet refuse to save)
  *    --pin FILE          which charm owns a SKU that the sheet labels under more than one charm ("twins"). A JSON object
  *                        { "SKU": { "at": [x, y] } } (a point on the owning charm, in page points: its outline box centre) or
- *                        { "SKU": charmIndex }; "SKU__S" pins a sized line. Without a pin the first charm of the page keeps the SKU
+ *                        { "SKU": charmIndex }; "SKU__S" pins a sized line. { "SKU": "elsewhere" } leaves the SKU to
+ *                        another master: every charm of this sheet loses it (a SKU read from two masters has one home). Without a pin the first charm of the page keeps the SKU
  *                        (the one labelCharms reports as kept: the label highest on the page), the same on every run.
  *    --out-dir DIR       STAGE instead of upload: write every per-SKU .ai / .png and records.json (the exact entries that
  *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
@@ -101,14 +102,24 @@ async function upload(origin, passcode, p, buf, contentType) {
 }
 function thumbnailPng(Geom, charm, size, PDF) {
   let Resvg = null; try { ({ Resvg } = require("@resvg/resvg-js")); } catch (_) { return null; }
-  const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h);
+  // a mismatched pair design (two different bodies under one SKU) is stored as ONE picture of both bodies side by side at one scale with a
+  // Left and a Right chip under them (charm-nest-pair-thumb.js, the same picture the app draws); every other design keeps today's picture exactly
+  let PT = null; try { PT = require("../charm-nest-pair-thumb.js"); } catch (_) {}
+  const pair = PT ? PT.plan(charm) : null;
+  const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = pair ? PT.layout(pair, b, { size, padPt: pad }).s : size / Math.max(w, h);
   const css = c => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
   const parts = [];
   for (const m of charm.members) { if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue;
     // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
     const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; parts.push(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
-  parts.push(`<path d="${Geom.svgPathOf(charm.outline)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
+  // (the cut outline in red: both bodies' outlines for a pair, the charm's own for every other design)
+  for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(`<path d="${Geom.svgPathOf(o)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
+  if (pair) {
+    const pic = PT.svgPicture(pair, { bbox: b, padPt: pad, size, bg: "#ece7dc", inner: parts.join("") });
+    // the chip lettering is the repo's own Source Sans 3 Semibold, so it does not depend on a font this PC happens to have
+    try { return new Resvg(pic.svg, { fitTo: { mode: "width", value: pic.layout.W }, font: { fontFiles: [path.join(root, "vendor", "fonts", "SourceSans3-Semibold.otf")], loadSystemFonts: false, defaultFontFamily: "Source Sans 3 Semibold" } }).render().asPng(); } catch (_) { return null; }
+  }
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(8, Math.round(w * s))}" height="${Math.max(8, Math.round(h * s))}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#ece7dc"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)">${parts.join("")}</g></svg>`;
   try { return new Resvg(svg, { fitTo: { mode: "width", value: Math.max(8, Math.round(w * s)) } }).render().asPng(); } catch (_) { return null; }
 }
@@ -146,9 +157,10 @@ function settleTwins(lab, charms, pins) {
   for (const d of lab.duplicates || []) { const k = keyOf(d); add(k, d.charmIndex); add(k, d.firstIndex); if (!kept.has(k)) kept.set(k, d.firstIndex); }
   const out = [];
   for (const [k, set] of claims) {
-    if (set.size < 2) continue;
+    const pin = pins && pins.get(k), away = pin === "elsewhere" || (pin && pin.elsewhere === true);   // "elsewhere": another master owns this SKU
+    if (set.size < 2 && !away) continue;
     const idx = [...set].sort((a, b) => a - b); let owner = kept.has(k) && set.has(kept.get(k)) ? kept.get(k) : idx[0], rule = "first on the page";
-    const pin = pins && pins.get(k);
+    if (away) { for (const i of idx) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); } out.push({ key: k, owner: null, others: idx, rule: "elsewhere" }); continue; }
     if (pin != null) {
       let want = typeof pin === "number" ? pin : pin && pin.index != null ? +pin.index : null;
       if (want == null && pin && Array.isArray(pin.at)) {
@@ -163,6 +175,20 @@ function settleTwins(lab, charms, pins) {
     out.push({ key: k, owner, others: idx.filter(i => i !== owner), rule });
   }
   let n = 0; for (const l of lab.labels.values()) n += 1 + (l.extra || []).length; lab.skuCount = n;
+  return out;
+}
+
+/** The storage name of each charm's file (charmnest/master/<key>.ai). The server turns every run of characters other than
+ *  letters, digits, _ . - into one "_" (safePath), so two different SKUs can name one file ("BOWLING_PIN+BALL" and "BOWLING PIN + BALL"
+ *  both become BOWLING_PIN_BALL.ai) and the second upload replaced the first. The first charm in drawing order keeps the plain
+ *  name; a later charm whose name collides gets "__<charm index>" after it. Returns Map(charm index → key). */
+function fileKeys(items) {
+  const safe = k => String(k).replace(/[^\w.\-\/]+/g, "_").replace(/\.\.+/g, ".").toLowerCase(), taken = new Set(), out = new Map();
+  for (const { index, l } of items.slice().sort((a, b) => a.index - b.index)) {
+    const base = l.size ? `${l.sku}__${l.size}` : l.sku; let key = base;
+    if (taken.has(safe(key))) key = `${base}__${index}`;
+    taken.add(safe(key)); out.set(index, key);
+  }
   return out;
 }
 
@@ -195,7 +221,7 @@ async function main(argv, log = console.log) {
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
-  if (twins.length) log(`  ${twins.length} SKU(s) are read under more than one charm and kept on one (${twins.filter(t => t.rule === "pinned").length} pinned, the rest the first on the page): ${twins.slice(0, 30).map(t => `${t.key} -> #${t.owner}`).join(", ")}${twins.length > 30 ? " …" : ""}`);
+  if (twins.length) log(`  ${twins.length} SKU(s) settled: read under more than one charm and kept on one, or left to another master (${twins.filter(t => t.rule === "pinned").length} pinned, ${twins.filter(t => t.rule === "elsewhere").length} elsewhere, the rest the first on the page): ${twins.slice(0, 30).map(t => `${t.key} -> ${t.owner == null ? "elsewhere" : "#" + t.owner}`).join(", ")}${twins.length > 30 ? " …" : ""}`);
 
   let masterUp = null;
   if (net && o.uploadMaster) { masterUp = await upload(o.origin, o.passcode, `charmnest/master/files/${masterHash.slice(0, 12)}-${name.replace(/[^\w.\-]+/g, "_")}`, buf, "application/pdf"); log(`master stored at ${masterUp.path}`); }
@@ -242,10 +268,11 @@ async function main(argv, log = console.log) {
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: g.charms.length, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [];
+  const keyOf = fileKeys(items);                                          // one file name per charm, whatever the server does to the characters
   const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
-    const key = l.size ? `${l.sku}__${l.size}` : l.sku;
+    const key = keyOf.get(index);
     if (progress.done[key]) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
     { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }
@@ -333,5 +360,5 @@ async function main(argv, log = console.log) {
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet, settleTwins, pinMap };
+module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });
