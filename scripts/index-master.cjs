@@ -67,7 +67,7 @@ function onlySet(spec) {
   if (!spec) return null;
   let list;
   if (fs.existsSync(spec)) {
-    const j = JSON.parse(fs.readFileSync(spec, "utf8"));
+    const txt = fs.readFileSync(spec, "utf8"); let j; try { j = JSON.parse(txt); } catch (_) { j = txt.split(/[\r\n,]+/); }   // JSON (a list, {skus}, {offending}) or a plain list, one SKU a line
     list = Array.isArray(j) ? j : Array.isArray(j.skus) ? j.skus : Array.isArray(j.offending) ? j.offending : [];
   } else list = spec.split(",");
   const set = new Set(list.map(x => String(x && typeof x === "object" ? x.sku : x || "").trim().toUpperCase()).filter(Boolean));

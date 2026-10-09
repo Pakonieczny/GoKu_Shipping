@@ -23,6 +23,8 @@ const T = {
   rareShare: 0.004, rareMin: 3            // a (layer, paint, colour) combination under 0.4 % of a master's artwork members
 };
 
+/** A fill the app paints as ink: black, or a dark neutral (the app's own test: no tint, luma <= 0.35). */
+const darkFill = c => { if (!c) return false; const mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]); return mx - mn <= 0.15 && 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] <= 0.35; };
 const cls = c => {
   if (!c) return "none"; const mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]);
   if (mx - mn <= T.achroSat) return mx < T.blackMax ? "black" : mx > T.whiteMin ? "white" : "grey";
@@ -70,6 +72,9 @@ function classify(c, ctx) {
   const fp = c.fp || (c.fp = fingerprint(c)), defects = [], detail = {};
   const add = (code, why) => { if (!defects.includes(code)) defects.push(code); detail[code] = detail[code] ? (detail[code].length < 220 ? detail[code] + "; " + why : detail[code]) : why; };
   const mem = c.members || [];
+  // 0 · paint lost by the per-SKU writer: the master draws these paths in a colour that a cut-out segment (a text object, say) set,
+  //     and the file written for the SKU no longer sets it (HATCH blue read back as black). Baked into the file: needs a re-index.
+  if (c.leak) { const w = (c.leak.first || []).map(x => `${x.L || "no layer"} ${x.fill ? "fill " + x.fill[0] + " -> " + x.fill[1] : ""}${x.stroke ? " stroke " + x.stroke[0] + " -> " + x.stroke[1] : ""}${x.lw ? " width " + x.lw[0] + " -> " + x.lw[1] : ""}`.trim()); add("colour-lost-in-file", `${c.leak.n} of ${c.leak.of} member(s) are painted differently in the per-SKU file: ${[...new Set(w)].slice(0, 3).join("; ")}`); }
   // 1 · grey boxes: a shading / image / form with no vector content is drawn as a translucent box by every preview and is in the per-SKU file
   const sh = mem.filter(m => m.k === "shading"), im = mem.filter(m => m.k === "image" || (m.k === "xobj" && !m.kids));
   if (sh.length) add("grey-box", `${sh.length} shading member(s) on ${[...new Set(sh.map(m => layerKey(m.L)))].join("/")}`);
@@ -97,9 +102,9 @@ function classify(c, ctx) {
   const ol = c.outline;
   if (ol && ol.k === "path" && !ol.syn && fp.outlineLayer !== "CUT") add("outline-not-cut-layer", `the outline is on ${ol.L || "no layer"}`);
   // 5 · solid black: the cut outline (or a CUT member covering the body) is a black FILL, so every preview paints the charm solid
-  if (ol && ol.f && cls(ol.fc) === "black" && !ol.s) add("solid-black", `the outline path is a black fill (${ol.op}), not a stroke`);
-  else if (ol && ol.f && cls(ol.fc) === "black") add("solid-black", `the outline path is a black fill and stroke (${ol.op})`);
-  const body = mem.filter(m => m.k === "path" && m.f && layerKey(m.L) === "CUT" && cls(m.fc) === "black" && fp.outlineA > 0 && (m.A || 0) >= T.solidFill * fp.outlineA && !(m.circ && m.circ.length && (m.A || 0) < 80));
+  if (ol && ol.f && darkFill(ol.fc) && !ol.s) add("solid-black", `the outline path is a black fill (${ol.op}), not a stroke`);
+  else if (ol && ol.f && darkFill(ol.fc)) add("solid-black", `the outline path is a black fill and stroke (${ol.op})`);
+  const body = mem.filter(m => m.k === "path" && m.f && layerKey(m.L) === "CUT" && darkFill(m.fc) && fp.outlineA > 0 && (m.A || 0) >= T.solidFill * fp.outlineA && !(m.circ && m.circ.length && (m.A || 0) < 80));
   if (body.length) add("solid-black", `${body.length} black-filled CUT member(s) cover ${Math.round(100 * Math.max(...body.map(m => m.A)) / fp.outlineA)} % of the outline area`);
   // 6 · hoops
   const hp = hoops(fp);
@@ -204,8 +209,11 @@ function main(argv) {
   // Paul's examples
   const ex = EXAMPLES.map(([label, re]) => { const hit = rows.filter(r => re.test(r.sku) || re.test(r.name)); return { label, count: hit.length, rows: hit.slice(0, 12).map(r => ({ sku: r.sku, master: r.master, defects: r.defects })) }; });
   // write
+  // a SKU read from two masters is one record in the catalogue: whichever master is indexed last owns it (the other is blocked or replaced)
+  const mastersOf = new Map(); for (const r of rows) { if (!mastersOf.has(r.sku)) mastersOf.set(r.sku, new Set()); mastersOf.get(r.sku).add(r.master); }
+  const multiMaster = [...mastersOf].filter(([, m]) => m.size > 1).map(([sku, m]) => ({ sku, masters: [...m], flagged: flaggedSet.has(sku) })).sort((a, b) => a.sku.localeCompare(b.sku));
   const sorted = offending.sort((a, b) => a.master.localeCompare(b.master) || a.sku.localeCompare(b.sku));
-  fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters (current main code); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, detail, sharesFileWith })) }, null, 1));
+  fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters (current main code); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, multiMaster, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, detail, sharesFileWith })) }, null, 1));
   const L = [];
   L.push("# Catalogue audit (offline, from the three master files)", "", `Generated ${new Date().toISOString()} by scripts/audit-catalog.cjs on the current main code. Nothing was read from the live site.`, "");
   L.push("## Masters", "", "| master | charm outlines | labelled designs | SKU lines | unlabelled outlines | labels with no charm | duplicate labels | loose ink | designs flagged | SKU lines flagged |", "|---|---|---|---|---|---|---|---|---|---|");
@@ -216,6 +224,7 @@ function main(argv) {
   for (const [k, v] of Object.entries(cat).sort((a, b) => b[1].skus - a[1].skus)) L.push(`| ${k} | ${v.skus} | ${v.designs.size} |`);
   L.push("", "## Paul's examples", "");
   for (const e of ex) { L.push(`- **${e.label}**: ${e.count} SKU line(s)`); for (const r of e.rows.slice(0, 8)) L.push(`  - ${r.sku} (${r.master}): ${r.defects.length ? r.defects.join(", ") : "nothing flagged"}`); }
+  L.push("", "## SKUs that sit in more than one master", "", `${multiMaster.length} SKU(s) are labelled in two masters. They are ONE record in the catalogue, and the master indexed last owns it, so a repair run per master must not rewrite them from the wrong one: ${multiMaster.slice(0, 40).map(x => `${x.sku} (${x.masters.map(m => m.replace(/^MASTER SKU_|_MV.*$/g, "")).join(" + ")}${x.flagged ? ", flagged" : ""})`).join(", ")}${multiMaster.length > 40 ? " …" : ""}`);
   if (Object.keys(cross).length) { L.push("", "## Cross-check with the five workers", ""); for (const [k, v] of Object.entries(cross)) L.push(v.error ? `- ${k}: unreadable (${v.error})` : `- ${k}: ${v.workerCount} SKUs listed, ${v.inMasters} of them in the masters, ${v.alsoFlaggedHere} also flagged here${v.notFlaggedHere.length ? `; not flagged here: ${v.notFlaggedHere.join(", ")}` : ""}`); }
   fs.writeFileSync(path.join(o.out, "CATALOG-report.md"), L.join("\n") + "\n");
   console.log(`designs ${tl.l}, SKU lines ${tl.k}, flagged designs ${tl.d}, flagged distinct SKUs ${flaggedSet.size}`);

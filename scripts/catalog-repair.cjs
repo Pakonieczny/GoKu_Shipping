@@ -10,7 +10,7 @@
  *             (plain GETs of the stored links: no function call, no Firestore read) into DIR/files/<storage path>, with
  *             DIR/manifest.json (bytes + sha256 of each). Nothing on the site is changed.
  *    verify   READ-ONLY. Reads the index again and checks (1) every staged record (index-master --out-dir) is live exactly as
- *             staged (file path, charm hash, size, holes), (2) every staged .ai now served is byte-identical to the staged
+ *             staged (file path, charm hash, size, holes), (2) every staged .ai now served draws the same as the staged
  *             one, (3) no SKU that was NOT repaired changed against the backup. Exit 1 on any difference.
  *    diff     READ-ONLY. Takes the files a staged run (index-master --out-dir) would write and compares each, drawn part by drawn
  *             part, with the .ai the site serves for that SKU now. The SKUs whose live file already draws the same are left
@@ -82,8 +82,9 @@ function affected(entries, want) {
 }
 async function pool(n, items, fn) { const q = items.slice(); await Promise.all(Array.from({ length: Math.min(n, q.length) }, async () => { while (q.length) await fn(q.shift()); })); }
 async function download(o, f) {
-  let url = f.url;
-  if (!url) { const r = await get(o, "charmNestOutput", { op: "url", path: f.path }); url = r.url; }   // (a stored record without its link: the function makes it)
+  // the stored link is a plain Storage GET (no Netlify call, no Firestore read). A record without one is reported, not worked around:
+  // charmNestOutput op=url is a POST that can write a download token, and nothing here may write.
+  const url = f.url; if (!url) throw new Error(`${f.path}: the index record holds no link for it`);
   const res = await fetch(url); if (!res.ok) throw new Error(`GET ${f.path}: HTTP ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
@@ -126,7 +127,7 @@ async function diff(o, log) {
   // one design file can carry several SKUs: compare it once, answer for all of them
   const byFile = new Map();
   for (const e of staged.entries) { if (want && !want.has(up(e.sku))) continue; if (!byFile.has(e.aiPath)) byFile.set(e.aiPath, { e, skus: [] }); byFile.get(e.aiPath).skus.push(up(e.sku)); }
-  const changed = [], same = [], gone = [], failed = []; let n = 0;
+  const changed = [], same = [], gone = [], failed = [], rec = {}; let n = 0;
   await pool(o.concurrency, [...byFile.entries()], async ([aiPath, { e, skus }]) => {
     try {
       const l = live.get(up(e.sku)); const g = l && (e.size ? (l.sizes || {})[up(e.size)] : l);
@@ -135,15 +136,23 @@ async function diff(o, log) {
       const theirs = await filePrint(await download(o, { path: g.aiPath, url: g.aiUrl }));
       const why = printDiff(theirs, mine);
       (why.length ? changed : same).push({ skus, aiPath, live: g.aiPath, why: why.join("; "), liveParts: theirs.n, stagedParts: mine.n });
+      // what the staged record would change in the index besides the drawing: the numbers the nesting and the engraving read
+      const rel = (a, b) => (a > 0 && b > 0 ? Math.abs(a - b) / a : 0), note = (k, v) => { (rec[k] = rec[k] || []).push({ skus, ...v }); };
+      if (rel(g.widthPt, e.widthPt) > 0.02 || rel(g.heightPt, e.heightPt) > 0.02) note("sizeMoved", { from: [g.widthPt, g.heightPt].map(v => +(+v).toFixed(2)), to: [e.widthPt, e.heightPt].map(v => +(+v).toFixed(2)) });
+      if ((g.holes || 0) !== (e.holes || 0)) note("holesChanged", { from: g.holes, to: e.holes });
+      if (l.engravableBy !== "operator" && (l.engravable !== false) !== (e.engravable !== false)) note("engravableChanged", { from: l.engravable !== false, to: e.engravable !== false });
+      if (l.upSource !== "operator" && l.upAngle != null && e.upAngle != null && Math.abs(((l.upAngle - e.upAngle + 540) % 360) - 180) > 1) note("upAngleChanged", { from: l.upAngle, to: e.upAngle });
+      if (e.blocked && !g.blocked && !l.blocked) note("newlyBlocked", { why: e.blocked });
     } catch (err) { failed.push({ skus, aiPath, error: err.message }); }
     if (++n % 100 === 0) log(`  ${n}/${byFile.size} designs compared`);
   });
   const skusChanged = [...new Set(changed.flatMap(x => x.skus))].sort();
-  fs.writeFileSync(path.join(o.stage, "diff.json"), json({ at: new Date().toISOString(), designs: byFile.size, changed, same: same.length, gone, failed }));
+  fs.writeFileSync(path.join(o.stage, "diff.json"), json({ at: new Date().toISOString(), designs: byFile.size, changed, same: same.length, gone, failed, recordChanges: rec }));
   fs.writeFileSync(path.join(o.stage, "changed-skus.json"), json(skusChanged));
   const reasons = {}; for (const c of changed) reasons[c.why.split(";")[0].replace(/\d+/g, "N")] = (reasons[c.why.split(";")[0].replace(/\d+/g, "N")] || 0) + 1;
   log(`diff: ${byFile.size} design file(s) compared with what the site serves · ${changed.length} differ (${skusChanged.length} SKUs) · ${same.length} already draw the same · ${gone.length} have no live file · ${failed.length} could not be compared`);
   for (const [k, v] of Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8)) log(`  ${v} × ${k}`);
+  for (const [k, v] of Object.entries(rec)) log(`  record check: ${v.length} design(s) with ${k}${k === "sizeMoved" || k === "engravableChanged" || k === "upAngleChanged" || k === "newlyBlocked" ? " (look at them in diff.json before writing)" : ""}`);
   if (failed.length) { log(`  ! could not compare: ${failed.slice(0, 5).map(x => x.skus[0] + " (" + x.error + ")").join(", ")}`); process.exitCode = 1; }
   return { designs: byFile.size, changed: changed.length, skus: skusChanged.length, same: same.length, gone: gone.length, failed: failed.length };
 }
@@ -177,7 +186,12 @@ async function verify(o, log) {
       const f = path.join(o.stage, "files", e.aiPath);
       if (!checked.has(e.aiPath) && fs.existsSync(f)) {
         checked.add(e.aiPath);
-        try { const b = await download(o, { path: e.aiPath, url: g.aiUrl || l.aiUrl }); if (sha(b) !== sha(fs.readFileSync(f))) bad.push({ sku, why: `served ${e.aiPath} differs from the staged file` }); } catch (err) { bad.push({ sku, why: `could not read ${e.aiPath}: ${err.message}` }); }
+        try {
+          // (not byte for byte: pdf-lib stamps each file with the second it was written, so two builds of one charm are never the same bytes;
+          //  what must match is what the file draws, part by part)
+          const theirs = await filePrint(await download(o, { path: e.aiPath, url: g.aiUrl || l.aiUrl })), mine = await filePrint(fs.readFileSync(f)), why = printDiff(theirs, mine);
+          if (why.length) bad.push({ sku, why: `served ${e.aiPath} does not draw as the staged file does: ${why.join("; ")}` });
+        } catch (err) { bad.push({ sku, why: `could not read ${e.aiPath}: ${err.message}` }); }
       }
     }
   }
@@ -195,7 +209,7 @@ async function verify(o, log) {
     }
     const extra = entries.filter(e => !before.entries.some(b => up(b.sku) === up(e.sku)) && !stagedSkus.has(up(e.sku))); for (const e of extra) bad.push({ sku: e.sku, why: "new in the live index though not staged" });
   }
-  log(`verify: ${bySku.size} staged SKU(s) checked (${checked.size} served file(s) compared byte for byte)${o.backup ? ` · ${compared} other SKU(s) compared with the backup, ${collateral} changed` : ""} · ${bad.length} problem(s)`);
+  log(`verify: ${bySku.size} staged SKU(s) checked (${checked.size} served file(s) compared part by part with the staged ones)${o.backup ? ` · ${compared} other SKU(s) compared with the backup, ${collateral} changed` : ""} · ${bad.length} problem(s)`);
   for (const b of bad.slice(0, 60)) log(`  ! ${b.sku}: ${b.why}`);
   if (bad.length) process.exitCode = 1;
   return { checked: bySku.size, bad };

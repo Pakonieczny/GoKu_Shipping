@@ -73,6 +73,29 @@ function polyStats(G, seg) {
   return { area, per, circles: circles.slice(0, 6), rect, subs: sps.length, cmds: sps.reduce((n, s) => n + s.length, 0) };
 }
 
+/** Cut out every non-path segment of the page (what the per-SKU writer does to the segments that are not a charm's own), read the
+ *  page again and compare the paint of each path with the original. Returns Map(segment index → { what: [from, to] }). */
+async function leakScan(P, parsed) {
+  const { PDFDocument, PDFName } = require(path.join(root, "vendor/pdf-lib-1.17.1.min.js"));
+  const keep = parsed.segments.filter(x => x.kind === "path").map(x => x.index);
+  const out = new Map();
+  const doc = await PDFDocument.load(parsed.bytes, { ignoreEncryption: true, updateMetadata: false });
+  const ref = doc.context.register(doc.context.flateStream(P.isolate(parsed.content, parsed.segments, keep)));
+  doc.getPage(0).node.set(PDFName.of("Contents"), doc.context.obj([ref]));
+  const p2 = await P.parseSource(new Uint8Array(await doc.save({ useObjectStreams: false })), "leak.ai");
+  const a = parsed.segments.filter(x => x.kind === "path"), b = p2.segments.filter(x => x.kind === "path");
+  if (a.length !== b.length) { out.error = `the cut page has ${b.length} paths, the master ${a.length}: not compared`; return out; }
+  const col = (on, c) => (on && c ? c.map(v => r(v, 2)).join(",") : "-");
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i], d = {};
+    if (x.fill !== y.fill || col(x.fill, x.fillRGB) !== col(y.fill, y.fillRGB)) d.fill = [col(x.fill, x.fillRGB), col(y.fill, y.fillRGB)];
+    if (x.stroke !== y.stroke || col(x.stroke, x.strokeRGB) !== col(y.stroke, y.strokeRGB)) d.stroke = [col(x.stroke, x.strokeRGB), col(y.stroke, y.strokeRGB)];
+    if (x.stroke && Math.abs((x.lwPt || 0) - (y.lwPt || 0)) > 0.02) d.lw = [r(x.lwPt || 0, 2), r(y.lwPt || 0, 2)];
+    if (Object.keys(d).length) out.set(x.index, d);
+  }
+  return out;
+}
+
 async function dump(file, outFile, opts) {
   opts = opts || {};
   const { CharmNestPDF: P, Geom: G } = require(path.join(root, "netlify/functions/_charmNestPdf.js"));
@@ -80,6 +103,12 @@ async function dump(file, outFile, opts) {
   const log = m => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s] ${m}`);
   const parsed = await P.parseSource(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), name);
   log(`parsed: ${parsed.segments.length} top-level segments, ${parsed.nested.length} nested`);
+  // The per-SKU writer (isolate) cuts out every segment that is not the charm's own, and a segment's byte range can hold a
+  // graphics-state operator that the segments after it rely on (a text object that sets the layer's fill colour: BT /CS0 cs
+  // 0 0 1 scn …). Cutting it changes the colour of the paths that follow. Done here for every non-path segment at once, which
+  // is the writer's effect on any charm: the paths whose paint changes, by segment index (see `leak` of each charm).
+  const leak = opts.noLeak ? null : await leakScan(P, parsed);
+  if (leak) log(`leak scan: ${leak.size} path segment(s) change paint when the segments around them are cut out${leak.error ? " · " + leak.error : ""}`);
   const g = P.groupCharms(parsed, { minPt: 6 });
   log(`grouped: ${g.charms.length} charm outlines, ${g.orphans.length} orphans (rule ${g.rule})`);
   const lab = P.labelCharms(parsed, g.charms, { pattern: P.SKU_PATTERN_DEFAULT, gapPt: 6.4 / MM, widen: 0.25 });
@@ -134,6 +163,7 @@ async function dump(file, outFile, opts) {
       outline: c.outline ? member(c.outline, null, null) : null, extras: (c.extras || []).length, merged: c.mergedInto != null ? 1 : 0,
       members: c.members.filter(m => m !== c.outline).map(m => member(m, op, ob))
     };
+    if (leak && leak.size) { const hit = c.members.filter(m => m.index != null && m.parent == null && m.kind === "path" && leak.has(m.index)); if (hit.length) rec.leak = { n: hit.length, of: c.members.length, first: hit.slice(0, 4).map(m => Object.assign({ i: m.index, L: m.layer || null }, leak.get(m.index))) }; }
     if ((opts.rtAll || rtRe) && l && (opts.rtAll || [c.sku, ...(c.extraSkus || []).map(x => x.sku)].some(x => rtRe && rtRe.test(x)))) { try { rec.rt = await readBack(c); } catch (e) { rec.rt = { error: String(e.message || e).slice(0, 200) }; } }
     charms.push(rec);
   }
@@ -155,6 +185,26 @@ async function dump(file, outFile, opts) {
     charms, orphans };
   fs.writeFileSync(outFile, JSON.stringify(out));
   log(`dump written: ${outFile} (${(fs.statSync(outFile).size / 1048576).toFixed(1)} MB)`);
+}
+
+/** Add the leak scan to a dump made without it (a 30 s parse of the master instead of the 5 minute grouping): every charm gets
+ *  `leak` = { n, of, first[] } when members of it lose their paint in the per-SKU file, and the dump gets `leakTotal`. */
+async function addLeak(file, dumpFile) {
+  const { CharmNestPDF: P } = require(path.join(root, "netlify/functions/_charmNestPdf.js"));
+  const buf = fs.readFileSync(file), t0 = Date.now();
+  const parsed = await P.parseSource(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), path.basename(file));
+  const leak = await leakScan(P, parsed), d = JSON.parse(fs.readFileSync(dumpFile, "utf8"));
+  if (d.master !== path.basename(file)) throw new Error(`the dump is of ${d.master}, not ${path.basename(file)}`);
+  let hit = 0;
+  for (const c of d.charms) {
+    delete c.leak;
+    const all = (c.outline ? [c.outline] : []).concat(c.members), ms = all.filter(m => m.i != null && m.p == null && m.k === "path" && leak.has(m.i));
+    if (ms.length) { hit++; c.leak = { n: ms.length, of: all.length, first: ms.slice(0, 4).map(m => Object.assign({ i: m.i, L: m.L }, leak.get(m.i))) }; }
+  }
+  d.leakTotal = { paths: leak.size, charms: hit, error: leak.error || null, at: new Date().toISOString() };
+  fs.writeFileSync(dumpFile, JSON.stringify(d));
+  console.log(`${path.basename(file)}: ${leak.size} path(s) change paint in the per-SKU file · ${hit} charm(s) hold some · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  return d.leakTotal;
 }
 
 /** A fingerprint of one per-SKU .ai (or any small .ai) that does not depend on where on its page the charm sits: every drawn
@@ -187,14 +237,17 @@ function printDiff(a, b) {
   return why.length ? why : ["different"];
 }
 
-module.exports = { dump, polyStats, filePrint, printDiff };
+module.exports = { dump, polyStats, filePrint, printDiff, leakScan, addLeak };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === "dump") {
     if (rest.length < 2) { console.error('usage: node scripts/audit-catalog.cjs dump "<MASTER.ai>" <dump.json>'); process.exit(2); }
-    const opts = {}; for (let i = 2; i < rest.length; i++) { if (rest[i] === "--rt") opts.rt = rest[++i]; else if (rest[i] === "--rt-all") opts.rtAll = true; }
+    const opts = {}; for (let i = 2; i < rest.length; i++) { if (rest[i] === "--rt") opts.rt = rest[++i]; else if (rest[i] === "--rt-all") opts.rtAll = true; else if (rest[i] === "--no-leak") opts.noLeak = true; }
     dump(rest[0], rest[1], opts).catch(e => { console.error("audit-catalog dump:", e.stack || e.message); process.exit(1); });
+  } else if (cmd === "leak") {
+    if (rest.length < 2) { console.error('usage: node scripts/audit-catalog.cjs leak "<MASTER.ai>" <dump.json>'); process.exit(2); }
+    addLeak(rest[0], rest[1]).catch(e => { console.error("audit-catalog leak:", e.stack || e.message); process.exit(1); });
   } else if (cmd === "report") {
     require("./audit-catalog-report.cjs").main(rest);
   } else { console.error("usage: audit-catalog.cjs dump <master.ai> <dump.json> | report <dump.json>... --out <dir>"); process.exit(2); }
