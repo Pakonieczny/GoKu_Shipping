@@ -329,6 +329,13 @@ function seed(st) {
       assert.equal((await call({ op: 'masterPatch', sku: 'HEART_FACINGTEST', patch: { facing: null } })).status, 200); assert.equal('facing' in (await get()), false, 'null gives it back');
       await put([e({ facing: 'L' })]); assert.equal((await get()).facing, 'L', 'and the indexer may write it again');
       await put([e({ sku: 'PLAIN_FACINGTEST' })]); assert.equal('facing' in (await call({ op: 'masterGet', sku: 'PLAIN_FACINGTEST' })).body.entry, false);
+      // facing X (the design reads one way: letters, numbers) and sym (does the design look the same in a mirror: measured at indexing) are kept the same way
+      assert.equal((await call({ op: 'masterPatch', sku: 'HEART_FACINGTEST', patch: { facing: 'X' } })).status, 200); assert.equal((await get()).facing, 'X');
+      await put([e({ facing: 'R' })]); assert.equal((await get()).facing, 'X', 'a person\'s X stands over a re-index');
+      await put([e({ sym: 'directional' })]); assert.equal((await get()).sym, 'directional'); assert.equal((await call({ op: 'masterList', q: 'HEART_FACINGTEST' })).body.entries[0].sym, 'directional');
+      await put([e({ sym: 'bogus' })]); assert.equal((await get()).sym, 'directional', 'a value that is not symmetric, slight or directional is ignored');
+      await put([e()]); assert.equal((await get()).sym, 'directional', 'silence leaves it'); await put([e({ sym: 'symmetric' })]); assert.equal((await get()).sym, 'symmetric', 'a new measure replaces the old one');
+      assert.equal('sym' in (await call({ op: 'masterGet', sku: 'PLAIN_FACINGTEST' })).body.entry, false, 'an entry indexed without it carries none');
       assert.equal(Master.cleanFacing('X'), 'X', 'X says the design reads one way (letters, numbers): cut as drawn on both sides'); assert.equal(Master.cleanFacing('sideways'), undefined); assert.equal(Master.cleanFacing(undefined), undefined); assert.equal(Master.cleanFacing(null), null);
     });
     await t('10e a pair always has two pieces: a group whose rows say 2 and that has one piece left is named (missing), counted both sides; a made-up-again piece is counted once; rows that disagree say nothing', () => {

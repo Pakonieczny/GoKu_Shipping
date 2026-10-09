@@ -529,6 +529,19 @@
     return facingOfBody(bodiesOf(charm)[0], charm);
   }
 
+  /** What the Master tab card shows for "which way this design faces" (Paul, 9 Oct: left and right earrings are mirror images, so the app must know which way the drawing faces):
+   *  { show, value, options, hint }. Shown only for a design that is not the same in a mirror (the index field `sym` written at indexing, or `level` when the page measured it) or
+   *  one a person already set; a symmetric design has nothing to decide, and a design whose geometry is not known shows nothing. value "" = not set (as drawn is the Left),
+   *  "L" | "R" = the way the master draws it, "X" = it reads one way (letters, numbers: never turned over). */
+  function facingControl(entry, level) {
+    const e = entry || {}, set = e.facing === "L" || e.facing === "R" || e.facing === "X" ? e.facing : "", lv = e.sym || level || "";
+    return {
+      show: !!set || lv === "directional", value: set,
+      options: [["", "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]],
+      hint: "Which way the master file draws this design. A pair is a Left and a Right earring that are mirror images, so the Right is cut turned over; say which way the drawing faces so the Left earring faces left. \"Reads one way\" is for letters, numbers and words: both earrings are cut as drawn. Not set: the drawing is taken as the Left. Applies to orders made up from now on."
+    };
+  }
+
   const mx = (p, cx) => [2 * cx - p[0], p[1]];
   const boxOfPts = pts => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const q of pts) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; } return pts.length ? [x0, y0, x1, y1] : null; };
   function mirrorSeg(seg, cx, writable) {
@@ -725,7 +738,7 @@
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
-    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
+    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };
