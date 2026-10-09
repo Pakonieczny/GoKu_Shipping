@@ -247,10 +247,28 @@ const ListMedia = (() => {
   }
   const catalog=new Map();
   // (`px`, from the picture viewer, draws the same design large from the same source: never the thumbnail enlarged)
+  // (an earring's direction, Paul 9 Oct 18:47: the Right is the Left turned over about the vertical axis. A picture asked for ONE piece of a matching pair (opts.side "L" | "R", opts.mirror: true for the
+  //  piece that is the mirror image of the drawing) is the design as drawn, turned over for the mirror piece; a charm already held mirrored (charm.mirror) is not turned twice)
+  async function flipPicture(out) {
+    if(!out)return out;
+    try{
+      let src=out;if(typeof out==='string')src=await new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=out;});
+      const w=src.naturalWidth || src.width,h=src.naturalHeight || src.height;if(!w || !h)return out;
+      const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.translate(w,0);g.scale(-1,1);g.drawImage(src,0,0);
+      return typeof out==='string'?c.toDataURL('image/png'):c;
+    }catch(_){return out;}
+  }
   async function vector(row,px,opts) {
+    const st={drawnMirrored:false},out=await vector0(row,px,opts,st);
+    const turn=!!out && !!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !st.drawnMirrored;
+    return turn?flipPicture(out):out;
+  }
+  async function vector0(row,px,opts,st) {
     if(!row || row.spec?.noDesign)return null;
-    // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair)
-    const charm=pairRow(row)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
+    const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
+    const charm=(pairRow(row) || sideOne)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    if(charm && opts?.side && charm.mirror)st.drawnMirrored=true;
     // (opts.highlight "L" | "R": a mismatched pair's picture with the other body washed out, for ONE piece of the pair: the pair component's own option, passed on as it is asked for)
     if(charm)return P.frontPreview ? (opts?.highlight ? P.frontPreview(charm,px || 220,opts) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
@@ -277,7 +295,7 @@ const ListMedia = (() => {
     if(!row || row.spec?.noDesign)return '';
     const sku=String(row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
@@ -11719,7 +11737,7 @@ const OrderWin = window.OrderWin = (() => {
       (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name + (r.order.isGift ? " · gift" : "")) : r.order.isGift ? mcell("Gift", "yes") : "") +
       (sp.special ? mcell("Custom order", sp.special.label + (sp.special.read && !sp.special.decided ? ` · Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "") + (sp.special.why ? " · " + sp.special.why : "")) : sp.customDone ? mcell("Custom order", sp.customDone.category || "completed") : "") +
       mcell("Quantity", pairSides(r).length ? `${sp.quantity || r.line.quantity || 1} pair${(sp.quantity || r.line.quantity || 1) > 1 ? "s" : ""} · ${pairSides(r).length} pieces: Left and Right` : String(sp.quantity || r.line.quantity || 1)) +
-      (pairSides(r).length ? mcell("Pair", "Mismatched: the Left and the Right are different charms of one listing") : "") +
+      (pairSides(r).length ? mcell("Pair", ListMedia.pairRow(r) ? "Mismatched: the Left and the Right are different charms of one listing" : "Matching: the Right is the Left turned over (its mirror image)") : "") +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
       (sheetCell ? mcell("Sheet", sheetCell) : "") +
@@ -11879,7 +11897,7 @@ const OrderWin = window.OrderWin = (() => {
           engrave: x.engrave ? { state: x.engrave.state || "", needed: x.engrave.needed } : null, engraveCandidate: sp.engraveCandidate, noDesign: sp.noDesign });
       // (a mismatched pair line: its Left and Right are pieces of their own, `sides`: the line stays ONE piece for the pick, the timeline's lanes and the Review card; its rows are drawn per side)
       const sd = pairSides(x), tid = String(x.line.transactionId || "");
-      const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
+      const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, mirror: mine.some(c => c.mirror), pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
       return Object.assign({ key: x.key, tid, qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
         line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {});
@@ -12136,7 +12154,7 @@ const OrderWin = window.OrderWin = (() => {
       const sx = sideEach.get(sp.key); if (!sx) return "";
       const lineScope = scope && scope.find(q => q.key === x.p.key), ssp = lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null;
       const dot = `<i class="dot" style="--c:${esc(colorOf(sp.metal))}"></i>`, side = sideWord(sp.side), meta = pieceMeta(sp);
-      const nm = `<span class="owSidePic" data-pc-thumb="${esc(sp.side)}" data-pc-thumb-line="${esc(x.p.key)}" aria-hidden="true"></span><b>${esc(x.p.name)}</b> · <span class="owPcSide" data-side="${esc(sp.side)}">${esc(side)}</span>${meta ? " · " + esc(meta) : ""}`;
+      const nm = `<span class="owSidePic" data-pc-thumb="${esc(sp.side)}" data-pc-thumb-line="${esc(x.p.key)}"${sp.mirror ? ' data-pc-mirror="1"' : ""} aria-hidden="true"></span><b>${esc(x.p.name)}</b> · <span class="owPcSide" data-side="${esc(sp.side)}">${esc(side)}</span>${meta ? " · " + esc(meta) : ""}`;
       const aria = `${x.p.name} · ${side}${meta ? " · " + meta : ""}`;
       const ctl = i === 0 ? ctls.get(x.p.key) : null, hold = i === 0 ? holds.get(x.p.key) : "";
       const act = ctl ? `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>` : hold ? `<span class="pcAct" data-pc-hold>${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
@@ -12180,7 +12198,7 @@ const OrderWin = window.OrderWin = (() => {
     box._h = html; box.innerHTML = html; pdotBack(box, held);
     wirePcSheet(box);
     // (the small pictures of the Left and Right rows: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
-    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => ListMedia.watch(h, () => ListMedia.vectorThumb(pr, { highlight: h.dataset.pcThumb, px: 120 }), ListMedia.vectorKey(pr, { highlight: h.dataset.pcThumb }))); });
+    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => { const o = { highlight: h.dataset.pcThumb, side: h.dataset.pcThumb, mirror: h.dataset.pcMirror === "1", px: 120 }; ListMedia.watch(h, () => ListMedia.vectorThumb(pr, o), ListMedia.vectorKey(pr, o)); }); });
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
     markPieces();
