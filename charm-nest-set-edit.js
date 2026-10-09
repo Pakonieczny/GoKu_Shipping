@@ -132,7 +132,7 @@
 
   /** The set's own records after the edit, from its record (`doc`) and the sheets that leave / join. Pure: `at`, `by` are the caller's. */
   function setAfter(doc, edit) {
-    const leave = edit.leave || [], join = edit.join || [], gone = new Set(leave.map(idOf)), skus = edit.skus || {}, by = edit.by || '', at = +edit.at || 0;
+    const leave = edit.leave || [], join = edit.join || [], gone = new Set(leave.map(idOf)), skus = edit.skus || {}, sides = edit.sides || {}, by = edit.by || '', at = +edit.at || 0;
     const sheetIds = [...new Set((doc.sheetIds || []).filter(i => !gone.has(str(i))).concat(join.map(idOf)))];
     const stay = (edit.members || []).filter(m => !gone.has(idOf(m)));
     const metals = [...new Set(stay.map(m => m.metal).concat(join.map(m => m.metal)).filter(Boolean))];
@@ -149,7 +149,7 @@
         const m = /^(\d{1,30})_(\d{1,30})_(\d{1,4})$/.exec(key); if (!m) continue;
         const [, rid, tid, copy] = m, o = orders[rid] = orders[rid] || { held: null, lines: [] };
         let line = o.lines.find(l => str(l.transactionId) === tid); if (!line) { line = { transactionId: tid, sku: skus[tid] || skus[key] || '', copies: [] }; o.lines.push(line); }
-        if (!line.copies.some(c => c.poolId === key)) line.copies.push({ copy: +copy, sheetId: idOf(j), sheet: name, poolId: key, backPoolId: null });
+        if (!line.copies.some(c => c.poolId === key)) line.copies.push({ copy: +copy, sheetId: idOf(j), sheet: name, poolId: key, backPoolId: null, ...(sides[key] ? { side: sides[key] } : {}) });
       }
     }
     const labelFiles = (doc.labelFiles || []).filter(f => !gone.has(str(f.sheetId))).concat(join.flatMap(j => ((j.label && j.label.files) || []).map(f => Object.assign({ sheetId: idOf(j), sheet: j.fileBase || f.sheet || null, metal: j.metal || null }, f))));

@@ -12,9 +12,23 @@ const { str, num } = require("./_charmNestAuth");
 const INDEX = "Charm_Master_Index", FILES = "Charm_Master_Files";
 const isSku = s => /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/.test(String(s || ""));   // free text, as the shop's SKUs are ("T-REX_84495", "HUGGIE HOOPS- UMBRELLA")
 
+/** The optional `pair` of a design that draws more than one separate body (charm-nest-pair.js, PAIRMASTER; contract.md):
+    { v: 1, bodies: 2 to 8, mismatched: boolean }. undefined = the entry says nothing (what is stored stays as it is, which is
+    what every indexer written before pairs sends); null = "not a pair design" (the stored one is removed); an object that is
+    not that shape is ignored, never stored and never a reason to remove what is there. */
+function cleanPair(p) {
+  if (p === undefined) return undefined;
+  if (p === null) return null;
+  if (typeof p !== "object" || Array.isArray(p)) return undefined;
+  const bodies = Math.floor(+p.bodies);
+  if (!(bodies >= 2 && bodies <= 8)) return undefined;
+  return { v: 1, bodies, mismatched: p.mismatched === true };
+}
+
 function slimEntry(d) {
   if (!d) return null;
-  return { sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes),
+  const pair = cleanPair(d.pair);
+  return { ...(pair ? { pair } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes),
     engravable: d.engravable !== false, engravableBy: d.engravableBy || null, upAngle: d.upAngle == null ? null : num(d.upAngle), upSource: d.upSource || null, backKeepOut: d.backKeepOut || [], aiPath: d.aiPath || null, thumbPath: d.thumbPath || null, aiUrl: d.aiUrl || null, thumbUrl: d.thumbUrl || null,
     sizes: d.sizes || null, blocked: d.blocked || null, conflict: d.conflict || null, sizeMoved: d.sizeMoved || null, labelSource: d.labelSource || "text", confirmedBy: d.confirmedBy || null, open: !!d.open, indexedAt: d.indexedAt && d.indexedAt.toMillis ? d.indexedAt.toMillis() : (num(d.indexedAtMs) || null), hashSource: d.hashSource || "browser" };
 }
@@ -36,7 +50,7 @@ async function putIndex(db, FV, body) {
   for (let i = 0; i < skus.length; i += 200) {
     const part = skus.slice(i, i + 200);
     // (only what the rules below look at of an entry already there: its master, its size, its operator overrides)
-    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes"] });
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pairBy"] });
     snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
   }
   let batch = db.batch(), pending = 0;
@@ -50,11 +64,15 @@ async function putIndex(db, FV, body) {
       return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib) || String(a.size).localeCompare(String(b.size));
     })[0];
     const doc = { sku, masterHash, masterPath: str(body.masterPath, 600), masterName: str(body.masterName, 200), indexedAt: FV.serverTimestamp(), indexedAtMs: Date.now(), hashSource: str(body.hashSource || "browser", 20) };
-    const geom = e => ({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) });
+    // (`pair` goes with the geometry of the design, and of each size: only when the entry sent one, or null to take it away)
+    const pairOf = e => { const x = cleanPair(e.pair); return x === undefined ? {} : { pair: x === null ? FV.delete() : x }; };
+    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) }, pairOf(e));
     Object.assign(doc, geom(base));
     const sized = list.filter(e => e.size);
     if (sized.length) { doc.sizes = {}; for (const e of sized) doc.sizes[String(e.size).toUpperCase()] = geom(e); if (!list.find(e => !e.size)) { doc.charmHash = null; doc.aiPath = ""; doc.thumbPath = ""; doc.aiUrl = ""; doc.thumbUrl = ""; } }
     else if (ex && ex.sizes) doc.sizes = FV.delete();
+    // a person's decision about a doubtful design (masterPatch `pair`, pairBy "operator") stands over what a re-index reads from the drawing
+    if (ex && ex.pairBy === "operator") { delete doc.pair; for (const z of Object.values(doc.sizes || {})) delete z.pair; }
     // derived defaults, kept when an operator already overrode them
     if (!(ex && ex.engravableBy === "operator")) { doc.engravable = base.engravable !== false; doc.engravableBy = "index"; }
     if (!(ex && ex.upSource === "operator")) { doc.upAngle = base.upAngle == null ? null : num(base.upAngle); doc.upSource = str(base.upSource || "index", 20); }
@@ -93,4 +111,4 @@ async function putFile(db, FV, body) {
   return { ok: true, masterHash: hash };
 }
 
-module.exports = { INDEX, FILES, isSku, slimEntry, putIndex, putFile };
+module.exports = { INDEX, FILES, isSku, slimEntry, cleanPair, putIndex, putFile };
