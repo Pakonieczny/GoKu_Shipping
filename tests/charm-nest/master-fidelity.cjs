@@ -41,11 +41,11 @@ let checks = 0; const ok = m => { checks++; console.log('  ok ' + m); };
   assert(!rec.fills.includes('rgb(0,0,0)'), 'nothing is painted black that the master does not paint black');
   assert(rec.strokes.every(s => s.color === '#000' || s.color === 'rgb(0,0,0)'), 'cut lines are drawn in the cut pen');
   ok('white fill on a cut-line member stays white');
-  // a dark fill on a cut-line member (the twin of the silhouette, a black cut-out) is unchanged
+  // a black fill inside a charm is a mistake for blue hatching (black-fill rule): it is drawn blue, never black
   const dark = fillOnly('CUT', [blob(40, 40, 12, 4)], [0.05, 0.05, 0.05]);
   const r2 = group([body, dark]); const rec2 = draw(r2.g.charms[0]);
-  assert(rec2.fills.every(f => f === 'rgb(0,0,0)'), 'a dark fill is still drawn black: ' + JSON.stringify(rec2.fills));
-  ok('dark fill unchanged');
+  assert(rec2.fills.every(f => f === 'rgb(0,0,255)'), 'a black fill inside the charm is drawn as blue hatching: ' + JSON.stringify(rec2.fills));
+  ok('black fill inside a charm is blue hatching');
 }
 
 // 2 · a red outline on the CUT layer INSIDE a black cut outline is engraving; the layer still rules everywhere else

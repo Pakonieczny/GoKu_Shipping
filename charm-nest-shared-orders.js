@@ -353,7 +353,8 @@
    * removeFromSheet({orderId, sheetId, mode:'hold'|'cancel', by, note, scope}) or (orderId, sheetId, {mode, by, note, scope}).
    * Never runs by itself: the person chose Hold or Cancel. It is the sheet window's own "Take off the sheet" (SheetWin.takeOffOrder):
    *   scope 'order' (default)  the order's pieces come off every sheet that can give them up, and it waits On hold (or is cancelled)
-   *   scope 'sheet'            only the pieces on `sheetId` come off, their lines wait On hold (a cancel is always the whole order)
+   *   scope 'sheet'            only the pieces on `sheetId` come off, their lines wait On hold (a cancel is always the whole order). A line comes off WHOLE:
+   *                            the other ear of a pair, or the other discs, on another sheet come off with it (SheetWin.offPlan, PairRemove); `removed` then also lists them, with `side` and `group`
    * A piece on a cut sheet, or in a set sent to the station, stays (answered in `stayed`, with the plain reason).
    */
   async function removeFromSheet(a, b, c) {
