@@ -68,13 +68,13 @@ const poly = (pts, extra) => { const xs = pts.map(p => p[0]), ys = pts.map(p => 
 const thumbLeft = [[5, 0], [20, 0], [20, 26], [5, 26], [5, 14], [0, 14], [0, 8], [5, 8]];             // a mitten-like body: the thumb sticks out to the LEFT, the mass lies right
 const mitten = poly(thumbLeft, { index: 1 }), mink = eng(8, 2, 18, 6); mink.index = 2;
 const mCharm = { outline: mitten, members: [mitten, mink], bbox: [0, 0, 20, 26], upAngle: 30 };
-ok(Pair.facingOf(mCharm) === 'L', 'a body with its thumb out left faces left');
+ok(Pair.facingOf(mCharm) === null && Pair.facingInfo(Pair.bodiesOf(mCharm)[0], mCharm).directional === true, 'a body with its thumb out left is directional, and nothing in its shape says which way it faces: unknown (as drawn is the Left)');
 ok(Pair.facingOf({ outline: o1, members: [o1], bbox: [0, 0, 20, 26] }) === null, 'a symmetric body has no facing');
 ok(Pair.facingOf(Object.assign({ facing: 'R' }, mCharm)) === 'R', 'a facing a person set wins over the heuristic');
 const mirrored = Pair.mirrorOf(mCharm);
 ok(mirrored.bbox.join() === '0,0,20,26' && mirrored.mirrored === true && mirrored !== mCharm && mCharm.mirrored === undefined, 'mirrorOf: a new charm, the same box, the original untouched');
 ok(mirrored.outline.subpaths[0][0][1][0] === 15 && mirrored.outline.subpaths[0][5][1][0] === 20 && mirrored.outline.synthetic === true, 'mirrorOf reflects x about the box centre and marks the path as written from geometry');
-ok(Pair.facingOf(mirrored) === 'R', 'the mirror image of a left-facing body faces right');
+ok(Pair.facingOf(Pair.mirrorOf(Object.assign({ facing: 'L' }, mCharm))) === 'R', 'the mirror image of a body a person set to face left faces right');
 ok(mirrored.upAngle === 150, 'the hole direction turns about the vertical axis (30 -> 150)');
 const back = Pair.mirrorOf(mirrored);
 ok(JSON.stringify(back.outline.subpaths) === JSON.stringify(mitten.subpaths) && back.bbox.join() === '0,0,20,26', 'mirroring twice gives the drawing back');

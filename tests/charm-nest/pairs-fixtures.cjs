@@ -17,7 +17,7 @@
 //   * a matching pair's pieces now carry side "L" then "R" (they used to carry null), and `mirror` (true on the piece that is the mirror of the drawing)
 //   * kinds: 'pair' | 'hoop' | 'mismatched' (earring pairs: 2 pieces per unit) | 'earring-single' (the "Single" line: 1 piece per unit, no side) |
 //            'single' (a pendant or charm) | 'discs' (n discs) | 'letters' (n letters): the last four never have a side
-//   * the default pair design is PAIR-FACE-L (drawn facing left, asymmetric, so mirroring is visible); PAIR-FACE-R faces right; PAIR-SET-R carries a person's `facing: "R"`
+//   * the default pair design is PAIR-FACE-L (drawn facing left, asymmetric, so mirroring is visible); PAIR-FACE-R faces right (a person set `facing: "R"` on it: a shape cannot say which way it faces); PAIR-SET-R carries a person's `facing: "R"`
 //   * every sheet charm of a world carries `shapeJson`: its laid outline as a JSON STRING (a list of polygons is an array in an array: Firestore refuses it)
 //   * F.problems has new codes: side-missing, side-unexpected, mirror-missing, mirror-mismatch, mirror-pairing, mirror-unexpected, shape-mismatch, reflected, not-mirror
 //   * a world is `{ ..., kinds }` (groupKey -> kind) and the run record's lines carry `kind` and `pieceCount`, as the intake will set spec.pair.kind / spec.pieceCount
@@ -169,7 +169,7 @@ function charmOf(sku) {
   const bodies = src(), members = [];
   for (const b of bodies) { members.push(b.outline); for (const i of b.inks) members.push(i); if (b.ring) members.push(b.ring); }
   const bbox = members.reduce((u, m) => [Math.min(u[0], m.bbox[0]), Math.min(u[1], m.bbox[1]), Math.max(u[2], m.bbox[2]), Math.max(u[3], m.bbox[3])], [1e9, 1e9, -1e9, -1e9]);
-  return { sku, ...(sku === 'PAIR-SET-R' ? { facing: 'R' } : {}), outline: bodies[0].outline, members, bbox, widthPt: bbox[2] - bbox[0], heightPt: bbox[3] - bbox[1], areaPt2: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) };
+  return { sku, ...(sku === 'PAIR-SET-R' || sku === 'PAIR-FACE-R' ? { facing: 'R' } : {}), outline: bodies[0].outline, members, bbox, widthPt: bbox[2] - bbox[0], heightPt: bbox[3] - bbox[1], areaPt2: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) };
 }
 /** The master index entry of a design: `pair` only when it draws more than one body (the contract's Charm_Master_Index field). */
 function entryOf(sku) {
