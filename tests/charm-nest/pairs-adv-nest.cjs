@@ -148,4 +148,41 @@ const baseJob = { sheet, angles: Array.from({ length: 36 }, (_, i) => i * 10), f
     assert.equal(pd.group, undefined, 'a plain charm carries no group');
     pass('7 the partial sheet\'s trial pack carries group, side, mirror and near into the solver job (PAIRPARTIAL\'s request is already met through buildJob)');
   }
+
+  /* ── 8 · a quantity-2 line (L, R, L, R) when the sheet takes three of the four: the whole line is turned away, not three pieces ── */
+  {
+    const sq = (id, extra) => { const scale = 2, side = Math.ceil(31 / MM * scale), bits = new Uint8Array(side * side).fill(1);
+      for (let y = 0; y < Math.floor(side / 3); y++) for (let x = 0; x < Math.floor(side / 6); x++) bits[y * side + x] = 0;
+      const piece = { id, w: side, h: side, scale, bits, areaPt2: bits.reduce((a, b) => a + b, 0) / (scale * scale), orderDate: 1, pinned: null, hold: false, ...extra }; return Object.assign(piece, S.pairFields(piece)); };
+    const job = pieces => ({ ...baseJob, pieces, maxTrials: 60, timeBudgetMs: 30000 });
+    const three = await S.solve(job([sq('a', { order: 'a' }), sq('b', { order: 'b' }), sq('c', { order: 'c' })]), {});
+    assert.equal(three.placements.length, 3, 'control: three 31 mm squares fit the sheet');
+    const four = ['L', 'R', 'L', 'R'].map((side, i) => sq('q' + i, { order: 'q', side, mirror: side === 'R', groupKey: 'q:1', groupSize: 4 }));
+    const one = await S.solve(job([...four, sq('x', { order: 'x' })]), {});
+    const placed = new Set(one.placements.map(p => p.id));
+    assert(four.every(p => placed.has(p.id)) || four.every(p => !placed.has(p.id)), 'a line of four is whole or turned away whole, never three: ' + [...placed].join(','));
+    const only = await S.solve(job(four), {});
+    assert.equal(only.placements.length, 0, 'the line of four does not fit (three do): none of its pieces is placed');
+    assert(only.pairing && only.pairing.turnedAway === 1 && only.pairing.split.length === 0, 'pairing: ' + JSON.stringify(only.pairing));
+    pass('8 a quantity-2 line (L R L R) that does not fit whole is turned away whole (three of four fit, none is placed)');
+  }
+
+  /* ── 9 · after a hold frees room: the pair that was turned away whole (the strip under three locked squares is 16 mm high) is seated whole, and near, once two of the squares are gone ── */
+  {
+    const sq = (id, mm, extra) => { const scale = 2, side = Math.ceil(mm / MM * scale), bits = new Uint8Array(side * side).fill(1);
+      for (let y = 0; y < Math.floor(side / 3); y++) for (let x = 0; x < Math.floor(side / 6); x++) bits[y * side + x] = 0;
+      const piece = { id, w: side, h: side, scale, bits, areaPt2: bits.reduce((a, b) => a + b, 0) / (scale * scale), orderDate: 1, pinned: null, hold: false, ...extra }; return Object.assign(piece, S.pairFields(piece)); };
+    const fixed = [17, 49, 81].map((x, i) => { const pin = { cxPt: x / MM, cyPt: 17 / MM, angle: 0 }; return { piece: sq('f' + i, 31, { order: 'f' + i, pinned: pin }), pin }; });
+    const lockOf = list => list.map(f => ({ id: f.piece.id, ...f.pin, wPt: f.piece.w / 2, hPt: f.piece.h / 2 }));
+    const mate = () => [sq('L1', 20, { order: 'p', side: 'L', mirror: false, groupKey: 'p:1', groupSize: 2 }), sq('R1', 20, { order: 'p', side: 'R', mirror: true, groupKey: 'p:1', groupSize: 2 })];
+    const run = async list => { const locked = lockOf(list); return S.solve({ ...baseJob, pieces: [...list.map(f => f.piece), ...mate()], lockedPlacements: locked, initialLayout: locked, maxTrials: 60, timeBudgetMs: 30000 }, {}); };
+    const full = await run(fixed);
+    assert.deepEqual(full.placements.filter(p => p.id === 'L1' || p.id === 'R1'), [], 'with three squares in place neither piece of the pair goes in (the strip is 16 mm)');
+    assert(full.pairing.turnedAway === 1 && full.pairing.split.length === 0, 'turned away whole: ' + JSON.stringify(full.pairing));
+    const freed = await run(fixed.slice(0, 1));
+    const got = freed.placements.filter(p => p.id === 'L1' || p.id === 'R1');
+    assert.equal(got.length, 2, 'two squares left (a hold freed their room): both pieces of the pair are seated');
+    assert(freed.pairing.seated === 1 && freed.pairing.near.maxMm < 8, 'and near each other: ' + JSON.stringify(freed.pairing));
+    pass('9 a pair turned away from a full sheet is seated whole and near once a hold frees room');
+  }
 })().catch(e => { console.error(e); process.exit(1); });

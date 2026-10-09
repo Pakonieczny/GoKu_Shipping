@@ -234,6 +234,11 @@ async function main() {
 
     const idle = () => page.evaluate(() => window.Seal && Seal.whenIdle ? Seal.whenIdle() : null);
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 5000 }); };
+    // How many rows the Pieces list draws. Both lines are earring pairs (a pair is a Left and a Right, drawn in their own direction), so a line the
+    // pool holds no pieces of any more (held, completed by hand) draws TWO rows, the Left and the Right, both under the line's own key; a line whose
+    // pool rows are the old one-row-per-copy shape (this fixture's pooled orders) stays one row; a cancelled order has no list.
+    const earsOfTruth = t => (t.state === 'hold' || t.state === 'hand') ? 2 : t.state === 'cancelled' ? 0 : 1;
+    const rowsOf = o => Object.values(TRUTH[o.rid]).reduce((n, t) => n + earsOfTruth(t), 0);
     const openWin = async (o, n) => {
       // (a cancelled order is not in the pull: it opens from its records by its number, and has no list of pieces)
       const cancelled = o === CANC, key = cancelled ? o.rid : kOf(o, 'hug');
@@ -250,14 +255,15 @@ async function main() {
       const t = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
       const card = document.getElementById('owNowCard');
       const chips = [...card.querySelectorAll('.shs .owShChip')].map(c => ({ pc: c.dataset.pc || '', text: t(c.querySelector('b')), sub: t(c.querySelector('span span')), off: c.classList.contains('off'), hand: !!c.dataset.hand }));
-      const rows = {};
+      const rows = {}, ears = {};
       for (const r of document.querySelectorAll('#owPcSum .owPcRow')) {
         const k = r.dataset.piece || '', chip = r.querySelector('.st .pcSt'), sr = r.querySelector('.st.owPcSr');
-        rows[k] = { st: t(chip) || t(sr), k: chip ? chip.dataset.k : null, dots: [...r.querySelectorAll('.steps i')].map(i => i.classList.contains('on')) };
+        rows[k] = { st: t(chip) || t(sr), k: chip ? chip.dataset.k : null, dots: [...r.querySelectorAll('.steps i')].map(i => i.classList.contains('on')), side: r.dataset.side || '' };
+        (ears[k] = ears[k] || []).push(rows[k]);
       }
       const rail = [...document.querySelectorAll('#owRail .tlStop')].map(s => ({ k: s.dataset.stage, cls: s.className.replace('tlStop', '').trim(), cnt: t(s.querySelector('.tlCnt')) }));
       const tab = document.querySelector('.owTabsV [data-ow-view="sheet"]');
-      return { head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), pill: t(document.getElementById('owNow')), chips, rows, rail, tab: { off: tab.classList.contains('off'), count: t(document.getElementById('owShCount')) } };
+      return { head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), pill: t(document.getElementById('owNow')), chips, rows, ears, rail, tab: { off: tab.classList.contains('off'), count: t(document.getElementById('owShCount')) } };
     });
     const timelineSnap = () => page.evaluate(() => {
       const t = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
@@ -275,16 +281,24 @@ async function main() {
         const t = truth[name], row = s.rows[key], chip = s.chips.find(c => c.pc === key), tag = `${o.rid} ${name} (${t.state})`;
         if (!row && t.state === 'cancelled') { if (chip && !chip.off) out.push(`${tag}: a cancelled piece's chip names a sheet ${JSON.stringify(chip)}`); continue; }   // (a cancelled order has no list of pieces)
         if (!row) { out.push(`${tag}: no row`); continue; }
-        // the row's status
-        const want = t.state === 'sheet' ? WORD.sheet(t.label) : WORD[t.state];
-        if (!want.test(row.st || '')) out.push(`${tag}: the row says "${row.st}"`);
-        // the six dots: Order in is done for every piece that has arrived; Nested only while the piece is on a sheet; every later dot only after it
-        const dots = row.dots;
-        if (dots.length < 4) out.push(`${tag}: the row draws ${dots.length} dots`);
-        if (t.on && !dots[1]) out.push(`${tag}: on a sheet, but its Nested dot is hollow ${JSON.stringify(dots)}`);
-        if (!t.on && t.state !== 'hand' && t.state !== 'cancelled') {
-          if (dots[1]) out.push(`${tag}: not on a sheet, but its Nested dot is solid ${JSON.stringify(dots)}`);
-          if (dots.slice(1).some(Boolean)) out.push(`${tag}: not on a sheet, but a later dot is solid ${JSON.stringify(dots)}`);
+        // an earring pair that the pool holds no pieces of any more is drawn as its Left row and its Right row (one row for a pooled line)
+        const list = (s.ears && s.ears[key]) || [row], wantRows = earsOfTruth(t);
+        if (list.length !== wantRows) out.push(`${tag}: ${list.length} rows, ${wantRows} expected ${JSON.stringify(list.map(r => r.side))}`);
+        if (wantRows === 2 && list.map(r => r.side).sort().join() !== 'L,R') out.push(`${tag}: the two rows are not the Left and the Right ${JSON.stringify(list.map(r => r.side))}`);
+        // every ear's row says the same as the piece does
+        for (const ear of list) {
+          const tg = ear.side ? `${tag} ${ear.side === 'L' ? 'Left' : 'Right'}` : tag;
+          // the row's status
+          const want = t.state === 'sheet' ? WORD.sheet(t.label) : WORD[t.state];
+          if (!want.test(ear.st || '')) out.push(`${tg}: the row says "${ear.st}"`);
+          // the six dots: Order in is done for every piece that has arrived; Nested only while the piece is on a sheet; every later dot only after it
+          const dots = ear.dots;
+          if (dots.length < 4) out.push(`${tg}: the row draws ${dots.length} dots`);
+          if (t.on && !dots[1]) out.push(`${tg}: on a sheet, but its Nested dot is hollow ${JSON.stringify(dots)}`);
+          if (!t.on && t.state !== 'hand' && t.state !== 'cancelled') {
+            if (dots[1]) out.push(`${tg}: not on a sheet, but its Nested dot is solid ${JSON.stringify(dots)}`);
+            if (dots.slice(1).some(Boolean)) out.push(`${tg}: not on a sheet, but a later dot is solid ${JSON.stringify(dots)}`);
+          }
         }
         // the hold card's chip
         if (t.on) { if (!chip || chip.off || !(chip.text || '').includes(t.label)) out.push(`${tag}: its chip says ${JSON.stringify(chip)}`); }
@@ -333,7 +347,7 @@ async function main() {
       return out;
     };
     const run = async (o, withTimeline = true) => {
-      await openWin(o, 2);
+      await openWin(o, rowsOf(o));
       const s = await snap(); let tl = null;
       if (withTimeline) { await view('timeline'); tl = await timelineSnap(); await view('info'); }
       if (probe) {

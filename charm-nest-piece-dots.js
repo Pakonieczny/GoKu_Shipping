@@ -83,6 +83,8 @@
 .pdSpin{width:14px;height:14px;box-sizing:border-box;border:2px solid var(--line,#e4ddd0);border-top-color:var(--ink70,#5b554c);border-radius:50%;animation:pdSpin .7s linear infinite}
 @keyframes pdSpin{to{transform:rotate(360deg)}}
 .pdLine{display:block;overflow-wrap:anywhere}
+.pdEar{display:block;margin-top:5px;text-align:center;font:600 10px/1.2 var(--sans,system-ui,sans-serif);letter-spacing:.02em;color:var(--ink70,#5b554c)}
+.pdTip.text .pdEar{margin-top:4px;text-align:left}
 .pdTip::after{content:"";position:absolute;left:var(--ax);bottom:-3.5px;width:7px;height:7px;margin-left:-3.5px;background:var(--card,#fffefb);border:1px solid var(--line,#e4ddd0);border-top:0;border-left:0;border-radius:0 0 2px 0;transform:rotate(45deg)}
 .pdTip.below::after{bottom:auto;top:-3.5px;transform:rotate(225deg)}
 @media (prefers-reduced-motion:reduce){.pdSpin{animation-duration:1.6s}}`;
@@ -203,7 +205,7 @@
   }
 
   /* ═══ the one card ═══ */
-  const st = { tip: null, box: null, wait: null, line: null, dot: null, key: '', how: '', x: 0, y: 0, on: false, mo: null, scope: null, anim: null };
+  const st = { tip: null, box: null, wait: null, line: null, ear: null, dot: null, key: '', how: '', x: 0, y: 0, on: false, mo: null, scope: null, anim: null };
   function make() {
     if (st.tip) return st.tip;
     css();
@@ -213,16 +215,21 @@
     const sp = doc.createElement('i'); sp.className = 'pdSpin'; sp.setAttribute('role', 'status'); sp.setAttribute('aria-label', 'Loading design');
     const tx = doc.createElement('span'); tx.textContent = 'Loading design'; st.wait.append(sp, tx);
     st.line = doc.createElement('span'); st.line.className = 'pdLine';
+    st.ear = doc.createElement('span'); st.ear.className = 'pdEar';   // (an earring pair's piece: which ear this card is of)
     return t;
   }
   const dotOf = n => (n && n.nodeType === 1 && n.classList && n.classList.contains('pdot')) ? n : null;
   /** What the card holds for a dot now: the picture (ready), the spinner (being made), or one calm line. */
+  // an earring pair's piece names its ear under the picture (the card of the Right shows the Right's own picture, turned over)
+  function earWord(dot) { const s = dot && dot.getAttribute ? dot.getAttribute('data-pd-s') : ''; return s === 'L' ? 'Left earring' : s === 'R' ? 'Right earring' : ''; }
   function paint(info, e) {
-    const t = st.tip;
-    if (!info.none && e && e.state === 'ready') { st.box.replaceChildren(e.img); t.classList.remove('text'); t.replaceChildren(st.box); return; }
-    if (!info.none && (!e || e.state === 'busy')) { st.box.replaceChildren(st.wait); t.classList.remove('text'); t.replaceChildren(st.box); return; }
+    const t = st.tip, ear = earWord(st.dot);
+    if (ear) st.ear.textContent = ear;
+    const fill = (text, ...kids) => { t.classList.toggle('text', text); t.replaceChildren(...kids, ...(ear ? [st.ear] : [])); };
+    if (!info.none && e && e.state === 'ready') { st.box.replaceChildren(e.img); fill(false, st.box); return; }
+    if (!info.none && (!e || e.state === 'busy')) { st.box.replaceChildren(st.wait); fill(false, st.box); return; }
     st.line.textContent = !info.none && e && e.state === 'error' ? FAILED : NO_DESIGN;
-    t.classList.add('text'); t.replaceChildren(st.line);
+    fill(true, st.line);
   }
   function place(dot) {
     const t = st.tip, b = dot.getBoundingClientRect();

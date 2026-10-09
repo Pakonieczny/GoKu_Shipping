@@ -271,6 +271,21 @@ async function partB() {
     assert.equal(tl2.left, 'Left'); assert.equal(tl2.none, ''); assert.equal(tl2.together, ''); assert.equal(tl2.title, 'Left · On GF Sheet 1'); assert.equal(tl2.plain, 'On GF Sheet 1');
     assert.ok(/Sheet 1/.test(JSON.stringify(tl2.hl)) && /Sheet 2/.test(JSON.stringify(tl2.hr)) && !/Sheet 2/.test(JSON.stringify(tl2.hl)), JSON.stringify(tl2));
     ok('B9 an event only one ear has is titled with its side, a shared one is not, and each ear\'s placement history is its own');
+    // 10 · the issue dots' hover card names the ear under the picture; a dot with no side says nothing extra
+    const hov = {};
+    await page.evaluate(() => {
+      const host = document.createElement('div'); host.id = 'pdProbe'; host.style.cssText = 'position:fixed;left:40px;top:300px;z-index:99999;background:#fff;padding:20px';
+      host.innerHTML = PieceDots.html([{ pool: 'x_1', n: 1, side: 'L', none: true }, { pool: 'x_2', n: 2, side: 'R', mirror: true, none: true }, { pool: 'x_3', n: 3, none: true }], { order: '9' });
+      document.body.appendChild(host);
+    });
+    for (const [i, name] of [[1, 'left'], [2, 'right'], [3, 'plain']]) {
+      await page.mouse.move(3, 3); await page.waitForTimeout(80);
+      await page.hover(`#pdProbe .pdot:nth-child(${i})`); await page.waitForTimeout(200);
+      hov[name] = await page.evaluate(() => { const t = PieceDots.tip(), e = t.querySelector('.pdEar'); return { on: t.hasAttribute('data-on'), ear: e ? e.textContent : null, text: t.textContent.replace(/\s+/g, ' ').trim() }; });
+    }
+    assert.ok(hov.left.on && hov.left.ear === 'Left earring' && hov.right.ear === 'Right earring', JSON.stringify(hov));
+    assert.ok(hov.plain.on && hov.plain.ear === null && !/earring/.test(hov.plain.text), JSON.stringify(hov));
+    ok('B10 the issue dots\' hover card names the ear, and a piece with no side adds nothing');
     await context.close();
   } finally { await browser.close(); srv.close(); }
   assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
