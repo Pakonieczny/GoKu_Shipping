@@ -263,12 +263,9 @@
   }
   const keyOk = k => typeof k === "string" && k.length > 1 && !/^:/.test(k);
 
-  const FORMS_PAIR = new Set(["earrings", "earring", "stud", "studs", "hoop", "hoops", "huggie", "huggies", "stud earrings", "hoop earrings", "huggie earrings", "pair"]);
-  const FORMS_SINGLE = new Set(["earring-single", "single earring", "single", "charm", "pendant", "keychain", "bracelet", "anklet"]);
-  const formOf = line => String((line && ((line.spec && line.spec.form) || line.form || (line.row && line.row.spec && line.row.spec.form))) || "").toLowerCase().trim();
   const num = v => (Number.isFinite(+v) && +v > 0 ? Math.floor(+v) : 0);
-  const quantityOf = line => num(line && ((line.spec && line.spec.quantity) || line.quantity || line.qty || (line.row && line.row.spec && line.row.spec.quantity))) || 1;
-  /** n for a disc necklace ("3 discs"), or 0. Read from an explicit count on the line, else from the listing text and variations. */
+  const quantityOf = line => Math.max(1, Math.round(+(line && ((line.spec && line.spec.quantity) || line.quantity || line.qty || (line.row && line.row.spec && line.row.spec.quantity))) || 1));
+  /** n for a disc necklace ("3 discs"), or 0: INFORMATION ONLY (the app counts no more pieces for it today; see pieceCountOf). Read from an explicit count on the line, else from the listing text and variations. */
   function discsOf(line) {
     if (!line) return 0;
     const e = num(line.discs || line.discCount || (line.spec && (line.spec.discs || line.spec.discCount)));
@@ -277,17 +274,16 @@
     const m = /(\d{1,2})\s*(?:x\s*)?(?:discs?|disks?|circles?)\b/i.exec(texts) || /\b(?:discs?|disks?)\s*[:\-x]\s*(\d{1,2})\b/i.exec(texts);
     return m ? +m[1] : 0;
   }
-  /** How many pieces one order line makes. An explicit count on the line wins (the intake sets it: pieceCount / poolIds); else
-   *  a mismatched design makes two per unit, earrings two per unit, a disc necklace its discs, anything else one per unit. */
+  /** How many pieces one order line makes. TODAY (every site of the app: makePool, footprint, OrderPieces, station-live-order ...) a line
+   *  makes max(1, round(quantity)) pieces whatever its form, so that is the rule here too; nothing doubles earrings or multiplies discs.
+   *  An explicit count wins (the intake sets spec.pieceCount: one source of truth in charm-nest-orders.js; a row's pool ids are the fact).
+   *  Only a MISMATCHED design makes two pieces per unit (its left and its right body). */
   function pieceCountOf(line, charm) {
-    const explicit = num(line && (line.pieceCount || line.pieces_n)) || (line && Array.isArray(line.poolIds) && line.poolIds.length) || 0;
+    const explicit = num(line && (line.pieceCount || (line.spec && line.spec.pieceCount) || (line.row && line.row.spec && line.row.spec.pieceCount))) ||
+      (line && Array.isArray(line.poolIds) && line.poolIds.length) || (line && line.row && Array.isArray(line.row.poolIds) && line.row.poolIds.length) || 0;
     if (explicit) return explicit;
-    const q = quantityOf(line), d = discsOf(line);
-    if (d > 1) return d * q;
-    if (charm && isMismatched(charm)) return 2 * q;
-    const f = formOf(line);
-    if (FORMS_PAIR.has(f) && !FORMS_SINGLE.has(f)) return 2 * q;
-    return q;
+    const q = quantityOf(line);
+    return charm && isMismatched(charm) ? 2 * q : q;
   }
   /** The pieces one order line makes, in order: [{ side, bodyIndex, groupKey, n, of }]. A mismatched design: every unit makes its left piece
    *  (bodyIndex 0, "L") then its right piece (bodyIndex 1, "R"); anything else: bodyIndex 0, side null. */
@@ -299,15 +295,12 @@
     }
     return out;
   }
-  /** single | pair | mismatched | multi (n discs, or any count above two). */
+  /** single (one piece) | pair (two pieces of one design) | mismatched (a left and a right body) | multi (three or more pieces, or several mismatched pairs). */
   function kindOf(line, charm) {
-    if (charm && isMismatched(charm) && pieceCountOf(line, charm) === 2) return "mismatched";
-    const total = pieceCountOf(line, charm);
-    if (discsOf(line) > 1) return "multi";
-    if (charm && isMismatched(charm)) return "multi";   // several mismatched pairs on one line: two or more of each side
+    const total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm);
+    if (mis) return total === 2 ? "mismatched" : "multi";
     if (total <= 1) return "single";
-    if (total === 2) return "pair";
-    return "multi";
+    return total === 2 ? "pair" : "multi";
   }
   /** True when two different pieces are in one group (one order line): they must be on the same sheet and the same metal, and
    *  anything that moves, removes or completes one must know about the other. */

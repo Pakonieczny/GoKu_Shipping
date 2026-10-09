@@ -27,7 +27,8 @@
  *                        a hash that moves makes the protected placements of a cut Rose sheet refuse to save)
  *    --pin FILE          which charm owns a SKU that the sheet labels under more than one charm ("twins"). A JSON object
  *                        { "SKU": { "at": [x, y] } } (a point on the owning charm, in page points: its outline box centre) or
- *                        { "SKU": charmIndex }; "SKU__S" pins a sized line. Without a pin the first charm of the page keeps the SKU
+ *                        { "SKU": charmIndex }; "SKU__S" pins a sized line. { "SKU": "elsewhere" } leaves the SKU to
+ *                        another master: every charm of this sheet loses it (a SKU read from two masters has one home). Without a pin the first charm of the page keeps the SKU
  *                        (the one labelCharms reports as kept: the label highest on the page), the same on every run.
  *    --out-dir DIR       STAGE instead of upload: write every per-SKU .ai / .png and records.json (the exact entries that
  *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
@@ -156,9 +157,10 @@ function settleTwins(lab, charms, pins) {
   for (const d of lab.duplicates || []) { const k = keyOf(d); add(k, d.charmIndex); add(k, d.firstIndex); if (!kept.has(k)) kept.set(k, d.firstIndex); }
   const out = [];
   for (const [k, set] of claims) {
-    if (set.size < 2) continue;
+    const pin = pins && pins.get(k), away = pin === "elsewhere" || (pin && pin.elsewhere === true);   // "elsewhere": another master owns this SKU
+    if (set.size < 2 && !away) continue;
     const idx = [...set].sort((a, b) => a - b); let owner = kept.has(k) && set.has(kept.get(k)) ? kept.get(k) : idx[0], rule = "first on the page";
-    const pin = pins && pins.get(k);
+    if (away) { for (const i of idx) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); } out.push({ key: k, owner: null, others: idx, rule: "elsewhere" }); continue; }
     if (pin != null) {
       let want = typeof pin === "number" ? pin : pin && pin.index != null ? +pin.index : null;
       if (want == null && pin && Array.isArray(pin.at)) {
@@ -205,7 +207,7 @@ async function main(argv, log = console.log) {
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
-  if (twins.length) log(`  ${twins.length} SKU(s) are read under more than one charm and kept on one (${twins.filter(t => t.rule === "pinned").length} pinned, the rest the first on the page): ${twins.slice(0, 30).map(t => `${t.key} -> #${t.owner}`).join(", ")}${twins.length > 30 ? " …" : ""}`);
+  if (twins.length) log(`  ${twins.length} SKU(s) settled: read under more than one charm and kept on one, or left to another master (${twins.filter(t => t.rule === "pinned").length} pinned, ${twins.filter(t => t.rule === "elsewhere").length} elsewhere, the rest the first on the page): ${twins.slice(0, 30).map(t => `${t.key} -> ${t.owner == null ? "elsewhere" : "#" + t.owner}`).join(", ")}${twins.length > 30 ? " …" : ""}`);
 
   let masterUp = null;
   if (net && o.uploadMaster) { masterUp = await upload(o.origin, o.passcode, `charmnest/master/files/${masterHash.slice(0, 12)}-${name.replace(/[^\w.\-]+/g, "_")}`, buf, "application/pdf"); log(`master stored at ${masterUp.path}`); }
