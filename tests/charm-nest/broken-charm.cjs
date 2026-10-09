@@ -127,6 +127,19 @@ const near = (c, x, y, tol = 3) => { const b = c.outline.bbox; return Math.abs((
   assert.deepEqual(rw.skus, ['DOG_88528', 'DOG_88528 (HUGGIE)'], 'the re-index list holds the two dogs the reader now reads right, not the ring or the open dog');
   assert.equal(list.find(e => e.sku === 'DOG_OPEN_44711').fix, 'master', 'the open dog is for the artist');
   assert.equal(list.find(e => e.sku === 'RING_12345').fix, 'review', 'a lone ring is for a person to look at');
-  assert(list.some(e => e.sku === 'RING_12345') && list.some(e => e.sku === 'DOG_OPEN_44711') && !list.some(e => e.sku === 'DOG_88528 (HUGGIE)' || e.sku === 'DOG_88528'), 'the report lists the ring and the open dog, not the repaired dogs: ' + list.map(e => e.sku));
+  const dog = list.find(e => e.sku === 'DOG_88528 (HUGGIE)');
+  assert(dog && dog.fix === 'reader' && dog.reasons.some(r => r.rule === 'cut-line-not-closed' && /0\.0\d+ pt/.test(r.why)), 'the repaired dog is listed as a design the reader fixes, with the size of its gap: ' + JSON.stringify(dog));
+  assert(list.some(e => e.sku === 'RING_12345') && list.some(e => e.sku === 'DOG_OPEN_44711') && !list.some(e => e.sku === 'DOG_OPEN_44711' && e.fix === 'reader'), 'the report lists the ring and the open dog (for a person and the artist): ' + list.map(e => e.sku + ':' + e.fix).join(','));
+  // a SKU on two drawings of two masters is held live once: the one the library holds from another master is not re-indexed
+  const two = JSON.parse(JSON.stringify(res)), baseRow = two.rows.find(x => x.sku === 'DOG_88528 (HUGGIE)'), mk = (master, sku, r, nc) => Object.assign({}, baseRow, { master, sku, skus: [sku], charm: r, nearClosed: nc || undefined, flags: [] });
+  const X = JSON.parse(JSON.stringify(two)); X.master = 'MASTER SKU_X'; X.rows = [mk('MASTER SKU_X', 'SHARED_1', 1, true)]; X.orphanLabels = [];
+  const Y = JSON.parse(JSON.stringify(X)); Y.master = 'MASTER SKU_Y'; Y.rows = [mk('MASTER SKU_Y', 'SHARED_1', 2, false)];
+  const fx = path.join(dir, 'x.json'), fy = path.join(dir, 'y.json'); fs.writeFileSync(fx, JSON.stringify(X)); fs.writeFileSync(fy, JSON.stringify(Y));
+  const heldBy = m => { const f = path.join(dir, 'index-' + m + '.json'); fs.writeFileSync(f, JSON.stringify({ entries: [{ sku: 'SHARED_1', masterName: 'MASTER SKU_' + m + '.ai', widthPt: 10, heightPt: 10, areaPt2: 50, holes: 0 }] })); return f; };
+  const run = (m) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-rep2-')); S.report(['--scan', fx, fy, '--index', heldBy(m), '--out', d]); return JSON.parse(fs.readFileSync(path.join(d, 'BROKENCHARM-rewrite-skus.json'), 'utf8')); };
+  // a SKU on two drawings of two masters is held live by one of them: the other master's design is not re-indexed under it
+  const heldByX = run('X'); assert.deepEqual(heldByX.skus, ['SHARED_1'], 'the master that holds the SKU live is re-indexed'); assert.deepEqual(heldByX.notReindexedHeldByAnotherMaster, {});
+  assert(heldByX.skuInSeveralMasters.SHARED_1 && heldByX.skuInSeveralMasters.SHARED_1.length === 2, 'the SKU in two masters is named in the list: ' + JSON.stringify(heldByX.skuInSeveralMasters));
+  const heldByY = run('Y'); assert.deepEqual(heldByY.skus, [], 'a SKU the library holds from another master is not re-indexed under this design'); assert(heldByY.notReindexedHeldByAnotherMaster.SHARED_1, 'and the list says why');
   console.log('broken-charm OK: a body open by 0.09 pt is closed, the dachshund huggie is a body with its ring and engraving, a 4 pt opening stays open');
 })().catch(e => { console.error(e); process.exit(1); });
