@@ -2370,7 +2370,8 @@ const Master = window.Master = (() => {
           if (Date.now() - lastChange > 6 * 60000) throw new Error(`the server stopped reporting at "${d.stage}" ${silent} min ago — the file is too large for the server route (about 1 GB of memory, 15 min). Index it with the local indexer: node scripts/index-master.cjs "<file>" --origin ${location.origin}`);
           if (Date.now() - t0 > 16 * 60000) throw new Error("the server route ran past its 15-minute limit — index the file with the local indexer: node scripts/index-master.cjs"); }
         await load(true);
-        job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked`);
+        job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked${(job.result.pairs || []).filter(x => x.folded).length ? ` · ${(job.result.pairs || []).filter(x => x.folded).length} pair design(s) built from both bodies` : ""}`);
+        if ((job.result.pairsKept || []).length) say("warn", `${job.result.pairsKept.length} pair design(s) could not be built and were left as they were: ${job.result.pairsKept.slice(0, 12).map(k => k.sku).join(", ")}`);
         render(); return job;
       }
       const lab = P.labelCharms(parsed, g.charms, { pattern: skuRegex(), gapPt: (+S.settings.labelGapMm || 6.4) * PT, widen: 0.25 });
@@ -2450,7 +2451,13 @@ const Master = window.Master = (() => {
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
   async function writeIndex(job) {
     const { parsed, charms, lab, masterHash, name } = job; const entries = [], blocked = [], skus = [];
-    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld);
+    // A pair design is never written back as one body. This indexer draws ONE body per label (its silhouettes come from a canvas), so a row of two bodies under one label (a mismatched pair)
+    // and a SKU the library already holds as a pair are left as they are, and the run says so (charm-nest-pair.js keepPairs; the server route and scripts/index-master.cjs build the pair from both bodies).
+    const labelsOf = c => { const l = lab && lab.labels instanceof Map ? lab.labels.get(c.index) : null; return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, size: x.size, bbox: x.bbox })) : []; };
+    const keep = window.CharmNestPair && window.CharmNestPair.keepPairs ? window.CharmNestPair.keepPairs(charms, labelsOf, B.master.entries) : new Map();
+    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld && !keep.has(c.index));
+    job.kept = charms.filter(c => keep.has(c.index) && c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld).map(c => ({ sku: c.sku, kind: keep.get(c.index).kind, why: keep.get(c.index).why }));
+    if (job.kept.length) { const text = `${job.kept.length} pair design(s) were NOT written, so none was turned back into one body: ${job.kept.slice(0, 12).map(k => k.sku).join(", ")}${job.kept.length > 12 ? " …" : ""}. The Master tab indexer draws one body for each label (${job.kept[0].sku}: ${job.kept[0].why}). Index this master with the server route or node scripts/index-master.cjs, which build the pair from both bodies.`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     let n = 0;
     const one = async (c) => {
       const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
@@ -2475,6 +2482,7 @@ const Master = window.Master = (() => {
     const replaces = [...new Set(B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash).concat(job.supersede || []))];
     const r = await api("charmNestLibrary", { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
     job.conflicts = r.blocked || []; job.sizeMoved = r.sizeMoved || [];
+    if ((r.pairKept || []).length) { const text = `${r.pairKept.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${r.pairKept.slice(0, 12).map(b => b.sku).join(", ")}${r.pairKept.length > 12 ? " …" : ""}`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     if (job.conflicts.length) agent({ master: masterHash }, "warn", `${name}: ${job.conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${job.conflicts.map(b => b.sku).join(", ")}`);
     if (job.sizeMoved.length) agent({ master: masterHash }, "warn", `${name}: ${job.sizeMoved.length} SKU(s) changed size by more than 5% since the last index: ${job.sizeMoved.map(b => b.sku).join(", ")}`);
     await api("charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });

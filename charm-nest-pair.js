@@ -742,12 +742,105 @@
   /** The master index entry's `pair` field for a row: { v: 1, bodies, mismatched }. */
   const pairField = rec => ({ v: 1, bodies: rec.bodies, mismatched: rec.kind === "mismatched" });
 
+  /** The pair layer of the INDEXERS (scripts/index-master.cjs and netlify/functions/charmMaster-background.js read it from here, so the two cannot disagree).
+   *  A master draws some designs as a ROW of bodies with ONE label centred under the whole row ("Mismatched_7134": MITTENS 1 beside MITTENS 2). groupCharms reads
+   *  each body as a charm of its own and only the labelled one was ever indexed, so the library held half of the design. This reads the rows back from the grouping
+   *  (masterPairs; it changes nothing in the grouping) and, for a row it is sure is a mismatched pair, builds ONE design from it: each body is welded with its own
+   *  hoop, then the bodies' members are folded into the labelled charm (foldRow, the same fold the app does when it reads a per-SKU file that splits in two). Every
+   *  other design is not touched: it reaches the indexer's loop as the same charm object it always did.
+   *    P  the PDF module (integrateRings, cutLinesOf)      G  charm-nest-geom (flatten, upAngleOf, backView, engraveMask, largestRectangles)
+   *    g  groupCharms()'s answer      lab  labelCharms()'s answer      items  [{ index, l, c }] the labelled charms this run builds (a row is folded only when its owner is among them)
+   *    o  { engraveMarginMm, pairAlso: Set | array | "SKU,SKU" (doubtful one-label rows of these SKUs are folded too) }      log  a function that takes a line
+   *  Returns { rows (for the report), fold: Map(owner's charm index → { rec, charm, bodies, view, open, holes, engrave, field }), refused: Map(owner's charm index → why) }. */
+  function pairLayer(P, G, g, lab, items, o, log) {
+    o = o || {}; log = log || (() => {});
+    const out = { rows: [], fold: new Map(), refused: new Map() }, MM = 25.4 / 72;   // refused: owner index → why, for a row that is a pair but could not be folded (its lone labelled body must not be written in its place)
+    const byIndex = new Map(g.charms.map(c => [c.index, c])), building = new Set(items.map(it => it.index));
+    const linesOf = c => { const l = lab.labels.get(c.index); return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, bbox: x.bbox })) : []; };
+    const also = o.pairAlso ? new Set((typeof o.pairAlso === "string" ? o.pairAlso.split(",") : [...o.pairAlso]).map(x => String(x || "").trim().toUpperCase()).filter(Boolean)) : null;
+    const union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+    const openOf = c => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); };
+    // the same readings the indexer takes of a lone charm (up direction, back view, room for an engraving), taken of one body
+    const engraveOf = c => {
+      let engravable = true, upAngle = null, upSource = "drawn", flipOk = true, flipWhy = null;
+      try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: o.engraveMarginMm }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
+      catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
+      return { engravable, upAngle, upSource, flipOk, flipWhy };
+    };
+    for (const r of masterPairs(g.charms, linesOf)) {
+      const forced = !!also && r.skus.some(s => also.has(String(s).toUpperCase())) && r.labelled.length === 1 && r.kind !== "neighbours";
+      const row = { kind: r.kind, sure: !!r.sure, folded: false, bodies: r.bodies, owner: r.owner, skus: r.skus, charms: r.charms, labelled: r.labelled, offset: r.offset, why: r.why };
+      if (r.linearRatio != null) row.linearRatio = r.linearRatio; if (r.weak) row.weak = r.weak; if (r.partnerSku) row.partnerSku = r.partnerSku;
+      out.rows.push(row);
+      if (!(r.sure || forced)) continue;
+      if (!building.has(r.owner)) { row.note = "not built in this run"; continue; }
+      const bodyCharms = r.charms.map(i => byIndex.get(i)), owner = byIndex.get(r.owner);
+      if (bodyCharms.some(c => !c) || !owner) { row.note = "a body of the row is missing from the grouping"; out.refused.set(r.owner, row.note); continue; }
+      try {
+        for (const c of bodyCharms) { const x = P.integrateRings(c); if (x.left.length) log(`  ! ${r.skus[0]}: a hoop could not join its charm: ${x.left[0]}`); }   // each body with its own hoop, before the bodies are folded
+        const charm = foldRow(owner, bodyCharms.filter(c => c !== owner));
+        const outlines = bodyCharms.map(c => c.outline);
+        const merged = Object.assign({}, owner.outline, { subpaths: [].concat(...outlines.map(x => x.subpaths || [])), bbox: outlines.map(x => x.bbox).reduce(union), closed: outlines.every(x => x.closed) });
+        const eng = bodyCharms.map(engraveOf), first = eng[bodyCharms.indexOf(owner)];   // (the labelled body's up direction is the one the library always held for this SKU)
+        // each body can be written as a form of its own only when no two bodies draw from one top-level group of the master (then the per-SKU file keeps them apart)
+        const parentsOf = c => new Set(c.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null));
+        const par = bodyCharms.map(parentsOf), apart = par.every((a, i) => par.every((b, j) => i === j || ![...a].some(t => b.has(t))));
+        row.folded = true; row.forced = forced && !r.sure; row.partners = bodyCharms.filter(c => c !== owner).map(c => c.index);
+        if (!apart) row.note = "the bodies share a top-level group of the master: written as one group";
+        out.fold.set(r.owner, {
+          rec: r, charm, bodies: apart ? bodyCharms : null, view: Object.assign({}, charm, { outline: merged }),                      // (the merged outline is only what the area and the hash are read from; the charm keeps a real body's outline, so its bodies can be told apart again)
+          open: bodyCharms.some(openOf), holes: bodyCharms.reduce((n, c) => n + P.cutLinesOf(c).length, 0),
+          engrave: { engravable: eng.every(e => e.engravable), upAngle: first.upAngle, upSource: first.upSource, flipOk: eng.every(e => e.flipOk), flipWhy: (eng.find(e => !e.flipOk) || {}).flipWhy || null },
+          field: { v: 1, bodies: r.bodies, mismatched: r.kind === "mismatched" || (forced && r.bodies === 2 && !["twins", "sizes", "sample"].includes(r.kind)) }
+        });
+      } catch (e) { row.folded = false; row.note = "not folded: " + e.message; out.refused.set(r.owner, row.note); log(`  ! ${r.skus[0]}: the pair could not be folded: ${e.message}`); }
+    }
+    const folded = out.rows.filter(x => x.folded), unbuilt = out.rows.filter(x => x.sure && x.note === "not built in this run"), doubtful = out.rows.filter(x => !x.folded && !x.sure && !/^(neighbours|sizes|sample)$/.test(x.kind));
+    if (out.rows.length) log(`  pairs: ${out.rows.length} row(s) of touching bodies under one label · ${folded.length} folded into one design (${folded.map(x => x.skus[0]).slice(0, 40).join(", ")}${folded.length > 40 ? " …" : ""})${unbuilt.length ? ` · ${unbuilt.length} sure pair(s) not built in this run` : ""}${doubtful.length ? ` · ${doubtful.length} left as they were because a person has to look (${doubtful.map(x => `${x.skus[0] || "#" + x.owner}: ${x.kind}`).slice(0, 30).join(", ")})` : ""}`);
+    return out;
+  }
+
+  /** Does the library's entry for a SKU (and size) hold the design as a PAIR (a `pair` field of two bodies or more)? entry: a master index entry, as the library returns it. */
+  function heldPair(entry, size) {
+    if (!entry) return false;
+    const t = size && entry.sizes && entry.sizes[String(size).toUpperCase()] ? entry.sizes[String(size).toUpperCase()] : entry;
+    return !!(t && t.pair && +t.pair.bodies >= 2);
+  }
+  /** For an indexer that draws ONE body per label (the Master tab's own indexer: its silhouettes come from a canvas) and so cannot build a pair design: which of the charms it is about
+   *  to write it must leave alone, because writing the labelled body alone would turn a pair design back into one body (a file with half the design, a record that still says two).
+   *    charms  the grouping's charms     labelsOf(charm) → [{ sku, bbox, size? }]     known  Map(SKU → the library's entry) or null
+   *  Returns Map(charm index → { why, kind: "row" | "held", skus }): "row" = this charm is the labelled one of a row of two bodies that is surely a mismatched pair;
+   *  "held" = the library already holds one of its SKUs as a pair and this charm shows fewer bodies than that. A charm that already carries every body (a review merged them) is not held back. */
+  function keepPairs(charms, labelsOf, known) {
+    const out = new Map(), byIndex = new Map((charms || []).map(c => [c.index, c]));
+    for (const r of masterPairs(charms, labelsOf)) if (r.sure) out.set(r.owner, { kind: "row", skus: r.skus.slice(), why: "its drawing is a row of " + r.bodies + " bodies under one label (a mismatched pair)" });
+    if (known) for (const c of charms || []) {
+      if (c.mergedInto != null || out.has(c.index)) continue;
+      const lines = labelsOf(c) || []; if (!lines.length) continue;
+      const held = lines.map(l => ({ l, e: known.get(String(l.sku || "").toUpperCase()) })).find(x => heldPair(x.e, x.l.size));
+      if (!held) continue;
+      const t = held.l.size && held.e.sizes && held.e.sizes[String(held.l.size).toUpperCase()] || held.e;
+      let n = 1; try { n = bodiesOf(c).length; } catch (_) {}
+      if (n < +t.pair.bodies) out.set(c.index, { kind: "held", skus: lines.map(l => l.sku), why: "the library holds " + held.l.sku + " as a pair of " + t.pair.bodies + " bodies and this drawing shows " + n });
+    }
+    return out;
+  }
+
+  /** The extra fields an indexer writes on a design's entry besides `pair` (PAIRMIRROR's, shared so the browser, the server and the script write the same words):
+   *  sym (does the design look the same in a mirror: "symmetric" | "slight" | "directional") for every design, facings ([null, "mirror"…]) for a folded pair drawn as mirror images.
+   *  Anything the module cannot say is left out; never throws. */
+  function entryFields(c, folded) {
+    const out = {};
+    try { const bs = bodiesOf(c); if (folded && bs.length === 2) { const rel = facingOfBody(bs[1], c); if (rel) out.facings = [null, rel]; } const sym = bs[0] ? symmetryOf(bs[0]).level : undefined; if (sym) out.sym = sym; } catch (_) {}
+    return out;
+  }
+
   return {
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
-    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField,
+    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, entryFields, heldPair, keepPairs,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };
 });

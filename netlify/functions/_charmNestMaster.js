@@ -66,7 +66,7 @@ const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair,
 async function putIndex(db, FV, body) {
   const entries = (body.entries || []).filter(e => e && isSku(String(e.sku || "").toUpperCase()));
   const masterHash = str(body.masterHash, 80), replaces = new Set((body.replaces || []).map(String).concat([masterHash]));
-  const out = { written: 0, blocked: [], sizeMoved: [] };
+  const out = { written: 0, blocked: [], sizeMoved: [], pairKept: [] };
   // group sized designs under one SKU
   const bySku = new Map();
   for (const e of entries) { const sku = String(e.sku).toUpperCase(); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(e); }
@@ -76,13 +76,16 @@ async function putIndex(db, FV, body) {
   for (let i = 0; i < skus.length; i += 200) {
     const part = skus.slice(i, i + 200);
     // (only what the rules below look at of an entry already there: its master, its size, its operator overrides)
-    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pairBy", "facingBy"] });
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pair", "pairBy", "facingBy"] });
     snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
   }
   let batch = db.batch(), pending = 0;
   const flush = async () => { if (pending) { await batch.commit(); batch = db.batch(); pending = 0; } };
   for (const [sku, list] of bySku) {
     const ref = db.collection(INDEX).doc(sku); const ex = existing.get(sku) || null;
+    // A design the library holds as a PAIR is never written back as one body. An entry that says nothing of `pair` (an indexer that read only the labelled body of a row of two) would put one body's
+    // file and size over a record that still says two bodies; it is left as it was and the answer names it (`pairKept`). `pair: null` (a person's word, or a deliberate re-index) still takes it away.
+    if (ex && (cleanPair(ex.pair) || Object.values(ex.sizes || {}).some(z => z && cleanPair(z.pair))) && !list.some(e => cleanPair(e.pair) !== undefined)) { out.pairKept.push({ sku, reason: "the library holds " + sku + " as a pair and this entry draws one body: left as it was (set pair to null first to make it one charm)" }); continue; }
     // a stable base whatever order the entries arrived in: the unsized entry, else the smallest size
     const LADDER = ["XS", "S", "M", "L", "XL"];
     const base = list.find(e => !e.size) || list.slice().sort((a, b) => {
