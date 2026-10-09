@@ -1135,7 +1135,7 @@ const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
 /* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
    take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
-const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize"];
+const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize", "quantity"];
 const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt", "side"];
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
 async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
@@ -1152,12 +1152,14 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
-/** What changes whenever the index does: how many entries it holds, and when one was last indexed and last edited
-    (masterPatch). A background reload of the library that finds these as they were reads nothing more (Master.load). */
+/** What changes whenever the index does: how many entries it holds, and when one was last indexed (masterPutIndex: every write of an
+    entry stamps indexedAt) and last edited (masterPatch: pair, facing, angle, engravable ... all stamp updatedAt; a removal changes the
+    count), and the shape the entries are sent in (Master.SHAPE: the code that makes them). A background reload of the library, or a page
+    that kept a copy of it (charm-nest-master-cache.js), that finds these as they were reads nothing more (Master.load). */
 async function masterIndexSig() {
   const ix = db.collection(Master.INDEX);
   const [n, indexed, edited] = await Promise.all([ix.count().get(), ix.orderBy("indexedAt", "desc").limit(1).select("indexedAt").get(), ix.orderBy("updatedAt", "desc").limit(1).select("updatedAt").get()]);
-  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null };
+  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null, shape: Master.SHAPE };
 }
 /* The index in parts, in SKU (document id) order: a part holds up to `limit` entries, what fits in ANSWER_BYTES and what
    was read within ANSWER_MS, and `next` is the SKU after which the next part starts (null at the end of the index). It
@@ -1358,8 +1360,20 @@ async function op_poolPut(b) {
      committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
   const legacyLines = new Set();
   list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && legacyLive(cur)) legacyLines.add(Placement.groupOfPool(p.poolId)); });
+  /* A line already pooled with FEWER pieces than it is sent with (the pair and count rule of 9 Oct 2026 came after it was pooled: a pair is
+     two pieces, a necklace with 3 discs is three) keeps the pieces it has. None of its rows is written, so a piece is never added to a line
+     that is on a sheet or in the pool; the answer says which rows are short and what each holds, and the page notes it on the line.
+     (A row taken off, or superseded by an Etsy change, is not live: the line is then made up new, at the new count.) */
+  const lineOfId = id => String(id).replace(/_\d+$/, ""), shortLines = new Set(), short = [];
+  list.forEach((p, i) => {
+    const cur = found[i] && found[i].exists ? found[i].data() : null; if (!cur || p.custom || Placement.TAKE_OFF_STATES.has(cur.state)) return;
+    const had = Math.floor(+cur.quantity) || 0, wants = Math.floor(+p.quantity) || 0;
+    if (had && wants && had < wants && !legacyLines.has(Placement.groupOfPool(p.poolId))) { shortLines.add(lineOfId(p.poolId)); short.push({ poolId: p.poolId, had, wants }); }
+  });
+  if (short.length) out.short = short;
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
+    if (shortLines.has(lineOfId(p.poolId))) continue;
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
     if (p.side && legacyLines.has(Placement.groupOfPool(p.poolId))) { (out.legacy || (out.legacy = [])).push(p.poolId); continue; }
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
@@ -2891,12 +2905,15 @@ async function op_optionMapGet(b = {}) {
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
   if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };
-  const m = b.map || {}; const field = ["form", "size", "chain", "ignore", "design"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain, ignore or design" };
+  const m = b.map || {}; const field = ["form", "size", "chain", "ignore", "design", "count"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain, ignore, design or count" };
+  // count: how many separate pieces ONE of this product makes in all when the buyer chose this option value ("2 Disc" is 2; 1 = just one piece, not a count), 1 to 12
+  const count = field === "count" ? Math.floor(+m.value) : 0;
+  if (field === "count" && !(count >= 1 && count <= 12)) return { error: "the count an option gives is a whole number from 1 to 12" };
   // design: the option picks the charm (Zodiac Sign: Pisces), for one listing, a SKU of the master index
   const design = field === "design" ? String(m.value || "").trim().toUpperCase() : "";
   if (field === "design" && (lid === "*" || !Master.isSku(design))) return { error: "the charm an option picks is saved for one listing, as a master SKU" };
   const ref = db.collection(PREFIX + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
-  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
+  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : field === "count" ? String(count) : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
   await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
   return { ok: true };
 }
@@ -3807,6 +3824,8 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
+  // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)
+  if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   DONE_TOUCH = false;
   const fn = OPS[body.op];

@@ -525,36 +525,81 @@
      not a closed stroke, so it was no cut line and no outline candidate; the charm group was its cyan jump ring alone, the
      body fell out as an orphan (it is more than three times the ring's box) and the engraving drawn on it hung loose around
      the ring ("0 holes", a ring and a few red strokes). The same drawing in the plain Dachshund had no outline at all and its
-     label found no charm, so that SKU was never indexed. 18 bodies and holes of that size are in the three masters.
+     label found no charm, so that SKU was never indexed. 32 strokes of that kind are in the three masters (18 of them bodies).
      Rule: a stroked, unfilled path on a cut layer (or with no layer role) whose every subpath is closed, or ends within
      NEAR_CLOSED_MAX_PT of its start and within NEAR_CLOSED_FRAC of its own length, is closed. The gap stays recorded in
      `nearClosed`; the subpath gets its `h`, so nesting, silhouettes and holes read it as the closed outline it was drawn as.
-     The bytes of the master are untouched (the per-SKU writer copies the original operators). A larger gap is a real opening
-     and stays open (the indexer reports it as "open outline"). Engraving layers are never touched. */
+     The same goes for the open subpaths of one compound path whose ends meet each other (an open run of the body and its closing
+     chord as the next subpath): they are joined into one closed subpath. The bytes of the master are untouched (the per-SKU
+     writer copies the original operators). A larger gap is a real opening and stays open (the indexer reports it as "open
+     outline"). Engraving layers are never touched. */
   const NEAR_CLOSED_MAX_PT = 1.0, NEAR_CLOSED_FRAC = 0.05;
-  function subpathGap(sub) {
+  function subpathEnds(sub) {
     if (!sub || !sub.length || sub[0][0] !== "m") return null;
-    if (sub.some(o => o[0] === "h")) return { gap: 0, len: 0, closed: true };
     const first = sub[0][1]; let last = first, len = 0;
     for (const o of sub) {
       if (o[0] === "l") { len += Math.hypot(o[1][0] - last[0], o[1][1] - last[1]); last = o[1]; }
-      else if (o[0] === "c") {   // control polygon length bounds the curve from above; it is only the scale of the 5 % test
+      else if (o[0] === "c") {   // the control polygon bounds the curve from above; it is only the scale of the 5 % test
         len += Math.hypot(o[1][0] - last[0], o[1][1] - last[1]) + Math.hypot(o[2][0] - o[1][0], o[2][1] - o[1][1]) + Math.hypot(o[3][0] - o[2][0], o[3][1] - o[2][1]); last = o[3];
       }
     }
-    return { gap: Math.hypot(first[0] - last[0], first[1] - last[1]), len, closed: false };
+    return { first, last, len, gap: Math.hypot(first[0] - last[0], first[1] - last[1]), closed: sub.some(o => o[0] === "h") };
+  }
+  /** The same subpath drawn the other way round (Béziers keep their shape: handles swap). */
+  function reverseSub(sub) {
+    const segs = sub.filter(o => o[0] !== "h"), pts = [segs[0][1]];
+    for (let i = 1; i < segs.length; i++) pts.push(segs[i][0] === "c" ? segs[i][3] : segs[i][1]);
+    const out = [["m", pts[pts.length - 1]]];
+    for (let i = segs.length - 1; i >= 1; i--) out.push(segs[i][0] === "c" ? ["c", segs[i][2], segs[i][1], pts[i - 1]] : ["l", pts[i - 1]]);
+    return out;
+  }
+  /** Loops made of the open subpaths of ONE compound path whose ends meet each other (the body is an open run and its closing
+      chord is the next subpath: the chicken of RUNNING_73848 and the bars of the customs master). Returns the joined, closed
+      subpaths and the widest join, or null when any open subpath does not end up in a closed loop. */
+  function joinOpenSubpaths(open) {
+    const pts = []; open.forEach((o, i) => { pts.push({ i, k: 0, p: o.e.first }, { i, k: 1, p: o.e.last }); });
+    const mate = pt => { let best = null, bd = NEAR_CLOSED_MAX_PT; for (const q of pts) { if (q.i === pt.i) continue; const d = Math.hypot(q.p[0] - pt.p[0], q.p[1] - pt.p[1]); if (d <= bd) { bd = d; best = q; } } return best; };
+    const done = new Set(), loops = []; let widest = 0;
+    for (let i0 = 0; i0 < open.length; i0++) {
+      if (done.has(i0)) continue;
+      const chain = [{ i: i0, rev: false }]; const seen = new Set([i0]); let enterK = 0, cur = i0, closedAt = null;
+      for (;;) {
+        const exit = pts.find(q => q.i === cur && q.k !== enterK), m = exit && mate(exit);
+        if (!m) return null;
+        if (m.i === i0) { closedAt = Math.hypot(m.p[0] - open[i0].e.first[0], m.p[1] - open[i0].e.first[1]); if (m.k !== 0 || closedAt > NEAR_CLOSED_MAX_PT) return null; widest = Math.max(widest, Math.hypot(exit.p[0] - m.p[0], exit.p[1] - m.p[1])); break; }
+        if (seen.has(m.i)) return null;
+        widest = Math.max(widest, Math.hypot(exit.p[0] - m.p[0], exit.p[1] - m.p[1]));
+        seen.add(m.i); chain.push({ i: m.i, rev: m.k === 1 }); cur = m.i; enterK = m.k;
+      }
+      if (chain.length < 2) return null;
+      let joined = null;
+      for (const c of chain) {
+        const sub = open[c.i].sub, part = c.rev ? reverseSub(sub) : sub.filter(o => o[0] !== "h");
+        if (!joined) joined = part.slice(); else { const end = joined[joined.length - 1], at = end[0] === "c" ? end[3] : end[1]; if (Math.hypot(at[0] - part[0][1][0], at[1] - part[0][1][1]) > 1e-6) joined.push(["l", part[0][1]]); joined.push(...part.slice(1)); }
+      }
+      joined.push(["h"]); loops.push({ at: Math.min(...chain.map(c => open[c.i].i)), sub: joined }); chain.forEach(c => done.add(c.i));
+    }
+    return { loops, widest };
   }
   function closeNearlyClosed(list) {
     let n = 0;
     for (const s of list || []) {
       if (!s || s.kind !== "path" || s.closed || !s.stroke || s.fill || !s.subpaths || !s.subpaths.length) continue;
       if (pathRole(s) === "artwork") continue;
-      const ends = s.subpaths.map(subpathGap);
+      const ends = s.subpaths.map(subpathEnds);
       if (ends.some(e => !e)) continue;
-      if (!ends.every(e => e.closed || (e.gap <= NEAR_CLOSED_MAX_PT && e.gap <= NEAR_CLOSED_FRAC * e.len))) continue;
-      s.nearClosed = Math.max(...ends.map(e => e.gap));
-      s.subpaths.forEach((sub, i) => { if (!ends[i].closed) sub.push(["h"]); });
-      s.closed = true; n++;
+      const nearly = e => e.closed || (e.gap <= NEAR_CLOSED_MAX_PT && e.gap <= NEAR_CLOSED_FRAC * e.len);
+      const open = []; s.subpaths.forEach((sub, i) => { if (!nearly(ends[i])) open.push({ i, sub, e: ends[i] }); });
+      let gap = Math.max(0, ...ends.filter((e, i) => nearly(e) && !e.closed).map(e => e.gap)), subs = s.subpaths.map((sub, i) => ({ at: i, sub }));
+      if (open.length) {
+        if (open.length < 2) continue;                                       // one run whose ends are really apart is an opening, not a loop
+        const j = joinOpenSubpaths(open); if (!j) continue;
+        const openAt = new Set(open.map(o => o.i)); subs = subs.filter(x => !openAt.has(x.at)).concat(j.loops).sort((x, y) => x.at - y.at);
+        gap = Math.max(gap, j.widest);
+      }
+      const out = subs.map(x => x.sub);
+      out.forEach((sub, i) => { if (!sub.some(o => o[0] === "h")) sub.push(["h"]); });
+      s.subpaths = out; s.nearClosed = gap; s.closed = true; n++;
     }
     return n;
   }
@@ -1294,7 +1339,7 @@
   const HATCH_BLUE = [0, 0, 1];
   const BLACK_SILHOUETTE_COVER = 0.9;          // a black twin that covers this share of the outline's area is the silhouette again
   const BLACK_DISC_MIN_HOLES = 2;              // a round black fill with at least this many inner holes is art on a disc
-  const isBlackFill = m => !!m && m.kind === "path" && !!m.closed && !!m.fill && !m.stroke && !!m.fillRGB &&
+  const isBlackFill = m => !!m && m.kind === "path" && !!m.fill && !m.stroke && !!m.fillRGB &&     // (a fill closes its subpaths itself: a path painted `f` with no closepath is a filled area too)
     (Math.max(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2]) - Math.min(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2])) <= 0.15 && lum(m.fillRGB) <= 0.35;
   /** What a closed filled path covers, by its own fill rule: area filled, area inside its outer boundary, inner holes, outer subpaths. */
   function fillFacts(m) {
@@ -1315,7 +1360,7 @@
   /** A round body drawn only as a black fill with art in it (see rule 2): the circle's subpath index, else -1. */
   function engravedDiscOf(c) {
     const o = c && c.outline;
-    if (!isBlackFill(o) || (o.subpaths || []).length < 1 + BLACK_DISC_MIN_HOLES) return -1;
+    if (!isBlackFill(o) || (o.subpaths || []).length < 1 + BLACK_DISC_MIN_HOLES || /^labels?$/i.test(String(o.layer || "").trim())) return -1;   // (a note or badge on the LABELS layer is not a charm)
     const f = fillFacts(o); if (f.outers.length !== 1 || f.holes < BLACK_DISC_MIN_HOLES) return -1;
     const V = vec(); if (!V) return -1;
     let disc = null; try { disc = circleOf(o.subpaths[f.outers[0]], V); } catch (_) { disc = null; }

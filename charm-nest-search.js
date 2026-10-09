@@ -64,6 +64,10 @@
       b && b.review && b.review.items, b && b.review && b.review.items.length, C && C.count ? C.count() : 0, cancelList.length, IX.cloud.size];
   }
   const stale = () => { const r = refsNow(); return r.length !== IX.refs.length || r.some((v, i) => v !== IX.refs[i]); };
+  /** True when the order line's design draws two different bodies (the master record's pair field, the shared module agreeing). */
+  function mismatchedRow(r) {
+    try { const CP = W.CharmNestPair, sku = r && ((r.spec && r.spec.designSku) || (r.line && r.line.sku)), en = CP && sku && W.Master && W.Master.entryFor ? W.Master.entryFor(sku) : null; return !!(en && en.pair && CP.isMismatched(en)); } catch (_) { return false; }
+  }
   function build() {
     const t0 = performance.now(), b = Bs(), s = St();
     const by = new Map(), list = [];
@@ -75,6 +79,8 @@
         if (!r || !r.order) continue;
         const o = r.order, l = r.line || {}, e = at(String(o.receiptId));
         e.rows.push(r);
+        // (a mismatched pair order, a left and a right charm of two designs, is found by typing "mismatched"; any other order's words are untouched)
+        if (!e.extra && mismatchedRow(r)) e.extra = "mismatched pair";
         if (!e.num && o.orderNumber) e.num = String(o.orderNumber);
         if (!e.buyer && o.buyer && o.buyer.name) e.buyer = o.buyer.name;
         push(e.skus, (r.spec && r.spec.designSku) || l.sku); push(e.titles, l.title); push(e.listings, l.listingId && String(l.listingId));
@@ -110,7 +116,7 @@
     for (const [rid, c] of IX.cloud) { const e = at(rid); e.cloud = c; if (!e.buyer && c.buyer) e.buyer = c.buyer; for (const x of c.skus) push(e.skus, x); for (const x of c.titles) push(e.titles, x); for (const x of c.listings) push(e.listings, x); if (!e.at) e.at = c.at || 0; }
     for (const e of list) {
       e.buyerL = e.buyer.toLowerCase();
-      e.hay = (e.buyer + "\u0001" + e.skus.join("\u0001") + "\u0001" + e.titles.join("\u0001")).toLowerCase();
+      e.hay = (e.buyer + "\u0001" + e.skus.join("\u0001") + "\u0001" + e.titles.join("\u0001") + (e.extra ? "\u0001" + e.extra : "")).toLowerCase();
       e.dig = (e.num && e.num !== e.rid ? e.num + "|" : "") + e.listings.join("|");
     }
     list.sort((a, b2) => b2.at - a.at);                                          // newest first: every pass keeps this order
@@ -261,14 +267,25 @@
     } catch (err) { console.warn("order search: seal", err); return ""; }
   }
   const mark = (text, q) => { const s = String(text || ""), i = q ? s.toLowerCase().indexOf(q) : -1; return i < 0 ? esc(s) : esc(s.slice(0, i)) + `<mark>${esc(s.slice(i, i + q.length))}</mark>` + esc(s.slice(i + q.length)); };
+  /** An earring pair order as the card says it (Paul, 9 Oct 2026: the Left and the Right of one order are tracked together): the pieces' sides and where each is now; null for every other order. */
+  function pairOf(e) {
+    try {
+      const OP = W.OrderPieces; if (!OP || !e.rows.length) return null;
+      const ps = OP.of(e.rid).filter(p => (p.side === "L" || p.side === "R") && !p.gone); if (!ps.some(p => p.side === "L") || !ps.some(p => p.side === "R")) return null;
+      const sp = OP.known(e.rid) ? OP.spread(e.rid) : null;
+      return { mismatched: ps.some(p => p.kind === "mismatched"), ps, known: !!sp, split: !!(sp && sp.splitGroups && sp.splitGroups.length) };
+    } catch (_) { return null; }
+  }
+  const sideAt = (p, known) => known ? `${p.sideLabel} ${p.nested && p.sheetLabel ? "on " + p.sheetLabel : "not on a sheet yet"}` : p.sideLabel;   // (nothing is said of a sheet until the order's sheets have been read)
   function cardHtml(h, R, one) {
     const e = h.e, st = stateOf(e), q = R.num || (R.q.split(" ")[0] || ""), n = e.num || e.rid;
     const numHtml = R.num ? mark(n === e.rid || n.indexOf(R.num) >= 0 ? n : e.rid, R.num) : esc(n);
     let also = "";
     if (R.num && h.s === 2) { const li = e.listings.find(x => x.indexOf(R.num) >= 0); if (li) also = `<span class="cnsTag">listing ${mark(li, R.num)}</span>`; }
     const sku = !R.num && q ? e.skus.find(x => x.toLowerCase().includes(q)) || e.titles.find(x => x.toLowerCase().includes(q)) : null;
+    const pr = pairOf(e), pairTag = pr ? `<span class="cnsTag pair" title="${esc((pr.mismatched ? "A mismatched pair: " : "A pair: ") + pr.ps.slice(0, 4).map(p => sideAt(p, pr.known)).join(", "))}">${pr.mismatched ? "Mismatched · " : ""}Left + Right${pr.split ? " · split" : ""}</span>` : "";
     const what = sku ? mark(sku, q) : esc(e.skus.slice(0, 2).join(" · ") + (e.skus.length > 2 ? ` +${e.skus.length - 2}` : ""));
-    return `<div class="cnsTop"><span class="cnsNum mono">${numHtml}</span><span class="cnsWho">${R.num ? esc(e.buyer) : mark(e.buyer, q)}</span>${also}${e.cloud ? `<span class="cnsTag cloud" title="Not in memory here: read from the cloud">from the cloud</span>` : ""}` +
+    return `<div class="cnsTop"><span class="cnsNum mono">${numHtml}</span><span class="cnsWho">${R.num ? esc(e.buyer) : mark(e.buyer, q)}</span>${also}${pairTag}${e.cloud ? `<span class="cnsTag cloud" title="Not in memory here: read from the cloud">from the cloud</span>` : ""}` +
       `<span class="cnsPill ${st.tone}"><span class="d"></span>${esc(st.pill)}</span></div>` +
       `<div class="cnsMeta">${rail(st)}<span class="cnsNow${st.cancelled ? " bad" : ""}" title="Where it is now">${esc(st.now)}</span>${sealOf(e, st)}` +
       `${st.sheets.length ? `<span class="cnsSheet">${esc(st.sheets.slice(0, 2).map(s => s.label).join(" · "))}${st.sheets.length > 2 ? ` +${st.sheets.length - 2}` : ""}</span>` : ""}<span class="cnsWhat">${what}</span></div>` +
@@ -679,6 +696,7 @@
     const evs = c ? c.events.slice(-5).reverse() : [];
     const row = (k, v) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`;
     card.insertAdjacentHTML("beforeend", `<dl class="cnsDetail">${lines.length ? row("Ordered", lines.slice(0, 6).map(([a, b]) => `<span class="mono">${esc(a || "no SKU")}</span>${b ? " " + esc(b) : ""}`).join("<br>")) : ""}` +
+      (() => { const pr = pairOf(e); return pr ? row("Pieces", pr.ps.map(p => esc(sideAt(p, pr.known))).join("<br>")) : ""; })() +
       (st.sheets.length ? row("Sheets", st.sheets.map(x => `${esc(x.label)}${x.cut ? " · cut" : ""}`).join(" · ")) : "") +
       (cx ? row("Cancelled", `${esc(cx.by || "")}${cx.at ? " · " + esc(whenTxt(cx.at)) : ""}${cx.why ? " · " + esc(cx.why) : ""}`) : "") +
       (evs.length ? row("Latest", evs.map(v => `${esc(TYPE_LABEL(v.type))}${v.by ? " · " + esc(v.by) : ""} <span class="t">${esc(whenTxt(v.at))}</span>`).join("<br>")) : "") + `</dl>`);
