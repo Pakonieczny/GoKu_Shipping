@@ -1126,18 +1126,13 @@
   }
 
   /* A card's piece count says what it counts when a pair is on it: "24 pieces, 10 pairs, 3 half pairs" (a half pair: one ear here, its other piece on another sheet), read from OrderPieces by
-     PiecePlacement.sheetWords the moment the count is hovered, so it is never older than the sheet. A card with no pair keeps its look and no title; a Completed sheet whose orders were never
-     read on this page is read once (OrderPieces.loadSheet) and the words come as that lands. */
-  const readOnce = new Set();
+     PiecePlacement.sheetWords the moment the count is hovered, so it is never older than the sheet. It reads ONLY what the page already holds: hovering costs no request at all (a sheet
+     whose orders this page has not read, a long Completed list swept with the mouse, gets no title). A card with no pair keeps its look and no title. */
   function onCountHover(e) {
     const t = e.target && e.target.closest ? e.target.closest('[data-sheet-count], [data-ld-pcs]') : null; if (!t) return;
-    const PP = window.PiecePlacement, OP = window.OrderPieces; if (!PP || typeof PP.sheetWords !== 'function') return;
+    const PP = window.PiecePlacement; if (!PP || typeof PP.sheetWords !== 'function') return;
     const ids = (t.dataset.sheetCount ? [t.dataset.sheetCount] : String(t.dataset.ldPcs || '').split(',')).filter(Boolean), nums = (String(t.textContent).match(/\d+/g) || []).map(Number);
-    const words = () => { const w = PP.sheetWords(ids, nums); if (w) t.title = w; else t.removeAttribute('title'); return w; };
-    if (words() || !OP || typeof OP.loadSheet !== 'function') return;
-    const fresh = ids.filter(id => !readOnce.has(id)).slice(0, 6); if (!fresh.length) return;
-    for (const id of fresh) readOnce.add(id);
-    Promise.all(fresh.map(id => Promise.resolve().then(() => OP.loadSheet(id)).catch(() => {}))).then(words, () => {});
+    const w = PP.sheetWords(ids, nums); if (w) t.title = w; else t.removeAttribute('title');
   }
 
   window.LibraryDone = { mark, isDone, isFiled, cutStamp, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };

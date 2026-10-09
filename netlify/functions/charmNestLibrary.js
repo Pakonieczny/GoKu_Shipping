@@ -2538,7 +2538,7 @@ async function op_laserDone(b) {
       if (!set && own) records.push({...own.data(),id,processSeals:recovered.get('sheet:'+id)});
       await processDecisions(tx,records);
       const blocked=records.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderBlockers);
-      if(blocked.length)return {error:`Not ready for Laser cutting: order ${blocked[0].id} — ${blocked[0].why}`,status:409};
+      if(blocked.length)return {error:`Not ready for Laser cutting: order ${blocked[0].id} — ${Readiness.blockText(blocked[0])}`,status:409};
       const ready=set ? records.every(s=>s.setId===setRef.id) && Readiness.laserGroup(set,records).ready : records.length===1 && Readiness.laserSheet(records[0]).ready;
       if (!ready) return {error:"Not ready for Laser cutting: every remaining sheet needs approved engraving, verified files and QR labels",status:409};
     }

@@ -107,7 +107,7 @@
    * names that piece and that sheet (round 8: a sheet in no set says so, another set is a split); the piece completed by hand is never the one blamed. One exception,
    * because it is a person's or Etsy's explicit stop and not an inference about where pieces are: a HELD piece (a person's hold, or an
    * Etsy change waiting for review) holds the sheet wherever it sits, even a one-piece order on this very sheet (as before). */
-  const KEYS=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];   // which kind names an order that has several
+  const KEYS=['doubled','pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];   // which kind names an order that has several
   const PROBLEM_WORDS={unmatchedSku:'SKU not in a master',needsMaterial:'needs material',needsMapping:'needs an option mapped',missingSize:'no design for that size',blockedSku:'SKU is blocked',oversize:'does not fit the plate'};
   const PROBLEM_KEY={needsMaterial:'unmatched',needsMapping:'unmatched',blockedSku:'noDesign',missingSize:'noDesign',oversize:'noDesign'};
   const STAGE_WORDS={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
@@ -115,13 +115,21 @@
   const tailNo=k=>{const m=/_(\d+)$/.exec(String(k||''));return m?+m[1]:0;};
   // (how many pieces a line makes: the intake's explicit count when it wrote one (a mismatched pair makes a left and a right piece per unit: charm-nest-pair.js pieceCountOf), else its quantity as it always was)
   const qtyOf=l=>Math.max(1,Math.floor(+(l.spec?.pieceCount || l.pieceCount || l.spec?.quantity || l.quantity) || 1));
+  const groupOf=l=>{const n=Math.floor(+(l.groupSize ?? l.spec?.groupSize) || 0);return n>1 && n<=400?n:0;};
+  // which ear a copy is: the line's `sides` (the run's line record) or the intake's spec.pair.sides, indexed by the copy number; null when the line does not say (a necklace, a glued piece, an old record)
+  const sideOfCopy=(l,id)=>{const sides=Array.isArray(l.sides)?l.sides:Array.isArray(l.spec?.pair?.sides)?l.spec.pair.sides:null,n=tailNo(id),v=sides && n>0?sides[n-1]:null;return v==='L' || v==='R'?v:null;};
+  const EAR_NAME={L:'left earring',R:'right earring'};
+  const whoOf=(l,id,of)=>{const e=EAR_NAME[sideOfCopy(l,id)];return e?`the ${e}`:`piece ${tailNo(id)} of ${of}`;};
   const titleOf=l=>String(l.line?.title || l.snap?.title || l.spec?.designSku || l.sku || '').replace(/\s+/g,' ').trim();
   // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
   function copyIds(l,key){
     const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],q=Math.max(1,Math.floor(+(l.spec?.quantity ?? l.quantity) || 1));
     // the pieces a line made are the pool ids it has: a line pooled before every earring pair made a Left and a Right piece has ONE id per unit and is never "missing" its Right
     // piece. The intake's larger count (pairs: 2 per unit; discs: n) is waited for when the line has no ids yet; with ids, ids are invented only up to its quantity, as before.
-    const want=ids.length?Math.max(ids.length,Math.min(qtyOf(l),q)):qtyOf(l);
+    // A line whose pieces SAY they are a group (groupSize: the pool rows of its pieces carry it, the run's line record keeps it) is waited for as that many pieces, even when
+    // the record lists fewer ids: a Right earring whose piece record was never written is a piece that is on no sheet, not a piece that does not exist. A line
+    // with no groupSize (pooled before the rule, or a record from before it) is read as it always was.
+    const want=ids.length?Math.max(ids.length,Math.min(qtyOf(l),q),groupOf(l)):Math.max(qtyOf(l),groupOf(l));
     for(let n=1;key && ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
     return ids.sort((a,b)=>tailNo(a)-tailNo(b));       // a piece is "piece 2" by its copy number, whatever order the record lists them in (OrderPieces numbers them alike)
   }
@@ -142,7 +150,9 @@
   // a sheet's readiness for another sheet's order: the physical stages only (never its own order check), a cut sheet, or one cut before
   const physicalReady=(s,r)=>+s.laserDoneAt>0 || (r.included && (completedBefore(s) || r.ready));
   function readOrders(rows,sheets){
-    const copies=new Map(),phys=new Map(),groups=new Map(),orders=new Map();
+    const copies=new Map(),phys=new Map(),groups=new Map(),orders=new Map(),removed=new Set();
+    // (a copy a cleanup took off a sheet on purpose, named in that sheet's record: it is no piece of its order any more)
+    for(const s of sheets || [])for(const id of s.cleanup?.removedPoolIds || [])removed.add(String(id));
     for(const s of sheets || [])if(!s.archived){
       const r=sheet(s,{physicalOnly:true});
       phys.set(s,{ok:physicalReady(s,r),stage:Object.keys(r.stages).find(k=>!r.stages[k]) || (held(s)?'held':r.included?'':'included'),set:setOf(s),setLabel:s.setSeq || s.seq?`Set ${s.setSeq || s.seq}`:''});
@@ -160,20 +170,25 @@
         const hand=ids.some(x=>(copies.get(x) || []).length)?null:handOf(l);
         if(!hand && (l.spec?.noDesign || l.noDesign || l.state==='noDesign'))continue;    // nothing to cut
         const problem=problemOf(l);
+        const listed=new Set((Array.isArray(l.poolIds)?l.poolIds:[]).map(String)),made=groupOf(l);
         for(const pid of ids){
           const on=copies.get(pid) || [];
+          if(!on.length && removed.has(pid))continue;
           // completed by hand: the piece is resolved (it needs no sheet, waits for nothing and holds nothing: it is not one of the order's pieces),
           // unless the line is held as well (a person's or Etsy's explicit stop holds wherever the piece is)
           if(hand && !hold)continue;
           let block=null;
           if(hold)block={key:'held',why:hold};
-          else if(!on.length)block=problem?{key:problem.key,why:problem.why}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
+          else if(!on.length)block=problem?{key:problem.key,why:problem.why}:made && listed.size && !listed.has(pid)?{key:'pooled',missing:true,why:`${whoOf(l,pid,`${made}`)} is missing: only ${listed.size} of this line's ${made} pieces were made, so it is on no sheet`}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
+          // one piece listed by two saved sheets would be cut twice: the order waits until a person takes it off one of them (the sheets are the ones already read: no read of its own)
+          else if(on.length>1)block={key:'doubled',why:`${whoOf(l,pid,'this order')} is listed on both ${on.map(sheetLabel).join(' and ')}, so it would be cut twice`};
           else if(!on.some(s=>+s.laserDoneAt>0 || phys.get(s).ok)){
             const s=on.find(x=>!phys.get(x).ok) || on[0],stage=phys.get(s).stage;
             // (the sets its holders are in: forSheet drops this wait for a sheet of the very same set, where it is the set's wait, not the order's)
             block={key:'otherSheetNotReady',stage,why:`${s.metalLabel || s.metal || 'Sheet'}: ${STAGE_WORDS[stage] || (stage==='held'?'held back from Laser cutting':stage==='included'?'not in a set yet':'not ready for laser cutting')}`,setId:phys.get(s).set,setLabel:phys.get(s).setLabel,setIds:on.map(x=>phys.get(x).set)};
           }
           const at=on.length?on[0]:null;
+          if(block)block.side=sideOfCopy(l,pid);
           pieces.push({index:pieces.length+1,key:pid,poolId:pid,lineKey:key,label:titleOf(l),state:l.state,sheetId:at?(at.id || at.sheetId):null,sheetLabel:at?sheetLabel(at):null,sheetIds:on.map(s=>s.id || s.sheetId),block});
         }
       }
@@ -181,14 +196,14 @@
     }
     return orders;
   }
-  const head=bs=>{const b=bs.slice().sort((x,y)=>rank(x.key)-rank(y.key))[0];return {key:b.key,why:b.why,line:b.lineKey,...(b.sheetId?{sheetId:b.sheetId,sheetLabel:b.sheetLabel}:{}),...(b.stage?{stage:b.stage}:{})};};
+  const head=bs=>{const b=bs.slice().sort((x,y)=>rank(x.key)-rank(y.key))[0];return {key:b.key,why:b.why,line:b.lineKey,...(b.sheetId?{sheetId:b.sheetId,sheetLabel:b.sheetLabel}:{}),...(b.stage?{stage:b.stage}:{}),...(b.side?{side:b.side}:{})};};
   /** orderReports(rows, allSheets): what each order waits for, whichever sheet asks. { [orderId]: {ready:true} | {ready:false, key, why, line, sheetId?, sheetLabel?, stage?,
    *  blocks:[{key,index,label,poolId,lineKey,sheetId|null,sheetLabel|null,why,stage?}], onSheets, pieceCount, customer, listingId} }.
    *  `blocks` are the pieces that hold the order back (see above), each with the sheet it sits on; forSheet() reads them from one sheet. */
   function orderReports(rows,sheets){
     const out={};
     for(const [id,o] of readOrders(rows,sheets)){
-      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
+      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
       out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
     }
     return out;
@@ -203,7 +218,7 @@
     if(!r || r.ready===true || !Array.isArray(r.blocks) || !sid)return r;
     if(Array.isArray(r.onSheets) && !r.onSheets.includes(sid))return {ready:true};
     // (a held piece stops the sheet wherever it sits: a person's hold or an Etsy change waiting for review is no inference about where pieces are)
-    const mine=r.blocks.filter(b=>b.key==='held' || (b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid)) && !ownSetWait(b,mySet)));
+    const mine=r.blocks.filter(b=>b.key==='held' || b.key==='doubled' || (b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid)) && !ownSetWait(b,mySet)));
     if(!mine.length)return {ready:true};
     if(mine.length===r.blocks.length)return r;
     return {ready:false,...head(mine),blocks:mine,onSheets:r.onSheets,pieceCount:r.pieceCount,customer:r.customer,listingId:r.listingId};
@@ -218,6 +233,18 @@
     const sid=s.id || s.sheetId;
     return orderIds(s).map(id=>[id,s.orderReadiness?.[id]?forSheet(s.orderReadiness[id],sid,setOf(s)):{ready:false,why:'Order readiness has not been verified'}]).filter(([,r])=>r.ready!==true).map(([id,r])=>({id,...r}));
   };
+  /** blockText(blocker): the words a refusal says for one order that holds a sheet back (orderBlockers' entry). It is the order's own reason, and when the piece
+   *  that waits is one ear of a pair it says WHICH ear and where ("the right earring is on GF Sheet 2 (gold: engraving needs approval)"). A line that does not
+   *  say its sides (a necklace, a single, an old record) keeps the reason it always had. */
+  function blockText(b){
+    const bs=Array.isArray(b && b.blocks)?b.blocks.slice().sort((x,y)=>rank(x.key)-rank(y.key)):[],h=bs[0];
+    if(!h || !h.side || h.key==='doubled' || h.missing)return String(b && b.why || '');          // (a missing or doubled piece already names its ear)
+    const ear=`the ${EAR_NAME[h.side]}`,more=bs.length>1?` (${bs.length-1} more piece${bs.length===2?'':'s'} of this order also wait)`:'';
+    if(h.key==='otherSheetNotReady')return `${ear} is on ${h.sheetLabel || 'another sheet'} (${h.why})${more}`;
+    if(h.key==='pooled')return `${ear} is not on a saved sheet yet${more}`;
+    if(h.key==='held')return `${ear} is held: ${h.why}${more}`;
+    return `${ear}: ${h.why}${more}`;
+  }
   const filed=s=>+s.laserDoneAt>0 && !s.laserSetPending;
   // These are historical facts, independent of today's readiness or completion flag.
   // Old completion records have an exact signer/time; the former blue icon did not.
@@ -459,7 +486,7 @@
    * above), at most one entry for the sheet's own current blocker (no order), and, for a sheet of a set, only real set trouble (a sheet of the set that cannot
    * be found). A set mate that merely is not ready is never listed (round 8): the set's wait is said once, under the Approve button (setGate's reason). Pure: the sheet's own record (its orderReadiness, as the server answers it) or, when ctx.rows and ctx.allSheets are
    * given (the page, or a test), the pieces read from those. */
-  const PIECE_PHRASE={pooled:'not on a sheet yet',noSku:'no SKU',held:'held'};
+  const PIECE_PHRASE={pooled:'not on a sheet yet',noSku:'no SKU',held:'held',doubled:'on two sheets'};
   // an order split across two sets (round 7): its other piece sits on a not-ready sheet of ANOTHER set than the asking sheet's. The cardinal rule
   // (sheets that share a multi-piece order belong to one set) says it should not be; it stays a real issue, worded as the split it is.
   const splitFrom=(b,me)=>!!(me && me.setId && b && b.key==='otherSheetNotReady' && (Array.isArray(b.setIds)?b.setIds:[b.setId]).some(x=>x && x!==me.setId));
@@ -467,7 +494,7 @@
   // round 8: its other piece is on a not-ready sheet that is in NO set, while the asking sheet is in one. It is still the one honest wait (a real piece on a real
   // sheet), told as what it is: that sheet has no set (the cardinal rule says sheets sharing a multi-piece order belong to one set). Never a piece completed by hand: those are no pieces.
   const noSetFrom=(b,me)=>!!(me && me.setId && b && b.key==='otherSheetNotReady' && Object.prototype.hasOwnProperty.call(b,'setId') && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>!x));
-  const pieceLine=(b,me)=>b.key==='pooled'?'Not on a sheet yet':b.key==='noSku'?'No SKU':b.key==='otherSheetNotReady'?(splitFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in another set`:noSetFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in no set and not ready yet`:`On ${b.sheetLabel || 'another sheet'}, not ready yet`):sentence(b.why);
+  const pieceLine=(b,me)=>b.key==='doubled'?'Listed on two sheets':b.key==='pooled'?(b.missing?'Never made (no piece record)':'Not on a sheet yet'):b.key==='noSku'?'No SKU':b.key==='otherSheetNotReady'?(splitFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in another set`:noSetFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in no set and not ready yet`:`On ${b.sheetLabel || 'another sheet'}, not ready yet`):sentence(b.why);
   // the words of what holds an order back, from its blocks (older reports without blocks: their own words, as they were mapped before)
   function orderWhy(r,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[];
@@ -477,7 +504,7 @@
     }
     if(bs.length===1){
       const b=bs[0];
-      return b.key==='pooled'?'Its other piece is not on a sheet yet':b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?(noSetFrom(b,me)?`Its other piece is on ${b.sheetLabel || 'another sheet'}, which is in no set${b.stage==='included'?'':`, and ${MISSING[b.stage] || 'it is not ready'}`}`:`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`):`Its other piece: ${b.why}`;
+      return b.key==='doubled'?sentence(b.why).replace(/\.$/,''):b.key==='pooled'?(b.missing?sentence(b.why).replace(/\.$/,''):'Its other piece is not on a sheet yet'):b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?(noSetFrom(b,me)?`Its other piece is on ${b.sheetLabel || 'another sheet'}, which is in no set${b.stage==='included'?'':`, and ${MISSING[b.stage] || 'it is not ready'}`}`:`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`):`Its other piece: ${b.why}`;
     }
     const phrase=b=>PIECE_PHRASE[b.key] || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':noSetFrom(b,me)?' (in no set)':''}`:b.why);
     return `${bs.length} of its other pieces wait: ${[...new Set(bs.map(phrase))].join(', ')}`;
@@ -486,7 +513,7 @@
   function orderIssue(id,r,ctx,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me)),ns=!sp && bs.find(b=>noSetFrom(b,me));
     return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
+      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
       why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:ns?{noSet:true}:{})};
   }
   // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)
@@ -542,7 +569,7 @@
   }
   /** issues(sheetOrSet, ctx): the real issues holding a sheet or set back from Laser cutting.
    *  → [{ step:'nesting'|'engraving'|'orders'|'laser', key, sheetId, sheetLabel, ... }]
-   *   order issue (step 'orders', one per order): key 'pooled'|'noSku'|'unmatched'|'noDesign'|'held'|'otherSheetNotReady' (the first of these among the pieces holding it),
+   *   order issue (step 'orders', one per order): key 'doubled'|'pooled'|'noSku'|'unmatched'|'noDesign'|'held'|'otherSheetNotReady' (the first of these among the pieces holding it),
    *     orderId, orderLabel, customer, listingId, thumb, pieceCount, pieces:[{index,key,poolId,label,kind,sheetId|null,sheetLabel|null,stage,why}] (the OTHER pieces that hold it), why, open:{type:'order',id,poolId}
    *   own blocker (no order): key 'archived'|'held'|'notInSet'|'roseLine'|'layout'|'approvalsNeeded'|'backFilesMissing' (step engraving: "Saving back files")|'qrMissing' (step orders: "QR label not made yet"), label (a few words, no counts), open:{type:'sheet',id}
    *   no set wait: a set mate that merely is not ready is the SET's wait, said once under the Approve button (setGate().reason), never an entry of a sheet's list
@@ -680,5 +707,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });

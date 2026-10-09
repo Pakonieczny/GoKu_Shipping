@@ -58,6 +58,8 @@
     noSku: { tone: 'clay', group: () => 'No SKU', chip: () => 'No SKU' },
     unmatched: { tone: 'clay', group: () => 'Unknown SKU', chip: () => 'Unknown SKU' },
     noDesign: { tone: 'clay', group: () => 'No design', chip: () => 'No design' },
+    // one piece listed by two saved sheets would be cut twice: a person takes it off one of them
+    doubled: { tone: 'clay', group: () => 'On two sheets', chip: () => 'On two sheets' },
     held: { tone: 'clay', group: () => 'On hold', chip: () => 'On hold' },
     otherSheetNotReady: { tone: 'slate', group: s => `Waits on ${s}`, chip: (n, s) => `Waits on ${s}` },
     // an order split between two sets (the other piece is on a not-ready sheet of ANOTHER set): a real issue, said as the split it is
@@ -92,7 +94,7 @@
   /* pairs (Paul, 9 Oct 2026, amendment 2): every earring pair is a Left and a Right piece, and an order held back by ONE of them says which ("Right piece waits on RG Sheet 2"), by both
      "Pair waits on RG Sheet 2". The ear of a piece is the issue piece's own `side`, else what OrderPieces knows of that pool id (the readiness gives only the pool id). An order whose held-back
      pieces are not all earrings, or of two ears with only one named, says what it always said. */
-  const EARS = { L: 'Left', R: 'Right' }, EAR_KEYS = new Set(['pooled', 'otherSheetNotReady', 'held']);
+  const EARS = { L: 'Left', R: 'Right' }, EAR_KEYS = new Set(['pooled', 'otherSheetNotReady', 'held', 'doubled']);
   function earOf(it, pieces) {
     if (!pieces.length || !EAR_KEYS.has(it.key)) return '';
     let known = null;
@@ -109,7 +111,7 @@
   }
   const NO_DESIGN = new Set(['noSku', 'unmatched', 'noDesign']);                           // a piece with one of these has no vector design to show
   const STEP = { nesting: 'Nesting', engraving: 'Engraving', orders: 'Order check', laser: 'Laser cutting' };   // the rail's own words
-  const HARD = new Set(['noSku', 'unmatched', 'noDesign', 'held']);   // a person has to fix these (the count chip turns clay); the others only wait
+  const HARD = new Set(['noSku', 'unmatched', 'noDesign', 'held', 'doubled']);   // a person has to fix these (the count chip turns clay); the others only wait
   const SIX = 6, SHOWN = 3;   // more than SIX issues fold into groups; a group shows SHOWN rows before "Show N more"
 
   /* ═══ the adapter: today's explain() items as issues (used only until CharmNestReadiness.issues exists) ═══ */

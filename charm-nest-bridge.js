@@ -1541,6 +1541,9 @@ const Orders = window.Orders = (() => {
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
       engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign: hand ? !!(row.spec.special && row.spec.special.notCut) : !!row.spec?.noDesign,
+      // the group its pieces say they are (the pool rows' groupSize: set by Pool.pinPooled) and which ear each copy is (spec.pair.sides, only when some copy has one): the server waits for a piece
+      // whose record was never written (Readiness.copyIds) and names the ear in its refusals. A line pooled before the rule carries neither.
+      ...(row.groupSize > 1 ? { groupSize: row.groupSize } : {}), ...(row.spec && row.spec.pair && Array.isArray(row.spec.pair.sides) && row.spec.pair.sides.some(x => x === "L" || x === "R") ? { sides: row.spec.pair.sides.slice(0, 400).map(x => x === "L" || x === "R" ? x : "") } : {}),
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}),   // (released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
@@ -1563,7 +1566,7 @@ const Orders = window.Orders = (() => {
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
-      poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
+      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
      in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
@@ -2905,7 +2908,12 @@ const Pool = window.Pool = (() => {
    *  spec.pieceNote says in plain words what the rule gives now. Nothing is added to the pool or taken from it. A line changed on Etsy is made up
    *  new (repoolChanged, changePending), at the new count. */
   function pinPooled(row) {
-    const sp = row.spec; if (!sp || row.repoolChanged || row.changePending) return;
+    const sp = row.spec; if (!sp) return;
+    // the group the pool rows of this line's pieces say they are (a piece of a pair or a necklace carries groupSize): kept on the row and in its run record, so the readiness
+    // waits for a piece whose pool row was never written. A row the page has not loaded yet changes nothing (the last word stays); a line taken off has no live row.
+    const live = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(r => r && !["abandoned", "superseded"].includes(r.state));
+    if (live.length) { const g = Math.max(0, ...live.map(r => +r.groupSize || 0)); if (g > 1) row.groupSize = g; else delete row.groupSize; }
+    if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
     const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
     if (had) O.pinPieces(sp, had);
@@ -7504,7 +7512,7 @@ const Sets = window.Sets = (() => {
     const orderReadiness=window.CharmNestReadiness.orderReports(Orders.rows(),physical);
     const reports=physical.filter(sh=>sh.setId===set.setId).map(sh=>({...sh,orderReadiness}));
     const blocked=reports.flatMap(window.CharmNestReadiness.orderBlockers);
-    if(blocked.length)throw pendingRelease(`${blocked[0].id}: ${blocked[0].why}`);
+    if(blocked.length)throw pendingRelease(`${blocked[0].id}: ${window.CharmNestReadiness.blockText(blocked[0])}`);
     if(!window.CharmNestReadiness.set(set,reports).ready){
       // a Rose Gold sheet whose newest charms wait for Cut Sheet (only a press adds its green line): named, with what to press
       const uncut=sheets.find(sh=>window.RoseStock?.waiting?.(sh));

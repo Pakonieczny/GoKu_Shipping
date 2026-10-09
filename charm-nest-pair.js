@@ -151,6 +151,10 @@
         const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
         const ringLike = maxDim <= RING_MAX_PT && (s.subpaths || []).length <= 2 && (s.subpaths || []).every(sp => sp.length <= 20);
         if (ringLike && all.some(b => bbNear(s.bbox, b.bbox, RING_NEAR_PT + 1) && Math.min(...pts.map(p => distPolys(p[0], p[1], b.polys))) <= RING_NEAR_PT + (s.lwPt || 0) / 2 + (b.outline.lwPt || 0) / 2)) continue;   // a hoop beside a body is part of it
+        // The bodies of one design stand SIDE BY SIDE, as the master draws a pair (the same row rule masterPairs uses: they overlap in height). A closed cut path drawn above or below a body
+        // (a second bar of a bracelet, a plate under a charm) is part of that one body, not a second charm: without this the reader's nearly-closed-loop repair turned four plain bar designs into "pairs".
+        const vOv = b => Math.min(s.bbox[3], b.outlineBbox[3]) - Math.max(s.bbox[1], b.outlineBbox[1]);
+        if (!all.some(b => vOv(b) >= PAIR_DEFAULTS.vo * Math.min(s.bbox[3] - s.bbox[1], b.outlineBbox[3] - b.outlineBbox[1]))) continue;
         const rec = bodyRecord(s, members, polys);
         all.push(rec);
       }

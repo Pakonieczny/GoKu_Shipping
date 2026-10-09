@@ -190,24 +190,71 @@ const R = n => F.rid(n), T = n => F.tx(n);
       try { const r = await m2.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [] } }); assert(r.error || (m2.rec('sh-gf1').poolIds || []).includes(L2), 'the cut sheet now lists nothing: ' + JSON.stringify(m2.rec('sh-gf1').poolIds)); } finally { m2.done(); }
     });
   }
-  // ═══ 9 · a half-written group: the line says 2 pieces (pieceCount, as the intake now records it) but only its Left has a pool id ═══
+  // ═══ 9 · a half-written group: the line says 2 pieces (groupSize, as the pool rows of its pieces say it) but only its Left has a pool id ═══
   {
     const rid = R(13), key = rid + '_' + T(10), L = key + '_1', Rr = key + '_2';
-    await open('9a (finding 6, open) Readiness expects the Right earring of a line that says pieceCount 2 and lists only the Left: a sheet holding the Left must wait for it', async () => {
-      const lines = [{ key, orderId: rid, poolIds: [L], quantity: 1, pieceCount: 2, state: 'written' }];
-      const sheet = { id: 'a', setId: null, poolIds: [L], orders: [rid], laserDoneAt: 0, metal: 'gold' };
-      const pieces = Readiness.pieces(lines, [sheet])[rid]; assert.deepEqual(pieces.map(p => p.poolId), [L, Rr], 'the order reads ' + JSON.stringify(pieces.map(p => p.poolId)));
+    const line = (extra) => ({ key, orderId: rid, poolIds: [L], quantity: 1, pieceCount: 2, state: 'written', ...extra });
+    const sheetA = (extra) => Object.assign({ id: 'a', sheetIndex: 1, setId: null, poolIds: [L], orders: [rid], laserDoneAt: 0, metal: 'gold' }, extra || {});
+    await t('9a (finding 6) a line whose pieces say they are a group of 2 but lists only the Left: the order reads two pieces, the Right is missing and the sheet holding the Left waits, in words that name the right earring', async () => {
+      const lines = [line({ groupSize: 2, sides: ['L', 'R'] })], sheets = [sheetA()];
+      const pieces = Readiness.pieces(lines, sheets)[rid]; assert.deepEqual(pieces.map(p => p.poolId), [L, Rr], 'the order reads ' + JSON.stringify(pieces.map(p => p.poolId)));
+      const rep = Readiness.orderReports(lines, sheets)[rid]; assert.equal(rep.ready, false, JSON.stringify(rep));
+      const mine = Readiness.forSheet(rep, 'a', null); assert.equal(mine.ready, false, JSON.stringify(mine));
+      const b = mine.blocks[0]; assert.equal(b.poolId, Rr); assert.equal(b.side, 'R'); assert(/^the right earring is missing/.test(b.why) && /1 of this line's 2/.test(b.why), b.why);
+      const rec = { id: 'a', orderReadiness: { [rid]: mine }, setId: null, orders: [rid], poolIds: [L] };
+      const text = Readiness.blockText(Readiness.orderBlockers(rec)[0]); assert(/right earring/.test(text), text);
+      console.log('      text: ' + text);
+    });
+    await t('9b a line pooled before the rule (no groupSize in its record) whose pieceCount says 2 but lists one id is NOT waited for (nothing is invented for it)', async () => {
+      const lines = [line()], sheets = [sheetA()];
+      assert.deepEqual(Readiness.pieces(lines, sheets)[rid].map(p => p.poolId), [L]);
+      assert.equal(Readiness.forSheet(Readiness.orderReports(lines, sheets)[rid], 'a', null).ready, true);
+    });
+    await t('9c a copy a cleanup took off a sheet on purpose (named in a sheet record\'s cleanup.removedPoolIds) is no piece and is not waited for', async () => {
+      const lines = [line({ groupSize: 2, sides: ['L', 'R'] })], sheets = [sheetA(), { id: 'b', sheetIndex: 2, poolIds: [], orders: [], metal: 'gold', cleanup: { id: 'c1', removedPoolIds: [Rr] } }];
+      assert.deepEqual(Readiness.pieces(lines, sheets)[rid].map(p => p.poolId), [L]); assert.equal(Readiness.forSheet(Readiness.orderReports(lines, sheets)[rid], 'a', null).ready, true);
+    });
+    await t('9d a 3-disc necklace that lists two ids: the third disc is the missing piece, named by its number (a necklace has no ear)', async () => {
+      const d = k => rid + '_' + T(11) + '_' + k, lines = [{ key: rid + '_' + T(11), orderId: rid, poolIds: [d(1), d(2)], quantity: 1, pieceCount: 3, groupSize: 3, state: 'written' }];
+      const rep = Readiness.orderReports(lines, [sheetA({ poolIds: [d(1), d(2)] })])[rid]; assert.equal(rep.ready, false);
+      const b = rep.blocks.find(x => x.missing); assert.equal(b.poolId, d(3)); assert(!b.side && /^piece 3 of 3 is missing/.test(b.why), b.why);
+    });
+    await t('9e the other ear waiting on another sheet: the refusal text names that ear and its sheet; a necklace or a line with no sides says what it always said', async () => {
+      const lines = [line({ poolIds: [L, Rr], groupSize: 2, sides: ['L', 'R'] })];
+      const a = sheetA(), b = { id: 'b', sheetIndex: 2, setId: null, poolIds: [Rr], orders: [rid], laserDoneAt: 0, metal: 'gold' };
+      const rep = Readiness.orderReports(lines, [a, b])[rid], mine = Readiness.forSheet(rep, 'a', null);
+      const text = Readiness.blockText({ id: rid, ...mine }); assert(/right earring is on GF Sheet 2/.test(text), text); console.log('      text: ' + text);
+      const plain = Readiness.orderReports([line({ poolIds: [L, Rr] })], [a, b])[rid], p = Readiness.blockText({ id: rid, ...Readiness.forSheet(plain, 'a', null) });
+      assert(!/earring/.test(p), p);
     });
   }
   // ═══ 10 · two tabs nest the same ear on two sheets ═══
   {
     const m = mount({ orders: [{ rid: R(14), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }, { rid: R(15), lines: [{ n: 10, kind: 'single', on: 'sh-gf3' }] }], tracked: [F.groupKey(R(14), T(10))] });
     const [L] = m.idsOf(R(14), T(10), 2);
-    await open('10a (finding 12, open) a stale tab saves GF Sheet 3 with the Left earring that GF Sheet 1 already holds: the server must refuse a piece listed on two saved sheets', async () => {
+    await open('10a (finding 12, the SAVE itself is still accepted; Approve and the laser refuse it, 10b) a stale tab saves GF Sheet 3 with the Left earring that GF Sheet 1 already holds: the server must refuse a piece listed on two saved sheets', async () => {
       const r = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf3', poolIds: [F.poolId(R(15), T(10), 1), L] } });
       assert(r.error, 'accepted: ' + JSON.stringify(m.rec('sh-gf3').poolIds) + ' and GF Sheet 1 still lists ' + JSON.stringify(m.rec('sh-gf1').poolIds));
     });
     m.done();
+  }
+  // ═══ 10b · the same ear listed on two saved sheets must stop Approve and the laser, with a plain reason (read from the sheets already read: no extra read) ═══
+  {
+    const rid = R(14), key = rid + '_' + T(10), L = key + '_1', Rr = key + '_2';
+    const lines = [{ key, orderId: rid, poolIds: [L, Rr], quantity: 1, pieceCount: 2, groupSize: 2, sides: ['L', 'R'], state: 'written' }];
+    const a = { id: 'a', sheetIndex: 1, poolIds: [L], orders: [rid], metal: 'gold' }, b = { id: 'b', sheetIndex: 2, poolIds: [L, Rr], orders: [rid], metal: 'gold' };
+    await t('10b (finding 12) the Left listed on two sheets: both sheets are held back, the reason names the left earring and both sheets; one sheet alone is not doubled', async () => {
+      const rep = Readiness.orderReports(lines, [a, b])[rid]; assert.equal(rep.ready, false); assert.equal(rep.key, 'doubled', JSON.stringify(rep));
+      for (const id of ['a', 'b']) {
+        const mine = Readiness.forSheet(rep, id, null); assert.equal(mine.ready, false, id + ' ' + JSON.stringify(mine));
+        const text = Readiness.blockText({ id: rid, ...mine }); assert(/left earring/.test(text) && /GF Sheet 1/.test(text) && /GF Sheet 2/.test(text) && /twice/.test(text), text);
+        if (id === 'a') console.log('      text: ' + text);
+      }
+      const one = Readiness.orderReports(lines, [a, Object.assign({}, b, { poolIds: [Rr] })])[rid]; assert.notEqual(one.key, 'doubled');
+    });
+    await t('10c a sheet that was repacked (archived) and still lists the piece does not count as a second sheet', async () => {
+      const rep = Readiness.orderReports(lines, [a, Object.assign({}, b, { archived: true })])[rid]; assert.notEqual(rep.key, 'doubled');
+    });
   }
   // ═══ 11 · rule A with units, a whole pair, a mismatched pair and letters ═══
   {
