@@ -27,6 +27,11 @@ ok(Pair.bodiesOf(twin).length === 2 && !Pair.isMismatched(twin), 'identical twin
 // a small sample beside a charm is not a second body
 const sample = { outline: o1, members: [o1, e1, rect(25, 0, 33, 8)], bbox: [0, 0, 33, 26] };
 ok(Pair.bodiesOf(sample).length === 1, 'a small sample is not a body');
+// a second closed cut path ABOVE or BELOW the body (the second bar of a bracelet, drawn under the first) is part of one body; BESIDE it, it is a second body
+const stackedTop = { outline: o1, members: [o1, e1, rect(0, 30, 20, 56), eng(4, 34, 16, 38, [0, 0, 1])], bbox: [0, 0, 20, 56] };
+ok(Pair.bodiesOf(stackedTop).length === 1 && !Pair.isMismatched(stackedTop) && Pair.pieceCountOf({ quantity: 1 }, stackedTop) === 1, 'a second cut path stacked above the body is not a second body, so it is not a mismatched pair');
+const stagger = { outline: o1, members: [o1, e1, rect(21, 10, 41, 36), eng(25, 14, 37, 18, [0, 0, 1])], bbox: [0, 0, 41, 36] };
+ok(Pair.bodiesOf(stagger).length === 2 && Pair.isMismatched(stagger), 'a second body that stands beside the first, a little higher, is still a pair');
 // an entry that carries the pair field answers without geometry
 ok(Pair.isMismatched({ sku: 'MISMATCHED_7134', pair: { v: 1, bodies: 2, mismatched: true } }), 'a master entry with pair.mismatched');
 ok(!Pair.isMismatched({ sku: 'X', pair: { v: 1, bodies: 2, mismatched: false } }), 'a master entry with a twin pair');
