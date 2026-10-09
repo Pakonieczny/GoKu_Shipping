@@ -163,7 +163,7 @@ function readFindings(dir) {
     const m = /^([A-Za-z]+)-affected\.json$/.exec(f); if (!m) continue;
     try {
       const j = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); const set = new Set();
-      const take = v => { if (typeof v === "string") set.add(v.toUpperCase()); else if (v && typeof v === "object") { if (v.sku) set.add(String(v.sku).toUpperCase()); for (const k of ["skus", "skusBefore", "affected", "offending", "list", "items", "entries"]) if (Array.isArray(v[k])) v[k].forEach(take); } };
+      const take = v => { if (typeof v === "string") set.add(v.toUpperCase()); else if (v && typeof v === "object") { if (v.sku) set.add(String(v.sku).toUpperCase()); for (const k of ["skus", "skusBefore", "affected", "offending", "list", "items", "entries", "charms"]) if (Array.isArray(v[k])) v[k].forEach(take); } };
       Array.isArray(j) ? j.forEach(take) : take(j); out[m[1].toUpperCase()] = set;
     } catch (e) { out[m[1].toUpperCase()] = { error: e.message }; }
   }
