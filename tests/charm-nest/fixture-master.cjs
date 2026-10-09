@@ -20,7 +20,7 @@ function outline(kind, cx, cy, s, num) {
 }
 
 /**
- * opts: { count, labelled: true, edge: true, scale: 1 } → { charms:[{sku, size, kind, cx, cy, s, labelled}], bytes }
+ * opts: { count, labelled: true, edge: true, scale: 1, twins: false } → { charms:[{sku, size, kind, cx, cy, s, labelled}], bytes }
  * The SKUs are BR-TST-01 … and the page is 300 × 250 mm-ish so the charms have room; sizes 10–18 mm, times scale.
  */
 async function buildMaster(outPath, opts = {}) {
@@ -58,6 +58,8 @@ async function buildMaster(outPath, opts = {}) {
   // labels: SKU text directly under each charm (top edge ≈ 2 mm below the outline's bottom edge)
   const labelAt = (c, text, dyMm) => { const size = 6; const w = font.widthOfTextAtSize(text, size); page.drawText(text, { x: c.cx - w / 2, y: c.cy - c.s / 2 - (dyMm || 2) * MM - size * 0.75, size, font, color: rgb(0.1, 0.1, 0.1) }); };
   charms.forEach((c, i) => {
+    // twins: charm 7 is labelled with charm 1's SKU, written on two lines, then with its own second SKU (a SKU read under two charms, one of which repeats it)
+    if (opts.twins && i === 6) { labelAt(c, charms[0].sku, 2); labelAt(c, charms[0].sku, 4); labelAt(c, 'BR-TWN-07', 6); c.twin = true; return; }
     if (!edge) return labelAt(c, c.sku);
     if (i === 1) { c.size = 'S'; return labelAt(c, `${c.sku} · S`); }          // size suffix
     if (i === 2) { c.labelled = false; c.tooFar = true; return labelAt(c, c.sku, 8); } // 8 mm below: too far, becomes an orphan label

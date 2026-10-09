@@ -25,6 +25,10 @@
  *    --new-hash          with --only: write the charm hash the new file computes. By default a rebuilt SKU whose size, area and holes
  *                        are unchanged keeps the hash it has (the hash counts the members, so dropping a grey box would change it, and
  *                        a hash that moves makes the protected placements of a cut Rose sheet refuse to save)
+ *    --pin FILE          which charm owns a SKU that the sheet labels under more than one charm ("twins"). A JSON object
+ *                        { "SKU": { "at": [x, y] } } (a point on the owning charm, in page points: its outline box centre) or
+ *                        { "SKU": charmIndex }; "SKU__S" pins a sized line. Without a pin the first charm of the page keeps the SKU
+ *                        (the one labelCharms reports as kept: the label highest on the page), the same on every run.
  *    --out-dir DIR       STAGE instead of upload: write every per-SKU .ai / .png and records.json (the exact entries that
  *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
  *                        count, the sizes and a few files, then run again without --out-dir to write the same thing.
@@ -57,6 +61,7 @@ function args(argv) {
     else if (a === "--all") o.all = true;
     else if (a === "--only") { o.only = String(v || ""); i++; }
     else if (a === "--new-hash") o.newHash = true;
+    else if (a === "--pin") { o.pin = String(v || ""); i++; }
     else if (a === "--out-dir") { o.outDir = String(v || ""); i++; }
     else if (a === "--work-dir") { o.workDir = String(v || ""); i++; }
     else if (a === "--engrave-margin-mm") { o.engraveMarginMm = +v || 0.8; i++; }
@@ -108,6 +113,59 @@ function thumbnailPng(Geom, charm, size, PDF) {
   try { return new Resvg(svg, { fitTo: { mode: "width", value: Math.max(8, Math.round(w * s)) } }).render().asPng(); } catch (_) { return null; }
 }
 
+/** --pin: SKU (or SKU__SIZE) → { at: [x, y] } | { index } | charm index. Returns a Map keyed by the upper-case SKU key, or null. */
+function pinMap(spec) {
+  if (!spec) return null;
+  const j = JSON.parse(fs.readFileSync(spec, "utf8")), src = j && j.pins && typeof j.pins === "object" ? j.pins : j, m = new Map();
+  for (const [k, v] of Object.entries(src || {})) m.set(String(k).trim().toUpperCase().replace(/\s*[·•]\s*([A-Z0-9]{1,3})$/, "__$1"), v);
+  return m;
+}
+/** A SKU read under more than one charm of the sheet ("twins") belongs to ONE of them. labelCharms reports every later charm in
+ *  `duplicates` and means to drop the SKU from it, but its drop removes only the first line it finds: a charm whose label text
+ *  repeats the SKU on a second line (or a stack that lists it twice) keeps it, so both charms were built under one file name and one
+ *  index record, and which of them reached the library depended on which build finished last (four run at once) and which entry the
+ *  index took first. Here the owner is settled before anything is built, the same on every run: the charm a pin names, else the first
+ *  charm of the page (the one labelCharms kept). Every other charm loses every line of that SKU (it keeps its other SKUs, or becomes
+ *  unlabelled), and a SKU written twice under one charm is kept once. Returns the decisions, for the report. */
+function settleTwins(lab, charms, pins) {
+  const keyOf = x => { const sk = String(x.sku || "").toUpperCase(); return x.size ? `${sk}__${String(x.size).toUpperCase()}` : sk; };
+  const linesOf = l => [l].concat(l.extra || []);
+  const cOf = i => charms.find(c => c.index === i);
+  const setLines = (i, lines) => {
+    const l = lab.labels.get(i), c = cOf(i); if (!l) return;
+    if (!lines.length) { lab.labels.delete(i); if (c) { c.sku = null; c.skuSize = null; c.label = null; c.extraSkus = []; } lab.unlabelled.push(i); return; }
+    const f = lines[0]; if (f !== l) { l.sku = f.sku; l.size = f.size; l.str = f.str; l.bbox = f.bbox; }
+    l.extra = lines.slice(1); if (c) { c.sku = l.sku; c.skuSize = l.size; c.extraSkus = l.extra; }
+  };
+  for (const [i, l] of [...lab.labels]) {                              // a SKU written twice under one charm is one line
+    const seen = new Set(), lines = linesOf(l).filter(x => { const k = keyOf(x); if (seen.has(k)) return false; seen.add(k); return true; });
+    if (lines.length !== 1 + (l.extra || []).length) setLines(i, lines);
+  }
+  const claims = new Map(), kept = new Map(), add = (k, i) => { if (!claims.has(k)) claims.set(k, new Set()); claims.get(k).add(i); };
+  for (const [i, l] of lab.labels) for (const x of linesOf(l)) add(keyOf(x), i);
+  for (const d of lab.duplicates || []) { const k = keyOf(d); add(k, d.charmIndex); add(k, d.firstIndex); if (!kept.has(k)) kept.set(k, d.firstIndex); }
+  const out = [];
+  for (const [k, set] of claims) {
+    if (set.size < 2) continue;
+    const idx = [...set].sort((a, b) => a - b); let owner = kept.has(k) && set.has(kept.get(k)) ? kept.get(k) : idx[0], rule = "first on the page";
+    const pin = pins && pins.get(k);
+    if (pin != null) {
+      let want = typeof pin === "number" ? pin : pin && pin.index != null ? +pin.index : null;
+      if (want == null && pin && Array.isArray(pin.at)) {
+        const [px, py] = pin.at.map(Number); let best = null, bd = Infinity;
+        for (const i of idx) { const b = cOf(i).outline.bbox; if (px < b[0] - 1 || px > b[2] + 1 || py < b[1] - 1 || py > b[3] + 1) continue; const d = Math.hypot(px - (b[0] + b[2]) / 2, py - (b[1] + b[3]) / 2); if (d < bd) { bd = d; best = i; } }
+        want = best;
+      }
+      if (want == null || !set.has(want)) throw new Error(`--pin ${k}: no charm carrying it is where the pin says (${JSON.stringify(pin)}); its charms are ${idx.map(i => { const b = cOf(i).outline.bbox; return `#${i} at ${((b[0] + b[2]) / 2).toFixed(1)},${((b[1] + b[3]) / 2).toFixed(1)}`; }).join("; ")}`);
+      owner = want; rule = "pinned";
+    }
+    for (const i of idx) if (i !== owner) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); }
+    out.push({ key: k, owner, others: idx.filter(i => i !== owner), rule });
+  }
+  let n = 0; for (const l of lab.labels.values()) n += 1 + (l.extra || []).length; lab.skuCount = n;
+  return out;
+}
+
 async function main(argv, log = console.log) {
   const o = args(argv);
   if (!o.file) throw new Error('usage: node scripts/index-master.cjs "<master.ai>" --origin <sorter site> [--dry] [--passcode …]');
@@ -131,16 +189,19 @@ async function main(argv, log = console.log) {
   const g = P.groupCharms(parsed, { minPt: o.minPt });
   const pattern = o.pattern ? new RegExp(o.pattern) : P.SKU_PATTERN_DEFAULT;
   const lab = P.labelCharms(parsed, g.charms, { pattern, gapPt: o.gapMm / MM, widen: 0.25 });
+  const twins = settleTwins(lab, g.charms, pinMap(o.pin));
   log(`${g.charms.length} charm outline(s) · ${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
   if ((g.markers || []).length) { const by = {}; for (const m of g.markers) by[m.why] = (by[m.why] || 0) + 1; log(`  ${g.markers.length} marker object(s) beside charms are left out of them (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
+  if (twins.length) log(`  ${twins.length} SKU(s) are read under more than one charm and kept on one (${twins.filter(t => t.rule === "pinned").length} pinned, the rest the first on the page): ${twins.slice(0, 30).map(t => `${t.key} -> #${t.owner}`).join(", ")}${twins.length > 30 ? " …" : ""}`);
 
   let masterUp = null;
   if (net && o.uploadMaster) { masterUp = await upload(o.origin, o.passcode, `charmnest/master/files/${masterHash.slice(0, 12)}-${name.replace(/[^\w.\-]+/g, "_")}`, buf, "application/pdf"); log(`master stored at ${masterUp.path}`); }
 
   let items = [...lab.labels].map(([index, l]) => ({ index, l, c: g.charms.find(x => x.index === index) })).filter(x => x.c);
+  items.sort((x, y) => x.index - y.index);                                 // drawing order: the same queue, and the same records.json, on every run
   const skusOf = l => [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
   if (only) {
     const found = new Set(); items = items.filter(({ l }) => { const mine = skusOf(l); const hit = mine.some(sk => only.has(sk)); if (hit) for (const sk of mine) found.add(sk); return hit; });
@@ -181,10 +242,11 @@ async function main(argv, log = console.log) {
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: g.charms.length, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [];
+  const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
     const key = l.size ? `${l.sku}__${l.size}` : l.sku;
-    if (progress.done[key]) { const d = progress.done[key]; entries.push(d.entry); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { entries.push(Object.assign({}, d.entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
+    if (progress.done[key]) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
     { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }
     const sil = G.silhouetteBits(c, 6, {});
@@ -215,12 +277,13 @@ async function main(argv, log = console.log) {
       if (t && t.charmHash && near(t.widthPt, entry.widthPt) && near(t.heightPt, entry.heightPt) && near(t.areaPt2, entry.areaPt2) && (t.holes || 0) === (entry.holes || 0)) { if (t.charmHash !== entry.charmHash) hashKept = true; entry.charmHash = t.charmHash; }
     }
     if (hashKept) hashesKept++;
-    entries.push(entry); skus.push(l.sku); const blk = reasons.length ? { sku: l.sku, reason: reasons.join("; ") } : null; if (blk) blocked.push(blk);
-    for (const x of l.extra || []) { entries.push(Object.assign({}, entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
+    addEntry(entry, index); skus.push(l.sku); const blk = reasons.length ? { sku: l.sku, reason: reasons.join("; ") } : null; if (blk) blocked.push(blk);
+    for (const x of l.extra || []) { addEntry(Object.assign({}, entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
     progress.done[key] = { entry, blocked: blk, extra: l.extra || [] }; done++;
     if (done % 25 === 0) { saveProgress(); log(`  ${done + skipped}/${total} · ${((Date.now() - t0) / 1000).toFixed(0)} s`); }
   };
   await Promise.all(Array.from({ length: o.dry ? 8 : o.concurrency }, async () => { while (queue.length) { const it = queue.shift(); try { await one(it); } catch (e) { log(`  ! ${it.l.sku}: ${e.message}`); blocked.push({ sku: it.l.sku, reason: "not written: " + e.message }); } } }));
+  entries.sort((x, y) => (rank.get(x) || 0) - (rank.get(y) || 0)); skus.sort();
   saveProgress();
   // a small ring left loose beside a charm blocks it, as the other routes do
   for (const orp of g.orphans || []) { const b = orp.bbox; if (!b || orp.kind !== "path" || !orp.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of g.charms) { if (!c.sku) continue; const ob = c.outline.bbox; if (cx < ob[0] - 4 / MM || cx > ob[2] + 4 / MM || cy < ob[1] - 4 / MM || cy > ob[3] + 4 / MM) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 / MM) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
@@ -266,9 +329,9 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, twins, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet };
+module.exports = { main, api, upload, onlySet, settleTwins, pinMap };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });
