@@ -131,6 +131,14 @@ const R = n => F.rid(n), T = n => F.tx(n);
       assert.equal(JSON.stringify([m.row(L), m.row(Rr), m.rec('sh-gf1'), m.rec('sh-gf2')].map(x => Object.assign({}, x, { updatedAt: 0 }))), before);
       assert.equal(m.row(L).state, 'written');
     });
+    await t('6b2 Release after that (poolPut of both ears, as the page makes the line up again): the cut Left is answered as placed on its sheet and is NOT written again; the Right is live again', async () => {
+      const row = id => m.row(id), base = id => ({ poolId: id, runId: 'run-pairs', state: 'ready', sheetId: null, setId: null, orderId: R(7), transactionId: T(10), lineKey: R(7) + '_' + T(10), sku: 'PAIR-FACE-L', material: 'gold', form: 'earrings', quantity: 2, side: id === L ? 'L' : 'R', mirror: id !== L, bodyIndex: 0, groupKey: R(7) + ':' + T(10), groupSize: 2, copy: id === L ? 1 : 2 });
+      for (const id of [L, Rr]) m.fsx.put('Charm_Pool', id, Object.assign({}, m.row(id), { quantity: 2 }));   // (a real pool row's quantity is the line's piece count, as preparePool writes it)
+      const r = await m.fns.lib('poolPut', { pools: [base(L), base(Rr)] }); assert(!r.error, JSON.stringify(r));
+      assert.deepEqual((r.placed || []).map(x => x.poolId), [L], JSON.stringify(r)); assert.equal(r.written, 1);
+      assert.equal(row(L).sheetId, 'sh-gf1'); assert.equal(row(L).state, 'written'); assert.equal(row(Rr).state, 'ready'); assert(row(Rr).repooledAt, 'the Right says it is live again');
+      assert.equal(row(Rr).mirror, true, 'the Right is still the mirror image');
+    });
     await t('6c a line made up again (state superseded) still supersedes a piece on a cut sheet, as before (an Etsy change)', async () => {
       const r = await m.fns.lib('poolUpdate', { poolIds: [L], patch: { state: 'superseded', sheetId: null, setId: null } }); assert(!r.error, JSON.stringify(r));
       assert.equal(m.row(L).state, 'superseded'); assert.equal(r.kept, undefined);
@@ -220,6 +228,25 @@ const R = n => F.rid(n), T = n => F.tx(n);
     await t('11c a mismatched pair on two sheets of two different sets: moving either sheet into the other set is allowed to ask, but each leaves with a refusal that names left and right', async () => {
       const r = await m.move('sh-gf4', 'set-1'); console.log('      join text: ' + (r.error || JSON.stringify(r).slice(0, 200)));
       const out = await m.move('sh-ss1', null); assert.equal(out.status, 409, JSON.stringify(out)); console.log('      leave text: ' + out.error);
+    });
+    m.done();
+  }
+  // ═══ 12 · a patch that names the other ear, or the other way round, for a piece already on a sheet ═══
+  {
+    const m = mount({ orders: [{ rid: R(16), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(16), T(10))] });
+    const [L, Rr] = m.idsOf(R(16), T(10), 2), gk = F.groupKey(R(16), T(10));
+    const pair = (side, mirror, extra) => Object.assign({ side, mirror, bodyIndex: 0, groupKey: gk, groupSize: 2 }, extra || {});
+    await t('12a poolUpdate naming the Left\'s ear and direction for the placed Right is not written for it (the rest of the patch is); the answer says wrongWay; the Right stays the Right, mirrored', async () => {
+      const r = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('L', false, { heldNote: 'x' }) }); assert(!r.error, JSON.stringify(r));
+      assert.deepEqual(r.wrongWay, [Rr], JSON.stringify(r)); assert.equal(m.row(Rr).side, 'R'); assert.equal(m.row(Rr).mirror, true); assert.equal(m.row(Rr).heldNote, 'x');
+    });
+    await t('12b the same ear and direction again is a plain re-write; naming only the wrong mirror flag is also refused', async () => {
+      const ok = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('R', true, { runId: 'run-x' }) }); assert(!ok.error && !ok.wrongWay, JSON.stringify(ok)); assert.equal(m.row(Rr).runId, 'run-x');
+      const flip = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('R', false) }); assert.deepEqual(flip.wrongWay, [Rr]); assert.equal(m.row(Rr).mirror, true);
+    });
+    await t('12c a row that is not on a sheet yet (ready) can still be given its ear', async () => {
+      m.fsx.put('Charm_Pool', Rr, Object.assign({}, m.row(Rr), { state: 'ready', sheetId: null, setId: null }));
+      const r = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('R', true, { runId: 'run-y' }) }); assert(!r.error && !r.wrongWay, JSON.stringify(r)); assert.equal(m.row(Rr).runId, 'run-y');
     });
     m.done();
   }

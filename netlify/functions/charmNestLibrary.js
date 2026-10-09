@@ -1461,12 +1461,18 @@ async function op_poolUpdate(b) {
     return { ok: true, count: ids.length - keptSet.size, sheets: done.edited, ...(done.extended.length ? { extended: done.extended } : {}), ...(done.kept.length ? { kept: done.kept } : {}) };
   }
   // left and right rows named over a line an older run made as one glued piece, still in play, are not written (poolPut's rule): the page is told (`legacy`)
-  let wrote = ids; const legacy = [];
-  if (sent.length && PoolPieces.cleanFields(Object.assign({ poolId: ids[0] }, p)).side) {
+  let wrote = ids; const legacy = [], wrongWay = new Set();
+  const wantPair = sent.length ? PoolPieces.cleanFields(Object.assign({ poolId: ids[0] }, p)) : null;
+  if (wantPair && wantPair.side) {
     const rowsRead = [];
-    for (let i = 0; i < ids.length; i += 100) rowsRead.push(...await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: ["side", "groupSize", "state", "sheetId"] }));
+    for (let i = 0; i < ids.length; i += 100) rowsRead.push(...await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: ["side", "mirror", "groupSize", "state", "sheetId"] }));
     const lines = new Set(); ids.forEach((id, i) => { if (legacyLive(rowsRead[i] && rowsRead[i].exists ? rowsRead[i].data() : null)) lines.add(Placement.groupOfPool(id)); });
     if (lines.size) { wrote = ids.filter(id => !lines.has(Placement.groupOfPool(id))); legacy.push(...ids.filter(id => lines.has(Placement.groupOfPool(id)))); }
+    /* A piece that is already made up and on a sheet (or past it) never changes ear or direction: the Right is the Left's mirror image and was nested as one.
+       A patch that names the other ear, or the other way round, for such a piece is not written for it (the rest of the patch is), and the answer says
+       which ids (`wrongWay`). Naming the same ear and direction again is a plain re-write. (ADVLIFE 13, 9 Oct 2026) */
+    ids.forEach((id, i) => { const cur = rowsRead[i] && rowsRead[i].exists ? rowsRead[i].data() : null;
+      if (cur && (cur.side === "L" || cur.side === "R") && !Placement.TAKE_OFF_STATES.has(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state)) && (cur.side !== wantPair.side || (typeof wantPair.mirror === "boolean" && typeof cur.mirror === "boolean" && cur.mirror !== wantPair.mirror))) wrongWay.add(id); });
   }
   let before = null;
   if (told && wrote.length) try { before = new Map(); for (let i = 0; i < wrote.length; i += 100) (await db.getAll(...wrote.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(wrote[i + j], s.exists ? s.data() : null)); }
@@ -1474,13 +1480,13 @@ async function op_poolUpdate(b) {
   let batch = db.batch(), n = 0;
   for (const id of wrote) {
     const doc = Object.assign({}, p, { updatedAt: FV.serverTimestamp() });
-    if (sent.length) { for (const k of sent) delete doc[k]; Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); delete doc.poolId; }
+    if (sent.length) { for (const k of sent) delete doc[k]; if (!wrongWay.has(id)) { Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); } delete doc.poolId; }
     batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
   }
   if (n) await batch.commit();
   if (told && wrote.length) await stamp(() => poolEvents(wrote, p, before, b), "pool");
   if (told && wrote.length && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(wrote, p, before, b);
-  return { ok: true, count: wrote.length, ...(legacy.length ? { legacy } : {}) };
+  return { ok: true, count: wrote.length, ...(legacy.length ? { legacy } : {}), ...(wrongWay.size ? { wrongWay: [...wrongWay] } : {}) };
 }
 /* A cancelled order's pieces taken off (removedReason "cancelled...", the sheet window's Cancel and AutoCancel): each sheet
    they left is a removal on its cancel record too, with when and who (_orderCancel.noteRemovals; kept for good, 29 Sep).
