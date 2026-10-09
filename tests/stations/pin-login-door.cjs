@@ -105,11 +105,11 @@ const check = async (name, fn) => { try { await fn(); results.push([name, true])
     assert.strictEqual(r.body.ok, true); assert.strictEqual(r.body.name, 'Giovanna');
     assert.strictEqual((await call(ODD)).body.name, 'Zoë O’Neil-Ñandú', 'case, accents and punctuation stay; spaces and line ends are tidied');
     assert.strictEqual((await call(LOWER)).body.name, 'giovanna c.', 'a lower-case name stays lower case');
-    assert.strictEqual((await call(ANNA)).body.name, 'Anna');
+    assert.strictEqual((await call(ANNA)).body.name, 'Ana_M', 'a record that says "Anna" logs in as Ana_M (Paul, 9 Oct 2026: one person; tests/stations/ana-alias.cjs)');
     assert(!seesPin(r.raw), 'the response echoes a number');
     for (const [n, p] of PEOPLE) {                                                 // each number gives its own person, and only that person
       const x = await call(p);
-      assert.strictEqual(x.body.name, n.replace(/\s+/g, ' ').trim()); assert.deepStrictEqual(Object.keys(x.body).sort(), ['name', 'ok']);
+      assert.strictEqual(x.body.name, n === 'Anna' ? 'Ana_M' : n.replace(/\s+/g, ' ').trim()); assert.deepStrictEqual(Object.keys(x.body).sort(), ['name', 'ok']);
     }
     assert.strictEqual(slept.length, 0, 'a right number is answered at once');
     assert.strictEqual(docs.has('Station_PinLogin/limits'), false, 'a right number adds to no count');
@@ -305,7 +305,7 @@ const check = async (name, fn) => { try { await fn(); results.push([name, true])
       const gone = await get('3521000778'); assert.deepStrictEqual(gone.body, { success: false, notFound: true });
       assert.strictEqual((await get('3521000777', { sandbox: true })).body.notFound, true, 'the sandbox copy of an order is its own');
       // the login door is untouched, and nothing above put the key or a number in a response or a log line
-      assert.strictEqual((await call(ANNA)).body.name, 'Anna');
+      assert.strictEqual((await call(ANNA)).body.name, 'Ana_M');
       assert(!bodies.slice(b0).some(b => seesPin(b) || b.includes(KEY)), 'a response held a number or the key');
       assert(!logs.slice(l0).some(l => seesPin(l) || l.includes(KEY)), 'a log line held a number or the key');
     } finally { if (saved === undefined) delete process.env.EDIT_PASSCODE; else process.env.EDIT_PASSCODE = saved; require(path.join(root, 'netlify/functions/_editPasscode.js')).resetCache(); }

@@ -511,11 +511,11 @@
   <script src="station-session.js?v=20261006-st3"></script>
   <!-- What each person did here (scans, stickers printed, orders sorted, rejects) for the Employee efficiency console: the
        person, station and device are the StationSession's. Without the file nothing changes. -->
-  <script src="station-activity.js?v=20261009-ps1"></script>
+  <script src="station-activity.js?v=20261009-ps1-adv1"></script>
   <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
        (station-live-order.js). Optional: without it nothing changes. -->
   <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
-  <script src="station-live-order.js?v=20261009-ps1"></script>
+  <script src="station-live-order.js?v=20261009-ps1-adv1"></script>
   <script>
     try {
       StationSession.init({
@@ -1501,7 +1501,9 @@ window.SortTL = (function () {
   const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const toast = html => { try { window.M && M.toast && M.toast({ html }); } catch (_) {} };
   // (a number alone is never a name: an employee number typed here before is not recorded as who sorted)
-  function getEmployee() { const v = lsGet(EMP_KEY).trim(); return /^\d{4,}$/.test(v) ? "" : v; }
+  // (Paul, 9 Oct 2026: "Ana_M and Anna are the same person": her other spellings are the one login name, here and on the server: netlify/functions/_activityKinds.js loginName)
+  const oneLogin = s => { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; };
+  function getEmployee() { const v = oneLogin(lsGet(EMP_KEY).trim()); return /^\d{4,}$/.test(v) ? "" : v; }
 
   function tl() {
     const S = window.StationTimeline;
@@ -1601,7 +1603,7 @@ window.SortTL = (function () {
       const v = inp.value.replace(/\s+/g, " ").trim().slice(0, 40);
       inp.value = ""; inp.style.webkitTextSecurity = "";
       if (save && /^\d{6}$/.test(v)) signIn(v);
-      else if (save && v && !/^\d+$/.test(v)) { lsSet(EMP_KEY, v); lsSet(VIA_KEY, "name"); sessionIn(v); }
+      else if (save && v && !/^\d+$/.test(v)) { const nm = oneLogin(v); lsSet(EMP_KEY, nm); lsSet(VIA_KEY, "name"); sessionIn(nm); }
       else if (save && v) toast("An employee number has 6 digits");
       inp.hidden = true; btn.hidden = false;
       renderChip();

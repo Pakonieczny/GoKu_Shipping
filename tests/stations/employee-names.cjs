@@ -206,7 +206,7 @@ let MAIN;
   const ALL_NAMES = [...PIN_NAMES, 'Michael V.', 'MICHAEL V', 'Ana M.', 'Paul K', 'Giovanna', 'Michael T.', 'Michael'];
   ALL_NAMES.forEach((n, i) => {
     const r = ACT.clean({ id: `weld-1_AAAA_${i + 1}_1700000000000`, station: 'welding', action: 'scan', person: n, at: NOW }, NOW, '');
-    assert.strictEqual(!r.refused && r.doc.person === n, true, 'the activity door accepts the name as sent: ' + n);
+    assert.strictEqual(!r.refused && r.doc.person === (n === 'Ana M.' ? 'Ana_M' : n), true, 'the activity door accepts the name as sent (Ana M. is stored as her one login name, Ana_M: Paul, 9 Oct 2026): ' + n);
     const id = ACT.rollupId('2026-10-02', n);
     assert.strictEqual(id, '2026-10-02__' + n, 'the rollup id is day__name, untouched: ' + n);
     assert.strictEqual(validFirestoreId(id), true, 'a valid Firestore document id: ' + id);
@@ -271,10 +271,10 @@ let MAIN;
   /* the store, exactly as the stations wrote it */
   assert.strictEqual(col('Station_Activity').size, 35, 'one document per event: 4+2+3+4+3+2+3+2+2+2+2+2+2+2');
   const stored = n => docsOf('Station_Activity').filter(e => e.person === n).length;
-  eq(['Giovanna C.', 'Giovanna', 'Empress D.', 'Michael_V', 'Michael V.', 'MICHAEL V', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Ana M.', 'Paul_K', 'Paul K', 'Michael T.', 'Michael'].map(stored), [4, 2, 3, 4, 3, 2, 3, 2, 2, 2, 2, 2, 2, 2], 'every event carries the name as the station signed in (nothing is tidied on the way in)');
-  eq(docsOf('Station_Sessions').map(d => d.person).sort(), ['Ana M.', 'Ana_M', 'Empress D.', 'Giovanna', 'Giovanna C.', 'Ivy_Y', 'MICHAEL V', 'Michael', 'Michael T.', 'Michael V.', 'Michael_V', 'Michelle_R', 'Paul K', 'Paul_K'].sort(), 'the sessions carry the same names');
+  eq(['Giovanna C.', 'Giovanna', 'Empress D.', 'Michael_V', 'Michael V.', 'MICHAEL V', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Paul_K', 'Paul K', 'Michael T.', 'Michael'].map(stored), [4, 2, 3, 4, 3, 2, 3, 2, 4, 2, 2, 2, 2], 'every event carries the name as the station signed in (nothing is tidied on the way in), except Ana M. typed at sorting-2: her one login name, Ana_M (Paul, 9 Oct 2026), so Ana_M has the 2 + 2 events');
+  eq(docsOf('Station_Sessions').map(d => d.person).sort(), ['Ana_M', 'Ana_M', 'Empress D.', 'Giovanna', 'Giovanna C.', 'Ivy_Y', 'MICHAEL V', 'Michael', 'Michael T.', 'Michael V.', 'Michael_V', 'Michelle_R', 'Paul K', 'Paul_K'].sort(), 'the sessions carry the same names');
   const ids = docsOf('Efficiency_Daily').map(d => d._id).sort();
-  eq(ids, ['Giovanna C.', 'Giovanna', 'Empress D.', 'Michael_V', 'Michael V.', 'MICHAEL V', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Ana M.', 'Paul_K', 'Paul K', 'Michael T.', 'Michael'].map(n => '2026-10-02__' + n).sort(), 'fourteen rollup documents: two or three for each person with more than one spelling');
+  eq(ids, ['Giovanna C.', 'Giovanna', 'Empress D.', 'Michael_V', 'Michael V.', 'MICHAEL V', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Paul_K', 'Paul K', 'Michael T.', 'Michael'].map(n => '2026-10-02__' + n).sort(), 'thirteen rollup documents: two or three for each person with more than one spelling (Ana M. is written as Ana_M: one document)');
   assert(ids.every(validFirestoreId), 'every rollup id is a valid Firestore id');
   assert(docsOf('Efficiency_Daily').every(d => d._id === '2026-10-02__' + d.person), 'the id and the person field agree');
   eq(docsOf('Efficiency_Daily').reduce((n, d) => n + d.events, 0), 35, 'the rollups counted every event once');
@@ -353,9 +353,9 @@ let MAIN;
       for (const [st, v] of Object.entries(d.stations)) { const s = AK.readStationCounters(st, v); g.parts += (s.parts || 0) - (s.undoParts || 0); g.scans += s.scans || 0; g.scanParts += s.scanParts || 0; }
       g.docs++; groups.set(key(d.person), g);
     }
-    eq(groups.size, 9, 'the fourteen rollup documents are nine people');
+    eq(groups.size, 9, 'the thirteen rollup documents are nine people');
     for (const p of A.people) { const g = groups.get(key(p.name)); eq([p.totals.parts, p.totals.scans, p.totals.scanParts], [g.parts, g.scans, g.scanParts], p.name + ': the card equals the sum of that person\'s rollup documents'); }
-    eq([...groups.values()].map(g => g.docs).sort(), [1, 1, 1, 1, 1, 2, 2, 2, 3], 'Michael V. has three documents, Giovanna, Ana M. and Paul K. two, the rest one');
+    eq([...groups.values()].map(g => g.docs).sort(), [1, 1, 1, 1, 1, 1, 2, 2, 3], 'Michael V. has three documents, Giovanna and Paul K. two, the rest one (Ana M. only one: her typed spelling is written as Ana_M)');
   }
 
   /* ═══════════ 5 · config/employeeAliases ═══════════ */
@@ -376,7 +376,7 @@ let MAIN;
     for (const [n, pin] of fakePins) assert.strictEqual(dump.includes(pin), false, 'the PIN of ' + n + ' is in a stored document or an answer');
   }
   MAIN = { A };
-  say('1-5 the seven names + typed variants: door, sessions, rollups (14 documents, valid ids), reader (9 people, nice names, sums, no double counting), any spelling, aliases');
+  say('1-5 the seven names + typed variants: door, sessions, rollups (13 documents, valid ids), reader (9 people, nice names, sums, no double counting), any spelling, aliases');
 
   /* ═══════════ 6 · the console's view model ═══════════ */
   {

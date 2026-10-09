@@ -67,16 +67,24 @@
   /** the line's own words name earrings (title or a chosen option): the guard that keeps a note or a SKU on a charm, a necklace or a disc line from making a pair of it */
   const EAR_WORDS = /\b(?:ear\s?rings?|studs?|huggies?|hoops?)\b/i;
   const earWords = t => { try { return EAR_WORDS.test([t && t.title].concat(Array.isArray(t && t.variations) ? t.variations.map(v => v && (v.formatted_value != null ? v.formatted_value : v.value)) : []).filter(Boolean).join(" ")); } catch (_) { return false; } };
+  /* A line is a mismatched pair only when it is a pair of EARRINGS (ADVCOUNT, 9 Oct: a necklace charm whose SKU is "CAT(+FISH) - Cat Only", a necklace with the option "Silver • 2 symbols"
+     or a note "not mismatched" was told "Pair: Left + Right" and printed a LEFT and a RIGHT sticker). What the buyer's words say (a two-designs option, a Left / Right option name, a
+     note) counts only on a line sold as a pair; a SKU is never split here to guess two designs (a station holds no master, and a mismatched pair has the same count and sides as a
+     matching one); one ear alone (Single) is never a pair of anything. */
+  const personal = v => /personali[sz]ation|engraving text|custom text/i.test(String((v && (v.formatted_name != null ? v.formatted_name : v.name)) || ""));
   function saysMismatched(t) {
     try {
       if (!t || typeof t !== "object") return false;
+      const O = ordersLib(), sig = O && typeof O.lineSignals === "function" ? O.lineSignals(t) : null;
+      if (sig && sig.soldAs === "single") return false;
       if (t.__pair === "mismatched" || (t.__pair && t.__pair.mismatched === true)) return true;
-      if (skuSays(t)) return true;
-      for (const v of (Array.isArray(t.variations) ? t.variations : [])) if (SAYS.test(String((v && (v.formatted_value != null ? v.formatted_value : v.value)) || ""))) return true;
-      // the intake's own reading of the words (an option or a note that says mismatched / two designs), with the listing title blanked (a title is on every line of the listing, whichever the buyer picked)
-      const O = ordersLib(); if (O && typeof O.lineSignals === "function" && O.lineSignals(Object.assign({}, t, { title: "" })).says === true) return true;
-      // a SKU that names two designs ("A / B", "A + B", "A & B", "A, B"): only on a line sold as a pair of earrings. The same shapes are on single charms ("CAT(+FISH) - Cat Only", "HEART & STAR"), which are one piece and never a Left and a Right.
-      if (O && typeof O.splitSkus === "function" && soldAsPair(t) && O.splitSkus(skuOf(t))) return true;
+      if (SAYS.test(skuOf(t))) return true;                                                // a design named MISMATCHED, MISMATCHED_7134
+      const pair = sig ? sig.soldAs === "pair" : true;                                     // (without the intake file the old rule: the line's own words)
+      for (const v of (Array.isArray(t.variations) ? t.variations : [])) {
+        if (!pair && personal(v)) continue;                                                // a note on a line that is not an earring pair says nothing about pairs
+        if (SAYS.test(String((v && (v.formatted_value != null ? v.formatted_value : v.value)) || ""))) return true;
+      }
+      if (pair && sig && O.lineSignals(Object.assign({}, t, { title: "" })).says === true) return true;   // (the listing title is on every line of the listing, whichever the buyer picked: not read)
     } catch (_) {}
     return false;
   }

@@ -219,6 +219,12 @@ function fileKeys(items) {
   return out;
 }
 
+/** Whether a design looks the same in a mirror (charm-nest-pair.js symmetryOf on its first body): "symmetric" | "slight" | "directional", or undefined when the module cannot say.
+ *  Stored as the index field `sym` so the Master tab can show its "faces" box only for designs that need it. */
+function symLevel(Pair, c) {
+  try { const b = Pair && Pair.bodiesOf ? Pair.bodiesOf(c)[0] : null; return b && Pair.symmetryOf ? Pair.symmetryOf(b).level : undefined; } catch (_) { return undefined; }
+}
+
 /** The pair layer (pairs, 9 Oct). A master draws some designs as a ROW of bodies with ONE label centred under the whole row ("Mismatched_7134":
  *  MITTENS 1 beside MITTENS 2). groupCharms reads each body as a charm of its own and only the labelled one was ever indexed, so the library
  *  held half of the design. This reads the rows back from the grouping (charm-nest-pair.js masterPairs; it changes nothing in the grouping) and,
@@ -387,6 +393,8 @@ async function main(argv, log = console.log) {
     let hashKept = false;
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
     if (pm) entry.pair = pm.field;                                       // { v: 1, bodies, mismatched }: only a folded pair carries it (a record without it leaves a stored one alone)
+    if (pm && Pair) { try { const bs = Pair.bodiesOf(c), rel = bs.length === 2 ? Pair.facingOfBody(bs[1], c) : null; if (rel) entry.facings = [null, rel]; } catch (_) {} }   // a pair drawn with the right body as the mirror image of the left: the entry says so (the order window reads it without the drawing); a person's words stand over it
+    { const sym = symLevel(Pair, c); if (sym) entry.sym = sym; }       // does the design look the same in a mirror? (symmetric | slight | directional): the Master tab asks a person which way a directional one faces (charm-nest-pair.js symmetryOf)
     if (net && only && !o.newHash) {                                   // the held record's hash stands while the drawing's geometry is the same
       const h = held.get(String(l.sku).toUpperCase()), t = h && (l.size ? (h.sizes || {})[String(l.size).toUpperCase()] : h), near = (a, b) => Math.abs(a - b) <= Math.max(0.01, 0.001 * Math.max(Math.abs(a), Math.abs(b)));
       if (t && t.charmHash && near(t.widthPt, entry.widthPt) && near(t.heightPt, entry.heightPt) && near(t.areaPt2, entry.areaPt2) && (t.holes || 0) === (entry.holes || 0)) { if (t.charmHash !== entry.charmHash) hashKept = true; entry.charmHash = t.charmHash; }
@@ -448,5 +456,5 @@ async function main(argv, log = console.log) {
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng, pairLayer };
+module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng, pairLayer, symLevel };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });

@@ -83,6 +83,8 @@ function pairLine(rid, l) {
   return Object.assign(l, { design: d.sku, pairKind: F.KINDS[l.kind].pair, pf: d.pieces.map(p => ({ side: p.side, bodyIndex: p.bodyIndex, groupKey: p.groupKey, groupSize: p.groupSize, mirror: p.mirror, shapeJson: F.shapeJsonOf(d.sku, p, { angle: 0, cx: 0, cy: 0 }) })) });
 }
 /** The pair fields of piece i of a line (a pool row or a page row); withShape: a sheet charm also holds its laid outline. */
+/** The quantity of a line: the Etsy units (a pair line of quantity 1 is two pieces, a disc necklace of 3 discs is one necklace); a plain line has one piece per unit. */
+const unitsOf = (l, pieces) => (l && l.pf ? Math.max(1, l.qty | 0 || 1) : Math.max(1, pieces));
 const pfRow = (l, i, withShape) => (l && l.pf && l.pf[i] ? Object.assign({ side: l.pf[i].side, bodyIndex: l.pf[i].bodyIndex, groupKey: l.pf[i].groupKey, groupSize: l.pf[i].groupSize, mirror: l.pf[i].mirror }, withShape ? { shapeJson: l.pf[i].shapeJson } : {}) : {});
 const lineOfItem = (spec, rid, n) => ((spec.orders.find(o => o.rid === rid) || { lines: [] }).lines.find(l => l.n === n)) || null;
 
@@ -99,7 +101,7 @@ function cloudDocs(spec) {
   const NOW = Date.now(), docs = { sheets: [], pool: [], run: null, sets: [] }, lines = {};
   for (const o of spec.orders) for (const l of o.lines) {
     const key = lineKey(o.rid, l.n), cs = copiesOf(l);
-    lines[key] = { orderId: o.rid, transactionId: String(tx(l.n)), sku: l.custom ? '' : 'TEST-' + l.n, state: cs.length && cs.every(Boolean) ? 'written' : l.custom ? 'noDesign' : 'pooled', quantity: Math.max(1, cs.length), material: l.metal, poolIds: cs.map((_, i) => pid(o.rid, l.n, i + 1)), noDesign: !!l.custom, ...(l.pf ? { kind: l.pairKind, pieceCount: cs.length } : {}) };
+    lines[key] = { orderId: o.rid, transactionId: String(tx(l.n)), sku: l.custom ? '' : 'TEST-' + l.n, state: cs.length && cs.every(Boolean) ? 'written' : l.custom ? 'noDesign' : 'pooled', quantity: unitsOf(l, cs.length), material: l.metal, poolIds: cs.map((_, i) => pid(o.rid, l.n, i + 1)), noDesign: !!l.custom, ...(l.pf ? { kind: l.pairKind, pieceCount: cs.length } : {}) };
   }
   docs.run = { runId: RUN, status: 'running', step: 'nest', day: DAY, lines, orders: spec.orders.map(o => o.rid), sheets: {}, holds: {}, errors: [], resumable: true };
   for (const sh of spec.sheets) {
@@ -112,7 +114,7 @@ function cloudDocs(spec) {
     docs.sheets.push({ id: sh.id, setId: s.set, setSeq: SET_DEF.find(x => x.id === s.set).seq, sheetIndex: s.n, runId: RUN, metal: s.metal, day: DAY, fileBase: fileBase(s), folder: fileBase(s), status: 'complete', placedCount: placements.length, charmCount: placements.length,
       density: .5, stock: { wPt: 300, hPt: 150, wIn: 6, hIn: 4.5 }, placements, charms, poolIds, orders, verification: { ok: true }, outputs: {}, label: { files: [], orders }, createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 });
   }
-  for (const o of spec.orders) for (const l of o.lines) copiesOf(l).forEach((on, i) => docs.pool.push({ ...pfRow(l, i), poolId: pid(o.rid, l.n, i + 1), orderId: o.rid, transactionId: String(tx(l.n)), lineKey: lineKey(o.rid, l.n), sku: 'TEST-' + l.n, material: l.metal, copy: i + 1, quantity: copiesOf(l).length, runId: RUN,
+  for (const o of spec.orders) for (const l of o.lines) copiesOf(l).forEach((on, i) => docs.pool.push({ ...pfRow(l, i), poolId: pid(o.rid, l.n, i + 1), orderId: o.rid, transactionId: String(tx(l.n)), lineKey: lineKey(o.rid, l.n), sku: 'TEST-' + l.n, material: l.metal, copy: i + 1, quantity: unitsOf(l, copiesOf(l).length), runId: RUN,
     state: on ? 'written' : 'ready', sheetId: on || null, setId: on ? SHEET[on].set : null, sheetName: on ? fileBase(SHEET[on]) : null, createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 }));
   for (const set of SET_DEF) { const sh = spec.sheets.filter(x => SHEET[x.id].set === set.id); if (sh.length) docs.sets.push({ setId: set.id, seq: set.seq, day: DAY, runId: RUN, sheetIds: sh.map(x => x.id), materials: [...new Set(sh.map(x => x.metal))], orders: {}, labelFiles: [], status: 'labelled' }); }
   return docs;
@@ -351,11 +353,11 @@ async function seedPage(page, spec, { owner }) {
     for (const o of spec.orders) for (const l of o.lines) {
       const cs = l.custom ? [] : l.pf ? l.pf.map((_, i) => (Array.isArray(l.on) ? (l.on[i] || null) : (l.on || null))) : Array.isArray(l.on) ? l.on : [l.on || null];   // (a pair line: one entry per piece)
       const order = { receiptId: o.rid, orderNumber: o.rid, createTs: BASE_TS - 9000, updateTs: BASE_TS, shipBy: BASE_TS + 500000, buyer: { name: 'Buyer ' + o.rid.slice(-3) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [] };
-      const ln = { transactionId: String(tid(l.n)), listingId: '1800' + l.n, sku: l.custom ? '' : 'TEST-' + l.n, title: l.custom ? 'Custom piece ' + l.n : 'Test charm ' + l.n, quantity: Math.max(1, cs.length), variations: [{ name: 'Metal', value: l.metal === 'silver' ? 'Sterling Silver' : '14k Gold Filled' }], metalKey: l.metal, metalLabel: l.metal === 'silver' ? 'Sterling Silver' : '14k Gold Filled', personalization: [] };
+      const ln = { transactionId: String(tid(l.n)), listingId: '1800' + l.n, sku: l.custom ? '' : 'TEST-' + l.n, title: l.custom ? 'Custom piece ' + l.n : 'Test charm ' + l.n, quantity: l.pf ? Math.max(1, l.qty | 0 || 1) : Math.max(1, cs.length), variations: [{ name: 'Metal', value: l.metal === 'silver' ? 'Sterling Silver' : '14k Gold Filled' }], metalKey: l.metal, metalLabel: l.metal === 'silver' ? 'Sterling Silver' : '14k Gold Filled', personalization: [] };
       order.lines = [ln];
       const key = `${o.rid}_${ln.transactionId}`;   // (the app's own line key: receipt_transaction)
       if (!l.custom) window.B.master.entries.set('TEST-' + l.n, { sku: 'TEST-' + l.n, updatedAt: 1, ...(l.kind === 'mismatched' ? { pair: { v: 1, bodies: 2, mismatched: true } } : {}) });   // (a design in a master file: no "Unknown SKU" question on the line)
-      rows.push({ key, order, line: ln, spec: { designSku: ln.sku, quantity: Math.max(1, cs.length), material: l.metal, problems: [], ...(l.pf ? { pieceCount: cs.length, kind: l.kind, pair: { kind: l.pairKind } } : {}), ...(l.custom ? { noDesign: true, special: { label: 'Custom', notCut: true } } : {}) }, problems: [], state: l.custom ? 'noDesign' : (owner && cs.length && cs.every(Boolean) ? 'written' : 'pooled'), reason: null,
+      rows.push({ key, order, line: ln, spec: { designSku: ln.sku, quantity: l.pf ? Math.max(1, l.qty | 0 || 1) : Math.max(1, cs.length), material: l.metal, problems: [], ...(l.pf ? { pieceCount: cs.length, kind: l.kind, pair: { kind: l.pairKind } } : {}), ...(l.custom ? { noDesign: true, special: { label: 'Custom', notCut: true } } : {}) }, problems: [], state: l.custom ? 'noDesign' : (owner && cs.length && cs.every(Boolean) ? 'written' : 'pooled'), reason: null,
         poolIds: cs.map((_, i) => `${o.rid}_${tid(l.n)}_${i + 1}`), engrave: null, material: l.metal, arrivedAt: Date.now() - 7200000 });
     }
     window.B.orders.rows = rows; window.B.orders.byKey = new Map(rows.map(r => [r.key, r]));

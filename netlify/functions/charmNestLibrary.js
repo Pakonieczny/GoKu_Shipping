@@ -1152,12 +1152,14 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
-/** What changes whenever the index does: how many entries it holds, and when one was last indexed and last edited
-    (masterPatch). A background reload of the library that finds these as they were reads nothing more (Master.load). */
+/** What changes whenever the index does: how many entries it holds, and when one was last indexed (masterPutIndex: every write of an
+    entry stamps indexedAt) and last edited (masterPatch: pair, facing, angle, engravable ... all stamp updatedAt; a removal changes the
+    count), and the shape the entries are sent in (Master.SHAPE: the code that makes them). A background reload of the library, or a page
+    that kept a copy of it (charm-nest-master-cache.js), that finds these as they were reads nothing more (Master.load). */
 async function masterIndexSig() {
   const ix = db.collection(Master.INDEX);
   const [n, indexed, edited] = await Promise.all([ix.count().get(), ix.orderBy("indexedAt", "desc").limit(1).select("indexedAt").get(), ix.orderBy("updatedAt", "desc").limit(1).select("updatedAt").get()]);
-  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null };
+  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null, shape: Master.SHAPE };
 }
 /* The index in parts, in SKU (document id) order: a part holds up to `limit` entries, what fits in ANSWER_BYTES and what
    was read within ANSWER_MS, and `next` is the SKU after which the next part starts (null at the end of the index). It
@@ -1200,6 +1202,8 @@ async function op_masterPatch(b) {
   if (p.pair !== undefined) { const x = Master.cleanPair(p.pair); if (x !== undefined) { doc.pair = x === null ? FV.delete() : x; doc.pairBy = "operator"; } }
   // the way the drawing faces, "L" or "R", as a person says it (amendment 2); null gives the decision back to the indexer; a re-index keeps it (putIndex)
   if (p.facing !== undefined) { const x = Master.cleanFacing(p.facing); if (x !== undefined) { if (x === null) { doc.facing = FV.delete(); doc.facingBy = FV.delete(); } else { doc.facing = x; doc.facingBy = "operator"; } } }
+  // the same for each body of a MISMATCHED design (a flat list of L, R or null, body 0 first); the person's word, kept through a re-index
+  if (p.facings !== undefined) { const x = Master.cleanFacings(p.facings); if (x !== undefined) { if (x === null) doc.facings = FV.delete(); else { doc.facings = x; doc.facingBy = "operator"; } } }
   if (p.confirmedBy) { doc.confirmedBy = str(p.confirmedBy, 80); doc.confirmedAt = FV.serverTimestamp(); }
   const ref = db.collection(Master.INDEX).doc(sku); if (!(await ref.get()).exists) return { error: "not indexed: " + sku };   // a patch never creates a shell entry
   await ref.set(doc, { merge: true });
@@ -3822,6 +3826,8 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
+  // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)
+  if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   DONE_TOUCH = false;
   const fn = OPS[body.op];

@@ -322,7 +322,7 @@
       const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
       const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
-      if (side) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : facingOf(charm)); mirror = side !== (f || "L"); }
+      if (side && (opts && opts.facing || !readsOneWay(charm))) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : mis ? facingSetFor({ index: bodyIndex }, charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (an index entry with no geometry: the words it holds for each body)   // (a design that reads one way, letters and numbers, is cut as drawn on both sides)
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
     }
     return out;
@@ -404,7 +404,7 @@
        3. a second body of a mismatched pair is read from the first (drawn as the mirror image of it: it faces the other way; drawn the same: the same way);
        4. everything else is UNKNOWN (null), and unknown means as drawn is the Left and the Right is the mirror (the way Paul's picture draws both mittens).
      Nothing here guesses a side from a shape. */
-  const SYM_N = 64, SYM_CUT_OK = 0.06, SYM_CUT_DIR = 0.09, SYM_ART_OK = 0.10, SYM_ART_DIR = 0.16;
+  const SYM_N = 64, SYM_CUT_OK = 0.04, SYM_CUT_DIR = 0.065, SYM_ART_OK = 0.10, SYM_ART_DIR = 0.14;   // (calibrated on 3,833 live designs: of 50 labelled by eye, 14 of 14 left-facing and 10 of 12 right-facing read directional, 38 of 50 symmetric ones read symmetric)
   const symCache = typeof WeakMap === "function" ? new WeakMap() : null;
 
   function rasterPolys(polys, k, cx, cy, N) {   // even-odd fill of closed polygons into an N x N mask, y up, the square k centred on (cx, cy)
@@ -464,8 +464,21 @@
     if (symCache) symCache.set(body, out);
     return out;
   }
-  /** The side a stored value says ("L" | "R") or null. */
+  /** The side a stored value says ("L" | "R") or null. A person's "X" (words, letters, numbers: it reads one way) is not a side: see readsOneWay. */
   const facingValue = v => (v === "L" || v === "R" ? v : null);
+  /* DESIGNS THAT READ ONE WAY (letters, numbers, scripture, words): a Right piece turned over would read backwards ("Engraved TEXT stays readable", Paul 18:47),
+     so both pieces are cut as drawn (side still Left and Right, mirror false). A person says so with facing "X" on the record; by default a design whose SKU names it
+     a letter, an initial, a number, an alphabet or scripture does (a narrow rule: "HEART LOVE LETTER" and "SWORD" do not). Lettering drawn INTO a picture (a SHERIFF
+     badge, the N E S W of a compass) cannot be told from the drawing: a person sets "X" on those designs too. */
+  const LETTERING = /(?:^|[\s_-])(?:LETTERS?|INITIALS?|ALPHABET|NUMBERS?|SCRIPTURE|SCRIPT)(?:$|[\s_\d(-])/i, NOT_LETTERING = /LOVE\s+LETTER|SWORD/i;
+  const nameOf = x => String((x && (x.sku || (x.entry && x.entry.sku) || x.name)) || "");
+  function readsOneWay(charmOrEntry) {
+    if (!charmOrEntry || typeof charmOrEntry !== "object") return false;
+    const rec = charmOrEntry.entry || charmOrEntry;
+    if (rec.facing === "X" || charmOrEntry.facing === "X") return true;
+    if (facingValue(rec.facing) || facingValue(charmOrEntry.facing)) return false;   // a person's side stands over the name
+    const n = nameOf(charmOrEntry); return LETTERING.test(n) && !NOT_LETTERING.test(n);
+  }
   const opposite = f => (f === "L" ? "R" : f === "R" ? "L" : null);
   /** The side a PERSON said this body faces, from the record (`facings[index]` of a mismatched record, or `facing`, which is body 0's), else null. */
   function facingSetFor(body, charmOrEntry) {
@@ -481,12 +494,14 @@
     const set = facingSetFor(body, charmOrEntry); if (set) return set;
     return relationFacing(body, charmOrEntry);
   }
+  const REL_IOU = 0.85, REL_MARGIN = 0.15;   // two bodies are "mirror images" (or "the same way") when that overlap is this high and clearly higher than the other (measured on the live pairs: 0.88 against 0.65 is a mirror pair)
   function relationFacing(body, charmOrEntry) {
     if (!body || !body.index || !charmOrEntry || !charmOrEntry.outline) return null;
     const bodies = bodiesOf(charmOrEntry); if (bodies.length !== 2 || !bodies[0] || bodies[0] === body) return null;
     const sim = shapeSimilarity(bodies[0], body), f0 = facingSetFor(bodies[0], charmOrEntry);
-    if (sim.mirrored >= PAIR_DEFAULTS.sameShapeIoU && sim.same < 0.85) return opposite(f0 || "L");   // drawn as a pair of ears already: the second faces away from the first
-    return null;   // drawn the same way (or not alike): unknown, so the Left as drawn and the Right turned
+    if (sim.mirrored >= REL_IOU && sim.mirrored - sim.same >= REL_MARGIN) return opposite(f0 || "L");   // drawn as a pair of ears already: the second faces away from the first
+    if (sim.same >= REL_IOU && sim.same - sim.mirrored >= REL_MARGIN && f0) return f0;   // drawn the same way as the first, and a person said which way that is
+    return null;   // drawn the same way (or not alike) and nobody said: unknown, so the Left as drawn and the Right turned
   }
   /** What is known about the way a body faces: { facing, confidence 0..1, source, directional, level, symmetry:{cut,art}, why }. source: "person" | "mirror-of-first" | "unknown" | "symmetric".
    *  directional says the mirror image differs from the drawing (the design needs a facing); facing null with directional true is a design a person should set. */
@@ -513,6 +528,26 @@
     if (set) return set;
     if (!charm.outline) return null;
     return facingOfBody(bodiesOf(charm)[0], charm);
+  }
+
+  /** What the Master tab card shows for "which way this design faces" (Paul, 9 Oct: left and right earrings are mirror images, so the app must know which way the drawing faces):
+   *  { show, mismatched, value, options, bodies, hint }. Shown only for a design that is not the same in a mirror (the index field `sym` written at indexing, or `level` when the page
+   *  measured it) or one a person already set; a symmetric design has nothing to decide, and a design whose geometry is not known shows nothing. value "" = not set (as drawn is the
+   *  Left), "L" | "R" = the way the master draws it, "X" = it reads one way (letters, numbers: never turned over). A MISMATCHED pair (a left body and a right body under one SKU) is
+   *  always shown, with one box per body (`bodies`: [{ index, label, value, options }]): each body is judged on its own, because the two are not alike. */
+  function facingControl(entry, level) {
+    const e = entry || {}, word = v => (v === "L" || v === "R" ? v : ""), set = e.facing === "L" || e.facing === "R" || e.facing === "X" ? e.facing : "", lv = e.sym || level || "";
+    const hint = "Which way the master file draws this design. A pair is a Left and a Right earring that are mirror images, so the Right is cut turned over; say which way the drawing faces so the Left earring faces left. \"Reads one way\" is for letters, numbers and words: both earrings are cut as drawn. Not set: the drawing is taken as the Left. Applies to orders made up from now on.";
+    if (e.pair && e.pair.mismatched === true) {
+      const per = Array.isArray(e.facings) ? e.facings : [], one = i => word(per[i]) || (i === 0 ? word(e.facing) : "");
+      const opts = who => [["", who + ": not set"], ["L", who + " faces left"], ["R", who + " faces right"]];
+      return { show: true, mismatched: true, value: one(0), options: opts("Left"), bodies: [0, 1].map(i => ({ index: i, label: i ? "Right" : "Left", value: one(i), options: opts(i ? "Right" : "Left") })),
+        hint: "A left body and a right body under one SKU. Say which way each body is drawn (facing left or right) so the Left earring faces left and the Right earring faces right; a body drawn facing the wrong way is cut turned over. Not set: the left body is taken as the Left and the right body is turned over. Applies to orders made up from now on." };
+    }
+    return {
+      show: !!set || lv === "directional", mismatched: false, value: set, bodies: null,
+      options: [["", "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]], hint
+    };
   }
 
   const mx = (p, cx) => [2 * cx - p[0], p[1]];
@@ -711,7 +746,7 @@
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
-    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
+    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };

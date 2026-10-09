@@ -738,8 +738,16 @@
     if (e.print) return printTitle(e);
     if (e.type === "scan") return seenAt(e);
     const t = e.text && e.text.length <= (max || 90) ? e.text : "";
-    return t || labelOf(e.type) + (e.sheet ? " — " + e.sheet : "");
+    const base = t || labelOf(e.type) + (e.sheet ? " — " + e.sheet : "");
+    return e.sideWord ? e.sideWord + " · " + base : base;   // (one ear of a pair that sits apart from the other: "Left · On GF Sheet 1")
   };
+  /** Which ear of an earring pair an event is, when the pair's ears do not share it: the event names one ear's pool piece, or a sheet only one ear is on. "Left" | "Right" | "" (both ears, or no pair). */
+  function sideOfEvent(e, p) {
+    const sd = p && Array.isArray(p.sides) ? p.sides : null; if (!sd || sd.length < 2) return "";
+    const d = e.data || {}, ids = [].concat(d.poolId || [], Array.isArray(d.poolIds) ? d.poolIds : []).map(String);
+    const hit = ids.length ? sd.filter(q => ids.some(id => (q.pools || []).includes(id))) : e.sheetId ? sd.filter(q => (q.sheets || []).includes(e.sheetId)) : [];
+    return hit.length === 1 ? (hit[0].side === "L" ? "Left" : hit[0].side === "R" ? "Right" : "") : "";
+  }
   const hay = e => [e.text, e.sheet, e.sheetId, e.setId, e.lineKey, e.transactionId, e.by, e.device, (() => { try { return JSON.stringify(e.data || ""); } catch (_) { return ""; } })()].join(" ").toLowerCase();
 
   /** Where an order stands, for the rail and the Now line: its events (oldest first), its cancel record and the
@@ -808,11 +816,14 @@
      the whole order (arrived, a cancel, a note), or, when it names a sheet, to the pieces on that sheet. */
   function ofPiece(e, p, pieces) {
     if (!e || !p) return false;
-    if (e.lineKey) return e.lineKey === p.key;
-    if (e.transactionId) return !p.tid || e.transactionId === String(p.tid);
+    // (a SIDE piece, Paul 9 Oct 2026: the Left or the Right of a mismatched pair, `side` "L" | "R" with its line's key in `lineKey`: it is the line's piece for every event of the whole line
+    //  (the line's key, its transaction, an event with no piece), and its own only for an event that names one of ITS pool ids, or ITS sheet when no pool id is named)
+    const lk = p.side ? p.lineKey || p.key : p.key;
     const d = e.data || {}, ids = [].concat(d.poolId || [], Array.isArray(d.poolIds) ? d.poolIds : []).map(String);
-    if (ids.length) return ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
-    if (e.sheetId && (pieces || []).some(q => (q.sheets || []).length)) return (p.sheets || []).includes(e.sheetId);
+    if (e.lineKey) return e.lineKey === lk && (!p.side || !ids.length || ids.some(id => (p.pools || []).includes(id)));
+    if (e.transactionId) return (!p.tid || e.transactionId === String(p.tid)) && (!p.side || !ids.length || ids.some(id => (p.pools || []).includes(id)));
+    if (ids.length) return p.side ? ids.some(id => (p.pools || []).includes(id)) : ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
+    if (e.sheetId && (pieces || []).some(q => (q.sheets || []).length || (q.sides || []).some(z => (z.sheets || []).length))) return (p.sheets || []).includes(e.sheetId);
     return true;
   }
   /** The order across its pieces: each piece where it stands (derive over its own events, its own steps), each rail step
@@ -1723,7 +1734,12 @@
     /** One piece: its own events and steps. All pieces of an order of several: the order is where its slowest piece is,
      *  on the steps any of its pieces takes, each counted. One piece only: as it always was. */
     const pieceNow = () => (S.piece && S.pieces.find(p => p.key === S.piece)) || null;
+    function markSides() {
+      const lines = (S.pieces || []).filter(p => p && Array.isArray(p.sides) && p.sides.length > 1);
+      for (const e of S.every || []) { const q = lines.length ? lines.find(z => ofPiece(e, z, S.pieces)) : null, w = q ? sideOfEvent(e, q) : ""; if ((e.sideWord || "") !== w) e.sideWord = w; }
+    }
     function narrow() {
+      markSides();
       const p = pieceNow();
       if (!p) { S.piece = null; S.events = S.every; S.byKey = S.allKeys; return; }
       S.events = S.every.filter(e => ofPiece(e, p, S.pieces)); S.byKey = new Map(S.events.map(e => [e.key, e]));
@@ -2334,6 +2350,6 @@
   /** Something this order's timeline is made of moved (learnt from the page's cheap shared signals): the open feed of that order reads now, even slowed. How many feeds were woken. */
   const poke = orderId => { const id = digits(orderId); let n = 0; for (const F of [...feeds]) if (id && F.orderId === id && F.poke()) n++; return n; };
   root.OrderTimelineUI = { mount, feed, poke, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
-    stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
+    stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel, titleOf, sideOfEvent };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);

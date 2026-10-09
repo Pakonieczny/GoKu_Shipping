@@ -79,6 +79,12 @@ const discArt = (cx, cy, R) => [blob(cx, cy, 2 * R, 2 * R), rectCW(cx - 0.5 * R,
   // an oval is not a circle (a pumpkin with its face): it stays a silhouette with windows
   { const oval = blackFill('CUT', [blob(40, 40, 26, 20), ...discArt(40, 40, 6).slice(1)]); group([oval]); assert(P.engravedDiscOf({ outline: oval }) < 0, 'only a perfect circle'); }
 
+  // a badge or note on the LABELS layer is not a charm: a round black disc with art on it is left as it is (the marker rules own it)
+  { const note = blackFill('LABELS', discArt(40, 40, 15)); assert(P.engravedDiscOf({ outline: note }) < 0, 'a LABELS disc is not an engraved disc'); }
+
+  // a fill painted with no closepath (an expanded stroke or a letter written `... c f`) is a filled area all the same
+  { const body = path_('CUT', [blob(40, 40, 30, 36)]), open = blackFill('ENGRAVE', [blob(40, 40, 10, 14).slice(0, -1)], { closed: false }); group([body, open]); assert(P.isBlackFill(open) && open.hatchBlue && open.manufacturingRole === 'hatch', 'an unclosed black fill inside the charm is hatching'); }
+
   // 5 · a hoop drawn as a filled washer is still a hoop; a ring wholly inside the body is art (thick black ring)
   {
     const body = path_('CUT', [blob(40, 40, 30, 36)]), washer = blackFill('CUT', [blob(40, 62, 8, 8), blobCW(40, 62, 4, 4)]);
@@ -129,11 +135,46 @@ const discArt = (cx, cy, R) => [blob(cx, cy, 2 * R, 2 * R), rectCW(cx - 0.5 * R,
       const cb = gb.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
       for (const o of gb.charms) if (o !== cb) for (const m of o.members) cb.members.push(m);
       P.integrateRings(cb);
-      assert.equal(cb.members.filter(m => m.hatchBlue).length, hatch.length, name + ': the stored file reads back with the same hatching');
+      const blue = m => m.kind === 'path' && m.fill && !m.stroke && m.fillRGB[0] === 0 && m.fillRGB[1] === 0 && m.fillRGB[2] === 1;
+      assert.equal(cb.members.filter(blue).length, hatch.length, name + ': the stored file reads back with the same hatching, written blue');
+      assert(!cb.members.some(m => P.isBlackFill(m)), name + ': and holds no black fill at all');
       assert.equal(P.cutLinesOf(cb).length, P.cutLinesOf(c).length, name + ': and the same holes');
       assert(draw(cb).fills.length >= 1 && draw(cb).fills.every(f => f === BLUE), name + ': painted blue from the stored file');
-      assert(!cb.members.some(m => m.fill && m.hatchBlue === undefined && !P.isCutSilhouetteFill(cb, m) && (G.pathRole(m) === 'artwork')), name + ': no black artwork fill left unstamped');
     }
+  }
+
+  // 8b · the per-SKU file and the sheet carry the hatching in BLUE: no black fill operator is written for art inside the charm (the cut line stays as drawn)
+  {
+    const f3 = v => (Math.round(v * 1000) / 1000).toString();
+    const ops = (subs, dx = 0, dy = 0) => subs.map(sp => sp.map(o => o[0] === 'h' ? 'h' : o[0] === 'c' ? [1, 2, 3].map(i => f3(o[i][0] - dx) + ' ' + f3(o[i][1] - dy)).join(' ') + ' c' : f3(o[1][0] - dx) + ' ' + f3(o[1][1] - dy) + ' ' + o[0]).join(' ')).join(' ');
+    const bodySubs = [blob(40, 40, 36, 40)], aSubs = [blob(34, 44, 8, 10)], bSubs = [blob(46, 34, 8, 10)], cSubs = [blob(40, 52, 6, 6).slice(0, -1)], keepBlue = [blob(40, 28, 6, 6)];
+    // a layer marker around everything, a fill under a translated matrix, a fill with no closepath, a blue fill that is already hatching
+    const content = `/OC /MC0 BDC 0 0 0 RG 0.28 w ${ops(bodySubs)} S EMC\n/OC /MC1 BDC q 1 0 0 1 5 7 cm 0 0 0 rg ${ops(aSubs, 5, 7)} f Q 0 0 0 rg ${ops(bSubs)} f* 0 0 0 rg ${ops(cSubs)} f 0 0 1 rg ${ops(keepBlue)} f EMC\n`;
+    const doc = await PDFLib.PDFDocument.create(), page = doc.addPage([80, 80]); page.node.normalize();
+    const { PDFName, PDFString } = PDFLib, ocg = doc.context.register(doc.context.obj({ Type: 'OCG', Name: PDFString.of('ENGRAVE') })), ocg0 = doc.context.register(doc.context.obj({ Type: 'OCG', Name: PDFString.of('CUT') }));
+    page.node.Resources().set(PDFName.of('Properties'), doc.context.obj({ MC0: ocg0, MC1: ocg }));
+    page.node.addContentStream(doc.context.register(doc.context.flateStream(new TextEncoder().encode(content))));
+    const parsed = await P.parseSource(await doc.save(), 'hatch-copy'), g = P.groupCharms(parsed, { minPt: 6 }); assert.equal(g.charms.length, 1);
+    const c = g.charms[0], stamped = c.members.filter(m => m.hatchBlue); assert.equal(stamped.length, 3, 'the three black fills are stamped, the blue one is not');
+    const bytes = await P.buildSingleCharm(Object.assign({}, c, { name: 'hatch-copy' }), parsed);
+    const copy = await P.parseSource(bytes, 'hatch-copy file'), g2 = P.groupCharms(copy, { minPt: 6 }); assert.equal(g2.charms.length, 1, 'one charm in the per-SKU file');
+    const c2 = g2.charms[0], paths2 = c2.members.filter(m => m.kind === 'path');
+    const fillsOnly = paths2.filter(m => m.fill && !m.stroke);
+    assert.equal(fillsOnly.length, 4, 'all four art fills are in the file');
+    assert(fillsOnly.every(m => m.fillRGB[0] === 0 && m.fillRGB[1] === 0 && m.fillRGB[2] === 1), 'every art fill is written blue: ' + JSON.stringify(fillsOnly.map(m => m.fillRGB)));
+    assert.equal(c2.members.filter(m => m.hatchBlue).length, 0, 'nothing left to stamp: the file has no black fill for the charm');
+    assert.equal(c2.outline && c2.outline.stroke, true, 'the cut outline is still the stroked line'); assert.deepEqual(c2.outline.strokeRGB.map(v => Math.round(v)), [0, 0, 0]);
+    // same shapes, same places (the translated one included), same paint rule (the f* one is still even-odd)
+    const rel = (m, o) => [m.bbox[0] - o.bbox[0], m.bbox[1] - o.bbox[1], m.bbox[2] - o.bbox[0], m.bbox[3] - o.bbox[1]].map(v => Math.round(v * 10) / 10).join(',');   // (the per-SKU file has its own artboard: compare places relative to the outline)
+    const box = (m, o) => rel(m, o || c.outline), before = c.members.filter(m => m.fill && !m.stroke).map(m => box(m, c.outline)).sort(), after = fillsOnly.map(m => box(m, c2.outline)).sort();
+    assert.deepEqual(after, before, 'the copies sit exactly where the master drew the fills');
+    assert(fillsOnly.some(m => String(m.paintOp).endsWith('*')), 'an even-odd fill stays even-odd');
+    assert.equal(P.cutLinesOf(c2).length, P.cutLinesOf(c).length, 'the same holes'); assert.equal(draw(c2).fills.filter(f => f === BLACK).length, 0, 'drawn: no black');
+    // written again from the read-back file: the same file contents (the copy is not rewritten twice)
+    const again = await P.parseSource(await P.buildSingleCharm(Object.assign({}, c2, { name: 'hatch-copy' }), copy), 'again'), c3 = P.groupCharms(again, { minPt: 6 }).charms[0];
+    assert.deepEqual(c3.members.filter(m => m.fill && !m.stroke).map(m => box(m, c3.outline)).sort(), before, 'idempotent');
+    // the layer marker survives: the copies are still inside the layer the master drew them in
+    assert.deepEqual(fillsOnly.map(m => m.layer).sort(), c.members.filter(m => m.fill && !m.stroke).map(m => m.layer).sort(), 'each copy keeps its layer'); assert(fillsOnly.some(m => m.layer === 'ENGRAVE'), 'and that layer is the ENGRAVE layer the master named');
   }
 
   // 9 · the stored-picture route draws it blue too (scripts/index-master.cjs; resvg is not a dependency of the test run, so it is only checked when it can be loaded)

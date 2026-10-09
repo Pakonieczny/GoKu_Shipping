@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-rose.js?v=20261007-edges-gc1", "charm-nest-solver.js?v=20261009-unjam1");
+importScripts("charm-nest-rose.js?v=20261007-edges-gc1", "charm-nest-solver.js?v=20261009-unjam1-pair2");
 
 let current = null;   // { jobId, job, stop }
 
@@ -69,7 +69,7 @@ self.onmessage = async (e) => {
         post({type:'gpu',progress:{active:true,phase:'active',reason:'GPU enabled · CPU baseline searches also running',adapter:gpu.stats.adapter}});
       } catch(e){gpu?.destroy?.();gpu=null;post({type:'gpu',progress:{active:false,phase:'fallback',reason:'CPU fallback: '+String(e.message||e)}});}
     }
-    if (m.job.learned && !self.CharmNestLearned) importScripts("charm-nest-learned.js");
+    if (m.job.learned && !self.CharmNestLearned) importScripts("charm-nest-learned.js?v=20261009-pair1");
     const solver = m.job.learned ? CharmNestLearned : CharmNestSolver;
     const result = await solver.solve(m.job, {
       gpu,
