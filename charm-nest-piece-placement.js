@@ -161,6 +161,26 @@
     return [...by].map(([k, c]) => `${c} ${k}`).join(', ');
   }
 
+  /** What stands on ONE place (a sheet, or the sheets of a set), counted from the groups of the orders on it (PiecePlacement.groups of each WHOLE order, so a pair knows its other piece is elsewhere):
+   *  { pieces, pairs, halves }. A pair counts when both its ears are on the place; one ear whose other is elsewhere is a half pair. A group that is no earring pair (discs, a single) counts only its pieces. Pure. */
+  function sheetCounts(gs, sheetIds) {
+    const ids = new Set([].concat(sheetIds == null ? [] : sheetIds).filter(Boolean)), out = { pieces: 0, pairs: 0, halves: 0 };
+    for (const g of Array.isArray(gs) ? gs : []) {
+      const mine = g.pieces.filter(p => p.on && ids.has(p.sheetId)); if (!mine.length) continue;
+      out.pieces += mine.length;
+      if (!(g.kind === 'pair' || g.kind === 'mismatched') || !g.known) continue;
+      if (g.hasSides) { const l = mine.filter(p => p.side === 'L').length, r = mine.filter(p => p.side === 'R').length; out.pairs += Math.min(l, r); out.halves += Math.abs(l - r) + (mine.length - l - r > 0 ? 1 : 0); }   // (an ear is a pair only with its other ear on the same place)
+      else if (mine.length === g.n) out.pairs += Math.floor(g.n / 2); else out.halves += 1;
+    }
+    return out;
+  }
+  /** "24 pieces, 10 pairs, 3 half pairs" (pairs and half pairs only when there are some); '' for nothing. Pure. */
+  function countWords(c) {
+    if (!c || !c.pieces) return '';
+    const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    return [n(c.pieces, 'piece', 'pieces'), c.pairs ? n(c.pairs, 'pair', 'pairs') : '', c.halves ? n(c.halves, 'half pair', 'half pairs') : ''].filter(Boolean).join(', ');
+  }
+
   function sheetsOf(list) {
     const out = [], seen = new Set();
     for (const s of Array.isArray(list) ? list : []) {
@@ -336,7 +356,22 @@
     }
     const of = (orderId, lineKey, opts) => { const o = ofOrder(orderId, opts); return lineKey ? o.byKey.get(lineKey) || null : o.order; };
     function ofRow(row, opts) { const rid = row && row.order ? ridOf(row.order.receiptId) : ''; return rid && row.key ? of(rid, row.key, opts) : null; }
-    return { of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, STATES };
+    /** The words a sheet's (or a set's) piece count carries on hover: "24 pieces, 10 pairs, 3 half pairs", read from OrderPieces (every order on those sheets, whole, so a half pair is known).
+     *  '' when the page cannot count them all (an order's record not read yet) or when nothing is a pair: a card that shows its numbers needs no other words. `shown` are the numbers the card prints
+     *  (the words are given only when they count the same pieces). */
+    function sheetWords(sheetIds, shown) {
+      const OP = root.OrderPieces; if (!OP || typeof OP.onSheet !== 'function' || typeof OP.of !== 'function') return '';
+      const ids = [].concat(sheetIds || []).filter(Boolean); if (!ids.length) return '';
+      try {
+        const rids = new Set(); for (const id of ids) for (const x of OP.onSheet(id) || []) rids.add(x.orderId);
+        const gs = []; for (const rid of rids) gs.push(...groups(OP.of(rid) || []));
+        const c = sheetCounts(gs, ids);
+        if (!c.pairs && !c.halves) return '';
+        if (shown != null && ![].concat(shown).some(k => +k === c.pieces)) return '';
+        return countWords(c);
+      } catch (_) { return ''; }
+    }
+    return { of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, sheetCounts, countWords, sheetWords, STATES };
   }
-  return { resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, makePage, STATES, WAIT_TEXT, NEXT_TEXT };
+  return { resolve, roll, history, withHistory, groups, pairWords, placeWords, sideWord, sheetCounts, countWords, makePage, STATES, WAIT_TEXT, NEXT_TEXT };
 });
