@@ -2124,7 +2124,7 @@ const Master = window.Master = (() => {
     if(!T||typeof T.mount!=="function")return mountMasterPreviewsPlain(grid);
     const sizeOf=entry=>entry?.sizes && Object.keys(entry.sizes)[0] || null;
     previewMount=T.mount(grid,{
-      selector:'[data-preview-sku]',concurrency:6,
+      selector:'[data-preview-sku]',concurrency:6,keep:false,   // (Pool.masterPreview keeps the picture itself, under this same key, for every list that draws a design)
       // (a design the pool already holds is drawn from that copy at once, no download: nothing to keep, and its picture stays as it was)
       keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath,geom.charmHash||entry.charmHash,entry.indexedAt):"";},
       produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry)):null;},
@@ -2704,7 +2704,11 @@ const Pool = window.Pool = (() => {
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
     const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
-    const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
+    // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
+    const T=window.CharmNestThumbs,geom=sizeEntry(entry,size),keep=T&&T.designKey?T.designKey(key,geom.charmHash||entry.charmHash,entry.indexedAt):"";
+    const make=()=>readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    const task=keep?T.picture(keep,make):make();
     masterPreviewCache.set(key,task);
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}

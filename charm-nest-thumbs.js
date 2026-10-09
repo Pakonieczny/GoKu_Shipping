@@ -33,11 +33,13 @@
   /* ── which drawing code made a picture ── */
   // The pictures are made by these files, and every one of them is bumped (?v=) when it changes, so their addresses are the
   // version of the drawing: a changed drawing gets new keys and the old pictures are never shown again.
-  const DRAWERS = /charm-nest-(?:pdf|geom|vector|pair|pair-thumb)\.js/;
+  // (charm-nest-background.js carries the address of the compute worker that does the drawing, so it is part of it too.
+  //  DRAW_REV: bump it by hand when the way a design is READ or drawn changes in a file that is not listed here, e.g. readMasterCharm in the bridge)
+  const DRAWERS = /charm-nest-(?:pdf|geom|vector|pair|pair-thumb|background)\.js/, DRAW_REV = 1;
   let versionCache = null;
   function drawingVersion() {
     if (versionCache !== null) return versionCache;
-    let s = 'v' + SCHEMA;
+    let s = 'v' + SCHEMA + '.' + DRAW_REV;
     try { s += [...root.document.querySelectorAll('script[src]')].map(e => e.getAttribute('src') || '').filter(u => DRAWERS.test(u)).sort().join('|'); } catch (_) { /* no document: the key is the schema alone */ }
     let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
     return (versionCache = h.toString(36));
@@ -175,6 +177,7 @@
   /**
    * mount(grid, o): o.selector (the tiles waiting for a picture), o.keyOf(tile) (the key, '' for none), o.produce(tile) → Promise<data URL>
    * (the caller's own drawing or download), o.paint(tile, url), o.fail(tile, error); o.concurrency (6), o.margin ('70% 0px').
+   * o.keep === false: the caller's produce keeps its own picture (it calls picture() itself under the same key); this only looks it up.
    * Returns { stop() }. A tile with a picture already in memory is painted before this returns (a redrawn grid does not blink).
    */
   function mount(grid, o) {
@@ -216,7 +219,7 @@
           if (d.get(t) >= 1 && !still) { wait = Math.max(wait, IDLE_MS - (now - st.lastScroll)); continue; }   // ahead of the screen while it is still moving: later
           const w = waiting.get(t); if (!w || w.state !== 'queued') continue;
           w.state = 'making'; st.running++;
-          make(w.key, () => o.produce(t)).then(url => { if (url) finish(t, url); else { waiting.delete(t); o.fail && o.fail(t, new Error('No picture')); } },
+          (o.keep === false ? Promise.resolve().then(() => o.produce(t)) : make(w.key, () => o.produce(t))).then(url => { if (url) finish(t, url); else { waiting.delete(t); o.fail && o.fail(t, new Error('No picture')); } },
             err => { waiting.delete(t); if (t.isConnected && o.fail) { try { o.fail(t, err); } catch (_) {} } })
             .finally(() => { st.running--; pump(); });
         }
