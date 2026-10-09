@@ -202,4 +202,49 @@ const SAMPLES = '/mnt/project-files/plans/pairs-1009/PAIRMASTER-samples/';
     assert.deepEqual(ps.map(p => p.side), ['L', 'R']);
     open('PAIRORDERWIN', ps.every(p => p.kind === 'pair') && Core.spread(ps).groups[0].kind === 'pair', 'G1 a matching stud pair is kind "pair" in the order window\'s pieces (it says "' + ps[0].kind + '")');
   }
+
+  /* ── H · every station page counts the pool's pieces: the page's OWN code, cut out of the page and run, against the intake's count ──
+        (pair line = 2 per unit, 3 discs = 3, a Single = 1, a necklace q2 = 2); the lines are raw Etsy transactions, as the pages hold them */
+  {
+    const LINES = {
+      'stud pair': T({ title: 'Crab Charm Stud Earrings' }), 'stud pair q2': T({ title: 'Crab Charm Stud Earrings', quantity: 2 }),
+      'single stud earring': T({ title: 'Star Single Stud Earring', variations: V('Type', 'Single earring') }), 'single stud earring q2': T({ title: 'Star Single Stud Earring', quantity: 2, variations: V('Type', 'Single earring') }),
+      'mismatched stud pair': T({ sku: 'MISMATCHED_7134', title: 'Mismatched stud earrings' }), 'huggie pair': T({ title: 'Huggie hoop earrings' }),
+      'necklace q2': T({ title: 'Dainty charm necklace', quantity: 2 }), 'three discs': T({ title: 'Initial Disc Necklace', variations: V('Number of Discs / Metal', '3 discs • gold') }),
+      'charm with a plus SKU': T({ sku: 'CAT(+FISH) - Cat Only', title: 'Cat Add On Charm' })
+    };
+    const ORDERS = Object.entries(LINES).map(([n, t]) => [n, [t]]).concat([['stud pair + 3 discs + necklace q2', [LINES['stud pair'], LINES['three discs'], LINES['necklace q2']]], ['huggies + single stud + mismatched', [LINES['huggie pair'], LINES['single stud earring q2'], LINES['mismatched stud pair']]]]);
+    const real = list => list.reduce((n, t) => n + poolOf(t).pieceCount, 0);
+    const cut = (src, from, to) => { const a = src.indexOf(from); assert(a >= 0, 'the page still has ' + from); const b = src.indexOf(to, a); assert(b > a, 'the page still has ' + to); return src.slice(a, b); };
+    const live = [], SA = { working: o => live.push(o), idle() {}, log() {}, touch() {} }; win.StationActivity = SA;   // (the helper's own realm tells the live board through the same stand-in)
+    const sandbox = () => { const g = { CharmNestOrders: O, StationLiveOrder: S0, StationActivity: SA, console }; g.window = g; return vm.createContext(g); };   // (the page's global IS window)
+    // Welding (weld-1): parts credited and the pieces / count the live board shows, for the STUD lines of the order (only studs are welded: Paul, 3 Oct)
+    { const src = read('weld-1.html'), body = cut(src, 'const WELD_STUD', 'function weldLiveEnd'); const ctx = sandbox();
+      vm.runInContext(body + '; window.__weld = { weldPieces, weldLive, weldIsStud };', ctx); const W = ctx.window.__weld;
+      for (const [n, list] of ORDERS) {
+        const studs = list.filter(t => W.weldIsStud(t)), want = real(studs);
+        assert.equal(W.weldPieces({ transactions: list }).parts, want, 'weld-1 ' + n + ': parts credited = the pool\'s pieces of its stud lines');
+        if (!studs.length) continue;
+        live.length = 0; W.weldLive('4170000001', { transactions: list }, ''); const b = live[0];
+        assert.equal(b.pieceCount, want, 'weld-1 ' + n + ': the live board counts ' + b.pieceCount + ', the pool makes ' + want);
+        assert(b.pieces.length === want || want > 24, 'weld-1 ' + n + ': the board lists ' + b.pieces.length + ' pieces for ' + want);
+      } }
+    // the pages that count with the helper at a station: shipping / sorting piecesOf, design's per-order units, design-message's scan, assembly's scan and board
+    { const sh = cut(read('shipping-1.html'), 'const piecesOf = list =>', 'const orderMem'); const ctx = sandbox(); vm.runInContext(sh + '; window.__p = piecesOf;', ctx);
+      for (const [n, list] of ORDERS) assert.equal(ctx.window.__p(list), real(list), 'shipping piecesOf ' + n); }
+    for (const f of ['sorting.html', 'sorting-2.html']) {
+      const sh = cut(read(f), 'function piecesOf(id)', 'const dayKey = ()' in {} ? '' : f === 'sorting.html' ? '// the orders already counted' : 'const dayKey ='); const ctx = sandbox();
+      for (const [n, list] of ORDERS) { ctx.window.cachedOrderItems = list.map(t => Object.assign({ receipt_id: '77' }, t)); ctx.idsOfItem = () => ['77']; vm.runInContext(sh + '; window.__p = piecesOf;', ctx); assert.equal(ctx.window.__p('77'), real(list), f + ' piecesOf ' + n); }
+    }
+    for (const f of ['assembly-1.html', 'assembly-2.html', 'assembly-3.html', 'assembly-4.html']) {
+      const sh = cut(read(f), 'function actLive(orderId, data, how)', 'function actLiveEnd'); const ctx = sandbox(); ctx.ACT_LIVE_HOLD = 600000; vm.runInContext(sh + '; window.__l = actLive;', ctx);
+      for (const [n, list] of ORDERS) { live.length = 0; ctx.window.__l('4170000001', { transactions: list, name: 'X' }, ''); assert.equal(live[0].pieceCount, real(list), f + ' live board ' + n); }
+      const scan = read(f); assert(/parts = StationLiveOrder\.units\(list\)/.test(scan), f + ': the scan credits the helper\'s count');
+    }
+    for (const f of ['design.html', 'design-1.html']) assert(/StationLiveOrder\.units \? StationLiveOrder\.units\(t\)/.test(read(f)), f + ': an order\'s parts are the helper\'s count');
+    for (const f of ['design-message.html', 'design-message-1.html']) assert(/StationLiveOrder\.units \? StationLiveOrder\.units\(txs\)/.test(read(f)) && /StationLiveOrder\.start\(/.test(read(f)), f + ': scan parts and the board are the helper\'s');
+    // the helper alone, for the three that go through it (design, design-message start, assembly L.start): its count is the pool's, its pieces are that many
+    for (const [n, list] of ORDERS) { assert.equal(S.units(list), real(list), 'helper units ' + n); const pc = S.pieces(list, '4170000001'); assert.equal(pc.pieceCount, real(list), 'helper pieceCount ' + n); assert(pc.pieces.length === real(list) || (real(list) > 24 && pc.pieces.length <= 24), 'helper pieces ' + n + ': ' + pc.pieces.length); }
+    ok('H1 every station page counts the pool\'s pieces (pair = 2 per unit, 3 discs = 3, a Single = 1): welding (parts and live board), assembly 1-4, shipping, sorting, sorting-2, design, design-message, on 11 order shapes');
+  }
 })().catch(e => { console.error(e); process.exit(1); });
