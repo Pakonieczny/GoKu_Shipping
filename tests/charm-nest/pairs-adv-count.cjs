@@ -114,11 +114,16 @@ known('F6', 'a side-only option, or a "Replacement ... Left Ear" title, is a sin
 
 /* ── 7 · a line that says two different designs but names one waits ─────────────────────────────────────────────────────────── */
 known('F7', 'mismatched in the words, one SKU: held for a person', () => {
-  for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
+  for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Heart'), V('Right Ear Charm', 'Cat')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
     const r = read(over);
-    ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
+    ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.pairSecond || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
   }
 });
+
+{   // (Left and Right options whose values ARE two master designs are a resolved mismatched pair: nothing to ask, the Left is the first design and the Right the second)
+  const r = read(S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]));
+  eq([r.spec.pieceCount, r.spec.pair.mismatched, r.spec.pair.members.map(m => m.side + ':' + m.sku), r.spec.problems.length], [2, true, ['L:STAR', 'R:MOON'], 0], 'Left Star / Right Moon (both master designs) is a mismatched pair and waits for nobody');
+}
 
 /* ── 8 · the station pages: Left / Right only for an earring pair ───────────────────────────────────────────────────────────── */
 {
@@ -171,6 +176,21 @@ known('F7', 'mismatched in the words, one SKU: held for a person', () => {
   eq(J(c.livePairOf(rowOf(S('Star Stud Earrings')), '4170000001')).map(p => p.side), ['L', 'R'], 'an earring pair is still a Left and a Right');
   eq(J(c.livePairOf(rowOf(S('Star Charm', [], { quantity: 2 })), '4170000001')), [], 'a plain quantity-2 charm is told exactly as before (the count did not change)');
   eq(J(c.livePairOf(rowOf(S('Initial Disc Necklace', [V('Necklace Options', '2 Disc')], { quantity: 2 })), '4170000001')).map(p => [p.of, p.n]), [[4, 1], [4, 2], [4, 3], [4, 4]], 'two 2-disc necklaces are 4 pieces of one group');
+}
+
+/* ── 10 · the sticker module and the efficiency record count with the pool's count ──────────────────────────────────────────── */
+{
+  const PL = require(path.join(root, 'charm-nest-pair-labels.js'));
+  global.CharmNestPair = Pair;   // (the module reads the globals the page has)
+  const rowOf = (over, c) => { const line = mk(over); return { order, line, spec: O.interpretLine(order, line, c || ctx()) }; };
+  const pairRow = rowOf(S('Star Stud Earrings')), disc3 = rowOf(S('Initial Disc Necklace', [V('Number of Discs', '3')])), many = rowOf(S('Star Charm', [], { quantity: 25 }));
+  eq(PL.pieceCount([pairRow, disc3], () => null), 5, 'a card with a pair and a 3-disc necklace is 2 + 3 pieces, as the pool counts it (it said 3)');
+  eq(PL.pieceCount([pairRow, many], () => null), 27, 'a quantity of 25 charms is 25 pieces, not the 20 the sticker module capped it at');
+  eq(PL.pieceCount([disc3], () => null), null, 'no pair on the card: null, the page counts as it always did');
+  eq(PL.stickerPieces([pairRow, disc3], () => null).map(s => s.side), ['L', 'R'], 'the necklace beside a pair prints no sticker of its own');
+  const sticky = (over, c) => { const r = rowOf(over, c); return { stickers: (PL.stickerPieces([r], () => null) || []).length, pool: O.pieceCountOf(r.spec) }; };
+  eq(sticky(S('Star Stud Earrings', [], { quantity: 3 })), { stickers: 6, pool: 6 }, 'sticker count = pool count: 3 pairs');
+  eq(sticky(S('Star Stud Earrings', [V('Qty', '2 studs')]), ctx(answer('Qty', '2 studs', 4))), { stickers: 4, pool: 4 }, 'sticker count = pool count: an answered 4');
 }
 
 console.log(`\npairs-adv-count: ${n} checks passed${open.length ? `, ${open.length} OPEN findings (${open.join(' ')}) for other owners` : ''}`);

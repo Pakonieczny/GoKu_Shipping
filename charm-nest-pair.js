@@ -322,7 +322,7 @@
       const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
       const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
-      if (side && (opts && opts.facing || !readsOneWay(charm))) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (a design that reads one way, letters and numbers, is cut as drawn on both sides)
+      if (side && (opts && opts.facing || !readsOneWay(charm))) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : mis ? facingSetFor({ index: bodyIndex }, charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (an index entry with no geometry: the words it holds for each body)   // (a design that reads one way, letters and numbers, is cut as drawn on both sides)
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
     }
     return out;
@@ -568,7 +568,9 @@
       else { members.push(m); unmirrored.push(m); }   // text, image and shading objects have no geometry to reflect: they stay as drawn (sample text is never in a charm; engraving text is placed by the engraving code)
     }
     const out = Object.assign({}, c, { outline: map.get(c.outline) || mirrorSeg(c.outline, cx, true), members, bbox: [2 * cx - c.bbox[2], c.bbox[1], 2 * cx - c.bbox[0], c.bbox[3]], mirrored: !c.mirrored, mirror: !c.mirror, dropIndices: dropped, unmirrored });
-    if (!map.has(c.outline)) out.members = [out.outline].concat(members);
+    // a cut line chained from several open strokes is a synthetic outline that is only geometry (its real parts are members and are written themselves): it is never added as a member, or the laser would cut it twice
+    if (c.outline && Array.isArray(c.outline.parts)) out.outline.parts = c.outline.parts.map(q => map.get(q) || q);
+    else if (!map.has(c.outline)) out.members = [out.outline].concat(members);
     if (Array.isArray(c.extras)) out.extras = c.extras.map(e => map.get(e) || e);
     if (Array.isArray(c.centerPt)) out.centerPt = mx(c.centerPt, cx);
     if (Array.isArray(c.bboxOuter)) out.bboxOuter = [2 * cx - c.bboxOuter[2], c.bboxOuter[1], 2 * cx - c.bboxOuter[0], c.bboxOuter[3]];

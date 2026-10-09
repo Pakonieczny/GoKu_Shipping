@@ -207,7 +207,7 @@ async function partB() {
     assert.deepEqual(sides.map(r => r.tag), ['Left', 'Right'], JSON.stringify(w)); assert.deepEqual(sides.map(r => r.st), ['GF Sheet 1', 'GF Sheet 2'], JSON.stringify(w));
     assert.ok(sides.every(r => r.dots >= 4 && r.thumb), 'each side has its own dots and its own picture box');
     assert.equal(w.head, 'Its pieces'); assert.match(w.sub, /2 pieces/); assert.match(w.sku, /Left \+ Right/); assert.match(w.meta, /Pair.*Mismatched/); assert.match(w.meta, /Left GF Sheet 1 · Right GF Sheet 2/);
-    assert.match(w.split, /Its pair is split: Left on GF Sheet 1, Right on GF Sheet 2/); ok('B1 a split pair: a row for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
+    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B1 a split pair: a row for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
     assert.deepEqual(w.chips.filter(c => /Left|Right/.test(c)).length, 2, 'a box for each side'); ok('B1b the Where-it-is-now boxes name the sides');
     // 2 · both on one sheet
     w = await open(Q, Q.tx);
@@ -216,7 +216,7 @@ async function partB() {
     w = await open(R, R.tx);
     assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'Waiting for a sheet']], JSON.stringify(w));
     assert.equal(w.rows.filter(r => !r.side).length, 1); assert.ok(w.rows.filter(r => r.side).every(r => r.piece === `${R.rid}_${R.tx}`), 'both side rows pick their line');
-    assert.match(w.split, /Left on GF Sheet 1, Right not on a sheet yet/); ok('B3 a pair and another line: the Right is waiting, the Left is on its sheet, the other line has its own row');
+    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on no sheet\./); ok('B3 a pair and another line: the Right is waiting, the Left is on its sheet, the other line has its own row');
     assert.equal(await page.evaluate(() => (document.querySelector('#owPcSum .owPcState') || {}).textContent), 'Showing all 3 pieces', 'the pair counts as two pieces beside the other line'); ok('B3a the quiet line counts pieces: a pair (2) and another line (1) are 3');
     // a press on the Right row picks the line, a second press shows all pieces again
     await page.evaluate(() => document.querySelector('#owPcSum .owPcRow[data-side="R"] .owPcName').click()); await page.waitForTimeout(300);
@@ -230,7 +230,7 @@ async function partB() {
     assert.deepEqual(es.map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 2']], JSON.stringify(w));
     assert.deepEqual(es.map(r => r.mirror), [false, true], 'the Right picture is the one turned over');
     assert.match(w.sub, /2 pieces/); assert.match(w.sku, /Left \+ Right/); assert.match(w.meta, /Pair.*Matching/); assert.ok(!/Mismatched/.test(w.meta));
-    assert.match(w.split, /Its pair is split: Left on GF Sheet 1, Right on GF Sheet 2/); ok('B5 a matching earring pair: a Left and a Right row, the Right drawn turned over, the pair said to be matching');
+    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B5 a matching earring pair: a Left and a Right row, the Right drawn turned over, the pair said to be matching');
     // 6 · the run banner counts PIECES: a pair is two (PAIRFLOW's hand-over), a charm or a disc line as many as it always counted
     const ban = await page.evaluate(() => ({ pull: RunCtl.stepDetail({ step: 'pull' }), pool: RunCtl.stepDetail({ step: 'pool' }), lines: Orders.rows().filter(x => x.state !== 'gone').length, per: Orders.rows().map(x => [x.key, x.state, RunCtl.bannerPieces(x), x.spec && x.spec.form]) }));
     assert.equal(ban.lines, 6, JSON.stringify(ban)); assert.deepEqual(ban.per.map(x => x[3]), ['earrings', 'earrings', 'earrings', null, null, 'earrings'], JSON.stringify(ban)); assert.equal(ban.pull, ' \u00b7 10 pieces', JSON.stringify(ban)); assert.equal(ban.pool, ' \u00b7 10 of 10 pieces', JSON.stringify(ban)); ok('B6 the run banner counts pieces: four pair lines and two other lines make 10 pieces, not 6');
@@ -242,6 +242,27 @@ async function partB() {
       return { lineEv: one({ type: 'welded', lineKey: line, transactionId: tx, at: 1 }), bothIds: one({ type: 'welded', data: { poolIds: [`${line}_1`, `${line}_2`] }, lineKey: line, at: 1 }), leftOnly: one({ type: 'qr-printed', data: { poolId: `${line}_1` }, lineKey: line, at: 1 }), rightOnly: one({ type: 'qr-printed', data: { poolId: `${line}_2` }, lineKey: line, at: 1 }) };
     }, { rid: E.rid, tx: E.tx });
     assert.deepEqual(tl.lineEv, [true, true], JSON.stringify(tl)); assert.deepEqual(tl.bothIds, [true, true]); assert.deepEqual(tl.leftOnly, [true, false]); assert.deepEqual(tl.rightOnly, [false, true]); ok('B7 one seal for the pair line shows on the Left and the Right row; a seal for one piece only on its own');
+    // 8 · the Orders list: ONE row per order line, "Left + Right" in its facts and where each ear sits (points 39, 40); a charm line of quantity 2 is as before
+    await page.evaluate(() => { if (document.getElementById('orderWin').open) OrderWin.close(); }); await page.waitForTimeout(400);
+    const lst = await page.evaluate(({ P, M, E }) => {
+      const rowOf = rid => [...document.querySelectorAll('.orderListRow, .ocard')].filter(n => n.textContent.includes(rid)).map(n => n.textContent.replace(/\s+/g, ' '));
+      return { P: rowOf(P.rid), M: rowOf(M.rid), E: rowOf(E.rid) };
+    }, { P, M, E });
+    assert.equal(lst.P.length, 1, 'one row for the pair line: ' + JSON.stringify(lst.P)); assert.match(lst.P[0], /Qty 1 · Left \+ Right/); assert.match(lst.P[0], /Left GF Sheet 1 · Right GF Sheet 2/, lst.P[0]);
+    assert.equal(lst.E.length, 1); assert.match(lst.E[0], /Qty 1 · Left \+ Right/); assert.equal(lst.M.length, 1); assert.ok(/Qty 2/.test(lst.M[0]) && !/Left \+ Right/.test(lst.M[0]), lst.M[0]);
+    ok('B8 the Orders list: one row per pair line, Qty with Left + Right, the ears said by side; a charm line of quantity 2 unchanged');
+    // 9 · the timeline names the ear on an event only one ear has, and history is each ear's own
+    const tl2 = await page.evaluate(({ rid, tx }) => {
+      const U = OrderTimelineUI, line = `${rid}_${tx}`, A = 'sheet-A', B = 'sheet-B';
+      const p = { key: line, tid: tx, qty: 1, pools: [`${line}_1`, `${line}_2`], sheets: [A, B], line: {}, sides: [{ key: line + '#L', side: 'L', lineKey: line, pools: [`${line}_1`], sheets: [A] }, { key: line + '#R', side: 'R', lineKey: line, pools: [`${line}_2`], sheets: [B] }] };
+      const onA = { type: 'placed', sheetId: A, sheet: 'GF Sheet 1', text: 'On GF Sheet 1', at: 1 }, bothP = { type: 'arrived', at: 1 }, share = Object.assign({}, p, { sides: p.sides.map(s => Object.assign({}, s, { sheets: [A] })) });
+      const hist = side => PiecePlacement.history([onA, { type: 'placed', sheetId: B, sheet: 'GF Sheet 2', text: 'On GF Sheet 2', at: 2 }].filter(e => UI_ofPiece(e, p.sides.find(s => s.side === side), p.sides)));
+      const UI_ofPiece = (e, s, all) => U.ofPiece(e, Object.assign({}, s, { tid: tx }), all);
+      return { left: U.sideOfEvent(onA, p), none: U.sideOfEvent(bothP, p), together: U.sideOfEvent(onA, share), title: U.titleOf(Object.assign({ sideWord: 'Left' }, onA)), plain: U.titleOf(onA), hl: hist('L').on, hr: hist('R').on };
+    }, { rid: E.rid, tx: E.tx });
+    assert.equal(tl2.left, 'Left'); assert.equal(tl2.none, ''); assert.equal(tl2.together, ''); assert.equal(tl2.title, 'Left · On GF Sheet 1'); assert.equal(tl2.plain, 'On GF Sheet 1');
+    assert.ok(/Sheet 1/.test(JSON.stringify(tl2.hl)) && /Sheet 2/.test(JSON.stringify(tl2.hr)) && !/Sheet 2/.test(JSON.stringify(tl2.hl)), JSON.stringify(tl2));
+    ok('B9 an event only one ear has is titled with its side, a shared one is not, and each ear\'s placement history is its own');
     await context.close();
   } finally { await browser.close(); srv.close(); }
   assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
