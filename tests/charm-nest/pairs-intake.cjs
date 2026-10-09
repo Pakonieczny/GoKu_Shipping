@@ -29,7 +29,7 @@ const V = (name, value) => ({ name, value });
 const counts = x => ({ q: x.spec.quantity, pieces: x.spec.pieceCount, sides: x.spec.pair.sides.map(s => s || '').join(''), kind: x.spec.pair.kind });
 const asks = x => x.spec.problems.filter(p => p.kind === 'needsMapping' && p.count);
 
-eq(O.PIECE_RULES, { pairFormsMakeTwo: true, optionCountsMake: true, mismatchedMakesTwo: false }, 'the rule: pairs and option counts on; a mismatched design stays glued until the pool cuts a piece per ear');
+eq(O.PIECE_RULES, { pairFormsMakeTwo: true, optionCountsMake: true, mismatchedMakesTwo: true }, 'the rule: pairs, option counts and mismatched pairs (a piece per ear) are on');
 
 // ── 1 · the shapes of a line, quantity 1, 2 and 3 ───────────────────────────────────────────────────────────────────────────
 const SHAPES = [
@@ -172,31 +172,40 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
 // ── 5 · a mismatched pair ───────────────────────────────────────────────────────────────────────────────────────────────────────
 {
   const byName = row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 1 });
-  ok(byName.spec.pair.mismatched && byName.spec.pair.source === 'name' && byName.spec.pair.kind === 'mismatched', 'MISMATCHED_7134 is a mismatched pair (by its name until the catalogue carries pair)');
-  ok(byName.spec.pair.glued && byName.spec.pair.earring && byName.spec.pair.split === false, 'one glued copy per unit while the pool makes one copy per unit');
-  eq(byName.spec.pieceCount, 1, 'so the count is one glued copy (two bodies in it)'); eq(byName.spec.pair.sides, [null], 'with no side of its own');
-  eq(row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 2 }).spec.pieceCount, 2, 'quantity 2: two glued copies');
+  ok(byName.spec.pair.mismatched && byName.spec.pair.source === 'name', 'MISMATCHED_7134 is a mismatched pair (by its name until the catalogue carries pair)');
+  eq(counts(byName), { q: 1, pieces: 2, sides: 'LR', kind: 'mismatched' }, 'a mismatched pair is a Left and a Right piece');
+  ok(byName.spec.pair.earring && !byName.spec.pair.glued && byName.spec.pair.split === true, 'cut from its two bodies');
+  eq(O.piecesOf(byName).map(p => p.bodyIndex), [0, 1], 'body 0 is the left, body 1 the right');
   const byField = row({ sku: 'DUAL_PAIR', quantity: 2 });
   ok(byField.spec.pair.mismatched && byField.spec.pair.source === 'design', 'entry.pair.mismatched makes it a mismatched pair');
+  eq(counts(byField), { q: 2, pieces: 4, sides: 'LRLR', kind: 'multi' }, 'two units are 4 pieces, L R L R');
+  eq(O.piecesOf(byField).map(p => p.bodyIndex), [0, 1, 0, 1], 'bodies 0 1 0 1');
   ok(!row({ sku: 'MISMATCHED_9' }).spec.pair.mismatched, 'entry.pair says not mismatched: the record wins over the name');
   ok(!row({ sku: 'TWIN' }).spec.pair.mismatched, 'two identical bodies are a matching pair, not mismatched');
   ok(!O.interpretLine(order, mk({ sku: 'MISMATCHED_5555' }), ctx()).pair.mismatched, 'a MISMATCHED name no master holds is an unmatched SKU, not a pair');
-  withRules({ mismatchedMakesTwo: true }, () => {
-    const r1 = row({ sku: 'MISMATCHED_7134', quantity: 1 }), r2 = row({ sku: 'DUAL_PAIR', quantity: 2 });
-    eq(counts(r1), { q: 1, pieces: 2, sides: 'LR', kind: 'mismatched' }, 'switch on: a mismatched pair is a Left and a Right piece');
-    eq(counts(r2), { q: 2, pieces: 4, sides: 'LRLR', kind: 'multi' }, 'switch on: two units are 4 pieces, L R L R');
-    eq(O.piecesOf(r2).map(p => p.bodyIndex), [0, 1, 0, 1], 'body 0 is the left, body 1 the right');
-    const entry = { pair: { v: 1, bodies: 2, mismatched: true } };
-    const ps = CP.piecesFor(Object.assign({ receiptId: order.receiptId, transactionId: r1.line.transactionId }, r1), entry);
-    eq(ps.map(p => p.side), ['L', 'R'], 'piecesFor says Left then Right'); eq(ps.map(p => p.bodyIndex), [0, 1], 'bodies 0 and 1');
-    // two SKUs / two options name the pair's designs: pooled as the first design (its own piece), the right is the pool's second
-    const two = row({ sku: 'MITTENS 1 + MITTENS 2', title: 'Mittens Mismatched Studs' });
-    ok(two.spec.pair.mismatched && two.spec.pair.source === 'skus', 'two SKUs in the master name a mismatched pair'); eq(two.spec.pair.members.map(m => m.sku), ['MITTENS 1', 'MITTENS 2'], 'its members'); eq(two.spec.designSku, 'MITTENS 1', 'pooled as its first design');
-    const opt = row({ sku: 'A', title: 'Mittens Stud Earrings', variations: [V('Left Earring Design', 'MITTENS 1'), V('Right Earring Design', 'MITTENS 2')] });
-    eq(opt.spec.pair.source, 'options', 'options named for the left and the right'); eq(opt.spec.pieceCount, 2, '2 pieces');
+  const entry = { pair: { v: 1, bodies: 2, mismatched: true } };
+  const ps = CP.piecesFor(Object.assign({ receiptId: order.receiptId, transactionId: byName.line.transactionId }, byName), entry);
+  eq(ps.map(p => p.side), ['L', 'R'], 'charm-nest-pair.js piecesFor says Left then Right'); eq(ps.map(p => p.bodyIndex), [0, 1], 'bodies 0 and 1');
+  eq(CP.piecesFor(Object.assign({ receiptId: order.receiptId, transactionId: byField.line.transactionId }, byField), entry).map(p => p.side), ['L', 'R', 'L', 'R'], 'quantity 2: L R L R');
+  // two SKUs / two options name the pair's designs
+  const two = row({ sku: 'MITTENS 1 + MITTENS 2', title: 'Mittens Mismatched Studs' });
+  ok(two.spec.pair.mismatched && two.spec.pair.source === 'skus', 'two SKUs in the master name a mismatched pair'); eq(two.spec.pair.members.map(m => m.sku), ['MITTENS 1', 'MITTENS 2'], 'its members'); eq(two.spec.designSku, 'MITTENS 1', 'pooled as its first design'); eq(two.spec.pieceCount, 2, '2 pieces');
+  const opt = row({ sku: 'A', title: 'Mittens Stud Earrings', variations: [V('Left Earring Design', 'MITTENS 1'), V('Right Earring Design', 'MITTENS 2')] });
+  eq(opt.spec.pair.source, 'options', 'options named for the left and the right'); eq(opt.spec.pieceCount, 2, '2 pieces');
+  // the glued fallback: a mismatched pair whose bodies the pool cannot cut apart is the one glued copy per unit it always was
+  const g = row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 2 });
+  O.glue(g.spec);
+  eq(counts(g), { q: 2, pieces: 2, sides: '', kind: 'multi' }, 'glue(): one copy per unit, no side'); ok(g.spec.pair.glued && g.spec.pair.notes.some(x => /glued piece/.test(x)), 'and it says so');
+  eq(counts(O.glue(row({ sku: 'MISMATCHED_7134', quantity: 1 }).spec) && row({ sku: 'MISMATCHED_7134', quantity: 1 })).pieces, 2, 'glue() changes only the spec it is given');
+  const g1 = row({ sku: 'MISMATCHED_7134', quantity: 1 }); O.glue(g1.spec); eq(counts(g1), { q: 1, pieces: 1, sides: '', kind: 'mismatched' }, 'one glued copy is still the mismatched kind');
+  ok(O.glue(row({ sku: 'A' }).spec).pair.glued === false, 'glue() leaves a line that is not mismatched alone');
+  // the switch off brings the glued copy back for every mismatched design at once
+  withRules({ mismatchedMakesTwo: false }, () => {
+    const off = row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 2 });
+    ok(off.spec.pair.glued && off.spec.pair.earring && off.spec.pair.split === false, 'switch off: one glued copy per unit'); eq(off.spec.pieceCount, 2, 'quantity 2: two glued copies'); eq(off.spec.pair.sides, [null, null], 'with no side');
+    const twoOff = row({ sku: 'MITTENS 1 + MITTENS 2', title: 'Mittens Mismatched Studs' });
+    ok(twoOff.spec.pair.mismatched && twoOff.spec.pair.glued, 'a two-SKU line is read as its pair but counted as one glued copy');
   });
-  const twoOff = row({ sku: 'MITTENS 1 + MITTENS 2', title: 'Mittens Mismatched Studs' });
-  ok(twoOff.spec.pair.mismatched && twoOff.spec.pair.glued, 'with the switch off a two-SKU line is read as its pair but counted as it is today (one copy per unit)');
   const says = row({ sku: 'A', title: 'Mismatched Studs', quantity: 1 }); ok(says.spec.pair.says && !says.spec.pair.mismatched, 'words alone never make a mismatched pair'); eq(says.spec.pieceCount, 2, 'it is made as a matching pair of 2 meanwhile'); ok(says.spec.pair.notes.length === 1, 'with a plain note');
 }
 
@@ -235,8 +244,8 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
 {
   const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
   const mp = src.slice(src.indexOf('  async function makePool('), src.indexOf('  /** The recorded line joins its sheet.'));
-  ok(/O\.pieceCountOf\(sp\)/.test(mp) && !/copy <= sp\.quantity/.test(mp), 'makePool makes pieceCountOf copies, not the Etsy quantity');
-  ok(/copy, quantity: count, form/.test(mp) && /copy, quantity: count,/.test(mp), 'a pool row\'s quantity is the pieces of its line');
+  ok(/pinPooled\(row\)/.test(mp) && /sp\.pieceCount/.test(mp) && !/copy <= sp\.quantity/.test(mp), 'makePool pins an old line, then makes the intake\'s spec.pieceCount copies, not the Etsy quantity'); ok(/O\.glue\(sp\)/.test(mp), 'and falls back to the glued copy when a mismatched pair\'s bodies cannot be cut apart');
+  ok(/copy, quantity: count/.test(mp), 'a pool row\'s quantity is the pieces of its line');
   for (const m of ['piecesOfRows = rows =>', 'charms+=O.pieceCountOf(r)', '* O.pieceCountOf(sp)', 'waiting.reduce((n, r) => n + O.pieceCountOf(r), 0)']) ok(src.includes(m), 'bridge count site: ' + m);
   ok(/field: "count", value: String\(n\)/.test(src) && /How many pieces\?/.test(src), 'the Review card answers a count question');
   ok(/spec\?\.pieceCount/.test(fs.readFileSync(path.join(root, 'charm-nest-readiness.js'), 'utf8')), 'readiness reads spec.pieceCount');

@@ -507,6 +507,7 @@
     // Flatten form children for detection/grouping with a pointer to their top-level segment
     const nested = [];
     segs.forEach(s => { if (s.kind === "xobj" && s.children) s.children.forEach(k => { k.parent = s.index; nested.push(k); }); });
+    closeNearlyClosed(segs); closeNearlyClosed(nested);
     return {
       name, bytes, doc, page,
       pageW: mb.width, pageH: mb.height, mediaBox: [mb.x, mb.y, mb.x + mb.width, mb.y + mb.height],
@@ -515,6 +516,47 @@
       content, segments: segs, nested, inner,
       counts: { paths: segs.filter(s => s.kind === "path").length + nested.filter(s => s.kind === "path").length, top: segs.length, xobjects: segs.filter(s => s.kind === "xobj").length, text: segs.filter(s => s.kind === "text").length }
     };
+  }
+
+  /* ═══ 4b · a cut line drawn closed, but never closed ═══════════════════
+     Illustrator writes a closed path with `h`. A path the artist drew by clicking back on its first point, or one that a
+     tool left with its ends a hair apart, has no `h`, and the interpreter only calls it closed when the ends meet within
+     0.05 pt. DACHSHUND_88528 (HUGGIE) is the case: its black body on CUT ends 0.09 pt (0.03 mm) from where it starts. It was
+     not a closed stroke, so it was no cut line and no outline candidate; the charm group was its cyan jump ring alone, the
+     body fell out as an orphan (it is more than three times the ring's box) and the engraving drawn on it hung loose around
+     the ring ("0 holes", a ring and a few red strokes). The same drawing in the plain Dachshund had no outline at all and its
+     label found no charm, so that SKU was never indexed. 18 bodies and holes of that size are in the three masters.
+     Rule: a stroked, unfilled path on a cut layer (or with no layer role) whose every subpath is closed, or ends within
+     NEAR_CLOSED_MAX_PT of its start and within NEAR_CLOSED_FRAC of its own length, is closed. The gap stays recorded in
+     `nearClosed`; the subpath gets its `h`, so nesting, silhouettes and holes read it as the closed outline it was drawn as.
+     The bytes of the master are untouched (the per-SKU writer copies the original operators). A larger gap is a real opening
+     and stays open (the indexer reports it as "open outline"). Engraving layers are never touched. */
+  const NEAR_CLOSED_MAX_PT = 1.0, NEAR_CLOSED_FRAC = 0.05;
+  function subpathGap(sub) {
+    if (!sub || !sub.length || sub[0][0] !== "m") return null;
+    if (sub.some(o => o[0] === "h")) return { gap: 0, len: 0, closed: true };
+    const first = sub[0][1]; let last = first, len = 0;
+    for (const o of sub) {
+      if (o[0] === "l") { len += Math.hypot(o[1][0] - last[0], o[1][1] - last[1]); last = o[1]; }
+      else if (o[0] === "c") {   // control polygon length bounds the curve from above; it is only the scale of the 5 % test
+        len += Math.hypot(o[1][0] - last[0], o[1][1] - last[1]) + Math.hypot(o[2][0] - o[1][0], o[2][1] - o[1][1]) + Math.hypot(o[3][0] - o[2][0], o[3][1] - o[2][1]); last = o[3];
+      }
+    }
+    return { gap: Math.hypot(first[0] - last[0], first[1] - last[1]), len, closed: false };
+  }
+  function closeNearlyClosed(list) {
+    let n = 0;
+    for (const s of list || []) {
+      if (!s || s.kind !== "path" || s.closed || !s.stroke || s.fill || !s.subpaths || !s.subpaths.length) continue;
+      if (pathRole(s) === "artwork") continue;
+      const ends = s.subpaths.map(subpathGap);
+      if (ends.some(e => !e)) continue;
+      if (!ends.every(e => e.closed || (e.gap <= NEAR_CLOSED_MAX_PT && e.gap <= NEAR_CLOSED_FRAC * e.len))) continue;
+      s.nearClosed = Math.max(...ends.map(e => e.gap));
+      s.subpaths.forEach((sub, i) => { if (!ends[i].closed) sub.push(["h"]); });
+      s.closed = true; n++;
+    }
+    return n;
   }
 
   /* ═══ 5 · grouping ═════════════════════════════════════════════════════ */
@@ -1373,6 +1415,21 @@
       else resRef = out.context.register(out.context.obj({}));
       copies.set(sid, { copied, content, resRef, parsed });
     }
+    // The optional-content key a layer name has in a source's resources: a MIRRORED piece (the Right earring) is drawn from its geometry, and is put inside the
+    // same layer as the as-drawn one, so the .ai and the DXF name its cut and its engraving as the master does (pairs, 9 Oct). null: no such layer, nothing wrapped.
+    const layerKeys = new Map();
+    const layerKeyOf = (src, name) => {
+      if (!name) return null;
+      let m = layerKeys.get(src);
+      if (!m) {
+        m = new Map(); layerKeys.set(src, m);
+        try {
+          const rd = out.context.lookup(src.resRef), pd = rd instanceof PDFDict ? out.context.lookup(rd.get(PDFName.of("Properties"))) : null;
+          if (pd instanceof PDFDict) for (const [k, v] of pd.entries()) { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null, text = nm && nm.decodeText ? nm.decodeText() : null; if (text != null && !m.has(text)) m.set(text, PDFName.of(k.decodeText()).toString()); }
+        } catch (_) { /* a source with unreadable layers: the piece stays on its charm's layer */ }
+      }
+      return m.get(name) || null;
+    };
     const font = spec.labelled ? await out.embedFont(StandardFonts.Helvetica) : null;
     const usedNames = new Set(["SHEET (do not cut)"]);
     spec.placements.forEach((pl, i) => {
@@ -1388,7 +1445,7 @@
       const keep = c.dropIndices ? c.topIndices.filter(i => !c.dropIndices.has(i)) : c.topIndices;
       let bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, keep));
       // members the source never held (a welded outline, a ring's hole) are written after the copied bytes, in the same space
-      { const extra = syntheticOps(c.members || []); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
+      { const extra = syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
       const pad = c.strokePt / 2 + 1;
       const bb = [c.bbox[0] - pad, c.bbox[1] - pad, c.bbox[2] + pad, c.bbox[3] + pad];
       const trimmed = trimResources(out, out.context.lookup(src.resRef), bytes, 0) || src.resRef;
@@ -1478,7 +1535,7 @@
     const topOf = m => (m.parent != null ? m.parent : m.index);
     const tops = [...new Set(cut.map(topOf).filter(t => t != null))];
     const shared = c.members.some(m => !cutSet.has(m) && tops.includes(topOf(m)));
-    const reference = { redrawn: shared || cut.some(m => m.synthetic), tops };
+    const reference = { redrawn: shared || cut.some(m => m.synthetic) || !!spec.mirrored, tops };   // a mirrored piece (the Right earring) has no source bytes to copy: its cut is the mirrored geometry the caller passes, redrawn from the exact transformed paths
     // 1 · CUT OUTLINE (reference)
     addOCG("CUT OUTLINE (reference)", "ocCut");
     page.pushOperators(ocgOps("ocCut"), pushGraphicsState());
@@ -1850,17 +1907,19 @@
     c.ringGeometryVersion=3;return res;
   }
   /** Content-stream operators for members that have no bytes in the source, in the source's own coordinates. */
-  function syntheticOps(members) {
+  function syntheticOps(members, keyOf) {
     const f = v => (Math.round(v * 1000) / 1000).toString(); let out = "";
     for (const m of members) {
       if (!m || !m.synthetic) continue; const rgb = m.strokeRGB || [0, 0, 0], fill = m.fillRGB || [0, 0, 0];
+      const lk = m.mirrored === true && keyOf ? keyOf(m.layer) : null;   // a mirrored member goes back into the layer it was drawn on (only those: a welded ring is written as before)
+      if (lk) out += `/OC ${lk} BDC `;
       out += `q ${f(rgb[0])} ${f(rgb[1])} ${f(rgb[2])} RG ${f(fill[0])} ${f(fill[1])} ${f(fill[2])} rg ${f(m.lwPt || 0.25)} w `;
       for (const sp of m.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") out += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") out += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") out += "h "; }
-      out += (m.fill ? (m.stroke ? "B" : "f") + (m.paintOp?.endsWith("*") ? "*" : "") : "S") + " Q\n";
+      out += (m.fill ? (m.stroke ? "B" : "f") + (m.paintOp?.endsWith("*") ? "*" : "") : "S") + " Q" + (lk ? " EMC" : "") + "\n";
     }
     return out;
   }
-  root.CharmNestPDF = { markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;

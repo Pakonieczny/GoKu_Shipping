@@ -1,40 +1,74 @@
-// PAIRS FIXTURES: one small shared helper that builds OFFLINE orders, pool rows, sheet records, set records and Etsy receipts for pairs,
-// mismatched pairs and multi-piece (disc) orders, on the repo's fake Firestore with the no-nested-arrays check. Written by PAIRTESTS
-// (pairs-1009, area 15); the other workers reuse it. No browser, no network, no paid call, nothing outside memory.
+// PAIRS FIXTURES: one small shared helper that builds OFFLINE orders, pool rows, sheet records, set records and Etsy receipts for earring pairs,
+// mismatched pairs and multi-piece (disc, letters) orders, on the repo's fake Firestore with the no-nested-arrays check, and a checker that
+// fails when pieces of one group disagree about their sheet, side, group or MIRROR. Written by PAIRTESTS (pairs-1009, area 15); the other
+// workers reuse it. No browser, no network, no paid call, nothing outside memory.
 //
 //   const F = require('./pairs-fixtures.cjs');
 //
-// WORDS (plan.md): PIECE = one physical cut charm of an order line. GROUP = every piece of one order line (receipt id + transaction id; key
-// "rid:tx", CharmNestPair.groupKey). MATCHING PAIR = two pieces of one design. MISMATCHED PAIR = the design draws TWO different bodies, so the
-// two pieces are different charms, side "L" then "R". Pool id = rid_tx_copy; an order line's key = rid_tx.
+// WORDS (plan.md, contract.md AMENDMENT 2): PIECE = one physical cut charm of an order line. GROUP = every piece of one order line (receipt id +
+// transaction id; key "rid:tx", CharmNestPair.groupKey). EARRING PAIR = a stud, hoop or huggie pair, matching or mismatched: ALWAYS one LEFT and
+// one RIGHT piece per unit of quantity (quantity 2 = 2 L + 2 R), copies alternate L, R. The RIGHT is the LEFT MIRRORED (x -> -x about the body's own
+// bounding-box centre); `mirror` is true on the piece that is the mirror of the as-drawn master design (which one that is depends on the way the
+// drawing faces: F.DESIGN_FACING, CharmNestPair.facingOf). MISMATCHED PAIR = the design draws TWO different bodies: the Left earring is the left
+// body, the Right earring the right body, each oriented to face its own side. Discs, letters, necklace charms and "Single" earring lines: side null,
+// mirror false, never mirrored. The nester may TURN a piece, never reflect it. Pool id = rid_tx_copy; an order line's key = rid_tx.
+//
+// ── WHAT CHANGED WITH AMENDMENT 2 (read this if you used the helper before) ──────────────────────────────────────────────────────────────────
+//   * a matching pair's pieces now carry side "L" then "R" (they used to carry null), and `mirror` (true on the piece that is the mirror of the drawing)
+//   * kinds: 'pair' | 'hoop' | 'mismatched' (earring pairs: 2 pieces per unit) | 'earring-single' (the "Single" line: 1 piece per unit, no side) |
+//            'single' (a pendant or charm) | 'discs' (n discs) | 'letters' (n letters): the last four never have a side
+//   * the default pair design is PAIR-FACE-L (drawn facing left, asymmetric, so mirroring is visible); PAIR-FACE-R faces right (a person set `facing: "R"` on it: a shape cannot say which way it faces); PAIR-SET-R carries a person's `facing: "R"`
+//   * every sheet charm of a world carries `shapeJson`: its laid outline as a JSON STRING (a list of polygons is an array in an array: Firestore refuses it)
+//   * F.problems has new codes: side-missing, side-unexpected, mirror-missing, mirror-mismatch, mirror-pairing, mirror-unexpected, shape-mismatch, reflected, not-mirror
+//   * the set records of a world list each copy with its sheet and side, as a committed set does (orders[rid].lines[{ transactionId, sku, copies:[{ copy, sheetId, sheet, poolId, side }] }]); a split inside one set stores no tracking field of its own, so `tracked` stays an input of the checker
+//   * a world is `{ ..., kinds }` (groupKey -> kind) and the run record's lines carry `kind` and `pieceCount`, as the intake will set spec.pair.kind / spec.pieceCount
 //
 // ── THE NAMED CASES (F.cases) — each is a ready world, ids fixed, `expect` says what the checker must find ───────────────────────────────────
-//   pairOneSheet            a matching pair (2 studs) on one sheet, with filler orders
-//   pairSplitOneSet         a matching pair split over two sheets of ONE set (allowed only as a tracked split)
-//   pairSplitTwoSets        a matching pair split over two sheets of two SETS (never allowed: the cardinal rule)
+//   pairOneSheet            a pair drawn facing left on one sheet: Left as drawn, Right mirrored, with filler orders
+//   pairFacesRight          a pair drawn facing RIGHT: the Right is as drawn, the Left is the mirror
+//   pairSymmetric           a symmetric stud pair: still a Left and a Right, the Right flagged mirrored (the outlines look alike)
+//   pairQty2                quantity 2: 2 Left + 2 Right (copies L, R, L, R)
+//   pairRotated             pairs turned by 0, 90, 180, 270 degrees: a turn is allowed (nothing reported)
+//   pairSplitOneSet         a pair split over two sheets of ONE set (allowed only as a tracked split)
+//   pairSplitTwoSets        a pair split over two sheets of two SETS (never allowed: the cardinal rule)
 //   discs3Sheets            a 3-disc necklace, one disc on each of three sheets of one set (tracked split)
-//   mixedSheet              one sheet holding studs + hoops + discs + a single pendant + a mismatched pair
-//   mismatchedTwoOutlines   a mismatched pair (a ball and a racket: two different outlines) side by side on one sheet, L then R
+//   lettersNecklace         a 4-letter necklace on one sheet
+//   singleLine              a "Single" earring line, quantity 2 (two pieces, no side), next to a pair
+//   mixedSheet              one sheet holding studs + hoops + discs + letters + a Single line + a pendant + a mismatched pair
+//   mismatchedTwoOutlines   a mismatched pair with two different outlines (a ball and a racket) side by side on one sheet, L then R
+//   mismatchedMittens       the picture (MISMATCHED_7134): two mitten bodies drawn facing left, the Right earring is body 2 mirrored
 //   mismatchedSplit         the same mismatched pair, its left piece on one sheet and its right piece on another of the same set (tracked)
 //   pairWaiting             a pair of which one piece is on a sheet and one still waits (a half-placed group)
 //   Each: F.cases.<id>() -> world (fresh object every call).   F.caseList() -> [{ id, about, world, expect }].
 //
 // ── BUILDING A WORLD ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-//   F.world({ orders:[{ rid, lines:[{ n, kind, sku?, qty?, metal?, discs?, form?, on? }] }], sheets:[{ id, metal, n, set }], tracked? })
-//       kind: 'pair' | 'hoop' | 'mismatched' | 'single' | 'earring-single' | 'discs'     (default sku, form and piece count follow the kind)
+//   F.world({ orders:[{ rid, lines:[{ n, kind, sku?, qty?, metal?, discs?, letters?, form?, on? }] }], sheets:[{ id, metal, n, set }], tracked?, rotate? })
+//       kind: 'pair' | 'hoop' | 'mismatched' | 'earring-single' | 'single' | 'discs' | 'letters'   (default sku, form and piece count follow the kind)
 //       on:   a sheet id (every piece on it) | an array with one entry per piece (a sheet id, or null = that piece waits) | omitted = all wait
 //       tracked: groupKeys whose split over sheets is tracked on purpose (R3), e.g. ['4190000001:5000000010']
-//   -> { orders, pieces, pool, sheets, sets, run, designs, tracked }   (all plain data; docs have NO array inside an array)
-//   F.pieceCount(kind, qty, discs)        the number of pieces a line makes in the PLAN's words (pair 2, n discs n, mismatched a left and a right per unit, single 1; times quantity),
-//                                         worked out here independently of CharmNestPair; every fixture line carries it as `pieceCount` (as the intake's spec.pieceCount will).
-//                                         NOTE: with no explicit count CharmNestPair.pieceCountOf follows today's app (quantity pieces; only a mismatched design doubles): pairs-tests.cjs prints where the two differ
-//   F.legacy(world)                       the same world as the app stored it before pairs: no side, bodyIndex, groupKey, groupSize anywhere
-//   F.clone(world)                        a deep copy (mutate a copy to make a broken world)
-//   F.designs() / F.charmOf(sku) / F.entryOf(sku)   the designs: PAIR-STUD, PAIR-HOOP (a hoop welded to its body: ONE body), PAIR-TWIN (two identical
-//       bodies drawn: NOT mismatched), ONE-PENDANT, DISC-14, MITTENS-MIS (two cut shapes alike, inks differ: the picture in plans/pairs-1009),
-//       TENNIS-MIS (a ball and a racket: two different outlines). charmOf = a charm CharmNestPair.bodiesOf reads; entryOf = the master index entry
-//       (with `pair` when the design has more than one body).
+//       rotate: true turns the pieces by 0, 90, 180, 270 in turn (the shapes then lie turned; the checker must still pass)
+//   -> { orders, pieces, pool, sheets, sets, run, designs, kinds, tracked }   (all plain data; docs have NO array inside an array)
+//   Every pool row and sheet charm carries side, bodyIndex, groupKey, groupSize, mirror (F.PAIR_FIELDS); every sheet charm also `shapeJson`.
+//   F.pieceCount(kind, qty, count)   the number of pieces a line makes in the PLAN's words (earring pair 2 per unit, n discs n, a single 1; times quantity), worked out here
+//                                    independently of CharmNestPair; every fixture line carries it as `pieceCount` (as the intake's spec.pieceCount will).
+//   F.legacy(world)                  the same world as the app stored it before pairs: no side, bodyIndex, groupKey, groupSize, mirror, shapeJson anywhere
+//   F.clone(world)                   a deep copy (mutate a copy to make a broken world)
+//   F.designs() / F.charmOf(sku) / F.entryOf(sku)   the designs: PAIR-FACE-L (default pair), PAIR-FACE-R, PAIR-SET-R (symmetric with a person's facing R), PAIR-STUD
+//       (symmetric), PAIR-HOOP (a hoop welded to its body: ONE body), PAIR-TWIN (two identical bodies drawn: NOT mismatched), ONE-PENDANT, DISC-14, LETTER-DISC,
+//       MITTENS-MIS (the picture in plans/pairs-1009), TENNIS-MIS (a ball and a racket: two different outlines). charmOf = a charm CharmNestPair.bodiesOf reads;
+//       entryOf = the master index entry (with `pair` when the design has more than one body, `facing` when a person set one).
+//   F.DESIGN_FACING   which way each design's body faces in the drawing ("L" | "R" | null), written by hand: pairs-tests.cjs checks CharmNestPair.facingOf against it
+//   F.expectedMirror(sku, side, bodyIndex)  what the mirror flag of that piece must be (side !== facing, facing null = "L")
 //   F.ids: rid(n) tx(n) poolId(rid, tx, copy) lineKey(rid, tx) groupKey(rid, tx)
+//
+// ── DIRECTION ON THE SHEET (shapeJson) ───────────────────────────────────────────────────────────────────────────────────────────────────────
+//   F.laidShape(sku, piece, { angle, cx, cy })  the polygons of the piece's outline as it lies on a sheet: its own body, mirrored when piece.mirror, turned, placed
+//   F.shapeJsonOf(...same)                       the same as the JSON string a sheet charm stores (`charm.shapeJson`; a list of polygons must be a string in Firestore)
+//   F.shapeState(laid, drawn)                    "asDrawn" | "mirrored" | "either" (a symmetric shape fits both) | "none" (fits neither), judged under the BEST turn: a turn
+//                                                can never turn a mirror image into the original, a reflection can, which is how the checker finds a reflected piece
+//   F.mirrorPolys(polys) / F.layPolys(polys, deg, cx, cy)   x -> -x about the box centre / turn about the box centre (never a reflection)
+//   F.reflectedPlacement(placement)             true when a placement says it was reflected (flipX, reflect, mirrored, flip, negative scale); a turn never sets one
+//   A nester that wants to be checked writes each charm's laid outline into `shapeJson` and never sets a reflect flag on a placement.
 //
 // ── THE FAKE FIRESTORE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 //   const fs = F.fakeFirestore();            // { st, admin, db, put(coll,id,doc), get(coll,id), list(coll), del(coll,id), seed(world), docsOf(), writes }
@@ -46,12 +80,23 @@
 //   F.COLL                                   the collection names: sheets pool sets runs timeline cancelled custom poolBack master
 //
 // ── THE PAIR CHECKER (the placement oracle's pair rule, usable anywhere) ─────────────────────────────────────────────────────────────────────
-//   F.problems(docs, opts)  docs = { pool:[rows], sheets:[sheet docs], sets:[set docs], designs? }  (F.docsOf(fs) or a world)  opts = { tracked:[groupKey], legacy }
+//   F.problems(docs, opts)  docs = { pool:[rows], sheets:[sheet docs], sets:[set docs], designs?, kinds?, runs? }  (F.docsOf(fs) or a world)
+//                           opts = { tracked:[groupKey], mirror:false (skip every mirror and shape check: records made before Amendment 2), allowWaiting, allowSplit }
 //   -> [{ code, groupKey, poolId?, text }]  codes:
 //        key-mismatch      a piece's stored groupKey is not its pool id's (pool row or sheet charm)
-//        size-mismatch     pieces of one group disagree about groupSize, or the group's rows are not that many
-//        side-mismatch     a piece's side differs between its pool row and its sheet charm, or from the design (L then R; matching: none)
-//        side-pairing      a mismatched group has not as many L as R, or two pieces share a body
+//        size-mismatch     pieces of one group disagree about groupSize, or the group's rows are more than that many
+//        missing-piece     a group has fewer pool rows than its groupSize (or a hole in the copy numbers)
+//        side-missing      a piece of an earring pair (pool row or sheet charm) has no side
+//        side-unexpected   a disc, letter, single or pendant piece says Left or Right
+//        side-mismatch     a piece's side differs between its pool row and its sheet charm, or from its copy (odd copy Left, even copy Right)
+//        side-pairing      an earring group has not as many L as R, or a body does not fit its side (a mismatched Left is body 0, Right body 1; a matching pair's are body 0)
+//        mirror-missing    a piece of an earring pair has no `mirror` flag (pool row or sheet charm)
+//        mirror-mismatch   a piece's mirror flag differs between pool row and sheet, or from what its side and the design's facing give (the Right of a left-facing design is mirrored)
+//        mirror-pairing    a matching pair's Left and Right are both mirrored or both as drawn (one of the two must be the mirror of the other)
+//        mirror-unexpected a disc, letter, single or pendant piece is marked mirrored
+//        shape-mismatch    a sheet charm's laid outline (shapeJson) is not its design body, as drawn or mirrored, at any turn
+//        reflected         a laid outline is mirrored when the piece is not, or as drawn when it should be mirrored (a piece was reflected), or a placement carries a reflect flag
+//        not-mirror        a matching pair's Right does not lie as the mirror of its Left (both lie as drawn, or both mirrored)
 //        sheet-disagree    the pool row's sheetId, the sheet's poolIds, its charms and its placements do not say the same sheet
 //        duplicate-piece   one piece is listed by two sheets
 //        untracked-split   the pieces of one group are on more than one sheet (or on one and waiting), and nothing says it is tracked
@@ -59,7 +104,8 @@
 //        metal-mismatch    the pieces of one group (or a sheet and its pieces) differ in metal
 //        set-disagree      a sheet's setId, the set's sheetIds and the pieces' setId do not agree
 //        half-held         some pieces of a group are on hold or cancelled and some are not
-//        missing-piece     a group has fewer pool rows than its groupSize (or a hole in the copy numbers)
+//        set-copy-disagree a committed set record (orders[rid].lines[].copies[]: copy, sheetId, poolId, side) lists a piece on another sheet than the sheet records have it, or with another side than its pool row
+//   The kind of a group comes from docs.kinds, else the run records' lines (`kind`), else the rows' sides and the design and form.
 //   F.sheetsOf(group, docs) / F.groupsOf(docs)   the groups (key -> pieces with their sheet) as the checker reads them
 //   Legacy records (no pair fields) are checked only for the things that need none: sheet-disagree, duplicate-piece, untracked-split, split-across-sets,
 //   metal-mismatch, set-disagree, half-held (a group is derived from its pool ids, a side from nothing).
@@ -94,6 +140,7 @@ const path_ = (pts, extra) => Object.assign({ kind: 'path', closed: true, stroke
 const rect = (x0, y0, x1, y1, extra) => path_([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], extra);
 const ngon = (cx, cy, rx, ry, n) => path_(Array.from({ length: n || 24 }, (_, i) => [cx + rx * Math.cos(2 * Math.PI * i / (n || 24)), cy + ry * Math.sin(2 * Math.PI * i / (n || 24))]));
 const ink = (x0, y0, x1, y1, rgb) => rect(x0, y0, x1, y1, { layer: 'ENGRAVE', strokeRGB: rgb || [1, 0, 0] });
+const mittenR = x => [[x + 14, 0], [x, 0], [x, 30], [x + 14, 30], [x + 14, 20], [x + 20, 16], [x + 14, 12]];   // the mirror image of mitten(x): the thumb sticks out to the right
 const mitten = x => [[x + 6, 0], [x + 20, 0], [x + 20, 30], [x + 6, 30], [x + 6, 20], [x, 16], [x + 6, 12]];   // a mitten-like cut line: left of the body a thumb
 // each design: bodies = [{ outline, inks[] }] (left to right in the drawing), plus a hoop ring where the design has one
 const DESIGN_SRC = {
@@ -103,28 +150,37 @@ const DESIGN_SRC = {
   'ONE-PENDANT': () => [{ outline: ngon(12, 14, 11, 13), inks: [ink(6, 10, 18, 16, [0, 0, 1])] }],
   'DISC-14':     () => [{ outline: ngon(7, 7, 7, 7), inks: [] }],
   'MITTENS-MIS': () => [{ outline: path_(mitten(0)), inks: [ink(8, 2, 20, 6)] }, { outline: path_(mitten(26)), inks: [ink(34, 2, 46, 6), ink(30, 10, 34, 14, [0, 0, 1]), ink(38, 12, 42, 16, [0, 0, 1])] }],   // MISMATCHED_7134: MITTENS 1 + MITTENS 2
+  'PAIR-FACE-L': () => [{ outline: path_(mitten(0)), inks: [ink(8, 2, 20, 6)] }],                                            // an earring drawn FACING LEFT (the thumb sticks out to the left): as drawn it is the Left
+  'PAIR-FACE-R': () => [{ outline: path_(mittenR(0)), inks: [ink(0, 2, 12, 6)] }],                                           // the same, drawn FACING RIGHT: as drawn it is the Right, the Left is its mirror
+  'PAIR-SET-R':  () => [{ outline: ngon(10, 12, 9, 11), inks: [ink(5, 8, 15, 12)] }],                                       // symmetric, but a person set `facing: "R"` on its record: as drawn it is the Right
+  'LETTER-DISC': () => [{ outline: ngon(7, 7, 7, 7), inks: [] }],                                                           // a letter disc of a letters necklace
   'TENNIS-MIS':  () => [{ outline: ngon(10, 10, 10, 10), inks: [ink(4, 9, 16, 11)] }, { outline: path_([[28, 0], [34, 0], [34, 30], [31, 36], [28, 30]]), inks: [ink(29, 20, 33, 28)] }],   // a ball and a racket: two different outlines
 };
-const KINDS = {   // what a kind of line means: default design, the Etsy form, the pieces per unit
-  pair: { sku: 'PAIR-STUD', form: 'earrings', per: 2 }, hoop: { sku: 'PAIR-HOOP', form: 'hoop', per: 2 }, mismatched: { sku: 'MITTENS-MIS', form: 'earrings', per: 2 },
-  single: { sku: 'ONE-PENDANT', form: 'necklace', per: 1 }, 'earring-single': { sku: 'PAIR-STUD', form: 'earring-single', per: 1 }, discs: { sku: 'DISC-14', form: 'necklace', per: 1 },
+// which way each design's body faces in the drawing (declared here by hand; pairs-tests.cjs checks CharmNestPair.facingOf against it): "L", "R", or null (symmetric: as drawn is the Left)
+const DESIGN_FACING = { 'PAIR-STUD': [null], 'PAIR-HOOP': [null], 'PAIR-TWIN': [null, null], 'ONE-PENDANT': [null], 'DISC-14': [null], 'LETTER-DISC': [null], 'PAIR-FACE-L': ['L'], 'PAIR-FACE-R': ['R'], 'PAIR-SET-R': ['R'], 'MITTENS-MIS': ['L', 'L'], 'TENNIS-MIS': [null, null] };
+const KINDS = {   // what a kind of line means: default design, the Etsy form, the pieces per unit, and what the intake calls it (line.pair.kind)
+  pair: { sku: 'PAIR-FACE-L', form: 'earrings', per: 2, pair: 'pair' }, hoop: { sku: 'PAIR-HOOP', form: 'hoop', per: 2, pair: 'pair' }, mismatched: { sku: 'MITTENS-MIS', form: 'earrings', per: 2, pair: 'mismatched' },
+  single: { sku: 'ONE-PENDANT', form: 'necklace', per: 1, pair: 'single' }, 'earring-single': { sku: 'PAIR-STUD', form: 'earring-single', per: 1, pair: 'single' },
+  discs: { sku: 'DISC-14', form: 'necklace', per: 1, pair: 'discs' }, letters: { sku: 'LETTER-DISC', form: 'necklace', per: 1, pair: 'letters' },
 };
-/** How many pieces a line makes (independent of CharmNestPair: the tests compare the two). */
-const pieceCount = (kind, qty, discs) => (kind === 'discs' ? Math.max(1, discs | 0) : KINDS[kind].per) * Math.max(1, qty | 0);
+const EARRING_PAIR = new Set(['pair', 'hoop', 'mismatched']);
+/** How many pieces a line makes (independent of CharmNestPair: the tests compare the two): an earring pair is a Left and a Right per unit, n discs or n letters are n, a single is 1; times quantity. */
+const pieceCount = (kind, qty, count) => ((kind === 'discs' || kind === 'letters') ? Math.max(1, count | 0) : KINDS[kind].per) * Math.max(1, qty | 0);
 function charmOf(sku) {
   const src = DESIGN_SRC[sku]; if (!src) throw new Error('no such fixture design: ' + sku);
   const bodies = src(), members = [];
   for (const b of bodies) { members.push(b.outline); for (const i of b.inks) members.push(i); if (b.ring) members.push(b.ring); }
   const bbox = members.reduce((u, m) => [Math.min(u[0], m.bbox[0]), Math.min(u[1], m.bbox[1]), Math.max(u[2], m.bbox[2]), Math.max(u[3], m.bbox[3])], [1e9, 1e9, -1e9, -1e9]);
-  return { sku, outline: bodies[0].outline, members, bbox, widthPt: bbox[2] - bbox[0], heightPt: bbox[3] - bbox[1], areaPt2: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) };
+  return { sku, ...(sku === 'PAIR-SET-R' || sku === 'PAIR-FACE-R' ? { facing: 'R' } : {}), outline: bodies[0].outline, members, bbox, widthPt: bbox[2] - bbox[0], heightPt: bbox[3] - bbox[1], areaPt2: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) };
 }
 /** The master index entry of a design: `pair` only when it draws more than one body (the contract's Charm_Master_Index field). */
 function entryOf(sku) {
   const c = charmOf(sku), d = Pair.describe(c), e = { sku, members: c.members.length, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, holes: 0, engravable: false };
   if (d.count > 1) e.pair = { v: 1, bodies: d.count, mismatched: !!d.mismatched };
+  if (c.facing) e.facing = c.facing;   // (a person's setting on the record)
   return e;
 }
-const designs = () => Object.fromEntries(Object.keys(DESIGN_SRC).map(sku => [sku, { sku, charm: charmOf(sku), entry: entryOf(sku), bodies: Pair.bodiesOf(charmOf(sku)).map(b => ({ index: b.index, side: b.side, w: b.outlineBbox[2] - b.outlineBbox[0], h: b.outlineBbox[3] - b.outlineBbox[1] })) }]));
+const designs = () => Object.fromEntries(Object.keys(DESIGN_SRC).map(sku => [sku, { sku, charm: charmOf(sku), entry: entryOf(sku), facings: DESIGN_FACING[sku].slice(), bodies: Pair.bodiesOf(charmOf(sku)).map(b => ({ index: b.index, side: b.side, w: b.outlineBbox[2] - b.outlineBbox[0], h: b.outlineBbox[3] - b.outlineBbox[1] })) }]));
 
 /* ═══════════════════════════ the world ═══════════════════════════ */
 const SHEETS = [{ id: 'sh-gf1', metal: 'gold', n: 1, set: 'set-1' }, { id: 'sh-gf2', metal: 'gold', n: 2, set: 'set-1' }, { id: 'sh-gf3', metal: 'gold', n: 3, set: 'set-1' }, { id: 'sh-gf4', metal: 'gold', n: 4, set: 'set-2' }, { id: 'sh-ss1', metal: 'silver', n: 1, set: 'set-1' }];
@@ -132,21 +188,70 @@ const SET_SEQ = { 'set-1': 1, 'set-2': 2, 'set-3': 3 };
 const fileBase = s => `${CODE[s.metal] || 'GF'}_${DAY}_Set-${SET_SEQ[s.set] || 1}_Sheet-${s.n}`;
 const sheetLabel = s => `${CODE[s.metal] || 'GF'} Sheet ${s.n}`;
 
-/** An order line as the page and the cloud hold it, and the pieces it makes. */
+/** An order line as the page and the cloud hold it, and the pieces it makes (side and mirror from the shared module, checked here against what the plan says). */
 function lineOf(rid_, l) {
   const kind = l.kind || 'single', K = KINDS[kind]; if (!K) throw new Error('no such kind: ' + kind);
-  const t = tx(l.n), sku = l.sku || K.sku, qty = Math.max(1, l.qty | 0 || 1), discs = kind === 'discs' ? (l.discs || 3) : 0, metal = l.metal || 'gold', form = l.form || K.form;
-  // (the line carries its own piece count, as the intake sets spec.pieceCount: the plan's words: a pair of earrings is 2 pieces, n discs are n, a mismatched pair is a left and a right per unit)
-  const want = pieceCount(kind, qty, discs), charm = charmOf(sku), line = { receiptId: rid_, transactionId: t, quantity: qty, form, sku, pieceCount: want, ...(discs ? { discs } : {}), title: l.title || (kind === 'discs' ? `Disc necklace, ${discs} discs` : kind === 'mismatched' ? `Mismatched ${sku} earrings` : `${sku} ${form}`) };
-  const per = Pair.piecesFor(line, charm);
-  if (per.length !== want) throw new Error(`CharmNestPair.piecesFor makes ${per.length} piece(s) for ${kind} x${qty}${discs ? ' (' + discs + ' discs)' : ''}, the fixture expects ${want}`);
+  const t = tx(l.n), sku = l.sku || K.sku, qty = Math.max(1, l.qty | 0 || 1), count = kind === 'discs' ? (l.discs || 3) : kind === 'letters' ? (l.letters || 3) : 0, metal = l.metal || 'gold', form = l.form || K.form;
+  // (the line carries its own piece count and its kind, as the intake sets spec.pieceCount and spec.pair.kind)
+  const want = pieceCount(kind, qty, count), charm = charmOf(sku);
+  const line = { receiptId: rid_, transactionId: t, quantity: qty, form, sku, pieceCount: want, pair: { kind: K.pair }, ...(kind === 'discs' ? { discs: count } : kind === 'letters' ? { letters: count } : {}),
+    title: l.title || (kind === 'discs' ? `Disc necklace, ${count} discs` : kind === 'letters' ? `Letters necklace, ${count} letters` : kind === 'mismatched' ? `Mismatched ${sku} earrings` : `${sku} ${form}`) };
+  const per = Pair.piecesFor(line, charm, l.facing ? { facing: l.facing } : undefined);
+  if (per.length !== want) throw new Error(`CharmNestPair.piecesFor makes ${per.length} piece(s) for ${kind} x${qty}${count ? ' (' + count + ')' : ''}, the fixture expects ${want}`);
   const on = l.on == null ? Array(want).fill(null) : Array.isArray(l.on) ? l.on.slice() : Array(want).fill(l.on);
   if (on.length !== want) throw new Error(`line ${l.n}: ${want} pieces but ${on.length} placements`);
-  const pieces = per.map((p, i) => ({ poolId: poolId(rid_, t, i + 1), orderId: rid_, transactionId: t, lineKey: lineKey(rid_, t), sku, material: metal, copy: i + 1, quantity: qty, form, kind: Pair.kindOf(line, charm), side: p.side, bodyIndex: p.bodyIndex, groupKey: p.groupKey, groupSize: p.of, on: on[i] || null }));
-  return { n: l.n, kind, sku, qty, metal, form, discs, line, charm, pieces };
+  const pieces = per.map((p, i) => ({ poolId: poolId(rid_, t, i + 1), orderId: rid_, transactionId: t, lineKey: lineKey(rid_, t), sku, material: metal, copy: i + 1, quantity: qty, form, kind: Pair.kindOf(line, charm), lineKind: kind,
+    side: p.side, bodyIndex: p.bodyIndex, groupKey: p.groupKey, groupSize: p.of, mirror: !!p.mirror, on: on[i] || null }));
+  return { n: l.n, kind, sku, qty, metal, form, count, discs: kind === 'discs' ? count : 0, line, charm, pieces };
 }
-const PAIR_FIELDS = ['side', 'bodyIndex', 'groupKey', 'groupSize'];
-/** Build every document a spec needs. See the header. */
+const PAIR_FIELDS = ['side', 'bodyIndex', 'groupKey', 'groupSize', 'mirror'];
+
+/* ═══════════════════════════ shapes: direction is never lost ═══════════════════════════
+   Each piece's cut outline as it lies on its sheet is a polygon list (laid): the design body, mirrored when the piece is a mirror, turned by the placement's angle, put at its place.
+   The sheet charm carries it as `shapeJson` (a JSON STRING: a list of point lists is an array in an array, which Firestore refuses). */
+const polysOfSeg = seg => Pair._flatten(seg, 8);
+const bboxOfPolys = polys => { let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of polys) for (const q of p) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; } return [x0, y0, x1, y1]; };
+const round2 = v => Math.round(v * 100) / 100;
+/** The polygons of the piece's own outline, as drawn in the master (the as-drawn body of the design, before any mirror). */
+function bodyPolys(sku, bodyIndex) { const c = charmOf(sku), bodies = Pair.bodiesOf(c), b = bodies[Math.min(bodyIndex || 0, bodies.length - 1)]; return polysOfSeg(b.outline); }
+/** Mirror about the vertical axis through the polygons' own bounding-box centre (x -> -x), as CharmNestPair.mirrorOf does. */
+function mirrorPolys(polys) { const b = bboxOfPolys(polys), cx = (b[0] + b[2]) / 2; return polys.map(p => p.map(q => [2 * cx - q[0], q[1]])); }
+/** Turn polygons by `deg` degrees about their own bounding-box centre, then put that centre at (cx, cy). A rotation: never a reflection. */
+function layPolys(polys, deg, cx, cy) {
+  const b = bboxOfPolys(polys), mx = (b[0] + b[2]) / 2, my = (b[1] + b[3]) / 2, a = (deg || 0) * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+  return polys.map(p => p.map(q => [round2((q[0] - mx) * c - (q[1] - my) * sn + (cx || 0)), round2((q[0] - mx) * sn + (q[1] - my) * c + (cy || 0))]));
+}
+/** The outline of THIS piece laid on a sheet: the piece's own body (a mismatched pair's left or right), mirrored when piece.mirror, turned, placed. */
+function laidShape(sku, piece, place) {
+  let polys = bodyPolys(sku, piece.bodyIndex); if (piece.mirror) polys = mirrorPolys(polys);
+  return layPolys(polys, (place && place.angle) || 0, (place && place.cx) || 0, (place && place.cy) || 0);
+}
+// the shape of a piece against its design: how far is it from the design as drawn, and from the design mirrored, under the BEST turn? (a Hausdorff distance over sampled boundary points, in
+// units of the design's size: the placement's angle and sign convention are not needed, and a reflection can never be turned into the original, which is the point)
+const outerOf = polys => polys.map(p => { let a = 0, cx = 0, cy = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const f = p[j][0] * p[i][1] - p[i][0] * p[j][1]; a += f; cx += (p[j][0] + p[i][0]) * f; cy += (p[j][1] + p[i][1]) * f; } a /= 2; return { p, a: Math.abs(a), cx: a ? cx / (6 * a) : p[0][0], cy: a ? cy / (6 * a) : p[0][1] }; }).sort((x, y) => y.a - x.a)[0];
+function boundary(poly, n) {
+  const segs = []; let total = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const L = Math.hypot(poly[i][0] - poly[j][0], poly[i][1] - poly[j][1]); segs.push({ a: poly[j], b: poly[i], L }); total += L; }
+  const out = []; let k = 0, acc = 0;
+  for (let i = 0; i < n; i++) { const d = (i + .5) * total / n; while (k < segs.length - 1 && acc + segs[k].L < d) { acc += segs[k].L; k++; } const sg = segs[k], t = sg.L ? (d - acc) / sg.L : 0; out.push([sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t]); }
+  return out;
+}
+const distToPoly = (pt, poly) => { let best = Infinity; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const ax = poly[j][0], ay = poly[j][1], dx = poly[i][0] - ax, dy = poly[i][1] - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((pt[0] - ax) * dx + (pt[1] - ay) * dy) / L)) : 0, ex = ax + t * dx - pt[0], ey = ay + t * dy - pt[1], d = ex * ex + ey * ey; if (d < best) best = d; } return Math.sqrt(best); };
+function shapeFit(laidPolys, drawnPolys) {
+  const L = outerOf(laidPolys), D = outerOf(drawnPolys); if (!L || !D) return { asDrawn: Infinity, mirrored: Infinity };
+  const lp = L.p.map(q => [q[0] - L.cx, q[1] - L.cy]), size = Math.max(...bboxOfPolys([lp]).slice(2).map(Math.abs), 1e-6) * 2, la = boundary(lp, 48);
+  const err = (poly, deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a), r = poly.map(q => [q[0] * c - q[1] * sn, q[0] * sn + q[1] * c]); let worst = 0; for (const q of boundary(r, 48)) worst = Math.max(worst, distToPoly(q, lp)); for (const q of la) worst = Math.max(worst, distToPoly(q, r)); return worst / size; };
+  const best = poly => { let b = Infinity, bd = 0; for (let d = 0; d < 360; d += 3) { const e = err(poly, d); if (e < b) { b = e; bd = d; } } for (let d = bd - 3; d <= bd + 3; d += .25) b = Math.min(b, err(poly, d)); return b; };
+  const dp = D.p.map(q => [q[0] - D.cx, q[1] - D.cy]), dm = dp.map(q => [-q[0], q[1]]);
+  return { asDrawn: best(dp), mirrored: best(dm) };
+}
+const SHAPE_TOL = 0.045;
+/** What a laid outline is: "asDrawn" | "mirrored" | "either" (a symmetric shape fits both) | "none" (fits neither: the wrong body, or a distorted one). */
+function shapeState(laidPolys, drawnPolys) { const f = shapeFit(laidPolys, drawnPolys), a = f.asDrawn < SHAPE_TOL, m = f.mirrored < SHAPE_TOL; return a && m ? (Math.abs(f.asDrawn - f.mirrored) < 0.004 ? 'either' : f.asDrawn < f.mirrored ? 'asDrawn' : 'mirrored') : a ? 'asDrawn' : m ? 'mirrored' : 'none'; }
+const REFLECT_FLAGS = ['flipX', 'reflect', 'reflected', 'mirrored', 'flipped', 'flip'];   // a placement that says it was reflected (a rotation never sets one)
+const reflectedPlacement = pl => !!pl && (REFLECT_FLAGS.some(k => pl[k] === true) || +pl.scaleX < 0 || +pl.sx < 0 || +pl.scale < 0);
+
+/** Build every document a spec needs. See the header. spec.rotate: true turns pieces by 0, 90, 180, 270 in turn (a rotation is always allowed). */
 function world(spec) {
   const orders = (spec.orders || []).map(o => ({ rid: o.rid, lines: o.lines.map(l => lineOf(o.rid, l)) }));
   const sheetDefs = (spec.sheets || SHEETS).map(s => Object.assign({ id: s.id, metal: s.metal, n: s.n, set: s.set }, {})), byId = Object.fromEntries(sheetDefs.map(s => [s.id, s]));
@@ -158,39 +263,56 @@ function world(spec) {
     Object.fromEntries(PAIR_FIELDS.map(k => [k, p[k]]))));
   const sheets = sheetDefs.map(s => {
     const mine = pieces.filter(p => p.on === s.id); if (!mine.length) return null;
-    const charms = mine.map((p, i) => { const body = designMap[p.sku].bodies[Math.min(p.bodyIndex, designMap[p.sku].bodies.length - 1)]; return { id: `${s.id}-c${i}`, poolId: p.poolId, order: p.orderId, name: `${p.orderId} · ${p.sku}${p.groupSize > 1 ? ` · ${p.copy}/${p.groupSize}` : ''}`, sku: p.sku, lineKey: p.lineKey, side: p.side, bodyIndex: p.bodyIndex, groupKey: p.groupKey, groupSize: p.groupSize, widthPt: +body.w.toFixed(2), heightPt: +body.h.toFixed(2) }; });
-    const placements = charms.map((c, i) => ({ id: c.id, cxPt: 30 + (i % 6) * 40, cyPt: 30 + Math.floor(i / 6) * 40, angle: 0, wPt: c.widthPt, hPt: c.heightPt }));
+    const placements = [];
+    const charms = mine.map((p, i) => {
+      const body = designMap[p.sku].bodies[Math.min(p.bodyIndex, designMap[p.sku].bodies.length - 1)], id = `${s.id}-c${i}`, angle = spec.rotate ? [0, 90, 180, 270][i % 4] : 0, cx = 30 + (i % 6) * 40, cy = 30 + Math.floor(i / 6) * 40;
+      placements.push({ id, cxPt: cx, cyPt: cy, angle, wPt: +body.w.toFixed(2), hPt: +body.h.toFixed(2) });
+      return { id, poolId: p.poolId, order: p.orderId, name: `${p.orderId} · ${p.sku}${p.groupSize > 1 ? ` · ${p.copy}/${p.groupSize}` : ''}`, sku: p.sku, lineKey: p.lineKey, side: p.side, bodyIndex: p.bodyIndex, groupKey: p.groupKey, groupSize: p.groupSize, mirror: p.mirror,
+        widthPt: +body.w.toFixed(2), heightPt: +body.h.toFixed(2), shapeJson: JSON.stringify(laidShape(p.sku, p, { angle, cx, cy })) };
+    });
     return { id: s.id, setId: s.set, setSeq: SET_SEQ[s.set] || 1, sheetIndex: s.n, runId: RUN, metal: s.metal, day: DAY, fileBase: fileBase(s), folder: fileBase(s), status: 'complete', placedCount: placements.length, charmCount: charms.length, density: .5,
       stock: { wPt: 300, hPt: 150 }, placements, charms, poolIds: charms.map(c => c.poolId), orders: [...new Set(charms.map(c => c.order))], verification: { ok: true }, outputs: {}, label: { files: [], orders: [...new Set(charms.map(c => c.order))] }, archived: false, createdAt: T0, updatedAt: T0 + 5000 };
   }).filter(Boolean);
-  const sets = [...new Set(sheets.map(s => s.setId))].map(id => { const mine = sheets.filter(s => s.setId === id); return { setId: id, seq: SET_SEQ[id] || 1, day: DAY, runId: RUN, sheetIds: mine.map(s => s.id), materials: [...new Set(mine.map(s => s.metal))], orders: {}, labelFiles: [], status: 'labelled' }; });
-  const lines = {}; for (const o of orders) for (const l of o.lines) lines[lineKey(o.rid, tx(l.n))] = { orderId: o.rid, transactionId: tx(l.n), sku: l.sku, state: l.pieces.every(p => p.on) ? 'written' : 'pooled', quantity: l.qty, material: l.metal, poolIds: l.pieces.map(p => p.poolId), ...(l.kind !== 'single' ? { kind: l.kind, pieceCount: l.pieces.length } : {}) };
+  const sets = [...new Set(sheets.map(s => s.setId))].map(id => {
+    const mine = sheets.filter(s => s.setId === id), ord = {};   // (a set record lists each copy with its sheet and side: orders[rid].lines[{ transactionId, sku, copies:[{ copy, sheetId, sheet, poolId, side }] }])
+    for (const sh of mine) for (const c of sh.charms) { const pc = pieces.find(p => p.poolId === c.poolId), o = ord[pc.orderId] = ord[pc.orderId] || { held: null, lines: [] }; let line = o.lines.find(l => l.transactionId === pc.transactionId); if (!line) { line = { transactionId: pc.transactionId, sku: pc.sku, copies: [] }; o.lines.push(line); } line.copies.push({ copy: pc.copy, sheetId: sh.id, sheet: sh.fileBase, poolId: pc.poolId, backPoolId: null, ...(pc.side ? { side: pc.side } : {}) }); }
+    return { setId: id, seq: SET_SEQ[id] || 1, day: DAY, runId: RUN, sheetIds: mine.map(s => s.id), materials: [...new Set(mine.map(s => s.metal))], orders: ord, labelFiles: [], status: 'labelled' }; });
+  const lines = {}, kinds = {}; for (const o of orders) for (const l of o.lines) { lines[lineKey(o.rid, tx(l.n))] = { orderId: o.rid, transactionId: tx(l.n), sku: l.sku, state: l.pieces.every(p => p.on) ? 'written' : 'pooled', quantity: l.qty, material: l.metal, poolIds: l.pieces.map(p => p.poolId), kind: KINDS[l.kind].pair, pieceCount: l.pieces.length }; kinds[groupKey(o.rid, tx(l.n))] = KINDS[l.kind].pair; }
   const run = { runId: RUN, status: 'running', step: 'nest', day: DAY, lines, orders: orders.map(o => o.rid), sheets: {}, holds: {}, errors: [], resumable: true };
-  return { orders, pieces, pool, sheets, sets, run, designs: designMap, tracked: (spec.tracked || []).slice(), sheetDefs };
+  return { orders, pieces, pool, sheets, sets, run, designs: designMap, kinds, tracked: (spec.tracked || []).slice(), sheetDefs };
 }
 const clone = w => (typeof structuredClone === 'function' ? structuredClone(w) : JSON.parse(JSON.stringify(w)));
-/** The same world as the app stored it before pairs existed: no side, bodyIndex, groupKey or groupSize on any piece. */
+/** The same world as the app stored it before pairs existed: no side, bodyIndex, groupKey, groupSize or mirror on any piece, no shapes, no kinds. */
 function legacy(w) {
   const c = clone(w); for (const p of c.pool) for (const k of PAIR_FIELDS) delete p[k];
-  for (const s of c.sheets) for (const ch of s.charms) for (const k of PAIR_FIELDS) delete ch[k];
+  for (const s of c.sheets) for (const ch of s.charms) { for (const k of PAIR_FIELDS) delete ch[k]; delete ch.shapeJson; }
   for (const p of c.pieces) for (const k of PAIR_FIELDS) delete p[k];
+  for (const set of c.sets) for (const o of Object.values(set.orders || {})) for (const l of o.lines) for (const cp of l.copies) delete cp.side;
   for (const l of Object.values(c.run.lines)) { delete l.kind; delete l.pieceCount; }
-  c.legacy = true; return c;
+  c.kinds = {}; c.legacy = true; return c;
 }
 
 /* ═══════════════════════════ the named cases ═══════════════════════════ */
 const FILLER = [{ rid: rid(90), lines: [{ n: 90, kind: 'single', on: 'sh-gf1' }] }, { rid: rid(91), lines: [{ n: 91, kind: 'single', on: 'sh-gf2' }] }, { rid: rid(92), lines: [{ n: 92, kind: 'single', on: 'sh-gf4', metal: 'gold' }] }, { rid: rid(93), lines: [{ n: 93, kind: 'single', metal: 'silver', on: 'sh-ss1' }] }];
 const gk = (o, n) => groupKey(rid(o), tx(n));
 const CASES = {
-  pairOneSheet: { about: 'a matching pair on one sheet', build: () => world({ orders: [{ rid: rid(1), lines: [{ n: 10, kind: 'pair', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
-  pairSplitOneSet: { about: 'a matching pair split over two sheets of one set (tracked)', build: () => world({ orders: [{ rid: rid(2), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }, ...FILLER], tracked: [gk(2, 10)] }), expect: [] },
-  pairSplitTwoSets: { about: 'a matching pair split over two sheets of two sets (never allowed)', build: () => world({ orders: [{ rid: rid(3), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf4'] }] }, ...FILLER], tracked: [gk(3, 10)] }), expect: ['split-across-sets'] },
-  discs3Sheets: { about: 'a 3-disc necklace, a disc on each of three sheets of one set (tracked)', build: () => world({ orders: [{ rid: rid(4), lines: [{ n: 10, kind: 'discs', discs: 3, on: ['sh-gf1', 'sh-gf2', 'sh-gf3'] }] }, ...FILLER], tracked: [gk(4, 10)] }), expect: [] },
-  mixedSheet: { about: 'one sheet with studs, hoops, discs, a pendant and a mismatched pair', build: () => world({ orders: [
+  pairOneSheet: { about: 'a pair of earrings drawn facing left (a Left as drawn, a Right mirrored) on one sheet', build: () => world({ orders: [{ rid: rid(1), lines: [{ n: 10, kind: 'pair', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  pairFacesRight: { about: 'a pair drawn facing RIGHT: the Right is as drawn, the Left is the mirror', build: () => world({ orders: [{ rid: rid(11), lines: [{ n: 10, kind: 'pair', sku: 'PAIR-FACE-R', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  pairSymmetric: { about: 'a symmetric stud pair: still a Left and a Right, the Right flagged mirrored (the shapes look alike)', build: () => world({ orders: [{ rid: rid(12), lines: [{ n: 10, kind: 'pair', sku: 'PAIR-STUD', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  pairQty2: { about: 'a pair with quantity 2: two Left and two Right, copies alternate L, R, L, R', build: () => world({ orders: [{ rid: rid(13), lines: [{ n: 10, kind: 'pair', qty: 2, on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  pairRotated: { about: 'a pair and a hoop pair turned by 0, 90, 180, 270 degrees: a turn is always allowed (nothing to report)', build: () => world({ rotate: true, orders: [{ rid: rid(14), lines: [{ n: 10, kind: 'pair', qty: 2, on: 'sh-gf1' }, { n: 11, kind: 'mismatched', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  pairSplitOneSet: { about: 'a pair split over two sheets of one set (tracked)', build: () => world({ orders: [{ rid: rid(2), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }, ...FILLER], tracked: [gk(2, 10)] }), expect: [] },
+  pairSplitTwoSets: { about: 'a pair split over two sheets of two sets (never allowed)', build: () => world({ orders: [{ rid: rid(3), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf4'] }] }, ...FILLER], tracked: [gk(3, 10)] }), expect: ['split-across-sets'] },
+  discs3Sheets: { about: 'a 3-disc necklace, a disc on each of three sheets of one set (tracked): no side, never mirrored', build: () => world({ orders: [{ rid: rid(4), lines: [{ n: 10, kind: 'discs', discs: 3, on: ['sh-gf1', 'sh-gf2', 'sh-gf3'] }] }, ...FILLER], tracked: [gk(4, 10)] }), expect: [] },
+  lettersNecklace: { about: 'a letters necklace of 4 letters on one sheet: 4 pieces, no side, never mirrored', build: () => world({ orders: [{ rid: rid(15), lines: [{ n: 10, kind: 'letters', letters: 4, on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  singleLine: { about: 'a "Single" earring line, quantity 2: two pieces with no side (a single is not a pair), next to a pair', build: () => world({ orders: [{ rid: rid(16), lines: [{ n: 10, kind: 'earring-single', qty: 2, on: 'sh-gf1' }, { n: 11, kind: 'pair', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  mixedSheet: { about: 'one sheet with studs, hoops, discs, letters, a Single line, a pendant and a mismatched pair', build: () => world({ orders: [
       { rid: rid(5), lines: [{ n: 10, kind: 'pair', on: 'sh-gf1' }, { n: 11, kind: 'hoop', on: 'sh-gf1' }] },
       { rid: rid(6), lines: [{ n: 10, kind: 'discs', discs: 4, on: 'sh-gf1' }, { n: 11, kind: 'single', on: 'sh-gf1' }] },
-      { rid: rid(7), lines: [{ n: 10, kind: 'mismatched', on: 'sh-gf1' }] }, ...FILLER.slice(1)] }), expect: [] },
+      { rid: rid(7), lines: [{ n: 10, kind: 'mismatched', on: 'sh-gf1' }] },
+      { rid: rid(17), lines: [{ n: 10, kind: 'letters', letters: 3, on: 'sh-gf1' }, { n: 11, kind: 'earring-single', qty: 2, on: 'sh-gf1' }] }, ...FILLER.slice(1)] }), expect: [] },
   mismatchedTwoOutlines: { about: 'a mismatched pair (a ball and a racket) on one sheet, left then right', build: () => world({ orders: [{ rid: rid(8), lines: [{ n: 10, kind: 'mismatched', sku: 'TENNIS-MIS', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
+  mismatchedMittens: { about: 'the picture: MITTENS 1 and MITTENS 2 under one label, both drawn facing left, so the Right earring is the second body mirrored', build: () => world({ orders: [{ rid: rid(18), lines: [{ n: 10, kind: 'mismatched', on: 'sh-gf1' }] }, ...FILLER] }), expect: [] },
   mismatchedSplit: { about: 'a mismatched pair, the left on one sheet and the right on another of one set (tracked)', build: () => world({ orders: [{ rid: rid(9), lines: [{ n: 10, kind: 'mismatched', on: ['sh-gf1', 'sh-gf2'] }] }, ...FILLER], tracked: [gk(9, 10)] }), expect: [] },
   pairWaiting: { about: 'a pair of which one piece is on a sheet and one waits (a half-placed group)', build: () => world({ orders: [{ rid: rid(10), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', null] }] }, ...FILLER] }), expect: ['untracked-split'] },
 };
@@ -209,7 +331,7 @@ function fakeFirestore(opts) {
       for (const s of w.sets) fs.put(COLL.sets, s.setId, s);
       fs.put(COLL.runs, w.run.runId, w.run); return fs;
     },
-    docsOf() { return { pool: st.list(COLL.pool), sheets: st.list(COLL.sheets).filter(s => !s.archived).map(s => Object.assign({ id: s._id }, s)), sets: st.list(COLL.sets), designs: designs() }; } };
+    docsOf() { return { pool: st.list(COLL.pool), sheets: st.list(COLL.sheets).filter(s => !s.archived).map(s => Object.assign({ id: s._id }, s)), sets: st.list(COLL.sets), runs: st.list(COLL.runs), designs: designs() }; } };
   return fs;
 }
 /** The REAL netlify functions over that fake: { handlers, call(name, body), lib(op, args), restore() }. */
@@ -226,7 +348,7 @@ function functions(fs, names) {
 /* ═══════════════════════════ the pair checker ═══════════════════════════ */
 const held = r => !!r && r.state === 'abandoned' && (+r.heldAt > 0 || r.heldBy || +r.removedAt > 0 || r.removedBy);
 const HEALTHY = r => r && r.state !== 'abandoned' && r.state !== 'superseded';
-/** Groups from the cloud documents: Map(groupKey -> { key, pieces:[{ poolId, copy, row, sheets:[sheet doc], charm, placement }] }). A group is derived from the pool id, never from the stored field. */
+/** Groups from the cloud documents: Map(groupKey -> { key, pieces:[{ poolId, copy, row, sheets:[sheet doc], charm, charms:[{ sheet, charm, placement }] }] }). A group is derived from the pool id, never from the stored field. */
 function groupsOf(docs) {
   const sheets = (docs.sheets || []).filter(s => !s.archived), out = new Map();
   const at = (k, poolId) => { if (!out.has(k)) out.set(k, { key: k, pieces: new Map() }); const g = out.get(k); if (!g.pieces.has(poolId)) g.pieces.set(poolId, { poolId, copy: (poolParts(poolId) || {}).copy || 0, row: null, sheets: [], charm: null, charms: [], placement: null }); return g.pieces.get(poolId); };
@@ -236,13 +358,30 @@ function groupsOf(docs) {
   return out;
 }
 const sheetsOf = g => [...new Set(g.pieces.flatMap(p => p.sheets.map(s => s.id || s._id)))].sort();
-/** Everything that makes one group's pieces disagree about their sheet, side or group. See the header for the codes. */
+/** What kind of line each group is (key "rid:tx" -> pair | mismatched | single | discs | letters ...), from the run documents (their lines carry `kind`, as the intake sets spec.pair.kind). */
+function kindsOfRuns(runs) { const out = {}; for (const r of runs || []) for (const [k, l] of Object.entries((r && r.lines) || {})) { const m = /^(\d{4,20})_(.+)$/.exec(k); if (m && l && l.kind) out[groupKey(m[1], m[2])] = l.kind; } return out; }
+// the laid outline of a sheet charm against its design: memoised (the search over turns is the slow part)
+const SHAPE_MEMO = new Map();
+function shapeOfCharm(design, bodyIndex, shapeJson) {
+  if (!design || !shapeJson) return null;
+  const key = design.sku + '|' + bodyIndex + '|' + shapeJson, hit = SHAPE_MEMO.get(key); if (hit) return hit;
+  let laid; try { laid = JSON.parse(shapeJson); } catch (e) { return { state: 'unreadable' }; }
+  const bodies = Pair.bodiesOf(design.charm), b = bodies[Math.min(bodyIndex || 0, bodies.length - 1)];
+  const out = { state: shapeState(laid, polysOfSeg(b.outline)) }; SHAPE_MEMO.set(key, out); return out;
+}
+/** Everything that makes one group's pieces disagree about their sheet, side, mirror or group. See the header for the codes. */
 function problems(docs, opts) {
   opts = opts || {}; const out = [], tracked = new Set(opts.tracked || docs.tracked || []), designs_ = docs.designs || {}, sheetById = new Map((docs.sheets || []).filter(s => !s.archived).map(s => [s.id || s._id, s]));
+  const kinds = Object.assign({}, kindsOfRuns(docs.runs || (docs.run ? [docs.run] : [])), docs.kinds || {}), mirrorOn = opts.mirror !== false;
   const add = (code, g, text, poolId) => out.push({ code, groupKey: g ? g.key : '', poolId: poolId || null, text });
-  const sid = s => s.id || s._id;
+  const sid = s => s.id || s._id, word = s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : 'no side'), yes = b => (b ? 'mirrored' : 'as drawn');
   for (const g of groupsOf(docs).values()) {
-    const ps = g.pieces, rows = ps.map(p => p.row).filter(Boolean), pair = rows.some(r => r.groupKey != null || r.side !== undefined) || ps.some(p => p.charm && p.charm.groupKey != null);
+    const ps = g.pieces, rows = ps.map(p => p.row).filter(Boolean), hasFields = rows.some(r => r.groupKey != null || r.side !== undefined) || ps.some(p => p.charm && p.charm.groupKey != null);
+    const sku = (rows[0] && rows[0].sku) || (ps.find(p => p.charm && p.charm.sku) || { charm: {} }).charm.sku, d = sku && designs_[sku] ? designs_[sku] : null, misDesign = d ? Pair.isMismatched(d.charm) : false;
+    // what the line is: the run says; else the rows' sides say; else the design and the form
+    let kind = kinds[g.key] || null;
+    if (!kind) kind = rows.some(r => r.side === 'L' || r.side === 'R') ? (misDesign ? 'mismatched' : 'pair') : misDesign ? 'mismatched' : (rows[0] && rows[0].form && Pair.isEarringPair({ form: rows[0].form }, d && d.charm)) ? 'pair' : (rows.length > 1 ? 'multi' : 'single');
+    const earring = kind === 'pair' || kind === 'mismatched';
     // key and size
     for (const p of ps) {
       if (p.row && p.row.groupKey != null && p.row.groupKey !== g.key) add('key-mismatch', g, `${p.poolId}: its pool row says group ${p.row.groupKey}, its pool id says ${g.key}`, p.poolId);
@@ -256,19 +395,63 @@ function problems(docs, opts) {
       if (absent.length) add('missing-piece', g, `${g.key} is ${size} piece(s) but the pool has no copy ${absent.join(', ')} (it holds ${rows.length})`);
       if (rows.length > size) add('size-mismatch', g, `${g.key} says ${size} piece(s) but the pool holds ${rows.length}`);
     }
-    // sides
+    // sides: an earring pair is a Left and a Right per unit (copies alternate L, R), matching or mismatched; discs, letters, singles have none
+    const sideOfCopy = copy => Pair.sideOf((copy - 1) % 2, 2);
     for (const p of ps) {
-      const rs = p.row && p.row.side, cs = p.charms.map(c => c.charm && c.charm.side).filter(v => v !== undefined);
-      for (const v of cs) if (p.row && p.row.side !== undefined && (v || null) !== (rs || null)) add('side-mismatch', g, `${p.poolId}: the pool row says ${rs || 'no side'}, the sheet says ${v || 'no side'}`, p.poolId);
+      const rs = p.row && p.row.side, cs = p.charms.filter(c => c.charm).map(c => c.charm.side);
+      for (const v of cs) if (p.row && p.row.side !== undefined && v !== undefined && (v || null) !== (rs || null)) add('side-mismatch', g, `${p.poolId}: the pool row says ${word(rs)}, the sheet says ${word(v)}`, p.poolId);
       if (new Set(p.charms.map(c => c.charm && (c.charm.side || null))).size > 1) add('side-mismatch', g, `${p.poolId}: its sheets disagree about its side`, p.poolId);
     }
-    if (pair) {
-      const sk = rows[0] && rows[0].sku, d = sk && designs_[sk], mis = d ? Pair.isMismatched(d.charm) : rows.some(r => r.side === 'L' || r.side === 'R');
-      const sides = rows.map(r => r.side || null), L = sides.filter(s => s === 'L').length, R = sides.filter(s => s === 'R').length;
-      if (d) for (const r of rows) { const want = mis ? Pair.sideOf((r.copy - 1) % 2, 2) : null; if ((r.side || null) !== want) add('side-mismatch', g, `${r.poolId}: the design ${sk} makes ${want ? want === 'L' ? 'Left' : 'Right' : 'no side'} for copy ${r.copy}, the pool row says ${r.side ? r.side === 'L' ? 'Left' : 'Right' : 'no side'}`, r.poolId); }
-      if (mis || L || R) {
-        if (L !== R) add('side-pairing', g, `${g.key} has ${L} left and ${R} right piece(s): a mismatched pair makes one of each`);
-        for (const r of rows) if (r.bodyIndex != null && r.side != null && r.side !== (r.bodyIndex === 0 ? 'L' : r.bodyIndex === 1 ? 'R' : null)) add('side-pairing', g, `${r.poolId}: body ${r.bodyIndex} cannot be side ${r.side}`, r.poolId);
+    if (hasFields) {
+      const L = rows.filter(r => r.side === 'L').length, R = rows.filter(r => r.side === 'R').length;
+      for (const p of ps) {
+        const sides = [p.row && p.row.side, ...p.charms.map(c => c.charm && c.charm.side)];
+        if (earring) {
+          const want = sideOfCopy(p.copy);
+          if (p.row && p.row.side !== 'L' && p.row.side !== 'R') add('side-missing', g, `${p.poolId}: a piece of an earring pair has no side (copy ${p.copy} is the ${word(want)})`, p.poolId);
+          else if (p.row && p.row.side !== want) add('side-mismatch', g, `${p.poolId}: copy ${p.copy} of an earring pair is the ${word(want)}, the pool row says ${word(p.row.side)}`, p.poolId);
+          for (const c of p.charms) if (c.charm && c.charm.side !== 'L' && c.charm.side !== 'R') add('side-missing', g, `${p.poolId}: ${sheetLabel2(c.sheet)} holds a piece of an earring pair with no side`, p.poolId);
+        } else {
+          for (const v of sides) if (v === 'L' || v === 'R') { add('side-unexpected', g, `${p.poolId}: a ${kind} piece (not an earring pair) says it is the ${word(v)}: only earring pairs have a side`, p.poolId); break; }
+        }
+      }
+      if (earring) {
+        if (L !== R) add('side-pairing', g, `${g.key} has ${L} left and ${R} right piece(s): an earring pair makes one of each per unit`);
+        for (const r of rows) { const wantBody = kind === 'mismatched' ? (r.side === 'L' ? 0 : r.side === 'R' ? 1 : null) : 0; if (r.bodyIndex != null && wantBody != null && r.bodyIndex !== wantBody) add('side-pairing', g, `${r.poolId}: body ${r.bodyIndex} cannot be the ${word(r.side)} of a ${kind} pair`, r.poolId); }
+      }
+    }
+    // mirror: the Right is the Left mirrored; a piece's flag follows its side and the way its body faces; the sheet agrees with the pool
+    if (mirrorOn && hasFields) {
+      const facingOfPiece = r => { const f = d && d.facings ? d.facings[Math.min(r.bodyIndex || 0, d.facings.length - 1)] : null; return f || 'L'; };
+      for (const p of ps) {
+        const rm = p.row ? p.row.mirror : undefined, cm = p.charms.filter(c => c.charm).map(c => c.charm.mirror);
+        for (const v of cm) if (rm !== undefined && v !== undefined && !!v !== !!rm) add('mirror-mismatch', g, `${p.poolId}: the pool row says ${yes(rm)}, ${sheetLabel2(p.sheets[0])} says ${yes(v)}`, p.poolId);
+        if (earring) {
+          if (p.row && rm === undefined) add('mirror-missing', g, `${p.poolId}: a piece of an earring pair has no mirror flag`, p.poolId);
+          for (const c of p.charms) if (c.charm && c.charm.mirror === undefined) add('mirror-missing', g, `${p.poolId}: ${sheetLabel2(c.sheet)} holds a piece of an earring pair with no mirror flag`, p.poolId);
+          if (p.row && rm !== undefined && d && (p.row.side === 'L' || p.row.side === 'R')) { const want = p.row.side !== facingOfPiece(p.row); if (!!rm !== want) add('mirror-mismatch', g, `${p.poolId}: the ${word(p.row.side)} of ${sku} (drawn facing ${facingOfPiece(p.row) === 'L' ? 'left' : 'right'}) must be ${yes(want)}, the pool row says ${yes(rm)}`, p.poolId); }
+        } else if (rm === true || cm.some(v => v === true)) add('mirror-unexpected', g, `${p.poolId}: a ${kind} piece (not an earring pair) is marked mirrored: only the Right of an earring pair is`, p.poolId);
+      }
+      if (earring && kind === 'pair') {   // one body: of a Left and a Right, exactly one is mirrored (the other is the drawing as it is)
+        const byUnit = new Map(); for (const r of rows) { if (r.mirror === undefined || (r.side !== 'L' && r.side !== 'R')) continue; const u = Math.ceil(r.copy / 2); if (!byUnit.has(u)) byUnit.set(u, {}); byUnit.get(u)[r.side] = !!r.mirror; }
+        for (const [u, m] of byUnit) if (m.L !== undefined && m.R !== undefined && m.L === m.R) add('mirror-pairing', g, `${g.key} unit ${u}: the Left and the Right are both ${yes(m.L)}: one of the two must be the mirror of the other`);
+      }
+    }
+    // direction on the sheet: each laid outline (shapeJson) is the piece's own body, mirrored exactly when the piece is a mirror; a Right is the Left mirrored; the nester only turned it
+    if (mirrorOn && d) {
+      const shapes = [];   // [{ p, state, flag }]
+      for (const p of ps) for (const c of p.charms) {
+        if (!c.charm) continue;
+        const bodyIndex = (p.row && p.row.bodyIndex != null) ? p.row.bodyIndex : (c.charm.bodyIndex || 0), flag = p.row && p.row.mirror !== undefined ? !!p.row.mirror : !!c.charm.mirror;
+        if (reflectedPlacement(c.placement)) add('reflected', g, `${p.poolId}: ${sheetLabel2(c.sheet)} places it with a reflection (${REFLECT_FLAGS.filter(k => c.placement[k] === true).join(', ') || 'negative scale'}): the nester may turn a piece, never reflect it`, p.poolId);
+        const sh = shapeOfCharm(d, bodyIndex, c.charm.shapeJson); if (!sh) continue;
+        if (sh.state === 'none' || sh.state === 'unreadable') { add('shape-mismatch', g, `${p.poolId}: the outline on ${sheetLabel2(c.sheet)} is not the outline of ${sku}${d.bodies && d.bodies.length > 1 ? ' body ' + bodyIndex : ''}, as drawn or mirrored, at any turn`, p.poolId); continue; }
+        shapes.push({ p, state: sh.state, flag, sheet: c.sheet });
+        if (sh.state !== 'either' && (sh.state === 'mirrored') !== flag) add('reflected', g, `${p.poolId}: it should lie ${yes(flag)} but its outline on ${sheetLabel2(c.sheet)} is ${yes(sh.state === 'mirrored')}: it was reflected (a piece may be turned, never reflected)`, p.poolId);
+      }
+      if (kind === 'pair') {
+        const byUnit = new Map(); for (const s of shapes) { const sd = s.p.row && s.p.row.side; if ((sd !== 'L' && sd !== 'R') || s.state === 'either') continue; const u = Math.ceil(s.p.copy / 2); if (!byUnit.has(u)) byUnit.set(u, {}); byUnit.get(u)[sd] = s; }
+        for (const [u, m] of byUnit) if (m.L && m.R && m.L.state === m.R.state) add('not-mirror', g, `${g.key} unit ${u}: the Right (${m.R.p.poolId}) and the Left (${m.L.p.poolId}) both lie ${yes(m.L.state === 'mirrored')}: the Right must be the Left mirrored`, m.R.p.poolId);
       }
     }
     // sheet agreement, duplicates
@@ -299,11 +482,19 @@ function problems(docs, opts) {
     // held
     const heldN = rows.filter(r => held(r)).length; if (heldN && heldN < rows.length) add('half-held', g, `${g.key}: ${heldN} of ${rows.length} piece(s) are on hold or cancelled, the rest are not`);
   }
+  // the set record lists each copy with its sheet and side (orders[rid].lines[].copies[]): it must say where the piece is and which ear it is
+  const rowById = new Map((docs.pool || []).map(r => [r.poolId, r])), sheetOfPiece = new Map(); for (const s of sheetById.values()) for (const id of s.poolIds || []) sheetOfPiece.set(id, sid(s));
+  for (const set of docs.sets || []) for (const [rid_, od] of Object.entries(set.orders || {})) for (const ln of (Array.isArray(od && od.lines) ? od.lines : Object.values((od && od.lines) || {}))) for (const cp of (ln && ln.copies) || []) {
+    const where = sheetOfPiece.get(cp.poolId), row = rowById.get(cp.poolId), k = gkOfPool(cp.poolId), bad = t => out.push({ code: 'set-copy-disagree', groupKey: k, poolId: cp.poolId, text: `set ${set.setId || set._id}, order ${rid_}: ${cp.poolId} ${t}` });
+    if (where && cp.sheetId && where !== cp.sheetId) bad(`is listed on ${cp.sheetId}, the sheet records have it on ${where}`);
+    else if (!where && cp.sheetId && sheetById.has(cp.sheetId) && row && HEALTHY(row)) bad(`is listed on ${cp.sheetId}, which does not hold it`);
+    if (cp.side && row && row.side !== undefined && (row.side || null) !== cp.side) bad(`is listed as the ${word(cp.side)}, the pool row says ${word(row.side)}`);
+  }
   for (const set of docs.sets || []) for (const id of set.sheetIds || []) { const s = sheetById.get(id); if (s && (s.setId || null) !== (set.setId || set._id)) out.push({ code: 'set-disagree', groupKey: '', poolId: null, text: `set ${set.setId || set._id} lists ${id}, whose own record says set ${s.setId || 'none'}` }); }
   for (const s of sheetById.values()) if (s.setId && (docs.sets || []).length) { const set = (docs.sets || []).find(x => (x.setId || x._id) === s.setId); if (set && !(set.sheetIds || []).includes(sid(s))) out.push({ code: 'set-disagree', groupKey: '', poolId: null, text: `${sid(s)} says set ${s.setId}, which does not list it` }); }
   return out;
 }
-const sheetLabel2 = s => `${CODE[s.metal] || 'GF'} Sheet ${s.sheetIndex || (/_Sheet-(\d+)/.exec(s.fileBase || '') || [])[1] || '?'}`;
+const sheetLabel2 = s => s ? `${CODE[s.metal] || 'GF'} Sheet ${s.sheetIndex || (/_Sheet-(\d+)/.exec(s.fileBase || '') || [])[1] || '?'}` : 'a sheet';
 
 /* ═══════════════════════════ Etsy receipts (the emulated Etsy / the sandbox stream) ═══════════════════════════ */
 const METAL_WORD = { gold: '14k Gold Filled', silver: 'Sterling Silver', rose: '14k Rose Gold Filled' };
@@ -322,5 +513,8 @@ const EXAMPLES = {
   pairOneSheet: { note: 'every earring line with quantity 1: 102 of the 105 earring lines of the snapshot' },
 };
 
+const expectedMirror = (sku, side, bodyIndex) => { const f = (DESIGN_FACING[sku] || [null])[Math.min(bodyIndex || 0, (DESIGN_FACING[sku] || [null]).length - 1)]; return side === 'L' || side === 'R' ? side !== (f || 'L') : false; };
+const shapeJsonOf = (sku, piece, place) => JSON.stringify(laidShape(sku, piece, place));
 module.exports = { COLL, CODE, DAY, RUN, ids, rid, tx, poolId, lineKey, groupKey, poolParts, gkOfPool, KINDS, pieceCount, designs, charmOf, entryOf, world, lineOf, clone, legacy, cases, caseList, CASES, SHEETS, FILLER,
-  fakeFirestore, functions, problems, groupsOf, sheetsOf, receipts, EXAMPLES, fileBase, sheetLabel: s => sheetLabel(s), PAIR_FIELDS, refuseNestedArrays };
+  fakeFirestore, functions, problems, groupsOf, sheetsOf, kindsOfRuns, receipts, EXAMPLES, fileBase, sheetLabel: s => sheetLabel(s), PAIR_FIELDS, refuseNestedArrays,
+  DESIGN_FACING, expectedMirror, laidShape, shapeJsonOf, shapeState, shapeFit, SHAPE_TOL, mirrorPolys, layPolys, bodyPolys, reflectedPlacement, REFLECT_FLAGS };

@@ -280,12 +280,21 @@
      mirrored. The intake says what a line is (spec.pair.kind, spec.pieceCount); a line without them is read by its form. */
   const PAIR_FORMS = new Set(["earrings", "earring", "pair", "pair of earrings", "stud", "studs", "stud earrings", "hoop", "hoops", "hoop earrings", "huggie", "huggies", "huggie earrings", "huggie hoops", "huggie charm set"]);
   const formOf = line => String((line && ((line.spec && line.spec.form) || line.form || (line.row && line.row.spec && line.row.spec.form))) || "").toLowerCase().trim();
-  /** Is this line an earring PAIR (its pieces are a Left and a Right)? spec.pair.kind wins; else a mismatched design is; else the form decides. */
+  const pairSpecOf = line => line && ((line.spec && line.spec.pair) || line.pair || (line.row && line.row.spec && line.row.spec.pair)) || null;
+  /** Is this line an earring PAIR (its pieces are a Left and a Right)? The intake's own answer wins (spec.pair.earring, which is true only for an earring pair line
+   *  that is not a mismatched design counted as one glued copy and not an old line pinned to the pieces it already has); else spec.pair.kind; else a mismatched
+   *  design is; else the form decides. */
   function isEarringPair(line, charm) {
-    const pr = line && ((line.spec && line.spec.pair) || line.pair || (line.row && line.row.spec && line.row.spec.pair));
+    const pr = pairSpecOf(line);
+    if (pr && typeof pr.earring === "boolean") return pr.earring === true && !pr.glued && !pr.legacy;
     if (pr && pr.kind) return pr.kind === "pair" || pr.kind === "mismatched";
     if (charm && isMismatched(charm)) return true;
     return PAIR_FORMS.has(formOf(line));
+  }
+  /** The side the intake gave each piece, in order (spec.pair.sides: "L" | "R" | null each, a flat array), or null when the line carries none. */
+  function sidesSaid(line) {
+    const pr = pairSpecOf(line);
+    return pr && Array.isArray(pr.sides) && pr.sides.length ? pr.sides.map(x => x === "L" || x === "R" ? x : null) : null;
   }
   /** How many pieces one order line makes. An explicit count wins (the intake sets spec.pieceCount: one source of truth in charm-nest-orders.js; a
    *  row's pool ids are the fact). Without one: an earring pair (or a mismatched design) makes two per unit, anything else one per unit. */
@@ -303,10 +312,11 @@
    *  Anything that is not an earring pair (a necklace of discs, a single earring): side null, mirror false. */
   function piecesFor(line, charm, opts) {
     const key = groupKey(line), total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm), out = [];
-    const pair = total >= 2 && isEarringPair(line, charm);
+    const pair = total >= 2 && isEarringPair(line, charm), said = sidesSaid(line);   // (the intake's own sides win; without them the pieces alternate L, R)
     const bodies = mis ? bodiesOf(charm) : null;
     for (let i = 0; i < total; i++) {
-      const side = pair ? (i % 2 === 0 ? "L" : "R") : null, bodyIndex = mis ? i % 2 : 0;
+      const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
+      const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
       if (side) { const f = (opts && opts.facing) || (bodies ? facingOfBody(bodies[bodyIndex], charm) : facingOf(charm)); mirror = side !== (f || "L"); }
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
@@ -372,35 +382,118 @@
      holes, hoop, engraving art and hatching; engraved TEXT stays readable and is placed, not reversed, by the engraving code). The nester may
      rotate a piece, never reflect it: a Right piece reaches the solver already mirrored. This is NOT the sheet "flip" used to engrave the back. */
 
-  /** Area-weighted centroid of a set of polygons (a hole, nested at odd depth, subtracts). */
-  function centroidOf(polys) {
-    const list = polys.filter(p => p.length > 2).map(p => { let a = 0, cx = 0, cy = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const f = p[j][0] * p[i][1] - p[i][0] * p[j][1]; a += f; cx += (p[j][0] + p[i][0]) * f; cy += (p[j][1] + p[i][1]) * f; } a /= 2; return { p, a: Math.abs(a), cx: a ? cx / (6 * a) : p[0][0], cy: a ? cy / (6 * a) : p[0][1] }; }).sort((x, y) => y.a - x.a);
-    let A = 0, X = 0, Y = 0;
-    for (const e of list) { let depth = 0; for (const o of list) if (o !== e && o.a > e.a && inPolys(e.p[0][0], e.p[0][1], [o.p])) depth++; const sg = depth % 2 ? -1 : 1; A += sg * e.a; X += sg * e.a * e.cx; Y += sg * e.a * e.cy; }
-    return A > 0 ? [X / A, Y / A] : null;
+  /* WHICH WAY DOES A DESIGN FACE? (PAIRMIRROR, 9 Oct; evidence in plans/pairs-1009/PAIRMIRROR-facing.json and PAIRMIRROR-points.md)
+     Measured on the live library (3,843 design files, 6,827 SKUs), by eye on about 100 designs: the masters follow NO drawing convention. Profile animals
+     face left about as often as right (panda, wolf, duck, fox, iguana face left; horse, seal, beaver, penguin, boot, dragon face right), mittens are drawn
+     thumb-left, and no shape measure (centre of mass, where the ink sits, which end is heavier) predicts the side better than a coin flip (the old centre-of-mass
+     rule was right for 12 of 24 labelled designs). A shape cannot say which end is the head. So:
+       1. whether a design NEEDS a facing is measured (it is, when its mirror image differs: symmetryOf), and that is sound;
+       2. which way it faces is a person's word (`facing` on the master record, set in the Master tab; a re-index never overwrites it);
+       3. a second body of a mismatched pair is read from the first (drawn as the mirror image of it: it faces the other way; drawn the same: the same way);
+       4. everything else is UNKNOWN (null), and unknown means as drawn is the Left and the Right is the mirror (the way Paul's picture draws both mittens).
+     Nothing here guesses a side from a shape. */
+  const SYM_N = 64, SYM_CUT_OK = 0.06, SYM_CUT_DIR = 0.09, SYM_ART_OK = 0.10, SYM_ART_DIR = 0.16;
+  const symCache = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function rasterPolys(polys, k, cx, cy, N) {   // even-odd fill of closed polygons into an N x N mask, y up, the square k centred on (cx, cy)
+    const m = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const x = cx + ((i + 0.5) / N - 0.5) * k, y = cy + (0.5 - (j + 0.5) / N) * k; if (inPolys(x, y, polys)) m[j * N + i] = 1; }
+    return m;
   }
-  /** Which way a body faces in the drawing: { facing: "L" | "R" | null, confidence 0..1, skew, method }. A FIRST HEURISTIC, honest about being weak: the
-   *  mass of an asymmetric charm (a mitten, an animal, a paw) sits away from what sticks out (thumb, head, beak), so a centroid right of the box
-   *  centre reads as facing left. Symmetric or near-symmetric bodies (|skew| under 4 percent of the width) are null: as drawn is the Left. */
-  function facingInfo(body) {
-    if (!body || !body.outline) return { facing: null, confidence: 0, skew: 0, method: "none" };
-    const b = body.outlineBbox || body.outline.bbox, w = b[2] - b[0]; if (!(w > 0)) return { facing: null, confidence: 0, skew: 0, method: "none" };
-    const c = centroidOf(flatten(body.outline, 8)); if (!c) return { facing: null, confidence: 0, skew: 0, method: "none" };
-    const skew = (c[0] - (b[0] + b[2]) / 2) / w, mag = Math.abs(skew), confidence = Math.min(1, mag / 0.15);
-    return { facing: mag < 0.04 ? null : skew > 0 ? "L" : "R", confidence: +confidence.toFixed(2), skew: +skew.toFixed(3), method: "centroid-skew" };
+  function rasterStroke(polylines, lw, k, cx, cy, N, m) {   // a line of width lw into the mask
+    const cell = k / N, r = Math.max(0.5, lw / 2 / cell);
+    for (const pl of polylines) for (let i = 1; i < pl.length; i++) {
+      const a = pl[i - 1], b = pl[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]), st = Math.max(1, Math.ceil(L / (cell * 0.5)));
+      for (let s = 0; s <= st; s++) {
+        const t = s / st, gi = (a[0] + (b[0] - a[0]) * t - cx) / k * N + N / 2, gj = N / 2 - (a[1] + (b[1] - a[1]) * t - cy) / k * N;
+        for (let jj = Math.max(0, Math.floor(gj - r)); jj <= Math.min(N - 1, Math.ceil(gj + r)); jj++) for (let ii = Math.max(0, Math.floor(gi - r)); ii <= Math.min(N - 1, Math.ceil(gi + r)); ii++) if ((ii + 0.5 - gi) ** 2 + (jj + 0.5 - gj) ** 2 <= r * r + 0.25) m[jj * N + ii] = 1;
+      }
+    }
   }
-  const FACING_MIN_CONFIDENCE = 0.5;
+  const flipRows = (m, N) => { const o = new Uint8Array(N * N); for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) o[j * N + i] = m[j * N + N - 1 - i]; return o; };
+  function fillHolesMask(m, N) {   // everything the outside cannot reach is part of the shape (a hoop's hole, a cut-out)
+    const out = new Uint8Array(N * N), st = [], push = (i, j) => { if (i < 0 || j < 0 || i >= N || j >= N) return; const q = j * N + i; if (out[q] || m[q]) return; out[q] = 1; st.push(q); };
+    for (let i = 0; i < N; i++) { push(i, 0); push(i, N - 1); push(0, i); push(N - 1, i); }
+    while (st.length) { const q = st.pop(), i = q % N, j = (q - i) / N; push(i + 1, j); push(i - 1, j); push(i, j + 1); push(i, j - 1); }
+    const r = new Uint8Array(N * N); for (let q = 0; q < N * N; q++) r[q] = out[q] ? 0 : 1; return r;
+  }
+  function edgeCells(m, N) { const e = new Uint8Array(N * N); for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const q = j * N + i; if (m[q] && (i === 0 || j === 0 || i === N - 1 || j === N - 1 || !m[q - 1] || !m[q + 1] || !m[q - N] || !m[q + N])) e[q] = 1; } return e; }
+  function distanceTo(m, N) {   // chamfer distance (in cells) from every cell to the nearest set cell
+    const D = new Float32Array(N * N).fill(1e9); for (let q = 0; q < N * N; q++) if (m[q]) D[q] = 0;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const q = j * N + i; let v = D[q]; if (i > 0) v = Math.min(v, D[q - 1] + 1); if (j > 0) { v = Math.min(v, D[q - N] + 1); if (i > 0) v = Math.min(v, D[q - N - 1] + 1.414); if (i < N - 1) v = Math.min(v, D[q - N + 1] + 1.414); } D[q] = v; }
+    for (let j = N - 1; j >= 0; j--) for (let i = N - 1; i >= 0; i--) { const q = j * N + i; let v = D[q]; if (i < N - 1) v = Math.min(v, D[q + 1] + 1); if (j < N - 1) { v = Math.min(v, D[q + N] + 1); if (i < N - 1) v = Math.min(v, D[q + N + 1] + 1.414); if (i > 0) v = Math.min(v, D[q + N - 1] + 1.414); } D[q] = v; }
+    return D;
+  }
+  function chamferP90(A, B, N) {   // the distance within which 90 percent of A's cells find a cell of B (and the other way round, the larger of the two), as a share of the drawing's size
+    const dB = distanceTo(B, N), dA = distanceTo(A, N), a = [], b = [];
+    for (let q = 0; q < N * N; q++) { if (A[q]) a.push(dB[q]); if (B[q]) b.push(dA[q]); }
+    const p90 = v => { if (!v.length) return 0; v.sort((x, y) => x - y); return v[Math.min(v.length - 1, Math.floor(0.9 * v.length))]; };
+    return Math.max(p90(a), p90(b)) / N;
+  }
+  /** How far a body is from its own mirror image: { cut, art, level, N }. cut = the cut line's distance from its mirror image (shares of the drawing's size, holes filled),
+   *  art = the engraving's (null when the body has none). level "symmetric" (the mirror image looks the same: nothing to decide), "directional" (it does not), "slight" (in between:
+   *  a hoop off to one side, a hand-drawn wobble). The mirror axis is the one mirrorOf uses: the vertical through the middle of the body's box. */
+  function symmetryOf(body) {
+    if (!body || !body.outline) return { cut: 0, art: null, level: "symmetric", N: SYM_N, none: true };
+    if (symCache) { const hit = symCache.get(body); if (hit) return hit; }
+    const N = SYM_N, bb = body.bbox || body.outlineBbox || body.outline.bbox, cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2, k = Math.max(bb[2] - bb[0], bb[3] - bb[1], 1e-6) * 1.04;
+    const S = fillHolesMask(rasterPolys(flatten(body.outline, 8), k, cx, cy, N), N), I = new Uint8Array(N * N);
+    for (const m of body.members || []) {
+      if (m === body.outline || m.kind !== "path" || !m.bbox || (isCut(m) && m.closed)) continue;   // a hole or a hoop belongs to the cut line, which S already holds
+      const polys = flatten(m, 6);
+      if (m.fill) { const f = rasterPolys(polys, k, cx, cy, N); for (let q = 0; q < I.length; q++) if (f[q]) I[q] = 1; }
+      if (m.stroke || !m.fill) rasterStroke(polys, m.lwPt || 0.5, k, cx, cy, N, I);
+    }
+    let sN = 0, iN = 0; for (let q = 0; q < N * N; q++) { sN += S[q]; iN += I[q]; }
+    const cut = chamferP90(edgeCells(S, N), edgeCells(flipRows(S, N), N), N);
+    const art = iN > 0.01 * sN ? chamferP90(edgeCells(I, N), edgeCells(flipRows(I, N), N), N) : null;
+    const level = cut >= SYM_CUT_DIR || (art != null && art >= SYM_ART_DIR) ? "directional" : cut < SYM_CUT_OK && (art == null || art < SYM_ART_OK) ? "symmetric" : "slight";
+    const out = { cut: +cut.toFixed(3), art: art == null ? null : +art.toFixed(3), level, N };
+    if (symCache) symCache.set(body, out);
+    return out;
+  }
   /** The side a stored value says ("L" | "R") or null. */
   const facingValue = v => (v === "L" || v === "R" ? v : null);
-  /** Which way ONE body of the design faces. A person's `facing` (on the record) wins, then `facings[index]` of a mismatched record, then the heuristic (only when it is sure enough). */
-  function facingOfBody(body, charmOrEntry) {
-    const c = charmOrEntry || {}, rec = c.entry || c;
-    const per = Array.isArray(rec.facings) && body && rec.facings[body.index] != null ? facingValue(rec.facings[body.index]) : null;
+  const opposite = f => (f === "L" ? "R" : f === "R" ? "L" : null);
+  /** The side a PERSON said this body faces, from the record (`facings[index]` of a mismatched record, or `facing`, which is body 0's), else null. */
+  function facingSetFor(body, charmOrEntry) {
+    const c = charmOrEntry || {}, rec = c.entry || c, idx = body && body.index != null ? body.index : 0;
+    const per = Array.isArray(rec.facings) && rec.facings[idx] != null ? facingValue(rec.facings[idx]) : null;
     if (per) return per;
-    const one = facingValue(rec.facing); if (one && (!body || !body.index)) return one;
-    const info = facingInfo(body); return info.confidence >= FACING_MIN_CONFIDENCE ? info.facing : null;
+    return idx === 0 ? facingValue(rec.facing) || facingValue(c.facing) : null;
   }
-  /** Which way the design (its first body) faces in the master drawing: "L" | "R" | null (symmetric, unknown, or not sure: then as drawn is the Left and the Right is the mirror).
+  /** Which way ONE body of the design faces, read from what is known: "L" | "R" | null (unknown, or symmetric: as drawn is the Left, the Right is the mirror).
+   *  A person's word (record `facing` / `facings[i]`) wins; else the second body of a mismatched pair from the first (drawn as its mirror image: it faces the
+   *  other way, drawn the same way: the same way); else null. No shape measure is used to guess a side (see the note above). */
+  function facingOfBody(body, charmOrEntry) {
+    const set = facingSetFor(body, charmOrEntry); if (set) return set;
+    return relationFacing(body, charmOrEntry);
+  }
+  function relationFacing(body, charmOrEntry) {
+    if (!body || !body.index || !charmOrEntry || !charmOrEntry.outline) return null;
+    const bodies = bodiesOf(charmOrEntry); if (bodies.length !== 2 || !bodies[0] || bodies[0] === body) return null;
+    const sim = shapeSimilarity(bodies[0], body), f0 = facingSetFor(bodies[0], charmOrEntry);
+    if (sim.mirrored >= PAIR_DEFAULTS.sameShapeIoU && sim.same < 0.85) return opposite(f0 || "L");   // drawn as a pair of ears already: the second faces away from the first
+    return null;   // drawn the same way (or not alike): unknown, so the Left as drawn and the Right turned
+  }
+  /** What is known about the way a body faces: { facing, confidence 0..1, source, directional, level, symmetry:{cut,art}, why }. source: "person" | "mirror-of-first" | "unknown" | "symmetric".
+   *  directional says the mirror image differs from the drawing (the design needs a facing); facing null with directional true is a design a person should set. */
+  function facingInfo(body, charmOrEntry) {
+    const sym = symmetryOf(body), set = facingSetFor(body, charmOrEntry);
+    const base = { directional: sym.level === "directional", level: sym.level, symmetry: { cut: sym.cut, art: sym.art } };
+    if (set) return Object.assign({ facing: set, confidence: 1, source: "person", why: "a person set it" }, base);
+    const rel = relationFacing(body, charmOrEntry);
+    if (rel) return Object.assign({ facing: rel, confidence: 0.9, source: "mirror-of-first", why: "drawn as the mirror image of the first body" }, base);
+    if (sym.level === "symmetric") return Object.assign({ facing: null, confidence: 1, source: "symmetric", why: "its mirror image looks the same" }, base);
+    return Object.assign({ facing: null, confidence: 0, source: "unknown", why: sym.level === "directional" ? "its mirror image differs and the drawing does not say which way it faces" : "nearly symmetric (a hoop off to one side or a wobble)" }, base);
+  }
+  /** Does this design need a person to say which way it faces? (directional, and nobody has said.) Takes a charm (geometry read) or a body. */
+  function needsFacing(charmOrBody, charm) {
+    const body = charmOrBody && charmOrBody.outline && charmOrBody.index == null ? bodiesOf(charmOrBody)[0] : charmOrBody, c = charm || charmOrBody;
+    if (!body) return false;
+    const info = facingInfo(body, c); return info.facing == null && info.directional;
+  }
+  /** Which way the design (its first body) faces in the master drawing: "L" | "R" | null (symmetric or unknown: then as drawn is the Left and the Right is the mirror).
    *  A `facing` ("L" | "R") a person set on the record or charm wins and a re-index never overwrites it. */
   function facingOf(charm) {
     if (!charm || typeof charm !== "object") return null;
@@ -434,6 +527,7 @@
     if (Array.isArray(c.bboxOuter)) out.bboxOuter = [2 * cx - c.bboxOuter[2], c.bboxOuter[1], 2 * cx - c.bboxOuter[0], c.bboxOuter[3]];
     if (typeof c.upAngle === "number") out.upAngle = ((180 - c.upAngle) % 360 + 360) % 360;   // 90 (up) stays up; the direction turns about the vertical axis
     if (c.bits && c.w) out.bits = flipMask(c.bits, c.w, c.h);
+    if (c.facing === "L" || c.facing === "R") out.facing = c.facing === "L" ? "R" : "L";   // the mirror image of a design that faces left faces right
     delete out.thumb; delete out.hash2;
     return out;
   }
@@ -573,7 +667,8 @@
       else if (sameShape && sameBody(A, B)) { rec.kind = "twins"; rec.why = "two identical bodies, cut line and engraving"; }
       else if (!sameShape && sim.mirrored >= opts.sameShapeIoU) { rec.kind = "mirror"; rec.why = "the second body is the first one flipped (a front and a back view, or a left and a right of one design)"; rec.mirrored = true; }
       else { rec.kind = "mismatched"; rec.why = sameShape ? "one cut shape, different engraving" : "two different shapes"; rec.mirrored = false; }
-      const weak = (rec.skus[0] || "").replace(/[^A-Z0-9]/gi, "").length < 4;   // a label of one or two characters ("V1 V2") is a note, not a SKU
+      const lab0 = rec.skus[0] || "", words = lab0.split(/[^A-Za-z0-9]+/).filter(Boolean);
+      const weak = lab0.replace(/[^A-Z0-9]/gi, "").length < 4 || (words.length > 0 && words.every(w => w.length <= 2));   // a label of a few characters, or of short words only ("V1 V2", "L R"), is a note, not a SKU
       if (weak) rec.weak = "the label \"" + (rec.skus[0] || "") + "\" is too short to be a SKU";
       rec.sure = rec.kind === "mismatched" && Math.abs(rec.offset) <= opts.off && !weak;
       out.push(rec);
@@ -603,8 +698,8 @@
   return {
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
-    describe, sameBody, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
-    facingOf, facingOfBody, facingInfo, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
+    describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
+    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };

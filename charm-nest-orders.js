@@ -382,11 +382,12 @@
        an option that may name a count but does not say what is counted (letters, initials, "Set of 3", a range) or that disagrees
          with the buyer's note: NOT guessed. The line waits for a person with a one-line question (a needsMapping problem with
          `count`), whose answer is kept for that listing and value like every other option answer ({ field: "count", value: "3" });
-       a mismatched DESIGN (two bodies under one label) is one glued copy per unit until the pool makes a piece for each ear
-         (PIECE_RULES.mismatchedMakesTwo, flipped in the same commit as the pool's per-body pieces); then 2 per unit, L and R.
+       a mismatched DESIGN (two bodies under one label) is 2 per unit, L and R, each cut from its own body (the pool's per-body pieces, PAIRPOOL);
+         when the pool cannot tell its two bodies apart it is made as the one glued copy per unit the app always made (glue(), spec.pair.glued),
+         and PIECE_RULES.mismatchedMakesTwo = false brings that back for every mismatched design at once.
      Old records: a line already pooled keeps the pieces it has (Orders pins spec.pieceCount to its pool ids and notes the shortfall in
      spec.pieceNote); the new count is for lines pooled from now on. */
-  const PIECE_RULES = { pairFormsMakeTwo: true, optionCountsMake: true, mismatchedMakesTwo: false };
+  const PIECE_RULES = { pairFormsMakeTwo: true, optionCountsMake: true, mismatchedMakesTwo: true };
   const lvName = v => String(v && (v.name != null ? v.name : v.formatted_name) || "");
   const lvValue = v => String(v && (v.value != null ? v.value : v.formatted_value) || "").replace(/&quot;/g, "\"");
   const clip = (s, n = 60) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
@@ -653,6 +654,15 @@
     return out;
   }
   const sidesOf = x => piecesOf(x).map(p => p.side);
+  /** A mismatched pair whose two bodies the pool could not tell apart is made as the ONE glued copy per unit the app always made (both ears in one
+   *  copy, no side), never as two copies of the folded charm. Sets the count, the sides and the kind, and says so in spec.pair.notes. */
+  function glue(spec) {
+    if (!spec || !spec.pair || !spec.pair.mismatched || spec.pair.glued) return spec;
+    spec.pair.glued = true; spec.pair.perUnit = 1; spec.pair.split = false; delete spec.pieceRule; delete spec.pieceNote;
+    spec.pieceCount = unitsOf(spec); spec.pair.sides = sidesOf(spec); spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
+    spec.pair.notes.push("made as one glued piece for each unit (the pool could not cut its two bodies apart)");
+    return spec;
+  }
   /** single | pair | mismatched | multi, as CharmNestPair.kindOf says it, from the pair facts and the number of pieces */
   const kindFor = (p, n) => {
     if (!p || n < 2) return p && p.mismatched ? "mismatched" : "single";                  // (one glued copy of a mismatched design is still the mismatched kind)
@@ -1137,7 +1147,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
+  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

@@ -78,8 +78,10 @@
             const side = typeof P.sideOf === "function" ? P.sideOf(i, 2) : (i === 0 ? "L" : "R");
             const label = (typeof P.sideLabel === "function" ? P.sideLabel(side) : "") || (i === 0 ? "Left" : "Right");
             // each ear faces its own side (Paul, 9 Oct 18:47): the Left ear is the Left earring, the Right ear the Right earring; a body that faces the
-            // wrong way is drawn mirrored left to right about its own centre. facing null (symmetric or unknown): drawn as it is.
-            const facing = facingOfBody(P, charm, b), mirror = !!facing && ((side === "L" && facing === "R") || (side === "R" && facing === "L"));
+            // wrong way is drawn mirrored left to right about its own centre. facing null (symmetric or unknown) means it is drawn facing left, the same
+            // rule as CharmNestPair.piecesFor (mirror = side !== (facing || "L")): so the Right ear of a pair drawn both ways alike (Paul's two thumb-left mittens)
+            // is shown turned, exactly as the piece is cut.
+            const facing = facingOfBody(P, charm, b), mirror = (side === "L" || side === "R") && side !== (facing || "L");
             return { index: b.index != null ? b.index : i, side, label, short: label.charAt(0).toUpperCase(), bbox: b.bbox.slice(), outline: b.outline || null, members: b.members || null, facing, mirror };
           }) };
         }
