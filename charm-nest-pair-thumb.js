@@ -56,8 +56,12 @@
   let memo = typeof WeakMap === "function" ? new WeakMap() : null;
   /** Which way a body faces ("L" | "R" | null = symmetric or unknown), from CharmNestPair.facingOf when it exists. */
   function facingOfBody(P, charm, b) {
-    if (typeof P.facingOf !== "function") return null;
-    try { const f = P.facingOf({ id: charm.id, outline: b.outline, members: b.members, bbox: b.bbox }); return f === "L" || f === "R" ? f : null; } catch (_) { return null; }
+    // the real per-body reader first (a person's facing / facings[] on the record win, then the shape heuristic); the whole-design reader on a one-body charm as a fallback
+    try {
+      const f = typeof P.facingOfBody === "function" ? P.facingOfBody(b, charm)
+        : typeof P.facingOf === "function" ? P.facingOf({ id: charm.id, facing: charm.facing, outline: b.outline, members: b.members, bbox: b.bbox }) : null;
+      return f === "L" || f === "R" ? f : null;
+    } catch (_) { return null; }
   }
   function plan(charm) {
     if (!charm || !okBox(charm.bbox)) return null;
