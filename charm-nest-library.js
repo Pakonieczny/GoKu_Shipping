@@ -954,7 +954,7 @@
       return `<div class="ldItem" data-kind="set" data-set="${esc(r.setId)}"><div class="ldLine" role="button" tabindex="0" aria-expanded="false" aria-label="${esc(`Set ${r.seq || ''}, ${plural(sheets.length, 'sheet')}: open`)}">`
         + `<span class="ldThumbs">${(sheets.length ? sheets.slice(0, 3) : [{}]).map(s => thumb(s.preview)).join('')}</span>`
         + `<span class="ldName"><b>Set ${esc(r.seq || '—')}</b><span class="sws">${mats.map(k => swatch(metalOf({ metal: k }), per.get(k) || 0)).join('')}</span><span class="ldDate" title="Set day">${esc(dayShort(r.day))}</span></span>`
-        + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
+        + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span data-ld-pcs="${esc((Array.isArray(r.sheetIds) && r.sheetIds.length ? r.sheetIds : sheets.map(s => s.id || s.sheetId)).filter(Boolean).slice(0, 12).join(','))}"><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
         + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Return the set and its sheets to Laser cutting">Reopen</button>${ICON.chev}`+'</div>'
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
@@ -962,7 +962,7 @@
     return `<div class="ldItem" data-kind="sheet" data-id="${esc(r.id)}"><div class="ldLine" role="button" tabindex="0" data-m="${esc(r.metal || '')}" title="${esc(r.fileBase || r.id)}" aria-label="${esc(`${CODE[r.metal] || ''} Sheet ${r.sheetIndex || 1}${sn ? ', Set ' + sn : ''}: open`)}">`
       + thumb(r.preview)
       + `<span class="ldName">${swatch(metalOf(r), 0)}<b>Sheet ${esc(r.sheetIndex || 1)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
-      + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
+      + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span data-ld-pcs="${esc(r.id)}"><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
       + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';
   }
   function dayHead(day, kind) {
@@ -1110,6 +1110,8 @@
     // Enter looks up a number however short (the box looks up one of 9 digits or more by itself)
     { const box = byId('libSearch'); if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); enter(); } }); }
     body.addEventListener('click', onMarkClick, true); done.addEventListener('click', onMarkClick, true);
+    // pieces and pairs (Paul, 9 Oct 2026): hover the piece count of a sheet card or a Completed row for "24 pieces, 10 pairs, 3 half pairs"
+    body.addEventListener('mouseover', onCountHover, { passive: true }); done.addEventListener('mouseover', onCountHover, { passive: true });
     done.addEventListener('click', onDoneClick); done.addEventListener('keydown', onDoneKey);
     done.addEventListener('load', e => { const i = e.target; if (i && i.tagName === 'IMG' && i.parentElement && i.parentElement.classList.contains('ldThumb')) i.classList.add('on'); }, true);
     done.addEventListener('error', e => { const i = e.target; if (i && i.tagName === 'IMG' && i.parentElement && i.parentElement.classList.contains('ldThumb')) i.remove(); }, true);
@@ -1121,6 +1123,21 @@
     { let queued = false; const fit = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; fitPlaceholder(); }); };
       if (window.ResizeObserver) new ResizeObserver(fit).observe(byId('libSearch')); else addEventListener('resize', fit); }
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
+  }
+
+  /* A card's piece count says what it counts when a pair is on it: "24 pieces, 10 pairs, 3 half pairs" (a half pair: one ear here, its other piece on another sheet), read from OrderPieces by
+     PiecePlacement.sheetWords the moment the count is hovered, so it is never older than the sheet. A card with no pair keeps its look and no title; a Completed sheet whose orders were never
+     read on this page is read once (OrderPieces.loadSheet) and the words come as that lands. */
+  const readOnce = new Set();
+  function onCountHover(e) {
+    const t = e.target && e.target.closest ? e.target.closest('[data-sheet-count], [data-ld-pcs]') : null; if (!t) return;
+    const PP = window.PiecePlacement, OP = window.OrderPieces; if (!PP || typeof PP.sheetWords !== 'function') return;
+    const ids = (t.dataset.sheetCount ? [t.dataset.sheetCount] : String(t.dataset.ldPcs || '').split(',')).filter(Boolean), nums = (String(t.textContent).match(/\d+/g) || []).map(Number);
+    const words = () => { const w = PP.sheetWords(ids, nums); if (w) t.title = w; else t.removeAttribute('title'); return w; };
+    if (words() || !OP || typeof OP.loadSheet !== 'function') return;
+    const fresh = ids.filter(id => !readOnce.has(id)).slice(0, 6); if (!fresh.length) return;
+    for (const id of fresh) readOnce.add(id);
+    Promise.all(fresh.map(id => Promise.resolve().then(() => OP.loadSheet(id)).catch(() => {}))).then(words, () => {});
   }
 
   window.LibraryDone = { mark, isDone, isFiled, cutStamp, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
