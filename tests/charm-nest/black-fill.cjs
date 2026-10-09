@@ -79,6 +79,12 @@ const discArt = (cx, cy, R) => [blob(cx, cy, 2 * R, 2 * R), rectCW(cx - 0.5 * R,
   // an oval is not a circle (a pumpkin with its face): it stays a silhouette with windows
   { const oval = blackFill('CUT', [blob(40, 40, 26, 20), ...discArt(40, 40, 6).slice(1)]); group([oval]); assert(P.engravedDiscOf({ outline: oval }) < 0, 'only a perfect circle'); }
 
+  // a badge or note on the LABELS layer is not a charm: a round black disc with art on it is left as it is (the marker rules own it)
+  { const note = blackFill('LABELS', discArt(40, 40, 15)); assert(P.engravedDiscOf({ outline: note }) < 0, 'a LABELS disc is not an engraved disc'); }
+
+  // a fill painted with no closepath (an expanded stroke or a letter written `... c f`) is a filled area all the same
+  { const body = path_('CUT', [blob(40, 40, 30, 36)]), open = blackFill('ENGRAVE', [blob(40, 40, 10, 14).slice(0, -1)], { closed: false }); group([body, open]); assert(P.isBlackFill(open) && open.hatchBlue && open.manufacturingRole === 'hatch', 'an unclosed black fill inside the charm is hatching'); }
+
   // 5 · a hoop drawn as a filled washer is still a hoop; a ring wholly inside the body is art (thick black ring)
   {
     const body = path_('CUT', [blob(40, 40, 30, 36)]), washer = blackFill('CUT', [blob(40, 62, 8, 8), blobCW(40, 62, 4, 4)]);

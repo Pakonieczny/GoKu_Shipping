@@ -106,6 +106,7 @@ async function sessionWrite(s) {
   let person = str(s.person, 200);
   if ((person.match(/\p{Nd}/gu) || []).length >= 4) person = person.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim();   // a name never carries a PIN: "Paul 482915" is "Paul"
   person = person.slice(0, 80);
+  try { person = require("./_activityKinds").loginName(person); } catch (_) {}   // (Paul, 9 Oct 2026: Anna and Ana_M are one person; a new session is stored under Ana_M)
   if (!id || !ev || !station || !computerId || (ev !== "end" && !/\p{L}/u.test(person))) return [400, { error: "not a session event" }];       // (no letter, "123456" or "12 34 56": a PIN, never a name)
   const eid = str(s.employeeId, 60), employeeId = /^\d+$/.test(eid) ? "" : eid;   // a PIN is only digits: never kept
   const device = str(s.device, 40).replace(/[^\w .:-]/g, "") || station;

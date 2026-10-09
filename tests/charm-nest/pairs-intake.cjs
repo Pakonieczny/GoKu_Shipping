@@ -7,7 +7,7 @@
 //   · an option that may name a count but does not say what is counted (letters, a range, "Set of 3", two numbers) or that the buyer's note disagrees with is NOT
 //     guessed: a needsMapping problem with `count` holds the line; a person's answer ({ field: "count" }) settles it; "1" says it is no count
 //   · "1-5 Character" (how long the engraving is) and sizes, lengths, purities are never counts; "N symbols" on an earring line is a number of designs, not of pieces
-//   · a mismatched DESIGN stays one glued copy per unit until the pool makes a piece per ear (PIECE_RULES.mismatchedMakesTwo), and is 2 per unit, L and R, when it flips
+//   · a mismatched DESIGN is 2 per unit, L and R (PIECE_RULES.mismatchedMakesTwo); with the switch off, or when the pool cannot cut its two bodies apart (glue()), one glued copy per unit
 //   · old records: a line already pooled keeps its pieces (pinPieces, the pool maker's pinPooled, the server's `short` answer); the new count is for lines pooled from now
 //   · ONE function: every count the bridge shows reads CharmNestOrders.pieceCountOf; no stored field holds an array inside an array
 const assert = require('assert');
@@ -84,7 +84,18 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   eq(named('Single earring', 'for my left ear').spec.pair.sideSaid, 'L', 'for my left ear');
   eq(named('Single earring', 'I left the design to you').spec.pair.sideSaid, null, '"left" as a verb is not a side');
   eq(named('Single earring', 'left ear and right ear please').spec.pair.sideSaid, null, 'both ears named is not a side (a person reads it)');
-  eq(row({ quantity: 2, title: 'Star Stud Earrings', variations: [V('Type', 'Single - Left')] }).spec.pair.sides, [null, null], 'two singles with one side named: which is which is not said (flagged)');
+  eq(row({ quantity: 2, title: 'Star Stud Earrings', variations: [V('Type', 'Single - Left')] }).spec.pair.sides, ['L', 'L'], 'two singles whose OPTION names the left ear: both are Left (the buyer chose that option for each unit)');
+  { const two = named('Single earring', 'right ear only please'); const q2 = row({ quantity: 2, title: 'Star Stud Earrings', variations: [V('Type', 'Single earring'), V('Personalization', 'right ear only please')] });
+    eq(two.spec.pair.sideBy, 'note', 'a note names the ear'); eq(q2.spec.pair.sides, [null, null], 'two singles and a NOTE that names one ear: which is which is not said');
+    ok(q2.spec.pair.notes.some(x => /not guessed/.test(x)), 'and a plain note says so'); }
+  // a TITLE that says Single (PAIRTESTS, snapshot order 4172023444): the word need not sit next to "earring"
+  const T = (title, q, vars) => row({ quantity: q || 1, title, variations: vars || [] });
+  eq(counts(T('Custom Single Replacement Silver Cat Huggie Earring Left Ear')), { q: 1, pieces: 1, sides: 'L', kind: 'single' }, 'title: Single ... Earring Left Ear is one Left piece');
+  eq(counts(T('Single Cat Huggie Earring Left Ear')), { q: 1, pieces: 1, sides: 'L', kind: 'single' }, 'title: Single Cat Huggie Earring Left Ear');
+  eq(counts(T('Huggie Earring, Single')).pieces, 1, 'title: ends with ", Single"'); eq(counts(T('Stud Earrings - Single')).pieces, 1, 'title: ends with "- Single"');
+  eq(counts(T('Single Cat Huggie Earring Right Ear', 3)), { q: 3, pieces: 3, sides: 'RRR', kind: 'multi' }, 'title: three singles that name the right ear are three Right pieces');
+  eq(T('Single Pearl Stud Earrings').spec.pieceCount, 2, 'Single Pearl Stud Earrings is a PAIR (one pearl each, the plural word after it)'); eq(T('Single Disc Hoop Earrings').spec.pieceCount, 2, 'Single Disc Hoop Earrings is a pair');
+  eq(T('Single Initial Disc Necklace').spec.pieceCount, 1, 'a necklace titled Single is one piece, no earring');
   eq(row({ title: 'Star Stud Earrings', variations: [V('Type', 'Pair')] }).spec.pair.soldAs, 'pair', 'an option that says Pair is a pair');
   eq(row({ title: 'Single Stud Earring or Pair', variations: [V('Type', 'Pair')] }).spec.pieceCount, 2, 'the option the buyer chose beats the title');
   eq(row({ title: 'Single Stud Earring', variations: [V('Type', 'Whatever')] }).spec.pieceCount, 1, 'a title that says single earring is one');
