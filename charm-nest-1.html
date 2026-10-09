@@ -739,6 +739,14 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcRow .pcSt[data-k=done]{background:#e8f1ea;border-color:#b6d2bf}.owPcRow .pcSt[data-k=done] span{color:#19663f}.owPcRow .pcSt[data-k=done]::before{background:#d9eadf}
 .owPcRow.slow .pcSt{border-color:var(--goldLine)}   /* (the slowest piece, where the order is: a gold hairline, no longer brown words) */
 @media(prefers-reduced-motion:reduce){.owPcRow .pcSt,.owPcRow .pcSt::before{transition:none}}
+/* the Left and the Right of a mismatched pair (one row each, bridge paintPieceSum sideRows): a small picture of the pair with the other body washed out, and the side's own name tag */
+.owPcRow .owPcThumb{display:inline-block;vertical-align:middle;width:34px;height:26px;margin-right:9px;border-radius:6px;background:var(--card2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
+.owPcRow .owPcThumb{font-size:0;line-height:0}.owPcRow .owPcThumb img,.owPcRow .owPcThumb canvas{display:block;width:100%;height:100%;object-fit:contain}
+.owPcRow .owPcThumb[role=button]::after{content:"\21bb";font:12px/26px var(--sans);color:var(--ink45);display:block;text-align:center}
+.owPcRow .owPcThumb .thumbLoading{transform:scale(.5)}.owPcRow .owPcThumb .thumbLoading .srOnly{display:none}
+.owPcRow .owPcSide{display:inline-block;padding:0 7px;border-radius:999px;background:var(--card2);box-shadow:inset 0 0 0 1px var(--line);font:700 10.5px/1.7 var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--ink70)}
+.owPcRow.owPcSideRow .nm{white-space:normal}
+.owSplit{margin-top:3px;font:600 12px/1.4 var(--sans);color:var(--warn,#a2591c)}
 .owPcRow .steps{display:inline-flex;gap:4px}
 .owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
 .owPcRow .steps i.on{background:var(--sage);box-shadow:none}

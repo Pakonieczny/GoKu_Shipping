@@ -257,7 +257,8 @@ const ListMedia = (() => {
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
-    return px ? (opts?.highlight ? Pool.masterFront(entry,row.spec?.size,px,opts) : Pool.masterFront(entry,row.spec?.size,px)) : Pool.masterPreview(entry,row.spec?.size,true);
+    if(opts?.highlight)return px ? Pool.masterFront(entry,row.spec?.size,px,opts) : Pool.masterPreview(entry,row.spec?.size,true,opts);
+    return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
   }
   /** A line's vector design drawn large on white (about 1600 px) for the picture viewer, as an address the viewer's picture
    *  can show; null when the line has no design. */
@@ -272,10 +273,11 @@ const ListMedia = (() => {
     return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
-  function vectorKey(row) {
+  function vectorKey(row,opts) {
     if(!row || row.spec?.noDesign)return '';
     const sku=String(row.spec?.designSku || row.line?.sku || '').toUpperCase();
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '');
+    // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
@@ -11669,7 +11671,7 @@ const OrderWin = window.OrderWin = (() => {
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
-    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—") + (pairSides(r).length ? " · a pair: Left + Right" : "");
+    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—") + (pairSides(r).length ? " · Left + Right" : "");
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
@@ -12160,7 +12162,7 @@ const OrderWin = window.OrderWin = (() => {
     box._h = html; box.innerHTML = html; pdotBack(box, held);
     wirePcSheet(box);
     // (the small pictures of the Left and Right rows: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
-    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => ListMedia.watch(h, () => ListMedia.vectorThumb(pr, { highlight: h.dataset.pcThumb, px: 120 }), JSON.stringify([ListMedia.vectorKey(pr), h.dataset.pcThumb]))); });
+    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => ListMedia.watch(h, () => ListMedia.vectorThumb(pr, { highlight: h.dataset.pcThumb, px: 120 }), ListMedia.vectorKey(pr, { highlight: h.dataset.pcThumb }))); });
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
     markPieces();

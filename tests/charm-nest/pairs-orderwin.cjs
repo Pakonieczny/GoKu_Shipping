@@ -89,4 +89,106 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
   assert.ok(base.filter(p => p.lineKey === `${rid}_${tx2}`).every(p => p.groupSize === 3)); ok('A8b every disc knows its group has 3');
 }
 
-console.log(`\n${ran} checks passed`);
+/* ── B · the real order window (needs playwright; skipped without) ── */
+async function partB() {
+  const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the order window checks were not run'); return; }
+  const { start } = require('./bridge-server.cjs');
+  const srv = await start({ receipts: [] });
+  const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 12, 17) / 1000);
+  const S = { gf1: 'sheet-pow-gf1', gf2: 'sheet-pow-gf2' }, SET = 'set-pow-1';
+  const P = { rid: '4200000010', tx: '9101' }, Q = { rid: '4200000011', tx: '9102' }, R = { rid: '4200000012', tx: '9103', tx2: '9104' }, M = { rid: '4200000013', tx: '9105' };
+  const id = (o, tx, c) => `${o.rid}_${tx}_${c}`;
+  const sheetDocs = () => ({
+    [S.gf1]: { id: S.gf1, metal: 'gold', sheetIndex: 1, setId: SET, setSeq: 1, folder: '2026-10-09_GF_Set-1_Sheet-1', fileBase: '2026-10-09_GF_Set-1_Sheet-1', day: '2026-10-09', status: 'written', stock: { wPt: 300, hPt: 150 }, orders: [P.rid, Q.rid, R.rid, M.rid],
+      poolIds: [id(P, P.tx, 1), id(Q, Q.tx, 1), id(Q, Q.tx, 2), id(R, R.tx, 1), id(M, M.tx, 1)] },
+    [S.gf2]: { id: S.gf2, metal: 'gold', sheetIndex: 2, setId: SET, setSeq: 1, folder: '2026-10-09_GF_Set-1_Sheet-2', fileBase: '2026-10-09_GF_Set-1_Sheet-2', day: '2026-10-09', status: 'written', stock: { wPt: 300, hPt: 150 }, orders: [P.rid, M.rid],
+      poolIds: [id(P, P.tx, 2), id(M, M.tx, 2)] }
+  });
+  const prow = (o, tx, copy, sku, side, sheetId, extra) => Object.assign({ poolId: id(o, tx, copy), orderId: o.rid, transactionId: tx, lineKey: `${o.rid}_${tx}`, sku, material: 'gold', copy, state: sheetId ? 'written' : 'ready', sheetId: sheetId || null, setId: sheetId ? SET : null, updatedAt: Date.now() },
+    side ? { side, bodyIndex: side === 'L' ? 0 : 1, groupKey: `${o.rid}:${tx}`, groupSize: 2 } : {}, extra || {});
+  const pools = () => [
+    prow(P, P.tx, 1, 'MISMATCHED_7134', 'L', S.gf1), prow(P, P.tx, 2, 'MISMATCHED_7134', 'R', S.gf2),
+    prow(Q, Q.tx, 1, 'MISMATCHED_7134', 'L', S.gf1), prow(Q, Q.tx, 2, 'MISMATCHED_7134', 'R', S.gf1),
+    prow(R, R.tx, 1, 'MISMATCHED_7134', 'L', S.gf1), prow(R, R.tx, 2, 'MISMATCHED_7134', 'R', null), prow(R, R.tx2, 1, 'FEMALE_SYMBOL', null, null),
+    prow(M, M.tx, 1, 'FEMALE_SYMBOL', null, S.gf1), prow(M, M.tx, 2, 'FEMALE_SYMBOL', null, S.gf2)
+  ];
+  const orderOf = (o, buyer, lines) => ({ receiptId: o.rid, orderNumber: o.rid, createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
+    lines: lines.map(([tx, sku, qty]) => ({ transactionId: tx, listingId: '19000' + tx.slice(-5), sku, title: sku === 'MISMATCHED_7134' ? 'Mismatched mittens earrings' : 'Female symbol charm', quantity: qty || 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: '14k Gold Filled' })) });
+  const orders = [
+    [orderOf(P, 'Split Pair', [[P.tx, 'MISMATCHED_7134']]), [[id(P, P.tx, 1), id(P, P.tx, 2)]]],
+    [orderOf(Q, 'Together Pair', [[Q.tx, 'MISMATCHED_7134']]), [[id(Q, Q.tx, 1), id(Q, Q.tx, 2)]]],
+    [orderOf(R, 'Pair Plus One', [[R.tx, 'MISMATCHED_7134'], [R.tx2, 'FEMALE_SYMBOL']]), [[id(R, R.tx, 1), id(R, R.tx, 2)], [id(R, R.tx2, 1)]]],
+    [orderOf(M, 'Matching Two', [[M.tx, 'FEMALE_SYMBOL', 2]]), [[id(M, M.tx, 1), id(M, M.tx, 2)]]]
+  ];
+  const seed = () => {
+    srv.st.docs.clear(); let n = 0;
+    for (const sh of Object.values(sheetDocs())) {
+      const placements = [], charms = [];
+      sh.poolIds.forEach((pid, i) => { const cid = 'c' + (++n); placements.push({ id: cid, cxPt: 30 + i * 34, cyPt: 30, angle: 0, wPt: 30, hPt: 30 }); charms.push({ id: cid, name: pid, poolId: pid, order: pid.split('_')[0], sku: 'X' }); });
+      srv.st.put('Charm_Nest_Sheets', sh.id, Object.assign({}, sh, { placements, charms, updatedAt: Date.now() }));
+    }
+    for (const p of pools()) srv.st.put('Charm_Pool', p.poolId, p);
+  };
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+  const errors = [];
+  try {
+    seed();
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.googleapis|fonts\.gstatic/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
+    await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', sandbox: 'off' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; });
+    const page = await context.newPage(); page.setDefaultTimeout(25000);
+    page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
+    await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
+    await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.OrderPieces && window.CharmNestPair && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    await page.evaluate(async ({ orders }) => {
+      // (the master record of the mismatched design says it draws two different bodies: the page's own test of "a mismatched pair")
+      const orig = Master.entryFor.bind(Master); Master.entryFor = sku => String(sku) === 'MISMATCHED_7134' ? { sku, pair: { v: 1, bodies: 2, mismatched: true }, updatedAt: 1 } : orig(sku);
+      await Orders.loadMaps(true);
+      for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: pools[i] && pools[i].length ? 'pooled' : 'pulled', reason: null, claimedBy: null, poolIds: pools[i] || [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
+      Orders.interpretAll(); CN.setMode('orders'); Orders.render();
+    }, { orders });
+    const open = async (o, tx) => {
+      if (await page.evaluate(() => document.getElementById('orderWin').open)) { await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open); }
+      await page.evaluate(k => OrderWin.open(k, { view: 'info' }), `${o.rid}_${tx}`);
+      await page.waitForFunction(r => OrderPieces.known(r), o.rid, { timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(1200);
+      return page.evaluate(() => {
+        const txt = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : '';
+        return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owPcThumb'), name: txt(r.querySelector('.owPcName')) })),
+          head: txt(document.getElementById('owPcSum')?.querySelector('.owPcHd')), sub: txt(document.getElementById('owSub')), sku: txt(document.getElementById('owSku')), meta: txt(document.getElementById('owMeta')), split: txt(document.querySelector('#owNowCard .owSplit')), chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(txt),
+          caption: [...document.querySelectorAll('#owPhoto, .owPics figcaption')].map(txt).join('|') };
+      });
+    };
+    // 1 · a pair, Left on GF Sheet 1 and Right on GF Sheet 2
+    let w = await open(P, P.tx);
+    if (process.env.POW_SHOT) await page.locator('#orderWin').screenshot({ path: process.env.POW_SHOT });
+    const sides = w.rows.filter(r => r.side);
+    assert.deepEqual(sides.map(r => r.tag), ['Left', 'Right'], JSON.stringify(w)); assert.deepEqual(sides.map(r => r.st), ['GF Sheet 1', 'GF Sheet 2'], JSON.stringify(w));
+    assert.ok(sides.every(r => r.dots >= 4 && r.thumb), 'each side has its own dots and its own picture box');
+    assert.equal(w.head, 'Its pieces'); assert.match(w.sub, /2 pieces/); assert.match(w.sku, /Left \+ Right/); assert.match(w.meta, /Pair.*Mismatched/); assert.match(w.meta, /Left GF Sheet 1 · Right GF Sheet 2/);
+    assert.match(w.split, /Its pair is split: Left on GF Sheet 1, Right on GF Sheet 2/); ok('B1 a split pair: a row for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
+    assert.deepEqual(w.chips.filter(c => /Left|Right/.test(c)).length, 2, 'a box for each side'); ok('B1b the Where-it-is-now boxes name the sides');
+    // 2 · both on one sheet
+    w = await open(Q, Q.tx);
+    assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 1']], JSON.stringify(w)); assert.equal(w.split, ''); assert.match(w.chips.join('|'), /Left \+ Right/); ok('B2 a pair on one sheet: both rows say GF Sheet 1, nothing says it is split, one box for the pair');
+    // 3 · a pair plus another line, the Right not placed yet
+    w = await open(R, R.tx);
+    assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'Waiting for a sheet']], JSON.stringify(w));
+    assert.equal(w.rows.filter(r => !r.side).length, 1); assert.ok(w.rows.filter(r => r.side).every(r => r.piece === `${R.rid}_${R.tx}`), 'both side rows pick their line');
+    assert.match(w.split, /Left on GF Sheet 1, Right not on a sheet yet/); ok('B3 a pair and another line: the Right is waiting, the Left is on its sheet, the other line has its own row');
+    // a press on the Right row picks the line, a second press shows all pieces again
+    await page.evaluate(() => document.querySelector('#owPcSum .owPcRow[data-side="R"] .owPcName').click()); await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => OrderWin.selectedPiece()), `${R.rid}_${R.tx}`); ok('B3b a press on a side row picks its line');
+    // 4 · a matching quantity-2 line stays as it was: one row, no sides, no split sentence
+    w = await open(M, M.tx);
+    assert.equal(w.rows.filter(r => r.side).length, 0); assert.ok(!/Left|Right/.test(w.sku + w.meta + w.sub), JSON.stringify(w)); assert.equal(w.split, ''); ok('B4 a matching line (quantity 2, two sheets) is drawn exactly as before: no side rows, no pair words');
+    await context.close();
+  } finally { await browser.close(); srv.close(); }
+  assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
+}
+
+(async () => {
+  await partB();
+  console.log(`\n${ran} checks passed`);
+})().catch(e => { console.error(e); process.exit(1); });
