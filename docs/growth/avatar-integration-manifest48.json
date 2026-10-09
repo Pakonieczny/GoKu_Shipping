@@ -1,0 +1,317 @@
+[
+  {
+    "path": "assets/brites-concierge-avatar-scene.mjs",
+    "bytes": 627788,
+    "newBlob": "c24dbe22a96398a7d80110e5517d75a56b44dcda",
+    "sha256": "303b233268e5713b270c921d219ffc7e1fb2b3e76a9ef3d7721fe9117acb2d09",
+    "oldBlob": "c24dbe22a96398a7d80110e5517d75a56b44dcda"
+  },
+  {
+    "path": "brites-catalogue-intents.js",
+    "bytes": 33835,
+    "newBlob": "4276c6800902563e9aa28d5f58df8dc308846d31",
+    "sha256": "e72e1ede895be42d1e849dd3f84def0f267fad1f991b2cc691b24402d4afa74c",
+    "oldBlob": "4276c6800902563e9aa28d5f58df8dc308846d31"
+  },
+  {
+    "path": "brites-concierge-avatar-scene.mjs",
+    "bytes": 47218,
+    "newBlob": "dd789500578334d9d27a620e23240c1aeec13f61",
+    "sha256": "4f4aa72d4bbd6cf83aaa1d095b6251f12c78a9c37ac18899b04b43ad585b5cbd",
+    "oldBlob": "dd789500578334d9d27a620e23240c1aeec13f61"
+  },
+  {
+    "path": "brites-concierge-avatar.js",
+    "bytes": 72574,
+    "newBlob": "4c12f8920132f308233f05de0e0969291be777de",
+    "sha256": "188d81838c287406e3bfc888650f8fe38ffc1bd05969457231a66045cf04ed37",
+    "oldBlob": "4c12f8920132f308233f05de0e0969291be777de"
+  },
+  {
+    "path": "brites-concierge-shopping-guide.js",
+    "bytes": 63320,
+    "newBlob": "e255a4fcf465435fd12b8ea6eb502be8da7f0a5e",
+    "sha256": "4eb24273d6807f22e303c162a667fecbafd72fc429f38dbe19640889e2817dc2",
+    "oldBlob": "e255a4fcf465435fd12b8ea6eb502be8da7f0a5e"
+  },
+  {
+    "path": "brites-concierge-voice.js",
+    "bytes": 104848,
+    "newBlob": "8f602b2a89d9af1210a6548ec05f37d90ca09838",
+    "sha256": "20ca696c85f19698723e71a81814c6f53a73b8dd21221bdee4bdd3d17c26827e",
+    "oldBlob": "32fa3772f5efebb6b0169dd797dea219e10e8481"
+  },
+  {
+    "path": "brites-concierge.js",
+    "bytes": 292138,
+    "newBlob": "65a2412e833c52b41665b121dc56b267e3f159d5",
+    "sha256": "acf06ad01b323629bbd1bb8ddd75fb300d364517eaa30211703d95d9eeddee19",
+    "oldBlob": "855295585e6abf4abeb6b701c8fab85a20f41a18"
+  },
+  {
+    "path": "brites-shopify-storefront-adapter.js",
+    "bytes": 85965,
+    "newBlob": "d944a2626aa314c688cda73d2b4aaa2628bb6882",
+    "sha256": "1e2b76182df635aef5a868584bd0cb64bacef4916811b776f7365bd0a2e37122",
+    "oldBlob": "7488d24827c8c68fccdba23039596285e79714e0"
+  },
+  {
+    "path": "brites-storefront-bridge.js",
+    "bytes": 125858,
+    "newBlob": "702d69b97ec20859010bce4cff897e6e7180a290",
+    "sha256": "b618fe2aa12a7cba94db29e96047ae94cbd1676771607ca6918d3c0ad799811d",
+    "oldBlob": "bd090d21a36d99c22586a5633a42b1bd05809c6b"
+  },
+  {
+    "path": "concierge-avatar-qa.js",
+    "bytes": 31462,
+    "newBlob": "23084c2fb6fcbd1d113b513525fe0b2a13454deb",
+    "sha256": "4b99457ef074cc0089d6a88e48ae2942860b3483374458316e73eb147977353d",
+    "oldBlob": "23084c2fb6fcbd1d113b513525fe0b2a13454deb"
+  },
+  {
+    "path": "concierge-sandbox.js",
+    "bytes": 184047,
+    "newBlob": "6929fd1383405296150c5582ef8b9f24be593a24",
+    "sha256": "cde0857f0118b9640e6c5bba77fb2f8aa5b6ce2e0abcfc5d31ff680524eecbec",
+    "oldBlob": "41624b0f3ab97468816bddc48f9200e0cfa6c888"
+  },
+  {
+    "path": "netlify/functions/_britesConciergeVoice.js",
+    "bytes": 86337,
+    "newBlob": "6346eb3af265dfdff671ba0cd11bf905f258bc4a",
+    "sha256": "7e765fe591ad7b3ba147ff38ab08e84b1add4d9b6529654c9c76077fae567041",
+    "oldBlob": "d5d28ead800ff4e1e0645da18428acf6073cc5a1"
+  },
+  {
+    "path": "netlify/functions/_britesGrowth.js",
+    "bytes": 161260,
+    "newBlob": "6bccb6c2db43ac09c5541586b245408ef832c448",
+    "sha256": "6924dc4e063ea8b1db613e5fc991b0ac2d535657127f2d16ede0828755d69890",
+    "oldBlob": "6bccb6c2db43ac09c5541586b245408ef832c448"
+  },
+  {
+    "path": "tests/growth/adversarial-continuity48.test.cjs",
+    "bytes": 4815,
+    "newBlob": "b615c8f2bc66bfcca7ec5e7d20a23fff3151ca91",
+    "sha256": "cda841f1dd820327d1bbe34b51f021e6fe156bf49c1dbcc40dc43ec335ddc93b",
+    "oldBlob": null
+  },
+  {
+    "path": "tests/growth/adversarial-search-continuation47.test.cjs",
+    "bytes": 26971,
+    "newBlob": "77ef3ccc397bb0194ef4f17e8fef28b0a6c23a75",
+    "sha256": "c73c90e892e4ac7a31cae6a05beef718e03fd7563babe61c6ec8ae8dcd62a277",
+    "oldBlob": "77ef3ccc397bb0194ef4f17e8fef28b0a6c23a75"
+  },
+  {
+    "path": "tests/growth/adversarial-shopping43.test.cjs",
+    "bytes": 67209,
+    "newBlob": "20ca3aee550f194c43b7d235eed41b3511c8cbd7",
+    "sha256": "7120bfacf5c12b9a6d1114d3cdca68f486afe33279081942ff4dee507ff4fdcd",
+    "oldBlob": "20ca3aee550f194c43b7d235eed41b3511c8cbd7"
+  },
+  {
+    "path": "tests/growth/adversarial-spoken46.test.cjs",
+    "bytes": 37171,
+    "newBlob": "c419a85b07114df3eca6e4719b2dc350b66beee9",
+    "sha256": "29172dcc1fa015600a86960af68cb76b43f1913a961686441914b9d55bc1c650",
+    "oldBlob": "c419a85b07114df3eca6e4719b2dc350b66beee9"
+  },
+  {
+    "path": "tests/growth/avatar-expression28.test.cjs",
+    "bytes": 14470,
+    "newBlob": "cba939e43c27b2a7d1efb7ac6f4c9bffe07e264c",
+    "sha256": "a262a8367ad7a2abb22a2a89ac571927b755fa2eec48e81e7783f394b151a53b",
+    "oldBlob": "cba939e43c27b2a7d1efb7ac6f4c9bffe07e264c"
+  },
+  {
+    "path": "tests/growth/avatar-pearlfin27.test.cjs",
+    "bytes": 15076,
+    "newBlob": "b84fa32ba08e8963a1f9f0e3baf50f0f3c6f2664",
+    "sha256": "4e7b961d6f3baae3e50023fe462c53e71cb9020909aaa836630ec4a574be8df1",
+    "oldBlob": "b84fa32ba08e8963a1f9f0e3baf50f0f3c6f2664"
+  },
+  {
+    "path": "tests/growth/avatar-reference19.test.cjs",
+    "bytes": 4554,
+    "newBlob": "bcc5ff6c271de7d8bdac1e1e4d8a3e1758fc5736",
+    "sha256": "d1354514cfa4efe419720ed8822c877989a11cafb8a7cdfc03c1a3c7a598b867",
+    "oldBlob": "bcc5ff6c271de7d8bdac1e1e4d8a3e1758fc5736"
+  },
+  {
+    "path": "tests/growth/avatar-request-face-scene.test.cjs",
+    "bytes": 15261,
+    "newBlob": "1b110546ead92e1d3bef0af02f60b9196e28df6c",
+    "sha256": "293aa22db309aefa70312d820b177384969ad71b4d016e783e7ffe8e5f233ec0",
+    "oldBlob": "1b110546ead92e1d3bef0af02f60b9196e28df6c"
+  },
+  {
+    "path": "tests/growth/avatar-rest46.test.cjs",
+    "bytes": 8745,
+    "newBlob": "e7eaeca296ee087a58190eb79e5e75783fb2be16",
+    "sha256": "9a4df09e2d9e24a8b72eb9ce27075a42f4426a57039f7141952a0e850afa4eb0",
+    "oldBlob": "e7eaeca296ee087a58190eb79e5e75783fb2be16"
+  },
+  {
+    "path": "tests/growth/avatar-thinking43.test.cjs",
+    "bytes": 11762,
+    "newBlob": "eb3d4e5eeab1c0164cac91a11809cdb142e39a19",
+    "sha256": "72ca8ebd65ff9d9fccb28c0b977da0af7b0855ee6cb3c425145a991803bf7aa3",
+    "oldBlob": "eb3d4e5eeab1c0164cac91a11809cdb142e39a19"
+  },
+  {
+    "path": "tests/growth/catalogue-theme-context47.test.cjs",
+    "bytes": 963,
+    "newBlob": "ddcfc70f40447d3a18037355cac877f40a0d6837",
+    "sha256": "62a5e4373fccaff8bfccd5645934f287be76d40b817494cbc75d354c865f3b92",
+    "oldBlob": "ddcfc70f40447d3a18037355cac877f40a0d6837"
+  },
+  {
+    "path": "tests/growth/concierge-avatar.test.cjs",
+    "bytes": 4775,
+    "newBlob": "296e95f8e8282446dd4c24d9f56fc12ab431df7a",
+    "sha256": "29b4951bde6689b73608af512e42ded6760186fd27dd798b5229141d9aed00b1",
+    "oldBlob": "296e95f8e8282446dd4c24d9f56fc12ab431df7a"
+  },
+  {
+    "path": "tests/growth/concierge-voice-tools23.test.cjs",
+    "bytes": 30509,
+    "newBlob": "e9de1a47806b7e05ef6114e24e44a94b6e66b921",
+    "sha256": "6544bf2038827994d75715bcff1ac5bf09ce581be80bcfdff48ad1e95517de76",
+    "oldBlob": "e9de1a47806b7e05ef6114e24e44a94b6e66b921"
+  },
+  {
+    "path": "tests/growth/emotion26-character.test.cjs",
+    "bytes": 9740,
+    "newBlob": "000ed4d959d5a41db862e8a156af72ae66c8f381",
+    "sha256": "74955ae8aef4a493d3028035ca60ce284c943b517b3280e268d9ae0b80c1b330",
+    "oldBlob": "000ed4d959d5a41db862e8a156af72ae66c8f381"
+  },
+  {
+    "path": "tests/growth/native-client46.test.cjs",
+    "bytes": 28802,
+    "newBlob": "822d53634f403a5d7fde54b26cc3dbfaf4a5eb07",
+    "sha256": "9a983c6475a84f1f46ef5615920687179c5c8249a4d8136b9c98d53ae78ce7fc",
+    "oldBlob": "822d53634f403a5d7fde54b26cc3dbfaf4a5eb07"
+  },
+  {
+    "path": "tests/growth/native-continuity48-fixture.cjs",
+    "bytes": 15029,
+    "newBlob": "50290b47af52e2701191f57212abcb6c0f4cc789",
+    "sha256": "7ea21a833500eb6a04ef099139b91f531f829324ea08af44b76add559ecdaa0a",
+    "oldBlob": null
+  },
+  {
+    "path": "tests/growth/native-continuity48.test.cjs",
+    "bytes": 12580,
+    "newBlob": "d2b179201c3809182635cdca7cf5ae0fae944007",
+    "sha256": "d94e13d421ff2ddb29bcb65d68e537a6888cf7add75196262a6e4b799181d45e",
+    "oldBlob": null
+  },
+  {
+    "path": "tests/growth/native-contract46.test.cjs",
+    "bytes": 9658,
+    "newBlob": "d5aedd1f02707e346489ddfa3e02538c664ebce5",
+    "sha256": "73ed54186afeaec758196aa9a05d122bb81401809dc4949f8ccad1b7b2104cf0",
+    "oldBlob": "d5aedd1f02707e346489ddfa3e02538c664ebce5"
+  },
+  {
+    "path": "tests/growth/native-search-continuation47.test.cjs",
+    "bytes": 17654,
+    "newBlob": "ee0124fe81f457a4ae11e8d81a7415d991cc7ddd",
+    "sha256": "ac128162e2a116ed04e560f6d548eb4757a499e6f192279f74ab8e6754b2141e",
+    "oldBlob": "ee0124fe81f457a4ae11e8d81a7415d991cc7ddd"
+  },
+  {
+    "path": "tests/growth/native-search47-fixture.cjs",
+    "bytes": 14475,
+    "newBlob": "38e0d6b2a9fe9aa1117e314c11e96025923d2be1",
+    "sha256": "95346eb12863aac02d3453e6ed567d3b6e1de9b30cc6b30138a2d130b5e12c6c",
+    "oldBlob": "38e0d6b2a9fe9aa1117e314c11e96025923d2be1"
+  },
+  {
+    "path": "tests/growth/native-spoken-acceptance46.test.cjs",
+    "bytes": 21215,
+    "newBlob": "41254fc180f026af02b77df46b22cd8909a3a594",
+    "sha256": "8b6e13994df6c6dd12351a8550ec458d2324f04cc885f1e4c6f27c80c60ba164",
+    "oldBlob": "41254fc180f026af02b77df46b22cd8909a3a594"
+  },
+  {
+    "path": "tests/growth/native-spoken46-fixture.cjs",
+    "bytes": 14318,
+    "newBlob": "37b0e246e7fab7312d1727c65021a05d3ae3592b",
+    "sha256": "794dced27bbe71e78de0a3db56fb65734c76bdb9aebe1d82040a0d6ab38e3c6c",
+    "oldBlob": "37b0e246e7fab7312d1727c65021a05d3ae3592b"
+  },
+  {
+    "path": "tests/growth/product-facts38.test.cjs",
+    "bytes": 27330,
+    "newBlob": "07c9e3942776dfa40e41d628d4e035bb766cb6b3",
+    "sha256": "1ee29ae65b0e4112e5e00d5c1dd693e99bff598841ecbfa4694aa14889907672",
+    "oldBlob": "07c9e3942776dfa40e41d628d4e035bb766cb6b3"
+  },
+  {
+    "path": "tests/growth/product-understanding38.test.cjs",
+    "bytes": 31788,
+    "newBlob": "8459adcb404842e32d8300668c15f90c9e6af739",
+    "sha256": "a2554f2152d1bf2fdf02c62b406f8aca535116ae62f1bfba250fe3154f268f54",
+    "oldBlob": "8459adcb404842e32d8300668c15f90c9e6af739"
+  },
+  {
+    "path": "tests/growth/robot-widget.test.cjs",
+    "bytes": 17279,
+    "newBlob": "edd99e7615200b43155ba447df524686faf70858",
+    "sha256": "e024553ca7d6fb1b9c51b671cc16197d0bfdd0977f44c168d4ea00f63999b6c8",
+    "oldBlob": "d8e7c3a4abbdb1e5332d78580dce13546a16d344"
+  },
+  {
+    "path": "tests/growth/storefront-language46.test.cjs",
+    "bytes": 15823,
+    "newBlob": "e67cdf0c18231bd01afe48d65bce873a025887d7",
+    "sha256": "927deb54706616ad1bcbf6b39f9e446292aebaad08b98a3b82686998b01b974c",
+    "oldBlob": "e67cdf0c18231bd01afe48d65bce873a025887d7"
+  },
+  {
+    "path": "tests/growth/storefront-questions39.test.cjs",
+    "bytes": 22532,
+    "newBlob": "0910030e9c5698941261b4a2ba803510b31669b4",
+    "sha256": "2af211f91d6aa53708b93d9a33aa86db1fb62b6c1a35ceb9ea0fbf4f7fc903fe",
+    "oldBlob": "0910030e9c5698941261b4a2ba803510b31669b4"
+  },
+  {
+    "path": "tests/growth/storefront-shopping37.test.cjs",
+    "bytes": 43499,
+    "newBlob": "a9c6255ee68cdfe5ba2046d3a1ba9e0887181ab2",
+    "sha256": "c931652eb0cbed44369b550b26c9982a2bfdb53dee2bdc1cbc4b20423bdf6167",
+    "oldBlob": "a9c6255ee68cdfe5ba2046d3a1ba9e0887181ab2"
+  },
+  {
+    "path": "tests/growth/storefront-voice30.test.cjs",
+    "bytes": 10223,
+    "newBlob": "811431b76899e19bdcb3cdf00b9a9718f4cb3b94",
+    "sha256": "652e7e499d6b345446fabb25899bde06e10729af936cb1f37e38839e9201808c",
+    "oldBlob": "811431b76899e19bdcb3cdf00b9a9718f4cb3b94"
+  },
+  {
+    "path": "tests/growth/typed-search-refresh47.test.cjs",
+    "bytes": 6459,
+    "newBlob": "2e6214fbc39d6bd1978b7e05483680ae04a3d871",
+    "sha256": "586e9b8ed8635c5302fdbf6eec9e5adee2bbcbbe3999f6b65334ebbcfc1f050d",
+    "oldBlob": "2e6214fbc39d6bd1978b7e05483680ae04a3d871"
+  },
+  {
+    "path": "tests/growth/visual-face33.test.cjs",
+    "bytes": 13394,
+    "newBlob": "1401e0a966f0f82784ead7c68ef3dae46f769c52",
+    "sha256": "3e02a4c31b8206039e818eda1abbb0467328e70242281a59b140d7d3b70b14b3",
+    "oldBlob": "1401e0a966f0f82784ead7c68ef3dae46f769c52"
+  },
+  {
+    "path": "tests/growth/voice-fast-actions39.test.cjs",
+    "bytes": 26476,
+    "newBlob": "2d6900d42b3e9d602ab4f55528716e5cc606c546",
+    "sha256": "13cca88dae59b684e2be9c4f75984cb85d1d4f1e390ec6c52700b42096becdf6",
+    "oldBlob": "2d6900d42b3e9d602ab4f55528716e5cc606c546"
+  }
+]

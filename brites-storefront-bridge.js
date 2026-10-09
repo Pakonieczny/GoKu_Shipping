@@ -59,6 +59,7 @@
       var groups=(Array.isArray(pc.optionGroups)?pc.optionGroups:[]).slice(0,12).flatMap(function(g){var name=plain(g&&g.name,120),seen=new Set(),values=(Array.isArray(g&&g.values)?g.values:[]).slice(0,250).flatMap(function(v){var clean=plain(v,300),key=literal(clean,300);if(!clean||seen.has(key))return [];seen.add(key);return [clean];});return name&&values.length?[{name:name,values:values}]:[];});
       if(new Set(groups.map(function(g){return literal(g.name,120);})).size===groups.length){var selectedNames=new Set(),selected=(Array.isArray(pc.selectedOptions)?pc.selectedOptions:[]).slice(0,12).flatMap(function(v){var group=groups.find(function(g){return literal(g.name,120)===literal(v&&v.name,120);}),values=group&&group.values.filter(function(x){return literal(x,300)===literal(v&&v.value,300);});if(!values||values.length!==1||selectedNames.has(group.name))return [];selectedNames.add(group.name);return [{name:group.name,value:values[0]}];});
         out.productControls={handle:pc.handle,productId:pc.productId,variantId:VARIANT.test(pc.variantId||'')?pc.variantId:null,quantity:pc.quantity,optionsOpen:pc.optionsOpen===true,openedOption:groups.some(function(g){return g.name===pc.openedOption;})?pc.openedOption:null,optionGroups:groups,selectedOptions:selected,reviewReady:pc.reviewReady===true};
+        if(groups.some(function(g){return g.name===pc.focusedOptionName;}))out.productControls.focusedOptionName=pc.focusedOptionName;if(pc.quantityFocused===true)out.productControls.quantityFocused=true;if(pc.variantPickerFocused===true)out.productControls.variantPickerFocused=true;
         ['productTitle','productType'].forEach(function(k){var label=plain(pc[k],k==='productTitle'?300:120);if(label)out.productControls[k]=label;});var current=selectedVariant(pc,groups,selected);if(current){out.productControls.selectedVariant=current;var total=Math.round(current.price*pc.quantity*100)/100;if(Number.isFinite(pc.itemTotalPrice)&&Math.abs(pc.itemTotalPrice-total)<.005)out.productControls.itemTotalPrice=total;if(current.id===pc.selectedVariant.id&&Number.isInteger(pc.selectedVariant.quantity)&&pc.selectedVariant.quantity===pc.quantity)out.productControls.selectedVariant.quantity=pc.quantity;if(Number.isFinite(pc.selectedVariant.subtotal)&&Math.abs(pc.selectedVariant.subtotal-total)<.005)out.productControls.selectedVariant.subtotal=total;}
         if(['choosing','ready','unavailable','held'].includes(pc.selectionStatus)){
           // Missing choices are derived from the published groups and the
@@ -264,13 +265,14 @@
     if(rest.replace(/\b(?:the|my|a|an|this|that|current|selected|piece|product|listing|item)\b/g,'').trim())return null;
     return {handle:pc.handle};
   }
-  function publishedOptionAlias(value,group){
+  function publishedOptionAlias(value,group,pc){
     var candidate=literal(value,300),matches=group.values.filter(function(v){return literal(v,300)===candidate;});
+    if(!matches.length&&/\blength\b/i.test(group.name)&&(/^[0-9]+(?:\.[0-9]+)?$/.test(candidate)||Object.hasOwn(QUANTITIES,candidate))){var number=Object.hasOwn(QUANTITIES,candidate)?QUANTITIES[candidate]:Number(candidate);matches=group.values.filter(function(v){return inchUnitText(v,300)===String(number)+' inch';});}
     if(!matches.length&&/\blength\b/i.test(group.name)&&/^\d+(?:\.\d+)? inch$/.test(inchUnitText(candidate,300)))matches=group.values.filter(function(v){return inchUnitText(v,300)===inchUnitText(candidate,300);});
-    if(!matches.length&&/\bengraving\b/i.test(group.name)&&/^(?:no engraving|without engraving|unengraved)$/.test(candidate))matches=group.values.filter(function(v){return /^(?:none|no engraving|without engraving|unengraved)$/.test(literal(v,300));});
+    if(!matches.length&&/\bengraving\b/i.test(group.name)&&/^(?:no engraving|without engraving|unengraved)$/.test(candidate))matches=group.values.filter(function(v){return /^(?:no|none|no engraving|without engraving|unengraved)$/.test(literal(v,300));});
     var vocabulary=root?.BritesCatalogueIntents||catalogue;
     if(!matches.length&&/^(?:metal(?: choice)?|materials?|finish)$/i.test(group.name)&&/^(?:(?:\d{1,2}\s*(?:k|kt|karats?|carats?)\s+)?(?:(?:solid|rose|white|yellow)\s+)?(?:gold(?:[ -]+(?:filled|plated))?|sterling(?:\s+silver)?|silver|gf))$/.test(candidate)&&typeof vocabulary?.material==='function'&&typeof vocabulary?.materialMatches==='function'){
-      var material=vocabulary.material(candidate)?.material;if(material)matches=group.values.filter(function(v){return vocabulary.materialMatches(v,material);});
+      var material=vocabulary.material(candidate)?.material;if(material){var chain=pc?.selectedOptions?.some(function(o){return /\blength\b/i.test(o.name)&&/^\d+(?:\.\d+)? inch$/.test(inchUnitText(o.value,300));});matches=group.values.filter(function(v){return vocabulary.materialMatches(v,material)&&(!chain||!/\bcharm[ -]only\b/i.test(v));});}
     }
     return matches.length===1?matches[0]:matches.length>1?false:null;
   }
@@ -280,8 +282,11 @@
     // A spoken no-engraving choice names a real option; a bare "no" still
     // cancels. Other short answers require the actual opened option menu.
     if(/^(?:no engraving|without engraving|unengraved)(?: (?:for|on|of) .+)?$/i.test(answer)){var requested=controls('Select '+answer,norm('Select '+answer),context);if(requested?.ok&&pc.optionGroups.filter(function(g){return /\bengraving\b/i.test(g.name);}).length>1)return optionAmbiguity('Which engraving menu would you like to change? Name its label.');return requested;}
-    if(!pc.optionsOpen||!pc.openedOption)return null;
-    var group=pc.optionGroups.find(function(g){return g.name===pc.openedOption;}),value=group&&publishedOptionAlias(answer,group);
+    if(pc.quantityFocused===true&&/^(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)$/.test(answer.toLowerCase()))return controls('Set quantity to '+answer,norm('Set quantity to '+answer),context);
+    var name=pc.focusedOptionName||pc.openedOption;
+    var deictic=/^(?:set|change|make|choose|select|use) (?:this|that|it|this option|that option)(?: to)? (.+)$/i.exec(answer);if(deictic){answer=deictic[1].trim();if(pc.quantityFocused===true)return controls('Set quantity to '+answer,norm('Set quantity to '+answer),context);}if(!pc.optionsOpen&&!pc.focusedOptionName&&!pc.variantPickerFocused)return null;
+    if(!name&&pc.variantPickerFocused){var matches=pc.optionGroups.flatMap(function(g){var v=publishedOptionAlias(answer,g,pc);return v===false?[{ambiguous:true}]:v?[{name:g.name,value:v}]:[];});if(matches.length===1&&!matches[0].ambiguous)return success({type:'select-option',handle:pc.handle,optionName:matches[0].name,optionValue:matches[0].value},context);return matches.length?optionAmbiguity('Which option menu would you like to change?'):null;}
+    var group=pc.optionGroups.find(function(g){return g.name===name;}),value=group&&publishedOptionAlias(answer,group,pc);
     if(value===false)return optionAmbiguity('More than one published value matches. Name its exact label.');
     return value?success({type:'select-option',handle:pc.handle,optionName:group.name,optionValue:value},context):null;
   }
@@ -296,8 +301,8 @@
       var length=/\blength\b/i.test(g.name),metal=/^(?:metal(?: choice)?|materials?|finish)$/i.test(g.name),hits=[];
       g.values.forEach(function(v){var key=length?inchUnitText(v,300):literal(v,300);occurrences(key,length).forEach(function(span){hits.push({value:v,...span});});});
       hits=hits.filter(function(hit){return !hits.some(function(other){return other.value!==hit.value&&other.start<=hit.start&&other.end>=hit.end&&other.end-other.start>hit.end-hit.start;});});
-      if(metal&&typeof vocabulary?.material==='function'&&typeof vocabulary?.materialMatches==='function')for(var mention of payload.matchAll(/\b(?:(?:\d{1,2}\s*(?:k|kt|karats?|carats?)\s+)?(?:(?:solid|rose|white|yellow)\s+){0,2}(?:gold(?:[ -]+(?:filled|plated))?|sterling(?:\s+silver)?|silver|gf))\b/g)){
-        var material=vocabulary.material(mention[0])?.material,values=material?g.values.filter(function(v){return vocabulary.materialMatches(v,material);}):[];
+      if(metal&&!hits.length&&typeof vocabulary?.material==='function'&&typeof vocabulary?.materialMatches==='function')for(var mention of payload.matchAll(/\b(?:(?:\d{1,2}\s*(?:k|kt|karats?|carats?)\s+)?(?:(?:solid|rose|white|yellow)\s+){0,2}(?:gold(?:[ -]+(?:filled|plated))?|sterling(?:\s+silver)?|silver|gf))\b/g)){
+        var material=vocabulary.material(mention[0])?.material,chain=/\b\d+(?:\.\d+)?\s*inch\b/.test(payload)||pc.selectedOptions.some(function(o){return /\blength\b/i.test(o.name)&&/^\d+(?:\.\d+)? inch$/.test(inchUnitText(o.value,300));}),values=material?g.values.filter(function(v){return vocabulary.materialMatches(v,material)&&(!chain||!/\bcharm[ -]only\b/i.test(v));}):[];
         if(values.length>1){error='Which '+g.name+' would you like: '+values.join(' or ')+'?';return;}
         if(values.length===1)hits.push({value:values[0],start:mention.index,end:mention.index+mention[0].length});
       }
@@ -381,7 +386,7 @@
       groups.forEach(function(g){g.values.forEach(function(v){var key=literal(v,300),at=payload.indexOf(key),numericLength=/^\d+(?:\.\d+)? inch$/.test(inchUnitText(v,300)),leftBoundary=numericLength?/[\w.+\-\u2212]/:/\w/;if(at>=0&&(at===0||!leftBoundary.test(payload[at-1]))&&(at+key.length===payload.length||!/\w/.test(payload[at+key.length])))matches.push({name:g.name,value:v});});});
       if(!matches.length){if(!/(?:^|\s)[+-]\s*\d/.test(inchPayload))groups.forEach(function(g){g.values.forEach(function(v){var key=inchUnitText(v,300);if(!/^\d+(?:\.\d+)? inch$/.test(key))return;var at=inchPayload.indexOf(key);if(at>=0&&(at===0||!/[\w.+-]/.test(inchPayload[at-1]))&&(at+key.length===inchPayload.length||!/\w/.test(inchPayload[at+key.length])))matches.push({name:g.name,value:v,unitAlias:true,lengthGroup:/\blength\b/i.test(g.name),key:key});});});}
       if(!matches.length){var negative=payload.match(/\b(?:no engraving|without engraving|unengraved)\b/);if(negative){var engravingGroups=pc.optionGroups.filter(function(g){return /\bengraving\b/i.test(g.name);}),negativeAmbiguous=false;if(engravingGroups.length>1)return optionAmbiguity('Which engraving menu would you like to change? Name its label.');groups.filter(function(g){return engravingGroups.includes(g);}).forEach(function(g){var alias=publishedOptionAlias(negative[0],g);if(alias===false)negativeAmbiguous=true;else if(alias)matches.push({name:g.name,value:alias,optionAlias:true,key:negative[0]});});if(negativeAmbiguous)return optionAmbiguity('Which no-engraving choice would you like? Name its label.');}}
-      if(!matches.length){var aliasWords=optionRequestRemainder(command,context,pc.handle,group?.name),ambiguous=false;groups.filter(function(g){return /^(?:metal(?: choice)?|materials?|finish)$/i.test(g.name);}).forEach(function(g){var alias=publishedOptionAlias(aliasWords,g);if(alias===false)ambiguous=true;else if(alias)matches.push({name:g.name,value:alias,optionAlias:true,key:aliasWords});});if(ambiguous)return optionAmbiguity('More than one published option value matches. Name its exact label.');}
+      if(!matches.length){var aliasWords=optionRequestRemainder(command,context,pc.handle,group?.name),ambiguous=false;groups.filter(function(g){return /^(?:metal(?: choice)?|materials?|finish)$/i.test(g.name);}).forEach(function(g){var alias=publishedOptionAlias(aliasWords,g,pc);if(alias===false)ambiguous=true;else if(alias)matches.push({name:g.name,value:alias,optionAlias:true,key:aliasWords});});if(ambiguous)return optionAmbiguity('More than one published option value matches. Name its exact label.');}
       if(matches.length>1)return optionAmbiguity('More than one published option value matches. Name its exact label.');
       if(matches.length!==1||(matches[0].unitAlias?!matches[0].lengthGroup:!matches[0].optionAlias&&!has(choiceWords,matches[0].value)))return failed('Name one exact published option value; I will keep the other choices unchanged.',true);
       var exactCommand=matches[0].unitAlias?norm(inchPayload.replace(matches[0].key,literal(matches[0].value,300))):matches[0].optionAlias?command.replace(matches[0].key,norm(matches[0].value)):command;
@@ -434,6 +439,9 @@
     var raw=typeof value==='string'?value:value&&value.message,context=snapshot(rawContext||value&&value.context),message=norm(raw);
     if(!plain(raw,2000))return failed('Please use a short, plain request.',false);
     if(!message)return failed('',false);
+    // A deictic dropdown suffix is meaningful only for the actual current
+    // product control. It never selects a different product or creates authority.
+    if(context.pageKind==='product'&&context.productControls?.handle===context.currentHandle&&(context.productControls.optionsOpen||context.productControls.focusedOptionName||context.productControls.variantPickerFocused)&&/^(?:(?:please|can you|could you|would you|will you)\s+)*(?:select|choose|pick|set|use)\b/i.test(raw)&&/\s+(?:from|in|on) (?:this|the|that) (?:drop[- ]?down|menu|selector)(?:,? please)?[.!?]?$/i.test(raw)){raw=raw.replace(/\s+(?:from|in|on) (?:this|the|that) (?:drop[- ]?down|menu|selector)(?:,? please)?[.!?]?$/i,'');message=norm(raw);}
     // A shopper can correct a choice without restarting the conversation.
     // Only a new explicit command follows this repair prefix; a bare no, wait,
     // stop or a negative/conditional replacement retains its normal refusal.
@@ -464,6 +472,7 @@
     if(informationRequest(message)){var known=resolveKnowledgeTarget(raw,context);return Object.assign(failed('',false),{delegated:'knowledge'},known.handle?{targetHandle:known.handle}:{});}
     if(/^(?:go |navigate |take me |move )?back(?: (?:one |a |the previous )?page)?$/.test(navCommand))return success({type:'back'},context);
     if(/^(?:go |navigate |take me |move )?forward(?: (?:one |a |the next )?page)?$/.test(navCommand))return success({type:'forward'},context);
+    if(/^(?:go|take me|scroll|move)(?: to)? (?:this|that|the current) section$/.test(navCommand)){if(!context.activeSection)return failed('Which section would you like to see?',true);var sectionAction={type:'scroll',section:context.activeSection};if(context.pageKind==='product'&&context.currentHandle)sectionAction.handle=context.currentHandle;return success(sectionAction,context);}
     var direction=/^(?:scroll|move)(?: the)?(?: (?:page|website))? (up|down|top|bottom)(?: (?:a|one) (?:page|screen)|(?: the)? (?:page|website)|(?: a)? (?:little|bit))?$/.exec(navCommand)||/^(?:scroll|go|take me)(?: (?:the page|the website))? to (?:the )?(top|bottom)$/.exec(navCommand);
     if(direction)return success({type:'scroll',direction:direction[1]},context);
     var galleryCommand=/^(?:open|show|display|select|choose|view)(?: me)?(?: the)? (?:image|photo|picture)(?: number)? (\d+)(?: (?:for|of) (.+))?$/.exec(navCommand)||/^(?:open|show|display|select|choose|view)(?: me)?(?: the)? (first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|next|previous) (?:image|photo|picture)(?: (?:for|of) (.+))?$/.exec(navCommand)||/^(next|previous) (?:image|photo|picture)(?: (?:for|of) (.+))?$/.exec(navCommand);

@@ -148,5 +148,5 @@ test('a rejected memorial occasion does not suppress a corrected birthday celebr
 
 test('the gesture greeting follows an explicit opening once and is never replayed by redundant open calls', async t => {
   const h=harness(t);h.open();await settle();assert.equal(h.avatarCalls.options[0].greetingOnOpen,false);assert.equal(h.avatarCalls.greetings,1);
-  h.open();await settle();assert.equal(h.avatarCalls.greetings,1);h.close();h.open();await settle();assert.equal(h.avatarCalls.greetings,2);
+  h.open();await settle();assert.equal(h.avatarCalls.greetings,1);h.close();h.open();await settle();assert.equal(h.avatarCalls.greetings,1);
 });
