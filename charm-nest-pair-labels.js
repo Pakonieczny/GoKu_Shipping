@@ -17,9 +17,9 @@
  *    reconcile(base, live)          base pieces, with each live sheet's own pieces in place of the ones it was recorded with
  *    splitNotes(sheetId, pieces, only?)  the lines a sheet's QR label carries for the groups that sit on more than one sheet ([] when none); only: the order numbers of one label's part
  *    backWord(b)                    " · Left" for a back record with a side, else ""
- *    labelPieces(line, entry)       the stickers a mismatched pair line needs: [{ side, n, of }], else null
+ *    labelPieces(row, entry)        the stickers an earring pair line needs (Left then Right per unit): [{ side, n, of }], else null
  *    stickerPieces(rows, entryOf)   the same for a card's lines (what QR Printer.html prints one page for)
- *    pieceCount(rows, entryOf)      pieces behind a card's lines (a mismatched pair makes two per unit), else null
+ *    pieceCount(rows, entryOf)      pieces behind a card's lines (an earring pair makes two per unit), else null
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory(root);
@@ -152,32 +152,43 @@
     if (P && typeof P.isMismatched === "function") { try { return !!P.isMismatched(entry); } catch (_) { return false; } }
     return !!(entry.pair && entry.pair.mismatched && +entry.pair.bodies === 2);
   }
-  const quantityOf = line => { const q = Math.floor(+(line && ((line.spec && line.spec.quantity) || line.quantity || line.qty)) || 1); return q > 0 ? Math.min(q, 20) : 1; };
+  const quantityOf = line => { const q = Math.floor(+(line && ((line.spec && line.spec.quantity) || line.quantity || line.qty || (line.line && line.line.quantity))) || 1); return q > 0 ? Math.min(q, 20) : 1; };
 
-  /** The stickers one order line needs: a mismatched pair line makes, for each unit bought, a LEFT sticker then a RIGHT sticker of the same order
-   *  ([{ side, n, of }]); a line that is not a mismatched pair makes none of its own (null: the order's one sticker, as before). */
-  function labelPieces(line, entry) {
-    if (!mismatchedDesign(entry)) return null;
-    const q = quantityOf(line), out = [];
-    for (let n = 1; n <= q; n++) { out.push({ side: "L", n, of: q }); out.push({ side: "R", n, of: q }); }
-    return out;
+  /** The pieces of an earring pair row (CharmNestPair.piecesFor: Left, Right, Left, Right ... every piece with its side, matching pairs too: Paul, 9 Oct 18:47),
+   *  or null when the row makes no pair (a single earring, a necklace, a charm). A mismatched design is a pair whatever the form says. */
+  function earPieces(row, entry) {
+    const P = pair();
+    if (P && typeof P.piecesFor === "function") {
+      let list = null; try { list = P.piecesFor(row, entry || undefined); } catch (_) { list = null; }
+      if (list && list.length >= 2 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;
+    }
+    if (mismatchedDesign(entry)) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
+    return null;
+  }
+
+  /** The stickers one order line needs: an earring pair line (matching or mismatched) makes, for each unit bought, a LEFT sticker then a RIGHT sticker of the
+   *  same order ([{ side, n, of }]); any other line makes none of its own (null: the order's one sticker, as before). row: the sorter's row ({ spec, line }). */
+  function labelPieces(row, entry) {
+    const list = earPieces(row, entry); if (!list) return null;
+    const of = Math.ceil(list.length / 2);
+    return list.map((p, i) => ({ side: p.side, n: Math.floor(i / 2) + 1, of }));
   }
   /** The stickers a card's lines need together (rows: the sorter's rows { spec, line }); entryOf(row) → the master entry of the row's design. null when none. */
   function stickerPieces(rows, entryOf) {
     const out = [];
-    for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const p = labelPieces(r && (r.line || r), e); if (p) out.push(...p); }
+    for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const p = labelPieces(r, e); if (p) out.push(...p); }
     return out.length ? out : null;
   }
-  /** Pieces behind a card's lines: a mismatched pair line makes two per unit, every other line what its quantity says (as the page counted before). null when no line is a pair. */
+  /** Pieces behind a card's lines: an earring pair line makes two per unit, every other line what its quantity says (as the page counted before). null when no line is a pair. */
   function pieceCount(rows, entryOf) {
     let n = 0, any = false;
     for (const r of rows || []) {
       let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; }
-      const q = quantityOf(r && (r.line || r));
-      if (mismatchedDesign(e)) { any = true; n += 2 * q; } else n += q;
+      const list = earPieces(r, e);
+      if (list) { any = true; n += list.length; } else n += quantityOf(r);
     }
     return any ? n : null;
   }
 
-  return { sideOf, wordOf, copyWord, manifestEntries, piecesOfOrders, piecesOfCharms, reconcile, splitNotes, shortSheet, backWord, mismatchedDesign, labelPieces, stickerPieces, pieceCount, MAX_NOTES };
+  return { sideOf, wordOf, copyWord, manifestEntries, piecesOfOrders, piecesOfCharms, reconcile, splitNotes, shortSheet, backWord, mismatchedDesign, earPieces, labelPieces, stickerPieces, pieceCount, MAX_NOTES };
 });
