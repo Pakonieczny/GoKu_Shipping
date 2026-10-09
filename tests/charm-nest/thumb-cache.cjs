@@ -264,6 +264,14 @@ async function partC() {
     const tags = await page.evaluate(() => { const e = [...B.master.entries.values()][0]; return { sku: Master.pictureTag(e), lib: picTag('https://firebasestorage.googleapis.com/v0/b/test-bucket/o/charmnest%2Fcharms%2Fabc.png?alt=media&token=t', 'abc') }; });
     ok(/crossorigin="anonymous" data-pic="\/\.netlify\/functions\/charmNestAsset\?url=/.test(tags.sku) && !/ src="/.test(tags.sku), 'the SKU picker tag goes through the asset function and is filled by the loader');
     ok(/data-pic="\/\.netlify\/functions\/charmNestAsset\?url=/.test(tags.lib) && /data-pic-key="w\|\d+\|c\|abc"/.test(tags.lib), 'the Library tile tag too, keyed by the charm for a week');
+    // and they are filled in, in the real page: a Library tile and the SKU picker's picture become the stored PNG, read through the asset function
+    const pics = await page.evaluate(async () => {
+      const e = [...B.master.entries.values()][0], host = document.createElement('div'); host.style.cssText = 'position:fixed;left:0;top:0;width:300px;height:200px;overflow:auto;background:#fff;z-index:99999';
+      host.innerHTML = '<div>' + picTag(e.thumbUrl, 'lib-test') + '</div><div>' + Master.pictureTag(e) + '</div>'; document.body.appendChild(host); mountPics(host); Master.mountPictures(host);
+      for (let i = 0; i < 100; i++) { const im = [...host.querySelectorAll('img')]; if (im.length === 2 && im.every(x => x.src.startsWith('data:') && x.complete)) return { ok: true, w: im.map(x => x.naturalWidth) }; await new Promise(r => setTimeout(r, 100)); }
+      return { ok: false, srcs: [...host.querySelectorAll('img')].map(x => x.src.slice(0, 40)) };
+    });
+    ok(pics.ok && pics.w.every(w => w > 0), 'a Library tile and the SKU picker picture are filled in with the stored PNG (' + JSON.stringify(pics.w || pics.srcs) + ')');
     ok(!errs.length, 'no page error: ' + errs.slice(0, 3).join(' | '));
     await ctx.close();
   } finally { await browser.close(); try { srv.close(); } catch (_) { /* done */ } }

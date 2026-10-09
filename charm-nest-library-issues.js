@@ -89,6 +89,24 @@
   const METAL_KEYS = new Set(Object.values(METAL_OF));
   const codeOf = label => (/^([A-Z0-9]{2,3}) Sheet/.exec(label || '') || [])[1] || '';   // "RG Sheet 1" -> "RG"
   const lineOfPool = pool => String(pool || '').replace(/_\d+$/, '');                     // a copy's pool id starts with its line's key
+  /* pairs (Paul, 9 Oct 2026, amendment 2): every earring pair is a Left and a Right piece, and an order held back by ONE of them says which ("Right piece waits on RG Sheet 2"), by both
+     "Pair waits on RG Sheet 2". The ear of a piece is the issue piece's own `side`, else what OrderPieces knows of that pool id (the readiness gives only the pool id). An order whose held-back
+     pieces are not all earrings, or of two ears with only one named, says what it always said. */
+  const EARS = { L: 'Left', R: 'Right' }, EAR_KEYS = new Set(['pooled', 'otherSheetNotReady', 'held']);
+  function earOf(it, pieces) {
+    if (!pieces.length || !EAR_KEYS.has(it.key)) return '';
+    let known = null;
+    const sideOf = p => {
+      if (p.side === 'L' || p.side === 'R') return p.side;
+      const id = String(p.poolId || p.key || ''); if (!id) return null;
+      if (!known) { known = new Map(); try { const OP = root.OrderPieces; for (const q of (OP && typeof OP.of === 'function' ? OP.of(it.orderId) : null) || []) known.set(String(q.key || q.poolId), q.side || null); } catch (e) { warn('ears', e); } }
+      return known.get(id) || null;
+    };
+    const sides = new Set(pieces.map(sideOf));
+    if (sides.has(null) || sides.has(undefined)) return '';
+    // (exactly one named piece, or exactly one Left and one Right: more pieces than that say what they always said)
+    return pieces.length === 1 && sides.size === 1 ? EARS[[...sides][0]] + ' piece' : pieces.length === 2 && sides.size === 2 ? 'Pair' : '';
+  }
   const NO_DESIGN = new Set(['noSku', 'unmatched', 'noDesign']);                           // a piece with one of these has no vector design to show
   const STEP = { nesting: 'Nesting', engraving: 'Engraving', orders: 'Order check', laser: 'Laser cutting' };   // the rail's own words
   const HARD = new Set(['noSku', 'unmatched', 'noDesign', 'held']);   // a person has to fix these (the count chip turns clay); the others only wait
@@ -142,6 +160,7 @@
       const tail = tidy(useful(own) ? own : whole && useful(whole[1]) ? whole[1] : '').replace(/…$/, '');
       if (tail) { const w = tail.split(' ').slice(0, 4).join(' '); chip = 'On hold: ' + (/^[A-Z][a-z]/.test(w) ? w[0].toLowerCase() + w.slice(1) : w); }
     }
+    const ear = earOf(it, pieces); if (ear) chip = ear + ' ' + chip.charAt(0).toLowerCase() + chip.slice(1);   // ("Right piece waits on RG Sheet 2", "Pair not on a sheet yet"; the group header stays the order's reason)
     return { id: (split ? 'split' : noSet ? 'noSet' : it.key) + (s ? ':' + s : ''), tone: r.tone, chip, group: r.group(s) };
   }
   function model(feed, opts) {
@@ -174,7 +193,7 @@
         const dots = [];
         for (let i = 0; i < Math.min(bad, total - 1); i++) {
           const p = pieces[i] || {}, kind = p.kind || it.key || '', pool = String(p.poolId || p.key || '');
-          dots.push({ ring: true, metal: METAL_OF[codeOf(p.sheetLabel)] || '', kind, n: +p.index || 0, pool, line: lineOfPool(pool), state: p.why || '', none: NO_DESIGN.has(kind) });
+          dots.push(Object.assign({ ring: true, metal: METAL_OF[codeOf(p.sheetLabel)] || '', kind, n: +p.index || 0, pool, line: lineOfPool(pool), state: p.why || '', none: NO_DESIGN.has(kind) }, p.side === 'L' || p.side === 'R' ? { side: p.side } : {}));
         }
         while (dots.length < total) dots.unshift({ ring: false, metal: '', kind: '', n: 0, pool: '', line: '', state: '', none: false });
         const cust = String(it.customer || '').trim();
@@ -225,10 +244,10 @@
       const x = Object.assign({}, d);
       if (d.ring) {
         const p = d.pool && byPool.get(d.pool);
-        if (p) { if (!x.metal) x.metal = METAL_OF[codeOf(p.sheetLabel)] || (METAL_KEYS.has(p.metal) ? p.metal : ''); x.line = p.lineKey || x.line; x.n = x.n || p.index; if (NO_DESIGN.has(p.problem)) x.none = true; }
+        if (p) { if (!x.metal) x.metal = METAL_OF[codeOf(p.sheetLabel)] || (METAL_KEYS.has(p.metal) ? p.metal : ''); x.line = p.lineKey || x.line; x.n = x.n || p.index; if (NO_DESIGN.has(p.problem)) x.none = true; if (!x.side && (p.side === 'L' || p.side === 'R')) x.side = p.side; }
       } else {
         const p = rest[k++];
-        if (p) { x.pool = p.key; x.line = p.lineKey; x.n = p.index; x.metal = METAL_OF[codeOf(p.sheetLabel)] || ''; x.state = p.sheetLabel ? 'on ' + p.sheetLabel : 'on a sheet'; if (NO_DESIGN.has(p.problem)) x.none = true; }
+        if (p) { x.pool = p.key; x.line = p.lineKey; x.n = p.index; x.metal = METAL_OF[codeOf(p.sheetLabel)] || ''; x.state = p.sheetLabel ? 'on ' + p.sheetLabel : 'on a sheet'; if (NO_DESIGN.has(p.problem)) x.none = true; if (p.side === 'L' || p.side === 'R') x.side = p.side; }
       }
       return x;
     });

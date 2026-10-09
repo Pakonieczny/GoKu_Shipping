@@ -105,6 +105,15 @@ t('roll: the order counts how many of its groups are split and tells where', () 
   const r = PP.roll([split, single]); assert.equal(r.splitPairs, 1); assert.equal(r.words, 'Left on GF Sheet 1, Right on RG Sheet 2');
   assert.equal(PP.roll([single]).splitPairs, undefined);
 });
+t('sheetCounts: a pair with both ears on the place is a pair, one ear whose other is elsewhere is a half pair, discs and singles are pieces only', () => {
+  const gs = PP.groups([on(1, 's1', 'GF Sheet 1', 'set-1', { side: 'L' }), on(2, 's1', 'GF Sheet 1', 'set-1', { side: 'R' }),
+    on(1, 's1', 'GF Sheet 1', 'set-1', { side: 'L', key: `${RID}_5000000012_1`, poolId: `${RID}_5000000012_1`, lineKey: `${RID}_5000000012` }), on(2, 's2', 'GF Sheet 2', 'set-1', { side: 'R', key: `${RID}_5000000012_2`, poolId: `${RID}_5000000012_2`, lineKey: `${RID}_5000000012` }),
+    on(1, 's1', 'GF Sheet 1', 'set-1', { key: `${RID}_5000000013_1`, poolId: `${RID}_5000000013_1`, lineKey: `${RID}_5000000013` })]);
+  const c1 = PP.sheetCounts(gs, ['s1']); assert.deepEqual(c1, { pieces: 4, pairs: 1, halves: 1 });
+  assert.deepEqual(PP.sheetCounts(gs, ['s2']), { pieces: 1, pairs: 0, halves: 1 }); assert.deepEqual(PP.sheetCounts(gs, ['s1', 's2']), { pieces: 5, pairs: 2, halves: 0 });   // (a set of both sheets: the split pair is whole again)
+  assert.equal(PP.countWords(c1), '4 pieces, 1 pair, 1 half pair'); assert.equal(PP.countWords({ pieces: 1, pairs: 0, halves: 0 }), '1 piece'); assert.equal(PP.countWords({ pieces: 0, pairs: 0, halves: 0 }), '');
+  assert.deepEqual(PP.sheetCounts(PP.groups([on(1, 's1', 'A', null), on(2, 's1', 'A', null), on(3, 's1', 'A', null)]), ['s1']), { pieces: 3, pairs: 0, halves: 0 });   // (discs: no pairs said)
+});
 t('the page face exposes the same helpers', () => {
   const page = PP.makePage({}); for (const k of ['groups', 'pairWords', 'placeWords', 'sideWord']) assert.equal(typeof page[k], 'function', k);
   assert.equal(page.sideWord('L'), 'Left'); assert.equal(page.sideWord('R'), 'Right'); assert.equal(page.sideWord(null), '');
@@ -195,6 +204,28 @@ if (process.argv.includes('--pure') || process.exitCode) return;
     assert.ok(pb.left && pb.right && pb.bad === null, 'an ear with a body asks Pool.ensureBase, and a body that cannot be made is an outline (null), never the wrong body: ' + JSON.stringify(pb));
     assert.deepEqual(pb.calls, [['src', 'L', 0, false], ['src', 'R', 1, true], ['src', 'R', 9, true]], 'it asks for exactly the ear, body and mirror the saved charm says');
     console.log('ok   piece drawing: an ear with a body is drawn from its own (mirrored) body by Pool.ensureBase; unsided and old pieces from the base, as before');
+    // Library: the issue chip names the ear of the piece that holds an order back; a piece count with a pair on it says its pieces and pairs on hover
+    const lis = await page.evaluate(([a, b, p2, p1, pb]) => {
+      const feed = pieces => ({ id: 'gold-open-1', label: 'GF Sheet 1', code: 'GF', metal: 'gold', issues: pieces.map(([rid, ps, key]) => ({ step: 'orders', key: key || 'otherSheetNotReady', orderId: rid, orderLabel: 'Order ' + rid, pieces: ps, open: { type: 'order', id: rid } })) });
+      const chip = (rid, ps, key) => LibraryIssues.model(feed([[rid, ps, key]])).orders[0].reason.chip;
+      const r2 = { poolId: p2, sheetLabel: 'GF Sheet 2' }, r1 = { poolId: p1, sheetLabel: 'GF Sheet 2' };
+      return { right: chip(a, [r2]), pair: chip(a, [r2, r1]), left: chip(a, [r1]), pooled: chip(a, [{ poolId: p2, sheetLabel: null }], 'pooled'), plain: chip(b, [{ poolId: pb, sheetLabel: 'GF Sheet 2' }]), told: chip(a, [{ poolId: 'x', side: 'R', sheetLabel: 'GF Sheet 2' }]),
+        noSide: chip(a, [{ sheetLabel: 'GF Sheet 2' }]), dot: LibraryIssues.model(feed([[a, [{ poolId: p2, side: 'R', sheetLabel: 'GF Sheet 2' }]]])).orders[0].dots.find(d => d.ring).side };
+    }, [A, B, pid(A, 1, 2), pid(A, 1, 1), pid(B, 2, 1)]);
+    assert.equal(lis.right, 'Right piece waits on GF Sheet 2', 'one Right piece holds the order back: ' + lis.right); assert.equal(lis.left, 'Left piece waits on GF Sheet 2'); assert.equal(lis.pair, 'Pair waits on GF Sheet 2', 'both ears: ' + lis.pair);
+    assert.equal(lis.pooled, 'Right piece not on a sheet yet'); assert.equal(lis.plain, 'Waits on GF Sheet 2', 'a normal order says what it always said: ' + lis.plain); assert.equal(lis.told, 'Right piece waits on GF Sheet 2', 'the issue piece\'s own side counts');
+    assert.equal(lis.noSide, 'Waits on GF Sheet 2', 'a piece nothing knows the ear of says what it always said'); assert.equal(lis.dot, 'R', 'the dot carries the ear');
+    // (a sheet the Library rows do not hold: the hover reads it whole once, and the words come as that lands)
+    const title = await page.evaluate(async () => {
+      const host = document.getElementById('libBody'), mk = (id, html) => { const e = document.createElement('span'); e.setAttribute('data-sheet-count', id); e.innerHTML = html; host.appendChild(e); return e; };
+      const sp = mk('gold-open-1', '<b>5</b>/5'), none = mk('gold-open-2', '<b>2</b>/2'), lone = mk('gold-open-1', '<b>3</b>/3');
+      for (const e of [sp, none, lone]) e.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      for (let i = 0; i < 100 && !(sp.title && none.title); i++) await new Promise(r => setTimeout(r, 100));
+      const out = { s1: sp.title, s2: none.title, wrongNumber: lone.title }; sp.remove(); none.remove(); lone.remove(); return out;
+    });
+    assert.equal(title.s1, '5 pieces, 1 pair, 1 half pair', 'GF Sheet 1 holds the pair D and one ear of A: ' + JSON.stringify(title)); assert.equal(title.s2, '2 pieces, 1 half pair', 'GF Sheet 2 holds the other ear of A: ' + JSON.stringify(title));
+    assert.equal(title.wrongNumber, '', 'a card whose printed number is not the pieces counted gets no words: ' + JSON.stringify(title));
+    console.log('ok   Library: the issue chip says "Right piece waits on GF Sheet 2" / "Pair waits on ..." and a normal order is unchanged; a card\'s piece count says "5 pieces, 1 pair, 1 half pair" on hover');
     // the orders list and the strip: the pair row names its ear, the normal order reads as before
     await page.evaluate(() => SheetWin.close()); await page.waitForTimeout(700);
     await page.evaluate(() => SheetWin.open('gold-open-1'));

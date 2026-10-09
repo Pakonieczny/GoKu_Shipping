@@ -1840,17 +1840,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* ── the sheet pane: its orders ── */
   /** Pairs on this sheet: groups the line says are pairs (the kind OrderPieces gives them, or ears) with both pieces here, and half pairs with one piece here. Nothing when no group says so. */
   function pairCounts() {
-    const out = { pairs: 0, halves: 0 }, P = PPL(); if (!P || !W.rec) return out;
-    for (const rid of W.orders.keys()) {
-      if (rid === "—") continue;
-      for (const g of groupsOf(rid)) {
-        if (!(g.kind === "pair" || g.kind === "mismatched") || !(g.hasSides || g.known)) continue;
-        const mine = g.pieces.filter(q => q.on && q.sheetId === W.id), here = mine.length; if (!here) continue;
-        if (g.hasSides) { const l = mine.filter(q => q.side === "L").length, r = mine.filter(q => q.side === "R").length; out.pairs += Math.min(l, r); out.halves += Math.abs(l - r) + (here - l - r > 0 ? 1 : 0); }   // (an ear is a pair only with its other ear on the same sheet)
-        else if (here === g.n) out.pairs += Math.floor(g.n / 2); else out.halves += 1;
-      }
-    }
-    return out;
+    const P = PPL(); if (!P || !W.rec || typeof P.sheetCounts !== "function") return { pairs: 0, halves: 0 };
+    const gs = []; for (const rid of W.orders.keys()) if (rid !== "—") gs.push(...groupsOf(rid));
+    const c = P.sheetCounts(gs, [W.id]);
+    return { pairs: c.pairs, halves: c.halves };
   }
   function renderStrip() {
     if(window.Seal?.defer('sheet-strip',renderStrip))return;
@@ -2533,6 +2526,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const fateExtra = (ids, groups, memo) => { try { const g = (groups || []).filter(z => z.kind === "pair" || z.kind === "mismatched"), mine = (ids || []).filter(id => g.some(z => z.items.some(i => i.id === id))); if (!mine.length) return {}; const sides = [...new Set(mine.map(id => memo && memo.get(id)).filter(Boolean))].sort().join(","); return Object.assign({ pieces: mine.length }, sides ? { sides } : {}); } catch (_) { return {}; } };
   // what a removal's timeline event keeps of the group (additive data: kind, how many pieces, their sides)
   const pairData = plan => { const g = ((plan && plan.groups) || []).find(z => z.text); return g ? { group: { kind: g.kind, pieces: g.size, sides: g.items.map(i => i.side || "-").join(",") } } : {}; };
+  /** The server's roseTakeOff says `partialGroups` when only some pieces of a group on that sheet were asked to leave (it should never be, every piece of a group is named): said, never silent. */
+  function roseParts(res, sh, rid) {
+    try {
+      const parts = (res && res.partialGroups) || [];
+      if (parts.length) agent({ pool: true }, "warn", `${rid || "an order"}: on ${sheetName(sh)} only ${parts.map(g => `${g.taken} of ${g.taken + g.left} pieces of ${g.order || "a group"}`).join(", ")} came off its green lines; the rest of the group is still there, check it`);
+    } catch (_) { /* a log line only */ }
+    return res;
+  }
   /** The pieces the server took off beyond the ones this page named (poolUpdate answers `extended`: a line comes off whole, also when this page's
    *  plan was out of date). They join the take-off here too: out of the pool rows, the order's lines and the engraving lists; said plainly. [] almost always. */
   function serverExtra(res, ids, rid) {
@@ -2830,7 +2831,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       // a Rose Gold sheet's saved green lines give up the pieces inside them first, on the server (a line with nothing left
       // inside it goes with them, one that keeps a piece stays as saved): nothing has changed yet if that cannot be done
-      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel });
+      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) roseParts(await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel }), sh, rid);
       changed = true;
       holdRelease(pages);
       off.state = "now"; paint();
@@ -4472,7 +4473,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return piecesOf(rec).filter(x => x.rid === String(rid)).map(x => x.poolId || x.id).sort().join(",");
   }
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
-    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "" })) });
+    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "",
+      // (an earring pair's piece keeps its ear on the record this page makes of its own sheet, as the saved descriptor does)
+      ...(c.side === "L" || c.side === "R" ? { side: c.side, mirror: c.mirror === true, ...(c.bodyIndex != null ? { bodyIndex: c.bodyIndex } : {}), ...(c.groupKey ? { groupKey: c.groupKey } : {}), ...(c.groupSize ? { groupSize: c.groupSize } : {}) } : {}) })) });
   async function attachGeom(x, g, rec) {
     if (g.pool) { const b = await pieceBase(g, x); if (!b) return; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
     const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
@@ -5015,7 +5018,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       freed: sheetId => (FREED.get(sheetId) || []).length,
     };
   })();
-  window.SheetWin = { pieceBase, remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is

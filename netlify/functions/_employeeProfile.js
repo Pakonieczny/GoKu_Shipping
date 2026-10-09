@@ -77,6 +77,20 @@ const WCAT = {
   matchedOrders: { label: "Orders matched", unit: "orders", better: null, est: true, why: "A phone scan is credited to the person signed in under Matching (the one with the latest input when two are), or to nobody when nobody is.", def: "Order codes scanned as Matching at the Welding station. Every scan counts, so an order scanned twice counts twice. Not a completion: the Welding station is not counted in orders finished." }
 };
 
+/** An earring PAIR line of a stored receipt (Paul, 9 Oct 2026, Amendment 2: every earring pair is a Left and a Right piece per unit): the line's pieces in order, [{ side: "L" | "R" }, ...],
+ *  read with the same two shared modules the order window uses (the intake's line reader and the pair module); null for every other line (a necklace, discs, a single earring, a line
+ *  neither can read), and for ANY failure, so the card then tells the line as it always did. A mismatched design is not told here (the master record is not read): its two pieces are a Left and a Right all the same. */
+function pairPiecesOf(rid, t, q) {
+  try {
+    const OR = require("../../charm-nest-orders.js"), CP = require("../../charm-nest-pair.js");
+    if (!OR || typeof OR.interpretLine !== "function" || !CP || typeof CP.isEarringPair !== "function") return null;
+    const spec = OR.interpretLine({ receiptId: String(rid) }, t, { optionMaps: {}, masterEntry: null });
+    const arg = { form: (spec && spec.form) || "", spec: spec || {}, quantity: q };
+    if (!CP.isEarringPair(arg, null)) return null;
+    const list = CP.piecesFor(arg, null);
+    return Array.isArray(list) && list.length > 1 && list.every(x => x && (x.side === "L" || x.side === "R")) ? list : null;
+  } catch (_) { return null; }
+}
 function make(K) {
   const KIND = K.KIND || { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", echoScans: () => new Set() };      // (the Welding station is not counted in throughput: see _activityKinds.js)
   const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
@@ -587,6 +601,12 @@ function make(K) {
       for (const t of txs) {
         const q = Math.max(1, Math.min(5000, Math.floor(num(t.quantity)) || 1)), sku = plain(t.sku).slice(0, 60), title = plain(t.title).slice(0, 120), thumb = thumbs.get(digits(t.listing_id, 20)) || "";
         text.push(sku, title);
+        const pr = pairPiecesOf(rid, t, q);               // (an earring pair: a Left and a Right for every unit, the pieces the pool makes; any other line as before)
+        if (pr) {
+          count += pr.length;
+          for (let i = 1; i <= pr.length && pieces.length < 12; i++) pieces.push({ id: `${digits(t.transaction_id, 20) || pieces.length + 1}_${i}`, label: `${sku || title} · ${pr[i - 1].side === "L" ? "Left" : "Right"}`, sku, side: pr[i - 1].side, thumbUrl: thumb });
+          continue;
+        }
         count += q;                                       // (the true number of pieces, a 300-piece line included; only the first 12 are listed)
         for (let i = 1; i <= q && pieces.length < 12; i++) pieces.push({ id: `${digits(t.transaction_id, 20) || pieces.length + 1}_${i}`, label: sku || title, sku, thumbUrl: thumb });
       }
@@ -712,5 +732,6 @@ function make(K) {
 module.exports = make;
 module.exports.RULES = RULES;
 module.exports.CATALOG = CATALOG;
+module.exports.pairPiecesOf = pairPiecesOf;
 module.exports.EVENT_DAYS = EVENT_DAYS;
 module.exports.STATION_LABEL = STATION_LABEL;
