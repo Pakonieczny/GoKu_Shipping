@@ -167,6 +167,19 @@ const ENGRAVE_INTENT_SCHEMA = { type: "object", additionalProperties: false, pro
   requests: { type: "object", additionalProperties: false, properties: { side: { type: "string", enum: ["back", "front", "both", "unspecified"] }, font: { type: ["string", "null"] }, handwriting: { type: "boolean" }, image: { type: "boolean" } }, required: ["side", "font", "handwriting", "image"] },
   questions: { type: "array", items: { type: "string" } }, confidence: { type: "number" } }, required: ["engrave", "text", "source", "sourceQuote", "requests", "questions", "confidence"] };
 
+/* A line that makes several pieces which can each carry their own words (the left and the right earring of a mismatched pair, the discs of a disc necklace)
+   is read with these instructions and this schema; every other line is read with the ones above, byte for byte as before (the cache of paid readings is
+   keyed by the request, so nothing already read is paid for again). */
+const ENGRAVE_PIECES_INSTRUCTIONS = ENGRAVE_INTENT_INSTRUCTIONS + `
+
+THIS LINE MAKES SEVERAL PIECES, each cut and engraved on its own. The message lists their slots: "L" is the LEFT earring and "R" the RIGHT earring (a matching pair: one design on each ear, the right earring is the left turned over like a mirror image; a mismatched pair: a different charm on each ear); "D1", "D2", "D3" ... are the discs of a disc necklace, disc 1 first. Besides the fields above, answer "pieces": one entry for every slot listed, each with the exact words for that piece only (the same verbatim rules as text).
+- The customer gives different words for different ears or discs ("left: Anna, right: Ben", "A B C" for three discs, a name for each ear): put each piece's own words in its slot.
+- The customer gives ONE inscription for the whole line (one name, one date): give every slot that same text (the words read the normal way on both ears; the right ear's letters are never reversed).
+- The words are clear but it is NOT clear which piece gets which (two names with no left or right, three letters and no order): give your best guess in pieces, add one short question for the operator ("Which ear gets Anna and which gets Ben?") and lower confidence.
+- A piece that is to have NO engraving gets "" for its text.
+- "text" is every inscription of the line together, joined by "\n" in slot order (left before right, disc 1 first).`;
+const ENGRAVE_PIECES_SCHEMA = { ...ENGRAVE_INTENT_SCHEMA, properties: { ...ENGRAVE_INTENT_SCHEMA.properties, pieces: { type: "array", items: { type: "object", additionalProperties: false, properties: { slot: { type: "string" }, text: { type: "string" } }, required: ["slot", "text"] } } }, required: [...ENGRAVE_INTENT_SCHEMA.required, "pieces"] };
+
 const ENGRAVE_REVIEW_INSTRUCTIONS = `You look at the rendered BACK of one jewelry charm with engraving text already placed by a measuring tool. The image shows a millimetre grid, the charm's cut outline and cut-outs (holes), and the text as it will be engraved. The tool has already PROVEN that no ink touches a cut edge or a hole and that the text is the largest size that fits; do not re-judge geometry. Judge readability and taste only: is the text legible at this size, does the placement look right on the piece, is anything awkward (a line breaking oddly, text crowding a hole, an orientation that reads wrong for a pendant). Answer legible true/false and one or two plain sentences of notes for the person who approves it.`;
 const ENGRAVE_REVIEW_SCHEMA = { type: "object", additionalProperties: false, properties: { legible: { type: "boolean" }, notes: { type: "string" }, concerns: { type: "array", items: { type: "string", enum: ["small", "crowded", "odd-break", "orientation", "placement", "other"] } } }, required: ["legible", "notes", "concerns"] };
 
@@ -228,7 +241,10 @@ function buildRequest(mode, body) {
     lines.push(`Buyer message on the order: ${JSON.stringify(str(body.buyerMessage, 2000))}`);
     lines.push(`Staff note (overrides the customer's text): ${JSON.stringify(str(body.staffNote, 2000))}`);
     lines.push(`Internal staff messages, oldest first: ${JSON.stringify((body.messages || []).slice(-5).map(m => ({ who: str(m.senderName, 60), text: str(m.text, 400) })))}`);
+    const slots = (Array.isArray(body.slots) ? body.slots : []).map(x => str(x, 4)).filter(x => /^(?:L|R|D\d{1,2})$/.test(x)).slice(0, 24);
+    if (slots.length > 1) lines.push(`Pieces of this line (slots, in order): ${JSON.stringify(slots)}. Answer "pieces" with one entry for each.`);
     content.push({ type: "text", text: lines.join("\n") });
+    if (slots.length > 1) return { system: ENGRAVE_PIECES_INSTRUCTIONS, schema: ENGRAVE_PIECES_SCHEMA, content, effort: EFFORT };
     return { system: ENGRAVE_INTENT_INSTRUCTIONS, schema: ENGRAVE_INTENT_SCHEMA, content, effort: EFFORT };
   }
   if (mode === "engraveReview") {
@@ -277,6 +293,7 @@ async function run(mode, body) {
     }
     if (mode === "engraveIntent") {
       parsed.text = str(parsed.text, 400); parsed.confidence = Math.max(0, Math.min(1, num(parsed.confidence))); parsed.questions = (parsed.questions || []).map(q => str(q, 300)).filter(Boolean);
+      if (Array.isArray(parsed.pieces)) parsed.pieces = parsed.pieces.filter(x => x && /^(?:L|R|D\d{1,2})$/.test(str(x.slot, 4))).map(x => ({ slot: str(x.slot, 4), text: str(x.text, 400) }));
     }
     if (mode === "packing") {
       parsed = require("./_charmNestSolver").normalizePackingPlan(parsed, req.pieceCount);

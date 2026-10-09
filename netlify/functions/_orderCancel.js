@@ -6,6 +6,7 @@
  *
  *  Charm_Nest_Cancelled/{orderId}   (Sandbox_Charm_Nest_Cancelled in the sandbox)
  *    orderId · by (a person's name, or "Etsy") · why · at (ms) · buyer · placedAt · shipBy (ms) · sheets[] · lines[]
+ *                (a line that made a pair or several pieces also has kind: pair | mismatched | multi and pieces: how many)
  *    source      "sorter" (a person) | "etsy" (Etsy cancelled it)
  *    etsyStatus  Etsy's own word for the receipt ("Canceled", "Fully Refunded"), once Etsy is known to have cancelled it
  *    etsyAt      when Etsy's receipt last changed (ms), with etsyStatus
@@ -53,7 +54,13 @@ function isCancelled(r) {
   if (/cancel/i.test(st)) return true;
   return /fully\s*refund/i.test(st) && !(r.is_shipped || raw.is_shipped || raw.was_shipped);
 }
-const lineOf = l => ({ transactionId: s(l && l.transactionId, 30), sku: s(l && l.sku, 80), title: s(l && l.title, 200), quantity: Math.max(1, Math.round(n(l && l.quantity)) || 1), material: s(l && l.material, 40) });
+// (a line that made a pair, a mismatched pair or several pieces also keeps `kind` and `pieces`: the record then says what was cancelled; a single piece adds neither, so old records and single-piece lines are unchanged)
+const LINE_KINDS = new Set(["pair", "mismatched", "multi"]);
+const lineOf = l => {
+  const out = { transactionId: s(l && l.transactionId, 30), sku: s(l && l.sku, 80), title: s(l && l.title, 200), quantity: Math.max(1, Math.round(n(l && l.quantity)) || 1), material: s(l && l.material, 40) };
+  if (l && LINE_KINDS.has(l.kind)) { out.kind = l.kind; out.pieces = Math.max(1, Math.min(99, Math.round(n(l.pieces)) || 1)); }
+  return out;
+};
 /** A cancel record as it is stored (createdAt aside). */
 function record(x) {
   const etsy = x.source === "etsy";
@@ -331,12 +338,14 @@ async function retryBacklog(db, FV) {
     sheet into the record there is. Never makes a record: an order restored meanwhile stays restored. opts: prefix, and
     removals / by (noteRemovals): each fate is also a removal of its own (sheet~<sheet>), with its time. */
 // "open": still on a saved sheet not cut yet that the sorter has not loaded (its pieces are to come off before cutting)
-const fateOf = f => ({ sheet: s(f && f.sheet, 80), fate: f && (f.fate === "cut" || f.fate === "open") ? f.fate : "removed", text: s(f && f.text, 160) });
+// (pieces / sides: how many pieces of a pair, and which sides ("L,R"), a sheet's step is about; only a pair or a mismatched pair carries them)
+const sidesOf = v => s(v, 20).replace(/[^LR,-]/g, "");
+const fateOf = f => { const out = { sheet: s(f && f.sheet, 80), fate: f && (f.fate === "cut" || f.fate === "open") ? f.fate : "removed", text: s(f && f.text, 160) }; if (f && n(f.pieces) > 0) out.pieces = Math.min(99, Math.round(n(f.pieces))); if (f && sidesOf(f.sides)) out.sides = sidesOf(f.sides); return out; };
 const FATE_OUTCOME = { removed: "removed", cut: "setAside", open: "waiting" };
 async function noteFates(db, orderId, fates, opts = {}) {
   const id = idOf(orderId); if (!id) return { error: "orderId required" };
   const inc = (Array.isArray(fates) ? fates : []).map(fateOf).filter(f => f.sheet).slice(0, 30), now = Date.now();
-  const rem = inc.map(f => removalOf({ id: `sheet~${f.sheet}`, where: f.sheet, kind: "sheet", outcome: FATE_OUTCOME[f.fate], text: f.text, by: opts.by }, now))
+  const rem = inc.map(f => removalOf({ id: `sheet~${f.sheet}`, where: f.sheet, kind: "sheet", outcome: FATE_OUTCOME[f.fate], text: f.text, by: opts.by, pieces: f.pieces, sides: f.sides }, now))
     .concat((Array.isArray(opts.removals) ? opts.removals : []).slice(0, 60).map(r => removalOf(r, now))).filter(Boolean);
   if (!inc.length && !rem.length) return { ok: true, changed: false };
   const ref = colOf(db, opts.prefix).doc(id);
@@ -357,7 +366,8 @@ async function noteFates(db, orderId, fates, opts = {}) {
    process ... all this must be saved"): the record's own list, one entry per removal under a stable id, so a retry or a
    re-detection lands on the same one:
      removals [{ id, at, where ("GF Sheet 1", "the SS pool", "the queue"), kind: sheet | pool | queue | station | other,
-                 outcome: removed | setAside | waiting | failed | seen, by, text, lineKey, station, was? }]
+                 outcome: removed | setAside | waiting | failed | seen, by, text, lineKey, station, was?,
+                 pieces?, sides? (a pair's removal: how many pieces, which sides "L,R") }]
    Entries are only added or updated: a waiting or failed one turns removed or set aside when that happens (its earlier
    state kept as `was`), never back. Nothing is pruned; past REMOVALS_MAX (far more than any order has pieces) a new one is
    not added and removalsLeftOut counts it. ── */
@@ -367,7 +377,11 @@ function removalOf(x, now) {
   if (!x || typeof x !== "object") return null;
   const where = s(x.where || x.sheet, 100), kind = KINDS.has(x.kind) ? x.kind : "sheet";
   const id = s(x.id, 120).replace(/[^\w.:~ ()-]/g, "_") || (where ? `${kind}~${where}` : ""); if (!id) return null;
-  return { id, at: n(x.at) || now || Date.now(), where, kind, outcome: OUTCOMES.has(x.outcome) ? x.outcome : "removed", by: s(x.by, 80), text: s(x.text, 160), lineKey: s(x.lineKey, 120), station: s(x.station, 40) };
+  const out = { id, at: n(x.at) || now || Date.now(), where, kind, outcome: OUTCOMES.has(x.outcome) ? x.outcome : "removed", by: s(x.by, 80), text: s(x.text, 160), lineKey: s(x.lineKey, 120), station: s(x.station, 40) };
+  // (a pair's removal says how many pieces and which sides; any other removal carries neither)
+  if (n(x.pieces) > 0) out.pieces = Math.min(99, Math.round(n(x.pieces)));
+  if (sidesOf(x.sides)) out.sides = sidesOf(x.sides);
+  return out;
 }
 function mergeRemovals(cur, inc) {
   const list = (Array.isArray(cur) ? cur : []).filter(r => r && typeof r === "object").slice(), idx = new Map(list.map((r, i) => [r.id, i]));
@@ -376,7 +390,7 @@ function mergeRemovals(cur, inc) {
     const i = idx.get(r.id);
     if (i == null) { if (list.length >= REMOVALS_MAX) { left++; continue; } idx.set(r.id, list.length); list.push(r); changed = true; continue; }
     const o = list[i], nx = Object.assign({}, o);
-    for (const k of ["where", "kind", "by", "text", "lineKey", "station"]) if (r[k] && r[k] !== o[k]) nx[k] = r[k];
+    for (const k of ["where", "kind", "by", "text", "lineKey", "station", "pieces", "sides"]) if (r[k] && r[k] !== o[k]) nx[k] = r[k];
     if (r.outcome !== o.outcome && !(FINAL.has(o.outcome) && !FINAL.has(r.outcome))) { nx.outcome = r.outcome; nx.at = r.at; nx.was = { outcome: s(o.outcome, 20), at: n(o.at) }; }
     if (JSON.stringify(nx) !== JSON.stringify(o)) { list[i] = nx; changed = true; }
   }

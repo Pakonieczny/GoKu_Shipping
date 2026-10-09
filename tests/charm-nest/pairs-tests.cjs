@@ -23,8 +23,9 @@ const T10 = F.tx(10), gkey = o => `${F.rid(o)}:${T10}`;
   for (const [sku, per] of Object.entries(F.DESIGN_FACING)) {
     const c = F.charmOf(sku), bodies = Pair.bodiesOf(c);
     ok(bodies.length === per.length, `${sku}: ${bodies.length} bodies, the fixtures say ${per.length}`);
-    bodies.forEach((b, i) => ok(Pair.facingOfBody(b, c) === per[i], `${sku} body ${i}: CharmNestPair says it faces ${Pair.facingOfBody(b, c)}, the fixtures say ${per[i]}`));
-    ok(Pair.facingOf(c) === per[0], `${sku}: facingOf ${Pair.facingOf(c)} vs ${per[0]}`);
+    // (a shape never says which way it faces: null is the Left as drawn, so a declared "L" reads back as null; "R" is only ever a person's word, on the record)
+    bodies.forEach((b, i) => ok((Pair.facingOfBody(b, c) || 'L') === (per[i] || 'L'), `${sku} body ${i}: CharmNestPair says it faces ${Pair.facingOfBody(b, c)}, the fixtures say ${per[i]}`));
+    ok((Pair.facingOf(c) || 'L') === (per[0] || 'L'), `${sku}: facingOf ${Pair.facingOf(c)} vs ${per[0]}`);
   }
   for (const kind of Object.keys(F.KINDS)) for (const qty of [1, 2, 3]) for (const count of kind === 'discs' || kind === 'letters' ? [2, 3, 4] : [0]) {
     const w = F.world({ orders: [{ rid: F.rid(1), lines: [{ n: 10, kind, qty, discs: count, letters: count }] }] }), pcs = w.pieces, per = F.KINDS[kind].pair, earring = kind === 'pair' || kind === 'hoop' || kind === 'mismatched';
