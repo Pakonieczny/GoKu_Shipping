@@ -17,25 +17,25 @@
  *        parse + group + label with the repo's own code (netlify/functions/_charmNestPdf.js: the parser the app and the
  *        indexer use) and write one compact fingerprint per charm. Run it once per master.
  *
+ *    node scripts/audit-catalog.cjs leak "<MASTER.ai>" <dump.json>
+ *        (dump already runs this) adds the paint-lost-by-the-writer check to a dump made without it, in about 30 s: cuts every
+ *        non-path segment out of the page the way the per-SKU writer (isolate) does, reads the page again and compares the paint
+ *        of each path. After a writer fix it must find 0.
+ *
  *    node scripts/audit-catalog.cjs report <dump.json> [<dump.json> ...] --out <dir> [--findings <dir>]
  *        classify every charm, flag the inconsistent ones and write CATALOG-offending.json and CATALOG-report.md
  *        into <dir>. --findings reads the five workers' <NAME>-affected.json files (if present) to confirm categories.
  *
- *  Categories (the `defects[]` of an SKU):
- *    colour-hatch-as-engrave   blue/red/colour paint on an ENGRAVE layer, or black paint on a HATCH layer (the layer and
- *                              the colour disagree: the app reads either; one of them is the wrong type of engraving)
- *    colour-unlayered          artwork with no layer name or a layer the app does not know
- *    black-fill-no-engrave     a big solid black filled path that is the charm body (no ENGRAVE/HATCH ink at all)
- *    black-fill-body           solid black fill covering most of the charm area (solid black no-engraving charm)
- *    grey-box                  a filled grey (or pattern/translucent stand-in) rectangle, image or shading member
- *    image-member              a raster image, shading or soft-masked form in the charm (cannot be laser cut or traced)
- *    extra-ring                a third concentric circle at a hoop (hoop + hole + a larger circle around them)
- *    detached-ring             a hoop circle that does not touch the body (loose washer)
- *    ring-orphan               a loose hoop-sized circle near the charm that the grouping left out of it
- *    text-member               a text object inside the charm (labels are removed; this is any other text)
- *    unlabelled                a charm outline with no SKU under it (not in the library at all)
- *    no-outline-cut            the charm has no CUT-layer outline
- *    multi-cut                 more than one CUT-layer outline at the top level of one charm
+ *  Categories (the `defects[]` of an SKU; the exact rules are in audit-catalog-report.cjs classify(), thresholds in T):
+ *    colour-lost-in-file   the per-SKU writer cuts out a text object that set the layer's colour, so blue HATCH reads back black
+ *                          (found by `leak`; baked into the file, needs a re-index after the writer fix)
+ *    grey-box / image-member   shading, image or grey box members: drawn as translucent boxes, carried in the per-SKU file
+ *    text-member / label-text-in-charm / label-ink / text-undecodable   text or label ink inside a charm
+ *    hatch-not-blue / engrave-not-red / cut-chromatic / outline-not-cut-layer   a layer and its colour disagree
+ *    solid-black           the cut outline is drawn as a black fill (read-time: drawCharm shows it as a cut line)
+ *    extra-ring / detached-ring / ring-orphan   hoop rings that are doubled, loose or left out of the charm
+ *    sku-is-dimension / size-outlier / family-outlier / outline-noop   labelling and family conventions
+ *    writer-changed-members / rings-error   (only with --rt) the per-SKU file does not read back as the master draws it
  *
  *  The thresholds are constants at the top of classify(); the report prints how many SKUs each rule flagged so a
  *  threshold that is wrong shows up as a count that is implausible.
