@@ -242,7 +242,7 @@ function pairLayer(P, G, Pair, g, lab, items, o, log) {
       const charm = Pair.foldRow(owner, bodyCharms.filter(c => c !== owner));
       const outlines = bodyCharms.map(c => c.outline);
       const merged = Object.assign({}, owner.outline, { subpaths: [].concat(...outlines.map(x => x.subpaths || [])), bbox: outlines.map(x => x.bbox).reduce(union), closed: outlines.every(x => x.closed) });
-      const eng = bodyCharms.map(engraveOf), first = eng[0];
+      const eng = bodyCharms.map(engraveOf), first = eng[bodyCharms.indexOf(owner)];   // (the labelled body's up direction is the one the library always held for this SKU)
       row.folded = true; row.forced = forced && !r.sure; row.partners = bodyCharms.filter(c => c !== owner).map(c => c.index);
       out.fold.set(r.owner, {
         rec: r, charm, view: Object.assign({}, charm, { outline: merged }),                      // (the merged outline is only what the area and the hash are read from; the charm keeps a real body's outline, so its bodies can be told apart again)
