@@ -50,7 +50,7 @@ for (const layer of ['Isolation Mode', null]) {
   assert.equal(draw(c).fills.length, 0, 'no solid body');
 }
 
-// 4 · real engraving stays: a blue hatch fill and a black fill on an engraving layer inside a stroked outline keep their paint
+// 4 · real engraving stays filled: a blue hatch fill keeps its paint; a black fill on an engraving layer inside a stroked outline is hatching (blue)
 {
   const body = path('CUT', [blob(20, 20, 20, 24)]);
   const hatch = path('HATCH', [blob(20, 20, 10, 12)], { stroke: false, fill: true, fillRGB: [0, 0, 1], paintOp: 'f' });
@@ -59,7 +59,7 @@ for (const layer of ['Isolation Mode', null]) {
   assert(!P.isCutSilhouetteFill(c, hatch) && !P.isCutSilhouetteFill(c, ink) && !P.isCutSilhouetteFill(c, body));
   const rec = draw(c);
   assert(rec.fills.includes('rgb(0,0,255)'), 'blue hatching stays filled');
-  assert(rec.fills.includes('rgb(0,0,0)'), 'real black engraving stays solid');
+  assert(!rec.fills.includes('rgb(0,0,0)') && rec.fills.filter(f => f === 'rgb(0,0,255)').length === 2, 'a black fill inside is blue hatching too (the black-fill rule, tests/charm-nest/black-fill.cjs): never a solid black body');
 }
 
 // 5 · a fill-only outline WITH engraving: the silhouette is a line, the engraving is still painted

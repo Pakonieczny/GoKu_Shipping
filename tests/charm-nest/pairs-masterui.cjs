@@ -49,6 +49,7 @@ const tA = rect(0, 0, 10, 40), tallPair = { outline: tA, members: [tA, eng(2, 2,
 const tl = PT.layout(PT.plan(tallPair), tallPair.bbox, { size: 168, padPt: 2 });
 ok(tl.H <= 168 && tl.W <= 168, 'a tall pair fits inside the size asked for, band included');
 
+PT.use(Object.assign({}, Pair, { facingOf: () => 'L', facingOfBody: b => (b.index === 0 ? 'L' : 'R') }));   // (each ear already faces its own side: nothing to turn over)
 /* ── 3 · canvasFor with a recording canvas: one drawCharm call, one scale, the wash only when asked and only when it is safe ── */
 const recorder = () => { const log = []; const ctx = new Proxy({}, { get: (t, k) => k === 'canvas' ? ctx._cv : (k in t ? t[k] : (...a) => { log.push([k, a]); }), set: (t, k, v) => { t[k] = v; log.push(['set:' + k, v]); return true; } }); return { log, make: (w, h) => { const cv = { width: w, height: h, getContext: () => ctx }; ctx._cv = cv; return cv; } }; };
 let drew = []; const fakeP = { drawCharm: (ctx, c, tx, k) => drew.push({ c, k, p: tx(0, 0) }) };
@@ -93,13 +94,14 @@ ok(PT.chipHtml(null) === '' && PT.chipHtml('X') === '' && PT.chipHtml(2) === '',
 /* ── 3b · direction (Paul, 9 Oct 18:47): each ear faces its own side; the Right piece is the Left turned over ── */
 const mitten = (x0, rgb, h) => { const o = rect(x0, 0, x0 + 16, 26, { subpaths: [[['m', [x0 + 4, 0]], ['l', [x0 + 16, 0]], ['l', [x0 + 16, 26]], ['l', [x0 + 4, 26]], ['l', [x0 + 4, 14]], ['l', [x0, 12]], ['l', [x0, 8]], ['l', [x0 + 4, 6]], ['h']]] }); return { o, members: [o, eng(x0 + 7, 3, x0 + 14, 3 + (h || 5), rgb)] }; };
 const mA = mitten(0, [1, 0, 0], 5), mB = mitten(22, [0, 0, 1], 9);
+PT.use(null);
 const mittens = () => ({ id: 'm', name: 'MITTENS', outline: mB.o, members: [mB.o, ...mB.members.slice(1), mA.o, ...mA.members.slice(1)], bbox: [0, 0, 38, 26], strokePt: .25, centerPt: [19, 13] });
 // the real shared module's reader (first heuristic): whatever it says, the plan agrees with it: a body is mirrored exactly when it faces the other side
 const realPlan = PT.plan(mittens());
-ok(realPlan && realPlan.bodies.every(b => (b.facing === null || b.facing === 'L' || b.facing === 'R') && b.mirror === (!!b.facing && b.facing !== b.side)), 'with the real facing reader: a body is turned over exactly when it faces the wrong way: ' + JSON.stringify(realPlan.bodies.map(b => [b.side, b.facing, b.mirror])));
+ok(realPlan && realPlan.bodies.every(b => (b.facing === null || b.facing === 'L' || b.facing === 'R') && b.mirror === (b.side !== (b.facing || 'L'))), 'with the real facing reader: a body is turned over exactly when it faces the wrong way (unknown = faces left, as piecesFor reads it): ' + JSON.stringify(realPlan.bodies.map(b => [b.side, b.facing, b.mirror])));
 const withFacing = f => { PT.use(Object.assign({}, Pair, { facingOf: f, facingOfBody: f })); };
 withFacing(() => null);
-ok(PT.plan(mittens()) && PT.plan(mittens()).bodies.every(b => b.mirror === false && b.facing === null), 'facing unknown: nothing is mirrored, the picture is as drawn');
+ok(PT.plan(mittens()) && PT.plan(mittens()).bodies.every(b => b.facing === null && b.mirror === (b.side === 'R')), 'facing unknown: it is read as facing left (the way piecesFor reads it), so the Left ear is as drawn and the Right ear is turned over');
 withFacing(() => 'L');   // both mittens as drawn face LEFT (Paul's picture): the Right ear has to be turned over
 let mp = PT.plan(mittens());
 ok(mp.bodies[0].side === 'L' && mp.bodies[0].mirror === false && mp.bodies[1].side === 'R' && mp.bodies[1].mirror === true && mp.bodies[1].facing === 'L', 'both bodies face left as drawn: the Right ear is mirrored, the Left is not');
@@ -107,8 +109,8 @@ withFacing(() => 'R'); mp = PT.plan(mittens());
 ok(mp.bodies[0].mirror === true && mp.bodies[1].mirror === false, 'both face right as drawn: the Left ear is mirrored instead');
 withFacing(b => (b.bbox[0] < 10 ? 'L' : 'R')); mp = PT.plan(mittens());
 ok(mp.bodies.every(b => b.mirror === false), 'each body already faces its own side: nothing is mirrored');
-withFacing(() => null); ok(PT.plan(mittens()).bodies.every(b => !b.mirror), 'facing unknown or symmetric: as drawn');
-withFacing(() => { throw new Error('boom'); }); ok(PT.plan(mittens()).bodies.every(b => !b.mirror), 'a facing that throws never breaks the picture');
+withFacing(() => null); ok(PT.plan(mittens()).bodies.map(b => b.mirror).join() === 'false,true', 'facing unknown: the Left as drawn, the Right turned (the same rule the cut piece follows)');
+withFacing(() => { throw new Error('boom'); }); ok(PT.plan(mittens()).bodies.length === 2, 'a facing that throws never breaks the picture');
 withFacing(() => 'L');
 const turns = log => log.filter(l => l[0] === 'scale' && l[1][0] === -1 && l[1][1] === 1).length;
 r = recorder(); drew = [];
@@ -174,7 +176,7 @@ if (Resvg) {
     try { const before = require(tmp).thumbnailPng; ok(before, 'the old maker could be loaded'); ok(Buffer.compare(before(Geom, oneCharm(), 168, null), pngOne) === 0, 'a normal design: byte-identical PNG to the code before this change'); } finally { fs.unlinkSync(tmp); }
   }
   // direction in the stored PNG: both mittens face left as drawn; with the facing known the Right one is turned over
-  PT.use(Object.assign({}, Pair, { facingOf: () => 'L', facingOfBody: () => 'L' })); mitPng.turned = png(mittens()); PT.use(Object.assign({}, Pair, { facingOf: () => null, facingOfBody: () => null })); mitPng.plain = png(mittens()); PT.use(null);
+  PT.use(Object.assign({}, Pair, { facingOf: () => 'L', facingOfBody: () => 'L' })); mitPng.turned = png(mittens()); PT.use(Object.assign({}, Pair, { facingOf: () => 'L', facingOfBody: b => (b.index === 0 ? 'L' : 'R') })); mitPng.plain = png(mittens()); PT.use(null);
   ok(mitPng.turned && mitPng.plain && Buffer.compare(mitPng.turned, mitPng.plain) !== 0, 'the stored PNG differs once a body has to be turned over');
 } else console.log('  – no @resvg/resvg-js here: the stored-PNG checks were not run');
 
@@ -280,7 +282,7 @@ ok(br.includes('e.pair && e.pair.mismatched ?') && br.includes('Left + Right pai
       const keep = [CharmNestPair.facingOf, CharmNestPair.facingOfBody];
       CharmNestPair.facingOf = () => 'L'; CharmNestPair.facingOfBody = () => 'L';
       const o = { turned: await spans(await CharmNestPDF.thumbnail(JSON.parse(JSON.stringify(fx.mit)), 400)) };
-      CharmNestPair.facingOf = () => null; CharmNestPair.facingOfBody = () => null;
+      CharmNestPair.facingOf = () => 'L'; CharmNestPair.facingOfBody = b => (b.index === 0 ? 'L' : 'R');
       o.plain = await spans(await CharmNestPDF.thumbnail(JSON.parse(JSON.stringify(fx.mit)), 400));
       CharmNestPair.facingOf = keep[0]; CharmNestPair.facingOfBody = keep[1];
       return o;
