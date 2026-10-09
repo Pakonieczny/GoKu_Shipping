@@ -45,6 +45,10 @@ function slimEntry(d) {
     sizes: d.sizes || null, blocked: d.blocked || null, conflict: d.conflict || null, sizeMoved: d.sizeMoved || null, labelSource: d.labelSource || "text", confirmedBy: d.confirmedBy || null, open: !!d.open, indexedAt: d.indexedAt && d.indexedAt.toMillis ? d.indexedAt.toMillis() : (num(d.indexedAtMs) || null), hashSource: d.hashSource || "browser" };
 }
 
+/** A short name for the shape an entry is sent in (the code that makes it). It rides in the index's signature (charmNestLibrary masterIndexSig),
+    so a page that kept a copy of the whole index (charm-nest-master-cache.js) reads it again when this code changed, not only when the data did. */
+const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair, cleanFacing, cleanSym, num].map(f => String(f)).join("\n")).digest("hex").slice(0, 10);
+
 /**
  * entries: [{ sku, size?, masterHash, masterPath, masterName, charmHash, widthPt, heightPt, areaPt2, members, holes, engravable, upAngle, upSource, aiPath, thumbPath, aiUrl, thumbUrl, open, labelSource, confidence, blocked? }]
  * opts: { replaces: [masterHash…] } — hashes of earlier versions of this same master file.
@@ -127,4 +131,4 @@ async function putFile(db, FV, body) {
   return { ok: true, masterHash: hash };
 }
 
-module.exports = { INDEX, FILES, isSku, slimEntry, cleanPair, cleanFacing, cleanSym, putIndex, putFile };
+module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanPair, cleanFacing, cleanSym, putIndex, putFile };
