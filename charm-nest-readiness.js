@@ -117,7 +117,10 @@
   const titleOf=l=>String(l.line?.title || l.snap?.title || l.spec?.designSku || l.sku || '').replace(/\s+/g,' ').trim();
   // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
   function copyIds(l,key){
-    const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],want=qtyOf(l);
+    const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],q=Math.max(1,Math.floor(+(l.spec?.quantity ?? l.quantity) || 1));
+    // the pieces a line made are the pool ids it has: a line pooled before every earring pair made a Left and a Right piece has ONE id per unit and is never "missing" its Right
+    // piece. The intake's larger count (pairs: 2 per unit; discs: n) is waited for when the line has no ids yet; with ids, ids are invented only up to its quantity, as before.
+    const want=ids.length?Math.max(ids.length,Math.min(qtyOf(l),q)):qtyOf(l);
     for(let n=1;key && ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
     return ids.sort((a,b)=>tailNo(a)-tailNo(b));       // a piece is "piece 2" by its copy number, whatever order the record lists them in (OrderPieces numbers them alike)
   }
