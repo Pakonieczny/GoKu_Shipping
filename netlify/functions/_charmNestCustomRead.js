@@ -36,6 +36,7 @@ Kinds:
 How to judge:
 - Weigh independent evidence. The SKU code, the listing photo, the listing description, the options, and the words of the buyer, staff and conversations are separate witnesses. A catalogue title plus a product photo of a finished charm means regular, whatever the title's filler words say.
 - A personalised catalogue design (a name, initial or date engraved on a standard charm) is regular, not custom.
+- A pair of earrings sold with a DIFFERENT charm on each ear ("mismatched", "one of each", two catalogue designs named in one listing or its options, a SKU such as MISMATCHED_7134) is regular when each ear is a catalogue design, never custom; say so in the summary and name BOTH designs (left, then right). It makes two pieces for the one line.
 - "Jewellery: Type not specified" and "no options" point toward custom or special, but a regular listing can lack them too; they never decide alone.
 - The listing photo is supporting evidence only. Product photos on white or neutral backgrounds are typical of regular listings. Never guess a kind from the photo alone.
 - Conversations may be about other orders by the same buyer; use them only where they clearly concern this line.

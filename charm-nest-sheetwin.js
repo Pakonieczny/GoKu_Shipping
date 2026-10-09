@@ -2785,8 +2785,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const mineRow = plan.whole && rid && String(r.order.receiptId) === rid;
         if (!mineRow && !(r.poolIds || []).some(id => ids.has(id))) continue;
         r.poolIds = (r.poolIds || []).filter(id => !ids.has(id));
-        const j = Engrave.items().get(r.key);
-        if (j) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(r.key); Review.remove("eng:" + r.key); } }
+        for (const j of Engrave.jobsOf(r)) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(j.key); Review.remove("eng:" + j.key); } }   // (each of a pair's ears or a necklace's discs has its own job: only the one whose pieces left goes)
         if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); r.holdSeen = false; CNListActivity.touch(r,r.heldAt); }
       }
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
@@ -3207,7 +3206,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function dropOrder(rid, all, keep) {
     rid = String(rid);
     const rows = (all ? Orders.rows().filter(r => String(r.order.receiptId) === rid && r.state !== "committed") : rowsOfOrder(rid)).filter(r => !(keep && keep(r))), keys = new Set(rows.map(r => r.key));
-    for (const r of rows) { B.orders.byKey.delete(r.key); Engrave.items().delete(r.key); for (const id of r.poolIds || []) if (!Pool.sheetOf(id)) B.pool.rows.delete(id); }
+    for (const r of rows) { B.orders.byKey.delete(r.key); Engrave.dropLine(r); for (const id of r.poolIds || []) if (!Pool.sheetOf(id)) B.pool.rows.delete(id); }
     B.orders.rows = B.orders.rows.filter(r => !keys.has(r.key));
     if (B.review && Array.isArray(B.review.items)) B.review.items = B.review.items.filter(it => String(it.rid || "") !== rid && !keys.has(it.line) && !keys.has(it.jobKey) && !(it.row && keys.has(it.row.key)) && !(it.rows || []).some(r => keys.has(r.key)));
     const run = B.run;

@@ -419,6 +419,7 @@ html[data-rail=lg] .railFoot{font-size:13px}
 .tileImg .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink45);font-size:10.5px;letter-spacing:.04em}
 .tileImg .ph.err{color:var(--clay)}
 .tileImg .qty{position:absolute;right:5px;top:5px;z-index:2;background:rgba(28,26,23,.82);color:#fff;font:700 10px var(--mono);border-radius:20px;padding:2px 7px;pointer-events:none}
+.tileImg .pairTag{position:absolute;right:5px;bottom:5px;z-index:2;background:var(--gold,#caa861);color:#1c1a17;font:700 10px var(--mono);border-radius:20px;padding:2px 7px;pointer-events:none}   /* an earring pair: a left and a right */
 .tileBody{padding:7px 8px 8px;display:grid;gap:3px;cursor:pointer;flex:1 1 auto;align-content:start}
 .tileBody:hover{background:var(--card2)}
 .tRow{display:flex;align-items:baseline;gap:5px;font-size:10.5px;line-height:1.25;min-width:0}
@@ -1331,7 +1332,7 @@ const DsActivity = (() => {
       the order leaves orderCache. */
   function pieces(ids) {
     const out = {};
-    try { for (const id of ids || []) { const t = orderCache[String(id)]; out[String(id)] = Array.isArray(t) ? t.reduce((n, x) => n + (Number(x && x.quantity) || 1), 0) : 0; } } catch (_) {}
+    try { for (const id of ids || []) { const t = orderCache[String(id)]; out[String(id)] = Array.isArray(t) ? (window.StationLiveOrder && StationLiveOrder.units ? StationLiveOrder.units(t) : t.reduce((n, x) => n + (Number(x && x.quantity) || 1), 0)) : 0; } } catch (_) {}
     return out;
   }
   /** Labels the print page produced: one `print` per label (a label lists up to 50 orders, so it carries no order id). */
@@ -3690,6 +3691,7 @@ function makeTile(tx) {
   const imgBox = document.createElement("div");
   imgBox.className = "tileImg";
   imgBox.innerHTML = `<div class="ph">Loading…</div><span class="qty">×${tx.quantity ?? 1}</span>`;
+  try { const pt = window.StationLiveOrder && StationLiveOrder.tag ? StationLiveOrder.tag(tx) : ""; if (pt) { imgBox.title = pt; tile.dataset.pair = "1"; imgBox.insertAdjacentHTML("beforeend", '<span class="pairTag">L+R</span>'); } } catch (_) {}   // an earring pair: a left and a right piece
   tile.appendChild(imgBox);
 
   const body = document.createElement("div");
@@ -7073,9 +7075,10 @@ window.DesignStation = {
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261006-st3"></script>
-<script src="station-activity.js?v=20261006-st2"></script>
+<script src="station-activity.js?v=20261009-ps1"></script>
 <!-- The order in hand right now (the selected orders = working, labels printed or selection cleared = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
-<script src="station-live-order.js?v=20261005-et2"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
+  <script src="station-live-order.js?v=20261009-ps1"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();

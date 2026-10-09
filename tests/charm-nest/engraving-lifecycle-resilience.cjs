@@ -24,7 +24,7 @@ function job(state = 'words') {
 }
 function engravingFixture() {
   let owner = new Map(), fonts = deferred(), worker = deferred(), calls = 0;
-  const context = vm.createContext({items:()=>owner, loadFonts:()=>fonts.promise, F_:{ok:true,Regular:{}}, G:{glyphCoverage:()=>({ok:true})}, Review:{add(){},remove(){}}, Pool:{update:async()=>{}}, RunCtl:{poke(){}}, EG:{cardKey:null}, render(){}, agent(){}, Master:{entryFor:()=>({})}, charmFor:()=>charm, fitClient:()=>({run:()=>{calls++;return worker.promise;}}), fitInput:(j,c)=>({charm:c,lines:j.lines.slice()}), fitStamp:x=>JSON.stringify(x.lines)});
+  const context = vm.createContext({lineOf:r=>r,timelineApproved(){},items:()=>owner, loadFonts:()=>fonts.promise, F_:{ok:true,Regular:{}}, G:{glyphCoverage:()=>({ok:true})}, Review:{add(){},remove(){}}, Pool:{update:async()=>{}}, RunCtl:{poke(){}}, EG:{cardKey:null}, render(){}, agent(){}, Master:{entryFor:()=>({})}, charmFor:()=>charm, fitClient:()=>({run:()=>{calls++;return worker.promise;}}), fitInput:(j,c)=>({charm:c,lines:j.lines.slice()}), fitStamp:x=>JSON.stringify(x.lines)});
   const charm = {outline:{},members:[]};
   vm.runInContext(section('  async function setReady(', '  /** A person\'s decision'), context);
   vm.runInContext(section('  const fitTasks =', '  async function claudeRead('), context);
@@ -93,7 +93,7 @@ async function testEngravingCallbacks() {
 async function testRecoveryFailures() {
   for (const changed of [true,false]) {
     const j = job(), blocked = [], gate = deferred(), started = deferred(); let owner = new Map([[j.key,j]]);
-    const context = vm.createContext({items:()=>owner,classifyTasks:new WeakMap(),fitTasks:new WeakMap(),charmFor:()=>({outline:{}}),sheetFor:()=>({fileBase:'saved'}),setTimeout,RunCtl:{poke(){}},render(){},setReady:()=>{started.resolve();return gate.promise;},fitJob:async()=>{},Review:{add:x=>blocked.push(x)}});
+    const context = vm.createContext({lineOf:r=>r,items:()=>owner,classifyTasks:new WeakMap(),fitTasks:new WeakMap(),charmFor:()=>({outline:{}}),sheetFor:()=>({fileBase:'saved'}),setTimeout,RunCtl:{poke(){}},render(){},setReady:()=>{started.resolve();return gate.promise;},fitJob:async()=>{},Review:{add:x=>blocked.push(x)}});
     vm.runInContext(section('  let previewRecovery =', '  let classifyPass ='),context);
     const pending = context.prepareWaitingPreviews(); await started.promise;
     if (changed) owner = new Map([[j.key,job('approved')]]);
@@ -102,7 +102,7 @@ async function testRecoveryFailures() {
   }
   for (const changed of [true,false]) {
     const j = job('ready'), gate = deferred(), started = deferred(); let owner = new Map([[j.key,j]]), feedback = 0;
-    const context = vm.createContext({items:()=>owner,canFit:()=>true,isWorking:()=>false,Pool:{sheetOf:()=>({fileBase:'saved'})},fitJob:()=>{started.resolve();return gate.promise;},Review:{add(){feedback++;}},agent(){},render(){}});
+    const context = vm.createContext({lineOf:r=>r,items:()=>owner,canFit:()=>true,isWorking:()=>false,Pool:{sheetOf:()=>({fileBase:'saved'})},fitJob:()=>{started.resolve();return gate.promise;},Review:{add(){feedback++;}},agent(){},render(){}});
     vm.runInContext(section('  async function fitAll(', '  /* Reading the words'),context);
     const pending = context.fitAll(); await started.promise;
     if (changed) { j.state = 'approved'; j.row.engrave = {state:'approved',approved:true}; }

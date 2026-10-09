@@ -85,12 +85,15 @@
 
   /* ── the answer, normalised (a missing field is empty, never a crash, never a guess) ── */
   const str = v => (v == null ? "" : String(v));
+  /** The pair fields of a piece the server sent (Paul, 9 Oct 2026): side "L" | "R" | "", group key, and `both` (one picture draws a mismatched pair's left and right body). */
+  const pairOf = p => ({ side: p && (p.side === "L" || p.side === "R") ? p.side : "", grp: p && p.grp ? str(p.grp) : "", both: !!(p && p.both === true) });
+  const SIDE_WORD = { L: "Left", R: "Right" };
   /** One order (or laser sheet) in somebody's hand. Inside the console E1's model leaves some fields out; its `raw` is the server's own entry, read first. */
   function normCurrent(c, st) {
     if (c && c._n) return c;   // already normalised
     c = c || {}; const r = c.raw && typeof c.raw === "object" ? c.raw : c;
     const rid = str(r.rid != null && r.rid !== "" ? r.rid : r.orderNumber), num = str(r.orderNumber || r.rid), kind = r.kind === "sheet" ? "sheet" : "order", title = str(r.title);
-    const pieces = (Array.isArray(r.pieces) ? r.pieces : []).filter(Boolean).map((p, i) => ({ id: str(p.id), label: str(p.label), sku: str(p.sku), thumbUrl: str(p.thumbUrl), vectorUrl: str(p.vectorUrl), photoUrl: str(p.photoUrl), n: i + 1 }));
+    const pieces = (Array.isArray(r.pieces) ? r.pieces : []).filter(Boolean).map((p, i) => Object.assign({ id: str(p.id), label: str(p.label), sku: str(p.sku), thumbUrl: str(p.thumbUrl), vectorUrl: str(p.vectorUrl), photoUrl: str(p.photoUrl), n: i + 1 }, pairOf(p)));
     const qr = kind === "sheet" ? "" : typeof r.qr === "string" ? r.qr : str((r.qr && r.qr.text) || num || rid);
     const person = str(c.person || r.person), sid = str(r.id);
     return { _n: 1, id: `${low(sid || person)}|${low(rid || title)}`, sid, kind, title, person, device: str(r.device), deviceLabel: str(r.deviceLabel), rid, orderNumber: num, customer: str(r.customer), scannedAt: T(r.scannedAt), beatAt: T(r.beatAt),
@@ -121,9 +124,10 @@
   /** One matched scan of the Welding station today (an order code scanned as Matching). `person` is "" for a scan made with nobody in Matching. */
   function normMatched(m) {
     m = m || {}; const rid = str(m.rid != null && m.rid !== "" ? m.rid : m.orderNumber), un = m.unattributed === true;
-    const pieces = (Array.isArray(m.pieces) ? m.pieces : []).filter(Boolean).slice(0, 1).map((p, i) => ({ id: str(p.id), label: str(p.label), sku: str(p.sku), thumbUrl: str(p.thumbUrl), vectorUrl: str(p.vectorUrl), photoUrl: str(p.photoUrl), n: i + 1 }));
+    const all = (Array.isArray(m.pieces) ? m.pieces : []).filter(Boolean), pair = all.some(p => p && p.both === true);   // (a mismatched pair on the order: the Matching person puts each left with its right)
+    const pieces = all.slice(0, 1).map((p, i) => ({ id: str(p.id), label: str(p.label), sku: str(p.sku), thumbUrl: str(p.thumbUrl), vectorUrl: str(p.vectorUrl), photoUrl: str(p.photoUrl), n: i + 1 }));
     return { rid, orderNumber: str(m.orderNumber || rid), at: T(m.at), person: un ? "" : str(m.person), unattributed: un, note: un ? str(m.note) || UNATTRIBUTED_NOTE : "", customer: str(m.customer),
-      thumbUrl: str(m.thumbUrl), vectorUrl: str(m.vectorUrl), photoUrl: str(m.photoUrl), pieces };
+      thumbUrl: str(m.thumbUrl), vectorUrl: str(m.vectorUrl), photoUrl: str(m.photoUrl), pieces, pair };
   }
   /** The raw station list with each numbered station (Assembly, Shipping) split into one station per desk, from what the live answer already carries (its pages, people and orders in hand,
    *  with `devices[].counts` and `unassigned`): Assembly 1..4 and Shipping 1..3 each get their own row, always (an idle desk shows a quiet dash). What no desk claims (people on a page
@@ -481,16 +485,19 @@
       th.set({ urls, rid: c.rid, pool: first1 && first1.id, label: sheet ? `Laser sheet ${name}` : `Picture of order ${name}`, icon: sheet ? "sheet" : "", vector: !sheet });
       qr.hidden = sheet; if (!sheet) qr.set({ url: qrUrl(c.qr), vector: false, fit: "contain", label: `QR code of order ${name}` });
       card.classList.toggle("sheet", sheet); card.classList.toggle("lp", !!goPerson);
-      const sig = JSON.stringify([total, c.pieces.map(p => [p.id, p.label, p.thumbUrl, p.vectorUrl, p.photoUrl])]);
+      const sig = JSON.stringify([total, c.pieces.map(p => [p.id, p.label, p.thumbUrl, p.vectorUrl, p.photoUrl, p.side, p.both])]);
       if (multi && sig !== pieceSig) {
         pieceSig = sig; pcs.textContent = ""; pcs.hidden = false; pcs.setAttribute("aria-label", `${total} pieces`);
         pcs.appendChild(h("span", "esPcL", `${total} pieces`));
         c.pieces.forEach((p, i) => {
+          const before = c.pieces[i - 1];
+          if (p.both && p.side === "R" && before && before.both && before.side === "L" && before.grp === p.grp) return;   // (a left and a right drawn in one picture are one tile, captioned "Left + Right")
           const fig = h("figure", "esPc"), box = pictureBox("esPcTh", 136); box.dataset.kind = "piece"; box.dataset.n = p.n; box.tabIndex = i === 0 ? 0 : -1;
-          const label = p.label || `Piece ${p.n}`; box.title = label; box.set({ urls: urlsOf(p, true), rid: c.rid, pool: p.id, label: `${label}` });
+          const cap = p.both ? "Left + Right" : SIDE_WORD[p.side] || String(p.n);
+          const label = (p.label || `Piece ${p.n}`) + (p.both ? " · Left + Right" : p.side ? ` · ${SIDE_WORD[p.side]}` : ""); box.title = label; box.set({ urls: urlsOf(p, true), rid: c.rid, pool: p.id, label: `${label}` });
           zoomBind(box);
           box.addEventListener("keydown", ev => { if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") return; const all = [...pcs.querySelectorAll(".esPcTh")], to = all[clamp(all.indexOf(box) + (ev.key === "ArrowRight" ? 1 : -1), 0, all.length - 1)]; if (to && to !== box) { ev.preventDefault(); all.forEach(x => { x.tabIndex = -1; }); to.tabIndex = 0; to.focus({ preventScroll: true }); } });
-          fig.append(box, h("figcaption", "", String(p.n))); pcs.appendChild(fig);
+          fig.append(box, h("figcaption", "", cap)); pcs.appendChild(fig);
         });
         if (total > c.pieces.length) {   // the answer lists the first few; the rest are counted, not pictured
           if (c.pieces.length) { const more = h("figure", "esPc"), m = h("span", "esMore", `+${total - c.pieces.length}`); m.title = `${total - c.pieces.length} more pieces are not shown`; more.append(m, h("figcaption", "", "more")); pcs.appendChild(more); }
@@ -899,7 +906,7 @@
         setText(r.tm, m.at ? clock(m.at) : ""); r.tm.title = m.at ? `${m.n > 1 ? "Last scanned" : "Scanned"} at ${clock(m.at)}` : "";
         const pc = m.pieces[0]; let urls = urlsOf(m, false); if (!urls.length && pc) urls = urlsOf(pc, true);
         r.th.set({ urls, rid: m.rid, pool: pc && pc.id, label: `Picture of order ${name}` });
-        r.el.setAttribute("aria-label", `Order ${name}${m.n > 1 ? `, scanned ${m.n} times` : ""}, ${un1 ? m.note.toLowerCase() : m.person ? "matched by " + m.person : ""}`);
+        r.el.setAttribute("aria-label", `Order ${name}${m.n > 1 ? `, scanned ${m.n} times` : ""}${m.pair ? ", mismatched pair: match each left with its right" : ""}, ${un1 ? m.note.toLowerCase() : m.person ? "matched by " + m.person : ""}`); r.el.dataset.pair = m.pair ? "1" : "";
         const at = prev ? prev.nextSibling : G.ml.firstChild; if (r.el !== at) G.ml.insertBefore(r.el, at); prev = r.el;
         if (fresh && !ctx.quiet) fade(r.el, { opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }, 300);
       }
@@ -1162,7 +1169,7 @@
 .esNote{font-size:11.5px;color:var(--ink45,#938c80);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .esPieces{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 9px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line2,#efe9dd);min-width:0}
 .esPcL{align-self:center;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45,#938c80);font-weight:700;margin-right:4px;white-space:nowrap}
-.esPc{margin:0;display:grid;justify-items:center;gap:3px}.esPc figcaption{font-size:10px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums}
+.esPc{margin:0;display:grid;justify-items:center;gap:3px}.esPc figcaption{font-size:10px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}
 .esPcTh{width:44px;height:44px;border-radius:8px}
 .esMore{display:grid;place-items:center;width:44px;height:44px;border-radius:8px;border:1px dashed var(--line,#e4ddd0);color:var(--ink45,#938c80);font:650 12px var(--sans,system-ui,sans-serif);font-variant-numeric:tabular-nums}
 .esPcNone{align-self:center;font-size:11.5px;color:var(--ink45,#938c80)}

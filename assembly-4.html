@@ -995,7 +995,7 @@
   <script src="station-session.js?v=20261006-st3"></script>
   <!-- Employee efficiency: each real action here (an order opened, the Team's done stamp, a flag, a failure) is one event with
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
-  <script src="station-activity.js?v=20261006-st2"></script>
+  <script src="station-activity.js?v=20261009-ps1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
@@ -1026,7 +1026,8 @@
 
   <!-- The order in hand right now: the scan shows it on the console's live stations board with one piece per unit (and its size), so the card
        counts pieces and finds each design's picture; the first Team stamp ends it (station-live-order.js). Optional: without it the page tells the board itself. -->
-  <script src="station-live-order.js?v=20261005-et2"></script>
+  <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
+  <script src="station-live-order.js?v=20261009-ps1"></script>
 
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -2398,6 +2399,7 @@ function metalToBadge(label){
               return { id: orderId + "_" + (String((it && it.transaction_id) || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: it && it.listing_id };
             });
             let units = 0; for (const it of (data && Array.isArray(data.transactions) ? data.transactions : [])) { const q = Math.floor(Number(it && (it.quantity ?? it.qty))); units += q > 0 ? q : 1; }
+            try { if (window.StationLiveOrder && StationLiveOrder.units && data && Array.isArray(data.transactions)) units = StationLiveOrder.units(data.transactions); } catch (_) {}   // (an earring pair is a Left and a Right piece per unit)
             S.working({ rid: orderId, orderNumber: orderId, customer: String((data && data.name) || ""), pieces, pieceCount: units, note, holdMs: ACT_LIVE_HOLD });
           } catch (_) {}
         }
@@ -2410,6 +2412,7 @@ function metalToBadge(label){
             actSeen.id = orderId; actSeen.at = now;
             const list = data && Array.isArray(data.transactions) ? data.transactions : [];
             let parts = 0; for (const it of list) { const q = Math.floor(Number(it && (it.quantity ?? it.qty))); parts += q > 0 ? q : 1; }
+            try { if (window.StationLiveOrder && StationLiveOrder.units) parts = StationLiveOrder.units(list); } catch (_) {}   // (the same count as the live board and every other station)
             const sku = list.length === 1 ? String((typeof extractSkuFromEtsy === "function" ? extractSkuFromEtsy(list[0]) : list[0].sku) || "").trim().slice(0, 60) : "";
             Object.assign(actLoaded, { id: data && !data.error ? orderId : "", parts, sku });   // not loaded when the lookup failed: its pieces stay unknown
             actLog("scan", { orderId, sku, parts, detail: how === "scan" ? "phone scan" : how === "paste" ? "pasted" : "typed" });
@@ -3157,6 +3160,7 @@ function metalToBadge(label){
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
+              try { var pairTag = window.StationLiveOrder && StationLiveOrder.tag ? StationLiveOrder.tag(item) : ""; if (pairTag) qtyBox.value += " \u00b7 L+R"; qtyBox.title = pairTag || ""; } catch (_) {}   // an earring pair says so (a Left and a Right), every other line is as before
             }
             if (metalBox) {
               metalBox.classList.add("detail-box"); // optional: match your example style
