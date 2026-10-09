@@ -2641,9 +2641,9 @@ const Pool = window.Pool = (() => {
   async function masterPreview(entry,size,front,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; any other design ignores both)
+    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
-    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+":":"")+path;
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
     const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
     masterPreviewCache.set(key,task);
@@ -3149,6 +3149,12 @@ const Gate = window.Gate = (() => {
      sheets then you'd have to inform the user with a pop-up, and then let the user make the decision of what to do").
      splitWith lists the other sheets that share an order with this one and would stay on the other side of the set. */
   const ordersOn = sh => { const ids = new Set((sh.placements || []).map(p => p.id)); return new Set((sh.charms || []).filter(c => ids.has(c.id) && c.order).map(c => String(c.order).split("/")[0])); };
+  /** What a sheet shares with others, in words: "the left and right earrings of an order" when the pieces of a shared order on these sheets are a Left and a Right (a pair), else "an order" (as it always said). */
+  function sharedWhat(sh, others) {
+    const sides = new Set(), mine = ordersOn(sh), sd = p => { const ids = new Set((p.placements || []).map(x => x.id)); for (const c of p.charms || []) { const s = ids.has(c.id) && c.order && mine.has(String(c.order).split("/")[0]) ? c.side || (c.orderInfo && c.orderInfo.side) : null; if (s === "L" || s === "R") sides.add(s); } };
+    try { [sh, ...others].forEach(sd); } catch (_) { /* the plain words stand */ }
+    return sides.has("L") && sides.has("R") ? "the left and right earrings of an order" : "an order";
+  }
   function splitWith(sh, included) {
     const mine = ordersOn(sh); if (!mine.size) return [];
     return allSheets().filter(p => p !== sh && solid(p.metal) && (p.runId || null) === (sh.runId || null) && picked(p) !== !!included && membershipEditable(p))
@@ -3456,7 +3462,7 @@ const Gate = window.Gate = (() => {
     const rule = cardinalFor(sh, true);
     if (rule.blocked) no(rule.blocked);
     const split = rule.list.length > 1 ? rule.list.filter(p => p !== sh).map(p => ({ sheet: p })) : splitWith(sh, true);
-    if (split.length) no(`${sheetNameOf(sh)} shares an order with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
+    if (split.length) no(`${sheetNameOf(sh)} shares ${sharedWhat(sh, split.map(x => x.sheet))} with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
     await changeMembership(sh.metal, true, sh);
   }
   /** A sheet of a COMMITTED set whose page copy lost its place in it (Paul, 7 Oct: a partial sheet was chosen for it and it was nested again; the page drafted it out of its
@@ -3500,7 +3506,7 @@ const Gate = window.Gate = (() => {
   function errWords(res) {
     const n = res && res.plan && res.plan.needs && res.plan.needs[0]; if (n) return needWords(n);
     const t = String((res && res.error) || "");
-    if (/pieces on|shares? an order/i.test(t)) return WHY.sharedOrders;
+    if (/pieces on|shares? an order|they stay in one set|they go into one set together|multi-piece order/i.test(t)) return WHY.sharedOrders;   // (the refusal says what the pieces are when it knows: "has its left earring on ... and its right earring on ...")
     if (/all that is in|Undo set/i.test(t)) return WHY.lastSheet;
     if (/was already cut/i.test(t)) return WHY.sheetCut;
     if (/Set \d+ is completed|completed set|takes no more/i.test(t)) return WHY.setCompleted;
@@ -3715,9 +3721,9 @@ const Gate = window.Gate = (() => {
   }
   /** " (3 pairs, each kept whole)" for the pairs (lines of exactly two pieces) among these sheets' charms; "" when there is none. */
   const pairsNote = pages => {
-    if (typeof groupOf !== "function") return "";
-    const by = new Map(); for (const p of pages) for (const c of p.charms) { if (c.excluded) continue; const g = groupOf(c); if (g) by.set(g, (by.get(g) || 0) + 1); }
-    const n = [...by.values()].filter(v => v === 2).length; return n ? ` (${n} pair${n === 1 ? "" : "s"}, each kept whole)` : "";
+    if (typeof groupOf !== "function" || typeof isPairLine !== "function") return "";
+    const by = new Map(); for (const p of pages) for (const c of p.charms) { if (c.excluded) continue; const g = groupOf(c); if (g) { if (!by.has(g)) by.set(g, []); by.get(g).push(c); } }
+    const n = [...by.values()].filter(isPairLine).length; return n ? ` (${n} pair${n === 1 ? "" : "s"}, each kept whole)` : "";
   };
   /** What a press will do, in the words the panel asks with. */
   function mergeWords(plan, kind) {
@@ -5161,7 +5167,7 @@ const Engrave = window.Engrave = (() => {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
     // a mismatched pair design: both bodies side by side with Left / Right chips (charm-nest-pair-thumb.js); any other charm is drawn below, unchanged
-    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
+    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
     if (pairCv) return pairCv;
     const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }

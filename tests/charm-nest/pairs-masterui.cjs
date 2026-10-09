@@ -90,6 +90,61 @@ const ch = PT.chipHtml('L'), cr = PT.chipHtml('R', { short: true }), c0 = PT.chi
 ok(ch.includes('>Left</span>') && ch.includes('data-side="L"') && ch.includes('#2a2724') && cr.includes('>R</span>') && c0 === ch && c1.includes('>Right</span>'), 'chipHtml: Left, Right, L, R, by side or body index');
 ok(PT.chipHtml(null) === '' && PT.chipHtml('X') === '' && PT.chipHtml(2) === '', 'chipHtml says nothing for anything that is not an ear');
 
+/* ── 3b · direction (Paul, 9 Oct 18:47): each ear faces its own side; the Right piece is the Left turned over ── */
+const mitten = (x0, rgb, h) => { const o = rect(x0, 0, x0 + 16, 26, { subpaths: [[['m', [x0 + 4, 0]], ['l', [x0 + 16, 0]], ['l', [x0 + 16, 26]], ['l', [x0 + 4, 26]], ['l', [x0 + 4, 14]], ['l', [x0, 12]], ['l', [x0, 8]], ['l', [x0 + 4, 6]], ['h']]] }); return { o, members: [o, eng(x0 + 7, 3, x0 + 14, 3 + (h || 5), rgb)] }; };
+const mA = mitten(0, [1, 0, 0], 5), mB = mitten(22, [0, 0, 1], 9);
+const mittens = () => ({ id: 'm', name: 'MITTENS', outline: mB.o, members: [mB.o, ...mB.members.slice(1), mA.o, ...mA.members.slice(1)], bbox: [0, 0, 38, 26], strokePt: .25, centerPt: [19, 13] });
+// the real shared module's reader (first heuristic): whatever it says, the plan agrees with it: a body is mirrored exactly when it faces the other side
+const realPlan = PT.plan(mittens());
+ok(realPlan && realPlan.bodies.every(b => (b.facing === null || b.facing === 'L' || b.facing === 'R') && b.mirror === (!!b.facing && b.facing !== b.side)), 'with the real facing reader: a body is turned over exactly when it faces the wrong way: ' + JSON.stringify(realPlan.bodies.map(b => [b.side, b.facing, b.mirror])));
+const withFacing = f => { PT.use(Object.assign({}, Pair, { facingOf: f, facingOfBody: f })); };
+withFacing(() => null);
+ok(PT.plan(mittens()) && PT.plan(mittens()).bodies.every(b => b.mirror === false && b.facing === null), 'facing unknown: nothing is mirrored, the picture is as drawn');
+withFacing(() => 'L');   // both mittens as drawn face LEFT (Paul's picture): the Right ear has to be turned over
+let mp = PT.plan(mittens());
+ok(mp.bodies[0].side === 'L' && mp.bodies[0].mirror === false && mp.bodies[1].side === 'R' && mp.bodies[1].mirror === true && mp.bodies[1].facing === 'L', 'both bodies face left as drawn: the Right ear is mirrored, the Left is not');
+withFacing(() => 'R'); mp = PT.plan(mittens());
+ok(mp.bodies[0].mirror === true && mp.bodies[1].mirror === false, 'both face right as drawn: the Left ear is mirrored instead');
+withFacing(b => (b.bbox[0] < 10 ? 'L' : 'R')); mp = PT.plan(mittens());
+ok(mp.bodies.every(b => b.mirror === false), 'each body already faces its own side: nothing is mirrored');
+withFacing(() => null); ok(PT.plan(mittens()).bodies.every(b => !b.mirror), 'facing unknown or symmetric: as drawn');
+withFacing(() => { throw new Error('boom'); }); ok(PT.plan(mittens()).bodies.every(b => !b.mirror), 'a facing that throws never breaks the picture');
+withFacing(() => 'L');
+const turns = log => log.filter(l => l[0] === 'scale' && l[1][0] === -1 && l[1][1] === 1).length;
+r = recorder(); drew = [];
+const mL = PT.layout(PT.plan(mittens()), mittens().bbox, { size: 168, padPt: 2 });
+PT.canvasFor(fakeP, mittens(), { size: 168, padPt: 2, bg: '#fff', makeCanvas: r.make });
+ok(drew.length === 2 && drew.every(d => Math.abs(d.k - mL.s) < 1e-9), 'with a body to turn over, each body is drawn on its own, both at the one scale');
+ok(turns(r.log) === 1, 'exactly one body (the Right) is turned over');
+const tr = r.log.find(l => l[0] === 'translate'); const cxR = ((22 + 38) / 2 - 0 + 2) * mL.s;
+ok(tr && Math.abs(tr[1][0] - 2 * cxR) < 1e-6, 'it is turned about its own centre (so it stays in its place)');
+ok(drew[0].c.members.includes(mittens().members[0]) || drew[0].c.members.length >= 2, 'each call carries one body\'s own ink');
+// the paint-time turn is the same operation the shared module gives the other workers (mirrorOf / pieceGeometry): x -> -x about the body's own box centre
+if (typeof Pair.pieceGeometry === 'function') {
+  const gm = Pair.pieceGeometry(mittens(), { bodyIndex: 1, mirror: true }), gp = Pair.pieceGeometry(mittens(), { bodyIndex: 1, mirror: false });
+  const bd1 = PT.plan(mittens()).bodies[1];
+  ok(gm && gp && Math.abs(gm.bbox[0] - (bd1.bbox[0] + bd1.bbox[2] - gp.bbox[2])) < 1e-6 && Math.abs(gm.bbox[2] - (bd1.bbox[0] + bd1.bbox[2] - gp.bbox[0])) < 1e-6, 'pieceGeometry(mirror) turns a body about the same centre the picture turns it about: ' + JSON.stringify([gp.bbox, gm.bbox]));
+}
+r = recorder(); drew = [];
+PT.canvasFor(fakeP, mittens(), { size: 168, padPt: 2, bg: '#fff', body: 1, makeCanvas: r.make });
+ok(drew.length === 1 && turns(r.log) === 1, 'the Right ear alone is turned over (it faces the wrong way as drawn)');
+r = recorder(); PT.canvasFor(fakeP, mittens(), { size: 168, padPt: 2, bg: '#fff', body: 1, mirror: false, makeCanvas: r.make });
+ok(turns(r.log) === 0, 'an explicit mirror:false from the piece wins over the facing');
+r = recorder(); PT.canvasFor(fakeP, mittens(), { size: 168, padPt: 2, bg: '#fff', body: 0, mirror: true, makeCanvas: r.make });
+ok(turns(r.log) === 1, 'an explicit mirror:true from the piece wins too');
+r = recorder(); PT.canvasFor(fakeP, mittens(), { size: 168, padPt: 2, bg: '#fff', body: 0, makeCanvas: r.make });
+ok(turns(r.log) === 0, 'the Left ear alone is drawn as it is');
+// one piece of a MATCHING pair (a one-body charm): a plain call is the design once, as drawn; the Right piece asks for mirror
+r = recorder(); drew = [];
+ok(PT.canvasFor(fakeP, oneCharm(), { size: 168, padPt: 2, bg: '#fff', makeCanvas: r.make }) === null && PT.canvasFor(fakeP, oneCharm(), { size: 168, padPt: 2, bg: '#fff', mirror: false, makeCanvas: r.make }) === null, 'a plain design card: null, the maker draws it once, as drawn');
+const cvM = PT.canvasFor(fakeP, oneCharm(), { size: 220, padPt: 3 * 72 / 25.4, bg: '#fff', mirror: true, makeCanvas: r.make });
+const w1 = 20 + 2 * 3 * 72 / 25.4, h1 = 26 + 2 * 3 * 72 / 25.4, s1 = 220 / Math.max(w1, h1);
+ok(cvM && cvM.width === Math.round(w1 * s1) && cvM.height === Math.round(h1 * s1), 'a mirrored piece picture has exactly the size of the plain front picture');
+ok(drew.length === 1 && turns(r.log) === 1 && !r.log.some(l => l[0] === 'fill' && false), 'drawn once, turned over');
+const cvS = PT.canvasFor(fakeP, oneCharm(), { size: 168, padPt: 2, bg: '#fff', side: 'R', makeCanvas: recorder().make });
+ok(cvS && cvS.height > Math.round((26 + 4) * (168 / 30)) - 1, 'a piece asked for with its side gets the chip band');
+PT.use(null);
+
 /* ── 4 · the stored PNG's picture (SVG): the same layout, the chips as vector rects and text ── */
 const pic = PT.svgPicture(pl, { bbox: pairCharm().bbox, padPt: 2, size: 168, bg: '#ece7dc', inner: '<path d="M0 0L1 1"/>' });
 ok(pic.layout.W === L168.W && pic.layout.H === L168.H, 'the SVG has the canvas layout');
@@ -99,7 +154,7 @@ ok(new RegExp(`scale\\(${Math.round(L168.s * 100) / 100} -${Math.round(L168.s * 
 
 /* ── 5 · the PNG maker in scripts/index-master.cjs: a normal design keeps today's picture ── */
 const IM = require('../../scripts/index-master.cjs');
-let Resvg = null;
+let Resvg = null; const mitPng = {};
 for (const base of [root, '/tmp/catapply-deps']) {   // (the repo does not carry resvg; a copy another worker installed outside it is used only to look, never installed from here)
   try { const at = require.resolve('@resvg/resvg-js', { paths: [base] }); ({ Resvg } = require(at)); if (base !== root) { process.env.NODE_PATH = path.join(base, 'node_modules') + path.delimiter + (process.env.NODE_PATH || ''); require('module')._initPaths(); } break; } catch (_) {}
 }
@@ -118,6 +173,9 @@ if (Resvg) {
     const tmp = path.join(root, 'scripts', '.index-master-before.cjs'); fs.writeFileSync(tmp, old.replace(/\nif \(require\.main === module\)[^\n]*/, '') + '\nmodule.exports.thumbnailPng = thumbnailPng;\n');
     try { const before = require(tmp).thumbnailPng; ok(before, 'the old maker could be loaded'); ok(Buffer.compare(before(Geom, oneCharm(), 168, null), pngOne) === 0, 'a normal design: byte-identical PNG to the code before this change'); } finally { fs.unlinkSync(tmp); }
   }
+  // direction in the stored PNG: both mittens face left as drawn; with the facing known the Right one is turned over
+  PT.use(Object.assign({}, Pair, { facingOf: () => 'L', facingOfBody: () => 'L' })); mitPng.turned = png(mittens()); PT.use(Object.assign({}, Pair, { facingOf: () => null, facingOfBody: () => null })); mitPng.plain = png(mittens()); PT.use(null);
+  ok(mitPng.turned && mitPng.plain && Buffer.compare(mitPng.turned, mitPng.plain) !== 0, 'the stored PNG differs once a body has to be turned over');
 } else console.log('  – no @resvg/resvg-js here: the stored-PNG checks were not run');
 
 /* ── 6 · wiring (source checks): every maker asks the component, every page loads it, the build ships it ── */
@@ -215,6 +273,41 @@ ok(br.includes('e.pair && e.pair.mismatched ?') && br.includes('Left + Right pai
     const wid = c => c[0][1] - c[0][0] + 1;
     ok(Math.abs(wid(c0) - (cBoth[0][1] - cBoth[0][0] + 1)) <= 2 && Math.abs(wid(c1b) - (cBoth[1][1] - cBoth[1][0] + 1)) <= 2, 'an ear alone is drawn at its scale in the pair picture (' + wid(c0) + '/' + wid(c1b) + ' vs ' + (cBoth[0][1] - cBoth[0][0] + 1) + '/' + (cBoth[1][1] - cBoth[1][0] + 1) + ')');
     ok((await sizeOf(bodyPics.b0)).w < (await sizeOf(bodyPics.b1)).w, 'the left ear\'s picture is narrower than the right ear\'s');
+    // direction in the real pictures: the page thumbnail of a pair whose bodies both face left as drawn turns the Right one over
+    const mit = mittens();
+    const sp = await page.evaluate(async fx => {
+      const spans = async u => { const p = await window.__px(u), dark = (r, g, b) => r < 100 && g < 100 && b < 100; const cl = window.__clusters(p, 0, p.h - Math.round(p.h * .2), dark); const out = []; for (const [c0, c1] of cl) { const span = (x0, x1) => { let lo = 1e9, hi = -1; for (let y = 0; y < p.h - Math.round(p.h * .2); y++) for (let x = x0; x <= x1; x++) { const i = (y * p.w + x) * 4; if (dark(p.d[i], p.d[i + 1], p.d[i + 2])) { lo = Math.min(lo, y); hi = Math.max(hi, y); } } return hi - lo; }; out.push([span(c0, c0 + 2), span(c1 - 2, c1)]); } return out; };
+      const keep = [CharmNestPair.facingOf, CharmNestPair.facingOfBody];
+      CharmNestPair.facingOf = () => 'L'; CharmNestPair.facingOfBody = () => 'L';
+      const o = { turned: await spans(await CharmNestPDF.thumbnail(JSON.parse(JSON.stringify(fx.mit)), 400)) };
+      CharmNestPair.facingOf = () => null; CharmNestPair.facingOfBody = () => null;
+      o.plain = await spans(await CharmNestPDF.thumbnail(JSON.parse(JSON.stringify(fx.mit)), 400));
+      CharmNestPair.facingOf = keep[0]; CharmNestPair.facingOfBody = keep[1];
+      return o;
+    }, { mit });
+    ok(sp.plain.length === 2 && sp.turned.length === 2, 'two bodies in both pictures');
+    ok(sp.plain.every(([l, r2]) => l < r2 * .6), 'as drawn, both mittens have their thumb on the left (their left edge is the short one): ' + JSON.stringify(sp.plain));
+    ok(sp.turned[0][0] < sp.turned[0][1] * .6 && sp.turned[1][0] > sp.turned[1][1] * 1.6, 'with the facing known, the Right mitten is turned over: its thumb is on the right now: ' + JSON.stringify(sp.turned));
+    // a one-body piece asked for as the Right piece through the real worker: turned over; the Left and the plain card are as drawn
+    const pieceSp = await page.evaluate(async fx => {
+      const w = new Worker('charm-nest-compute-worker.js'); let id = 0;
+      const run = (type, input) => new Promise((res, rej) => { const my = ++id; w.onmessage = ({ data }) => { if (data.id !== my || data.progress) return; data.error ? rej(new Error(data.error)) : res(data.result); }; w.postMessage({ id: my, type, input }); });
+      const strip = c => Object.fromEntries(['id', 'name', 'bbox', 'outline', 'members', 'strokePt', 'centerPt'].filter(k => c[k] !== undefined).map(k => [k, c[k]]));
+      const one = { id: 'o', outline: fx.m.o, members: fx.m.members, bbox: [22, 0, 38, 26], strokePt: .25, centerPt: [30, 13] };
+      const spans = async u => { const p = await window.__px(u), dark = (r, g, b) => r < 100 && g < 100 && b < 100; const span = (x0, x1) => { let lo = 1e9, hi = -1; for (let y = 0; y < p.h; y++) for (let x = x0; x <= x1; x++) { const i = (y * p.w + x) * 4; if (dark(p.d[i], p.d[i + 1], p.d[i + 2])) { lo = Math.min(lo, y); hi = Math.max(hi, y); } } return hi - lo; }; let first = -1, last = -1; for (let x = 0; x < p.w; x++) for (let y = 0; y < p.h; y++) { const i = (y * p.w + x) * 4; if (dark(p.d[i], p.d[i + 1], p.d[i + 2])) { if (first < 0) first = x; last = x; } } return [span(first, first + 2), span(last - 2, last), p.w, p.h]; };
+      const out = { plain: await run('front', { charm: strip(one), size: 300 }), turned: await run('front', { charm: strip(one), size: 300, opts: { mirror: true } }), chip: await run('front', { charm: strip(one), size: 300, opts: { mirror: true, side: 'R' } }) };
+      const r = { plain: await spans(out.plain), turned: await spans(out.turned), chip: await spans(out.chip), same: out.plain === out.turned };
+      w.terminate(); return r;
+    }, { m: mB });
+    ok(pieceSp.plain[0] < pieceSp.plain[1] * .6 && pieceSp.turned[0] > pieceSp.turned[1] * 1.6 && pieceSp.same === false, 'the Right piece of a pair is the design turned over left to right: ' + JSON.stringify([pieceSp.plain, pieceSp.turned]));
+    ok(pieceSp.turned[2] === pieceSp.plain[2] && pieceSp.turned[3] === pieceSp.plain[3] && pieceSp.chip[3] <= 300 && pieceSp.chip[2] < pieceSp.turned[2], 'the turned picture is the size of the plain one; with its side it also carries a chip band (inside the same square, so the drawing is a little smaller)');
+    if (mitPng.turned) {   // (the stored PNG draws each body's cut outline in red: that is what is measured)
+      const pngSp = await page.evaluate(async ([a, b]) => {
+        const spans = async u => { const p = await window.__px(u), dark = (r, g, b2) => r > 140 && g < 110 && b2 < 110, H = p.h - Math.round(p.h * .2); const cl = window.__clusters(p, 0, H, dark); return cl.map(([c0, c1]) => { const span = (x0, x1) => { let lo = 1e9, hi = -1; for (let y = 0; y < H; y++) for (let x = x0; x <= x1; x++) { const i = (y * p.w + x) * 4; if (dark(p.d[i], p.d[i + 1], p.d[i + 2])) { lo = Math.min(lo, y); hi = Math.max(hi, y); } } return hi - lo; }; return [span(c0, c0 + 1), span(c1 - 1, c1)]; }); };
+        return { turned: await spans('data:image/png;base64,' + a), plain: await spans('data:image/png;base64,' + b) };
+      }, [mitPng.turned.toString('base64'), mitPng.plain.toString('base64')]);
+      ok(pngSp.plain.length === 2 && pngSp.turned.length === 2 && pngSp.plain[1][0] < pngSp.plain[1][1] * .75 && pngSp.turned[1][0] > pngSp.turned[1][1] * 1.3 && pngSp.turned[0][0] < pngSp.turned[0][1] * .75, 'the stored PNG turns the wrong-facing body over: ' + JSON.stringify(pngSp));
+    }
     ok(workerPics.one === workerPics.oneHi, 'a normal charm ignores a highlight: the very same picture');
     ok(workerPics.thumb === thumb.pair, 'the worker thumbnail of the pair equals the page thumbnail');
     ok(!errors.length, 'no page errors: ' + errors.join(' | '));
