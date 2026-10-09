@@ -92,8 +92,10 @@
   function dotHtml(d, o, i, order) {
     const m = metalKey(d && d.metal) || metalKey(o.sheetMetal), pool = String((d && d.pool) || ''), line = String((d && d.line) || lineOf(pool)), n = +(d && d.n) || 0;
     const key = `${order}|${pool || '#' + i}`, ring = !!(d && d.ring);
-    const label = `Piece ${n || i + 1}${d && d.state ? ', ' + String(d.state).replace(/^./, c => c.toLowerCase()) : ''}`;
-    return `<i class="pdot${ring ? ' ring' : ''}"${m ? ` data-m="${m}"` : ''} data-pk="${esc(key)}" data-pd-o="${esc(order)}" data-pd-p="${esc(pool)}" data-pd-l="${esc(line)}" data-pd-n="${n}"${d && d.none ? ' data-pd-none="1"' : ''} tabindex="-1" role="button" aria-label="${esc(label)}"></i>`;
+    // (an earring pair's piece says which ear it is: the card then shows that ear's own picture, turned over for the Right)
+    const side = d && (d.side === 'L' || d.side === 'R') ? d.side : '', sideWord = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
+    const label = `Piece ${n || i + 1}${sideWord ? ', ' + sideWord.toLowerCase() : ''}${d && d.state ? ', ' + String(d.state).replace(/^./, c => c.toLowerCase()) : ''}`;
+    return `<i class="pdot${ring ? ' ring' : ''}"${m ? ` data-m="${m}"` : ''} data-pk="${esc(key)}" data-pd-o="${esc(order)}" data-pd-p="${esc(pool)}" data-pd-l="${esc(line)}" data-pd-n="${n}"${side ? ` data-pd-s="${side}"${d.mirror ? ' data-pd-m="1"' : ''}` : ''}${d && d.none ? ' data-pd-none="1"' : ''} tabindex="-1" role="button" aria-label="${esc(label)}"></i>`;
   }
   function html(dots, o) {
     o = o || {}; css();
@@ -131,9 +133,10 @@
     if (dot.getAttribute('data-pd-none') === '1') return { none: true, key: '', row: null };
     const o = dot.getAttribute('data-pd-o') || '', p = dot.getAttribute('data-pd-p') || '', l = dot.getAttribute('data-pd-l') || '';
     const row = rowFor(o, l, p), LM = root.PieceMedia || root.ListMedia;
+    const sd = dot.getAttribute('data-pd-s'), opts = sd === 'L' || sd === 'R' ? { highlight: sd, side: sd, mirror: dot.getAttribute('data-pd-m') === '1' } : null;   // (an earring's own ear: no opts for any other piece, so nothing else changes)
     let key = '';
-    if (row) { try { key = LM && typeof LM.vectorKey === 'function' ? LM.vectorKey(row) || '' : (row.spec && row.spec.noDesign ? '' : 'sku:' + String((row.spec && row.spec.designSku) || (row.line && row.line.sku) || '').toUpperCase()); } catch (e) { warn('design key', e); } }
-    const out = key && key !== 'sku:' ? { none: false, key, row } : { none: true, key: '', row };
+    if (row) { try { key = LM && typeof LM.vectorKey === 'function' ? (opts ? LM.vectorKey(row, opts) : LM.vectorKey(row)) || '' : (row.spec && row.spec.noDesign ? '' : 'sku:' + String((row.spec && row.spec.designSku) || (row.line && row.line.sku) || '').toUpperCase()); } catch (e) { warn('design key', e); } }
+    const out = key && key !== 'sku:' ? { none: false, key, row, opts } : { none: true, key: '', row };
     if (!out.none) dot._pd = out;   // (a dot whose row is not there yet is looked at again next time)
     return out;
   }
@@ -144,7 +147,7 @@
   const put = (k, e) => { cache.delete(k); cache.set(k, e); while (cache.size > CAP) cache.delete(cache.keys().next().value); };
   const usable = e => e && (e.state !== 'error' || Date.now() - e.at > 30000);   // (a failed design is tried again after 30 s, never in a loop)
   let running = 0, queue = [], pumping = false;
-  function load(key, row) {
+  function load(key, row, opts) {
     const had = cache.get(key);
     if (had && !(had.state === 'error' && Date.now() - had.at > 30000)) { if (had.state !== 'busy') { cache.delete(key); cache.set(key, had); } return had; }
     const e = { state: 'busy', img: null, url: '', at: Date.now() };
@@ -152,7 +155,7 @@
     const LM = root.PieceMedia || root.ListMedia;
     const task = Promise.resolve().then(() => {
       if (!LM || typeof LM.vectorThumb !== 'function') return null;
-      return LM.vectorThumb(row);
+      return opts ? LM.vectorThumb(row, opts) : LM.vectorThumb(row);
     }).then(url => {
       if (!url) { e.state = 'none'; counts.none++; return; }
       const img = new root.Image(); img.alt = ''; img.decoding = 'async'; img.draggable = false; img.src = url;
@@ -172,7 +175,7 @@
         const j = queue.shift();
         if (!j.scope.isConnected) continue;   // (its list has gone from the page: nobody will hover it)
         const had = cache.get(j.key); if (had && usable(had) && had.state !== 'error') continue;
-        load(j.key, j.row);
+        load(j.key, j.row, j.opts);
       }
       if (queue.length) pump();
     });
@@ -190,7 +193,7 @@
       seen.add(x.key);
       if (!clip) { const c = (o && o.clip) || scope; clip = c.getBoundingClientRect ? c.getBoundingClientRect() : { top: 0, bottom: vh }; }
       const r = d.getBoundingClientRect();
-      (r.height && r.bottom > Math.max(0, clip.top) && r.top < Math.min(vh, clip.bottom) ? vis : rest).push({ key: x.key, row: x.row, scope });
+      (r.height && r.bottom > Math.max(0, clip.top) && r.top < Math.min(vh, clip.bottom) ? vis : rest).push({ key: x.key, row: x.row, opts: x.opts, scope });
     }
     if (!vis.length && !rest.length) return 0;
     const keys = new Set(vis.concat(rest).map(j => j.key));
@@ -238,7 +241,7 @@
     if (!dot || !dot.isConnected) return;
     const t = make(), info = resolve(dot);
     let e = null;
-    if (!info.none) { e = cache.get(info.key) || null; if (e && e.state === 'error' && Date.now() - e.at > 30000) e = null; if (!e) e = load(info.key, info.row); else if (e.state !== 'busy') { cache.delete(info.key); cache.set(info.key, e); counts.hits++; } }
+    if (!info.none) { e = cache.get(info.key) || null; if (e && e.state === 'error' && Date.now() - e.at > 30000) e = null; if (!e) e = load(info.key, info.row, info.opts); else if (e.state !== 'busy') { cache.delete(info.key); cache.set(info.key, e); counts.hits++; } }
     const layer = layerOf(dot); if (t.parentNode !== layer) layer.appendChild(t);
     const was = st.on;
     st.dot = dot; st.key = dot.getAttribute('data-pk') || ''; st.how = how;
