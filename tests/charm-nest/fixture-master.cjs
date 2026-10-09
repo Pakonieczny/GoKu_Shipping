@@ -59,7 +59,7 @@ async function buildMaster(outPath, opts = {}) {
   const labelAt = (c, text, dyMm) => { const size = 6; const w = font.widthOfTextAtSize(text, size); page.drawText(text, { x: c.cx - w / 2, y: c.cy - c.s / 2 - (dyMm || 2) * MM - size * 0.75, size, font, color: rgb(0.1, 0.1, 0.1) }); };
   charms.forEach((c, i) => {
     // twins: charm 7 is labelled with charm 1's SKU, written on two lines, then with its own second SKU (a SKU read under two charms, one of which repeats it)
-    if (opts.twins && i === 6) { labelAt(c, charms[0].sku, 2); labelAt(c, charms[0].sku, 4); labelAt(c, 'BR-TWN-07', 6); c.twin = true; return; }
+    if (opts.twins && i === 6) { labelAt(c, charms[0].sku, 2); if (opts.twins === 'single') labelAt(c, 'BR-TWN-07', 4); else { labelAt(c, charms[0].sku, 4); labelAt(c, 'BR-TWN-07', 6); } c.twin = true; return; }
     if (!edge) return labelAt(c, c.sku);
     if (i === 1) { c.size = 'S'; return labelAt(c, `${c.sku} · S`); }          // size suffix
     if (i === 2) { c.labelled = false; c.tooFar = true; return labelAt(c, c.sku, 8); } // 8 mm below: too far, becomes an orphan label

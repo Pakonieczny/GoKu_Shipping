@@ -163,6 +163,13 @@ function settleTwins(lab, charms, pins) {
     const f = lines[0]; if (f !== l) { l.sku = f.sku; l.size = f.size; l.str = f.str; l.bbox = f.bbox; }
     l.extra = lines.slice(1); if (c) { c.sku = l.sku; c.skuSize = l.size; c.extraSkus = l.extra; }
   };
+  const giveLine = (i, line) => {
+    const l = lab.labels.get(i), c = cOf(i), x = { sku: line.sku, size: line.size, str: line.str, bbox: line.bbox };
+    if (l) { l.extra = (l.extra || []).concat([x]); if (c) c.extraSkus = l.extra; return; }
+    lab.labels.set(i, Object.assign({ seg: null, gap: 0, extra: [] }, x));
+    const u = lab.unlabelled.indexOf(i); if (u >= 0) lab.unlabelled.splice(u, 1);
+    if (c) { c.sku = x.sku; c.skuSize = x.size; c.extraSkus = []; }
+  };
   for (const [i, l] of [...lab.labels]) {                              // a SKU written twice under one charm is one line
     const seen = new Set(), lines = linesOf(l).filter(x => { const k = keyOf(x); if (seen.has(k)) return false; seen.add(k); return true; });
     if (lines.length !== 1 + (l.extra || []).length) setLines(i, lines);
@@ -185,6 +192,11 @@ function settleTwins(lab, charms, pins) {
       }
       if (want == null || !set.has(want)) throw new Error(`--pin ${k}: no charm carrying it is where the pin says (${JSON.stringify(pin)}); its charms are ${idx.map(i => { const b = cOf(i).outline.bbox; return `#${i} at ${((b[0] + b[2]) / 2).toFixed(1)},${((b[1] + b[3]) / 2).toFixed(1)}`; }).join("; ")}`);
       owner = want; rule = "pinned";
+    }
+    // an owner that lost the line to labelCharms' duplicate rule (another charm was first on the page, so this one's line was dropped) gets it back
+    if (!(lab.labels.get(owner) && linesOf(lab.labels.get(owner)).some(x => keyOf(x) === k))) {
+      const proto = idx.map(i => lab.labels.get(i)).filter(Boolean).flatMap(linesOf).find(x => keyOf(x) === k);
+      if (proto) giveLine(owner, proto);
     }
     for (const i of idx) if (i !== owner) { const l = lab.labels.get(i); if (l) setLines(i, linesOf(l).filter(x => keyOf(x) !== k)); }
     out.push({ key: k, owner, others: idx.filter(i => i !== owner), rule });
