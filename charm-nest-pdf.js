@@ -881,6 +881,7 @@
     const claim = new Map();
     for (const c of charms) for (const t of c.topIndices) { const seg = parsed.segments[t]; if (seg && seg.kind === "xobj") { const n = c.members.filter(m => m.parent === t).length; const cur = claim.get(t); if (!cur || n > cur.n) claim.set(t, { c, n }); } }
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
+    if (opts.blackFill !== false) classifyBlackFills(charms);   // a black FILL inside a charm is blue hatching, never a hole or a black body (section "a black FILL is blue hatching")
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
     return { charms, frame, frames, orphans, markers, sampleText, rule, outlineCount: outlines.length, mergedCount: merged.size };
@@ -1247,6 +1248,7 @@
     // A cut-line member's pen is the cut black, but a light fill it carries stays as drawn: the white lettering knocked out of
     // a blue plate ("POLICE") is white in the master, not black.
     drawSegments(ctx, c.members.map(m => isCutSilhouetteFill(c, m) ? cutLineOf(m)
+      : m.hatchBlue && m.fill && !m.stroke ? {...m, fillRGB: HATCH_BLUE}      // a black fill inside the charm is blue hatching (see "a black FILL is blue hatching")
       : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:m !== c.outline && m.fill && m.fillRGB && lum(m.fillRGB) > 0.35 ? m.fillRGB : [0,0,0]} : m), tx, scale);
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
     ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
@@ -1268,6 +1270,80 @@
   }
   /** The cut line a filled cut silhouette stands for: the same path, stroked black at the cut hairline, not filled. */
   const cutLineOf = m => ({ ...m, fill: false, stroke: true, paintOp: "S", strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: CUT_HAIRLINE_PT });
+
+  /* ═══ a black FILL is blue hatching ═══════════════════════════════════════════════════════════════════════════════
+     Paul's rule for the master drawings: black means a cut LINE and nothing else. A black FILLED area is never a real black
+     area; it is engraving drawn in the wrong colour, and the right colour is the blue of hatching (0,0,255). So:
+       1. a black fill inside a charm (dark achromatic, filled, not stroked, not the charm's outline) is HATCHING: painted
+          blue in every picture and the DXF, never counted as a hole or a cut line, never a black body. (Candy_20812
+          (Huggie)'s stripes, the BIRTHFLOWER flowers, the black bars of CHEVRON_7834 (Huggie), black fills on HATCH and
+          ENGRAVE layers.) The one exception is the twin of the outline: a black fill with the outline's own box that
+          covers at least 90 % of the outline's area is the charm's silhouette again (WOLF_89694: stroked outline plus its
+          filled twin) and stays a cut line (isCutSilhouetteFill).
+       2. a charm that is ONLY a black fill (no other outline: WOLF + MOON, MAPLE_4007, MALE SYMBOL, every letter) is a plain
+          charm: the fill is its cut silhouette, drawn as a hairline, no engraving (the earlier decision, adfa46dd). A fill
+          is not a silhouette, though, when it is a round disc with art in it: its outer boundary is one perfect circle and it
+          has at least two inner holes (the white strips between the bars of CHEVRON_7834 and CHEVRON_9294, the mountain
+          disc, the moon and stars disc). Then the circle is the cut outline and the whole fill is hatching on the disc.
+       3. a thick black RING stays what it was: a ring-sized washer drawn as one filled path of two circles that is not wholly
+          inside the outline is a hoop (the huggie ring, welded by integrateRings), not hatching. A ring that is wholly
+          inside the outline is art on the disc, so it is hatching.
+     The decision is stamped on the segment (`hatchBlue`, role "hatch") when the charm is grouped, so every consumer that
+     groups the same drawing (a per-SKU file read back, a sheet, the DXF) reaches the same answer; the master's own
+     operators in the files are not touched. */
+  const HATCH_BLUE = [0, 0, 1];
+  const BLACK_SILHOUETTE_COVER = 0.9;          // a black twin that covers this share of the outline's area is the silhouette again
+  const BLACK_DISC_MIN_HOLES = 2;              // a round black fill with at least this many inner holes is art on a disc
+  const isBlackFill = m => !!m && m.kind === "path" && !!m.closed && !!m.fill && !m.stroke && !!m.fillRGB &&
+    (Math.max(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2]) - Math.min(m.fillRGB[0], m.fillRGB[1], m.fillRGB[2])) <= 0.15 && lum(m.fillRGB) <= 0.35;
+  /** What a closed filled path covers, by its own fill rule: area filled, area inside its outer boundary, inner holes, outer subpaths. */
+  function fillFacts(m) {
+    const subs = (m.subpaths || []).map(sp => flatten({ subpaths: [sp] }, 8)[0] || []);
+    const n = subs.length, signed = subs.map(p => p.length > 2 ? p.reduce((v, q, i) => v + q[0] * p[(i + 1) % p.length][1] - q[1] * p[(i + 1) % p.length][0], 0) / 2 : 0), area = signed.map(Math.abs);
+    const holds = subs.map((p, i) => { const out = []; if (p.length > 2) for (let j = 0; j < n; j++) if (j !== i && area[j] > area[i] && subs[j].length > 2 && pointInPolys(p[0][0], p[0][1], [subs[j]])) out.push(j); return out; });
+    const parent = holds.map(h => h.length ? h.reduce((a, b) => area[b] < area[a] ? b : a) : -1), even = String(m.paintOp || "").endsWith("*");
+    let filled = 0, outer = 0, holes = 0; const outers = [];
+    for (let i = 0; i < n; i++) {
+      if (!(area[i] > 0)) continue;
+      const wind = Math.sign(signed[i]) + holds[i].reduce((v, j) => v + Math.sign(signed[j]), 0), on = even ? holds[i].length % 2 === 0 : wind !== 0;
+      let kids = 0; for (let k = 0; k < n; k++) if (parent[k] === i) kids += area[k];
+      if (on) filled += Math.max(0, area[i] - kids);
+      if (!holds[i].length) { outer += area[i]; outers.push(i); } else if (holds[i].length === 1 && !on) holes++;
+    }
+    return { filled, outer, holes, outers };
+  }
+  /** A round body drawn only as a black fill with art in it (see rule 2): the circle's subpath index, else -1. */
+  function engravedDiscOf(c) {
+    const o = c && c.outline;
+    if (!isBlackFill(o) || (o.subpaths || []).length < 1 + BLACK_DISC_MIN_HOLES) return -1;
+    const f = fillFacts(o); if (f.outers.length !== 1 || f.holes < BLACK_DISC_MIN_HOLES) return -1;
+    const V = vec(); if (!V) return -1;
+    let disc = null; try { disc = circleOf(o.subpaths[f.outers[0]], V); } catch (_) { disc = null; }
+    return disc ? f.outers[0] : -1;
+  }
+  /** Stamp every black fill of every charm: hatching (blue, role "hatch") or the silhouette it already was. Returns the stamped members. */
+  function classifyBlackFills(charms) {
+    const stamped = [], cache = new Map();
+    for (const c of charms || []) {
+      if (!c || !c.outline || !Array.isArray(c.members) || !c.outline.bbox) continue;
+      const disc = engravedDiscOf(c);
+      if (disc >= 0) {                                         // rule 2: the circle is the cut outline, the fill becomes hatching below
+        const o = c.outline, sp = o.subpaths[disc], pts = []; for (const s of sp) for (let i = 1; i < s.length; i++) pts.push(s[i]);
+        // (no index, parent or byte range: the writer keeps the master's fill by its own index and adds this line, and a later weld cannot drop that fill)
+        const ring = { kind: "path", layer: o.layer || null, subpaths: [sp], bbox: bboxOf(pts), closed: true, stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: CUT_HAIRLINE_PT, paintOp: "S", depth: o.depth || 0, manufacturingRole: "cut", synthetic: true, start: -1, end: -1, discOf: true };
+        c.members.push(ring); c.outline = ring;
+      }
+      const o = c.outline, body = fillFacts({ subpaths: o.subpaths, paintOp: "f*" }).filled, polys = flatten(o, 8), ob = o.bbox, tol = Math.max(0.5, 0.02 * Math.max(ob[2] - ob[0], ob[3] - ob[1]));
+      for (const m of c.members) {
+        if (m === o || m.synthetic || m.manufacturingRole || !isBlackFill(m) || !m.bbox || /^labels?$/i.test(String(m.layer || "").trim())) continue;
+        const twin = Math.abs(ob[0] - m.bbox[0]) <= tol && Math.abs(ob[1] - m.bbox[1]) <= tol && Math.abs(ob[2] - m.bbox[2]) <= tol && Math.abs(ob[3] - m.bbox[3]) <= tol;
+        if (twin && body > 0 && fillFacts(m).filled >= BLACK_SILHOUETTE_COVER * body) continue;   // the silhouette again
+        if (ringLike(m) && insideFrac(samples(m, cache), polys) < 0.95) continue;                  // rule 3: a hoop drawn as a filled washer
+        m.hatchBlue = true; m.manufacturingRole = "hatch"; stamped.push(m);
+      }
+    }
+    return stamped;
+  }
   /** Draw segments; `solid` paints everything opaque black (for silhouettes) instead of in colour. */
   function drawSegments(ctx, segs, tx, s, solid) {
     for (const seg of segs) {
@@ -1923,4 +1999,6 @@
     takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
+  // the black-fill rule (kept off the long list for the same reason)
+  root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE;
 })(typeof window !== "undefined" ? window : self);

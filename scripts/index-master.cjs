@@ -116,9 +116,10 @@ function thumbnailPng(Geom, charm, size, PDF) {
   const parts = [], partOf = new Map();   // (partOf: what each member drew, kept only so a pair's bodies can be grouped when one has to be turned over)
   let cur = null; const emit = x => { parts.push(x); if (pair) { const l = partOf.get(cur) || []; l.push(x); partOf.set(cur, l); } };
   for (const m of charm.members) { cur = m; if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue;
-    // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
+    // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving.
+    // A black fill INSIDE the charm (m.hatchBlue, stamped by the grouping: charm-nest-pdf.js "a black FILL is blue hatching") is hatching: filled blue below.
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { emit(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
-    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; emit(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
+    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; emit(`<path d="${d}" fill="${m.fill ? (m.hatchBlue && !m.stroke ? "rgb(0,0,255)" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
   // (the cut outline in red: both bodies' outlines for a pair, the charm's own for every other design)
   const redOutline = o => `<path d="${Geom.svgPathOf(o)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`;
   for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(redOutline(o));
