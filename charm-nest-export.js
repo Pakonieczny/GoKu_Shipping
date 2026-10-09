@@ -62,6 +62,9 @@
     if (placement.scale && Math.abs(placement.scale-sx)>1e-5) throw new Error('Saved placement scale disagrees with the actual front artwork.');
     return sx;
   }
+  /** The ear a back engraving is for ("L" | "R"), from the back's own record, else from the sheet's charm of that pool id; null for any other piece (pairs, 9 Oct). */
+  const sideOfBack = (sheet, b) => { const s = b.side || ((sheet.charms || []).find(c => c.poolId === b.poolId) || {}).side; return s === 'L' || s === 'R' ? s : null; };
+  const groupOfBack = b => { if (b.groupKey) return String(b.groupKey); const m = /^(\d{4,20})_([^_]*)_\d{1,3}$/.exec(String(b.poolId || '')); return m ? m[1] + ':' + m[2] : ''; };
   async function compose(frontBytes, sheet, backs) {
     const P = pdf(), L = lib();
     const front = await P.parseSource(frontBytes, 'Front sheet');
@@ -77,7 +80,8 @@
       if (x===SPACE && x+w > front.pageW) x=Math.max(0,(front.pageW-w)/2);
       const tx=x-bounds[0]*scale, ty=y-bounds[1]*scale;
       inputs.push({parsed, scale, x:tx, y:ty, back:b});
-      layout.push({poolId:b.poolId, scale, boundsPt:[x,y,x+w,y+h], parentSheetId:sheet.id || sheet.sheetId});
+      const side=sideOfBack(sheet,b);
+      layout.push({poolId:b.poolId, ...(side?{side,groupKey:groupOfBack(b)}:{}), scale, boundsPt:[x,y,x+w,y+h], parentSheetId:sheet.id || sheet.sheetId});
       x+=w+SPACE;rowH=Math.max(rowH,h);
     }
     const out = await L.PDFDocument.create();
@@ -107,7 +111,8 @@
       page.drawPage(embedded,{x,y,width:parsed.pageW*scale,height:parsed.pageH*scale});
     }
     await place(front,0,0,1,'');
-    for(const item of inputs) await place(item.parsed,item.x,item.y,item.scale,'BACK '+item.back.poolId+' / ');
+    // (a back for one ear of a mismatched pair says so on its layer: "BACK 4171450075_9001_1 Left / ...")
+    for(const item of inputs){const side=sideOfBack(sheet,item.back);await place(item.parsed,item.x,item.y,item.scale,'BACK '+item.back.poolId+(side?' '+(side==='L'?'Left':'Right'):'')+' / ');}
     // History never enters production artwork. Only this layout's new contour
     // is cut, at 1:1 scale, on its own named laser layer.
     const rosePlan=sheet.rosePlanJson ? JSON.parse(sheet.rosePlanJson) : sheet.rosePlan;

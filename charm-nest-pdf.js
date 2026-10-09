@@ -1380,6 +1380,8 @@
       if (!src) return;
       const tag = "ocCharm" + i;
       let name = (c.name || c.slug || `charm-${String(i + 1).padStart(2, "0")}`).replace(/[^\x20-\x7E]/g, "").slice(0, 60) || `charm-${i + 1}`;
+      // a piece of a mismatched pair says which ear on its layer (so in the .ai and in the DXF: pairs, 9 Oct): " Left" / " Right" ends the name, inside the 60 characters
+      if (c.side === "L" || c.side === "R") { const w = c.side === "L" ? "Left" : "Right"; if (!/(?:^|[\s_-])(?:Left|Right)$/i.test(name)) name = name.slice(0, 60 - w.length - 1).trimEnd() + " " + w; }
       if (usedNames.has(name)) { let k = 2; while (usedNames.has(name + "-" + k)) k++; name = name + "-" + k; }
       usedNames.add(name);
       addOCG(name, tag);
