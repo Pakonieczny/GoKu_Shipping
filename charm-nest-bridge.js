@@ -2949,7 +2949,8 @@ const Pool = window.Pool = (() => {
     pinPooled(row);
     if (sp.pieceNote) agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote}`);
     const Pair = window.CharmNestPair, wanted = Pair && Pair.piecesFor && PoolPieces && !gluedLine(row) ? Pair.piecesFor(pairLine(row), base) : null;
-    const plan = wanted && wanted.length >= 2 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && wholeBody(src, +p.bodyIndex)) ? wanted : null;
+    // (a plan is the pieces of an earring pair, or ONE piece with its side: a single earring whose line names its ear is cut as that ear, the Right the mirror image by the same facing rule; a single that names no ear has no side and is cut as drawn)
+    const plan = wanted && wanted.length >= 1 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && wholeBody(src, +p.bodyIndex)) ? wanted : null;
     if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
@@ -2964,7 +2965,7 @@ const Pool = window.Pool = (() => {
     for (let copy = 1; copy <= count; copy++) {
       const poolId = O.poolId(row.order, row.line, copy), pp = plan ? plan[copy - 1] : null, mine = pp ? PoolPieces.fieldsOf(pp) : null;
       const charm = pp ? cloneCharm(baseFor(src, pp), `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
-      charm.name = pp ? `${row.order.receiptId} · ${sp.designSku} · ${copy}/${count}` : `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
+      charm.name = `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
       if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
@@ -9164,6 +9165,9 @@ const CustomSheet = window.CustomSheet = (() => {
   const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
+  /** The pieces the order asks for, as the card says them ("2 pieces ordered"): an earring pair is a Left and a Right per unit (pairPlan, the same count notReady
+   *  waits for), every other line what its quantity says, as before. (defaultQty is something else: how many copies of ONE dropped design start the row.) */
+  const piecesOrdered = it => Math.max(1, linesOf(it).reduce((n, r) => { const plan = r && r.spec && r.order && r.line ? pairPlan(r) : null; return n + (plan ? plan.length : (r.spec && r.spec.quantity) || 1); }, 0));
   /* ── an earring pair cut from the customer's own designs (Paul, 9 Oct 2026, 18:47) ──
      A pair of earrings is a LEFT and a RIGHT piece for every pair bought (charm-nest-pair.js piecesFor), a custom order too. The customer's file may draw
      both ears (two bodies: the one on the left is the Left) or one (the Right is then the Left mirrored, as for every other design). The card's Send to
@@ -9791,7 +9795,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!row) { d.close(); return; }
     const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
     d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
-    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(defaultQty(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
+    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(piecesOrdered(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
     const files = e ? e.files : [], sent = !!(e && e.sent), locked = sent || !!e?.sendIntent || busy.has(D.ck), busyNow = busy.get(D.ck) || "", calm = D.opening || !d.open || motionOff();
     // one metal for every design (with two or more), its bar opening or folding its room
     const allRow = d.querySelector(".cuAll"), grp = allRow.querySelector("[data-all]");

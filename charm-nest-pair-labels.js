@@ -17,7 +17,7 @@
  *    reconcile(base, live)          base pieces, with each live sheet's own pieces in place of the ones it was recorded with
  *    splitNotes(sheetId, pieces, only?)  the lines a sheet's QR label carries for the groups that sit on more than one sheet ([] when none); only: the order numbers of one label's part
  *    backWord(b)                    " · Left" for a back record with a side, else ""
- *    labelPieces(row, entry)        the stickers an earring pair line needs (Left then Right per unit): [{ side, n, of }], else null
+ *    labelPieces(row, entry)        the stickers an earring pair line needs (Left then Right per unit), or the one ear of a single earring that names its ear: [{ side, n, of }], else null
  *    stickerPieces(rows, entryOf)   the same for a card's lines (what QR Printer.html prints one page for)
  *    pieceCount(rows, entryOf)      pieces behind a card's lines (an earring pair makes two per unit), else null
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -165,7 +165,7 @@
     const P = pair();
     if (P && typeof P.piecesFor === "function") {
       let list = null; try { list = P.piecesFor(row, entry || undefined); } catch (_) { list = null; }
-      if (list && list.length >= 2 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;
+      if (list && list.length >= 1 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;   // (one piece with a side: a single earring that names its ear prints that ear's sticker)
     }
     if (mismatchedDesign(entry)) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
     return null;
@@ -175,6 +175,8 @@
    *  same order ([{ side, n, of }]); any other line makes none of its own (null: the order's one sticker, as before). row: the sorter's row ({ spec, line }). */
   function labelPieces(row, entry) {
     const list = earPieces(row, entry); if (!list) return null;
+    const alternate = list.length >= 2 && list.length % 2 === 0 && list.every((p, i) => p.side === (i % 2 ? "R" : "L"));
+    if (!alternate) return list.map((p, i) => ({ side: p.side, n: i + 1, of: list.length }));   // (single ears: each its own number, 1 of 1 prints no "n/of")
     const of = Math.ceil(list.length / 2);
     return list.map((p, i) => ({ side: p.side, n: Math.floor(i / 2) + 1, of }));
   }
