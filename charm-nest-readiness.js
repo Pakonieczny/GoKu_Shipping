@@ -112,7 +112,8 @@
   const STAGE_WORDS={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
   const rank=k=>{const i=KEYS.indexOf(k);return i<0?KEYS.length:i;};
   const tailNo=k=>{const m=/_(\d+)$/.exec(String(k||''));return m?+m[1]:0;};
-  const qtyOf=l=>Math.max(1,Math.floor(+(l.spec?.quantity || l.quantity) || 1));
+  // (how many pieces a line makes: the intake's explicit count when it wrote one (a mismatched pair makes a left and a right piece per unit: charm-nest-pair.js pieceCountOf), else its quantity as it always was)
+  const qtyOf=l=>Math.max(1,Math.floor(+(l.spec?.pieceCount || l.pieceCount || l.spec?.quantity || l.quantity) || 1));
   const titleOf=l=>String(l.line?.title || l.snap?.title || l.spec?.designSku || l.sku || '').replace(/\s+/g,' ').trim();
   // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
   function copyIds(l,key){

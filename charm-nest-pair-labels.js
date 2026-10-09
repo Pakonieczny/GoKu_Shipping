@@ -10,8 +10,8 @@
  *
  *    sideOf(x)                      "L" | "R" | null     a charm, pool row, set copy, back record, piece (its own `side`)
  *    wordOf(side | x)               "Left" | "Right" | ""
- *    copyWord(sku, copy, count, x)  one copy's name in the manifest: "SKU#2" (count > 1), "SKU" (alone), "SKU Left" (a side)
- *    manifestEntries(lines, nameOf) ["SKU Left->GF Sheet 1", ..., "[split over 2 sheets]"] for the lines of ONE order
+ *    copyWord(sku, copy, count, x)  one copy's name in the manifest: "SKU#2" (count > 1), "SKU" (alone), plus " (Left)" for a side
+ *    manifestEntries(lines, nameOf, arrow) ["SKU#1 (Left)->GF Sheet 1", ...] for the lines of ONE order
  *    piecesOfOrders(orders)         the flat piece list of a set's `orders` map (page shape or the server's)
  *    piecesOfCharms(charms)         the pieces of placed charms (order info, else the pool id "receipt_transaction_copy")
  *    reconcile(base, live)          base pieces, with each live sheet's own pieces in place of the ones it was recorded with
@@ -46,28 +46,24 @@
     return side === "L" ? "Left" : side === "R" ? "Right" : "";
   }
 
-  /** "SKU#2" for one of several copies, "SKU" for a lone one, "SKU Left" for a piece with a side. */
+  /** "SKU#2" for one of several copies, "SKU" for a lone one, and " (Left)" / " (Right)" after it for a piece with a side (the words the set editor's sideTag uses). */
   function copyWord(sku, copy, count, x) {
     const w = wordOf(x);
-    if (w) return `${str(sku)} ${w}`;
-    return `${str(sku)}${count > 1 ? "#" + str(copy) : ""}`;
+    return `${str(sku)}${count > 1 ? "#" + str(copy) : ""}${w ? " (" + w + ")" : ""}`;
   }
 
   /** "Sheet 2" from a sheet's file base ("GF_Oct-9_Set-3_Sheet-2"); anything else is said as it is. */
   const shortSheet = name => { const m = /_Sheet-(\d+)/.exec(str(name)); return m ? "Sheet " + m[1] : str(name); };
   const sheetKey = c => str(c && (c.sheetId || c.sheet));
 
-  /** The manifest words of ONE order's lines: every copy "SKU Left->sheet" (or "SKU#2->sheet" as before), and after a line whose copies sit on
-   *  more than one sheet "[split over 2 sheets]" (R3: a pair or a necklace's discs on different sheets must be said wherever sheets are listed).
-   *  lines: the order's lines, as an array or as the page's { transactionId: line }; nameOf(copy): the sheet's name. */
-  function manifestEntries(lines, nameOf) {
+  /** The manifest words of ONE order's lines: every copy "SKU#2 (Left)->sheet" (a copy without a side: "SKU#2->sheet", as before).
+   *  lines: the order's lines, as an array or as the page's { transactionId: line }; nameOf(copy): the sheet's name; arrow: "->" (set editor) or "→" (bridge). */
+  function manifestEntries(lines, nameOf, arrow) {
     const list = Array.isArray(lines) ? lines : Object.values(lines || {});
     const out = [];
     for (const l of list) {
       const copies = (l && l.copies) || [];
-      for (const c of copies) out.push(`${copyWord(l.sku, c.copy, copies.length, c)}->${nameOf ? nameOf(c) : str(c.sheet)}`);
-      const sheets = new Set(copies.map(sheetKey).filter(Boolean));
-      if (copies.length > 1 && sheets.size > 1) out.push(`[split over ${sheets.size} sheets]`);
+      for (const c of copies) out.push(`${copyWord(l.sku, c.copy, copies.length, c)}${arrow || "->"}${nameOf ? nameOf(c) : str(c.sheet)}`);
     }
     return out;
   }
