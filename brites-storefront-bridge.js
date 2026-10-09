@@ -334,7 +334,7 @@
     if(context.pageKind==='product'&&found.mode==='refine')return null;
     if(!plain(found.query,180))return failed('Use a search of 180 characters or fewer.',true);
     var action={type:'search',query:found.query},categories=found.plan?.categories||[],sort=sortFor(norm(raw));
-    if(categories.length===1&&FILTERS.includes(categories[0]))action.filter=categories[0];if(sort)action.sort=sort;
+    if(categories.length===1&&FILTERS.includes(categories[0]))action.filter=categories[0];else if(categories.length>1||found.plan?.excludedCategories?.length)action.filter='all';if(sort)action.sort=sort;
     return success(action,context);
   }
   function resolveIntent(value,rawContext){
@@ -404,7 +404,13 @@
         if(!query||query.length>180)return failed('Use a search of 180 characters or fewer.',true);
         if(cat&&norm(query).replace(/\b(?:all|only|a|an|some|the|please)\b/g,'').trim().replace(/s$/,'')===cat.replace(/s$/,'')&&!sort)return success({type:'filter',filter:cat},context);
         if(/\b(?:recommend|would look|should i|good gift|best gift|help me choose|for my|for mom|for dad)\b/.test(norm(query)))return failed('',false);
-        var searchAction={type:'search',query:query};if(sort)searchAction.sort=sort;if(cat)searchAction.filter=cat;return success(searchAction,context);
+        var searchAction={type:'search',query:query};if(sort)searchAction.sort=sort;if(cat)searchAction.filter=cat;
+        // A negative category is a search constraint, never a positive native
+        // filter. Multiple requested categories share the unfiltered host and
+        // retain their OR relationship in the complete search query.
+        var vocabulary=root?.BritesCatalogueIntents||catalogue,searchPlan;try{searchPlan=vocabulary?.plan?.(query);}catch{}
+        if(searchPlan?.categories?.length>1||searchPlan?.excludedCategories?.length)searchAction.filter=searchPlan.categories.length===1&&FILTERS.includes(searchPlan.categories[0])?searchPlan.categories[0]:'all';
+        return success(searchAction,context);
       }
     }
     return failed('',false);

@@ -132,6 +132,7 @@
     var bits=[...(p.terms||[]),...(p.themes||[]).map(function(t){return t==='animals'?'animal':t==='birds'?'bird':t==='pets'?'pet':t==='insects'?'insect':t;}),...(p.categories||[]).map(function(c){return CATEGORY_LABELS[c];})];
     if(p.materialLabel)bits.push(p.materialLabel);if(p.max!==null&&p.max!==undefined)bits.push('under '+p.max+' '+(p.currency||'USD'));if(p.min!==null&&p.min!==undefined)bits.push('at least '+p.min+' '+(p.currency||'USD'));
     if(p.excludedTerms?.length)bits.push('without '+p.excludedTerms.join(' or '));if(p.excludedThemes?.length)bits.push('without '+p.excludedThemes.map(function(t){return t==='animals'?'animal':t;}).join(' or '));
+    if(p.excludedCategories?.length)bits.push('without '+p.excludedCategories.map(function(c){return CATEGORY_LABELS[c];}).filter(Boolean).join(' or '));
     return bits.filter(Boolean).join(' ').slice(0,250);
   }
   function priorPlan(prior,options){

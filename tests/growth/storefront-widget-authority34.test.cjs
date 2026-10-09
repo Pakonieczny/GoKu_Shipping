@@ -52,15 +52,17 @@ function savedProducts(h){return JSON.parse(h.w.sessionStorage.getItem('brites-c
 function exactSelect(h){return h.root.querySelector('select[aria-label="Choose an exact variant"]');}
 function assertNoCartWrite(h){assert.equal(h.calls.network.filter(r=>/\/cart\/add\.js$/.test(r.url)).length,0);assert.equal(h.calls.controls.filter(c=>['bag-quantity','bag-remove'].includes(c.action.type)).length,0);}
 
-for(const count of [61,250])test('restored complete '+count+'-variant piece retains its exact last option and only prepares confirmation',async t=>{
-  const product=manyOptions(count),last=product.variants.at(-1),h=fixture(t,{restoredProducts:[product],restoredVariants:{[product.id]:last.id}});await h.open();
+// These persistence/validation cases exercise the standalone widget. A
+// connected page owns its own option controls, covered by commerce44 instead.
+for(const count of [61,250])test('standalone restored complete '+count+'-variant piece retains its exact last option and only prepares confirmation',async t=>{
+  const product=manyOptions(count),last=product.variants.at(-1),h=fixture(t,{noStorefront:true,restoredProducts:[product],restoredVariants:{[product.id]:last.id}});await h.open();
   h.button('Choose options').click();const select=exactSelect(h);assert.equal(select.options.length,count);assert.equal(select.value,last.id);assert.equal(select.options[count-1].textContent,last.title+' · $'+last.price.toFixed(2));
   const saved=savedProducts(h)[0];assert.equal(saved.variants.length,count);assert.equal(saved.variantsComplete,true);assert.equal(new Set(saved.variants.map(v=>v.id)).size,count);assert.equal(saved.suggestedVariantId,last.id);
   assert.equal(h.button('Review adding to bag').disabled,false);h.button('Review adding to bag').click();assert.match(h.root.querySelector('.review')?.textContent||'',new RegExp(last.title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.ok(h.button('Confirm add to bag'));assertNoCartWrite(h);assert.equal(h.calls.network.filter(r=>r.body.message).length,0);assert.equal(h.errors.length,0);
 });
 
-test('a restored 251-variant piece is bounded to 250 and cannot claim or review a complete selection',async t=>{
-  const product=manyOptions(251),last=product.variants.at(-1),h=fixture(t,{restoredProducts:[product],restoredVariants:{[product.id]:last.id}});await h.open();h.button('Choose options').click();
+test('a standalone restored 251-variant piece is bounded to 250 and cannot claim or review a complete selection',async t=>{
+  const product=manyOptions(251),last=product.variants.at(-1),h=fixture(t,{noStorefront:true,restoredProducts:[product],restoredVariants:{[product.id]:last.id}});await h.open();h.button('Choose options').click();
   const select=exactSelect(h),saved=savedProducts(h)[0];assert.equal(select.options.length,250);assert.equal(saved.variants.length,250);assert.equal(saved.variantsComplete,false);assert.equal([...select.options].some(o=>o.value===last.id),false);assert.notEqual(select.value,last.id);assert.notEqual(saved.suggestedVariantId,last.id);assert.equal(h.button('Review adding to bag').disabled,true);assert.match(h.root.querySelector('.options .note').textContent,/complete selection/);h.button('Review adding to bag').click();assert.equal(h.root.querySelector('.review'),null);assertNoCartWrite(h);
 });
 
@@ -69,14 +71,14 @@ for(const [label,damage] of [
   ['invalid published variant identity',p=>{p.variants[1].id='not-a-shopify-variant';}],
   ['nonfinite variant price',p=>{p.variants[1].price=null;}],
   ['duplicate exact variant identity',p=>{p.variants[1]=clone(p.variants[0]);}]
-])test('restored '+label+' fails completeness and keeps only distinct checked option rows',async t=>{
-  const product=manyOptions(3);damage(product);const h=fixture(t,{restoredProducts:[product]});await h.open();h.button('Choose options').click();const saved=savedProducts(h)[0];
+])test('standalone restored '+label+' fails completeness and keeps only distinct checked option rows',async t=>{
+  const product=manyOptions(3);damage(product);const h=fixture(t,{noStorefront:true,restoredProducts:[product]});await h.open();h.button('Choose options').click();const saved=savedProducts(h)[0];
   assert.equal(saved.variants.length,2);assert.equal(new Set(saved.variants.map(v=>v.id)).size,2);assert.equal(exactSelect(h).options.length,2);assert.equal(saved.variantsComplete,false);assert.equal(h.button('Review adding to bag').disabled,true);h.button('Review adding to bag').click();assert.equal(h.root.querySelector('.review'),null);assertNoCartWrite(h);assert.equal(h.errors.length,0);
 });
 
-test('an honestly incomplete restored list stays incomplete and a wholly invalid list cannot restore a product',async t=>{
+test('an honestly incomplete standalone restored list stays incomplete and a wholly invalid list cannot restore a product',async t=>{
   const incomplete=manyOptions(61);incomplete.variantsComplete=false;const empty=clone(bunny);empty.variants=[{id:'invalid',numericId:'0',price:null}];
-  const h=fixture(t,{restoredProducts:[incomplete,empty]});await h.open();h.button('Choose options').click();assert.equal(exactSelect(h).options.length,61);assert.equal(savedProducts(h).length,1);assert.equal(savedProducts(h)[0].variantsComplete,false);assert.equal(h.root.querySelectorAll('.card').length,1);assert.equal(h.button('Review adding to bag').disabled,true);assertNoCartWrite(h);
+  const h=fixture(t,{noStorefront:true,restoredProducts:[incomplete,empty]});await h.open();h.button('Choose options').click();assert.equal(exactSelect(h).options.length,61);assert.equal(savedProducts(h).length,1);assert.equal(savedProducts(h)[0].variantsComplete,false);assert.equal(h.root.querySelectorAll('.card').length,1);assert.equal(h.button('Review adding to bag').disabled,true);assertNoCartWrite(h);
 });
 
 test('native opening of a complete 250-variant piece preserves saved options but keeps spoken and tool envelopes bounded',async t=>{

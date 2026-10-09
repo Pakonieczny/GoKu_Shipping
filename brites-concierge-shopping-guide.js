@@ -458,5 +458,25 @@
     updateProducts(options.products);
     return Object.freeze({ updateProducts: updateProducts, setPreferences: setPreferences, prepare: prepare, suggest: suggest, markShown: markShown, dismiss: dismiss, reset: reset });
   }
-  return Object.freeze({ create: create });
+  function productMeasurements(facts,text){
+    var question=String(text||'').normalize('NFKC').toLowerCase();
+    [facts.title,facts.handle].filter(Boolean).forEach(function(label){question=question.split(String(label).normalize('NFKC').toLowerCase()).join(' ');});
+    var components=[{name:'charm',pattern:/\b(?:charms?|pendants?|discs?|disks?)\b/i},{name:'chain',pattern:/\bchains?\b/i},{name:'hoop',pattern:/\b(?:hoops?|huggies?)\b/i}],component=components.find(function(row){return row.pattern.test(question);});
+    var axes=[{name:'width',pattern:/\b(?:width|wide)\b/i},{name:'height',pattern:/\b(?:height|high|tall)\b/i},{name:'diameter',pattern:/\b(?:diameter|across)\b/i},{name:'thickness',pattern:/\b(?:thickness|thick)\b/i},{name:'length',pattern:/\b(?:lengths?|long)\b/i},{name:'weight',pattern:/\b(?:weight|heavy|weighs?)\b/i}],requestedAxes=axes.filter(function(row){return row.pattern.test(question);}),broad=/\b(?:dimensions?|measurements?)\b/i.test(question);
+    // Keep measurements attached to their published component and axis. A
+    // chain length never establishes charm width, even in one mixed sentence.
+    var split=/;\s*|,\s*(?:on|with)\s+|\s+(?:on|attached to|hanging from)\s+|\s+(?:and|with|while|plus)\s+(?=(?:(?:the|an?|included)\s+)?(?:\d+(?:\.\d+)?\s*(?:inches?|mm|cm)\s+)?(?:chains?|hoops?|huggies?|charms?|pendants?|discs?|disks?)\b)/i;
+    var componentDimensions=(Array.isArray(facts.dimensions)?facts.dimensions:[]).flatMap(function(sentence){return sentence.split(split);}).map(function(sentence){return sentence.trim();}).filter(function(sentence){
+      if(!/\d+(?:\.\d+|\/\d+)?\s*(?:mm|cm|millimet(?:er|re)s?|centimet(?:er|re)s?|inch(?:es)?|grams?|oz|["″])/i.test(sentence))return false;
+      if(component&&(!component.pattern.test(sentence)||components.some(function(other){return other!==component&&other.pattern.test(sentence);})))return false;
+      return true;
+    });
+    var dimensions=componentDimensions.filter(function(sentence){return broad||!requestedAxes.length||requestedAxes.some(function(axis){return axis.pattern.test(sentence);});});
+    var wantsSize=/\b(?:sizes?|sizing|dimensions?|measurements?)\b/i.test(question),optionGroups=(wantsSize||requestedAxes.length?facts.options||[]:[]).filter(function(group){
+      return /\b(?:sizes?|sizing|lengths?|width|height|diameter|circumference|fit|thickness|weight)\b/i.test(group.name)&&(!component||component.pattern.test(group.name))&&(broad||!requestedAxes.length||requestedAxes.some(function(axis){return axis.pattern.test(group.name);}));
+    });
+    var unknownAxes=requestedAxes.filter(function(axis){return !componentDimensions.some(function(sentence){return axis.pattern.test(sentence);})&&!optionGroups.some(function(group){return axis.pattern.test(group.name);});}).map(function(axis){return axis.name;}),requested=(component?component.name+'\u2019s ':"piece\u2019s ")+(unknownAxes.length?unknownAxes.join(' and '):'measurements');
+    return {dimensions:dimensions,optionGroups:optionGroups,unknown:unknownAxes.length||!dimensions.length&&(broad||!optionGroups.length)?'The published details do not confirm the '+requested+'. I can help you ask the studio for the exact measurement.':''};
+  }
+  return Object.freeze({ create: create, productMeasurements: productMeasurements });
 });

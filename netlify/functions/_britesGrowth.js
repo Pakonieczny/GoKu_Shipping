@@ -8,6 +8,7 @@ const storefront = require('./_britesStorefront');
 const storefrontSeed = require('./_britesStorefrontSeed');
 const catalogueDiscovery = require('./_britesCatalogueDiscovery');
 const catalogueIntents = require('../../brites-catalogue-intents.js');
+const {productMeasurements} = require('../../brites-concierge-shopping-guide.js');
 const publicSeedCache = {};
 const CATALOG_QUERY = `query GrowthProducts($query:String!, $after:String){products(first:50,query:$query,after:$after){nodes{id handle title status onlineStoreUrl descriptionHtml productType tags updatedAt featuredImage{url altText} images(first:16){nodes{url altText}} options{name values} variants(first:100){nodes{id title sku price availableForSale selectedOptions{name value}} pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}shop{name currencyCode}}`;
 const STOP_AT = Date.parse('2026-10-11T02:00:00Z');
@@ -903,7 +904,7 @@ function productFactRequest(message,context={}){
   const references=fieldMentions(text,'(?:this|that|current|selected) (?:exact )?(?:piece|product|item|one|necklace|charm|pair)|these (?:exact )?(?:earrings|huggies|studs|hoops)').filter(hit=>!hit.negative);
   const negatedDestination=destination.handles.length&&fieldMentions(text,'tell me(?: more)? about|describe|details (?:about|of|on|for)').some(hit=>hit.negative);
   const conflicting=destination.unsafe||destination.handles.length>1||negatedDestination||named.length>1||index!=null&&(!ordinalHandle||ordinalHandle!==handle)||destination.handles.length===1&&(namedProduct&&namedProduct.handle!==handle||explicitCurrent&&current&&current!==handle)||references.length>1&&/\b(?:and|another|other)\b/.test(text);
-  return {handle:conflicting?'':handle,...(namedProduct?{productId:namedProduct.id}:{}),fields,overview,careQuestion:/\b(?:hypoallergenic|nickel|allerg\w*|waterproof|tarnish)\b/i.test(text),confirmed:!!handle&&!conflicting};
+  return {handle:conflicting?'':handle,...(namedProduct?{productId:namedProduct.id}:{}),fields,overview,...(fields.includes('dimensions')?{measurementQuestion:destination.plain}:{}),careQuestion:/\b(?:hypoallergenic|nickel|allerg\w*|waterproof|tarnish)\b/i.test(text),confirmed:!!handle&&!conflicting};
 }
 function publicInventoryIdentities(value){return catalogueDiscovery.inventoryIdentities(value,{safeTitle:title=>typeof title==='string'&&title.length<=300&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(title)?shopperCatalogueField(title,180):null});}
 function createPublicInventory(options={}){
@@ -952,7 +953,12 @@ async function currentProductFacts({request,service,shopify,context,preferences,
   if(requested.has('lengths'))lines.push(optionText(/length/i,'Published lengths'));
   if(requested.has('engraving')){lines.push(optionText(/engrav|personali[sz]|custom/i,'Published engraving'));const detail=detailText(/engrav|personali[sz]|characters?|upload/i);if(detail)lines.push('Published personalization details: '+detail);}
   if(requested.has('options'))lines.push(options.length?'Published options: '+options.map(option=>option.name+' — '+option.values.join(', ')).join('; ')+'.':'No option groups are specified in the checked listing.');
-  if(requested.has('dimensions'))lines.push(dimensions.length?'Published measurements: '+dimensions.join(' '):'The checked listing does not specify dimensions or weight.');
+  if(requested.has('dimensions')){
+    const measurements=productMeasurements(facts,request.measurementQuestion||'What are its dimensions?');
+    if(measurements.dimensions.length)lines.push('Published measurements: '+measurements.dimensions.join(' '));
+    if(measurements.optionGroups.length)lines.push('Published size choices: '+measurements.optionGroups.map(group=>group.name+' — '+group.values.join(', ')).join('; ')+'.');
+    if(measurements.unknown)lines.push(!dimensions.length?'The checked listing does not specify dimensions or weight. '+measurements.unknown:measurements.unknown);
+  }
   if(requested.has('price')){
     if(selected){lines.push('Your selected '+selected.title+' is '+product.currency+' '+selected.price.toFixed(2)+' per item.'+(quantity!=null?' For quantity '+quantity+', the item subtotal is '+product.currency+' '+facts.itemTotalPrice.toFixed(2)+', before shipping and taxes.':''));}
     else if(priceRange)lines.push('The '+(available.length?'checked available options':'checked published options')+' range from '+product.currency+' '+priceRange.min.toFixed(2)+(priceRange.max!==priceRange.min?' to '+product.currency+' '+priceRange.max.toFixed(2):'')+'. No exact selected configuration price has been assumed.');

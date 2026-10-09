@@ -18,6 +18,7 @@ assets.push('brites-catalogue-intents.js','brites-concierge-shopping-guide.js');
 for(const file of assets){const target=path.join(out,'public-site',file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(path.join(root,file),target);}
 // The same canonical catalogue matcher is used in the browser and server.
 fs.copyFileSync(path.join(root,'brites-catalogue-intents.js'),path.join(out,'brites-catalogue-intents.js'));
+fs.copyFileSync(path.join(root,'brites-concierge-shopping-guide.js'),path.join(out,'brites-concierge-shopping-guide.js'));
 fs.writeFileSync(path.join(out,'public-site','index.html'),'<meta http-equiv="refresh" content="0;url=/concierge-sandbox.html">');
 const endpoints=['britesGrowthApi.js','britesGrowthCorrections.js','britesConcierge.js','britesConciergeDemoTurn.js','britesConciergeVoice.js','britesConciergeVoiceDeadline-background.js','britesConciergeVoiceReaper.js','britesGrowthCatalogue-background.js','britesGrowthTick.js'];
 const modules=['_britesMilestoneDiscovery.js','_britesGrowth.js','_britesStorefront.js','_britesGrowthDemandStore.js','_britesGrowthKeywordRevision.js','_britesGrowthController.js','_britesGrowthReceiptReconciliation.js','_britesGrowthReceiptSandboxCheck.js','_britesGrowthEtsyCacheReadOnly.js','_britesGrowthHistoricalLookup.js','_britesGrowthCorrectionRead.js','_britesGrowthCorrectionReview.js','_britesConciergeDiagnostics.js','_britesConcierge.js','_britesConciergeDemoTurn.js','_britesConciergeVoice.js','_britesConciergeVoiceDeadline.js','_googleAdsClaude.js','_editPasscode.js'];

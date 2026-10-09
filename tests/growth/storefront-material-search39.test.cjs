@@ -61,12 +61,28 @@ for(const [query,expected] of [
   ['Focus 14k gold filled necklaces under USD 60',['material-2','material-13']],
   ['Focus 10k gold filled necklaces under USD 60',['material-6']],
   ['Focus 14k rose gold filled necklaces under USD 60',['material-4']],
-  ['Focus solid gold necklaces under USD 160',['material-5','material-11']],
+  ['Focus solid gold necklaces under USD 160',['material-5']],
   ['Focus 14k solid gold necklaces under USD 160',['material-5']],
-  ['Focus 18k solid gold necklaces under USD 160',['material-11']],
+  ['Focus 18k solid gold necklaces under USD 160',[]],
   ['Focus 14k white gold necklaces under USD 160',['material-14']],
   ['Focus sterling silver necklaces under USD 60',['material-1','material-2','material-3','material-7']]
 ])test('literal published material and fineness search: '+query,async t=>{const h=await fixture(t),r=await search(h,query);assert.deepEqual(handles(r),expected);for(const p of r.products)assert.equal(p.matchingPriceRange.currency,'USD');assert.equal(h.errors.length,0);});
+test('karat-only published gold stays searchable but never establishes solid construction in the legacy fallback',async t=>{
+  const h=await fixture(t),before=clone((await h.store.readProduct('material-11')).product),plain=await search(h,'Focus 18k gold necklaces under USD 160');
+  assert.deepEqual(handles(plain),['material-11']);assert.equal(plain.products[0].matchingPriceRange.min,130);assert.deepEqual(clone(plain.products[0].matchingVariantIds),before.variants.map(v=>v.id));
+  for(const query of ['Focus 18k solid gold necklaces under USD 160','Focus solid white gold necklaces under USD 160'])assert.deepEqual(handles(await search(h,query)),[],query);
+  assert.deepEqual(clone((await h.store.readProduct('material-11')).product),before,'A stricter search cannot erase or relabel the unknown construction option');assert.equal(h.errors.length,0);
+});
+test('explicit 18k solid construction passes fallback search only on its available same-currency budget-matching variant',async t=>{
+  const products=catalogue(),p=products.find(row=>row.handle==='material-11');p.options[0].values=['18K Solid Gold'];p.variants[0].title='18K Solid Gold / 16 inches';p.variants[0].options[0].value='18K Solid Gold';
+  const h=await fixture(t,{products}),positive=await search(h,'Focus 18k solid gold necklaces under USD 160');assert.deepEqual(handles(positive),['material-11']);assert.deepEqual(clone(positive.products[0].options),p.options);assert.deepEqual(clone(positive.products[0].variants),p.variants);assert.equal(positive.products[0].matchingPriceRange.min,130);
+  assert.deepEqual(handles(await search(h,'Focus solid gold necklaces under USD 160')),['material-5','material-11']);
+  assert.deepEqual(handles(await search(h,'Focus 18k solid gold necklaces under USD 129')),[]);assert.deepEqual(handles(await search(h,'Focus 18k solid gold necklaces under CAD 160')),[]);assert.equal(h.errors.length,0);
+});
+test('an unavailable explicit 18k solid variant cannot borrow a cheap available silver variant in the fallback',async t=>{
+  const products=catalogue(),p=piece(11,'Focus Carat Necklace',[{metal:'Sterling Silver',price:40},{metal:'18K Solid Gold',price:130,available:false}]);products[10]=p;
+  const h=await fixture(t,{products}),result=await search(h,'Focus 18k solid gold necklaces under USD 160');assert.deepEqual(handles(result),[]);const exact=(await h.store.readProduct(p.handle)).product;assert.deepEqual(clone(exact.options),p.options);assert.deepEqual(clone(exact.variants),p.variants);assert.equal(h.errors.length,0);
+});
 test('standalone Rose remains a listing motif rather than an implied rose-gold choice',async t=>{const h=await fixture(t),r=await search(h,'Rose Flower necklaces under USD 60');assert.deepEqual(handles(r),['material-9']);assert.equal(r.products[0].matchingPriceRange.min,48);});
 test('item-budget currency matches exact published currency without conversion',async t=>{const h=await fixture(t),r=await search(h,'Focus 14k gold filled necklaces under CAD 60');assert.deepEqual(handles(r),['material-10']);assert.equal(r.products[0].matchingPriceRange.currency,'CAD');assert.equal(r.products[0].minPrice,55);const conflict=await search(h,'Focus gold necklaces under CAD 60 over USD 20');assert.deepEqual(handles(conflict),[]);});
 test('both price bounds apply to one available material choice',async t=>{const h=await fixture(t),r=await search(h,'Focus 14k gold filled necklaces at least USD 56 under USD 58');assert.deepEqual(handles(r),['material-2']);assert.equal(r.products[0].matchingPriceRange.min,57);assert.equal(r.products[0].matchingPriceRange.max,57);assert.equal(r.products[0].matchingVariantIds.length,1);});

@@ -72,6 +72,7 @@
   function minimum(p){const plan=activeSearchPlan(),candidates=plan&&hasSearchVariantCriteria(plan)?matchingSearchVariants(p,plan):p.variants.filter(v=>v.available||v.availabilityKnown===false);return candidates.length?Math.min(...candidates.map(v=>v.price)):null;}
   function projection(p){const plan=activeSearchPlan(),available=plan&&hasSearchVariantCriteria(plan)?matchingSearchVariants(p,plan):p.variants.filter(v=>v.available),prices=available.map(v=>v.price);return {...p,minPrice:minimum(p),suggestedVariantId:available[0]?.id||null,...(plan&&hasSearchVariantCriteria(plan)?{matchingVariantIds:available.map(v=>v.id),matchingPriceRange:prices.length?{min:Math.min(...prices),max:Math.max(...prices),currency:p.currency}:null,searchCriteria:publicSearchCriteria(plan)}:{})};}
   function categoryMatches(p,category){
+    if(!SEED_CATEGORIES.includes(category)&&typeof window.BritesCatalogueIntents?.categoryMatches==='function')return window.BritesCatalogueIntents.categoryMatches(p,category);
     if(SEED_CATEGORIES.includes(category)){
       if(Array.isArray(p.storeCategories)&&p.storeCategories.every(c=>SEED_CATEGORIES.includes(c)))return p.storeCategories.includes(category);
       const title=clean(p.title,300),type=clean(p.type,100),text=title+' '+type,finished=/\b(?:necklaces?|earrings?|studs?|huggies?|hoops?|bracelets?|rings?)\b/i.test(title);
@@ -120,8 +121,9 @@
   }
   function stripSearchMaterial(value){return value.replace(/\b(?:8|9|10|12|14|18|20|22|24)\s*(?:k(?:t)?|karats?|carats?)\b|\b14\s*\/\s*20\b/g,' ').replace(/\b(?:(?:solid|rose|white|yellow)\s+){0,2}(?:gold(?:\s*[- ]?\s*(?:filled|plated))?|sterling(?:\s+silver)?|silver|gf)\b(?:\s+(?:filled|plated|solid))?/g,' ');}
   function publishedMaterialMatches(value,request){
+    if(typeof window.BritesCatalogueIntents?.materialMatches==='function')return window.BritesCatalogueIntents.materialMatches(value,request);
     if(!request)return true;const actual=searchMaterial(value);if(!actual?.material)return false;const material=actual.material;
-    if(material.family!==request.family||request.color&&material.color!==request.color||request.kind!=='any'&&material.kind!==request.kind&&!(request.kind==='solid'&&material.kind==='any'&&material.karats.length))return false;
+    if(material.family!==request.family||request.color&&material.color!==request.color||request.kind!=='any'&&material.kind!==request.kind)return false;
     return !request.karats.length||material.karats.length===1&&request.karats.includes(material.karats[0]);
   }
   function searchBudget(raw,defaultCurrency='USD'){
@@ -593,7 +595,7 @@
       if(existing){if(existing.fingerprint!==fingerprint)return controlResult('add',false,'That earlier add request belongs to a different choice. Make a new request for the current selection.',{cartChanged:false,reason:'request-changed'});const result=await existing.promise;return result.ok?{...result,cartChanged:false,deduplicated:true,message:'That exact request was already added to your test bag. Its current contents are unchanged.',snapshot:snapshot()}:result;}
       if(adding)return controlResult('add',false,'Your earlier exact choice is still being checked.',{reason:'checking',cartChanged:false});
       if(signal?.aborted||!select.isConnected||!currentProductUI())return controlResult('add',false,'The earlier add request was cancelled. Your newer view is preserved.',{reason:'cancelled',cartChanged:false});
-      if(readCart().length>=50)return controlResult('add',false,'Your test bag has 50 lines. Remove a line before adding another; your existing pieces are preserved.',{reason:'bag-full',cartChanged:false});
+      if(readCart().length>=50){const message='Your test bag has 50 lines. Remove a line before adding another; your existing pieces are preserved.';status(message);return controlResult('add',false,message,{reason:'bag-full',cartChanged:false});}
       const version=navigationVersion,controller=new AbortController(),forwardAbort=()=>controller.abort();addController=controller;signal?.addEventListener('abort',forwardAbort,{once:true});let timedOut=false;
       const admitted=()=>!controller.signal.aborted&&select.isConnected&&state.pageKind==='product'&&state.currentHandle===p.handle&&state.current===p&&select.value===v.id&&quantity()===q&&navigationVersion===version;
       const cancellation=new Promise((_,reject)=>controller.signal.addEventListener('abort',()=>reject(Error(timedOut?'The live check took too long. Your bag is unchanged; try adding again.':'The earlier add request was cancelled. Your newer choice is preserved.')),{once:true})),timer=setTimeout(()=>{timedOut=true;controller.abort();},10000);
