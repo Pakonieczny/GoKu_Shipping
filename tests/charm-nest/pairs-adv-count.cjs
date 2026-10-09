@@ -114,11 +114,16 @@ known('F6', 'a side-only option, or a "Replacement ... Left Ear" title, is a sin
 
 /* ── 7 · a line that says two different designs but names one waits ─────────────────────────────────────────────────────────── */
 known('F7', 'mismatched in the words, one SKU: held for a person', () => {
-  for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
+  for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Heart'), V('Right Ear Charm', 'Cat')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
     const r = read(over);
     ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.pairSecond || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
   }
 });
+
+{   // (Left and Right options whose values ARE two master designs are a resolved mismatched pair: nothing to ask, the Left is the first design and the Right the second)
+  const r = read(S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]));
+  eq([r.spec.pieceCount, r.spec.pair.mismatched, r.spec.pair.members.map(m => m.side + ':' + m.sku), r.spec.problems.length], [2, true, ['L:STAR', 'R:MOON'], 0], 'Left Star / Right Moon (both master designs) is a mismatched pair and waits for nobody');
+}
 
 /* ── 8 · the station pages: Left / Right only for an earring pair ───────────────────────────────────────────────────────────── */
 {
