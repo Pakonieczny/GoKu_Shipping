@@ -546,7 +546,11 @@
     }
     for (const s of [].concat(line.personalization || [], line.buyerMessage || line.message_from_buyer || [])) if (MIS_WORD.test(visible(s))) signals.push(`note “${clip(visible(s))}”`);
     const opts = vars.filter(v => !isPersonalisation(v.name)).map(v => v.value), text = [title].concat(opts).join(" ");
-    const EAR = /\b(?:earrings?|studs?|huggies|huggie\s+(?:hoops?|charms?\s+set)|hoops?)\b/i;
+    /* The words of an earring line. A bare "hoop" in a TITLE that names another product ("Gold Hoop Charm Necklace Pendant", a hoop charm bracelet, anklet or key ring) says nothing about earrings
+       (ADVSTATION, 9 Oct): such a line is one piece unless an option says otherwise (an earring, stud or huggie word anywhere, or "hoop" in a chosen option, still makes it a pair). */
+    const EAR_STRONG = /\b(?:earrings?|studs?|huggies|huggie\s+(?:hoops?|charms?\s+set))\b/i, HOOP = /\bhoops?\b/i, OTHER_PRODUCT = /\b(?:necklaces?|pendants?|bracelets?|anklets?|key\s*(?:chains?|rings?)|keychains?|chokers?)\b/i;
+    const hoopOnlyInTitle = OTHER_PRODUCT.test(title) && !HOOP.test(opts.join(" "));
+    const EAR = { test: str => EAR_STRONG.test(str) || (HOOP.test(str) && !hoopOnlyInTitle) };
     const SINGLE_TXT = /\bsingle\s+(?:stud\s+|huggie\s+|hoop\s+)?(?:earring|stud|huggie|charm)\b|\b(?:1|one)\s+(?:single\s+)?(?:earring|stud|huggie)\b(?!s)/i, SINGLE_END = /\bsingle(?:\s+(?:earring|stud|huggie|hoop|charm))?\s*$/i;
     // a TITLE that says Single: next to the earring word, or a few words before it ("Custom Single Replacement Silver Cat Huggie Earring Left Ear"), or at its end
     // ("Huggie Earring, Single"). "Single Pearl Stud Earrings" is a pair of earrings with one pearl each, not a single earring: the plural word after it settles that.

@@ -388,6 +388,76 @@
   }
   /** A placement's box in pt as the solver reports it, or null when it carries none (a saved placement the page kept without one). */
   const placementBox = pl => pl && [pl.xPt, pl.yPt, pl.xPt + pl.wPt, pl.yPt + pl.hPt].every(Number.isFinite) ? [pl.xPt, pl.yPt, pl.xPt + pl.wPt, pl.yPt + pl.hPt] : null;
+  /** A placed piece's laid outline, read from the bits the nester was given: the outline of the piece's silhouette, turned by the placement's angle (a rotation, never a reflection;
+   *  the same sense as rotateBitmap, clockwise on the y-down sheet) and put at the placement's centre, as polygons in pt, y UP (opts.sheetHPt: the sheet's height, the y flip is about it;
+   *  without it y is simply negated), the outer outline first and the holes after it. The outline is turned as a polygon, not read from the rotated bitmap: rotateBitmap thickens a
+   *  shape by up to a pixel in a direction that depends on the angle, which would blur a direction check on a thin design.
+   *  The page stores JSON.stringify(result) as the sheet charm's `shapeJson` (a list of polygons is an array in an array, which Firestore refuses), so the placement oracle reads the
+   *  direction the NESTER gave a pair, not what the master says: a Right that reached the solver with the Left's bits lies reflected from what its record claims, and this shows it. */
+  function laidOutline(piece, placement, opts) {
+    opts = opts || {};
+    if (!piece || !piece.bits || !piece.w || !piece.h || !(piece.scale > 0) || !placement) return [];
+    const w = piece.w, h = piece.h, s = piece.scale, bits = piece.bits, on = (x, y) => x >= 0 && y >= 0 && x < w && y < h && bits[y * w + x] === 1;
+    // the cracks between a set pixel and an empty one, walked so that the set side is always on the same hand: outer loops one way round, holes the other
+    const out = new Map(), addEdge = (x0, y0, x1, y1) => { const k = y0 * (w + 1) + x0; (out.get(k) || out.set(k, []).get(k)).push([x1, y1, false]); };
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (bits[y * w + x] !== 1) continue;
+      if (!on(x, y - 1)) addEdge(x, y, x + 1, y);
+      if (!on(x + 1, y)) addEdge(x + 1, y, x + 1, y + 1);
+      if (!on(x, y + 1)) addEdge(x + 1, y + 1, x, y + 1);
+      if (!on(x - 1, y)) addEdge(x, y + 1, x, y);
+    }
+    const loops = [];
+    for (const [k0, list0] of out) {
+      for (const e0 of list0) {
+        if (e0[2]) continue;
+        const sx = k0 % (w + 1), sy = (k0 / (w + 1)) | 0, pts = [[sx, sy]];
+        let e = e0, px = sx, py = sy, guard = 0;
+        for (;;) {
+          e[2] = true; const nx = e[0], ny = e[1];
+          if (nx === sx && ny === sy) break;
+          pts.push([nx, ny]);
+          const cands = (out.get(ny * (w + 1) + nx) || []).filter(c => !c[2]);
+          if (!cands.length || ++guard > 4 * w * h) break;
+          // at a pinch two edges leave the corner: turn the same way every time, so two pixels that only touch stay two loops
+          const dx = nx - px, dy = ny - py;
+          e = cands.length === 1 ? cands[0] : cands.map(c => ({ c, t: dx * (c[1] - ny) - dy * (c[0] - nx) })).sort((a, b) => b.t - a.t)[0].c;
+          px = nx; py = ny;
+        }
+        if (pts.length >= 4) loops.push(pts);
+      }
+    }
+    const area = p => { let a = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += p[j][0] * p[i][1] - p[i][0] * p[j][1]; return a / 2; };
+    const withArea = loops.map(p => ({ p, a: area(p) })).filter(l => Math.abs(l.a) >= 6).sort((a, b) => Math.abs(b.a) - Math.abs(a.a));
+    if (!withArea.length) return [];
+    // px: the crack staircase is smoothed to about a percent of the piece (0.25 pt at most), a fifth of what the oracle allows (4.5 percent); small pieces get the finer cut
+    const tol = opts.tolPx != null ? +opts.tolPx : Math.min(1.5, Math.max(.75, .012 * Math.max(w, h)));
+    const dp = pts => {   // Douglas-Peucker on a closed loop: cut at the corner farthest from the first point, simplify both halves
+      const n = pts.length; if (n < 8) return pts;
+      let far = 0, fd = -1; for (let i = 1; i < n; i++) { const d = (pts[i][0] - pts[0][0]) ** 2 + (pts[i][1] - pts[0][1]) ** 2; if (d > fd) { fd = d; far = i; } }
+      const keep = new Uint8Array(n); keep[0] = keep[far] = 1;
+      const run = (a, b) => {   // indices a..b of the open run; b may be n (the first point again)
+        let md = -1, mi = -1; const A = pts[a], B = pts[b % n], dx = B[0] - A[0], dy = B[1] - A[1], L = Math.hypot(dx, dy) || 1e-9;
+        for (let i = a + 1; i < b; i++) { const d = Math.abs((pts[i][0] - A[0]) * dy - (pts[i][1] - A[1]) * dx) / L; if (d > md) { md = d; mi = i; } }
+        if (md > tol) { keep[mi] = 1; run(a, mi); run(mi, b); }
+      };
+      run(0, far); run(far, n);
+      return pts.filter((_, i) => keep[i]);
+    };
+    const th = (((+placement.angle || 0) % 360) + 360) % 360 * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th), ox = +placement.cxPt || 0, oy = +placement.cyPt || 0;
+    const sign = Math.sign(withArea[0].a), polys = [];
+    for (const l of withArea) {
+      // only the outer loop and the holes in it (half a square pt and more): a loop turning the same way as the outer one is metal inside a hole, not part of this outline
+      if (polys.length && (Math.sign(l.a) === sign || Math.abs(l.a) < .5 * s * s)) continue;
+      const q = dp(l.p); if (q.length < 3) continue;
+      polys.push(q.map(([vx, vy]) => {
+        const ux = vx - w / 2, uy = vy - h / 2, x = ox + (c * ux - sn * uy) / s, yDown = oy + (sn * ux + c * uy) / s;
+        return [Math.round(x * 100) / 100, Math.round((opts.sheetHPt != null ? opts.sheetHPt - yDown : -yDown) * 100) / 100];
+      }));
+      if (polys.length >= 8) break;
+    }
+    return polys;
+  }
   function bestResult(result, incumbent, sheet) {
     if (!incumbent || result && betterLayout(result, incumbent, sheet)) return publicLayout(result);
     const out = { ...publicLayout(result), ...publicLayout(incumbent), retainedBest: true };
@@ -2870,6 +2940,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, MATE_CAP_MM };
+  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
   return solverAPI;
 });

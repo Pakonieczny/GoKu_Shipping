@@ -245,9 +245,17 @@ function shapeFit(laidPolys, drawnPolys) {
   const dp = D.p.map(q => [q[0] - D.cx, q[1] - D.cy]), dm = dp.map(q => [-q[0], q[1]]);
   return { asDrawn: best(dp), mirrored: best(dm) };
 }
-const SHAPE_TOL = 0.045;
-/** What a laid outline is: "asDrawn" | "mirrored" | "either" (a symmetric shape fits both) | "none" (fits neither: the wrong body, or a distorted one). */
-function shapeState(laidPolys, drawnPolys) { const f = shapeFit(laidPolys, drawnPolys), a = f.asDrawn < SHAPE_TOL, m = f.mirrored < SHAPE_TOL; return a && m ? (Math.abs(f.asDrawn - f.mirrored) < 0.004 ? 'either' : f.asDrawn < f.mirrored ? 'asDrawn' : 'mirrored') : a ? 'asDrawn' : m ? 'mirrored' : 'none'; }
+const SHAPE_TOL = 0.045, SHAPE_LOOSE = 0.08, SHAPE_RATIO = 1.5, SHAPE_GAP = 0.02;
+/** What a laid outline is: "asDrawn" | "mirrored" | "either" (the two fit alike: a symmetric shape) | "none" (fits neither: the wrong body, or a distorted one).
+ *  Judged by the two distances (shapeFit, in units of the shape's size) and their ratio, so a raster outline from the nester (thin features, a closed silhouette) still reads:
+ *  a state wins when its distance is under SHAPE_LOOSE (.08) and the other is at least SHAPE_RATIO (1.5) times worse AND at least SHAPE_GAP (.02) worse (so noise in two tiny numbers decides nothing); both under SHAPE_LOOSE and closer than that = "either";
+ *  both over SHAPE_LOOSE = "none". (A vector outline from the fixtures fits its own drawing at about .01, the wrong orientation at .1 and more.) */
+function shapeState(laidPolys, drawnPolys) {
+  const f = shapeFit(laidPolys, drawnPolys), a = f.asDrawn, m = f.mirrored, lo = Math.min(a, m), hi = Math.max(a, m);
+  if (!(lo < SHAPE_LOOSE)) return 'none';
+  if (hi >= lo * SHAPE_RATIO && hi - lo >= SHAPE_GAP) return a < m ? 'asDrawn' : 'mirrored';
+  return 'either';
+}
 const REFLECT_FLAGS = ['flipX', 'reflect', 'reflected', 'mirrored', 'flipped', 'flip'];   // a placement that says it was reflected (a rotation never sets one)
 const reflectedPlacement = pl => !!pl && (REFLECT_FLAGS.some(k => pl[k] === true) || +pl.scaleX < 0 || +pl.sx < 0 || +pl.scale < 0);
 
@@ -517,4 +525,4 @@ const expectedMirror = (sku, side, bodyIndex) => { const f = (DESIGN_FACING[sku]
 const shapeJsonOf = (sku, piece, place) => JSON.stringify(laidShape(sku, piece, place));
 module.exports = { COLL, CODE, DAY, RUN, ids, rid, tx, poolId, lineKey, groupKey, poolParts, gkOfPool, KINDS, pieceCount, designs, charmOf, entryOf, world, lineOf, clone, legacy, cases, caseList, CASES, SHEETS, FILLER,
   fakeFirestore, functions, problems, groupsOf, sheetsOf, kindsOfRuns, receipts, EXAMPLES, fileBase, sheetLabel: s => sheetLabel(s), PAIR_FIELDS, refuseNestedArrays,
-  DESIGN_FACING, expectedMirror, laidShape, shapeJsonOf, shapeState, shapeFit, SHAPE_TOL, mirrorPolys, layPolys, bodyPolys, reflectedPlacement, REFLECT_FLAGS };
+  DESIGN_FACING, expectedMirror, laidShape, shapeJsonOf, shapeState, shapeFit, SHAPE_TOL, SHAPE_LOOSE, SHAPE_RATIO, SHAPE_GAP, mirrorPolys, layPolys, bodyPolys, reflectedPlacement, REFLECT_FLAGS };
