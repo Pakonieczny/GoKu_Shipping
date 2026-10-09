@@ -104,12 +104,19 @@
     //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
       const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
-      const plan = planOf(l), qty = plan ? Math.max(qty0, plan.length) : qty0;   // (a mismatched pair makes two pieces for every unit bought: its Left and its Right)
+      let plan = planOf(l), glued = false;
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
+      // an OLD record of a mismatched pair (pooled before pairs were tracked) is ONE glued piece per unit that carries both bodies: it is on a sheet whole, with nothing to split.
+      // It is told by what the line already holds: some pool rows, fewer than the pair makes now, none with a side. A line not pooled yet, or pooled since, makes the two pieces.
+      if (plan) {
+        const held = new Set(ids); for (const [id, p] of pools) if (p.lineKey === key && !GONE.has(p.state)) held.add(id);
+        if (held.size && held.size < plan.length && ![...held].some(id => { const r = pools.get(id); return r && (r.side === 'L' || r.side === 'R'); })) { plan = null; glued = true; }
+      }
+      const qty = plan ? Math.max(qty0, plan.length) : qty0;   // (a mismatched pair makes two pieces for every unit bought: its Left and its Right)
       for (let n = 1; ids.length < qty; n++) if (!ids.includes(`${key}_${n}`)) ids.push(`${key}_${n}`);
       for (const [id, p] of pools) if (p.lineKey === key && !ids.includes(id) && !GONE.has(p.state)) ids.push(id);
       ids.sort((a, b) => tailNo(a) - tailNo(b));   // (stable: by copy number, so a record that lists _3 before _1 does not change which piece is piece 2)
-      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos }));
+      ids.forEach((id, pos) => add(id, l, { qty: Math.max(qty, ids.length), plan, pos, glued }));
     }
     // (a pool row a Hold took off its sheet is a held piece, still: an order this page holds no lines of, found by number, says it is on hold)
     for (const [id, p] of pools) if (!seen.has(id) && (!GONE.has(p.state) || (!lines.length && heldRow(p)))) add(id, null, { qty: +p.quantity || 1 });
@@ -155,9 +162,9 @@
       const pp = o.plan && o.plan[o.pos] || null, rowSide = p && (p.side === 'L' || p.side === 'R') ? p.side : null, planSide = pp && (pp.side === 'L' || pp.side === 'R') ? pp.side : null;
       const side = rowSide || planSide || null, bodyIndex = p && p.bodyIndex != null && Number.isFinite(+p.bodyIndex) ? +p.bodyIndex : pp && pp.bodyIndex != null ? +pp.bodyIndex : null;
       const groupKey = String((p && p.groupKey) || (pp && pp.groupKey) || `${rid}:${(l && l.transactionId) || o.tx || ''}`);
-      const kind = o.plan ? (kindOf && l ? kindOf(l) || 'mismatched' : 'mismatched') : (side ? 'mismatched' : kindOf && l ? kindOf(l) || null : null);
+      const kind = o.plan ? (kindOf && l ? kindOf(l) || 'mismatched' : 'mismatched') : (side || o.glued ? 'mismatched' : kindOf && l ? kindOf(l) || null : null);
       const sideLabel = side === 'L' ? 'Left' : side === 'R' ? 'Right' : '';
-      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
+      return { key: id, lineKey: o.lineKey, index: 0, side, sideLabel, glued: !!o.glued, bodyIndex, groupKey, groupSize: (p && +p.groupSize > 0) ? +p.groupSize : 0, kind, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: (cleanSku(sku || (l && l.title)) || 'Piece') + (sideLabel ? ' · ' + sideLabel : ''), sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
         problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
     });
@@ -227,7 +234,7 @@
 
     // a MISMATCHED pair line (the master record says its design draws two different bodies: entry.pair.mismatched) makes the pieces CharmNestPair.piecesFor says; every other line: null,
     // so nothing about it changes. Without the shared module (CharmNestPair) or the master record's pair field the page behaves as it always did.
-    const pairEntry = l => { try { const M = root.Master, e = l && l.sku && M && M.entryFor ? M.entryFor(l.sku) : null; return e && e.pair && e.pair.mismatched === true ? e : null; } catch (_) { return null; } };
+    const pairEntry = l => { try { const CP = root.CharmNestPair, M = root.Master, e = CP && l && l.sku && M && M.entryFor ? M.entryFor(l.sku) : null; return e && e.pair && CP.isMismatched(e) ? e : null; } catch (_) { return null; } };
     const pairArg = l => ({ receiptId: l.receiptId, transactionId: l.transactionId, sku: l.sku, quantity: Math.max(1, Math.round(+(l.spec && l.spec.quantity || l.quantity) || 1)), form: l.form || '', key: l.key, spec: l.spec || {}, line: l });
     const pairOf = l => { const CP = root.CharmNestPair, e = CP && typeof CP.piecesFor === 'function' ? pairEntry(l) : null; if (!e) return null; try { const x = CP.piecesFor(pairArg(l), e); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
     const kindOf = l => { const CP = root.CharmNestPair, e = CP && typeof CP.kindOf === 'function' ? pairEntry(l) : null; if (!e) return null; try { return CP.kindOf(pairArg(l), e) || null; } catch (_) { return null; } };

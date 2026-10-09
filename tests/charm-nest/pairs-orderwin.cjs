@@ -60,6 +60,18 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
   assert.equal(Core.spread(same).splitGroups.length, 0); assert.equal(Core.spread(same).spreadAcross, false); ok('A6 both sides on one sheet: together');
 }
 
+/* ── an old record: a mismatched pair pooled before pairs were tracked is ONE glued piece on its sheet, never a falsely split pair ── */
+{
+  const rid = '4200000003', tx = '9004';
+  const old = [row(rid, tx, 1, { sheetId: SHEET.a })];
+  const ps = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'MISMATCHED_7134', 1, { poolIds: [`${rid}_${tx}_1`] })], pools: old, sheets: [sheet(SHEET.a, 'gold', 1, [`${rid}_${tx}_1`])], sheetsKnown: true, pairOf });
+  assert.equal(ps.length, 1); assert.equal(ps[0].glued, true); assert.equal(ps[0].side, null); assert.equal(ps[0].kind, 'mismatched'); assert.equal(ps[0].nested, true); assert.equal(ps[0].label, 'MISMATCHED 7134');
+  assert.equal(Core.spread(ps).splitGroups.length, 0); ok('A9 an old glued record is one piece on its sheet, not a split pair');
+  // a new pool with only its Left row so far (it carries a side): the Right is missing, not glued
+  const half = Core.resolve({ orderId: rid, lines: [line(rid, tx, 'MISMATCHED_7134', 1, { poolIds: [`${rid}_${tx}_1`] })], pools: [row(rid, tx, 1, { side: 'L', sheetId: SHEET.a })], sheets: [sheet(SHEET.a, 'gold', 1, [`${rid}_${tx}_1`])], sheetsKnown: true, pairOf });
+  assert.equal(half.length, 2); assert.equal(half[0].glued, false); assert.deepEqual(half.map(p => p.nested), [true, false]); assert.equal(Core.spread(half).splitGroups.length, 1); ok('A9b a Left row with no Right yet: the pair is split, not glued');
+}
+
 /* ── a line that is not a mismatched pair resolves exactly as before ── */
 {
   const rid = '4200000002', tx = '9002', tx2 = '9003';
@@ -68,7 +80,7 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
   const sheets = [sheet(SHEET.a, 'gold', 1, [`${rid}_${tx}_1`, `${rid}_${tx2}_1`, `${rid}_${tx2}_2`]), sheet(SHEET.b, 'gold', 2, [`${rid}_${tx2}_3`])];
   const base = Core.resolve({ orderId: rid, lines, pools, sheets, sheetsKnown: true });
   const hooked = Core.resolve({ orderId: rid, lines, pools, sheets, sheetsKnown: true, pairOf, kindOf: () => null });
-  const strip = ps => ps.map(p => { const q = Object.assign({}, p); for (const k of ['side', 'sideLabel', 'bodyIndex', 'groupKey', 'groupSize', 'kind']) delete q[k]; delete q.line; delete q.pool; return q; });
+  const strip = ps => ps.map(p => { const q = Object.assign({}, p); for (const k of ['side', 'sideLabel', 'glued', 'bodyIndex', 'groupKey', 'groupSize', 'kind']) delete q[k]; delete q.line; delete q.pool; return q; });
   assert.deepEqual(strip(hooked), strip(base)); assert.equal(base.length, 4); ok('A7 singles, matching pairs and discs: the same pieces with or without the pair hook');
   assert.ok(base.every(p => p.side === null && p.sideLabel === '' && p.kind === null)); ok('A7b no side, no kind on them');
   // discs: one group of 3, split over two sheets
