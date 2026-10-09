@@ -28,8 +28,11 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     assert.strictEqual(PP.parsePoolId('nonsense'), null);
     const good = { side: 'L', bodyIndex: 0, groupKey: '4190000001:5000000010', groupSize: 2 };
     assert.deepStrictEqual(PP.cleanFields(good), good);
-    for (const bad of [{ ...good, side: 'X' }, { ...good, bodyIndex: 1.5 }, { ...good, groupSize: 1 }, { ...good, groupSize: 401 }, { ...good, groupKey: 'abc' }, { side: 'L' }, { groupKey: good.groupKey, groupSize: 2 }, null, 5])
+    for (const bad of [{ ...good, side: 'X' }, { ...good, bodyIndex: 1.5 }, { ...good, groupSize: 0 }, { ...good, groupSize: 401 }, { ...good, groupKey: 'abc' }, { side: 'L' }, { groupKey: good.groupKey, groupSize: 2 }, null, 5])
       assert.deepStrictEqual(PP.cleanFields(bad), {}, 'all four valid or none: ' + JSON.stringify(bad));
+    assert.deepStrictEqual(PP.cleanFields({ ...good, groupSize: 1 }), { ...good, groupSize: 1 }, 'a single earring that names its ear is a sided piece of a group of ONE');
+    assert.strictEqual(PP.metaOf({ poolId: '4190000001_5000000010_1', ...good, groupSize: 1 }).kind, 'single');
+    assert.deepStrictEqual(PP.fieldsOf({ side: null, bodyIndex: 0, groupKey: good.groupKey, n: 1, of: 1 }), {}, 'a single that names no ear carries none of the fields');
     assert.deepStrictEqual(PP.fieldsOf({ side: 'R', bodyIndex: 1, groupKey: good.groupKey, n: 2, of: 4 }), { side: 'R', bodyIndex: 1, groupKey: good.groupKey, groupSize: 4 }, 'a piecesFor piece (of) becomes the record fields');
     assert.deepStrictEqual(PP.fieldsOf({ side: null, bodyIndex: 0, groupKey: good.groupKey, n: 1, of: 2 }), {}, 'a piece with no side (a single charm, a disc) carries none');
     assert.deepStrictEqual(PP.fieldsOf({ side: 'R', mirror: true, bodyIndex: 0, groupKey: good.groupKey, n: 2, of: 2 }), { side: 'R', mirror: true, bodyIndex: 0, groupKey: good.groupKey, groupSize: 2 }, 'a matching pair\'s Right: sided, mirrored, body 0');
@@ -201,6 +204,44 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     assert.strictEqual(row.state, 'held'); assert(/mirror/.test(row.reason)); assert(!w.calls.length, 'nothing recorded'); assert.strictEqual(w.pages.gold.charms.length, 0);
   }
   pass('a matching earring pair makes a Left and a Right per unit (the Right mirrored); a line that is not an earring pair is unchanged; no mirror means the line is held');
+
+  // a SINGLE earring that names its ear (Paul, 9 Oct: left and right are always kept; ADVCOUNT F12): ONE piece with that side, the Right the mirror image by the same facing rule as a pair
+  {
+    const entryFor = sku => Object.assign(F.entryOf(sku), { sku });
+    const specOf = (rid, tid, sku, title, vars) => {
+      const order = { receiptId: rid, updateTs: 1791500001 }, line = { transactionId: tid, listingId: '1', sku, title, quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: [], buyerMessage: '', variations: [{ name: 'Metal Choice', value: 'Gold' }].concat(vars || []) };
+      const sp = O.interpretLine(order, line, { optionMaps: {}, aliases: {}, noDesign: {}, masterEntry: entryFor });
+      return { designSku: sku, material: 'gold', quantity: 1, size: null, form: sp.form || 'earrings', chain: null, pair: sp.pair, pieceCount: sp.pieceCount };
+    };
+    const single = async (n, sku, title, want) => {
+      const rid = '41900001' + n, tid = '50000001' + n, w = world([sku]); w.use(sku);
+      const row = lineRow(rid, tid, sku, 1, specOf(rid, tid, sku, title));
+      await w.Pool.poolAdd(row, null);
+      const put = w.calls.find(x => x.body.op === 'poolPut'), pools = put.body.pools, charms = w.pages.gold.charms, p = pools[0];
+      assert.strictEqual(pools.length, 1, title + ': one piece'); assert.strictEqual(charms.length, 1);
+      if (!want) { assert(!('side' in p || 'bodyIndex' in p || 'groupKey' in p || 'groupSize' in p || 'mirror' in p), title + ': no ear named: no pair field, as drawn'); assert(!('side' in charms[0]) && !charms[0].outline.mirrored); return { w, row, p }; }
+      assert.deepStrictEqual(J([p.side, p.mirror, p.bodyIndex, p.groupKey, p.groupSize, p.copy, p.quantity]), [want.side, want.mirror, want.body || 0, rid + ':' + tid, 1, 1, 1], title);
+      assert.deepStrictEqual(J(PP.cleanFields(p)), J(PP.fieldsOf(p)), 'the server keeps every field'); refuseNestedArrays(p, 'pool row');
+      assert.strictEqual(charms[0].side, want.side); assert.strictEqual(charms[0].mirror, want.mirror); assert.strictEqual(charms[0].groupSize, 1);
+      assert.strictEqual(!!charms[0].outline.mirrored, want.mirror, 'the mirrored outline is cut for the piece that faces the other way');
+      assert.strictEqual(charms[0].name, rid + ' · ' + sku, 'the layer name has no 1/1');
+      assert.deepStrictEqual(J(PP.sheetCharmFields(charms[0])), J(PP.fieldsOf(p)));
+      return { w, row, p };
+    };
+    await single('31', 'PAIR-FACE-L', 'Custom Single Replacement Silver Cat Huggie Earring Left Ear', { side: 'L', mirror: false });
+    await single('32', 'PAIR-FACE-L', 'Single Star Earring, Right Ear', { side: 'R', mirror: true });
+    await single('33', 'PAIR-FACE-R', 'Single Star Earring, Left Ear', { side: 'L', mirror: true });
+    await single('34', 'PAIR-FACE-R', 'Single Star Earring Right Earring only', { side: 'R', mirror: false });
+    await single('35', 'PAIR-FACE-L', 'Single Star Earring');                                  // no ear named: the plain record
+    await single('36', 'TENNIS-MIS', 'Single Mittens Earring Right Ear', { side: 'R', mirror: true, body: 1 });   // a mismatched design: the body of that ear, not both (the fixture draws both bodies facing left, so its Right is turned over, as in a pair)
+    // the plain single's record is exactly what it was before pairs
+    const plain = await single('37', 'PAIR-FACE-L', 'Single Star Earring');
+    assert.strictEqual(JSON.stringify(plain.p), was('4190000137', '5000000137', 'PAIR-FACE-L', 1, 1, plain.p.charmHash, plain.row.spec.form));
+    // a pair is still a pair
+    const pair = world(['PAIR-FACE-L']); pair.use('PAIR-FACE-L'); const prow = lineRow('4190000138', '5000000138', 'PAIR-FACE-L', 1, specOf('4190000138', '5000000138', 'PAIR-FACE-L', 'Star Stud Earrings'));
+    await pair.Pool.poolAdd(prow, null); assert.deepStrictEqual(J(pair.calls.find(x => x.body.op === 'poolPut').body.pools.map(p => [p.side, p.mirror, p.groupSize])), [['L', false, 2], ['R', true, 2]]);
+  }
+  pass('a single earring that names its ear is ONE piece with that side (the Right mirrored by the facing rule, a mismatched design cut from that ear\'s body); one that names none is cut as drawn; a pair is still two');
 
   // the real module: whatever it says, the records it produces are valid for the server and the fields come straight from its pieces
   {

@@ -131,6 +131,14 @@ const R = n => F.rid(n), T = n => F.tx(n);
       assert.equal(JSON.stringify([m.row(L), m.row(Rr), m.rec('sh-gf1'), m.rec('sh-gf2')].map(x => Object.assign({}, x, { updatedAt: 0 }))), before);
       assert.equal(m.row(L).state, 'written');
     });
+    await t('6b2 Release after that (poolPut of both ears, as the page makes the line up again): the cut Left is answered as placed on its sheet and is NOT written again; the Right is live again', async () => {
+      const row = id => m.row(id), base = id => ({ poolId: id, runId: 'run-pairs', state: 'ready', sheetId: null, setId: null, orderId: R(7), transactionId: T(10), lineKey: R(7) + '_' + T(10), sku: 'PAIR-FACE-L', material: 'gold', form: 'earrings', quantity: 2, side: id === L ? 'L' : 'R', mirror: id !== L, bodyIndex: 0, groupKey: R(7) + ':' + T(10), groupSize: 2, copy: id === L ? 1 : 2 });
+      for (const id of [L, Rr]) m.fsx.put('Charm_Pool', id, Object.assign({}, m.row(id), { quantity: 2 }));   // (a real pool row's quantity is the line's piece count, as preparePool writes it)
+      const r = await m.fns.lib('poolPut', { pools: [base(L), base(Rr)] }); assert(!r.error, JSON.stringify(r));
+      assert.deepEqual((r.placed || []).map(x => x.poolId), [L], JSON.stringify(r)); assert.equal(r.written, 1);
+      assert.equal(row(L).sheetId, 'sh-gf1'); assert.equal(row(L).state, 'written'); assert.equal(row(Rr).state, 'ready'); assert(row(Rr).repooledAt, 'the Right says it is live again');
+      assert.equal(row(Rr).mirror, true, 'the Right is still the mirror image');
+    });
     await t('6c a line made up again (state superseded) still supersedes a piece on a cut sheet, as before (an Etsy change)', async () => {
       const r = await m.fns.lib('poolUpdate', { poolIds: [L], patch: { state: 'superseded', sheetId: null, setId: null } }); assert(!r.error, JSON.stringify(r));
       assert.equal(m.row(L).state, 'superseded'); assert.equal(r.kept, undefined);
@@ -160,6 +168,103 @@ const R = n => F.rid(n), T = n => F.tx(n);
       assert.equal(r.status, 409, JSON.stringify(r)); assert(/GF Sheet 2/.test(r.error) && /right earring/.test(r.error), r.error);
       assert.equal(JSON.stringify(m.rec('sh-gf2')), before);
       const l = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L] } }); assert(/GF Sheet 1/.test(l.error) && /left earring/.test(l.error), l.error);
+    });
+    m.done();
+  }
+  // ═══ 8 · Delete sheet on a sheet the laser already cut (passcode from the fixture, never printed) ═══
+  {
+    const m = mount({ orders: [{ rid: R(11), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(11), T(10))] });
+    const [L] = m.idsOf(R(11), T(10), 2);
+    m.fsx.put('Charm_Nest_Sheets', 'sh-gf1', Object.assign({}, m.rec('sh-gf1'), { laserDoneAt: NOW - 600000, laserDoneBy: 'Laser Lee' }));
+    await open('8a (finding 9, open question) deleting a sheet the laser already CUT frees its made Left earring to the pool as waiting, so it would be nested and cut a second time', async () => {
+      const r = await m.fns.lib('deleteSheet', { id: 'sh-gf1', code: process.env.CHARM_NEST_DELETE_CODE }); assert(!r.error, JSON.stringify(r));
+      assert(!(m.row(L).state === 'written' && !m.row(L).sheetId), 'the cut Left is waiting again: ' + JSON.stringify({ state: m.row(L).state, sheetId: m.row(L).sheetId, was: m.row(L).sheetIdWas }));
+    });
+    m.done();
+  }
+  {
+    await open('8b (finding 10, open question) a stale tab saves a CUT sheet with its piece list changed: the server writes it, so the record of what was cut loses the Left earring', async () => {
+      const m2 = mount({ orders: [{ rid: R(12), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(12), T(10))] });
+      const [L2] = m2.idsOf(R(12), T(10), 2);
+      m2.fsx.put('Charm_Nest_Sheets', 'sh-gf1', Object.assign({}, m2.rec('sh-gf1'), { laserDoneAt: NOW - 600000, laserDoneBy: 'Laser Lee' }));
+      try { const r = await m2.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [] } }); assert(r.error || (m2.rec('sh-gf1').poolIds || []).includes(L2), 'the cut sheet now lists nothing: ' + JSON.stringify(m2.rec('sh-gf1').poolIds)); } finally { m2.done(); }
+    });
+  }
+  // ═══ 9 · a half-written group: the line says 2 pieces (pieceCount, as the intake now records it) but only its Left has a pool id ═══
+  {
+    const rid = R(13), key = rid + '_' + T(10), L = key + '_1', Rr = key + '_2';
+    await open('9a (finding 6, open) Readiness expects the Right earring of a line that says pieceCount 2 and lists only the Left: a sheet holding the Left must wait for it', async () => {
+      const lines = [{ key, orderId: rid, poolIds: [L], quantity: 1, pieceCount: 2, state: 'written' }];
+      const sheet = { id: 'a', setId: null, poolIds: [L], orders: [rid], laserDoneAt: 0, metal: 'gold' };
+      const pieces = Readiness.pieces(lines, [sheet])[rid]; assert.deepEqual(pieces.map(p => p.poolId), [L, Rr], 'the order reads ' + JSON.stringify(pieces.map(p => p.poolId)));
+    });
+  }
+  // ═══ 10 · two tabs nest the same ear on two sheets ═══
+  {
+    const m = mount({ orders: [{ rid: R(14), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }, { rid: R(15), lines: [{ n: 10, kind: 'single', on: 'sh-gf3' }] }], tracked: [F.groupKey(R(14), T(10))] });
+    const [L] = m.idsOf(R(14), T(10), 2);
+    await open('10a (finding 12, open) a stale tab saves GF Sheet 3 with the Left earring that GF Sheet 1 already holds: the server must refuse a piece listed on two saved sheets', async () => {
+      const r = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf3', poolIds: [F.poolId(R(15), T(10), 1), L] } });
+      assert(r.error, 'accepted: ' + JSON.stringify(m.rec('sh-gf3').poolIds) + ' and GF Sheet 1 still lists ' + JSON.stringify(m.rec('sh-gf1').poolIds));
+    });
+    m.done();
+  }
+  // ═══ 11 · rule A with units, a whole pair, a mismatched pair and letters ═══
+  {
+    const m = mount({ orders: [
+      { rid: R(21), lines: [{ n: 10, kind: 'pair', qty: 2, on: ['sh-gf1', 'sh-gf1', 'sh-gf2', 'sh-gf2'] }] },   // two units, each pair whole on its own sheet, the line on two sheets
+      { rid: R(22), lines: [{ n: 10, kind: 'pair', on: ['sh-gf3', 'sh-gf3'] }, { n: 11, kind: 'single', on: 'sh-gf3' }] },   // a whole pair and another line on ONE sheet
+      { rid: R(23), lines: [{ n: 10, kind: 'mismatched', on: ['sh-gf4', 'sh-ss1'] }] },   // a mismatched pair on two sheets of two sets
+      { rid: R(24), lines: [{ n: 10, kind: 'letters', letters: 4, on: ['sh-gf3', 'sh-gf3', 'sh-gf3', 'sh-ss1'] }] }], tracked: [F.groupKey(R(21), T(10)), F.groupKey(R(23), T(10)), F.groupKey(R(24), T(10))] });
+    await t('11a two units of one line, each pair whole on a sheet, the line on two sheets: both sheets are refused and the text names the order, its earrings and both sheets', async () => {
+      const r = await m.move('sh-gf2', null); assert.equal(r.status, 409, JSON.stringify(r)); assert(/GF Sheet 1/.test(r.error) && /GF Sheet 2/.test(r.error) && new RegExp(R(21)).test(r.error), r.error);
+      console.log('      text: ' + r.error);
+    });
+    await t('11b a pair whole on one sheet with another order that is split: the refusal names THAT order (and its sheets), not the whole pair', async () => {
+      // (order 24 has letters on GF Sheet 3 and the silver sheet)
+      const r = await m.move('sh-gf3', null); assert.equal(r.status, 409, JSON.stringify(r)); assert(new RegExp(R(24)).test(r.error), r.error); assert(!new RegExp(R(22)).test(r.error), 'the whole pair of order 22 is not the reason: ' + r.error);
+      console.log('      text: ' + r.error);
+    });
+    await t('11c a mismatched pair on two sheets of two different sets: moving either sheet into the other set is allowed to ask, but each leaves with a refusal that names left and right', async () => {
+      const r = await m.move('sh-gf4', 'set-1'); console.log('      join text: ' + (r.error || JSON.stringify(r).slice(0, 200)));
+      const out = await m.move('sh-ss1', null); assert.equal(out.status, 409, JSON.stringify(out)); console.log('      leave text: ' + out.error);
+    });
+    m.done();
+  }
+  // ═══ 12 · a patch that names the other ear, or the other way round, for a piece already on a sheet ═══
+  {
+    const m = mount({ orders: [{ rid: R(16), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(16), T(10))] });
+    const [L, Rr] = m.idsOf(R(16), T(10), 2), gk = F.groupKey(R(16), T(10));
+    const pair = (side, mirror, extra) => Object.assign({ side, mirror, bodyIndex: 0, groupKey: gk, groupSize: 2 }, extra || {});
+    await t('12a poolUpdate naming the Left\'s ear and direction for the placed Right is not written for it (the rest of the patch is); the answer says wrongWay; the Right stays the Right, mirrored', async () => {
+      const r = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('L', false, { heldNote: 'x' }) }); assert(!r.error, JSON.stringify(r));
+      assert.deepEqual(r.wrongWay, [Rr], JSON.stringify(r)); assert.equal(m.row(Rr).side, 'R'); assert.equal(m.row(Rr).mirror, true); assert.equal(m.row(Rr).heldNote, 'x');
+    });
+    await t('12b the same ear and direction again is a plain re-write; naming only the wrong mirror flag is also refused', async () => {
+      const ok = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('R', true, { runId: 'run-x' }) }); assert(!ok.error && !ok.wrongWay, JSON.stringify(ok)); assert.equal(m.row(Rr).runId, 'run-x');
+      const flip = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('R', false) }); assert.deepEqual(flip.wrongWay, [Rr]); assert.equal(m.row(Rr).mirror, true);
+    });
+    await t('12c a row that is not on a sheet yet (ready) can still be given its ear', async () => {
+      m.fsx.put('Charm_Pool', Rr, Object.assign({}, m.row(Rr), { state: 'ready', sheetId: null, setId: null }));
+      const r = await m.fns.lib('poolUpdate', { poolIds: [Rr], patch: pair('R', true, { runId: 'run-y' }) }); assert(!r.error && !r.wrongWay, JSON.stringify(r)); assert.equal(m.row(Rr).runId, 'run-y');
+    });
+    m.done();
+  }
+  // ═══ 13 · a sheet save that would put the Right on a sheet facing the Left's way ═══
+  {
+    const m = mount({ orders: [{ rid: R(17), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', null] }] }], tracked: [] });
+    const [L, Rr] = m.idsOf(R(17), T(10), 2), gk = F.groupKey(R(17), T(10));
+    const charm = (id, side, mirror) => ({ id: 'c-' + id, poolId: id, side, mirror, bodyIndex: 0, groupKey: gk, groupSize: 2 });
+    await t('13a the Right (a mirror image in its piece record) added to GF Sheet 1 as a charm that says it is NOT mirrored: refused, nothing written; added as the mirror image: accepted', async () => {
+      const before = JSON.stringify(m.rec('sh-gf1'));
+      const bad = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L, Rr], charms: [charm(L, 'L', false), charm(Rr, 'R', false)] } });
+      assert.equal(bad.status, 409, JSON.stringify(bad)); assert(/GF Sheet 1/.test(bad.error) && /right earring/.test(bad.error) && /other way|wrong way|mirror/.test(bad.error), bad.error);
+      assert.equal(JSON.stringify(m.rec('sh-gf1')), before);
+      const ok = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L, Rr], charms: [charm(L, 'L', false), charm(Rr, 'R', true)] } }); assert(!ok.error, JSON.stringify(ok));
+      assert.deepEqual(m.rec('sh-gf1').poolIds, [L, Rr]);
+    });
+    await t('13b a plain charm (no side, no mirror) and a record without the pair fields save exactly as before', async () => {
+      const ok = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L, Rr], charms: [{ id: 'c-a', poolId: L }, { id: 'c-b', poolId: Rr }] } }); assert(!ok.error, JSON.stringify(ok));
     });
     m.done();
   }

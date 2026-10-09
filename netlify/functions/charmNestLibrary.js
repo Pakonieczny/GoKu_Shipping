@@ -794,10 +794,17 @@ async function op_putSheet(b) {
     // (poolTakeOff), so the piece is a NEW name here; Release re-pools the row first, which is the only way back. A piece the
     // record already lists is never in question, so a save of a sheet as it stands is never refused by this.
     if (Array.isArray(s.poolIds)) {
-      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [], sideOf = new Map();
-      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", "side", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) { off.push(r.id); sideOf.set(r.id, r.data().side); }
+      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [], sideOf = new Map(), rowOf = new Map();
+      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", "side", "mirror", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) { off.push(r.id); sideOf.set(r.id, r.data().side); } else if (r.exists) rowOf.set(r.id, r.data());
       // (a person reads the sheet as the Library names it and an earring as left or right, not a document id: ADVLIFE 8, 9 Oct 2026)
       const what = id => (sideOf.get(id) === "L" ? "the left earring " : sideOf.get(id) === "R" ? "the right earring " : "piece ") + id, name = Placement.labelOf(Object.assign({}, old, s)) || `Sheet ${s.id}`;
+      /* A piece added to the sheet faces the way its piece record says: the Right is the Left's mirror image, and a charm that says the other way (a page that
+         rebuilt it from the design as drawn) is never saved on a sheet, where it would be cut as the Left. Only a charm and a record that both say (side and a
+         true or false mirror) are compared; no extra read (the rows are the ones read above). (ADVLIFE 14, 9 Oct 2026) */
+      if (!off.length && Array.isArray(doc.charms)) {
+        const way = []; for (const c of doc.charms) { const r = c && c.poolId ? rowOf.get(String(c.poolId)) : null; if (r && (r.side === "L" || r.side === "R") && (c.side === "L" || c.side === "R") && typeof c.mirror === "boolean" && typeof r.mirror === "boolean" && (c.side !== r.side || c.mirror !== r.mirror)) way.push([String(c.poolId), r]); }
+        if (way.length) return { error: `${name} was not saved: ${way.length === 1 ? "the " + (way[0][1].side === "L" ? "left" : "right") + " earring " + way[0][0] : way.length + " earrings (" + way.slice(0, 3).map(w => w[0]).join(", ") + ")"} would be put on it facing the other way from its piece record (${way.length === 1 ? (way[0][1].mirror ? "the mirror image" : "as drawn") : "mirror image or as drawn"}). Reload the page to see the sheet as it is now`, status: 409, wrongWay: way.map(w => w[0]).slice(0, 20) };
+      }
       if (off.length) return { error: `${name} was not saved: it would put back ${off.length === 1 ? what(off[0]) : `${off.length} pieces (${off.slice(0, 3).map(what).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20) };
     }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
@@ -1461,12 +1468,18 @@ async function op_poolUpdate(b) {
     return { ok: true, count: ids.length - keptSet.size, sheets: done.edited, ...(done.extended.length ? { extended: done.extended } : {}), ...(done.kept.length ? { kept: done.kept } : {}) };
   }
   // left and right rows named over a line an older run made as one glued piece, still in play, are not written (poolPut's rule): the page is told (`legacy`)
-  let wrote = ids; const legacy = [];
-  if (sent.length && PoolPieces.cleanFields(Object.assign({ poolId: ids[0] }, p)).side) {
+  let wrote = ids; const legacy = [], wrongWay = new Set();
+  const wantPair = sent.length ? PoolPieces.cleanFields(Object.assign({ poolId: ids[0] }, p)) : null;
+  if (wantPair && wantPair.side) {
     const rowsRead = [];
-    for (let i = 0; i < ids.length; i += 100) rowsRead.push(...await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: ["side", "groupSize", "state", "sheetId"] }));
+    for (let i = 0; i < ids.length; i += 100) rowsRead.push(...await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: ["side", "mirror", "groupSize", "state", "sheetId"] }));
     const lines = new Set(); ids.forEach((id, i) => { if (legacyLive(rowsRead[i] && rowsRead[i].exists ? rowsRead[i].data() : null)) lines.add(Placement.groupOfPool(id)); });
     if (lines.size) { wrote = ids.filter(id => !lines.has(Placement.groupOfPool(id))); legacy.push(...ids.filter(id => lines.has(Placement.groupOfPool(id)))); }
+    /* A piece that is already made up and on a sheet (or past it) never changes ear or direction: the Right is the Left's mirror image and was nested as one.
+       A patch that names the other ear, or the other way round, for such a piece is not written for it (the rest of the patch is), and the answer says
+       which ids (`wrongWay`). Naming the same ear and direction again is a plain re-write. (ADVLIFE 13, 9 Oct 2026) */
+    ids.forEach((id, i) => { const cur = rowsRead[i] && rowsRead[i].exists ? rowsRead[i].data() : null;
+      if (cur && (cur.side === "L" || cur.side === "R") && !Placement.TAKE_OFF_STATES.has(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state)) && (cur.side !== wantPair.side || (typeof wantPair.mirror === "boolean" && typeof cur.mirror === "boolean" && cur.mirror !== wantPair.mirror))) wrongWay.add(id); });
   }
   let before = null;
   if (told && wrote.length) try { before = new Map(); for (let i = 0; i < wrote.length; i += 100) (await db.getAll(...wrote.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(wrote[i + j], s.exists ? s.data() : null)); }
@@ -1474,13 +1487,13 @@ async function op_poolUpdate(b) {
   let batch = db.batch(), n = 0;
   for (const id of wrote) {
     const doc = Object.assign({}, p, { updatedAt: FV.serverTimestamp() });
-    if (sent.length) { for (const k of sent) delete doc[k]; Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); delete doc.poolId; }
+    if (sent.length) { for (const k of sent) delete doc[k]; if (!wrongWay.has(id)) { Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); } delete doc.poolId; }
     batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
   }
   if (n) await batch.commit();
   if (told && wrote.length) await stamp(() => poolEvents(wrote, p, before, b), "pool");
   if (told && wrote.length && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(wrote, p, before, b);
-  return { ok: true, count: wrote.length, ...(legacy.length ? { legacy } : {}) };
+  return { ok: true, count: wrote.length, ...(legacy.length ? { legacy } : {}), ...(wrongWay.size ? { wrongWay: [...wrongWay] } : {}) };
 }
 /* A cancelled order's pieces taken off (removedReason "cancelled...", the sheet window's Cancel and AutoCancel): each sheet
    they left is a removal on its cancel record too, with when and who (_orderCancel.noteRemovals; kept for good, 29 Sep).

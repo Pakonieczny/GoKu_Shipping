@@ -15,10 +15,12 @@
  *      mirror     true | false              true: the piece is the MIRROR IMAGE of the as-drawn master design (a Left faces left, a Right faces right)
  *      bodyIndex  0 | 1                     which of the design's bodies this piece is cut from (a matching pair: 0; a mismatched pair: 0 = left body, 1 = right body)
  *      groupKey   "receiptId:transactionId" every piece of one order line (contract.md)
- *      groupSize  number of pieces in the group (2 x the Etsy quantity)
+ *      groupSize  number of pieces in the group (2 x the Etsy quantity; 1 for a single earring that names its ear)
  *  They are written in the pool row (poolPut), on the page's charm, and in the sheet record's `charms[]` entry. side, bodyIndex, groupKey and
  *  groupSize come all four or none (a record with some of them is read as having none); `mirror` is a boolean or absent (an older sided
  *  record has none: read as the as-drawn piece). Scalars only (Firestore refuses arrays in arrays; nothing here stores a list).
+ *  A SINGLE earring whose line names its ear (title or option: "Single Replacement, Left Ear", "Right earring only") is one piece with side "L" or "R", bodyIndex 0 (a
+ *  mismatched design: the body of that ear), mirror by the same facing rule as a pair, groupSize 1. A single that names no ear carries none of the fields (as drawn).
  *  Piece numbering: unit u = 1..q makes piece 2u-1 (LEFT) then piece 2u (RIGHT); a mismatched pair's Left is cut from body 0, its Right from body 1.
  *
  *  OLD RECORDS (no fields) are read, never rewritten: metaOf() derives the group from the pool id, the size from `quantity` (the
@@ -72,7 +74,7 @@
     const key = pid ? pid.groupKey : o.groupKey;   // a pool id names its group by itself: a wrong groupKey on a row is repaired from it
     if (side !== "L" && side !== "R") return {};
     if (!Number.isInteger(bodyIndex) || bodyIndex < 0 || bodyIndex > 9) return {};
-    if (!Number.isInteger(size) || size < 2 || size > MAX_PIECES) return {};
+    if (!Number.isInteger(size) || size < 1 || size > MAX_PIECES) return {};   // (a single earring that names its ear is a piece of a group of ONE: size 1, Paul 9 Oct, "left and right are always kept")
     if (!keyOk(key)) return {};
     return typeof o.mirror === "boolean" ? { side, mirror: o.mirror, bodyIndex, groupKey: key, groupSize: size } : { side, bodyIndex, groupKey: key, groupSize: size };
   }
@@ -95,7 +97,7 @@
     if (f.side) {
       // (a mismatched pair's Right is cut from body 1; a matching pair has one body. A Left of a mismatched pair says so only with ctx.mismatchedDesign: the master entry's `pair`)
       const mis = !!ctx.mismatchedDesign || f.bodyIndex > 0;
-      return { poolId: id, groupKey: f.groupKey, n, groupSize: f.groupSize, side: f.side, mirror: typeof f.mirror === "boolean" ? f.mirror : null, bodyIndex: f.bodyIndex, unit: Math.ceil(n / 2), kind: f.groupSize === 2 ? (mis ? "mismatched" : "pair") : "multi", glued: false, legacy: false };
+      return { poolId: id, groupKey: f.groupKey, n, groupSize: f.groupSize, side: f.side, mirror: typeof f.mirror === "boolean" ? f.mirror : null, bodyIndex: f.bodyIndex, unit: Math.ceil(n / 2), kind: f.groupSize === 1 ? "single" : f.groupSize === 2 ? (mis ? "mismatched" : "pair") : "multi", glued: false, legacy: false };
     }
     const size = num(row.quantity) || num(row.orderInfo && row.orderInfo.quantity) || num(ctx.groupSize) || num(ctx.quantity) || 1;
     const glued = !!ctx.mismatchedDesign;

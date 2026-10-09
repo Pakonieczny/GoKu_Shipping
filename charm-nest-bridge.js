@@ -2370,7 +2370,8 @@ const Master = window.Master = (() => {
           if (Date.now() - lastChange > 6 * 60000) throw new Error(`the server stopped reporting at "${d.stage}" ${silent} min ago — the file is too large for the server route (about 1 GB of memory, 15 min). Index it with the local indexer: node scripts/index-master.cjs "<file>" --origin ${location.origin}`);
           if (Date.now() - t0 > 16 * 60000) throw new Error("the server route ran past its 15-minute limit — index the file with the local indexer: node scripts/index-master.cjs"); }
         await load(true);
-        job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked`);
+        job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked${(job.result.pairs || []).filter(x => x.folded).length ? ` · ${(job.result.pairs || []).filter(x => x.folded).length} pair design(s) built from both bodies` : ""}`);
+        if ((job.result.pairsKept || []).length) say("warn", `${job.result.pairsKept.length} pair design(s) could not be built and were left as they were: ${job.result.pairsKept.slice(0, 12).map(k => k.sku).join(", ")}`);
         render(); return job;
       }
       const lab = P.labelCharms(parsed, g.charms, { pattern: skuRegex(), gapPt: (+S.settings.labelGapMm || 6.4) * PT, widen: 0.25 });
@@ -2450,7 +2451,13 @@ const Master = window.Master = (() => {
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
   async function writeIndex(job) {
     const { parsed, charms, lab, masterHash, name } = job; const entries = [], blocked = [], skus = [];
-    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld);
+    // A pair design is never written back as one body. This indexer draws ONE body per label (its silhouettes come from a canvas), so a row of two bodies under one label (a mismatched pair)
+    // and a SKU the library already holds as a pair are left as they are, and the run says so (charm-nest-pair.js keepPairs; the server route and scripts/index-master.cjs build the pair from both bodies).
+    const labelsOf = c => { const l = lab && lab.labels instanceof Map ? lab.labels.get(c.index) : null; return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, size: x.size, bbox: x.bbox })) : []; };
+    const keep = window.CharmNestPair && window.CharmNestPair.keepPairs ? window.CharmNestPair.keepPairs(charms, labelsOf, B.master.entries) : new Map();
+    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld && !keep.has(c.index));
+    job.kept = charms.filter(c => keep.has(c.index) && c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld).map(c => ({ sku: c.sku, kind: keep.get(c.index).kind, why: keep.get(c.index).why }));
+    if (job.kept.length) { const text = `${job.kept.length} pair design(s) were NOT written, so none was turned back into one body: ${job.kept.slice(0, 12).map(k => k.sku).join(", ")}${job.kept.length > 12 ? " …" : ""}. The Master tab indexer draws one body for each label (${job.kept[0].sku}: ${job.kept[0].why}). Index this master with the server route or node scripts/index-master.cjs, which build the pair from both bodies.`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     let n = 0;
     const one = async (c) => {
       const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
@@ -2475,6 +2482,7 @@ const Master = window.Master = (() => {
     const replaces = [...new Set(B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash).concat(job.supersede || []))];
     const r = await api("charmNestLibrary", { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
     job.conflicts = r.blocked || []; job.sizeMoved = r.sizeMoved || [];
+    if ((r.pairKept || []).length) { const text = `${r.pairKept.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${r.pairKept.slice(0, 12).map(b => b.sku).join(", ")}${r.pairKept.length > 12 ? " …" : ""}`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     if (job.conflicts.length) agent({ master: masterHash }, "warn", `${name}: ${job.conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${job.conflicts.map(b => b.sku).join(", ")}`);
     if (job.sizeMoved.length) agent({ master: masterHash }, "warn", `${name}: ${job.sizeMoved.length} SKU(s) changed size by more than 5% since the last index: ${job.sizeMoved.map(b => b.sku).join(", ")}`);
     await api("charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
@@ -2941,7 +2949,8 @@ const Pool = window.Pool = (() => {
     pinPooled(row);
     if (sp.pieceNote) agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote}`);
     const Pair = window.CharmNestPair, wanted = Pair && Pair.piecesFor && PoolPieces && !gluedLine(row) ? Pair.piecesFor(pairLine(row), base) : null;
-    const plan = wanted && wanted.length >= 2 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && wholeBody(src, +p.bodyIndex)) ? wanted : null;
+    // (a plan is the pieces of an earring pair, or ONE piece with its side: a single earring whose line names its ear is cut as that ear, the Right the mirror image by the same facing rule; a single that names no ear has no side and is cut as drawn)
+    const plan = wanted && wanted.length >= 1 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && wholeBody(src, +p.bodyIndex)) ? wanted : null;
     if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
@@ -2956,7 +2965,7 @@ const Pool = window.Pool = (() => {
     for (let copy = 1; copy <= count; copy++) {
       const poolId = O.poolId(row.order, row.line, copy), pp = plan ? plan[copy - 1] : null, mine = pp ? PoolPieces.fieldsOf(pp) : null;
       const charm = pp ? cloneCharm(baseFor(src, pp), `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
-      charm.name = pp ? `${row.order.receiptId} · ${sp.designSku} · ${copy}/${count}` : `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
+      charm.name = `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
       if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them
@@ -9156,6 +9165,9 @@ const CustomSheet = window.CustomSheet = (() => {
   const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
+  /** The pieces the order asks for, as the card says them ("2 pieces ordered"): an earring pair is a Left and a Right per unit (pairPlan, the same count notReady
+   *  waits for), every other line what its quantity says, as before. (defaultQty is something else: how many copies of ONE dropped design start the row.) */
+  const piecesOrdered = it => Math.max(1, linesOf(it).reduce((n, r) => { const plan = r && r.spec && r.order && r.line ? pairPlan(r) : null; return n + (plan ? plan.length : (r.spec && r.spec.quantity) || 1); }, 0));
   /* ── an earring pair cut from the customer's own designs (Paul, 9 Oct 2026, 18:47) ──
      A pair of earrings is a LEFT and a RIGHT piece for every pair bought (charm-nest-pair.js piecesFor), a custom order too. The customer's file may draw
      both ears (two bodies: the one on the left is the Left) or one (the Right is then the Left mirrored, as for every other design). The card's Send to
@@ -9783,7 +9795,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!row) { d.close(); return; }
     const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
     d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
-    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(defaultQty(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
+    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(piecesOrdered(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
     const files = e ? e.files : [], sent = !!(e && e.sent), locked = sent || !!e?.sendIntent || busy.has(D.ck), busyNow = busy.get(D.ck) || "", calm = D.opening || !d.open || motionOff();
     // one metal for every design (with two or more), its bar opening or folding its room
     const allRow = d.querySelector(".cuAll"), grp = allRow.querySelector("[data-all]");
@@ -12415,8 +12427,6 @@ const OrderWin = window.OrderWin = (() => {
     return l.some(p => p.side === "L") && l.some(p => p.side === "R") ? l : [];
   }
   const sideWord = sd => sd === "L" ? "Left" : sd === "R" ? "Right" : "";
-  /** How many pieces a line makes for the order's count: the pieces of a mismatched pair (two for every unit), else its quantity. */
-  const pieceQtyOf = x => { const sd = pairSides(x); return sd.length || Math.max(1, Math.round(+((x.spec && x.spec.quantity) || (x.line && x.line.quantity)) || 1)); };
   /** Each line of the order as a piece: its key, transaction, count, pool pieces and the sheets they are on. */
   function piecesOf(sibs) {
     return sibs.map(x => {
@@ -12432,7 +12442,9 @@ const OrderWin = window.OrderWin = (() => {
       // (a mismatched pair line: its Left and Right are pieces of their own, `sides`: the line stays ONE piece for the pick, the timeline's lanes and the Review card; its rows are drawn per side)
       const sd = pairSides(x), tid = String(x.line.transactionId || "");
       const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, mirror: mine.some(c => c.mirror), pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
-      return Object.assign({ key: x.key, tid, qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
+      // (qty: the pieces the line makes, THE count the intake gives (CharmNestOrders.pieceCountOf: three discs are 3, an old line keeps the pieces it was pooled with); a pair's sides carry their own, so this is for the lines without sides)
+      const pcs = sides ? 0 : (() => { try { return Math.max(1, Math.round(+O.pieceCountOf(x)) || 1); } catch (_) { return 0; } })();
+      return Object.assign({ key: x.key, tid, qty: pcs || Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
         line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {});
     });

@@ -17,7 +17,7 @@
  *    reconcile(base, live)          base pieces, with each live sheet's own pieces in place of the ones it was recorded with
  *    splitNotes(sheetId, pieces, only?)  the lines a sheet's QR label carries for the groups that sit on more than one sheet ([] when none); only: the order numbers of one label's part
  *    backWord(b)                    " · Left" for a back record with a side, else ""
- *    labelPieces(row, entry)        the stickers an earring pair line needs (Left then Right per unit): [{ side, n, of }], else null
+ *    labelPieces(row, entry)        the stickers an earring pair line needs (Left then Right per unit), or the one ear of a single earring that names its ear: [{ side, n, of }], else null
  *    stickerPieces(rows, entryOf)   the same for a card's lines (what QR Printer.html prints one page for)
  *    pieceCount(rows, entryOf)      pieces behind a card's lines (an earring pair makes two per unit), else null
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -165,7 +165,7 @@
     const P = pair();
     if (P && typeof P.piecesFor === "function") {
       let list = null; try { list = P.piecesFor(row, entry || undefined); } catch (_) { list = null; }
-      if (list && list.length >= 2 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;
+      if (list && list.length >= 1 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;   // (one piece with a side: a single earring that names its ear prints that ear's sticker)
     }
     if (mismatchedDesign(entry)) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
     return null;
@@ -175,14 +175,22 @@
    *  same order ([{ side, n, of }]); any other line makes none of its own (null: the order's one sticker, as before). row: the sorter's row ({ spec, line }). */
   function labelPieces(row, entry) {
     const list = earPieces(row, entry); if (!list) return null;
+    const alternate = list.length >= 2 && list.length % 2 === 0 && list.every((p, i) => p.side === (i % 2 ? "R" : "L"));
+    if (!alternate) return list.map((p, i) => ({ side: p.side, n: i + 1, of: list.length }));   // (single ears: each its own number, 1 of 1 prints no "n/of")
     const of = Math.ceil(list.length / 2);
     return list.map((p, i) => ({ side: p.side, n: Math.floor(i / 2) + 1, of }));
   }
-  /** The stickers a card's lines need together (rows: the sorter's rows { spec, line }); entryOf(row) → the master entry of the row's design. null when none. */
+  /** The stickers a card's lines need together (rows: the sorter's rows { spec, line }); entryOf(row) → the master entry of the row's design. null when none.
+   *  The ears are numbered across the whole card (a stud pair and a huggie pair on one order: 1/2 and 2/2, never two stickers that both say LEFT 1/1),
+   *  so no two stickers of one order are alike; one pair line reads exactly as labelPieces says it. */
   function stickerPieces(rows, entryOf) {
-    const out = [];
-    for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const p = labelPieces(r, e); if (p) out.push(...p); }
-    return out.length ? out : null;
+    const lists = [];
+    for (const r of rows || []) { let e = null; try { e = entryOf ? entryOf(r) : null; } catch (_) { e = null; } const list = earPieces(r, e); if (list) lists.push(list); }
+    if (!lists.length) return null;
+    const of = lists.reduce((n, l) => n + Math.ceil(l.length / 2), 0), out = [];
+    let n = 0;
+    for (const list of lists) list.forEach((p, i) => { if (i % 2 === 0) n++; out.push({ side: p.side, n, of }); });
+    return out;
   }
   /** The pieces a line that is not an earring pair makes: the one count of the app (CharmNestOrders.pieceCountOf: 3 discs are 3, a counted answer, an old line's own pieces), the Etsy quantity only when that is not at hand. */
   function otherPieces(row) {

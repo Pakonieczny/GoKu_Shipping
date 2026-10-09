@@ -21,6 +21,7 @@ const crypto = require("crypto");
 const admin = require("./firebaseAdmin");
 const Master = require("./_charmNestMaster");
 const { parseBody, safePath } = require("./_charmNestAuth");
+const Pair = require("../../charm-nest-pair.js");     // the pair layer (below): the same module scripts/index-master.cjs reads, so the two cannot disagree
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 const JOBS = "Charm_Nest_Jobs";
@@ -81,25 +82,33 @@ exports.handler = async (event) => {
     const parsed = await CharmNestPDF.parseSource(bytes, job.name || "master.ai");
     const g = CharmNestPDF.groupCharms(parsed, { minPt: +opts.minPt || 6 });
     const lab = CharmNestPDF.labelCharms(parsed, g.charms, { pattern, gapPt, widen: 0.25 });
-    const entries = [], blocked = [], skus = []; let ringsWelded = 0; const ringsLeft = [];
+    const entries = [], blocked = [], skus = []; let ringsWelded = 0; const ringsLeft = [], pairsKept = [];
     const total = lab.labels.size; let done = 0;
+    // A row of two bodies under ONE label that is surely a mismatched pair is ONE design (both bodies in its file and its record, `pair` on the entry), exactly as scripts/index-master.cjs
+    // builds it. Without this the pair came back as the labelled body alone and a re-index here would have turned a pair design back into one body.
+    const pairs = Pair.pairLayer(CharmNestPDF, Geom, g, lab, [...lab.labels].map(([index, l]) => ({ index, l })), { engraveMarginMm: +opts.engraveMarginMm || 0.8 }, m => console.log("[charmMaster]" + m));
     for (const [index, l] of lab.labels) {
-      const c = g.charms.find(x => x.index === index); if (!c) continue;
-      { const r = CharmNestPDF.integrateRings(c); ringsWelded += r.welded; if (r.left.length) ringsLeft.push({ sku: l.sku, why: r.left[0] }); }   // a ring beside the body becomes part of its cut line
-      const sil = Geom.silhouetteBits(c, 6, {});
+      const pm = pairs.fold.get(index);                                 // set only for a design folded from a pair; every other design takes the lines it always took
+      if (!pm && pairs.refused.has(index)) { pairsKept.push({ sku: l.sku, why: pairs.refused.get(index) }); continue; }   // a pair that could not be folded is left as it was: its labelled body alone must not take its place
+      const c = pm ? pm.charm : g.charms.find(x => x.index === index); if (!c) continue;
+      if (!pm) { const r = CharmNestPDF.integrateRings(c); ringsWelded += r.welded; if (r.left.length) ringsLeft.push({ sku: l.sku, why: r.left[0] }); }   // a ring beside the body becomes part of its cut line (a pair's bodies were welded before they were folded)
+      const sil = Geom.silhouetteBits(pm ? pm.view : c, 6, {});
       const charmHash = CharmNestPDF.fnv(CharmNestPDF.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
-      const open = (() => { const polys = Geom.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
+      const open = pm ? pm.open : (() => { const polys = Geom.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true, flipWhy = null;
+      if (pm) ({ engravable, upAngle, upSource, flipOk, flipWhy } = pm.engrave); else
       try { const up = Geom.upAngleOf(c); upAngle = up.angle; upSource = up.source; Geom.backView(c, { res: 6, upAngle }); }
       catch (e) { flipOk = false; flipWhy = e.message; }
       const key = l.size ? `${l.sku}__${l.size}` : l.sku;
-      const ai = await CharmNestPDF.buildSingleCharm(c, parsed);
+      const ai = await CharmNestPDF.buildSingleCharm(c, parsed, pm && pm.bodies ? { bodies: pm.bodies } : undefined);
       const aiUp = await save(bucket, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
       let thumb = null; const png = thumbnailPng(Geom, c, 168, CharmNestPDF); if (png) thumb = await save(bucket, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
       const reasons = [];
       if (open) reasons.push("open outline");
       if (!flipOk) reasons.push(flipWhy);
-      entries.push({ sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: CharmNestPDF.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", blocked: reasons.length ? reasons.join("; ") : null });
+      entries.push({ sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : CharmNestPDF.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", blocked: reasons.length ? reasons.join("; ") : null });
+      if (pm) entries[entries.length - 1].pair = pm.field;               // { v: 1, bodies, mismatched }: only a folded pair carries it (a record without it leaves a stored one alone)
+      Object.assign(entries[entries.length - 1], Pair.entryFields(c, !!pm));   // sym for every design, facings for a pair drawn as mirror images (the same words index-master writes)
       if (reasons.length) blocked.push({ sku: l.sku, reason: reasons.join("; ") });
       skus.push(l.sku);
       for (const x of l.extra || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
@@ -113,7 +122,7 @@ exports.handler = async (event) => {
     }
     const idx = await Master.putIndex(db, FV, { entries, masterHash, masterPath: job.path, masterName: job.name, hashSource: "server", replaces: opts.replaces || [] });
     await Master.putFile(db, FV, { file: { masterHash, path: job.path, name: job.name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(idx.blocked.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "server", pageW: parsed.pageW, pageH: parsed.pageH, replaces: opts.replaces || [] } });
-    const result = { masterHash, ringsWelded, ringsLeft, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts: idx.blocked, sizeMoved: idx.sizeMoved, skus };
+    const result = { masterHash, pairsKept: pairsKept.concat((idx.pairKept || []).map(k => ({ sku: k.sku, why: k.reason }))).slice(0, 100), pairs: pairs.rows.slice(0, 300).map(r => ({ sku: r.skus[0] || null, kind: r.kind, folded: r.folded, bodies: r.bodies, note: r.note || null })), ringsWelded, ringsLeft, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts: idx.blocked, sizeMoved: idx.sizeMoved, skus };
     await ref.set({ status: "done", stage: "done", done, total, result, finishedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, { merge: true });
     console.log(`[charmMaster] ${id}: ${lab.labels.size} labelled of ${g.charms.length}, ${lab.unlabelled.length} unlabelled, ${lab.orphans.length} orphan labels, ${blocked.length} blocked`);
   } catch (e) {
