@@ -1541,7 +1541,7 @@
     }
     // The optional-content key a layer name has in a source's resources: a MIRRORED piece (the Right earring) is drawn from its geometry, and is put inside the
     // same layer as the as-drawn one, so the .ai and the DXF name its cut and its engraving as the master does (pairs, 9 Oct). null: no such layer, nothing wrapped.
-    const layerKeys = new Map();
+    const layerKeys = new Map(); let layerSeq = 0;
     const layerKeyOf = (src, name) => {
       if (!name) return null;
       let m = layerKeys.get(src);
@@ -1549,7 +1549,21 @@
         m = new Map(); layerKeys.set(src, m);
         try {
           const rd = out.context.lookup(src.resRef), pd = rd instanceof PDFDict ? out.context.lookup(rd.get(PDFName.of("Properties"))) : null;
-          if (pd instanceof PDFDict) for (const [k, v] of pd.entries()) { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null, text = nm && nm.decodeText ? nm.decodeText() : null; if (text != null && !m.has(text)) m.set(text, PDFName.of(k.decodeText()).toString()); }
+          const nameOfOCG = v => { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null; return nm && nm.decodeText ? nm.decodeText() : null; };
+          if (pd instanceof PDFDict) for (const [k, v] of pd.entries()) { const text = nameOfOCG(v); if (text != null && !m.has(text)) m.set(text, PDFName.of(k.decodeText()).toString()); }
+          // A per-SKU file this app wrote keeps CUT / ENGRAVE / HATCH in the Properties of the form its page draws, not on the page (ADVSTATION, 9 Oct: the Right ear of every real
+          // per-SKU master landed on its own "... Right" layer, cut and engraving together). The layer found there is added to the page's Properties under a key of its own, which the
+          // form written for a mirrored piece can name; nothing already in the file changes.
+          const xo = rd instanceof PDFDict ? out.context.lookup(rd.get(PDFName.of("XObject"))) : null;
+          if (xo instanceof PDFDict) for (const [, xv] of xo.entries()) {
+            const form = out.context.lookup(xv), fr = form && form.dict ? out.context.lookup(form.dict.get(PDFName.of("Resources"))) : null, fp = fr instanceof PDFDict ? out.context.lookup(fr.get(PDFName.of("Properties"))) : null;
+            if (!(fp instanceof PDFDict)) continue;
+            for (const [, v] of fp.entries()) {
+              const text = nameOfOCG(v); if (text == null || m.has(text)) continue;
+              let target = pd; if (!(target instanceof PDFDict)) { target = out.context.obj({}); rd.set(PDFName.of("Properties"), target); }
+              const key = "ocLayer" + (++layerSeq); target.set(PDFName.of(key), v); m.set(text, "/" + key);
+            }
+          }
         } catch (_) { /* a source with unreadable layers: the piece stays on its charm's layer */ }
       }
       if (m.has(name)) return m.get(name);
@@ -2083,7 +2097,7 @@
     const f = v => (Math.round(v * 1000) / 1000).toString(); let out = "";
     for (const m of members) {
       if (!m || !m.synthetic) continue; const rgb = m.strokeRGB || [0, 0, 0], fill = m.fillRGB || [0, 0, 0];
-      const lk = m.mirrored === true && keyOf ? keyOf(m.layer) : null;   // a mirrored member goes back into the layer it was drawn on (only those: a welded ring is written as before)
+      const lk = m.mirrored === true && keyOf && !(m.original && m.original.synthetic) ? keyOf(m.layer) : null;   // a mirrored member goes back into the layer it was drawn on (only those: a welded ring is written as before; and the mirror of a member the Left writes from its geometry stays on the piece's own layer, as the Left's does: both ears on the same footing)
       if (lk) out += `/OC ${lk} BDC `;
       out += `q ${f(rgb[0])} ${f(rgb[1])} ${f(rgb[2])} RG ${f(fill[0])} ${f(fill[1])} ${f(fill[2])} rg ${f(m.lwPt || 0.25)} w `;
       for (const sp of m.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") out += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") out += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") out += "h "; }
