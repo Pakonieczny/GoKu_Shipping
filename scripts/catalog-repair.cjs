@@ -154,7 +154,9 @@ async function diff(o, log) {
     } catch (err) { failed.push({ skus, aiPath, error: err.message }); }
     if (++n % 100 === 0) log(`  ${n}/${byFile.size} designs compared`);
   });
-  const skusChanged = [...new Set(changed.flatMap(x => x.skus))].sort();
+  // a design is rewritten when the file draws differently OR the index record would change (size, holes, up angle, engravable, blocked):
+  // the reader groups a stored file again when it loads, so some fixes change the record and not what the file draws
+  const skusChanged = [...new Set(changed.flatMap(x => x.skus).concat(Object.values(rec).flatMap(v => v.flatMap(x => x.skus))))].sort();
   // live records of this master that the staged run does not carry: SKUs read from the sheet by Claude's vision (not by text), SKUs
   // the reader no longer labels, SKUs gone from the master. A whole-master stage only (a restricted one says nothing about them).
   let liveOnly = null;
@@ -165,7 +167,7 @@ async function diff(o, log) {
   fs.writeFileSync(path.join(o.stage, "diff.json"), json({ at: new Date().toISOString(), designs: byFile.size, changed, same: same.length, gone, failed, recordChanges: rec, liveOnly }));
   fs.writeFileSync(path.join(o.stage, "changed-skus.json"), json(skusChanged));
   const reasons = {}; for (const c of changed) reasons[c.why.split(";")[0].replace(/\d+/g, "N")] = (reasons[c.why.split(";")[0].replace(/\d+/g, "N")] || 0) + 1;
-  log(`diff: ${byFile.size} design file(s) compared with what the site serves · ${changed.length} differ (${skusChanged.length} SKUs) · ${same.length} already draw the same · ${gone.length} have no live file · ${failed.length} could not be compared`);
+  log(`diff: ${byFile.size} design file(s) compared with what the site serves · ${changed.length} draw differently, ${skusChanged.length} SKUs to rewrite (drawing or record) · ${same.length} already draw the same · ${gone.length} have no live file · ${failed.length} could not be compared`);
   for (const [k, v] of Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8)) log(`  ${v} × ${k}`);
   if (liveOnly) { const bySrc = {}; for (const x of liveOnly) bySrc[x.labelSource || "text"] = (bySrc[x.labelSource || "text"] || 0) + 1; log(`  ${liveOnly.length} live record(s) of this master are not in the staged run (by label source: ${JSON.stringify(bySrc)}): the vision-labelled ones cannot be rebuilt from this PC, see diff.json liveOnly`); }
   for (const [k, v] of Object.entries(rec)) log(`  record check: ${v.length} design(s) with ${k}${k === "sizeMoved" || k === "engravableChanged" || k === "upAngleChanged" || k === "newlyBlocked" ? " (look at them in diff.json before writing)" : ""}`);
