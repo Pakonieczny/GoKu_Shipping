@@ -90,7 +90,7 @@
     // canonical handle can supplement a generic title with no named design.
     return new Set(primary.concat(primary.some(function(t){return NAMED_MOTIFS.has(t);})?[]:words(finishFree(clean(product?.handle,180)))));
   }
-  function themeMatches(product,theme,cachedWords){var tokens=cachedWords||motifWords(product),set=THEME_TOKENS[theme];return !!set&&([...tokens].some(function(t){return set.has(t);})||[...tokens].some(function(t){return THEME_ALIASES[t]===theme;}));}
+  function themeMatches(product,theme,cachedWords){var tokens=cachedWords||motifWords(product),set=THEME_TOKENS[theme],sportingBat=theme==='animals'&&tokens.has('bat')&&['baseball','softball','cricket'].some(function(t){return tokens.has(t);});return !!set&&([...tokens].some(function(t){return set.has(t)&&!(sportingBat&&t==='bat');})||[...tokens].some(function(t){return THEME_ALIASES[t]===theme;}));}
   function motifMatches(product,value){var theme=THEME_ALIASES[String(value||'').toLowerCase()]||THEME_ALIASES[word(value)],tokens=motifWords(product);return theme?themeMatches(product,theme,tokens):words(value).every(function(t){return tokens.has(t);});}
   function categoryMatches(product,category){
     if(!category||category==='all'||category==='available')return true;if(!CATEGORY_PATTERNS[category])return false;

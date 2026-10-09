@@ -239,10 +239,10 @@
   },
   {
     "path": "brites-catalogue-intents.js",
-    "bytes": 33683,
+    "bytes": 33835,
     "oldBlob": "b2cacd29183763992fadece8f937b8fc7e6a2be2",
-    "newBlob": "f65e45ed72e59635e0dc0de1610a8a75e92bce86",
-    "sha256": "c720dda3b5cc5293ba560ef33f8047622f9ba05a9653ec55cd194d35d46163fc"
+    "newBlob": "4276c6800902563e9aa28d5f58df8dc308846d31",
+    "sha256": "e72e1ede895be42d1e849dd3f84def0f267fad1f991b2cc691b24402d4afa74c"
   },
   {
     "path": "tests/growth/adversarial-search-continuation47.test.cjs",
@@ -264,5 +264,12 @@
     "oldBlob": null,
     "newBlob": "38e0d6b2a9fe9aa1117e314c11e96025923d2be1",
     "sha256": "95346eb12863aac02d3453e6ed567d3b6e1de9b30cc6b30138a2d130b5e12c6c"
+  },
+  {
+    "path": "tests/growth/catalogue-theme-context47.test.cjs",
+    "oldBlob": null,
+    "bytes": 963,
+    "newBlob": "ddcfc70f40447d3a18037355cac877f40a0d6837",
+    "sha256": "62a5e4373fccaff8bfccd5645934f287be76d40b817494cbc75d354c865f3b92"
   }
 ]
