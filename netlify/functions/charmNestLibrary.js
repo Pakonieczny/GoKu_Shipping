@@ -2520,7 +2520,7 @@ async function op_laserDone(b) {
     if (done) {
       timed = await LT.recordDone(db, FV, PREFIX, { by, at, device, via, client: LT.cleanClient(b.laserTime),
         marks: changed.map(m => ({ sheetId: m.sheetId, sheet: sheetLabel(m.d), setId: m.d.setId || res.setId || "", setSeq: m.d.setSeq, metal: m.d.metal,
-          pieces: num(m.d.placedCount) || (Array.isArray(m.d.placements) ? m.d.placements.length : 0), orders: new Set(m.orders.map(String)).size })) });
+          pieces: num(m.d.placedCount) || (Array.isArray(m.d.placements) ? m.d.placements.length : 0), orders: new Set(m.orders.map(String)).size, orderIds: [...new Set(m.orders.map(String))] })) });
       if (timed.sheets.length) res.laserTime = { at, sheets: timed.sheets };
     } else await LT.recordUndone(db, FV, PREFIX, { by, at, marks: changed.map(m => ({ sheetId: m.sheetId, was: m.was })) });
   } catch (e) { console.warn("[charmNestLibrary] sheet time not recorded:", (e && e.message) || e); }

@@ -1098,7 +1098,9 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261006-st3"></script>
-  <script src="station-activity.js?v=20261006-st2"></script>
+  <script src="station-activity.js?v=20261009-ps1"></script>
+  <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
+  <script src="station-live-order.js?v=20261009-ps1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
@@ -1283,9 +1285,15 @@
       if (Array.isArray(d.transactions) || d.receipt_id || d.receipt) return "ok";
       return /not.?found|could not find|no such|does not exist|invalid.{0,12}(receipt|order)/i.test(String(d.error || d.message || "")) ? "missing" : "failed";
     }
+    /* the pieces of stud lines (Paul, 9 and 10 Oct 2026): the quantity, and a Left and a Right piece per unit of an earring pair (matching or mismatched); StationLiveOrder.units is the one count every station uses */
+    function weldUnits(list) {
+      try { if (window.StationLiveOrder && StationLiveOrder.units) return StationLiveOrder.units(list); } catch (_) {}
+      return (list || []).reduce((n, t) => n + (Math.floor(Number(t && t.quantity)) || 1), 0);
+    }
+    function weldSides(t, id) { try { return window.StationLiveOrder && StationLiveOrder.sides ? StationLiveOrder.sides(t, id, 24) : []; } catch (_) { return []; } }
     function weldPieces(d) {
       const lines = Array.isArray(d && d.transactions) ? d.transactions : [], studs = lines.filter(weldIsStud);
-      return { lines: lines.length, studs: studs.length, parts: studs.reduce((n, t) => n + (Math.floor(Number(t && t.quantity)) || 1), 0) };
+      return { lines: lines.length, studs: studs.length, parts: weldUnits(studs) };
     }
     const weldId = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
     /* The live stations board (StationActivity.working / idle; plans/employee-hr/api.md): the scan shows this order as the
@@ -1303,12 +1311,18 @@
         if (weldLiveScan.id !== id || now - weldLiveScan.at > weldLiveHold) weldLiveScan = { id, at: now };   // (the outcome tells the same scan again: one scan time)
         const lines = Array.isArray(orderData && orderData.transactions) ? orderData.transactions : [];
         const studs = lines.filter(weldIsStud), use = (studs.length ? studs : lines).slice(0, 24);
-        const pieces = use.map((t, i) => {
+        const pieces = []; let total = 0;
+        use.forEach((t, i) => {
           const q = Math.floor(Number(t && t.quantity)) || 1, title = String((t && t.title) || "").replace(/\s+/g, " ").trim().slice(0, 50) || "Piece " + (i + 1);
           let sku = ""; try { sku = String((t && t.sku) || (typeof extractSkuFromEtsy === "function" ? extractSkuFromEtsy(t) : "") || ""); } catch (_) {}
-          return { id: id + "_" + (weldId(t && t.transaction_id) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: t && t.listing_id };
+          const one = { id: id + "_" + (weldId(t && t.transaction_id) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: t && t.listing_id };
+          const sd = weldSides(t, id);
+          total += sd.length ? weldUnits([t]) : 1;
+          if (!sd.length) { pieces.push(one); return; }
+          // an earring pair (a left and a right, matching or mismatched): one piece per ear, Left then Right, one group; the Matching person puts each left with its right
+          if (pieces.length + sd.length <= 24) sd.forEach((d, k) => pieces.push(Object.assign({}, one, { id: one.id + "-" + (k + 1), label: title }, d)));
         });
-        S.working({ rid: id, orderNumber: id, customer: String((orderData && orderData.name) || ""), pieces, pieceCount: use.length, note: note || "", holdMs: weldLiveHold, scannedAt: weldLiveScan.at });
+        S.working({ rid: id, orderNumber: id, customer: String((orderData && orderData.name) || ""), pieces, pieceCount: Math.max(total, pieces.length), note: note || "", holdMs: weldLiveHold, scannedAt: weldLiveScan.at });
       } catch (_) {}
     }
     function weldLiveEnd(id) { try { if (window.StationActivity && StationActivity.idle) StationActivity.idle(id); } catch (_) {} }
@@ -3416,6 +3430,7 @@ function metalToBadge(label){
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
+              try { var pairTag = window.StationLiveOrder && StationLiveOrder.tag ? StationLiveOrder.tag(item) : ""; if (pairTag) qtyBox.value += " \u00b7 L+R"; qtyBox.title = pairTag || ""; } catch (_) {}   // an earring pair says so (a Left and a Right per pair), every other line is as before
             }
             if (metalBox) {
               metalBox.classList.add("detail-box"); // optional: match your example style

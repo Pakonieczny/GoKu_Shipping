@@ -41,6 +41,72 @@
   const plural=(n,one,many)=>n===1?one:many||one+'s';
   const mm1=v=>Math.round(v*10)/10;
 
+  /* ── pairs and groups (PAIRPARTIAL, Paul 9 Oct: a pair, a disc necklace or any order of several pieces is never split across sheets) ──
+     The never-split unit here is the page's own (keepOrdersWhole): the order (receipt), `c.order`. A group (one order line) is the unit the words speak of: "1 of the 2 pieces". */
+  const PP=()=>window.CharmNestPartial||null;
+  const orderOf=c=>c.order||c.id;
+  const groupKey=c=>{const P=PP();return P&&P.groupKeyOf?P.groupKeyOf(c):String(orderOf(c));};
+  const pieceWords=list=>{const P=PP();return P&&P.pieceWords?P.pieceWords(list):`${list.length} ${plural(list.length,'piece')}`;};
+  // the pieces of each order: Map order -> [piece]
+  const unitsOf=list=>{const m=new Map();for(const c of list){const k=orderOf(c);if(!m.has(k))m.set(k,[]);m.get(k).push(c);}return m;};
+  const sizesOf=list=>[...unitsOf(list).values()].map(u=>u.length);
+  const smallestUnit=list=>{const z=sizesOf(list);return z.length?Math.min(...z):0;};
+  const largestUnit=list=>{const z=sizesOf(list);return z.length?Math.max(...z):0;};
+  const orderWord=k=>String(k).split('/')[0];
+  /* what a trial put only PART of on a partial: [{ order, placed, of, side? }] (placed pieces in the trial, pieces of the order in `charms`; side = "Left" | "Right", the piece of a
+     2-piece earring pair that DID fit, so the words can name the one that did not: Amendment 2, every earring piece has its side) */
+  const SIDE={L:'Left',R:'Right'};
+  function splitsOf(charms,trialIds){
+    const out=[];
+    for(const [k,u] of unitsOf(charms)){
+      const here=u.filter(c=>trialIds.has(c.id)),placed=here.length;
+      if(placed>0&&placed<u.length){
+        const row={order:orderWord(k),placed,of:u.length};
+        if(u.length===2&&placed===1){const a=SIDE[here[0].side],b=SIDE[u.find(c=>c!==here[0]).side];if(a&&b&&a!==b)row.side=a;}
+        out.push(row);
+      }
+    }
+    return out;
+  }
+  const splitWords=list=>{
+    if(!list||!list.length)return '';
+    if(list.length===1){const s=list[0],which=s.side?` (the ${s.side} one; the ${s.side==='Left'?'Right':'Left'} one does not)`:'';return `Only ${s.placed} of the ${s.of} pieces of order ${s.order} fit${s.placed===1?'s':''} on it${which}, and ${s.of===2?'a pair':'an order'} is never split across sheets, so the order moves on whole.`;}
+    const s=list[0];return `Only part of ${list.length} orders fits on it (for example order ${s.order}: ${s.placed} of its ${s.of} pieces), and an order is never split across sheets, so those orders move on whole.`;
+  };
+  /* the groups of this sheet that also have pieces on ANOTHER sheet (a pair already split, R3): [{ group, order, here, elsewhere, sheets }] */
+  function sharedOf(sh,all){
+    const mine=new Map();for(const c of all){const k=groupKey(c);mine.set(k,(mine.get(k)||0)+1);}
+    const there=new Map();
+    try{
+      for(const p of (C.allSheets?C.allSheets():[])){
+        if(p===sh)continue;
+        for(const c of (C.activeCharms?C.activeCharms(p):(p.charms||[]))){const k=groupKey(c);if(!mine.has(k))continue;const o=there.get(k)||{n:0,sheets:new Set(),ids:new Set()};o.n++;o.sheets.add(label(p));if(p.sheetId)o.ids.add(p.sheetId);there.set(k,o);}
+      }
+    }catch(_){return [];}
+    return [...there].map(([k,o])=>({group:k,order:String(k).split(':')[0],here:mine.get(k),elsewhere:o.n,sheets:[...o.sheets],sheetIds:[...o.ids]}));
+  }
+  const sharedWords=list=>{
+    if(!list||!list.length)return '';
+    if(list.length===1){const o=list[0];return `Order ${o.order} also has ${o.elsewhere} ${plural(o.elsewhere,'piece')} on ${o.sheets.join(' and ')}. A piece of it that does not fit here moves to another sheet, so the order would sit on more sheets than before.`;}
+    const o=list[0];return `${list.length} orders on this sheet also have pieces on other sheets (for example order ${o.order} on ${o.sheets.join(' and ')}). Pieces that do not fit here move to another sheet, so those orders would sit on more sheets than before.`;
+  };
+
+  /* A committed set is frozen: a sheet in it that is nested again here keeps its place, but the pieces that do not fit go to a NEW page, which is outside that set. An order whose other
+     pieces sit on another sheet of the same set would then be split between the set and that new page (rule A / R3), and the set could never be finished. So: which of the groups that
+     would move on (`goes`: their ids) have pieces on another sheet of the committed set this sheet is in. */
+  const committedSetOf=sh=>{try{const sets=(window.Sets&&window.Sets.ofRun&&window.Sets.ofRun(sh.runId))||[];return sets.find(x=>x&&x.committedAt&&(x.sheetIds||[]).includes(sh.sheetId))||null;}catch(_){return null;}};
+  function setSplitsOf(sh,shared,goes){
+    const cs=committedSetOf(sh);if(!cs||!shared||!shared.length||!goes||!goes.length)return [];
+    const moving=new Set(goes.map(groupKey)),inSetIds=cs.sheetIds||[];
+    return shared.filter(o=>moving.has(o.group)&&(o.sheetIds||[]).some(id=>inSetIds.includes(id)));
+  }
+  const setSplitWords=list=>{
+    if(!list||!list.length)return '';
+    const o=list[0],tail='and a pair is never split between a committed set and a sheet outside it. Choose a bigger partial sheet, one that holds every piece of the order.';
+    if(list.length===1)return `Order ${o.order} has ${o.elsewhere} ${plural(o.elsewhere,'piece')} on ${o.sheets.join(' and ')}, in the same committed set. Its ${o.here} ${plural(o.here,'piece')} here would move on to a new sheet outside the set, ${tail}`;
+    return `${list.length} orders here have pieces on other sheets of the same committed set (for example order ${o.order} on ${o.sheets.join(' and ')}). Their pieces here would move on to a new sheet outside the set, ${tail}`;
+  };
+
   /* ── the policy (PartialSheets.policy: PS3's cache; auto when it is not loaded) ── */
   function policy(metal){
     try{const p=(window.PartialSheets&&window.PartialSheets.policy&&window.PartialSheets.policy(metal))||(typeof window.partialPolicy==='function'&&window.partialPolicy(metal));
@@ -142,10 +208,11 @@
       w.postMessage({type:'solve',jobId:id,job});
     });
   }
-  // A multi-piece order is never split across sheets: an order with a piece left out moves on whole (the page's keepOrdersWhole).
+  // A multi-piece order is never split across sheets: an order with a piece left out moves on whole (the page's keepOrdersWhole). `charms` must be EVERYTHING still
+  // to place (the preview passes `rest`, not the trial's head): an order whose other piece was never tried is a piece left out too, so a pair cannot be split by the head's cut.
   function wholeOrders(charms,placedIds){
-    const bad=new Set();for(const c of charms)if(!placedIds.has(c.id))bad.add(c.order||c.id);
-    return new Set(charms.filter(c=>placedIds.has(c.id)&&!bad.has(c.order||c.id)).map(c=>c.id));
+    const bad=new Set();for(const c of charms)if(!placedIds.has(c.id))bad.add(orderOf(c));
+    return new Set(charms.filter(c=>placedIds.has(c.id)&&!bad.has(orderOf(c))).map(c=>c.id));
   }
   // the footprint a piece takes (with its spacing), for the auto order
   const footMm2=c=>{try{return C.inflatedArea(c)*MM*MM;}catch(_){return (+c.areaPt2||0)*MM*MM;}};
@@ -156,35 +223,45 @@
     try{const Sv=window.CharmNestSolver;if(Sv&&Sv.makeSheetGrid)usable=Sv.makeSheetGrid({wPt:stock.wPt,hPt:stock.hPt,insetPt:+S.settings.insetPt||0,remnant:JSON.parse(stock.profileJson)},+S.settings.clearancePt||0,2).usableCells/4;}catch(_){}
     if(!(usable>0))usable=(card&&card.areaMm2?card.areaMm2:0)/(MM*MM);
     if(!(usable>0))return charms;
-    const out=[];let sum=0;
-    for(const c of charms){if(out.length&&sum>=usable*1.5)break;out.push(c);sum+=footMm2(c)/(MM*MM);}
-    return out;
+    // whole orders only: the cut falls between orders, never inside one (the pieces of a pair stay together; the list keeps its own order)
+    const units=unitsOf(charms),take=new Set();let sum=0;
+    for(const c of charms){const k=orderOf(c);if(take.has(k))continue;if(take.size&&sum>=usable*1.5)break;take.add(k);for(const m of units.get(k))sum+=footMm2(m)/(MM*MM);}
+    return charms.filter(c=>take.has(orderOf(c)));
   }
-  function capacityMm2(card,pieces){
+  // the estimate of how many of THESE pieces the card holds (their own average footprint and sides stand in for the metal's typical piece)
+  function estimateOf(card,pieces){
     try{
-      const P=window.CharmNestPartial;
-      if(P&&card.outline&&P.estimateFit){
+      const P=PP();
+      if(P&&card&&card.outline&&P.estimateFit&&pieces.length){
         const area=pieces.reduce((n,c)=>n+footMm2(c),0)/Math.max(1,pieces.length),sides=pieces.map(c=>[(+c.w||0)/(c.scale||1)*MM,(+c.h||0)/(c.scale||1)*MM]).filter(s=>s[0]>0&&s[1]>0);
         const typical={areaMm2:area,...(sides.length?{minMm:sides.reduce((n,s)=>n+Math.min(...s),0)/sides.length,maxMm:sides.reduce((n,s)=>n+Math.max(...s),0)/sides.length}:{})};
-        return P.estimateFit(card.outline,typical,{sheetWMm:card.sheetWMm,sheetHMm:card.sheetHMm}).packMm2||0;
+        return P.estimateFit(card.outline,typical,{sheetWMm:card.sheetWMm,sheetHMm:card.sheetHMm});
       }
     }catch(_){}
+    return null;
+  }
+  function capacityMm2(card,pieces){
+    const e=estimateOf(card,pieces);if(e)return e.packMm2||0;
     const s=cardSize(card);return (card.areaMm2||s.wMm*s.hMm*.7)*.75;
   }
-  // 'automatic' = best fit of the available list: the tightest partial that takes everything left, otherwise the biggest one, then again for the rest
+  // 'automatic' = best fit of the available list: the tightest partial that takes everything left, otherwise the biggest one, then again for the rest.
+  // With pairs (an order of 2 or more pieces is never split): a partial whose estimated room cannot hold even the smallest such order is skipped, and "takes everything"
+  // also needs room for the largest order whole.
   function bestFit(cards,pieces,taken){
-    const need=pieces.reduce((n,c)=>n+footMm2(c),0),rows=cards.filter(c=>!taken.has(c.id)).map(c=>({c,cap:capacityMm2(c,pieces)})).filter(r=>r.cap>0);
+    const need=pieces.reduce((n,c)=>n+footMm2(c),0),small=smallestUnit(pieces),large=largestUnit(pieces);
+    let rows=cards.filter(c=>!taken.has(c.id)).map(c=>{const e=small>1||large>1?estimateOf(c,pieces):null;return {c,cap:e?e.packMm2||0:capacityMm2(c,pieces),e};}).filter(r=>r.cap>0);
+    if(large>1)rows=rows.filter(r=>!r.e||r.e.high>=small);   // (a card that cannot hold the smallest order whole would only strand a piece of it)
     if(!rows.length)return null;
-    const enough=rows.filter(r=>r.cap>=need).sort((a,b)=>a.cap-b.cap);
+    const enough=rows.filter(r=>r.cap>=need&&(!r.e||r.e.pieces>=large)).sort((a,b)=>a.cap-b.cap);
     return (enough[0]||rows.sort((a,b)=>b.cap-a.cap)[0]).c;
   }
 
-  function words(pieces,links,left,next,sh){
-    const n=pieces;
-    if(!links.length)return `None of the ${n} ${plural(n,'piece')} fit${n===1?'s':''} on ${next.listed?'the partial sheet'+(next.listed>1?'s':''):'a partial sheet'} you chose.`;
+  function words(pieces,links,left,next,sh,pw){
+    const n=pieces,all=pw&&pw!==`${n} ${plural(n,'piece')}`?pw:null;   // (pw: "8 pieces (3 pairs and 2 single pieces)", only when something is in a group)
+    if(!links.length)return `None of the ${all||`${n} ${plural(n,'piece')}`} fit${n===1?'s':''} on ${next.listed?'the partial sheet'+(next.listed>1?'s':''):'a partial sheet'} you chose.`;
     if(!left){
-      if(links.length===1)return n===1?'The piece fits on this partial sheet.':`All ${n} pieces fit on this partial sheet.`;
-      return `All ${n} pieces fit on ${links.length} partial sheets: ${links.map(l=>`${l.placed} on ${l.label}`).join(', ')}.`;
+      if(links.length===1)return n===1?'The piece fits on this partial sheet.':`All ${all||`${n} pieces`} fit on this partial sheet.`;
+      return `All ${all||`${n} pieces`} fit on ${links.length} partial sheets: ${links.map(l=>`${l.placed} on ${l.label}`).join(', ')}.`;
     }
     const placed=n-left,first=links.length===1?`${placed} of ${n} ${plural(n,'piece')} fit${placed===1?'s':''} on ${links[0].label}`:`${placed} of ${n} pieces fit on ${links.length} partial sheets (${links.map(l=>`${l.placed} on ${l.label}`).join(', ')})`;
     const rest=`the other ${left} continue${left===1?'s':''}`;
@@ -206,7 +283,7 @@
       for(const id of ids||[]){const c=list.find(x=>x.id===id);if(!c)return refusal('gone','That partial sheet is not available any more. Choose another.');order.push(c);}
       const listed=order.length,maxLinks=Math.max(1,+o.maxLinks||4);
       if(!listed&&pol.mode==='new')return refusal('choose','This metal makes a new sheet by itself. Choose a partial sheet to use one.');
-      let rest=all.slice(),links=[],skipped=[],taken=new Set(order.map(c=>c.id)),auto=!listed;
+      let rest=all.slice(),links=[],skipped=[],taken=new Set(order.map(c=>c.id)),auto=!listed,splits=[];
       for(let k=0;rest.length&&k<maxLinks;k++){
         let card=order[k];
         if(!card){   // beyond the person's own list: automatic = best fit from the metal's available list; 'new' stops here
@@ -217,9 +294,10 @@
         const lab='Partial '+(links.length+skipped.length+1);
         step('trial',`Trying the pieces on ${lab}…`,{n:k+1,partialId:card.id});
         const stock=await stockOf(card),head=headFor(stock,rest,card),r=await runTrial(sh,stock,head,{maxMs:o.maxMs,seed:k+1});
-        const placedIds=wholeOrders(head,new Set((r.placements||[]).map(p=>p.id)));
-        const size=cardSize(card);
-        if(!placedIds.size){skipped.push({partialId:card.id,why:'No piece fits on it.'});continue;}
+        const trialIds=new Set((r.placements||[]).map(p=>p.id)),placedIds=wholeOrders(rest,trialIds);   // (against everything still to place: an order is whole only when every piece of it was placed)
+        const size=cardSize(card),cut=splitsOf(head,trialIds);   // (cut: orders this partial could take only part of, so they stay whole and move on)
+        for(const x of cut)if(!splits.some(y=>y.order===x.order))splits.push(x);
+        if(!placedIds.size){skipped.push({partialId:card.id,why:cut.length?splitWords(cut):'No piece fits on it.',...(cut.length?{splits:cut}:{})});continue;}
         links.push({n:links.length+1,partialId:card.id,stockId:stock.id,label:lab,wMm:mm1(size.wMm),hMm:mm1(size.hMm),areaMm2:card.areaMm2!=null?Math.round(card.areaMm2):null,placed:placedIds.size,pieceIds:rest.filter(c=>placedIds.has(c.id)).map(c=>c.id),placements:(r.placements||[]).filter(p=>placedIds.has(p.id)).map(p=>({id:p.id,cxPt:p.cxPt,cyPt:p.cyPt,angle:p.angle})),densityPct:Math.round(100*(r.density||0)),filled:rest.length>placedIds.size||(r.density||0)>=(+S.settings.maxFill||.8)-.02,outline:card.outline||null});
         rest=rest.filter(c=>!placedIds.has(c.id));
       }
@@ -229,10 +307,15 @@
         const more=pol.mode==='auto'?bestFit(list,rest,taken):null,sz=pol.mode==='new'?`${mm1(pol.wMm)} x ${mm1(pol.hMm)} mm`:'';
         nextInfo=more?{kind:'partial',listed,partialId:more.id}:{kind:'new',listed,size:sz};
       }
+      const pw=pieceWords(all),shared=sharedOf(sh,all),sw=splitWords(splits),hw=sharedWords(shared);
       const out={ok:true,metal,sheetId:sh.sheetId||null,pieces:all.length,fitsAll:!left,links,skipped,
         continues:{n:left,ids:rest.map(c=>c.id),next:left?(nextInfo.kind==='partial'?'partial':'new'):'none',...(nextInfo.partialId?{nextPartialId:nextInfo.partialId}:{})},
-        words:words(all.length,links,left,nextInfo,sh),
+        words:words(all.length,links,left,nextInfo,sh,pw),
         note:'A quick trial pack on the exact leftover outline. The nest itself can place a piece more or less.',auto};
+      // pairs (R3): what the partials could hold only part of, and the orders of this sheet that already have pieces on another sheet, said plainly
+      if(splits.length){out.splits=splits;out.splitWords=sw;if(!links.length)out.words+=' '+sw;}
+      if(shared.length){out.shared=shared;out.sharedWords=hw;}
+      {const ss=left?setSplitsOf(sh,shared,rest):[];if(ss.length){out.setSplit=ss;out.setSplitWords=setSplitWords(ss);out.words+=' '+out.setSplitWords;}}
       out.continues.words=left?out.words.replace(/^[^;]*; /,''):'';
       // a sheet with a recorded cut (not Completed) is told what the move does to it, before it is pressed
       if(cutOf(sh)){
@@ -278,10 +361,23 @@
       const order=[];for(const id of planned){const c=list.find(x=>x.id===id);if(!c){if(asked.includes(id))return fail('gone','That partial sheet is not available any more. Choose another.');continue;}order.push(c);}
       if(!order.length){
         if(pol.mode==='new')return fail('choose','This metal makes a new sheet by itself. Choose a partial sheet to use one.');
-        const c=bestFit(list,pieces,new Set());if(!c)return fail('none','There is no partial sheet available for this metal.');order.push(c);
+        const c=bestFit(list,pieces,new Set());
+        if(!c)return fail('none',list.length&&smallestUnit(pieces)>1?`No partial sheet available for this metal can hold even one whole order of this sheet (every order has ${smallestUnit(pieces)} or more pieces that are never split across sheets).`:'There is no partial sheet available for this metal.');
+        order.push(c);
       }
       const first=order[0];
       if(partialOf(sh)===first.id)return fail('same','This sheet already sits on that partial sheet.');
+      // the pair rule, before anything is claimed: a partial whose most generous estimate holds fewer pieces than the smallest order still to place cannot take even one order
+      // whole, and an order is never split across sheets (a refusal here is certain: the estimate's upper bound is the generous one)
+      {const unit=smallestUnit(pieces),e=unit>1?estimateOf(first,pieces):null;
+        if(e&&e.high<unit)return fail('pairs',`This partial sheet can hold about ${e.high} ${plural(e.high,'piece')} at most, and every order on this sheet has ${unit} or more pieces that are never split across sheets. Choose a bigger partial sheet.`);}
+      // the committed-set rule (R3): moving on to a page outside the set must not split an order the set shares with another of its sheets. Only asked when the sheet is in a committed set
+      // and shares an order at all; the trial that says what moves on is the previewed one, or one made now.
+      if(committedSetOf(sh)&&sharedOf(sh,pieces).length){
+        let pv=shown&&shown.ok&&shown.links&&shown.links[0]&&shown.links[0].partialId===first.id?shown:null;
+        if(!pv){sh._partialBusy=false;try{pv=await preview(sh,order.map(c=>c.id),{maxMs:o.maxMs,onStep:o.onStep});}finally{sh._partialBusy=true;}}
+        if(pv&&pv.ok&&pv.setSplit&&pv.setSplit.length)return fail('setpair',pv.setSplitWords);
+      }
       const chain=[];for(const c of order.slice(1))chain.push({id:c.id,stock:await stockOf(c)});
       // (what the sheet is in, before it moves: for the history line below)
       const sets=(window.Sets&&window.Sets.ofRun&&window.Sets.ofRun(sh.runId))||[],committed=sets.some(x=>x.committedAt&&(x.sheetIds||[]).includes(sh.sheetId)),inCurrent=inSet(sh)&&!committed;
@@ -308,7 +404,7 @@
       sh._byHand=true;
       C.startNest(sh);
       const sz=cardSize(first);
-      try{C.agent({metal},'nest',`Partial sheet: ${label(sh)} moved onto a partial sheet of ${mm1(sz.wMm)} x ${mm1(sz.hMm)} mm${chain.length?`, with ${chain.length} more partial ${plural(chain.length,'sheet')} to take what does not fit`:''}; its ${pieces.length} ${plural(pieces.length,'piece')} are nested again${committed?'; it stays in its committed set':inCurrent?'; it stays in its set':''}${approved?'; it was approved for Laser cutting, so its new layout is checked and approved again':''}${!wasCut&&held&&held!==stock.id?'; the sheet it sat on went back to the list':''}${wasCut?`; its recorded cut was set aside (the cut and its history stay), so it needs Cut Sheet again${moved&&moved.how==='claimed'?'; it sits on the leftover that cut made':moved&&moved.how==='discarded'?'; the leftover that cut made is no longer free metal and shows Discarded':''}`:''}`);}catch(_){}
+      try{C.agent({metal},'nest',`Partial sheet: ${label(sh)} moved onto a partial sheet of ${mm1(sz.wMm)} x ${mm1(sz.hMm)} mm${chain.length?`, with ${chain.length} more partial ${plural(chain.length,'sheet')} to take what does not fit`:''}; its ${pieceWords(pieces)} are nested again${committed?'; it stays in its committed set':inCurrent?'; it stays in its set':''}${approved?'; it was approved for Laser cutting, so its new layout is checked and approved again':''}${!wasCut&&held&&held!==stock.id?'; the sheet it sat on went back to the list':''}${wasCut?`; its recorded cut was set aside (the cut and its history stay), so it needs Cut Sheet again${moved&&moved.how==='claimed'?'; it sits on the leftover that cut made':moved&&moved.how==='discarded'?'; the leftover that cut made is no longer free metal and shows Discarded':''}`:''}`);}catch(_){}
       emit({type:'seated',metal,sheetId:sh.sheetId||null});
       step('done',`${label(sh)} is nesting on the partial sheet.`);
       sh._partialBusy=false;
@@ -330,7 +426,15 @@
       const open=p=>!p.roseCutAt&&!p.recalled&&!p.laserDoneAt&&!p.releaseFull&&!p.intakeFinalized;
       let tail=sh;
       for(let guard=0;guard<1000;guard++){const nx=tail._partialNext;if(!nx||!prim.pages.includes(nx))break;if(open(nx))return nx;tail=nx;}
-      let step=tail._partialChain&&tail._partialChain.shift();
+      // a pair needs two places (PAIRFLOW): a partial of the chain that cannot hold even the smallest order still to move is passed over, not claimed, and stays available for others
+      const known=(cache[sh.metal]&&cache[sh.metal].items)||[],unit=moving&&moving.length?smallestUnit(moving):0;
+      const holds=st=>{if(!(unit>1))return true;const c=known.find(x=>x.id===st.id),e=c?estimateOf(c,moving):null;return !e||e.high>=unit;};
+      let step=null;
+      while(tail._partialChain&&tail._partialChain.length){
+        const cand=tail._partialChain.shift();
+        if(holds(cand)){step=cand;break;}
+        try{C.agent({metal:sh.metal},'nest',`Partial sheet: a listed partial sheet was passed over for the pieces moving on from ${label(sh)}: it cannot hold even one whole order of them (${pieceWords(moving)}), and a pair is never split across sheets`);}catch(_){}
+      }
       if(!step&&policy(sh.metal).mode==='auto'){   // the listed partials are used up: automatic takes the best fit of the others, if the list is known
         const cards=(cache[sh.metal]&&cache[sh.metal].items)||[],taken=new Set(prim.pages.map(partialOf).filter(Boolean)),c=cards.length&&moving&&moving.length?bestFit(cards,moving,taken):null;
         // (the page is made with the partial's id and size; the claim at its nest start brings the stock with its profile, which is what the solver packs against)
@@ -366,8 +470,15 @@
   }
   const on=fn=>{if(typeof fn!=='function')return ()=>{};listeners.add(fn);return ()=>listeners.delete(fn);};
 
-  window.PartialNest={canSeat,preview,seat,useOn,chain,partialOf,on,nextPage,pending,claimed,lost,mode,newSheet,policy,
-    _cards:cardsOf,_bestFit:bestFit,_wholeOrders:wholeOrders};
+  // Cut Sheet, said after the cut: an order of this sheet with pieces on another sheet (a pair split across two sheets, R3). '' when none.
+  function cutNote(sh){
+    const list=sharedOf(sh,piecesOf(sh));
+    if(!list.length)return '';
+    if(list.length===1){const o=list[0];return `Order ${o.order}: ${o.here} ${plural(o.here,'piece')} of it ${o.here===1?'is':'are'} cut on this sheet, the other ${o.elsewhere} ${o.elsewhere===1?'is':'are'} on ${o.sheets.join(' and ')}.`;}
+    const o=list[0];return `${list.length} orders on this sheet have pieces on other sheets (for example order ${o.order} on ${o.sheets.join(' and ')}).`;
+  }
+  window.PartialNest={cutNote,canSeat,preview,seat,useOn,chain,partialOf,on,nextPage,pending,claimed,lost,mode,newSheet,policy,
+    _cards:cardsOf,_bestFit:bestFit,_wholeOrders:wholeOrders,_headFor:headFor,_splitsOf:splitsOf,_sharedOf:sharedOf,_estimateOf:estimateOf};
 
   /* window.PartialEngine: the shape the Partial Sheet panel (charm-nest-partial-ui.js) reads (contract.md, PS1's section). A thin face on the functions above:
      preview(sheet, partialId) -> { ok, pieces, fitsAll, fits (on THIS partial), rest, chain:[{partialId,name,wMm,hMm,areaMm2,fits}], then:'new'|'wait'|null, note, words }
@@ -382,7 +493,7 @@
       if(!pv||!pv.ok)return {ok:false,reason:(pv&&pv.why)||'This sheet cannot move to a partial sheet.',code:pv&&pv.code};
       const chainRows=pv.links.map(l=>{const c=cardOf(sh.metal,l.partialId);return {partialId:l.partialId,name:nameOf(c)||l.label,wMm:l.wMm,hMm:l.hMm,areaMm2:l.areaMm2,fits:l.placed};});
       const own=ids.length?pv.links.find(l=>l.partialId===ids[0]):pv.links[0],fits=own&&pv.links[0]===own?own.placed:0;   // (a partial that takes nothing is not in the links: 0 fit on it)
-      return {ok:true,pieces:pv.pieces,fitsAll:pv.fitsAll,fits,rest:pv.pieces-fits,chain:chainRows,then:pv.continues.n?(pv.continues.next==='partial'?'wait':'new'):null,note:pv.note,words:pv.words};
+      return {ok:true,pieces:pv.pieces,fitsAll:pv.fitsAll,fits,rest:pv.pieces-fits,chain:chainRows,then:pv.continues.n?(pv.continues.next==='partial'?'wait':'new'):null,note:pv.note,words:pv.words,...(pv.splitWords?{splitWords:pv.splitWords}:{}),...(pv.sharedWords?{sharedWords:pv.sharedWords}:{}),...(pv.setSplitWords?{setSplitWords:pv.setSplitWords}:{})};
     },
     async useOn(sh,partialId,o={}){
       const ids=(Array.isArray(partialId)?partialId:[partialId]).filter(Boolean),pv=seen.get(sigOf(sh,ids))||null;
