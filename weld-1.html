@@ -1316,9 +1316,9 @@
           const q = Math.floor(Number(t && t.quantity)) || 1, title = String((t && t.title) || "").replace(/\s+/g, " ").trim().slice(0, 50) || "Piece " + (i + 1);
           let sku = ""; try { sku = String((t && t.sku) || (typeof extractSkuFromEtsy === "function" ? extractSkuFromEtsy(t) : "") || ""); } catch (_) {}
           const one = { id: id + "_" + (weldId(t && t.transaction_id) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: t && t.listing_id };
-          const sd = weldSides(t, id);
-          total += sd.length ? weldUnits([t]) : 1;
-          if (!sd.length) { pieces.push(one); return; }
+          const sd = weldSides(t, id), n = weldUnits([t]);
+          total += n;                                         // (the same count the scan credits: a line that is no pair is its quantity, as at every other station)
+          if (!sd.length) { for (let k = 1; k <= n && pieces.length < 24; k++) pieces.push(n > 1 ? Object.assign({}, one, { id: one.id + "-" + k, label: title }) : one); return; }
           // an earring pair (a left and a right, matching or mismatched): one piece per ear, Left then Right, one group; the Matching person puts each left with its right
           if (pieces.length + sd.length <= 24) sd.forEach((d, k) => pieces.push(Object.assign({}, one, { id: one.id + "-" + (k + 1), label: title }, d)));
         });

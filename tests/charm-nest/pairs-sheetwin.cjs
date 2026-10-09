@@ -118,6 +118,23 @@ t('the page face exposes the same helpers', () => {
   const page = PP.makePage({}); for (const k of ['groups', 'pairWords', 'placeWords', 'sideWord']) assert.equal(typeof page[k], 'function', k);
   assert.equal(page.sideWord('L'), 'Left'); assert.equal(page.sideWord('R'), 'Right'); assert.equal(page.sideWord(null), '');
 });
+// ── Cancel keeps no ear of a cancelled pair on a sheet that will still be cut (ADVLIFE): the sheet window's real offPlan, run in node's vm over stand-ins for the page ──
+t('offPlan: Hold keeps a pair together beside its cut ear, Cancel takes the uncut ear off and sets only the cut one aside', () => {
+  const vm = require('vm'), src = fs.readFileSync(path.join(root, 'charm-nest-sheetwin.js'), 'utf8');
+  const i = src.indexOf('  function offPlan('), j = src.indexOf('  const listWhere = list =>'); assert.ok(i > 0 && j > i, 'offPlan found');
+  const L = `${RID}_${TX}_1`, R = `${RID}_${TX}_2`, other = '4300000102_5000000002_1';
+  const pages = [{ sheetId: 'A', fileBase: 'GF Sheet 1', laserDoneAt: 1, charms: [{ id: 'a0', poolId: L }], placements: [{ id: 'a0' }] },
+    { sheetId: 'B', fileBase: 'GF Sheet 2', charms: [{ id: 'b0', poolId: R }, { id: 'b1', poolId: other }], placements: [{ id: 'b0' }, { id: 'b1' }] }];
+  const rows = [{ key: `${RID}_${TX}`, order: { receiptId: RID }, poolIds: [L, R] }, { key: '4300000102_5000000002', order: { receiptId: '4300000102' }, poolIds: [other] }];
+  const sides = { [L]: 'L', [R]: 'R' }, ctx = { console, W: { byPool: new Map(), orders: new Map(), pools: new Map(), set: null, id: 'B', rec: null }, allSheets: () => pages, poolRowOf: () => null,
+    sheetWord: (id, fb) => fb || id, sentToStation: () => false, sideOfId: (rid, id) => sides[id] || null, pairSideOf: () => null, sideWord: q => (q === 'L' ? 'Left' : q === 'R' ? 'Right' : ''), linesOf: () => [], Orders: { rows: () => rows }, window: { Orders: { rows: () => rows } } };
+  vm.runInNewContext(src.slice(i, j) + '\n;this.offPlan = offPlan;', ctx);
+  const ids = list => Array.from(list, o => o.id).sort(), x = { rid: RID, poolId: null };
+  const hold = ctx.offPlan(x, true), cancel = ctx.offPlan(x, true, undefined, 'cancel');
+  assert.deepEqual(ids(hold.ok), []); assert.deepEqual(ids(hold.stay), [L, R].sort()); assert.equal(hold.stay.find(o => o.id === R).kind, 'together'); assert.match(hold.stay.find(o => o.id === R).why, /its pair stays together \(its Left piece is on GF Sheet 1: that sheet was marked completed\)/);
+  assert.deepEqual(ids(cancel.ok), [R], 'the uncut Right ear comes off a cancelled order'); assert.deepEqual(ids(cancel.stay), [L], 'only the cut Left ear stays'); assert.equal(cancel.stay[0].kind, 'cut');
+  const one = ctx.offPlan({ rid: RID, poolId: R }, false, undefined, 'cancel'); assert.deepEqual(ids(one.ok), [R]);   // (the same on the single-piece route)
+});
 console.log(`\n${n} checks (pure)`);
 
 /* ═══════════════════════════ the sheet window, in a browser ═══════════════════════════ */
@@ -215,14 +232,21 @@ if (process.argv.includes('--pure') || process.exitCode) return;
     assert.equal(lis.right, 'Right piece waits on GF Sheet 2', 'one Right piece holds the order back: ' + lis.right); assert.equal(lis.left, 'Left piece waits on GF Sheet 2'); assert.equal(lis.pair, 'Pair waits on GF Sheet 2', 'both ears: ' + lis.pair);
     assert.equal(lis.pooled, 'Right piece not on a sheet yet'); assert.equal(lis.plain, 'Waits on GF Sheet 2', 'a normal order says what it always said: ' + lis.plain); assert.equal(lis.told, 'Right piece waits on GF Sheet 2', 'the issue piece\'s own side counts');
     assert.equal(lis.noSide, 'Waits on GF Sheet 2', 'a piece nothing knows the ear of says what it always said'); assert.equal(lis.dot, 'R', 'the dot carries the ear');
-    // (a sheet the Library rows do not hold: the hover reads it whole once, and the words come as that lands)
+    // hovering a count reads NOTHING from the cloud: a sheet whose orders this page has not read gets no title, a sheet it holds whole gets the words
     const title = await page.evaluate(async () => {
       const host = document.getElementById('libBody'), mk = (id, html) => { const e = document.createElement('span'); e.setAttribute('data-sheet-count', id); e.innerHTML = html; host.appendChild(e); return e; };
-      const sp = mk('gold-open-1', '<b>5</b>/5'), none = mk('gold-open-2', '<b>2</b>/2'), lone = mk('gold-open-1', '<b>3</b>/3');
-      for (const e of [sp, none, lone]) e.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      for (let i = 0; i < 100 && !(sp.title && none.title); i++) await new Promise(r => setTimeout(r, 100));
-      const out = { s1: sp.title, s2: none.title, wrongNumber: lone.title }; sp.remove(); none.remove(); lone.remove(); return out;
+      const hover = e => e.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      const real = OrderPieces.loadSheet; let reads = 0; OrderPieces.loadSheet = (...a) => { reads++; return real.apply(OrderPieces, a); };
+      const out = {}; let sp = mk('gold-open-1', '<b>5</b>/5'), none = mk('gold-open-2', '<b>2</b>/2'), lone = mk('gold-open-1', '<b>3</b>/3'), unread = mk('gold-never-read', '<b>4</b>/4');
+      for (const e of [sp, none, lone, unread]) hover(e);
+      out.cold = { s1: sp.title, unread: unread.title, reads };
+      await real.call(OrderPieces, 'gold-open-1'); await real.call(OrderPieces, 'gold-open-2');   // (the page holds the sheets whole now, as it does for the sheets of the open run)
+      for (const e of [sp, none, lone, unread]) hover(e);
+      Object.assign(out, { s1: sp.title, s2: none.title, wrongNumber: lone.title, unread2: unread.title, reads });
+      for (const e of [sp, none, lone, unread]) e.remove(); OrderPieces.loadSheet = real; return out;
     });
+    assert.deepEqual(title.cold, { s1: '', unread: '', reads: 0 }, 'a hover alone reads nothing and says nothing it does not know: ' + JSON.stringify(title));
+    assert.equal(title.reads, 0, 'and still reads nothing after the page holds the sheets'); assert.equal(title.unread2, '', 'a sheet nothing is known of has no title');
     assert.equal(title.s1, '5 pieces, 1 pair, 1 half pair', 'GF Sheet 1 holds the pair D and one ear of A: ' + JSON.stringify(title)); assert.equal(title.s2, '2 pieces, 1 half pair', 'GF Sheet 2 holds the other ear of A: ' + JSON.stringify(title));
     assert.equal(title.wrongNumber, '', 'a card whose printed number is not the pieces counted gets no words: ' + JSON.stringify(title));
     console.log('ok   Library: the issue chip says "Right piece waits on GF Sheet 2" / "Pair waits on ..." and a normal order is unchanged; a card\'s piece count says "5 pieces, 1 pair, 1 half pair" on hover');
