@@ -1187,6 +1187,10 @@
   }
   /** The operator and AI see the same assembled charm: black cuts, original artwork colours. */
   async function thumbnail(c, size) {
+    // a mismatched pair design (two different bodies under one SKU): both bodies side by side at one scale, Left / Right chips under them
+    // (charm-nest-pair-thumb.js, the one picture of it). Every other charm falls through to the drawing below, unchanged.
+    const PT = root.CharmNestPairThumb, pairCv = PT ? PT.canvasFor({ drawCharm }, c, { size, padPt: 2, bg: "#ece7dc", makeCanvas }) : null;
+    if (pairCv) return pairCv.convertToBlob ? await blobToDataUrl(await pairCv.convertToBlob({ type: "image/png" })) : pairCv.toDataURL("image/png");
     const b = c.bbox, pad = 2;
     const w = b[2] - b[0] + pad * 2, h = b[3] - b[1] + pad * 2, s = size / Math.max(w, h);
     const W = Math.max(8, Math.round(w * s)), H = Math.max(8, Math.round(h * s));
@@ -1376,6 +1380,8 @@
       if (!src) return;
       const tag = "ocCharm" + i;
       let name = (c.name || c.slug || `charm-${String(i + 1).padStart(2, "0")}`).replace(/[^\x20-\x7E]/g, "").slice(0, 60) || `charm-${i + 1}`;
+      // a piece of a mismatched pair says which ear on its layer (so in the .ai and in the DXF: pairs, 9 Oct): " Left" / " Right" ends the name, inside the 60 characters
+      if (c.side === "L" || c.side === "R") { const w = c.side === "L" ? "Left" : "Right"; if (!/(?:^|[\s_-])(?:Left|Right)$/i.test(name)) name = name.slice(0, 60 - w.length - 1).trimEnd() + " " + w; }
       if (usedNames.has(name)) { let k = 2; while (usedNames.has(name + "-" + k)) k++; name = name + "-" + k; }
       usedNames.add(name);
       addOCG(name, tag);

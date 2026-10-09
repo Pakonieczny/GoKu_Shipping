@@ -5,7 +5,7 @@
 //   node tests/charm-nest/index-master-twins.cjs
 const fs = require('fs'), path = require('path'), assert = require('assert'), os = require('os');
 const { buildMaster } = require('./fixture-master.cjs');
-const { main } = require('../../scripts/index-master.cjs');
+const { main, fileKeys } = require('../../scripts/index-master.cjs');
 
 (async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cn-twins-'));
@@ -46,5 +46,15 @@ const { main } = require('../../scripts/index-master.cjs');
   assert.strictEqual(rows(q.rec, 'BR-TST-01')[0].widthPt, wP, 'a pin by charm index');
   fs.writeFileSync(path.join(tmp, 'pin3.json'), JSON.stringify({ 'BR-TST-01': { at: [1, 1] } }));
   await assert.rejects(() => stage('r', ['--pin', path.join(tmp, 'pin3.json')]), /no charm carrying it/, 'a pin that points at nothing is an error, not a guess');
-  console.log('index-master twins OK · default owner, determinism, pin by position and by index');
+  // 5. "elsewhere": another master owns the SKU, so no charm of this sheet carries it; the charm's other SKU stays
+  fs.writeFileSync(path.join(tmp, 'pin4.json'), JSON.stringify({ 'BR-TST-01': 'elsewhere', 'BR-TST-02': 'elsewhere' }));
+  const e = await stage('e', ['--pin', path.join(tmp, 'pin4.json')]);
+  assert.strictEqual(rows(e.rec, 'BR-TST-01').length, 0, 'elsewhere: the twin SKU is in no record of this sheet');
+  assert.strictEqual(rows(e.rec, 'BR-TST-02').length, 0, 'elsewhere: and a SKU with a single charm is left to the other master too');
+  assert.strictEqual(rows(e.rec, 'BR-TWN-07').length, 1, 'elsewhere: the second twin keeps its other SKU');
+  assert(e.rep.twins.some(t => t.rule === 'elsewhere' && t.owner === null));
+  // 6. two SKUs the server would store under one file name get two names (the first charm keeps the plain one)
+  const ks = fileKeys([{ index: 864, l: { sku: 'BOWLING_PIN+BALL' } }, { index: 2227, l: { sku: 'BOWLING PIN + BALL' } }, { index: 5, l: { sku: 'RING', size: 'S' } }, { index: 6, l: { sku: 'RING', size: 'M' } }]);
+  assert.strictEqual(ks.get(864), 'BOWLING_PIN+BALL'); assert.strictEqual(ks.get(2227), 'BOWLING PIN + BALL__2227'); assert.strictEqual(ks.get(5), 'RING__S'); assert.strictEqual(ks.get(6), 'RING__M');
+  console.log('index-master twins OK · default owner, determinism, pin by position and by index, elsewhere, file names');
 })().catch(e => { console.error(e); process.exit(1); });

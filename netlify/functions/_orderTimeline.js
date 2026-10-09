@@ -241,9 +241,9 @@ const SANDBOXED_DEFAULT = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets",
 const STATION_SANDBOXED = new Set(["Brites_Orders", "Design_Completed Orders", "Design_Order_Archive"]);
 const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6, steps: 60 };
 const SHEET_FIELDS = ["id", "metal", "metalLabel", "sheetIndex", "page", "setId", "setSeq", "fileBase", "stock", "poolIds", "orders", "label", "archived", "draft", "laserDoneAt", "laserDoneBy", "roseCutAt", "roseStockId", "rosePlanHash", "createdAt", "cardStartedAt", "updatedAt", "runId"];
-const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt", "heldAt", "heldBy", "heldReason", "repooledAt"];
+const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt", "heldAt", "heldBy", "heldReason", "repooledAt", "side", "groupSize"];
 const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "kind", "completedAt", "completedBy", "how", "printedAt", "printedBy", "lastPrintedAt", "lastPrintedBy", "prints", "stamps"];
-const BACK_FIELDS = ["poolId", "sheetId", "setId", "approvedAt", "approvedBy", "text", "invalidated", "transactionId", "copy"];
+const BACK_FIELDS = ["poolId", "sheetId", "setId", "approvedAt", "approvedBy", "text", "invalidated", "transactionId", "copy", "side"];
 const SET_FIELDS = ["setId", "seq", "name", "day", "committedAt", "committed", "refused", "status"];
 const ARCHIVE_FIELDS = ["completedAtMs", "completedAt", "completedBy", "setId", "runId", "sheetIds", "status", "shipments"];
 const RECEIPT_FIELDS = ["created_timestamp", "updated_timestamp", "status", "is_shipped", "is_paid", "raw.shipments"];
@@ -429,7 +429,9 @@ async function deriveEvents(db, id, opts) {
   for (const p of pools) { const k = lineOf(p) || p.poolId; const l = lines.get(k) || lines.set(k, { rows: [] }).get(k); l.rows.push(p); }
   for (const [k, l] of lines) {
     const at = Math.min(...l.rows.map(p => msOf(p.createdAt)).filter(Boolean)), p0 = l.rows[0];
-    if (Number.isFinite(at)) ev("pooled", at, { id: `d-pooled-${k}`, lineKey: lineOf(p0), transactionId: s(p0.transactionId, 30), by: "System", source: "sorter", station: "sorter", text: `Ready to nest: ${p0.sku || "charm"}${p0.material ? " · " + p0.material : ""}${l.rows.length > 1 ? ` · ${l.rows.length} pieces` : ""}`, data: { sku: s(p0.sku, 60), material: s(p0.material, 20), pieces: l.rows.length, runId: s(p0.runId, 80) } });
+    // an earring pair (matching or mismatched): its pieces are a left and a right one (the pieces' own `side`, stored by the intake; none on discs, letters or singles)
+    const sides = l.rows.slice().sort((a, b) => n(String(a.poolId).split("_").pop()) - n(String(b.poolId).split("_").pop())).map(p => (p.side === "L" || p.side === "R" ? p.side : "")).filter(Boolean), both = sides.includes("L") && sides.includes("R");
+    if (Number.isFinite(at)) ev("pooled", at, { id: `d-pooled-${k}`, lineKey: lineOf(p0), transactionId: s(p0.transactionId, 30), by: "System", source: "sorter", station: "sorter", text: `Ready to nest: ${p0.sku || "charm"}${p0.material ? " · " + p0.material : ""}${l.rows.length > 1 ? ` · ${l.rows.length} pieces` : ""}${both ? " (left and right)" : ""}`, data: Object.assign({ sku: s(p0.sku, 60), material: s(p0.material, 20), pieces: l.rows.length, runId: s(p0.runId, 80) }, sides.length ? { sides } : {}) });
   }
   const groups = (rows, keyOf) => { const m = new Map(); for (const p of rows) { const k = keyOf(p); if (k) (m.get(k) || m.set(k, []).get(k)).push(p); } return m; };
   for (const [k, rows] of groups(pools.filter(p => msOf(p.removedAt)), p => `${msOf(p.removedAt)}|${p.removedBy || ""}|${p.removedReason || ""}`)) {
@@ -521,7 +523,7 @@ async function deriveEvents(db, id, opts) {
     placementRev = Placement.digest([...poolS.docs.map(d => `p:${d.id}:${Placement.revOf(d)}`), ...sheetS.docs.map(d => `s:${d.id}:${Placement.revOf(d)}`)]);
   }
   const holds = rec ? rec.sheets.filter(d => !d.staleListed || (d.poolIds || []).some(x => String(x).startsWith(id + "_"))) : sheets;
-  const placement = rec ? { summary: rec.summary, repaired: rec.repaired.slice(0, 20), pieces: Object.keys(rec.placement).length <= 60 ? rec.placement : null } : null;
+  const placement = rec ? { summary: rec.summary, repaired: rec.repaired.slice(0, 20), pieces: Object.keys(rec.placement).length <= 60 ? rec.placement : null, ...(rec.splits ? { splits: rec.splits.slice(0, 40) } : {}) } : null;
   return { events: finalize(id, out), sheets: sheetS ? holds.map(d => ({ sheetId: d._id || d.id, sheet: sheetLabel(d), setId: s(d.setId, 100), cut: n(d.laserDoneAt) > 0 || n(d.roseCutAt) > 0 })) : null, errors, placementRev, placement };
 }
 
@@ -701,6 +703,10 @@ function whereOf(events, cancelled, hint = {}) {
   if (isCancelled && sheet) bits.push(`pieces on ${sheet}`);
   if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`${seen ? "seen at" : "at"} ${station}${device ? " (" + device + ")" : ""}`);
   if (by) bits.push(`by ${by}`);
-  return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
+  /* pieces on several sheets, some cut and some not (a pair, a mismatched pair or discs split over sheets): `stage` and `step` are the furthest
+     piece's, as they have always been for an order on two sheets; `partial` says how many of the sheets that hold it are cut, so the
+     page can show the rest is still to cut. Only present when that is so. */
+  const held = Array.isArray(hint.sheets) ? hint.sheets : null, partial = held && held.length > 1 && held.some(x => x.cut) && held.some(x => !x.cut) ? { sheets: held.length, cut: held.filter(x => x.cut).length } : null;
+  return Object.assign({ stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL }, partial ? { partial } : {});
 }
 module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };

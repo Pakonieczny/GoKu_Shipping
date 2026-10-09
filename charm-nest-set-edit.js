@@ -45,14 +45,15 @@
   /** "Order 4171450075 has pieces on GF Sheet 1 and SS Sheet 1: they stay in one set": orders with the same sheets are said together. */
   function sharedWords(items, tail) {
     const groups = new Map();
-    for (const it of items) { const sheets = [...new Set([].concat(it.here, it.there))], k = sheets.join('|'); const g = groups.get(k) || { sheets, orders: [] }; g.orders.push(it.orderId); groups.set(k, g); }
-    const parts = [...groups.values()].slice(0, 3).map(g => `${g.orders.length === 1 ? 'Order ' + g.orders[0] + ' has' : 'Orders ' + g.orders.slice(0, 3).join(', ') + (g.orders.length > 3 ? ' and ' + (g.orders.length - 3) + ' more' : '') + ' have'} pieces on ${joinWords(g.sheets)}`);
+    for (const it of items) { const sheets = [...new Set([].concat(it.here, it.there))], k = sheets.join('|'); const g = groups.get(k) || { sheets, orders: [], words: [] }; g.orders.push(it.orderId); g.words.push(it.words || ''); groups.set(k, g); }
+    // an order that knows what its pieces are says it ("has its left earring on GF Sheet 1 and its right earring on GF Sheet 2"); the others keep the plain words
+    const parts = [...groups.values()].slice(0, 3).map(g => g.orders.length === 1 && g.words[0] ? `Order ${g.orders[0]} ${g.words[0]}` : `${g.orders.length === 1 ? 'Order ' + g.orders[0] + ' has' : 'Orders ' + g.orders.slice(0, 3).join(', ') + (g.orders.length > 3 ? ' and ' + (g.orders.length - 3) + ' more' : '') + ' have'} pieces on ${joinWords(g.sheets)}`);
     return `${parts.join('; ')}${groups.size > 3 ? '; and more' : ''}: ${tail || 'they stay in one set'}`;
   }
 
   /** The multi-piece orders the moves would separate (SharedOrders.between over where every sheet ends up): an order is split when a
    *  moving sheet holds a piece of it and another sheet that holds a piece stays in a different set (or in none, when the move is into a set). */
-  function splitOrders(recs, moves) {
+  function splitOrders(recs, moves, meta) {
     const S = SR(); if (!S) return [];
     const has = id => Object.prototype.hasOwnProperty.call(moves, id), seen = new Map();
     for (const r of recs) if (r && idOf(r) && !r.archived && !seen.has(idOf(r))) seen.set(idOf(r), r);
@@ -60,10 +61,11 @@
     const label = new Map(sheets.map(s => [s.id, s.label])), out = new Map();
     for (const dest of [...new Set(Object.values(moves))]) {
       const ids = Object.keys(moves).filter(id => moves[id] === dest);
-      for (const it of S.between(sheets, ids, dest)) {
+      for (const it of S.between(sheets, ids, dest, meta ? { meta } : {})) {
         const o = out.get(it.orderId) || { orderId: it.orderId, here: [], there: [], hereIds: [], thereIds: [] };
         for (const id of it.hereIds) if (!o.hereIds.includes(id)) { o.hereIds.push(id); o.here.push(label.get(id)); }
         for (const id of it.thereIds) if (!o.thereIds.includes(id)) { o.thereIds.push(id); o.there.push(label.get(id)); }
+        for (const k of ['kind', 'words', 'groups', 'total', 'pieces', 'locked']) if (it[k] !== undefined && (o[k] === undefined || k === 'words' || k === 'kind')) o[k] = it[k];
         out.set(it.orderId, o);
       }
     }
@@ -113,9 +115,9 @@
     if (reasons.length || !real.length) return { ok: reasons.length === 0, reasons, shared: [], noop: !real.length && !reasons.length };
     // the cardinal rule over where every sheet ends up
     const all = [].concat(Object.values(recs), ...Object.values(sets).map(s => s.members || []), inp.others || []);
-    const shared = splitOrders(all, Object.fromEntries(real.map(id => [id, moves[id]])));
+    const shared = splitOrders(all, Object.fromEntries(real.map(id => [id, moves[id]])), inp.meta);
     // rule A is per sheet: two sheets that share an order do not leave their set together either (each one is checked on its own)
-    for (const id of real) if (inSetOf(recs[id]) && !moves[id]) for (const it of splitOrders(all, { [id]: null })) if (!shared.some(x => x.orderId === it.orderId)) shared.push(it);
+    for (const id of real) if (inSetOf(recs[id]) && !moves[id]) for (const it of splitOrders(all, { [id]: null }, inp.meta)) if (!shared.some(x => x.orderId === it.orderId)) shared.push(it);
     if (shared.length) {
       const leaves = real.some(id => !!inSetOf(recs[id])), mates = [...new Set(shared.flatMap(i => i.thereIds))].filter(id => !real.includes(id));
       add('sharedOrders', 'Orders shared with another sheet', sharedWords(shared, leaves ? 'they stay in one set' : 'they go into one set together'), { items: shared, mates });
@@ -132,7 +134,7 @@
 
   /** The set's own records after the edit, from its record (`doc`) and the sheets that leave / join. Pure: `at`, `by` are the caller's. */
   function setAfter(doc, edit) {
-    const leave = edit.leave || [], join = edit.join || [], gone = new Set(leave.map(idOf)), skus = edit.skus || {}, by = edit.by || '', at = +edit.at || 0;
+    const leave = edit.leave || [], join = edit.join || [], gone = new Set(leave.map(idOf)), skus = edit.skus || {}, sides = edit.sides || {}, by = edit.by || '', at = +edit.at || 0;
     const sheetIds = [...new Set((doc.sheetIds || []).filter(i => !gone.has(str(i))).concat(join.map(idOf)))];
     const stay = (edit.members || []).filter(m => !gone.has(idOf(m)));
     const metals = [...new Set(stay.map(m => m.metal).concat(join.map(m => m.metal)).filter(Boolean))];
@@ -149,7 +151,7 @@
         const m = /^(\d{1,30})_(\d{1,30})_(\d{1,4})$/.exec(key); if (!m) continue;
         const [, rid, tid, copy] = m, o = orders[rid] = orders[rid] || { held: null, lines: [] };
         let line = o.lines.find(l => str(l.transactionId) === tid); if (!line) { line = { transactionId: tid, sku: skus[tid] || skus[key] || '', copies: [] }; o.lines.push(line); }
-        if (!line.copies.some(c => c.poolId === key)) line.copies.push({ copy: +copy, sheetId: idOf(j), sheet: name, poolId: key, backPoolId: null });
+        if (!line.copies.some(c => c.poolId === key)) line.copies.push({ copy: +copy, sheetId: idOf(j), sheet: name, poolId: key, backPoolId: null, ...(sides[key] ? { side: sides[key] } : {}) });
       }
     }
     const labelFiles = (doc.labelFiles || []).filter(f => !gone.has(str(f.sheetId))).concat(join.flatMap(j => ((j.label && j.label.files) || []).map(f => Object.assign({ sheetId: idOf(j), sheet: j.fileBase || f.sheet || null, metal: j.metal || null }, f))));
@@ -163,6 +165,19 @@
     return out;
   }
 
+  /** The set's order map ({rid:{lines:[...]|{tid:line}}}) as the manifest says it. sideTag: " (Left)" for a piece of a mismatched pair, '' for every other piece (so a
+   *  set without one prints exactly as before). spanLines: one line per order whose pieces sit on more than one sheet of the set, the pieces told apart by side. */
+  const sideTag = c => c && c.side === 'L' ? ' (Left)' : c && c.side === 'R' ? ' (Right)' : '';
+  const linesOf = od => Array.isArray(od && od.lines) ? od.lines : Object.values((od && od.lines) || {});
+  function spanLines(orders, nameOf) {
+    const out = [];
+    for (const [rid, od] of Object.entries(orders || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      const pieces = linesOf(od).flatMap(l => (l.copies || []).map(c => ({ sku: l.sku || '', copy: c.copy, side: c.side || null, sheet: c.sheet || (nameOf && nameOf(c.sheetId)) || str(c.sheetId), n: (l.copies || []).length })));
+      if (new Set(pieces.map(p => p.sheet)).size < 2) continue;
+      out.push(`${rid}  ${pieces.map(p => `${p.sku}${p.n > 1 ? '#' + p.copy : ''}${sideTag(p)} ${p.sheet}`).join('  ')}`);
+    }
+    return out;
+  }
   /** The one sentence a refusal gives: the shared-orders sentence for the cardinal rule, else the label and its detail. */
   const sayWhy = v => { const r = (v && v.reasons || [])[0]; return r ? (r.key === 'sharedOrders' ? r.detail : `${r.label}. ${r.detail}`) : ''; };
   /* ── the page's side (browser only; the server never runs any of this) ────────────────────────────────────────────────────────────
@@ -180,20 +195,26 @@
   async function relabel(step, o) {
     const C = root.CN, O = root.CharmNestOrders, Sx = root.Sets; if (!C || !O || !Sx || !Sx.renderLabelPng) throw new Error('the page is not ready');
     const set = sound(await cloud({ op: 'setGet', setId: str(step.setId) })).set; if (!set) throw new Error('the set could not be read');
-    for (const id of step.sheetIds || []) {
-      const rec = sound(await cloud({ op: 'getSheet', id: str(id) }, 'Reading the sheet')).sheet; if (!rec) throw new Error('a sheet could not be read');
+    // (the sheets of this step are read first: sheets put in together say where each other's pieces are on their labels)
+    const recs = [];
+    for (const id of step.sheetIds || []) { const rec = sound(await cloud({ op: 'getSheet', id: str(id) }, 'Reading the sheet')).sheet; if (!rec) throw new Error('a sheet could not be read'); recs.push(rec); }
+    const PL = root.CharmNestPairLabels, placedOf = r => { const m = new Map((r.charms || []).map(c => [c.id, c])); return (r.placements || []).map(p => m.get(p.id)).filter(Boolean); };
+    const together = PL ? recs.map(r => ({ sheetId: r.id, sheet: r.fileBase || r.folder || r.id, pieces: PL.piecesOfCharms(placedOf(r)) })) : [];
+    for (const rec of recs) {
       const byId = new Map((rec.charms || []).map(c => [c.id, c])), ids = [...new Set((rec.placements || []).map(p => byId.get(p.id)).filter(Boolean).map(c => str(c.order || c.id).split('/')[0]).filter(Boolean))];
       if (!ids.length) throw new Error(`${wordOf(rec)} has no order placed on it`);
       const metal = O.CARD_TO_METAL[rec.metal] || rec.metal, parts = O.safeChunks(ids, metal, 1000, 500, 8), name = rec.fileBase || rec.folder || rec.id, no = rec.sheetIndex || rec.page || 1;
       const base = rec.outputs && rec.outputs.ai && rec.outputs.ai.path ? rec.outputs.ai.path.replace(/\/[^/]*$/, '') : `charmnest/sheets/${rec.day}/${name}`, files = [];
+      // a group (pair, discs) with pieces on another sheet of the set is said on the label (pairs, 9 Oct, R3): the set's own record says where its pieces are, this sheet's from its record
+      const noteOf = slice => (PL && together.length ? PL.splitNotes(rec.id, PL.reconcile(PL.piecesOfOrders(set.orders), together), slice) : []);
       for (const [i, slice] of parts.entries()) {
-        const payload = O.encodeOrderList(slice, metal);
+        const payload = O.encodeOrderList(slice, metal), notes = noteOf(slice);
         const label = `${(C.METAL_TAG && C.METAL_TAG[rec.metal]) || ''} · ${set.name} · Sheet ${no}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ''} · ${slice.length} order${slice.length === 1 ? '' : 's'}`;
-        const png = await Sx.renderLabelPng(payload, label);
+        const png = await Sx.renderLabelPng(payload, label, undefined, notes);
         const up = await C.uploadBytes(`${base}/${name}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ''}.png`, png.blob, 'image/png', 'Saving the sheet label');
-        files.push({ path: up.path, url: up.url, sheet: name, sheetId: rec.id, metal, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
+        files.push(Object.assign({ path: up.path, url: up.url, sheet: name, sheetId: rec.id, metal, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label }, notes.length ? { notes } : {}));
       }
-      const made = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label })), orders: ids };
+      const made = { files: files.map(f => Object.assign({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label }, f.notes ? { notes: f.notes } : {})), orders: ids };
       sound(await cloud({ op: 'putSheet', sheet: { id: rec.id, label: made } }, 'Saving the sheet label'));
       labelsMade.set(rec.id, files);
       try { for (const pg of (C.allSheets ? C.allSheets() : [])) if (pg.sheetId === rec.id) pg.label = made; } catch (_) { /* the page's copy follows at its next load */ }
@@ -217,14 +238,16 @@
     line(`${set.name} · ${set.day} · run ${set.runId}`, { size: 15, font: bold });
     line(`${own.size} sheet(s) · materials ${(set.materials || []).join(', ')} · ${orders.length} order(s) · edited after commit`); y -= 6;
     line('Orders and sheets', { font: bold, size: 11 });
-    for (const [rid, od] of orders.sort((a, b) => (a[0] < b[0] ? -1 : 1))) { const lines = Array.isArray(od.lines) ? od.lines : Object.values(od.lines || {}); line(`${rid}  ${lines.flatMap(l => (l.copies || []).map(c => `${l.sku || ''}${(l.copies || []).length > 1 ? '#' + c.copy : ''}->${c.sheet || names.get(c.sheetId) || ''}`)).join('  ')}`); }
+    for (const [rid, od] of orders.sort((a, b) => (a[0] < b[0] ? -1 : 1))) { const lines = Array.isArray(od.lines) ? od.lines : Object.values(od.lines || {}); line(`${rid}  ${(root.CharmNestPairLabels ? root.CharmNestPairLabels.manifestEntries(lines, c => c.sheet || names.get(c.sheetId) || '') : lines.flatMap(l => (l.copies || []).map(c => `${l.sku || ''}${(l.copies || []).length > 1 ? '#' + c.copy : ''}${sideTag(c)}->${c.sheet || names.get(c.sheetId) || ''}`))).join('  ')}`); }
+    const spans = spanLines(set.orders, id => names.get(id));
+    if (spans.length) { y -= 6; line('Orders on more than one sheet (they stay in one set)', { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line('Engraving', { font: bold, size: 11 });
-    const backs = sheets.flatMap(s => (s.backs || []).filter(b => b && !b.invalidated).map(b => `${names.get(s.id)}: ${b.order || ''} ${b.sku || ''} #${b.copy || 1} "${str(b.text).replace(/\n/g, ' / ')}" ${b.capMm ? b.capMm + ' mm' : ''} · ${b.approvedBy || '?'}`));
+    const backs = sheets.flatMap(s => (s.backs || []).filter(b => b && !b.invalidated).map(b => `${names.get(s.id)}: ${b.order || ''} ${b.sku || ''} #${b.copy || 1}${root.CharmNestPairLabels ? root.CharmNestPairLabels.backWord(b) : ''} "${str(b.text).replace(/\n/g, ' / ')}" ${b.capMm ? b.capMm + ' mm' : ''} · ${b.approvedBy || '?'}`));
     if (backs.length) backs.forEach(b => line(b)); else line('no engraving in this set');
     y -= 6; line('Labels', { font: bold, size: 11 }); files.forEach(f => line(`${f.label || f.sheet}  ${f.path || '(not uploaded)'}`));
     const edits = (Array.isArray(set.flowHistory) ? set.flowHistory : []).filter(h => h && h.type === 'setEdit');
     if (edits.length) { y -= 6; line('Changes after the commit', { font: bold, size: 11 }); edits.slice(-12).forEach(h => line(`${new Date(+h.at || 0).toISOString().slice(0, 16).replace('T', ' ')}  ${h.by || ''}: ${h.note || ''}`)); }
-    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheets.map(s => ({ sheetId: s.id, name: names.get(s.id), metal: s.metal, sheetIndex: s.sheetIndex, orders: s.orders || [], placements: s.placedCount || 0, backs: (s.backs || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, text: b.text, approvedBy: b.approvedBy })), verification: s.verification ? { ok: !!s.verification.ok } : null, outputs: s.outputs || null })),
+    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheets.map(s => ({ sheetId: s.id, name: names.get(s.id), metal: s.metal, sheetIndex: s.sheetIndex, orders: s.orders || [], placements: s.placedCount || 0, backs: (s.backs || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === 'L' || b.side === 'R' ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy })), verification: s.verification ? { ok: !!s.verification.ok } : null, outputs: s.outputs || null })),
       orders: Object.fromEntries(orders.map(([rid, od]) => [rid, { held: od.held || null, lines: Array.isArray(od.lines) ? od.lines : Object.values(od.lines || {}) }])), labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, edited: edits.slice(-12), generatedAt: new Date().toISOString() };
     const folder = set.folder, up = (p, bytes, type, label) => C.uploadBytes(`${folder}/${p}`, bytes, type, label);
     const [lp, mp, jp] = await Promise.all([up(`labels/${set.name}_labels.pdf`, await labels.save({ useObjectStreams: false }), 'application/pdf', "Saving the set's labels PDF"), up(`${set.name}_manifest.pdf`, await man.save({ useObjectStreams: false }), 'application/pdf', 'Saving the manifest'), up('set.json', new TextEncoder().encode(JSON.stringify(json, null, 1)), 'application/json', 'Saving the set data')]);
@@ -283,5 +306,5 @@
     try { if (sheets.length && C && C.loadLibrary) Promise.resolve(C.loadLibrary()).catch(() => {}); } catch (_) { /* refreshed at its next read */ }
   }
 
-  return { relabel, remakeFiles, applyMembership, verifyMoves, sayWhy, splitOrders, sharedWords, cutReason, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
+  return { relabel, remakeFiles, applyMembership, verifyMoves, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
 });
