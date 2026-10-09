@@ -123,3 +123,8 @@ test('native product and cart engraving clear replies describe the empty field w
   await f.say('Add this piece to my cart then open my cart');await f.say('Change the engraving wording of the first item in my cart to TEST46');const before=clone(f.cart()[0]);
   await f.say('Clear engraving wording for the first item in my cart');assert.equal(f.d.querySelector('[data-bag-engraving]').value,'');assert.equal(f.cart()[0].engravingPreview||'','');assert.equal(f.cart()[0].variant,before.variant);assert.equal(f.cart()[0].price,before.price);assert.match(f.lastSpoken(),/cleared/i);assert.doesNotMatch(f.lastSpoken(),/TEST46|in the visible field/i);shopperReply(f.lastSpoken());assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
 });
+
+for(const words of ['No engraving','Without engraving','Unengraved'])test('native explicit no-engraving choice can precede a quantity change in one request: '+words,async t=>{
+  const f=await fixture(t);await openInitial(f);await f.say('Select a 16 inch solid gold necklace for me');assert.equal(f.choices().Engraving,undefined);
+  const result=await f.say(words+' then set quantity to two');assert.equal(result.result?.ok,true,JSON.stringify(result.result));assert.deepEqual(f.choices(),{'Metal Choice':'14k Solid Gold','Necklace Length':'16 inch','Engraving':'None'});assert.equal(f.d.querySelector('input[aria-label="Quantity of this exact piece"]').value,'2');assert.equal(f.store.snapshot().productControls.selectionStatus,'ready');assert.equal(f.cart().length,0);assert.equal(f.toolCalls.length,0);shopperReply(f.lastSpoken());f.assertNativeOnly();
+});

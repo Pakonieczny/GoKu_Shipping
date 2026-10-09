@@ -528,6 +528,7 @@
     for(var part of parts){
       if(privateTextRequest(part)&&parts.length>1)return failed('Give engraving or gift-note text as its own request so its exact content stays private.',true);
       var command=part.trim().replace(/^(?:(?:please|can you|could you|would you|will you|i want (?:you )?to|i would like (?:you )?to|i'd like (?:you )?to)\s+)*/i,'');
+      if(parts.length>1&&/^(?:no engraving|without engraving|unengraved)(?:,? please)?[.!?]?$/i.test(command)){part='Select '+command;command=part;}
       var compound=compoundOptions(part.trim(),context);if(compound&&!compound.ok)return compound;
       var adding=/^(?:add|put) (\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty) (?:of )?(.+?) (?:to|in|into) (?:my |the )?(?:(?:test|mock|demo|sandbox) )?(?:bag|cart|basket)[.!?]?$/i.exec(command);
       var indexed=/^(?:zoom|enlarge|magnify)(?: me)?(?: the)? ((?:image|photo|picture)(?: number)? \d+|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|next|previous) (?:image|photo|picture))(?: (?:for|of) (.+?))?[.!?]?$/i.exec(command);
