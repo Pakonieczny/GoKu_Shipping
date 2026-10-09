@@ -40,6 +40,7 @@
     const drop=new Set(),extra=[];
     for(const charm of groups.charms) {
       const before=charm.members.slice(),result=pdf().integrateRings(charm);
+      for(const m of charm.members)if(pdf().isCutSilhouetteFill(charm,m))m.cutSilhouette=m===charm.outline?'outline':'twin';
       if(result.left.length)throw new Error('A hoop could not join its charm: '+result.left.join('; '));
       if(!result.welded)continue;
       before.filter(p=>!charm.members.includes(p)).forEach(p=>drop.add(p));
@@ -146,14 +147,19 @@
     for(const name of declaredLayers)layerColors.set(layer(name),[0,0,0]);
     for(const path of paths) {
       const name=layer(path.layer||'Artwork');
-      if(path.fill) {
+      // A charm's cut silhouette drawn as a FILL (productionPaths marks it) is a cut line: one closed polyline on its layer,
+      // never a solid hatch that the laser would take for engraving and that leaves the charm with no cut at all. Its filled
+      // twin beside a stroked outline adds nothing: that outline already cuts the line.
+      const cutFill=!!path.cutSilhouette && path.fill && !path.stroke;
+      if(cutFill && path.cutSilhouette==='twin')continue;
+      if(path.fill && !cutFill) {
         const loops=vector().filled(path);
         if(loops.length) {const color=rgb(path.fillRGB);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
       }
-      if(path.stroke)for(const sub of path.subpaths||[]) {
+      if(path.stroke || cutFill)for(const sub of path.subpaths||[]) {
         const f=flatten(sub);if(f.points.length<2)continue;
-        const color=rgb(path.strokeRGB);if(!layerColors.has(name))layerColors.set(name,color);
-        entities.push({...f,type:'LWPOLYLINE',layer:name,color,width:Math.max(0,+path.lwPt||0)*MM,fill:false});
+        const color=rgb(cutFill?path.fillRGB:path.strokeRGB);if(!layerColors.has(name))layerColors.set(name,color);
+        entities.push({...f,closed:cutFill?true:f.closed,type:'LWPOLYLINE',layer:name,color,width:Math.max(0,cutFill?Math.min(+path.lwPt||0,.25):+path.lwPt||0)*MM,fill:false});
       }
     }
     let text='',handle=0x1000;const add=(...pairs)=>{for(let i=0;i<pairs.length;i+=2)text+=pairs[i]+'\r\n'+pairs[i+1]+'\r\n';};
