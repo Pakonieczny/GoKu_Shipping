@@ -1325,6 +1325,9 @@ function poolEvents(ids, p, before, b) {
 }
 
 // ── pool ──
+/** An old piece row of a line made as ONE glued piece (no side, no group size) that is still in play: on a saved sheet, or committed, written, engraved or labelled
+    (taken off or made up again is free to become two pieces). The test poolPut and poolUpdate share before they write left and right rows over it. */
+const legacyLive = cur => !!cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && !!(cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state));
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
   if (!rows.length) return { error: "no pool rows" };
@@ -1354,7 +1357,7 @@ async function op_poolPut(b) {
   /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
      committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
   const legacyLines = new Set();
-  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && cur && !cur.side && !(+cur.groupSize > 0) && !["abandoned", "superseded"].includes(cur.state) && (cur.sheetId || ["committed", "written", "engraved", "labelled"].includes(cur.state))) legacyLines.add(Placement.groupOfPool(p.poolId)); });
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (p.side && legacyLive(cur)) legacyLines.add(Placement.groupOfPool(p.poolId)); });
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
@@ -1414,7 +1417,12 @@ async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
   // a change the order's timeline records (poolEvents) reads the rows first: the sheet a charm leaves, its set, and
   // whether the row already says so (a retry)
-  const p = b.patch && typeof b.patch === "object" ? b.patch : {}, told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
+  let p = b.patch && typeof b.patch === "object" ? b.patch : {};
+  // what a piece IS (side, mirror, bodyIndex, groupKey, groupSize) is written by poolPut, whole or not at all: a patch that carries any of it is
+  // checked the same way (all valid, the group key from the pool id) and a take-off never changes it; what a row already says stays as it is
+  const sent = PoolPieces.FIELDS.filter(k => Object.prototype.hasOwnProperty.call(p, k));
+  if (sent.length && Placement.isTakeOff(p)) { p = Object.assign({}, p); for (const k of sent) delete p[k]; }
+  const told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
   // a take-off (hold, cancel, an order gone from Etsy) is one commit across the pieces' rows AND the sheets that list them
   if (Placement.isTakeOff(p)) {
     const done = await poolTakeOff(ids, p, told), all = ids.concat(done.extended);
@@ -1423,15 +1431,27 @@ async function op_poolUpdate(b) {
     // extended: the other pieces of the same lines that came off with the ones named (a line comes off whole); absent when there were none
     return { ok: true, count: ids.length, sheets: done.edited, ...(done.extended.length ? { extended: done.extended } : {}) };
   }
+  // left and right rows named over a line an older run made as one glued piece, still in play, are not written (poolPut's rule): the page is told (`legacy`)
+  let wrote = ids; const legacy = [];
+  if (sent.length && PoolPieces.cleanFields(Object.assign({ poolId: ids[0] }, p)).side) {
+    const rowsRead = [];
+    for (let i = 0; i < ids.length; i += 100) rowsRead.push(...await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: ["side", "groupSize", "state", "sheetId"] }));
+    const lines = new Set(); ids.forEach((id, i) => { if (legacyLive(rowsRead[i] && rowsRead[i].exists ? rowsRead[i].data() : null)) lines.add(Placement.groupOfPool(id)); });
+    if (lines.size) { wrote = ids.filter(id => !lines.has(Placement.groupOfPool(id))); legacy.push(...ids.filter(id => lines.has(Placement.groupOfPool(id)))); }
+  }
   let before = null;
-  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
+  if (told && wrote.length) try { before = new Map(); for (let i = 0; i < wrote.length; i += 100) (await db.getAll(...wrote.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(wrote[i + j], s.exists ? s.data() : null)); }
   catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
   let batch = db.batch(), n = 0;
-  for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  for (const id of wrote) {
+    const doc = Object.assign({}, p, { updatedAt: FV.serverTimestamp() });
+    if (sent.length) { for (const k of sent) delete doc[k]; Object.assign(doc, PoolPieces.cleanFields(Object.assign({ poolId: id }, p))); Placement.cleanPiece(Object.assign(doc, { poolId: id })); delete doc.poolId; }
+    batch.set(col(POOL).doc(id), doc, { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
+  }
   if (n) await batch.commit();
-  if (told) await stamp(() => poolEvents(ids, p, before, b), "pool");
-  if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(ids, p, before, b);
-  return { ok: true, count: ids.length };
+  if (told && wrote.length) await stamp(() => poolEvents(wrote, p, before, b), "pool");
+  if (told && wrote.length && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(wrote, p, before, b);
+  return { ok: true, count: wrote.length, ...(legacy.length ? { legacy } : {}) };
 }
 /* A cancelled order's pieces taken off (removedReason "cancelled...", the sheet window's Cancel and AutoCancel): each sheet
    they left is a removal on its cancel record too, with when and who (_orderCancel.noteRemovals; kept for good, 29 Sep).
