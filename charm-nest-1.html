@@ -4600,7 +4600,10 @@ function startNestReady(sh, context) {
    put 138 charms on one sheet, and its one-by-one fill weighed them all together, drawn as masks, before the sheet was
    written. Now the oldest few orders are placed and the sheet written, then the next few come in (feedOn); the charms of
    the later orders wait on the sheet for their turn, as later orders wait at Etsy, and each few is placed exactly as an
-   update's new orders are, gap fill included. Gold, Silver and the solid golds of a run; Rose Gold keeps its own flow. */
+   update's new orders are, gap fill included. Gold and Silver of a run. Rose Gold, 10K and 14K (the metals with a green
+   line) keep their own flow: the whole batch is placed in one search and built as one block from the sheet's start, as
+   Rose Gold is (Paul, 8 Oct: "the 14K gold sheet is a mess because the sheet was not initially forced to be aligned like
+   the RG 14/20"). Three orders at a time never saw the rest of the batch, and each little group was seated against the last one. */
 const FEED_ORDERS = 3;
 const orderKey = c => String(c.order || c.id);
 /* The date the nest's oldest-first rule reads for a piece: its order's date, and for a piece of an order released from hold
@@ -4609,7 +4612,7 @@ const orderRank = c => (typeof CharmNestOrders !== "undefined" && CharmNestOrder
 /** The charms this search places, and those it leaves waiting for their turn (sh.feedWait). */
 function feedTurn(sh, items) {
   sh.feedWait = null;
-  if (!carefulNest(sh) || sh.metal === "rose" || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
+  if (!carefulNest(sh) || sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal)) || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
   const placed = new Set(sh.placements.map(p => p.id));
   const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b)));
   // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)

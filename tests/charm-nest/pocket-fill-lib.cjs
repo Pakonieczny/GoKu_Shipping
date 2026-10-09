@@ -63,6 +63,7 @@ function pageRules(root, ctl) {
   const ctx = {
     window: { B: { run: { runId: 'run-1', status: 'running' } } }, S: { settings: { maxFill: .8, clearancePt: -.5, runMode: 'auto' } },
     Set, Map, Math, JSON, Object, Array, String, Number, Date, console,
+    CharmNestRose: require(path.join(root || REPO, 'charm-nest-rose.js')),   // (the page's own test for the metals with a green line: feedTurn asks it)
     log() {}, agent: () => null, fmt: { pct: x => Math.round(100 * x) + '%' },
     activeCharms: sh => sh.charms.filter(c => !c.excluded), carefulNest: () => true, allSheets: () => ctl.pages,
     overflowToNextSheet: sh => ctl.overflow(sh), startNest: sh => ctl.work.push(sh),
