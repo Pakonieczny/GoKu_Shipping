@@ -68,7 +68,8 @@
   /** Is this piece the MIRROR IMAGE of the as-drawn master design? (Paul, 9 Oct 2026, 18:47: the Right earring is the Left turned 180 degrees about the
    *  vertical axis, so every stored earring side is L or R and one of them is the mirror.) The pool record says so (`mirror`); a piece that carries a
    *  side but no `mirror` asks the shared module which way the drawing faces (facingOf: null = symmetric or unknown, as-drawn is then the Left).
-   *  Never guessed for a piece with no stored side: an old line stays exactly as it was. `hint` is a saved back record ({ side, mirror }). */
+   *  Never guessed for a piece with no stored side, nor for the glued charm of a mismatched design (its two bodies face their own ways): an old line
+   *  stays exactly as it was. `hint` is a saved back record or a job ({ side, mirror }). */
   function mirrorOfId(ctx, poolId, charm, hint) {
     const rec = ctx && ctx.poolRow ? ctx.poolRow(poolId) : null;
     if (rec && typeof rec.mirror === 'boolean') return rec.mirror;
@@ -77,27 +78,26 @@
     const side = (rec && rec.side) || (charm && charm.side) || (hint && hint.side);
     if (side !== 'L' && side !== 'R') return false;
     const P = pairLib(ctx);
-    try { if (P && typeof P.facingOf === 'function' && charm) return side !== (P.facingOf(charm) || 'L'); } catch (_) { /* as drawn */ }
+    try { if (P && typeof P.facingOf === 'function' && charm && charm.outline && !(P.isMismatched && P.isMismatched(charm))) return side !== (P.facingOf(charm) || 'L'); } catch (_) { /* as drawn */ }
     return false;
   }
-  const mirroredOnce = typeof WeakMap === 'function' ? new WeakMap() : null;
-  /** The charm as THIS piece is cut (CharmNestPair.pieceGeometry): the Right earring's outline, holes and engraving art are the Left's mirrored, so the
-   *  fit, the back view and the back file are made on that. The engraved TEXT is never mirrored: it is fitted to the mirrored geometry and drawn as
-   *  letters that read normally (the back-side flip that makes it read from behind is a different operation and stays where it is). A piece that is
-   *  not mirrored, or whose geometry is already the mirrored one (`charm.mirrored`), gives the same object back. The mirrored copy is made once per
-   *  charm, so a result kept against it still matches after a wait. */
+  /** The charm as THIS piece is cut: CharmNestPair.pieceGeometry gives the body this ear is (a mismatched design's left or right body alone, not the two
+   *  glued) and, for the Right earring, its mirror image (outline, holes, hoop and engraving art mirrored). The fit, the back view and the back file are
+   *  made on that. The engraved TEXT is never mirrored: it is fitted to this geometry and drawn as letters that read normally (the back-side flip that
+   *  makes a back read from behind is a different operation and stays where it is). A single charm, a disc, a line with no side: the same object back.
+   *  A charm that is already the mirrored one (`charm.mirrored`) is never mirrored twice. The pair module caches the result per charm, body and mirror,
+   *  so a fit kept against it still matches after a wait. `hint`: { slot, side, mirror, bodyIndex } of a job or a saved back. */
   function pieceCharm(ctx, poolId, charm, hint) {
     if (!charm || charm.mirrored) return charm;
-    if (!mirrorOfId(ctx, poolId, charm, hint)) return charm;
     const P = pairLib(ctx); if (!P || typeof P.pieceGeometry !== 'function') return charm;
-    const hit = mirroredOnce && mirroredOnce.get(charm); if (hit) return hit;
     const rec = ctx && ctx.poolRow ? ctx.poolRow(poolId) : null;
+    const side = (rec && rec.side) || charm.side || (hint && hint.side) || (hint && (hint.slot === 'L' || hint.slot === 'R') ? hint.slot : null);
+    if (side !== 'L' && side !== 'R') return charm;
+    const mirror = mirrorOfId(ctx, poolId, charm, hint);
+    const bodyIndex = rec && rec.bodyIndex != null ? +rec.bodyIndex : hint && hint.bodyIndex != null ? +hint.bodyIndex : side === 'R' ? 1 : 0;
     let g = null;
-    try { g = P.pieceGeometry(charm, { poolId, side: (rec && rec.side) || charm.side || (hint && hint.side) || null, bodyIndex: rec && rec.bodyIndex, mirror: true }); } catch (_) { g = null; }
-    if (!g || g === charm) return charm;
-    const out = Object.assign({}, charm, g, { mirrored: true });
-    if (mirroredOnce) mirroredOnce.set(charm, out);
-    return out;
+    try { g = P.pieceGeometry(charm, { poolId, side, bodyIndex, mirror }); } catch (_) { g = null; }
+    return g && g.outline ? g : charm;
   }
   const order = s => (s === 'L' ? 0 : s === 'R' ? 1 : /^D\d+$/.test(s || '') ? 1 + (+s.slice(1)) : 99);
   /** How the line's engraving jobs are cut. `existing`: the slots jobs of this line already exist under (permanent: a job that exists keeps its slot).

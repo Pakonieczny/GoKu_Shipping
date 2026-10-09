@@ -4447,7 +4447,7 @@ const Engrave = window.Engrave = (() => {
   const items = () => B.engrave.items;
   /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
   const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
-  const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]));
+  const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]), { slot: job.slot, side: job.row && job.row.side });
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
   let openingBack = null, openingBackId = null;
   async function openBack(poolId, sheetId) {
@@ -4470,7 +4470,7 @@ const Engrave = window.Engrave = (() => {
         charm=Pool.cloneCharm(src.charms[0],poolId); charm.poolId=poolId;
         if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
       }
-      charm=pieceCharmOf(poolId,charm,saved);   // a Right ear's back is edited on the mirrored geometry it was cut and written on
+      charm=pieceCharmOf(poolId,charm,{ side:saved.side, slot:saved.slot, mirror:saved.mirror, bodyIndex:saved.bodyIndex });   // a Right ear's back is edited on the mirrored geometry it was cut and written on
       const sheet=Object.assign({},d,{sheetId:d.id,seq:d.setSeq,backPool:d.backPool || [],fileBase:d.fileBase || d.folder,
         folderPath:d.outputs?.ai?.path?.replace(/\/[^/]+$/,"")});
       if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
@@ -4532,7 +4532,7 @@ const Engrave = window.Engrave = (() => {
   function jobsOf(row) { row = lineOf(row); if (!row) return []; const out = []; for (const s of SLOT_PROBE) { const j = items().get(slotKey(row, s)); if (j) out.push(j); } return out; }
   /** The job of a row. A side row gives its own. A line with one job gives it; a line cut into slots gives the one named (`which`: a slot or a pool id) or, for
    *  a caller that shows the line as one, the first still to settle. */
-  function jobOf(row, which) {
+  const jobOf = (row, which) => {
     if (!row) return null;
     if (row.parentRow) return items().get(row.key) || null;
     const whole = items().get(row.key);
@@ -4541,7 +4541,7 @@ const Engrave = window.Engrave = (() => {
     const jobs = jobsOf(row); if (!jobs.length) return null;
     if (which) { const slot = SLOT_PROBE.includes(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
     return jobs.find(j => !DECIDED.includes(j.state) && j.state !== "none") || jobs[0];
-  }
+  };
   const newJob = (key, row) => ({ key, row, lineGap:.216, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() });
   function ensureOne(row, slot) {
     const key = slotKey(row, slot); let j = items().get(key);
@@ -4708,7 +4708,7 @@ const Engrave = window.Engrave = (() => {
     return setReady(job);
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
-  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: lineOf(job.row), job, why }); RunCtl.poke(); return job; }
+  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (owner.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
@@ -4716,9 +4716,9 @@ const Engrave = window.Engrave = (() => {
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
     if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
-    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: lineOf(job.row), job, why: F_.error }); return job; }
+    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: F_.error }); return job; }
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
-    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: lineOf(job.row), job, why: job.reason }); return job; }
+    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { ...job.row.engrave, needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
@@ -4852,7 +4852,7 @@ const Engrave = window.Engrave = (() => {
     catch (e) {
       if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
       job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
-      Review.add({ kind: e.stage === "flip" ? "flipFailed" : "placement", key: "eng:" + job.key, row: lineOf(job.row), job, why: job.reason, checks:e.checks, images:e.images });
+      Review.add({ kind: e.stage === "flip" ? "flipFailed" : "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason, checks:e.checks, images:e.images });
       agent({engrave:true}, "warn", `${job.row.order.receiptId}: ${job.reason}`);
       // A failed back check holds this engraving; other jobs and sheets continue.
       render(); return job;
@@ -4867,13 +4867,13 @@ const Engrave = window.Engrave = (() => {
     job.view=view; job.mask=mask; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
     if(!fit) {
       job.state="review";job.reason=result.reason;job.row.engrave.state="review";
-      if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:lineOf(job.row),job,why:result.reason});
+      if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:result.reason});
       render();return job;
     }
     job.wantSize=fit.size; job.verify={geometry:check,at:Date.now()};
     job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
-    if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: lineOf(job.row), job });
+    if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job });
     render(); return job;
   }
   async function claudeRead(job) {
@@ -4890,7 +4890,7 @@ const Engrave = window.Engrave = (() => {
     const owner = items(), jobs = [...owner.values()].filter(j => !j.editingBack && j.state === "ready" && j.row.state !== "gone" && canFit(j) && !isWorking(j));
     let fitted = 0;
     // a job counts only when the fit moved it on: one left "ready" (its charm not found on the sheet yet) changed nothing
-    for (const j of jobs) { if (items() !== owner || owner.get(j.key) !== j || j.state !== "ready" || j.row.state === "gone") continue; const row = j.row, sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { if (items() !== owner || owner.get(j.key) !== j || j.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvalPreparing || j.stamping) continue; j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: lineOf(j.row), job: j, why: e.message }); } if (items() === owner && owner.get(j.key) === j && j.state !== "ready") fitted++; }
+    for (const j of jobs) { if (items() !== owner || owner.get(j.key) !== j || j.state !== "ready" || j.row.state === "gone") continue; const row = j.row, sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { if (items() !== owner || owner.get(j.key) !== j || j.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvalPreparing || j.stamping) continue; j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: (j.row.parentRow || j.row), job: j, why: e.message }); } if (items() === owner && owner.get(j.key) === j && j.state !== "ready") fitted++; }
     if (items() !== owner || !fitted) return 0;
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
@@ -4997,7 +4997,7 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
-  function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: lineOf(job.row), job, why: job.reason }); render(); Orders.render(); }
+  function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   async function prepareApproval(job, by, at) {
     const charm=charmFor(job),view=job.view,fit=job.fit;
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
@@ -5135,7 +5135,7 @@ const Engrave = window.Engrave = (() => {
       // approved the same words again. Only a file that fails its own checks goes back to review.
       if (!e.engravingInvalid) {
         job.backPending = e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: the approved back file waits for the cloud (${e.message})`); retryBacksLater(); render(); }
-      else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: lineOf(job.row), job, why: job.reason }); render(); } }
+      else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); } }
     finally { job.backSaving = false; Session.schedule(); }
     // the run looks again only when the save changed something (a save with nothing to write would start it over and over)
     if(!job.editingBack && (job.state !== was || (job.backs || []).length !== had)) RunCtl.backgroundSettled();
@@ -5270,7 +5270,7 @@ const Engrave = window.Engrave = (() => {
     if(!host || !job)return;
     const revision=host._thumbRevision=(host._thumbRevision || 0)+1;
     const current=()=>host.isConnected && host._thumbRevision === revision;
-    const charm=(job.copies || job.row.poolIds || []).map(id=>pieceCharmOf(id,Pool.charmOf(id))).find(Boolean);
+    const charm=(job.copies || job.row.poolIds || []).map(id=>pieceCharmOf(id,Pool.charmOf(id),{ slot:job.slot, side:job.row && job.row.side })).find(Boolean);
     const paint=c=>{if(current())host.replaceChildren(renderFront(c,220));};
     if(charm?.outline && charm.members?.length){paint(charm);return;}
     const sku=job.row.spec.designSku || job.row.line.sku;
@@ -5342,7 +5342,7 @@ const Engrave = window.Engrave = (() => {
         if(e.engravingInvalid){
           job.state="blocked";job.reason=e.message;
           job.row.engrave={...job.row.engrave,state:"blocked",approved:false,reason:e.message};
-          try{Review.add({kind:"placement",key:"eng:"+job.key,row:lineOf(job.row),job,why:e.message});}catch(viewError){console.warn("Engraving review view",viewError);}
+          try{Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:e.message});}catch(viewError){console.warn("Engraving review view",viewError);}
         }else{job.backPending=e.message || "Back files wait for saving";retryBacksLater();}
         Session.schedule();
         for(const show of [()=>agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`),render])try{show();}catch(viewError){console.warn("Engraving save view",viewError);}
