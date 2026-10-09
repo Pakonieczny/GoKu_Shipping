@@ -525,11 +525,15 @@
     const opts = vars.filter(v => !isPersonalisation(v.name)).map(v => v.value), text = [title].concat(opts).join(" ");
     const EAR = /\b(?:earrings?|studs?|huggies|huggie\s+(?:hoops?|charms?\s+set)|hoops?)\b/i;
     const SINGLE_TXT = /\bsingle\s+(?:stud\s+|huggie\s+|hoop\s+)?(?:earring|stud|huggie|charm)\b|\b(?:1|one)\s+(?:single\s+)?(?:earring|stud|huggie)\b(?!s)/i, SINGLE_END = /\bsingle(?:\s+(?:earring|stud|huggie|hoop|charm))?\s*$/i;
+    // a TITLE that says Single: next to the earring word, or a few words before it ("Custom Single Replacement Silver Cat Huggie Earring Left Ear"), or at its end
+    // ("Huggie Earring, Single"). "Single Pearl Stud Earrings" is a pair of earrings with one pearl each, not a single earring: the plural word after it settles that.
+    const TITLE_SINGLE = t => SINGLE_TXT.test(t) || (EAR.test(t) && (/\bsingle\b(?:\s+[\w'’&.-]+){0,6}?\s+(?:earring|stud|huggie|hoop)\b(?!s|\s+(?:earrings|studs|huggies|hoops)\b)/i.test(t) || /(?:^|[,;|(\-–—]\s*)single\s*\)?\s*$/i.test(t)));
     const PAIR_OPT = /\bpair\b|\b(?:2|two)\s+(?:earrings|studs|huggies|hoops)\b|\bset\s+of\s+(?:2|two)\b/i;
     const optSingle = opts.some(x => SINGLE_TXT.test(x) || SINGLE_END.test(x) || (EAR.test(text) && /\bsingle\b/i.test(x))), optPair = !optSingle && EAR.test(text) && opts.some(x => PAIR_OPT.test(x));
-    const soldBy = optSingle || optPair ? "option" : SINGLE_TXT.test(title) ? "title" : EAR.test(text) ? "words" : null;
-    const soldAs = optSingle ? "single" : optPair ? "pair" : SINGLE_TXT.test(title) ? "single" : EAR.test(text) ? "pair" : null;
-    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side: singleSideOf(line), discs: discsIn(line) };
+    const soldBy = optSingle || optPair ? "option" : TITLE_SINGLE(title) ? "title" : EAR.test(text) ? "words" : null;
+    const soldAs = optSingle ? "single" : optPair ? "pair" : TITLE_SINGLE(title) ? "single" : EAR.test(text) ? "pair" : null;
+    const side = singleSideOf(line), sideBy = side ? (singleSideOf(Object.assign({}, line, { personalization: [], buyerMessage: null, message_from_buyer: null, variations: (line.variations || []).filter(v => !isPersonalisation(lvName(v))) })) === side ? "listing" : "note") : null;   // (listing: the title or an option names the ear, so it is every unit's; note: the buyer's words)
+    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line) };
   }
   /** Which ear a SINGLE earring is for, when the line names it: an option value ("Single - Left", "Right ear") or the buyer's note ("left ear
    *  only", "for my right ear"). Both ears named, or neither: null (unspecified: flagged, never guessed). */
@@ -543,6 +547,7 @@
     };
     for (const v of (line && line.variations) || []) { const name = lvName(v), value = lvValue(v); if (isPersonalisation(name)) tell(value, false); else if (/side|ear|earring/i.test(name) || /\b(?:single|ear|earring|stud|hoop|huggie)\b/i.test(value) || /^\s*(?:left|right)\b/i.test(value)) tell(value, true); }
     for (const s of [].concat((line && line.personalization) || [], (line && (line.buyerMessage || line.message_from_buyer)) || [])) tell(s, false);
+    if (!got.size && line && line.title) tell(line.title, false);   // (the title names the ear only when nothing else did: "... Earring Left Ear")
     return got.size === 1 ? (got.has("left") ? "L" : "R") : null;
   }
   /** Does this line say it is a mismatched pair? A line only: for pages that hold raw Etsy transactions and no master. */
@@ -586,7 +591,7 @@
     const cr = o.count || countRead(line, { optionMaps: o.optionMaps });
     // the option or title that says Single/Pair is the buyer's choice and wins; then the form the options gave; then the title's own words
     const soldAs = sig.soldBy === "option" ? sig.soldAs : form === "earring-single" ? "single" : (form === "earrings" || form === "huggie") ? "pair" : form ? null : sig.soldAs;
-    const info = { earring: false, single: soldAs === "single", soldAs, mismatched: false, source: null, members: null, says: sig.says, signals: sig.signals, discs: sig.discs, perUnit: 1, glued: false, split: PIECE_RULES.mismatchedMakesTwo, sideSaid: soldAs === "single" ? sig.side : null, count: null, asks: [], notes: [] };
+    const info = { earring: false, single: soldAs === "single", soldAs, mismatched: false, source: null, members: null, says: sig.says, signals: sig.signals, discs: sig.discs, perUnit: 1, glued: false, split: PIECE_RULES.mismatchedMakesTwo, sideSaid: soldAs === "single" ? sig.side : null, sideBy: soldAs === "single" && sig.side ? sig.sideBy : null, count: null, asks: [], notes: [] };
     if (dp && +dp.bodies > 1 && dp.mismatched) { info.mismatched = true; info.source = "design"; }
     else if (!dp && e && MISMATCH_NAME.test(upSku(o.sku))) { info.mismatched = true; info.source = "name"; }   // until the catalogue carries `pair`: MISMATCHED, MISMATCHED_6849, MISMATCHED_7134
     else if (o.members) { info.mismatched = true; info.source = o.members.source; info.members = o.members.members; }
@@ -607,6 +612,7 @@
     else if (!info.earring && !info.single && PIECE_RULES.optionCountsMake && cr.certain && cr.n > 1) info.perUnit = cr.n;
     // what a person should see, plainly
     if (info.single && !info.sideSaid) info.notes.push("single earring: the line does not say left or right");
+    else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
     if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but names one: made as a matching pair until a person names the second");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
     return info;
@@ -648,7 +654,7 @@
     for (let i = 0; i < total; i++) {
       let side = null, bodyIndex = 0;
       if (natural && p.earring && !p.glued && per % 2 === 0) { side = i % 2 === 0 ? "L" : "R"; if (p.mismatched) bodyIndex = i % 2; }
-      else if (natural && p.single && units === 1) side = p.sideSaid || null;
+      else if (natural && p.single && (units === 1 || p.sideBy === "listing")) side = p.sideSaid || null;
       out.push({ n: i + 1, of: total, unit: Math.floor(i / per) + 1, side, bodyIndex });
     }
     return out;

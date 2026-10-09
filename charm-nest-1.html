@@ -739,6 +739,14 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcRow .pcSt[data-k=done]{background:#e8f1ea;border-color:#b6d2bf}.owPcRow .pcSt[data-k=done] span{color:#19663f}.owPcRow .pcSt[data-k=done]::before{background:#d9eadf}
 .owPcRow.slow .pcSt{border-color:var(--goldLine)}   /* (the slowest piece, where the order is: a gold hairline, no longer brown words) */
 @media(prefers-reduced-motion:reduce){.owPcRow .pcSt,.owPcRow .pcSt::before{transition:none}}
+/* the Left and the Right of a mismatched pair (one row each, bridge paintPieceSum sideRows): a small picture of the pair with the other body washed out, and the side's own name tag */
+.owPcRow .owSidePic{display:inline-block;vertical-align:middle;width:34px;height:26px;margin-right:9px;border-radius:6px;background:var(--card2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
+.owPcRow .owSidePic{font-size:0;line-height:0}.owPcRow .owSidePic img,.owPcRow .owSidePic canvas{display:block;width:100%;height:100%;object-fit:contain}
+.owPcRow .owSidePic[role=button]::after{content:"\21bb";font:12px/26px var(--sans);color:var(--ink45);display:block;text-align:center}
+.owPcRow .owSidePic .thumbLoading{transform:scale(.5)}.owPcRow .owSidePic .thumbLoading .srOnly{display:none}
+.owPcRow .owPcSide{display:inline-block;padding:0 7px;border-radius:999px;background:var(--card2);box-shadow:inset 0 0 0 1px var(--line);font:700 10.5px/1.7 var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--ink70)}
+.owPcRow.owPcSideRow .nm{white-space:normal}
+.owSplit{margin-top:3px;font:600 12px/1.4 var(--sans);color:var(--warn,#a2591c)}
 .owPcRow .steps{display:inline-flex;gap:4px}
 .owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
 .owPcRow .steps i.on{background:var(--sage);box-shadow:none}
@@ -1915,6 +1923,7 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .purchaseSummary{display:grid;grid-template-columns:minmax(0,.75fr) minmax(0,1.25fr);gap:18px;align-items:start;min-width:0;padding-left:18px;border-left:1px solid var(--line2)}
 .purchaseType,.purchaseChoices{display:grid;gap:7px;min-width:0}
 .purchaseType strong{font:600 12.5px/1.45 var(--sans);color:var(--ink);overflow-wrap:anywhere}
+.purchaseType .purchasePair{font:600 11.5px/1.4 var(--sans);color:var(--ink70)}   /* (a mismatched pair: the Left and the Right are two different charms of one listing) */
 .purchaseChoices dl{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0}
 .purchaseChoices dl>div{min-width:0;max-width:100%}
 .purchaseChoices dt{font:10.5px/1.4 var(--sans);color:var(--ink45);overflow-wrap:anywhere}
@@ -3185,20 +3194,21 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1"></script>
-<script src="charm-nest-solver.js?v=20261009-unjam1"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1-pair2"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1"></script>
+<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow1"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col"></script>
-<script src="charm-nest-pair.js?v=20261009-pr1-mi1"></script>
-<script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi1"></script>
+<script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4"></script>
+<script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1"></script>
+<script src="charm-nest-master-cache.js?v=20261009-mc1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1-pe1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
@@ -3210,14 +3220,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi2"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2"></script>
-<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po1"></script>
+<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1"></script>
-<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1"></script>
+<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -4531,7 +4541,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -4570,13 +4580,13 @@ function buildJob(sh) {
     block: careful && (sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     // filling its gaps, a sheet takes any later order that fits, not only the oldest
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin)
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin), ...(typeof CharmNestSolver !== "undefined" && CharmNestSolver.pairFields ? CharmNestSolver.pairFields(c) : {}) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin; pairFields: the group, side and "seat near its mate" of a pair's pieces, nothing for any other charm)
   };
 }
 function packingKey(sh, items) {
   const st = stockFor(sh.metal, sh);
   return JSON.stringify([st.wPt, st.hPt, sh.roseStock?.id, sh.roseStock?.revision, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill,
-    items.map(c => [c.id, c.hash, c.w, c.h, c.areaPt2])]);
+    items.map(c => c.mirror ? [c.id, c.hash, c.w, c.h, c.areaPt2, "mirror"] : [c.id, c.hash, c.w, c.h, c.areaPt2])]);   // (the Right of a pair has the Left's size and area, but is its mirror: a side change is a different packing)
 }
 function renderNestFlow() {
   const b = $("#btnNestFlow"); if (!b) return;
@@ -7003,7 +7013,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -7135,7 +7145,7 @@ async function boot() {
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
@@ -7145,14 +7155,14 @@ boot();
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261006-st3"></script>
-<script src="station-activity.js?v=20261009-ps1"></script>
+<script src="station-activity.js?v=20261009-ps1-adv1"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
 <script src="charm-nest-laser-time.js?v=20261007-fc2"></script>
 <script src="charm-nest-laser-act.js?v=20261006-sa5-ls2-gc1"></script>
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow2-mc1-mi3-ana1-adv1-mi4"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7200,7 +7210,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw2-pe1-pr2"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw3-pe1-pr2"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
@@ -7210,7 +7220,7 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1"></script>
@@ -7227,15 +7237,15 @@ try {
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
 <script src="charm-nest-options-modal.js?v=20261007-os2-mn3-inc1"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
-<script src="charm-nest-piece-dots.js?v=20261005-pd1"></script>
+<script src="charm-nest-piece-dots.js?v=20261005-pd1-pow1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1"></script>
-<script src="charm-nest-piece-seals.js?v=20261005-pg1"></script>
+<script src="charm-nest-piece-seals.js?v=20261005-pg1-pow1"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1"></script>
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
 <script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1"></script>

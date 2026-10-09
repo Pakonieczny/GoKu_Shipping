@@ -148,7 +148,7 @@ async function write(db, FV, live, opts) {
   const event = live.event === "work" || live.event === "beat" || live.event === "idle" ? live.event : "";
   const station = typeof live.station === "string" && STATIONS.has(live.station) ? live.station : "";
   const device = str(live.device, 40).replace(/[^\w .:-]/g, "");
-  const person = noPin(str(live.person, 200)).slice(0, 80);
+  const person = (KIND.loginName || (n => n))(noPin(str(live.person, 200)).slice(0, 80));   // (a person with two records is shown under her one login name: Ana_M)
   if (!event || !station || !device || !person || !hasLetter(person)) return [400, { error: "not a live event" }];   // no letter (digits, "123 456") = a PIN, never a name
   const id = docId(station, device, person);
   if (!idOk(id)) return [400, { error: "not a live event" }];

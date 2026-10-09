@@ -86,19 +86,19 @@ function niceName(raw) {
   if (words.length > 1) words = words.map(w => /^\p{L}$/u.test(w) ? w + "." : w);
   return words.join(" ");
 }
-// seeded aliases (display name → other spellings): ONE table, _activityKinds.js PEOPLE_ALIASES (Giovanna, Anna with "Anns", Ivy), shared with _employeeAttendance.js so the two readers cannot
+// seeded aliases (display name → other spellings): ONE table, _activityKinds.js PEOPLE_ALIASES (Giovanna, Ana_M with "Anna" and "Anns", Ivy), shared with _employeeAttendance.js so the two readers cannot
 // disagree; the Firestore doc config/employeeAliases adds to these, never written here. The display names are also the roster the console lists even when nobody of them signed in today.
 const BUILTIN_ALIASES = KIND.PEOPLE_ALIASES || { "Giovanna": ["Giovanna C."] };
 const ROSTER = Object.keys(BUILTIN_ALIASES);
 function buildAliases(extra) {
   const display = new Map(), map = new Map();           // canonical key → display name · folded alias → canonical key
-  const add = (name, list) => {
+  const add = (name, list, nice) => {
     const d = cleanName(name); if (!okName(d)) return;
-    const ck = fold(d); if (!display.has(ck)) display.set(ck, d);
+    const ck = fold(d); if (!display.has(ck)) display.set(ck, nice ? niceName(d) : d);     // (the built-in table's names read like every console name: "Ana_M" is "Ana M."; the Firestore doc's own spelling is shown as written)
     if (!map.has(ck)) map.set(ck, ck);
     for (const a of Array.isArray(list) ? list.slice(0, 50) : typeof list === "string" ? [list] : []) { const an = cleanName(a); if (okName(an) && fold(an) !== ck) map.set(fold(an), ck); }   // (a list may be one plain string; an alias that folds to the name itself says nothing; spellings fold: case, spaces, punctuation)
   };
-  for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v);
+  for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v, true);
   if (extra && typeof extra === "object") for (const [k, v] of Object.entries(extra).slice(0, 200)) add(k, v);
   return { display, map };
 }
