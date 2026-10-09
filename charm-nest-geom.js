@@ -362,10 +362,16 @@
   const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
   // Manufacturing roles outrank paint. Red/blue are artwork colours, not holes.
   // Keep legacy unlabelled achromatic cut strokes; labelled artwork is never a cut.
+  // The hatching colour: a strong blue (0 0 1, and its near neighbours). Hatching is always a FILL; the masters hold it on
+  // HATCH, but some designs left it on the CUT layer (BASEBALL_71147, BILLIARD_972, COMPASS_85731, KIWI, APPLE2 - DISC ...).
+  const hatchBlue = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;
   function pathRole(m) {
     const role = String(m?.manufacturingRole || "").toLowerCase();
     if (["cut", "cutout", "outline"].includes(role)) return "cut";
     if (["engrave", "hatch", "artwork"].includes(role)) return "artwork";
+    // A blue fill with no stroke is hatching engraving wherever it was drawn: the laser recognises the pen by colour, so a
+    // blue fill on the CUT layer is still hatched, never cut through, and never a body or an opening.
+    if (m && m.kind === "path" && m.fill && !m.stroke && hatchBlue(m.fillRGB)) return "artwork";
     const layer = String(m?.layer || "").trim();
     if (/^(?:engrave|engraving|hatch|front detail)(?:$|[\s:_()\/-])/i.test(layer)) return "artwork";
     if (/^(?:cut|cutout|cut-out|cutline|cut line)(?:$|[\s:_()\/-])/i.test(layer)) return "cut";

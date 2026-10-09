@@ -108,6 +108,8 @@
   const bbArea = b => b ? Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]) : 0;
   const bbInter = (a, b) => { const r = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]; return r[2] > r[0] && r[3] > r[1] ? r : null; };
 
+  /** Operators that change the graphics state a later object paints with (colour, line style, extended state). */
+  const STATE_OPS = new Set(["g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN", "w", "J", "j", "M", "d", "ri", "i", "gs"]);
   function colorFrom(args, space, spaces) {
     const nums = args.filter(a => typeof a === "number");
     if (args.some(a => a && a.name)) return [0.5, 0.5, 0.5];      // pattern → unknown mid-grey
@@ -137,10 +139,16 @@
     let path = null, pathStart = -1, pendingClip = false, clipBox = null;
     let inText = false, textStart = -1, tm = null, tlm = null, fontSize = 1, textPts = [], textChars = 0;
     let textPieces = [], piece = null;
+    // Graphics-state operators written INSIDE a segment's own byte range (Illustrator opens a layer with a text run that
+    // carries `/CS0 cs 0 0 1 scn` for every object after it). The writer blanks that range for every charm that does not
+    // own the segment, so the ranges are recorded on the segment and written back (see isolate): without them the
+    // layer's colour is lost and a blue hatching fill is read back as the default black.
+    let held = [];
     const startPath = (i) => { if (!path) { path = { sub: [], cur: null, start: null, pts: [] }; pathStart = ins[i].start; } };
     const addPt = (p) => path.pts.push(p);
     for (let i = 0; i < ins.length; i++) {
       const { op, args } = ins[i];
+      if ((inText || path) && STATE_OPS.has(op)) held.push(ins[i].start, ins[i].end);
       switch (op) {
         case "q": stack.push({ ctm: ctm.slice(), fill, stroke, lw, fillSpace, strokeSpace, clipBox }); break;
         case "Q": { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; stroke = s.stroke; lw = s.lw; fillSpace = s.fillSpace; strokeSpace = s.strokeSpace; clipBox = s.clipBox; } break; }
@@ -192,13 +200,15 @@
             stroke: doStroke, fill: doFill, strokeRGB: stroke.slice(), fillRGB: fill.slice(), lwPt: lw * scaleOf(ctm),
             closed: allClosed, subpaths: path.sub.map(s => s.segs), bbox, depth
           };
+          if (held.length) seg.held = held;
+          held = [];
           if (pendingClip) clipBox = bbox;
           if (seg.kind === "clip") { seg.clipBox = bbox; }
           push(depth === 0 ? segs : inner, seg);
           path = null; pathStart = -1; pendingClip = false; break;
         }
         // ── text ──
-        case "BT": inText = true; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; textPieces = []; piece = null; break;
+        case "BT": inText = true; held = []; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; textPieces = []; piece = null; break;
         case "Tf": fontSize = Math.abs(+args[1]) || 1; fontName = args[0] && args[0].name || null; break;
         case "Tm": if (args.length >= 6) { tm = args.slice(0, 6).map(Number); tlm = tm; } piece = null; break;
         case "Td": case "TD": tlm = mul([1, 0, 0, 1, +args[0], +args[1]], tlm); tm = tlm; piece = null; break;
@@ -225,8 +235,9 @@
             const bbox = bboxOf(textPts);
             const decoded = textStrs.every(t => t && t.ok) ? textStrs.map(t => t.text).join("") : null;
             const pieces = textPieces.length > 1 ? textPieces.map(p => { const d = p.strs.every(t => t && t.ok) ? p.strs.map(t => t.text).join("") : null; return { bbox: bboxOf(p.pts), chars: p.chars, str: d, raw: p.raw, font: p.font, undecodable: d == null && p.chars > 0 }; }) : null;
-            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces });
+            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces, held: held.length ? held : undefined });
           }
+          held = [];
           inText = false; break;
         }
         case "BI": push(depth === 0 ? segs : inner, { kind: "image", start: ins[i].start, end: ins[i].end, bbox: bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]), depth }); break;
@@ -1072,18 +1083,28 @@
       it with spaces was, only without carrying the whole sheet's coordinates in every per-SKU file. */
   function isolate(content, segments, keep) {
     const keepSet = new Set(keep);
+    // `held`: the graphics-state operators a removed segment wrote inside its own range (a layer's colour is set by the
+    // text run that opens it). They stay, in order, so every kept object paints with the state it had in the master.
     const drop = segments
       .filter(s => !keepSet.has(s.index) && s.kind !== "clip" && s.kind !== "noop" && s.start >= 0 && s.end > s.start)
-      .map(s => [s.start, s.end]).sort((a, b) => a[0] - b[0]);
+      .map(s => [s.start, s.end, s.held || null]).sort((a, b) => a[0] - b[0]);
     const runs = [];
-    for (const r of drop) { const last = runs[runs.length - 1]; if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else runs.push([r[0], r[1]]); }
+    for (const r of drop) {
+      const last = runs[runs.length - 1];
+      if (last && r[0] <= last[1]) { last[1] = Math.max(last[1], r[1]); if (r[2]) last[2] = last[2] ? last[2].concat(r[2]) : r[2]; }
+      else runs.push([r[0], r[1], r[2]]);
+    }
     let size = 0, pos = 0;
-    for (const [a, b] of runs) { if (a > pos) size += a - pos; size += 1; pos = b; }
+    for (const [a, b, held] of runs) {
+      if (a > pos) size += a - pos; size += 1; pos = b;
+      if (held) for (let k = 0; k < held.length; k += 2) size += held[k + 1] - held[k] + 1;
+    }
     size += Math.max(0, content.length - pos);
     const out = new Uint8Array(size); let o = 0; pos = 0;
-    for (const [a, b] of runs) {
+    for (const [a, b, held] of runs) {
       if (a > pos) { out.set(content.subarray(pos, a), o); o += a - pos; }
       out[o++] = 0x20; pos = b;
+      if (held) for (let k = 0; k < held.length; k += 2) { out.set(content.subarray(held[k], held[k + 1]), o); o += held[k + 1] - held[k]; out[o++] = 0x20; }
     }
     if (pos < content.length) out.set(content.subarray(pos), o);
     return out;
