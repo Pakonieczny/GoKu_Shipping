@@ -1552,7 +1552,26 @@
           if (pd instanceof PDFDict) for (const [k, v] of pd.entries()) { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null, text = nm && nm.decodeText ? nm.decodeText() : null; if (text != null && !m.has(text)) m.set(text, PDFName.of(k.decodeText()).toString()); }
         } catch (_) { /* a source with unreadable layers: the piece stays on its charm's layer */ }
       }
-      return m.get(name) || null;
+      if (m.has(name)) return m.get(name);
+      // a per-SKU file keeps the master's layers (CUT, ENGRAVE, HATCH ...) in the Resources of the form that holds the charm, not on the page: find the layer there and
+      // give the page's own Resources a key for it, so the mirrored piece goes back into the same layer as the as-drawn one (and the .dxf names it the same way)
+      const nested = (() => {
+        const rd = out.context.lookup(src.resRef); if (!(rd instanceof PDFDict)) return null;
+        const seen = new Set(), look = (res, depth) => {
+          if (!(res instanceof PDFDict) || depth > 3) return null;
+          const pd = out.context.lookup(res.get(PDFName.of("Properties")));
+          if (pd instanceof PDFDict) for (const [, v] of pd.entries()) { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null; if (nm && nm.decodeText && nm.decodeText() === name) return v; }
+          const xo = out.context.lookup(res.get(PDFName.of("XObject")));
+          if (xo instanceof PDFDict) for (const [, v] of xo.entries()) { if (seen.has(v)) continue; seen.add(v); const f = out.context.lookup(v), hit = f && f.dict ? look(out.context.lookup(f.dict.get(PDFName.of("Resources"))), depth + 1) : null; if (hit) return hit; }
+          return null;
+        };
+        const ref = look(rd, 0); if (!ref) return null;
+        let props = out.context.lookup(rd.get(PDFName.of("Properties")));
+        if (!(props instanceof PDFDict)) { props = out.context.obj({}); rd.set(PDFName.of("Properties"), props); }
+        const key = "ocLayer" + m.size; props.set(PDFName.of(key), ref);
+        return PDFName.of(key).toString();
+      })();
+      m.set(name, nested); return nested;
     };
     const font = spec.labelled ? await out.embedFont(StandardFonts.Helvetica) : null;
     const usedNames = new Set(["SHEET (do not cut)"]);
