@@ -44,7 +44,7 @@ const pieces = (over, c) => read(over, c).spec.pieceCount;
     eq(Pair.piecesFor(Object.assign({}, line, { receiptId: f.rid, spec }), null).map(p => p.side || '-').join(''), spec.pair.sides.map(s => s || '-').join(''), tag + ': CharmNestPair.piecesFor sides agree');
     was += f.old; now += f.now; if (f.old !== f.now) changed++;
   }
-  ok(changed === 106 && now - was === 109, `106 lines change by +109 pieces (got ${changed} lines, +${now - was})`);
+  ok(changed === 105 && now - was === 108, `105 lines change by +108 pieces (106 and +109 until 754e6265 read "Single ... Earring" in a title) (got ${changed} lines, +${now - was})`);
 }
 
 /* ── 1 · "Just 1" on an earring line must not turn the pair into one piece ─────────────────────────────────────────────────── */
@@ -93,16 +93,23 @@ known('F5', 'a note that names 2+ discs/tags with no option count waits for a pe
 });
 
 /* ── 6 · a single earring, however it is written ────────────────────────────────────────────────────────────────────────────── */
-known('F6', 'single earring phrasing', () => {
+{
+  // fixed by PAIRINTAKE 754e6265 (a title that says Single near the earring word is one piece and names its ear)
   const single = (over, sideWant) => { const r = read(over); eq([r.spec.pieceCount, r.spec.pair.single], [1, true], JSON.stringify(over).slice(0, 80)); if (sideWant !== undefined) eq(r.spec.pair.sideSaid, sideWant, 'side'); };
   single(S('Custom Single Replacement Silver Cat Huggie Earring Left Ear'), 'L');
   single(S('Single Cat Huggie Earring'));
   single(S('Single Star Earring'));
   single(S('Star Stud Earring (single)'));
-  single(S('Star Stud Earrings', [V('Side', 'Left ear only')]), 'L');
-  single(S('Star Stud Earrings', [V('Ear', 'Right')]), 'R');
   eq(pieces(S('Star Stud Earrings, Single or Pair', [V('Type', 'Pair')])), 2, 'a title that offers both, with Pair chosen, stays a pair');
   eq(pieces(S('Star Stud Earrings')), 2, 'plain studs are still a pair');
+}
+known('F6', 'a side-only option, or a "Replacement ... Left Ear" title, is a single earring', () => {
+  const single = (over, sideWant) => { const r = read(over); eq([r.spec.pieceCount, r.spec.pair.single], [1, true], JSON.stringify(over).slice(0, 90)); if (sideWant !== undefined) eq(r.spec.pair.sideSaid, sideWant, 'side'); };
+  single(S('Star Stud Earrings', [V('Side', 'Left ear only')]), 'L');
+  single(S('Star Stud Earrings', [V('Ear', 'Right')]), 'R');
+  single(S('Star Stud Earrings', [V('Choose side', 'Right')]), 'R');
+  single(S('Replacement Stud Earring for Left Ear'), 'L');
+  single(S('Right Earring Replacement'), 'R');
 });
 
 /* ── 7 · a line that says two different designs but names one waits ─────────────────────────────────────────────────────────── */
