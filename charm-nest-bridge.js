@@ -5412,10 +5412,10 @@ const Engrave = window.Engrave = (() => {
     const backs = sh.backPool.slice(), when = at => at ? new Date(at).toLocaleString() : "";
     const items = await Promise.all(backs.map(async b => ({
       png: b.outputs && b.outputs.png && b.outputs.png.url ? await CharmNestAssets.bytes(b.outputs.png.url).catch(() => null) : null,
-      lines: [`${b.order} · ${b.sku} · copy ${b.copy}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
+      lines: [`${b.order} · ${b.sku} · copy ${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
     })));
     const pdf = await CharmNestExport.backIndexPdf({ title: sh.fileBase, backs: items });
-    const report = backs.map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
+    const report = backs.map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
     const [idx, rep] = await Promise.all([uploadBytes(`${sh.folderPath}/back/back-index.pdf`, pdf, "application/pdf", "Saving back index"), uploadBytes(`${sh.folderPath}/back/back-report.json`, new TextEncoder().encode(JSON.stringify(report, null, 1)), "application/json")]);
     sh.backOutputs = { index: { path: idx.path, url: idx.url }, report: { path: rep.path, url: rep.url }, count: backs.length };
     // the record is written in turn with the run's own sheet saves, which carry backOutputs too
@@ -6960,7 +6960,7 @@ const Sets = window.Sets = (() => {
   const ofRun = runId => (grouped().runs.get(runId) || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
   const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
-  async function renderLabelPng(payload, label, scale) {
+  async function renderLabelPng(payload, label, scale, notes) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
     const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const holder = document.createElement("div"); holder.style.cssText = "position:absolute;left:-9999px;top:0"; document.body.appendChild(holder);
@@ -6975,17 +6975,31 @@ const Sets = window.Sets = (() => {
       else throw new Error("QR code did not render — retry the label");
     } finally { holder.remove(); }
     ctx.fillStyle = "#000"; ctx.textBaseline = "top"; ctx.font = `bold ${9 * k}px Helvetica, Arial, sans-serif`; ctx.fillText(label, 1 * k, 93 * k, 143 * k); ctx.fillText("Notes:", 92 * k, 0.5 * k);
+    // a group (a pair, a necklace's discs) with pieces on another sheet is said on the label, under its title (pairs, 9 Oct: R3); none: the label is as it was
+    if (notes && notes.length) { ctx.font = `${6.5 * k}px Helvetica, Arial, sans-serif`; notes.slice(0, 4).forEach((t, i) => ctx.fillText(String(t), 1 * k, (104 + i * 9) * k, 143 * k)); }
     const blob = await new Promise(r => cv.toBlob(r, "image/png")); if(!blob)throw new Error("QR preview could not be saved"); return { blob, dataUrl: cv.toDataURL("image/png"), ecc };
+  }
+  /** The lines a sheet's QR label carries for every group (order line) that has pieces on this sheet and on another sheet of its set: [] for any
+   *  sheet that holds no split group (its label is then exactly what it was). `placed`: the sheet's placed charms; only: the orders of one label part. */
+  function pairNotes(sh, set, placed, only) {
+    const L = window.CharmNestPairLabels; if (!L || !set || !sh || !sh.sheetId) return [];
+    const base = L.piecesOfOrders(set.orders), here = L.piecesOfCharms(placed);
+    if (!here.length) return [];
+    const live = sheetsOf(set).filter(p => p !== sh && p.sheetId && p.sheetId !== sh.sheetId).map(p => { const byId = new Map(p.charms.map(c => [c.id, c])); return { sheetId: p.sheetId, sheet: p.fileBase, pieces: L.piecesOfCharms(p.placements.map(x => byId.get(x.id)).filter(Boolean)) }; });
+    live.push({ sheetId: sh.sheetId, sheet: sh.fileBase, pieces: here });
+    return L.splitNotes(sh.sheetId, L.reconcile(base, live), only);
   }
   /** After a sheet is saved: its label(s) beside it, the sheet record and the set record kept current, pool rows → written. */
   function labelsReady(sh, set) {
     const byId = new Map(sh.charms.map(c => [c.id, c]));
-    const ids = [...new Set(sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => String(c.order || c.id).split("/")[0]))];
+    const placed = sh.placements.map(p => byId.get(p.id)).filter(Boolean);
+    const ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))];
     const parts = O.safeChunks(ids, O.CARD_TO_METAL[sh.metal] || sh.metal, 1000, 500, 8);
     const files = sh.label?.files || [], indexed = (set.labelFiles || []).filter(f => f.sheetId === sh.sheetId);
+    // (a label is out of date when the split notes it carries are: a sibling piece moved to another sheet; a label with none and a sheet with none agree, as before)
     return sh.setId === set.setId && !sh.draft && parts.length > 0 && files.length === parts.length && indexed.length === files.length &&
       files.every((f, i) => f.url && f.path && f.sheet === sh.fileBase && f.payload === O.encodeOrderList(parts[i], O.CARD_TO_METAL[sh.metal] || sh.metal) &&
-        indexed.some(g => g.path === f.path && g.url === f.url && g.part === f.part));
+        indexed.some(g => g.path === f.path && g.url === f.url && g.part === f.part) && (f.notes || []).join("|") === pairNotes(sh, set, placed, parts[i]).join("|"));
   }
   async function onSheetSaved(sh, items, outputs, {labelsOnly = false, setOverride = null} = {}) {
     const set = setOverride || setOfSheet(sh); if (!set) return;
@@ -7002,11 +7016,12 @@ const Sets = window.Sets = (() => {
     for (const [i, slice] of parts.entries()) {
       const payload = O.encodeOrderList(slice, metalDS);
       const label = `${METAL_TAG[sh.metal]} · ${set.name} · Sheet ${sh.sheetIndex || sh.page}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} order${slice.length === 1 ? "" : "s"}`;
-      const png = await renderLabelPng(payload, label);
+      const notes = pairNotes(sh, set, placed, slice);   // (groups split over sheets: said on the label; [] for most sheets)
+      const png = await renderLabelPng(payload, label, undefined, notes);
       let up = null; if (S.cloud.ok && sh.folderPath) up = await uploadBytes(`${sh.folderPath}/${sh.fileBase}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ""}.png`, png.blob, "image/png", "Saving the sheet label");
-      files.push({ path: up && up.path, url: up && up.url, dataUrl: up ? null : png.dataUrl, sheet: sh.fileBase, sheetId: sh.sheetId, metal: metalDS, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
+      files.push({ path: up && up.path, url: up && up.url, dataUrl: up ? null : png.dataUrl, sheet: sh.fileBase, sheetId: sh.sheetId, metal: metalDS, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label, ...(notes.length ? { notes } : {}) });
     }
-    sh.label = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label })), orders: ids };
+    sh.label = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label, ...(f.notes ? { notes: f.notes } : {}) })), orders: ids };
     sh.setId = set.setId; sh.setSeq = set.seq;
     // (listings: the Library's listing search; left out when a piece's order line is not loaded, so the record keeps its own)
     const listings = typeof listingsOf === "function" ? listingsOf(placed) : null;
@@ -7018,7 +7033,7 @@ const Sets = window.Sets = (() => {
     // the set record
     if (!set.sheetIds.includes(sh.sheetId)) set.sheetIds.push(sh.sheetId);
     if (!set.materials.includes(sh.metal)) set.materials.push(sh.metal);
-    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null }); }
+    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null, ...(c.side === "L" || c.side === "R" ? { side: c.side, bodyIndex: c.bodyIndex == null ? (c.side === "L" ? 0 : 1) : c.bodyIndex } : {}) }); }
     set.labelFiles = set.labelFiles.filter(f => f.sheetId !== sh.sheetId).concat(sh.label.files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
     set.labels = null; // A previously collected PDF/manifest no longer describes these sheet labels.
     if (!labelsOnly) set.status = "nesting";
@@ -7107,16 +7122,16 @@ const Sets = window.Sets = (() => {
     const line = (t, opts = {}) => { if (y < 48) { page = man.addPage([612, 792]); y = 756; } page.drawText(ansi(t).slice(0, 110), Object.assign({ x: 36, y, size: 9.5, font }, opts)); y -= opts.size ? opts.size + 4 : 13; };
     line(`${set.name} · ${set.day} · run ${set.runId}`, { size: 15, font: bold }); line(`${set.sheetIds.length} sheet(s) · materials ${set.materials.map(m => labelOf(m)).join(", ")} · ${Object.keys(set.orders).length} order(s) · ${ev.committable.length} committable · ${Object.keys(ev.held).length} held · ${ev.gone.length} gone`); y -= 6;
     line("Orders and sheets", { font: bold, size: 11 });
-    for (const [rid, o] of Object.entries(set.orders).sort()) { const copies = Object.values(o.lines).flatMap(l => l.copies.map(c => `${l.sku}${l.copies.length > 1 ? "#" + c.copy : ""}→${c.sheet}`)); line(`${rid}  ${ev.held[rid] ? "HELD: " + (ev.held[rid].why || "") + "  " : ""}${copies.join("  ")}`); }
+    for (const [rid, o] of Object.entries(set.orders).sort()) { const copies = window.CharmNestPairLabels ? CharmNestPairLabels.manifestEntries(o.lines) : Object.values(o.lines).flatMap(l => l.copies.map(c => `${l.sku}${l.copies.length > 1 ? "#" + c.copy : ""}→${c.sheet}`)); line(`${rid}  ${ev.held[rid] ? "HELD: " + (ev.held[rid].why || "") + "  " : ""}${copies.join("  ")}`); }
     y -= 6; line("Engraving", { font: bold, size: 11 });
-    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
+    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");
     y -= 6; line("Labels", { font: bold, size: 11 }); files.forEach(f => line(`${f.label}  ${f.path || "(not uploaded)"}`));
     // released for labels: a sheet without its .pdf yet gets it now, copied from its .ai inside the bucket (op_sheetPdf)
     const noPdf = sheetsOf(set).filter(sh => sh.sheetId && sh.cloud && sh.cloud.ai && !sh.cloud.pdf);
     if (S.cloud.ok && !set.offline && noPdf.length) await api("charmNestLibrary", { op: "sheetPdf", ids: noPdf.map(sh => sh.sheetId) }, { label: "Saving the sheets' .pdf", quiet: true })
       .then(r => { for (const sh of noPdf) if (r && r.urls && r.urls[sh.sheetId]) sh.cloud.pdf = r.urls[sh.sheetId]; }).catch(e => console.warn("sheet .pdf", e));
-    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
+    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
     set.backCount = sheetsOf(set).reduce((n, sh) => n + (sh.backPool || []).length, 0);
     if (S.cloud.ok && !set.offline) {
       const [lp, mp, jp] = await Promise.all([uploadBytes(`${set.folder}/labels/${set.name}_labels.pdf`, await labels.save({ useObjectStreams: false }), "application/pdf", "Saving the set's labels PDF"), uploadBytes(`${set.folder}/${set.name}_manifest.pdf`, await man.save({ useObjectStreams: false }), "application/pdf", "Saving the manifest"), uploadBytes(`${set.folder}/set.json`, new TextEncoder().encode(JSON.stringify(json, null, 1)), "application/json")]);
@@ -8140,10 +8155,23 @@ const CustomPrint = window.CustomPrint = (() => {
   const grab = keys => { for (const k of keys) touching.set(k, (touching.get(k) || 0) + 1); };
   const drop = keys => { for (const k of keys) { const n = (touching.get(k) || 0) - 1; if (n > 0) touching.set(k, n); else touching.delete(k); } };
   let queue = Promise.resolve(), lastFrame = null, pressedBtn = null;
-  const PRINTER = "QR Printer.html", PRINTER_V = "20260928-pq-seal";
+  const PRINTER = "QR Printer.html", PRINTER_V = "20260928-pq-seal-pl1";
   // the Print QR label button pressed last (a press on a seal over it is passed on to it as a click): its seal lands there
   document.addEventListener("click", e => { const b = e.target && e.target.closest && e.target.closest("[data-cu-print]"); if (b) pressedBtn = b; }, true);
   const frames2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+  /* A mismatched pair line (a left charm and a different right charm under one listing) prints a LEFT sticker and a RIGHT sticker of the same order,
+     one page each (pairs, 9 Oct: "Print QR Label per piece"); QR Printer.html prints one page for each entry of `pieces`. A card with no such line prints the
+     one order sticker exactly as before: the label object is returned untouched. */
+  const designEntryOf = r => (r && r.spec && r.spec.designSku ? (Master.entryFor(r.spec.designSku) || null) : null);
+  function withPieces(label, rows) {
+    try {
+      const L = window.CharmNestPairLabels; if (!L || !label) return label;
+      const pieces = L.stickerPieces(rows, designEntryOf);
+      return pieces ? Object.assign({}, label, { pieces }) : label;
+    } catch (_) { return label; }
+  }
+  /** Pieces behind a card's lines for the efficiency record: a mismatched pair makes two per unit; any other card counts as the page always counted. */
+  const piecesN = rows => { try { const L = window.CharmNestPairLabels, n = L && L.pieceCount(rows, designEntryOf); return n || piecesOfRows(rows); } catch (_) { return piecesOfRows(rows); } };
   function redraw() {
     try { Review.render(); } catch (_) {}
     try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
@@ -8296,8 +8324,8 @@ const CustomPrint = window.CustomPrint = (() => {
     try {
       const at = Date.now();
       window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${at}`,
-        text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
-        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+        text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}${o.pieces ? `, ${o.pieces} stickers (Left and Right)` : ""}`,
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.pieces ? { pieces: o.pieces } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
     } catch (_) {}
   }
   function printedAnyway(rid, who, act, n) {
@@ -8342,7 +8370,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || keptOf(it);
     // from the order as it is now; an order that has left the pull prints the sticker its record kept
     let label = null;
-    try { label = rows.length ? O.sortingLabel(rows[0].order, rows[0].line) : null; } catch (_) { label = null; }
+    try { label = rows.length ? withPieces(O.sortingLabel(rows[0].order, rows[0].line), rows) : null; } catch (_) { label = null; }
     if (!label && !(rec && (rec.label || rec.hasLabel))) { toast("There is nothing to print for that card", "bad"); return; }
     const targets = rows.length ? rows.map(r => targetOf(r, rec, it))
       : [{ key: rec.key, receiptId: rec.receiptId, transactionId: rec.transactionId, sku: rec.sku, title: rec.title, category: rec.category, kind: rec.kind }];
@@ -8367,9 +8395,9 @@ const CustomPrint = window.CustomPrint = (() => {
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
       if (!out.ok) { humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "QR label print did not open" }); failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
-      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n });
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n, pieces: label && label.pieces ? label.pieces.length : 0 });
       // the efficiency record, beside the seal's own: the print dialog opened and closed (a print; the completion below is its own)
-      humanAct("print", { orderId: String(targets[0].receiptId || ""), parts: piecesOfRows(rows) || targets.length, detail: it.done ? "QR label, again" : "QR label" });
+      humanAct("print", { orderId: String(targets[0].receiptId || ""), parts: piecesN(rows) || targets.length, detail: it.done ? "QR label, again" : "QR label" });
       acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
@@ -8385,7 +8413,7 @@ const CustomPrint = window.CustomPrint = (() => {
       // closed without printing looks the same here); printed again: the new seal shows on the card
       if (done.length) sealed(it, rows, saved, done, who, "print", shown);
       // (a label printed again is a print only: the order was completed by the first)
-      if (done.length && !it.done) humanAct("complete", { orderId: String(targets[0].receiptId || ""), parts: piecesOfRows(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "QR label printed, order completed" });
+      if (done.length && !it.done) humanAct("complete", { orderId: String(targets[0].receiptId || ""), parts: piecesN(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "QR label printed, order completed" });
       if (putErr) humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "label printed but not marked completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "print"); } catch (_) {} }   // a Review card's question: answered, by who
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
@@ -8430,7 +8458,7 @@ const CustomPrint = window.CustomPrint = (() => {
     fails.delete(key); acting.set(key, "complete"); say(key, "Completing…");
     const mine = rows.map(r => r.key); grab(mine);
     queue = queue.then(async () => {
-      let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
+      let label = null; try { label = withPieces(O.sortingLabel(rows[0].order, rows[0].line), rows); } catch (_) { label = null; }
       const saved = {}; let putErr = null, cut = 0;
       for (const r of rows) {
         if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
@@ -8440,7 +8468,7 @@ const CustomPrint = window.CustomPrint = (() => {
       keepDone(saved);
       release(); busy.delete(key); acting.delete(key);
       if (done.length) sealed(it, rows, saved, done, who, "button");
-      if (done.length) humanAct("complete", { orderId: String(rid), parts: piecesOfRows(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "Complete Order" });
+      if (done.length) humanAct("complete", { orderId: String(rid), parts: piecesN(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "Complete Order" });
       if (putErr) humanAct("error", { orderId: String(rid), detail: done.length ? "not every piece was completed" : "order not completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
