@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('charm-nest-bridge.js', 'utf8');
-const context = vm.createContext({});
+const context = vm.createContext({ O: require('../../charm-nest-orders.js') });   // (orderTotals counts a line's pieces through the one count, CharmNestOrders.pieceCountOf)
 vm.runInContext(source.slice(source.indexOf('  function orderTotals('), source.indexOf('  function buildHead(')), context);
 const totals = rows => JSON.parse(JSON.stringify(context.orderTotals(rows)));
 const line = (receipt, transaction, quantity, extra = {}) => ({
