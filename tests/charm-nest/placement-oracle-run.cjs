@@ -50,7 +50,7 @@ const R = {   // browser-side readers (they run in the page)
   sw: rid => {
     const T = e => e ? e.textContent.replace(/\s+/g, ' ').trim() : '';
     const dlg = window.SheetWin && SheetWin._W && SheetWin._W.dlg; if (!dlg || !dlg.open) return [{ s: 'sw', gone: true }];
-    const txt = T(dlg), m = /(\d+)\s*charms?\s*(\d+)\s*orders?/.exec(txt);
+    const txt = T(dlg), m = /(\d+)\s*charms?\s*(?:\d+\s*(?:half\s+)?pairs?\s*)*(\d+)\s*orders?/.exec(txt);   // (the strip may say "4 charms 1 pair 3 orders" or "... 1 half pair ..." once a pair is on the sheet)
     if (!m && /no longer in the Library|could not open/i.test(txt)) return [{ s: 'sw.counts', kind: 'count', sheetId: SheetWin.current(), deleted: true }];   // (the window says its sheet is gone)
     if (!m) return [{ s: 'sw.counts', gone: true, text: txt.slice(0, 200) }];   // (still opening the sheet)
     return [{ s: 'sw.counts', kind: 'count', sheetId: SheetWin.current(), charms: +m[1], orders: +m[2] }];
