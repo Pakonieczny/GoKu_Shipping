@@ -79,3 +79,12 @@ test('native delayed transcript and duplicate final events do not borrow a previ
   const f=await fixture(t);await openInitial(f);await chooseInitial(f);const input=f.begin(),before=f.controls.length;f.commit(input);await settle();assert.equal(f.controls.length,before);f.final(input,'Add this piece to my cart');await settle();assert.equal(f.cart().length,1);
   f.final(input,'Add this piece to my cart');f.commit(input);await settle();assert.equal(f.cart().length,1);assert.equal(f.cart()[0].variant,'14k Gold Filled / 16 inch / None');assert.equal(f.cart()[0].price,59);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
 });
+
+test('native change engraving wording reaches the actual cart text field and keeps its contents private',async t=>{
+  const f=await fixture(t);await openInitial(f);await chooseInitial(f);await f.say('Select Engraved');await f.say('Set quantity to two');await f.say('Add this piece to my cart then open my cart');
+  const before=clone(f.cart()[0]),changed=await f.say('Change the engraving wording of the first item in my cart to TEST46');
+  assert.equal(changed.result?.ok,true,JSON.stringify(changed.result));assert.equal(changed.result?.cartChanged,true);assert.equal(f.cart()[0].engravingPreview,'TEST46');
+  for(const name of ['variantId','variant','quantity','price'])assert.equal(f.cart()[0][name],before[name],name);
+  assert.equal(f.d.querySelector('[data-bag-engraving]').value,'TEST46');assert.doesNotMatch(JSON.stringify(f.store.snapshot()),/TEST46/);assert.doesNotMatch(f.lastSpoken(),/TEST46/);shopperReply(f.lastSpoken());
+  const cleared=await f.say('Clear engraving wording for the first item in my cart');assert.equal(cleared.result?.ok,true,JSON.stringify(cleared.result));assert.equal(f.cart()[0].engravingPreview||'','');assert.equal(f.d.querySelector('[data-bag-engraving]').value,'');assert.equal(f.cart()[0].variant,before.variant);assert.equal(f.cart()[0].quantity,before.quantity);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});
