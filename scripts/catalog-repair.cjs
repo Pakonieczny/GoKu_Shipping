@@ -18,6 +18,9 @@
  *             (DIR/changed-skus.json, which index-master --only takes). It also lists the live records the stage does not carry.
  *             With --save-to BACKUPDIR it writes the backup of exactly those designs (same layout as `backup`) from the index it has
  *             just read: one pass, one read of the index. Keep one backup folder per master.
+ *    plan     OFFLINE. Reads a stage folder's diff.json and writes rewrite-skus.json (the whole designs to write, for index-master --only) and
+ *             held-back.json (designs left alone, with the reason): a design is held back when one of its SKUs is on an open sheet
+ *             (busy-skus.json), is read from more than one master (CATALOG-offending.json multiMaster), or is named in --hold.
  *    busy     READ-ONLY. Lists the SKUs on the saved sheets that are still open (op listSheets with excludeDone, the call the Library tab
  *             makes itself, paged): a repair leaves them alone. DIR/busy-skus.json for --exclude. One POST per part, no write.
  *    junk     READ-ONLY. Lists the SKUs in a backed-up index that the reader no longer accepts as SKUs (a measurement such as "11.4 MM",
@@ -31,6 +34,7 @@
  *    node scripts/catalog-repair.cjs backup  --origin https://goldenspike.app --out DIR [--skus FILE|A,B] [--no-files]
  *    node scripts/catalog-repair.cjs diff    --origin https://goldenspike.app --stage DIR [--skus FILE|A,B] [--save-to BACKUPDIR]
  *    node scripts/catalog-repair.cjs verify  --origin https://goldenspike.app --stage DIR --backup DIR [--changed FILE]
+ *    node scripts/catalog-repair.cjs plan    --stage DIR [--exclude busy-skus.json] [--offending CATALOG-offending.json] [--hold FILE|A,B]
  *    node scripts/catalog-repair.cjs busy    --origin https://goldenspike.app --out FILE
  *    node scripts/catalog-repair.cjs junk    --from DIR [--numbers] [--exclude FILE]
  *    node scripts/catalog-repair.cjs prune   --origin https://goldenspike.app --from DIR [--skus FILE|A,B] [--exclude FILE] [--numbers] [--write]
@@ -54,7 +58,7 @@ function args(argv) {
     const a = argv[i], v = argv[i + 1];
     if (a === "--origin") { o.origin = String(v || "").replace(/\/+$/, ""); i++; }
     else if (a === "--out") { o.out = v; i++; } else if (a === "--from") { o.from = v; i++; } else if (a === "--stage") { o.stage = v; i++; } else if (a === "--backup") { o.backup = v; i++; }
-    else if (a === "--skus") { o.skus = v; i++; } else if (a === "--save-to") { o.saveTo = v; i++; } else if (a === "--changed") { o.changed = v; i++; } else if (a === "--dry") o.dry = true; else if (a === "--no-files") o.noFiles = true; else if (a === "--numbers") o.numbers = true; else if (a === "--write") o.write = true; else if (a === "--exclude") { o.exclude = v; i++; }
+    else if (a === "--skus") { o.skus = v; i++; } else if (a === "--save-to") { o.saveTo = v; i++; } else if (a === "--changed") { o.changed = v; i++; } else if (a === "--dry") o.dry = true; else if (a === "--no-files") o.noFiles = true; else if (a === "--numbers") o.numbers = true; else if (a === "--write") o.write = true; else if (a === "--exclude") { o.exclude = v; i++; } else if (a === "--offending") { o.offending = v; i++; } else if (a === "--hold") { o.hold = v; i++; }
     else if (a === "--concurrency") { o.concurrency = Math.max(1, Math.min(8, +v || 4)); i++; }
   }
   return o;
@@ -108,8 +112,8 @@ async function download(o, f) {
 async function writeBackup(o, out, { entries, index, list, want, noFiles, cache, log }) {
   fs.mkdirSync(out, { recursive: true });
   const t0 = Date.now();
-  const bySource = {}, byMaster = {}; for (const e of entries) { const k = e.labelSource || "text"; bySource[k] = (bySource[k] || 0) + 1; const m = (e.masterName || "?") + " " + String(e.masterHash || "").slice(0, 12); byMaster[m] = (byMaster[m] || 0) + 1; }
-  log(`read the index: ${entries.length} SKU record(s)${index ? ` (index signature ${JSON.stringify(index)})` : ""} · by label source ${JSON.stringify(bySource)} · by master file ${JSON.stringify(byMaster)}`);
+  const bySource = {}, byMaster = {}, byHash = {}; for (const e of entries) { byHash[e.hashSource || "?"] = (byHash[e.hashSource || "?"] || 0) + 1; const k = e.labelSource || "text"; bySource[k] = (bySource[k] || 0) + 1; const m = (e.masterName || "?") + " " + String(e.masterHash || "").slice(0, 12); byMaster[m] = (byMaster[m] || 0) + 1; }
+  log(`read the index: ${entries.length} SKU record(s)${index ? ` (index signature ${JSON.stringify(index)})` : ""} · by label source ${JSON.stringify(bySource)} · by hash source ${JSON.stringify(byHash)} · by master file ${JSON.stringify(byMaster)}`);
   const files = await get(o, "charmNestLibrary", { op: "masterListFiles" });
   fs.writeFileSync(path.join(out, "index-all.json"), json({ readAt: new Date().toISOString(), origin: new URL(o.origin).host, count: entries.length, index, entries }));
   fs.writeFileSync(path.join(out, "files.json"), json({ readAt: new Date().toISOString(), files: files.files || [], index: files.index || null }));
@@ -291,6 +295,28 @@ async function restore(o, log) {
   return { wrote, files: paths.size, bad };
 }
 
+/* ── plan ── */
+async function plan(o, log) {
+  if (!o.stage) throw new Error("plan needs --stage (the folder diff wrote diff.json in)");
+  const d = JSON.parse(fs.readFileSync(path.join(o.stage, "diff.json"), "utf8"));
+  const busy = o.exclude ? onlySet(o.exclude) : new Set(), hold = o.hold ? onlySet(o.hold) : new Set();
+  const multi = new Set(); if (o.offending) { const j = JSON.parse(fs.readFileSync(o.offending, "utf8")); for (const m of j.multiMaster || []) multi.add(up(m.sku)); }
+  // the designs to write: every design whose file draws differently, and every design whose record would change
+  const designs = new Map(); const add = (skus, why) => { const k = [...new Set(skus.map(up))].sort().join("\u0001"); if (!designs.has(k)) designs.set(k, { skus: k.split("\u0001"), why: [] }); if (!designs.get(k).why.includes(why)) designs.get(k).why.push(why); };
+  for (const c of d.changed || []) add(c.skus, "draws differently");
+  for (const [k, v] of Object.entries(d.recordChanges || {})) for (const x of v) add(x.skus, k);
+  const write = [], held = [];
+  for (const g of designs.values()) {
+    const why = []; for (const sk of g.skus) { if (busy.has(sk)) why.push(`${sk} is on an open sheet`); if (multi.has(sk)) why.push(`${sk} is read from more than one master`); if (hold.has(sk)) why.push(`${sk} is held back by name`); }
+    if (why.length) held.push({ skus: g.skus, because: why, changes: g.why }); else write.push(...g.skus);
+  }
+  const skus = [...new Set(write)].sort();
+  fs.writeFileSync(path.join(o.stage, "rewrite-skus.json"), json(skus));
+  fs.writeFileSync(path.join(o.stage, "held-back.json"), json(held));
+  log(`plan: ${designs.size} design(s) differ from the site · ${skus.length} SKU(s) to write (${designs.size - held.length} designs) · ${held.length} design(s) held back${held.length ? ` (${held.slice(0, 6).map(h => h.skus[0]).join(", ")}${held.length > 6 ? " …" : ""})` : ""} -> ${o.stage}/rewrite-skus.json, held-back.json`);
+  return { designs: designs.size, skus: skus.length, held: held.length };
+}
+
 /* ── busy ── */
 /** The master SKUs on the open saved sheets. A sheet lists its sources by name: "SKU (master)" or "SKU · S (master)". */
 async function busy(o, log) {
@@ -361,10 +387,11 @@ async function main(argv, log = console.log) {
   if (o.cmd === "diff") return diff(o, log);
   if (o.cmd === "verify") return verify(o, log);
   if (o.cmd === "restore") return restore(o, log);
+  if (o.cmd === "plan") return plan(o, log);
   if (o.cmd === "busy") return busy(o, log);
   if (o.cmd === "junk") return junk(o, log);
   if (o.cmd === "prune") return prune(o, log);
-  throw new Error("usage: catalog-repair.cjs backup|diff|verify|busy|junk|prune|restore --origin <site> …  (see the header of this file)");
+  throw new Error("usage: catalog-repair.cjs backup|diff|plan|verify|busy|junk|prune|restore --origin <site> …  (see the header of this file)");
 }
 module.exports = { main, affected, filesOf, junkOf };
 if (require.main === module) main(process.argv).catch(e => { console.error("catalog-repair:", e.message); process.exit(1); });

@@ -169,6 +169,15 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   assert(dfa.changed === 1 && dfa.same === 5 && dfa.failed === 0, 'whole sheet: only the stale design differs: ' + JSON.stringify(dfa));
   const dja = JSON.parse(fs.readFileSync(path.join(stageAll, 'diff.json'), 'utf8'));
   assert.deepStrictEqual(dja.liveOnly.map(x => x.sku).sort(), ['11.4 MM', 'FRONT'], 'the records the sheet no longer carries are listed');
+  // plan: what to write, minus what is on an open sheet
+  const pl = await run(CR, ['plan', '--stage', stageAll, '--exclude', path.join(tmp, 'busy-skus.json')]);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(stageAll, 'rewrite-skus.json'), 'utf8')), ['BR-TST-01'], 'the stale design is the one to write: ' + JSON.stringify(pl));
+  const pl2 = await run(CR, ['plan', '--stage', stageAll, '--hold', 'BR-TST-01']);
+  assert(pl2.skus === 0 && pl2.held === 1 && /held back by name/.test(JSON.parse(fs.readFileSync(path.join(stageAll, 'held-back.json'), 'utf8'))[0].because[0]), 'a held design is not written');
+  fs.writeFileSync(path.join(tmp, 'busy2.json'), '["BR-TST-01"]');
+  const pl3 = await run(CR, ['plan', '--stage', stageAll, '--exclude', path.join(tmp, 'busy2.json')]);
+  assert(pl3.skus === 0 && pl3.held === 1, 'a design on an open sheet is not written');
+  await run(CR, ['plan', '--stage', stageAll]);
   // diff --save-to: the backup of what it found, from the one read of the index it made
   c0 = st.calls.length; const bk2 = path.join(tmp, 'backup2');
   await run(CR, ['diff', '--origin', sorterOrigin, '--stage', stageAll, '--save-to', bk2]);
