@@ -18,6 +18,8 @@
  *             (DIR/changed-skus.json, which index-master --only takes). It also lists the live records the stage does not carry.
  *             With --save-to BACKUPDIR it writes the backup of exactly those designs (same layout as `backup`) from the index it has
  *             just read: one pass, one read of the index. Keep one backup folder per master.
+ *    busy     READ-ONLY. Lists the SKUs on the saved sheets that are still open (op listSheets with excludeDone, the call the Library tab
+ *             makes itself, paged): a repair leaves them alone. DIR/busy-skus.json for --exclude. One POST per part, no write.
  *    junk     READ-ONLY. Lists the SKUs in a backed-up index that the reader no longer accepts as SKUs (a measurement such as "11.4 MM",
  *             a view word such as "FRONT", and with --numbers a bare 1-3 digit number): callouts the master's artists wrote beside a
  *             charm that an older reader took for its SKU. DIR/junk-skus.json.
@@ -29,6 +31,7 @@
  *    node scripts/catalog-repair.cjs backup  --origin https://goldenspike.app --out DIR [--skus FILE|A,B] [--no-files]
  *    node scripts/catalog-repair.cjs diff    --origin https://goldenspike.app --stage DIR [--skus FILE|A,B] [--save-to BACKUPDIR]
  *    node scripts/catalog-repair.cjs verify  --origin https://goldenspike.app --stage DIR --backup DIR [--changed FILE]
+ *    node scripts/catalog-repair.cjs busy    --origin https://goldenspike.app --out FILE
  *    node scripts/catalog-repair.cjs junk    --from DIR [--numbers] [--exclude FILE]
  *    node scripts/catalog-repair.cjs prune   --origin https://goldenspike.app --from DIR [--skus FILE|A,B] [--exclude FILE] [--numbers] [--write]
  *    node scripts/catalog-repair.cjs restore --origin https://goldenspike.app --from DIR [--skus FILE|A,B] [--dry]
@@ -288,6 +291,24 @@ async function restore(o, log) {
   return { wrote, files: paths.size, bad };
 }
 
+/* ── busy ── */
+/** The master SKUs on the open saved sheets. A sheet lists its sources by name: "SKU (master)" or "SKU · S (master)". */
+async function busy(o, log) {
+  if (!o.origin || !o.out) throw new Error("busy needs --origin and --out FILE");
+  const sheets = []; let cursor = null, parts = 0;
+  for (; parts < 60; parts++) {
+    const r = await api(o.origin, o.passcode, "charmNestLibrary", Object.assign({ op: "listSheets", excludeDone: true, limit: 300 }, cursor ? { cursor } : {}));
+    for (const sh of r.sheets || []) sheets.push(sh);
+    if (!(cursor = r.next || null)) break;
+  }
+  const skuOf = n => String(n || "").replace(/\s*\(master\)\s*$/i, "").replace(/\s*[·•]\s*[A-Z0-9]{1,3}$/i, "").trim().toUpperCase();
+  const rows = sheets.map(sh => ({ id: sh.id || sh.sheetId, label: (sh.label && sh.label.title) || sh.fileBase || null, metal: sh.metal || null, rose: !!(sh.roseStockId || sh.roseCutAt || sh.rosePlanHash), skus: [...new Set((sh.sources || []).filter(x => /\(master\)\s*$/i.test(x.name || "")).map(x => skuOf(x.name)).filter(Boolean))] }));
+  const skus = [...new Set(rows.flatMap(r => r.skus))].sort();
+  fs.writeFileSync(o.out, json({ at: new Date().toISOString(), sheets: rows, skus }));
+  log(`busy: ${sheets.length} open sheet(s) in ${parts + 1} part(s), ${skus.length} master SKU(s) on them (${rows.filter(r => r.rose).length} Rose sheet(s)) -> ${o.out}`);
+  return { sheets: rows.length, skus: skus.length };
+}
+
 /* ── junk · prune ── */
 /** The SKUs of a backed-up index that the reader's own SKU rule refuses now. */
 function junkOf(entries, o) {
@@ -340,9 +361,10 @@ async function main(argv, log = console.log) {
   if (o.cmd === "diff") return diff(o, log);
   if (o.cmd === "verify") return verify(o, log);
   if (o.cmd === "restore") return restore(o, log);
+  if (o.cmd === "busy") return busy(o, log);
   if (o.cmd === "junk") return junk(o, log);
   if (o.cmd === "prune") return prune(o, log);
-  throw new Error("usage: catalog-repair.cjs backup|diff|verify|junk|prune|restore --origin <site> …  (see the header of this file)");
+  throw new Error("usage: catalog-repair.cjs backup|diff|verify|busy|junk|prune|restore --origin <site> …  (see the header of this file)");
 }
 module.exports = { main, affected, filesOf, junkOf };
 if (require.main === module) main(process.argv).catch(e => { console.error("catalog-repair:", e.message); process.exit(1); });

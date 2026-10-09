@@ -152,6 +152,17 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   const rj = await run(CR, ['restore', '--origin', sorterOrigin, '--from', bk, '--skus', '11.4 MM']);
   assert(rj.bad === 0 && idx('11.4 MM'), 'restore brings a pruned record back');
 
+  // ── busy: the SKUs on open sheets, read the way the Library reads them ──
+  st.put('Charm_Nest_Sheets', 'sheetAAAAAAAAAA', { id: 'sheetAAAAAAAAAA', day: '2026-10-08', metal: 'gold', status: 'open', fileBase: 'GF Sheet 1', sources: [{ name: 'BR-TST-03 (master)', hash: 'h1' }, { name: 'BR-TST-02 · S (master)', hash: 'h2' }, { name: 'custom-upload.ai', hash: 'h3' }] });
+  st.put('Charm_Nest_Sheets', 'sheetBBBBBBBBBB', { id: 'sheetBBBBBBBBBB', day: '2026-10-07', metal: 'rose', status: 'open', roseStockId: 'stock1', sources: [{ name: 'BR-TST-06 (master)', hash: 'h4' }] });
+  st.put('Charm_Nest_Sheets', 'sheetCCCCCCCCCC', { id: 'sheetCCCCCCCCCC', day: '2026-10-06', metal: 'gold', archived: true, sources: [{ name: 'BR-TST-07 (master)', hash: 'h5' }] });
+  c0 = st.calls.length;
+  const bz = await run(CR, ['busy', '--origin', sorterOrigin, '--out', path.join(tmp, 'busy-skus.json')]);
+  const bj = JSON.parse(fs.readFileSync(path.join(tmp, 'busy-skus.json'), 'utf8'));
+  assert.deepStrictEqual(bj.skus, ['BR-TST-02', 'BR-TST-03', 'BR-TST-06'], 'the SKUs of the open sheets, not the archived one, no custom upload: ' + bj.skus);
+  assert(bj.sheets.find(x => x.id === 'sheetBBBBBBBBBB').rose && bz.sheets === 2, 'a Rose sheet is marked');
+  assert.deepStrictEqual(by2(c0), { 'charmNestLibrary:listSheets': 1 }, 'one call');
+
   // ── a whole-master stage: diff finds every design that differs, and names the live records the stage does not carry ──
   const stageAll = path.join(tmp, 'stage-all'); await run(IM, [file, '--out-dir', stageAll]);
   const dfa = await run(CR, ['diff', '--origin', sorterOrigin, '--stage', stageAll]);
