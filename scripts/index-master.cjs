@@ -95,6 +95,7 @@ async function main(argv, log = console.log) {
   const pattern = o.pattern ? new RegExp(o.pattern) : P.SKU_PATTERN_DEFAULT;
   const lab = P.labelCharms(parsed, g.charms, { pattern, gapPt: o.gapMm / MM, widen: 0.25 });
   log(`${g.charms.length} charm outline(s) · ${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
+  if ((g.markers || []).length) { const by = {}; for (const m of g.markers) by[m.why] = (by[m.why] || 0) + 1; log(`  ${g.markers.length} marker object(s) beside charms are left out of them (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);

@@ -551,6 +551,63 @@
   const insideFrac = (pts, polys) => pts.length ? pts.filter(p => pointInPolys(p[0], p[1], polys)).length / pts.length : 0;
   const minDist = (pts, polys) => { let d = Infinity; for (const p of pts) { const v = distToPolys(p[0], p[1], polys); if (v < d) d = v; } return d; };
 
+  /* ═══ 5-marker · marker content: what the artist drew BESIDE a charm, not ON it ═════════════════════════════════
+     A master carries notes for people next to each charm: a size badge (a gradient chip with the hoop size written on it,
+     LABELS layer), a dimension callout (a grey "12 mm" with the two thin grey bracket lines that measure it), a remark
+     ("necklace + choker", "FRONT", "OPTION A"), an example name beside a font choice. None of it is on the piece: it can
+     never be cut or engraved. The grouping used to take whatever sat within a few points of an outline as that charm's
+     detail, and the viewers have no font or gradient to paint, so each such object was drawn as a grey placeholder box,
+     stretched the charm's size and silhouette, took room on the sheet and was written into the per-SKU file and the sheet.
+     The rule: a text, gradient (`sh`) or image object whose box lies wholly outside the piece (the outline's box joined with
+     its closed cut-outs and attached rings) is a marker, and so is such an object that only grazes the piece (under half of
+     its own box over it) when it is a measurement, a grey note or on the LABELS layer; a thin light-grey open bracket outside
+     the piece is a dimension line. Text and drawings that are on the piece (engraving text, an image engraved inside) stay. */
+  const MEASURE = /\d\s*(?:mm|cm)(?![a-z])|(?:^|[\s(])\d+(?:\.\d+)?\s*(?:in|inch|inches)(?![a-z])/i;
+  const greyRGB = c => !!c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.03;
+  /** The colours these masters write notes in: mid and light greys, and the pale cyan of the ring marks (engraving text is blue or black). */
+  const noteRGB = c => !!c && ((greyRGB(c) && c[0] >= 0.4 && c[0] <= 0.92) || (c[0] >= 0.25 && c[0] <= 0.45 && c[1] >= 0.74 && c[1] <= 0.9 && c[2] >= 0.78 && c[2] <= 0.92));
+  function overlapFrac(a, b) {          // share of box a that lies over box b (a box with no area counts by its centre)
+    const w = a[2] - a[0], h = a[3] - a[1];
+    if (w <= 1e-6 || h <= 1e-6) { const cx = (a[0] + a[2]) / 2, cy = (a[1] + a[3]) / 2; return cx >= b[0] && cx <= b[2] && cy >= b[1] && cy <= b[3] ? 1 : 0; }
+    const iw = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), ih = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+    return iw > 0 && ih > 0 ? (iw * ih) / (w * h) : 0;
+  }
+  /** A dimension line: one thin, grey, open stroke of at most four straight segments (a bracket or a tick), short sided. */
+  function isDimensionLine(s) {
+    if (s.kind !== "path" || !s.stroke || s.fill || s.closed || !s.subpaths || s.subpaths.length !== 1 || !s.bbox) return false;
+    const sub = s.subpaths[0]; if (sub.some(x => x[0] === "c" || x[0] === "h") || sub.filter(x => x[0] !== "m").length > 4) return false;
+    const c = s.strokeRGB; if (!greyRGB(c) || c[0] < 0.4 || c[0] > 0.95) return false;
+    return (s.lwPt || 0) <= 0.4 && Math.min(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]) <= 6;
+  }
+  /** Why a member of a charm is marker content, or null when it belongs to the piece. `piece` is the box of the piece and
+      `polys` the flattened outline, which decides a dimension line (it lies against the edge of the box, never inside). */
+  function markerReason(m, piece, polys) {
+    if (!m.bbox) return null;
+    const grazing = overlapFrac(m.bbox, piece), onLabels = /^labels?$/i.test(String(m.layer || ""));
+    if (m.kind === "text") {
+      const str = String(m.str || ""), measure = MEASURE.test(str);
+      const note = measure || onLabels || noteRGB(m.fillRGB);
+      if (grazing < 0.1 || (grazing < 0.5 && note)) return measure ? "dimension text" : onLabels && /^[\d\s.]*$/.test(str) ? "size badge text" : "note text";
+      return null;
+    }
+    if (m.kind === "shading") return grazing < 0.5 ? (onLabels ? "size badge (gradient)" : "gradient object") : null;
+    if (m.kind === "image" || (m.kind === "xobj" && !(m.children && m.children.length))) return grazing < 0.5 ? "image or form object" : null;
+    if (isDimensionLine(m)) { const pts = samples(m, new Map()); if (!polys || insideFrac(pts, polys) < 0.5) return "dimension line"; }
+    return null;
+  }
+  /** Take every marker out of a charm's members and out of its box; returns the markers taken. */
+  function takeMarkers(c) {
+    const b = c.outline.bbox; let piece = b.slice();
+    for (const m of c.members) if (m !== c.outline && m.kind === "path" && m.closed && m.bbox && isCutLine(m)) piece = bbUnion(piece, m.bbox);
+    const polys = flatten(c.outline, 8), taken = [], keep = [];
+    for (const m of c.members) { const why = m === c.outline ? null : markerReason(m, piece, polys); if (why) { m.marker = why; taken.push({ seg: m, charm: c.index, why }); } else keep.push(m); }
+    if (taken.length) {
+      c.members = keep; c.extras = (c.extras || []).filter(x => keep.includes(x));
+      c.bbox = keep.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
+    }
+    return taken;
+  }
+
   /**
    * opts: { minPt (default 6), darkMax (0.35 luminance), framePct (0.8), touchPt (2.5) }
    * A charm = one outline segment + every other segment assigned to it.
@@ -715,6 +772,9 @@
       for (const c of charms) { const d = distToPolys(cx, cy, polysOf(c.outline)); if (d < nd) { nd = d; nearC = c; } }
       if (nearC) { nearC.members.push(s); nearC.bbox = bbUnion(nearC.bbox, s.bbox); nearC.extras.push(s); } else orphans.push(s);
     }
+    // Marker content (size badges, dimension callouts, notes) lies beside a charm, never on it: not a member, not in its box.
+    const markers = [];
+    if (!opts.keepMarkers) for (const c of charms) for (const t of takeMarkers(c)) markers.push(t);
     // Top-level membership: a nested segment brings its whole Do; a Do goes to the charm holding most of its children
     for (const c of charms) {
       const tops = new Map();
@@ -726,7 +786,7 @@
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
-    return { charms, frame, frames, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
+    return { charms, frame, frames, orphans, markers, rule, outlineCount: outlines.length, mergedCount: merged.size };
   }
 
   /** Chain open strokes by coincident endpoints into closed synthetic outlines. */
@@ -1557,6 +1617,6 @@
     }
     return out;
   }
-  root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawSegments, pathToCanvas,
     parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);
