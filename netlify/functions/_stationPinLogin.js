@@ -35,6 +35,8 @@
  *  constant time and is never logged, stored or returned. */
 "use strict";
 
+let loginName = n => n;          // (the one login name of a person with two records: _activityKinds.js; without the file the name goes out as stored)
+try { loginName = require("./_activityKinds").loginName || loginName; } catch (_) {}
 const ROSTER_COLL = "Brites_Orders", ROSTER_DOC = "Employee Numbers";
 const LIMITS_COLL = "Station_PinLogin", LIMITS_DOC = "limits";
 const WINDOW_MS = 60000, LOCK_MS = 60000;
@@ -143,7 +145,7 @@ async function pinLogin(db, event, rawPin) {
   if (!snap || !snap.exists) return resp(503, { error: "the sign-in list is not available" });      // no `ok`: not an answer
   const data = snap.data() || {};
   const name = Object.prototype.hasOwnProperty.call(data, rawPin) ? tidyName(data[rawPin]) : "";
-  if (name) return resp(200, { ok: true, name });
+  if (name) return resp(200, { ok: true, name: loginName(name) });          // (Paul, 9 Oct 2026: her record may say "Anna" or "Ana_M"; every login of hers answers "Ana_M": _activityKinds.js loginName; the stored record is never changed)
 
   failed(event);
   await sharedFailed(db);

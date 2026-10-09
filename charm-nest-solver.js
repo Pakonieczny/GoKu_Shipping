@@ -310,10 +310,83 @@
     out.placements = (layout.placements || []).map(p => ({ ...p }));
     for (const key of ["rejects", "capped", "liftedForOrders", "pocketFilled"]) if (Array.isArray(layout[key])) out[key] = layout[key].slice();
     if (layout.pocket) out.pocket = { ...layout.pocket };
+    if (layout.pairing) out.pairing = { ...layout.pairing, split: layout.pairing.split.slice(), near: { ...layout.pairing.near } };
     if (layout.unjam) out.unjam = { ...layout.unjam, moved: layout.unjam.moved.slice(), filled: layout.unjam.filled.slice(), tries: layout.unjam.tries.map(t => ({ ...t })) };
     if (layout.params) out.params = { ...layout.params, ...(layout.params.angles ? { angles: layout.params.angles.slice() } : {}), ...(layout.params.pieceOrder ? { pieceOrder: layout.params.pieceOrder.slice() } : {}) };
     return out;
   }
+  /* ── pairs: earrings sold as a left and a right of two different charms (Paul, 9 Oct 2026) ──────────────────────────────────
+     A mismatched pair is two ordinary pieces (own bitmap, own id) that carry `group` (the order line they belong to), `side`
+     ("L" or "R") and `near`. Every path of this solver already seats the pieces that share an `order` together or turns them
+     away together; linkGroups makes `group` count too, whatever order key the page gave, and `near` asks the careful pass to seat a
+     piece close to the others of its group. A piece without these fields is nested exactly as before.
+     The Right earring of a pair is the Left MIRRORED (Paul, 9 Oct 2026, 18:47: "one is flipped on a vertical Y axis 180°"): the page
+     hands the solver its mirrored outline as that piece's own bits (`mirror: true` says so). The solver rotates pieces and never
+     reflects one, and every variant is made from the piece's own bits (nothing is shared between two pieces), so a Right is
+     always placed as a mirror of its Left under whatever rotation each has.                                                    */
+  /** The pair fields of a charm (what the page keeps: groupKey or orderInfo, side, bodyIndex) as job-piece fields; {} for any other charm. A job piece gives its own back. */
+  function pairFields(c) {
+    if (!c) return {};
+    const oi = c.orderInfo || null;
+    const usable = k => k != null && String(k) !== "" && String(k).split(":")[0] !== "";   // (":" is the pair module's "no key": it must never join pieces of different orders)
+    const given = usable(c.groupKey) ? c.groupKey : usable(c.group) ? c.group : null;   // (a charm's groupKey, or a job piece's own group, which this passes on unchanged)
+    const group = given != null ? String(given) : oi && oi.receiptId != null && oi.transactionId != null ? String(oi.receiptId) + ":" + String(oi.transactionId) : null;
+    const side = c.side === "L" || c.side === "R" ? c.side : null;
+    if (group == null && !side) return {};
+    const out = {};
+    if (group != null) out.group = group;
+    if (side) { out.side = side; out.near = true; }
+    if (c.near != null) out.near = !!c.near;
+    if (c.bodyIndex != null && Number.isFinite(+c.bodyIndex)) out.bodyIndex = +c.bodyIndex;
+    if (c.groupSize != null && Number.isFinite(+c.groupSize) && +c.groupSize > 0) out.groupSize = +c.groupSize;
+    if (c.mirror === true) out.mirror = true;   // (information: the charm's own bits ARE the mirrored outline; the solver never reflects anything)
+    return out;
+  }
+  /** The pair fields a prepared piece keeps: its group, side, body, and whether it asks to be seated near its group (nothing at all for any other piece). */
+  function pairKeys(p) {
+    if (!p || p.group == null && !p.side) return {};
+    const near = p.near != null ? !!p.near : p.side === "L" || p.side === "R";
+    return { ...(p.group != null ? { group: String(p.group) } : {}), ...(p.side ? { side: p.side } : {}), ...(p.bodyIndex != null ? { bodyIndex: p.bodyIndex } : {}), ...(p.mirror ? { mirror: true } : {}), near };
+  }
+  /** The job with the pieces of one `group` brought under one `order` (the first order met), so no path of the solver can part them;
+      the same object when every group already shares its order (always, for the page as it is). */
+  function linkGroups(job) {
+    const pieces = job && job.pieces;
+    if (!Array.isArray(pieces) || !pieces.some(p => p && p.group != null)) return job;
+    const key = p => p.order || p.id, parent = new Map(), first = new Map();
+    const find = k => { let r = k; while (parent.has(r) && parent.get(r) !== r) r = parent.get(r); return r; };
+    for (const p of pieces) if (p && !parent.has(key(p))) parent.set(key(p), key(p));
+    for (const p of pieces) {
+      if (!p || p.group == null) continue;
+      if (!first.has(p.group)) { first.set(p.group, key(p)); continue; }
+      const a = find(first.get(p.group)), b = find(key(p));
+      if (a !== b) parent.set(b, a);
+    }
+    if (!pieces.some(p => p && find(key(p)) !== key(p))) return job;
+    return { ...job, pieces: pieces.map(p => p && find(key(p)) !== key(p) ? { ...p, order: find(key(p)) } : p), pairLinked: true };
+  }
+  /** Where the groups of two or more pieces stand: seated whole, turned away whole, or (never by this solver) in part. `box(id)` gives a placed piece's box in pt, when known. */
+  function pairingOf(pieces, placed, box) {
+    const by = new Map();
+    for (const p of pieces || []) if (p && p.group != null) (by.get(p.group) || by.set(p.group, []).get(p.group)).push(p);
+    let groups = 0, seated = 0, turnedAway = 0; const split = [], gaps = [];
+    for (const [g, list] of by) {
+      if (list.length < 2) continue;
+      groups++;
+      const n = list.filter(p => placed.has(p.id)).length;
+      if (n === list.length) seated++; else if (n === 0) turnedAway++; else split.push(String(g));
+      if (n === list.length && box && list.some(p => p.near === true || p.near == null && (p.side === "L" || p.side === "R"))) {
+        const boxes = list.map(p => box(p.id)).filter(Boolean);
+        // the worst piece of the group: its gap to the nearest other piece of the group
+        if (boxes.length === list.length) gaps.push(Math.max(...boxes.map(a => Math.min(...boxes.filter(b => b !== a).map(b => Math.hypot(Math.max(0, a[0] - b[2], b[0] - a[2]), Math.max(0, a[1] - b[3], b[1] - a[3])))))));
+      }
+    }
+    if (!groups) return null;
+    const mm = 25.4 / 72, near = gaps.length ? { n: gaps.length, meanMm: +(gaps.reduce((s, g) => s + g, 0) / gaps.length * mm).toFixed(2), maxMm: +(Math.max(...gaps) * mm).toFixed(2) } : { n: 0, meanMm: 0, maxMm: 0 };
+    return { groups, seated, turnedAway, split, near };
+  }
+  /** A placement's box in pt as the solver reports it, or null when it carries none (a saved placement the page kept without one). */
+  const placementBox = pl => pl && [pl.xPt, pl.yPt, pl.xPt + pl.wPt, pl.yPt + pl.hPt].every(Number.isFinite) ? [pl.xPt, pl.yPt, pl.xPt + pl.wPt, pl.yPt + pl.hPt] : null;
   function bestResult(result, incumbent, sheet) {
     if (!incumbent || result && betterLayout(result, incumbent, sheet)) return publicLayout(result);
     const out = { ...publicLayout(result), ...publicLayout(incumbent), retainedBest: true };
@@ -333,7 +406,8 @@
     const suggestions=(Array.isArray(plan.suggestions)?plan.suggestions:[]).filter(p=>p && valid(p.index) && !hintsSeen.has(p.index) && hintsSeen.add(p.index)).slice(0,24).map(p=>({index:p.index,angles:angles(p.angles)}));
     return {profiles,pairs,suggestions,summary:String(plan.summary||"").slice(0,700)};
   }
-  function shapeKey(p) { return JSON.stringify([p.hash || p.id,p.w,p.h,p.scale,p.areaPt2]); }
+  // (a mirrored piece, the Right earring of a pair, is a different shape from its Left: never one cache entry for both)
+  function shapeKey(p) { return JSON.stringify(p.mirror ? [p.hash || p.id,p.w,p.h,p.scale,p.areaPt2,"mirror"] : [p.hash || p.id,p.w,p.h,p.scale,p.areaPt2]); }
   function packingCompatibility(a, b, hints) {
     const explicit=hints?.partners?.[a]?.[b];
     if(Number.isFinite(explicit))return Math.max(0,Math.min(1,explicit/100));
@@ -367,7 +441,11 @@
     // a charm the unjam lifted comes back in the result's own placements, at its new spot: the saved one and its area leave the fixed part
     const areaOfFixed=p=>{const v=prepareVariant(pieceOf(p.id),p.angle,job.clearancePt,job.fineRes||2);return v?areaOf(v.fine.bits)/Math.pow(job.fineRes||2,2):0;};
     const merge=r=>{const moved=new Set(r.unjam?.moved||[]),kept=moved.size?fixed.filter(p=>!moved.has(p.id)):fixed,area=moved.size?fixedArea-fixed.filter(p=>moved.has(p.id)).reduce((n,p)=>n+areaOfFixed(p),0):fixedArea;
-      return {...r,placements:[...kept.map(p=>({...p})),...(r.placements||[])],placedPt2:area+(r.placedPt2||0),usablePt2:usable,freePt2:r.freePt2??remaining,placedCells:(area+(r.placedPt2||0))*Math.pow(job.fineRes||2,2),density:(area+(r.placedPt2||0))/Math.max(1,usable),params:{seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,...r.params,maxFill:job.maxFill||.8}};};
+      const out={...r,placements:[...kept.map(p=>({...p})),...(r.placements||[])],placedPt2:area+(r.placedPt2||0),usablePt2:usable,freePt2:r.freePt2??remaining,placedCells:(area+(r.placedPt2||0))*Math.pow(job.fineRes||2,2),density:(area+(r.placedPt2||0))/Math.max(1,usable),params:{seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,...r.params,maxFill:job.maxFill||.8}};
+      // pairs: the saved pieces count as seated, so a group with a saved piece and a turned-away one is reported as split (the page flags it)
+      delete out.pairing; const byId=new Map(out.placements.map(p=>[p.id,p])), pr=pairingOf(job.pieces,new Set(byId.keys()),id=>placementBox(byId.get(id)));
+      if(pr)out.pairing=pr;
+      return out;};
     const info=r=>({...r,placed:(r.placed||0)+fixed.length,total:job.pieces.length,...(r.placedPt2!=null?{placedPt2:r.placedPt2+fixedArea,usablePt2:usable}:{}),...(r.density!=null?{density:(r.density*remaining+fixedArea)/Math.max(1,usable)}:{})});
     if(!pieces.length || cap<=0 || remaining<=0)return merge({placements:[],rejects:pieces.map(p=>p.id),trials:0,elapsedMs:0,endedBy:'cap',params:{maxFill:job.maxFill||.8}});
     const next={...job,protectedRose:null,lockedPlacements:null,sheet:remainderSheet,pieces,maxFill:Math.min(1,cap/remaining),initialLayout:(job.initialLayout||[]).filter(p=>!ids.has(p.id))};
@@ -375,6 +453,7 @@
     return merge(result);
   }
   async function solve(job, cb) {
+    job = linkGroups(job);   // (the pieces of one pair or set share one order, whatever the page named it)
     if(job.protectedRose||job.lockedPlacements?.length)return solveAppend(job,cb||{});
     cb = cb || {};
     const t0 = now();
@@ -493,7 +572,7 @@
       // footprintCells: what the piece occupies on the sheet grid (its eroded or grown mask) — the same measure the
       // occupancy readout uses, so the fill ceiling and "% full" agree. The solid silhouette (holes filled) stays for reports.
       const footprintCells = variants.length ? Math.min(...variants.map(v => v.cells)) : solidFineCells;
-      prepared.push({ id: p.id, idx: i, order: p.order || p.id, orderDate: +p.orderDate || 0, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null });
+      prepared.push({ id: p.id, idx: i, order: p.order || p.id, orderDate: +p.orderDate || 0, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null, ...pairKeys(p) });
       if (cb.onStage) cb.onStage("prepare", i + 1, pieces.length);
       await yieldNow();
     }
@@ -818,6 +897,34 @@
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let rec = [], cells = 0, lastProbe = -Infinity, graded = 0;
       let lastStage = null, unjamOn = false;   // (unjamOn: the charms seen moving are an unjam's, see below)
+      /* Pairs (Paul, 9 Oct 2026: a mismatched pair, a left and a right of two different charms, goes on one sheet, and "ideally near each
+         other"). A piece that asks to be near its group (`near`) is charged `weights.mate` mm² for each mm between it and the nearest
+         seated piece of its group, up to MATE_CAP_MM: the second body goes by the first when it costs the sheet little, never at any
+         price (in the Rose Gold block the growth of the block costs more than the whole cap). Nothing is charged to any other piece, so
+         singles, matching pairs and discs grade exactly as before. The group's saved pieces (job.sheet.fixedPieces) count as seated. */
+      const nearGroups = new Set(job.pairNear === false ? [] : prepared.filter(p => p.near && p.group != null).map(p => p.group)), mateOn = nearGroups.size > 0;
+      let mateOff = new Set();   // saved charms an unjam attempt has lifted: their old places are not a mate's
+      const fixedMates = [];
+      if (mateOn) for (const e of job.sheet.fixedPieces || []) {
+        if (!e.piece || e.piece.group == null || !nearGroups.has(String(e.piece.group))) continue;
+        const v = prepareVariant(e.piece, e.placement.angle, clearancePt, fineRes); if (!v) continue;
+        const x0 = Math.round(e.placement.cxPt * fineRes - v.solid.cx), y0 = Math.round(e.placement.cyPt * fineRes - v.solid.cy);
+        fixedMates.push({ id: e.placement.id, group: String(e.piece.group), box: [x0, y0, x0 + v.fine.w, y0 + v.fine.h] });
+      }
+      const mateBoxes = p => {
+        const out = [];
+        for (const r of rec) if (r.p !== p && r.p.group === p.group) out.push([r.x, r.y, r.x + r.v.fine.w, r.y + r.v.fine.h]);
+        for (const f of fixedMates) if (f.group === p.group && f.id !== p.id && !mateOff.has(f.id)) out.push(f.box);
+        return out;
+      };
+      const boxGapMm = (a, b) => Math.hypot(Math.max(0, a[0] - b[2], b[0] - a[2]), Math.max(0, a[1] - b[3], b[1] - a[3])) / MM_PX;
+      /** Sets t.mate (mm to the nearest seated mate, capped) and t.mateHas on a spot of piece p; nothing for a piece that is not near. */
+      const markMate = (t, p) => {
+        if (!mateOn || !p || !p.near || p.group == null) return t;
+        const boxes = mateBoxes(p); t.mateHas = boxes.length > 0; t.mate = 0;
+        if (boxes.length) { const me = [t.x, t.y, t.x + t.v.fine.w, t.y + t.v.fine.h]; let g = Infinity; for (const b of boxes) g = Math.min(g, boxGapMm(me, b)); t.mate = Math.min(MATE_CAP_MM, g); }
+        return t;
+      };
       // at most one probe every 40 ms, but always the first of each stage, so every step of the search is shown
       const probe = (p, v, x, y, stage, force) => {
         const t = now(); if (!cb.onProbe || (!force && stage === lastStage && t - lastProbe < 40)) return; lastProbe = t; lastStage = stage;
@@ -999,13 +1106,14 @@
         return s / 3;
       };
       /** The grade of a spot: higher is better, in mm² of space given up. */
-      const grade = (v, x, y, front) => {
+      const grade = (v, x, y, front, p) => {
         const waste = lossAt(v, x, y) * cellMm2;
         const around = aroundAt(v, x, y) * cellMm2;
         const far = axisX ? x + v.fine.w : y + v.fine.h, growth = Math.max(0, far - front) / MM_PX;
         const along = (axisX ? x + v.fine.w / 2 : y + v.fine.h / 2) / MM_PX, claim = envAt(v, x, y) * cellMm2;
+        const mated = markMate({ v, x, y }, p);
         graded++;
-        return { waste, around, growth, along, claim, far, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim) };
+        return { waste, around, growth, along, claim, far, ...(mated.mateHas !== undefined ? { mate: mated.mate, mateHas: mated.mateHas } : {}), fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim + weights.mate * (mated.mate || 0)) };
       };
       /* Where a charm can go, exactly. At each angle every position on the fine grid is legal or not; the positions
          are taken 4×4 at a time: a block is out when even the part of the charm all 16 positions share hits
@@ -1152,7 +1260,8 @@
           const s = spots[i], v = s.v;
           const lb = (lossLive(v, s.x, s.y) - lastBonus) * cellMm2, around = aroundAt(v, s.x, s.y) * cellMm2;
           const far = axisX ? s.x + v.fine.w : s.y + v.fine.h, growth = Math.max(0, far - front) / MM_PX, along = (axisX ? s.x + v.fine.w / 2 : s.y + v.fine.h / 2) / MM_PX, claim = envAt(v, s.x, s.y) * cellMm2;
-          Object.assign(s, { waste: lb, around, growth, along, claim, far, fit: -(lb + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim), staleWaste: true });
+          markMate(s, p);
+          Object.assign(s, { waste: lb, around, growth, along, claim, far, fit: -(lb + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim + weights.mate * (s.mate || 0)), staleWaste: true });
           graded++;
           probe(p, s.v, s.x, s.y, "try");
           if ((i & 63) === 63) { if (stopped()) return null; reportMetrics(); await yieldNow(); }
@@ -1177,7 +1286,7 @@
         if (cb.onGrades && !quiet) cb.onGrades(p.id, scored.map(s => ({ angle: s.v.angle, cxPt: (s.x + s.v.solid.cx) / fineRes, cyPt: (s.y + s.v.solid.cy) / fineRes, waste: s.waste, around: s.around, growth: s.growth, fit: s.fit })), scored.length);
         let best = null;
         for (const s of scored.slice(0, 6)) {
-          const n = nudge(p, s.v, s.x, s.y), g = n.x === s.x && n.y === s.y ? s : { v: s.v, x: n.x, y: n.y, ...grade(s.v, n.x, n.y, front) };
+          const n = nudge(p, s.v, s.x, s.y), g = n.x === s.x && n.y === s.y ? s : { v: s.v, x: n.x, y: n.y, ...grade(s.v, n.x, n.y, front, p) };
           const pick = g.fit >= s.fit - .5 ? g : s;
           if (!best || pick.fit > best.fit) best = pick;
         }
@@ -1191,7 +1300,7 @@
           if (picks.every(q => Math.abs(q.x - s.x) > far || Math.abs(q.y - s.y) > far)) picks.push(s);
           if (picks.length >= n) break;
         }
-        return picks.map(s => { const m = nudge(p, s.v, s.x, s.y), g = m.x === s.x && m.y === s.y ? s : { v: s.v, x: m.x, y: m.y, ...grade(s.v, m.x, m.y, front) }; return g.fit >= s.fit - .5 ? g : s; });
+        return picks.map(s => { const m = nudge(p, s.v, s.x, s.y), g = m.x === s.x && m.y === s.y ? s : { v: s.v, x: m.x, y: m.y, ...grade(s.v, m.x, m.y, front, p) }; return g.fit >= s.fit - .5 ? g : s; });
       };
       /* Look-ahead (Paul, 24 Sep: "look ahead for as many charms as you have available to choose the best one for the
          current situation"). Every waiting charm's spots are graded once on the sheet as it stands, and after each
@@ -1251,7 +1360,7 @@
           the leaders are ever picked, and a marked spot is graded when it rises among them. So each placement costs
           the other waiting charms a few dozen grades, not hundreds.                                               */
       const LEADERS = 16, RESTING = 24, FAST_LEADERS = 6;
-      const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along + weights.env * t.claim);
+      const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along + weights.env * t.claim + weights.mate * (t.mate || 0));
       const refresh = (p, spots, events, front) => {
         const out = [], seen = new Set(), key = c => c.v.angle + ":" + c.x + ":" + c.y;
         for (const s of spots) {
@@ -1260,14 +1369,14 @@
           const t = { ...s };
           if (events.some(e => meets(b, e.chg, lossPad))) t.staleWaste = true;
           if (events.some(e => meets(b, e.box, aroundPad))) t.staleAround = true;
-          t.growth = Math.max(0, t.far - front) / MM_PX; t.claim = envAt(t.v, t.x, t.y) * cellMm2; t.fit = fitOf(t);
+          t.growth = Math.max(0, t.far - front) / MM_PX; t.claim = envAt(t.v, t.x, t.y) * cellMm2; markMate(t, p); t.fit = fitOf(t);
           out.push(t); seen.add(key(t));
         }
         for (const e of events) {
           const near = [];
           for (const v of p.careful) for (const c of restingNear(v, e.box, 2)) if (!seen.has(key(c))) near.push(c);
           near.sort((a, b) => b.touch - a.touch);
-          for (const c of near.slice(0, RESTING)) { if (seen.has(key(c))) continue; seen.add(key(c)); out.push(Object.assign(c, grade(c.v, c.x, c.y, front))); metrics.positions++; }
+          for (const c of near.slice(0, RESTING)) { if (seen.has(key(c))) continue; seen.add(key(c)); out.push(Object.assign(c, grade(c.v, c.x, c.y, front, p))); metrics.positions++; }
         }
         for (let changed = true; changed;) {
           out.sort((a, b) => b.fit - a.fit); changed = false;
@@ -1338,7 +1447,14 @@
             for (const q of others) {
               const c = cache.get(q); if (!c || c.at < events.length) continue;
               let best = -Infinity;
-              for (const s of c.spots) if (s.fit > best && (!meets(boxOf(s.v, s.x, s.y), box, 1) || fine.fits(s.v.fine.pm, s.x, s.y))) best = s.fit;
+              // (the mate of a near piece: its spots count what the move does to its distance from the piece the move seats)
+              const mateQ = mateOn && q.near && mv.p.near && q.group != null && q.group === mv.p.group;
+              if (!mateQ) { for (const s of c.spots) if (s.fit > best && (!meets(boxOf(s.v, s.x, s.y), box, 1) || fine.fits(s.v.fine.pm, s.x, s.y))) best = s.fit; }
+              else for (const s of c.spots) {
+                if (meets(boxOf(s.v, s.x, s.y), box, 1) && !fine.fits(s.v.fine.pm, s.x, s.y)) continue;
+                const d = Math.min(MATE_CAP_MM, boxGapMm(boxOf(s.v, s.x, s.y), box)), f = s.fit - weights.mate * (s.mateHas ? Math.min(0, d - (s.mate || 0)) : d);
+                if (f > best) best = f;
+              }
               if (best === -Infinity && !mv.strand) mv.strand = q;
               score += best > -Infinity ? best : -STRANDS;
             }
@@ -1516,7 +1632,7 @@
       const savedRecs = new Map();       // id → rec-like entry of a movable saved charm, prepared on first use
       const savedEntry = e => {
         const id = e.placement.id; let r = savedRecs.get(id); if (r) return r;
-        const piece = e.piece, p = { id, idx: -1, src: piece, order: piece.order || id, orderDate: +piece.orderDate || 0, areaPt2: piece.areaPt2 || 0, solidFineCells: 0, footprintCells: 0, variants: [], pinned: null, meta: null, locked: true };
+        const piece = e.piece, p = { id, idx: -1, src: piece, order: piece.order || id, orderDate: +piece.orderDate || 0, areaPt2: piece.areaPt2 || 0, solidFineCells: 0, footprintCells: 0, variants: [], pinned: null, meta: null, locked: true, ...pairKeys(piece) };
         const v = variantsFor(p, [((e.placement.angle % 360) + 360) % 360])[0]; if (!v) return null;
         p.solidFineCells = p.footprintCells = v.cells; p.careful = [v];
         r = { p, v, x: Math.round(e.placement.cxPt * fineRes - v.solid.cx), y: Math.round(e.placement.cyPt * fineRes - v.solid.cy), fit: 0, waste: 0, saved: true };
@@ -1636,6 +1752,7 @@
         const attempt = async (units, mode) => {
           const U = units.flatMap(u => u.entries), uOwn = U.filter(r => !r.saved), uSaved = U.filter(r => r.saved);
           const off = new Set([...movedSaved, ...uSaved.map(r => r.p.id)]), b = baseWithout(off), recKeep = cur.rec.filter(r => !uOwn.includes(r));
+          mateOff = new Set(off);   // (a lifted saved charm's old place is no mate's)
           const keep = { fine: baseFine, coarse: baseCoarse, maxFill };
           for (const r of U) probe(r.p, r.v, r.x, r.y, 'lift', true);
           baseFine = b.fine; baseCoarse = b.coarse; maxFill = Math.min(1, maxFill0 + savedCells(off) / usableCellsFine);
@@ -1647,7 +1764,7 @@
           // the missed order first in both; then best fit first ('fit') or the biggest first ('big')
           try { again = await pass(new Set(G.pieces), { rec: recKeep, pool, all: true, must: new Set(pool), multi: +job.unjamMoves || UNJAM_MOVES, focus: mode === 'big' ? 'big' : null }); }
           finally {
-            fastSpots = 0; homeOf = null; baseFine = keep.fine; baseCoarse = keep.coarse; maxFill = keep.maxFill;
+            fastSpots = 0; homeOf = null; baseFine = keep.fine; baseCoarse = keep.coarse; maxFill = keep.maxFill; mateOff = new Set(movedSaved);
             for (const [p, c] of keepCareful) p.careful = c; keepCareful.clear();
             for (const r of U) if (r.saved) r.p.careful = [r.v];
           }
@@ -1683,6 +1800,7 @@
         // commit: the lifted saved charms now live in rec, on a sheet without their saved places
         baseFine = best.b.fine; baseCoarse = best.b.coarse; maxFill = best.maxFillNew;
         for (const id of best.off) movedSaved.add(id);
+        mateOff = new Set(movedSaved);
         const had = new Set(cur.rec.map(r => r.p.id)), added = best.again.rec.filter(r => !had.has(r.p.id) && !r.p.locked);
         for (const r of added) { pocketFilled.push(r.p.id); unjamStats.filled.push(r.p.id); }
         const next = outWith(cur, best.again);
@@ -2046,7 +2164,9 @@
     // what the pieces the ceiling held back would add, so the console can say the arithmetic plainly
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     reportMetrics(true);
-    return Object.assign({}, best, {
+    // pairs: where each group of two or more stands (never in part; see pairingOf)
+    const pairing = (() => { const byId = new Map(best.placements.map(p => [p.id, p])); return pairingOf(pieces, new Set(byId.keys()), id => placementBox(byId.get(id))); })();
+    return Object.assign({}, best, pairing ? { pairing } : {}, {
       endedBy, trials:metrics.layouts, metrics:{...metrics}, elapsedMs: now() - t0, cappedPt2,
       params: { exploreRotations: !!job.exploreRotations, contactScoring: "silhouette-neighbors-and-edges", edgeWeight: EDGE_WEIGHT, straightEdgeWeight: STRAIGHT_EDGE_WEIGHT, perimeterCandidates: true, compactPartial: !!best.stripPacked, packingAxis: best.stripPacked ? stripAxis : null, packingGuided: guidedTrials > 0, shapeGuided: !!job.packingHints?.profiles, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
@@ -2093,7 +2213,9 @@
   // a careful append's grade, in mm² given up: slivers count in full, the empty band around the charm at `around`,
   // each mm the occupied part of the sheet grows at `growth`, and each mm further along it at `along`
   // and each mm² of new space it claims beyond its own area at `env` (see env in carefulAppend)
-  const FIT_WEIGHTS = { around: .5, growth: 1.5, along: .02, env: .5 };
+  const FIT_WEIGHTS = { around: .5, growth: 1.5, along: .02, env: .5, mate: 1 };
+  // a piece asked to be near its group (the two bodies of a mismatched pair) pays `mate` mm² per mm from the nearest seated piece of its group, at most this many mm
+  const MATE_CAP_MM = 40;
   /* Rose Gold (job.block): the charms go on as one tight block from the sheet's start, the way a jeweller cuts a
      rectangle off the sheet (Paul, 25 Sep: "perfect rectangular ... not given part of the sheet without spreading
      along the edges and leaving gaps"). Each mm the block grows costs the whole strip of stock across the sheet, so
@@ -2747,6 +2869,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64 };
+  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, MATE_CAP_MM };
   return solverAPI;
 });

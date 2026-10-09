@@ -122,16 +122,16 @@ function bestForm(forms) {
   for (const [form, n] of forms) { const v = n * 2 + (form !== form.toLowerCase() && form !== form.toUpperCase() ? 1 : 0); if (v > score || (v === score && form < best)) { best = form; score = v; } }
   return best;
 }
-const BUILTIN_ALIASES = KIND.PEOPLE_ALIASES || { "Giovanna": ["Giovanna C."] };     // the console's own table (_activityKinds.js PEOPLE_ALIASES: Giovanna, Anna with "Anns", Ivy): one table, so the two readers cannot disagree
+const BUILTIN_ALIASES = KIND.PEOPLE_ALIASES || { "Giovanna": ["Giovanna C."] };     // the console's own table (_activityKinds.js PEOPLE_ALIASES: Giovanna, Ana_M with "Anna" and "Anns", Ivy): one table, so the two readers cannot disagree
 function buildAliases(extra) {
   const display = new Map(), map = new Map();
-  const add = (name, list) => {
+  const add = (name, list, nice) => {
     const d = cleanName(name); if (!okName(d)) return;
-    const ck = fold(d); if (!display.has(ck)) display.set(ck, d);
+    const ck = fold(d); if (!display.has(ck)) display.set(ck, nice ? niceName(d) : d);     // (the built-in table's names read like every console name: "Ana_M" is "Ana M."; the Firestore doc's own spelling is shown as written)
     if (!map.has(ck)) map.set(ck, ck);
     for (const a of Array.isArray(list) ? list.slice(0, 50) : typeof list === "string" ? [list] : []) { const an = cleanName(a); if (okName(an) && fold(an) !== ck) map.set(fold(an), ck); }
   };
-  for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v);
+  for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v, true);
   if (isObj(extra)) for (const [k, v] of Object.entries(extra).slice(0, 200)) add(k, v);
   return { display, map };
 }

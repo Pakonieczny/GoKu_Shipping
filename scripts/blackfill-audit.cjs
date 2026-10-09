@@ -97,16 +97,25 @@ function facts(charm) {
 }
 const near = (a, b) => Math.abs(a - b) <= Math.max(0.05, 0.002 * Math.max(Math.abs(a), Math.abs(b)));
 const isDark = (px, i) => px[i + 3] > 200 && px[i] < 80 && px[i + 1] < 80 && px[i + 2] < 80;
-/** Share of dark pixels inside the charm's own body, and over the whole picture, for a picture drawn at `size` with the app's 2 pt padding. */
+/** Share of dark pixels inside the charm's own body, and over the whole picture, for a picture drawn at `size` with the app's 2 pt padding.
+ *  The body is the filled area of the charm's outline with its edge band (2 px) taken off: a charm drawn as a thin line (an outline filled
+ *  only 0.25 pt wide, the rainbow arcs, an elephant's silhouette) has no interior to be black, and its two hairline edges would otherwise
+ *  count as a "100 % black body". `bodyEdge` is the share without that band, `thin` says the body is mostly edge band. */
 function darkShare(img, charm, size) {
   const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h), W = Math.max(8, Math.round(w * s)), H = Math.max(8, Math.round(h * s));
-  const mask = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#fff"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)"><path d="${G.svgPathOf(charm.outline)}" fill="#000" fill-rule="evenodd"/></g></svg>`;
-  const m = raster(mask); let body = 0, dark = 0, all = 0, total = img.W * img.H;
+  const mask = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#fff"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)"><path d="${G.svgPathOf(charm.outline)}" fill="#000" fill-rule="${String(charm.outline.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"}"/></g></svg>`;
+  const m = raster(mask), R = 2, inB = new Uint8Array(m.W * m.H); for (let i = 0; i < inB.length; i++) inB[i] = m.px[i * 4] < 128 ? 1 : 0;
+  const tmp = new Uint8Array(inB.length), inner = new Uint8Array(inB.length);                       // erosion by R px (square element, two passes)
+  for (let y = 0; y < m.H; y++) for (let x = 0; x < m.W; x++) { let ok = 1; for (let d = -R; d <= R && ok; d++) { const xx = x + d; if (xx < 0 || xx >= m.W || !inB[y * m.W + xx]) ok = 0; } tmp[y * m.W + x] = ok; }
+  for (let y = 0; y < m.H; y++) for (let x = 0; x < m.W; x++) { let ok = 1; for (let d = -R; d <= R && ok; d++) { const yy = y + d; if (yy < 0 || yy >= m.H || !tmp[yy * m.W + x]) ok = 0; } inner[y * m.W + x] = ok; }
+  let all = 0, total = img.W * img.H, bodyEdge = 0, darkEdge = 0, body = 0, dark = 0;
   for (let y = 0; y < img.H; y++) for (let x = 0; x < img.W; x++) {
     const i = (y * img.W + x) * 4, d = isDark(img.px, i); if (d) all++;
-    const mx = Math.min(m.W - 1, Math.round(x * m.W / img.W)), my = Math.min(m.H - 1, Math.round(y * m.H / img.H)); if (m.px[(my * m.W + mx) * 4] < 128) { body++; if (d) dark++; }
+    const mx = Math.min(m.W - 1, Math.round(x * m.W / img.W)), my = Math.min(m.H - 1, Math.round(y * m.H / img.H)), k = my * m.W + mx;
+    if (inB[k]) { bodyEdge++; if (d) darkEdge++; }
+    if (inner[k]) { body++; if (d) dark++; }
   }
-  return { body: body ? dark / body : 0, picture: all / total };
+  return { body: body ? dark / body : 0, bodyEdge: bodyEdge ? darkEdge / bodyEdge : 0, thin: bodyEdge > 0 && body < 0.25 * bodyEdge, picture: all / total };
 }
 /** What the Master tab paints for the charm: drawCharm on a canvas, and the stored-PNG route. */
 function pictures(charm) {
@@ -176,7 +185,7 @@ async function main(argv, log = console.log) {
       if (r.error) { errors.push({ aiPath, why: r.error }); continue; }
       n++; summary.designs++; if (n % 100 === 0) log(`  ${master}: ${n} read, ${changed} changed so far`);
       const skus = entries.map(e => e.sku + (e.size ? ` · ${e.size}` : ""));
-      for (const sku of skus) metrics[sku] = { master, darkStoredBody: r.after.darkStored ? pct(r.after.darkStored.body) : null, darkCanvasBody: pct(r.after.darkCanvas.body), darkStoredPicture: r.after.darkStored ? pct(r.after.darkStored.picture) : null, darkCanvasPicture: pct(r.after.darkCanvas.picture),
+      for (const sku of skus) metrics[sku] = { master, thin: r.after.darkCanvas.thin, darkCanvasBodyWithEdge: pct(r.after.darkCanvas.bodyEdge), darkStoredBody: r.after.darkStored ? pct(r.after.darkStored.body) : null, darkCanvasBody: pct(r.after.darkCanvas.body), darkStoredPicture: r.after.darkStored ? pct(r.after.darkStored.picture) : null, darkCanvasPicture: pct(r.after.darkCanvas.picture),
         before: r.changed ? { darkStoredBody: r.before.darkStored ? pct(r.before.darkStored.body) : null, darkCanvasBody: pct(r.before.darkCanvas.body) } : undefined };
       const worst = Math.max(r.after.darkStored ? r.after.darkStored.body : 0, r.after.darkCanvas.body);
       if (worst > 0.9) summary.over90.push({ skus, master, darkStoredBody: pct(r.after.darkStored ? r.after.darkStored.body : 0), darkCanvasBody: pct(r.after.darkCanvas.body), fills: r.after.fills });
@@ -209,5 +218,5 @@ async function main(argv, log = console.log) {
   log(`designs ${summary.designs} · affected ${affected.length} · rewrite SKUs ${rewrite.length} · over 90 % dark: ${summary.over90.length} · errors ${errors.length}`);
   return { affected, summary };
 }
-module.exports = { main, load, facts, measure, darkShare, decodePng, SvgCtx };
+module.exports = { main, load, facts, measure, darkShare, decodePng, SvgCtx, raster };
 if (require.main === module) main(process.argv).catch(e => { console.error("blackfill-audit:", e.message); process.exit(1); });

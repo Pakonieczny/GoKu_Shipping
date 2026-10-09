@@ -119,7 +119,7 @@
     const u = UI(); if (!u || !ctx || typeof ctx !== 'object' || !Array.isArray(ctx.events)) return null;
     const piece = ctx.piece || ctx.p || null, pieces = Array.isArray(ctx.pieces) && ctx.pieces.length ? ctx.pieces : piece ? [piece] : [];
     const events = ctx.events.filter(e => e && typeof e === 'object' && e.type && (!piece || u.ofPiece(e, piece, pieces)));
-    return { u, events, piece, pieces, D: ctx.D || null, steps: Array.isArray(ctx.steps) && ctx.steps.length ? ctx.steps : null, cancelled: ctx.cancelled || null, context: ctx.context || null, rec: ctx.rec || null, lineKey: String((piece && piece.key) || (ctx.rec && ctx.rec.key) || ctx.lineKey || '') };
+    return { u, events, piece, pieces, D: ctx.D || null, steps: Array.isArray(ctx.steps) && ctx.steps.length ? ctx.steps : null, cancelled: ctx.cancelled || null, context: ctx.context || null, rec: ctx.rec || null, lineKey: String((piece && (piece.lineKey || piece.key)) || (ctx.rec && ctx.rec.key) || ctx.lineKey || '') };
   }
   const atOf = e => +e.at || 0;
   const byAt = (a, b) => atOf(a) - atOf(b);
