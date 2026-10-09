@@ -42,6 +42,8 @@
  *  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
 "use strict";
 const fs = require("fs"), path = require("path");
+/** The commit of the working tree that parsed the master (so a dump says what code it came from). */
+function codeCommit() { try { return require("child_process").execSync("git rev-parse --short=8 HEAD", { cwd: __dirname, stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch (e) { return null; } }
 const root = path.join(__dirname, "..");
 const MM = 25.4 / 72;
 const r = (v, n) => { const k = Math.pow(10, n == null ? 2 : n); return Math.round(v * k) / k; };
@@ -180,7 +182,7 @@ async function dump(file, outFile, opts) {
     orphans.push(o);
   }
   log(`orphans described: ${orphans.length}`);
-  const out = { master: name, bytes: buf.length, pageW: parsed.pageW, pageH: parsed.pageH, at: new Date().toISOString(), rule: g.rule, kindCount, layerCount,
+  const out = { master: name, bytes: buf.length, pageW: parsed.pageW, pageH: parsed.pageH, at: new Date().toISOString(), code: codeCommit(), rule: g.rule, kindCount, layerCount,
     lab: { labelled: lab.labels.size, skuCount: lab.skuCount, unlabelled: lab.unlabelled, orphans: lab.orphans.map(x => ({ sku: x.sku, size: x.size, str: x.str, bbox: x.bbox && x.bbox.map(v => r(v)) })), duplicates: lab.duplicates, undecodable: lab.undecodable.length },
     charms, orphans };
   fs.writeFileSync(outFile, JSON.stringify(out));

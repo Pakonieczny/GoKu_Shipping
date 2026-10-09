@@ -11,6 +11,9 @@ const fs = require("fs"), path = require("path");
 const MM = 25.4 / 72;
 
 /* ───────── thresholds (every rule's count is printed in the report, so a threshold that is wrong shows up) ───────── */
+/** Mirrors NOT_SKU in charm-nest-pdf.js (parseSkuLabel): a measurement or a view word typed beside a charm is a callout, never a SKU. */
+const NOT_SKU = /^(?:[\d.,]+\s*(?:mm|cm|in|inch|inches|")|(?:front|back)(?:\s*(?:\/|&|AND)?\s*(?:front|back))?|option(?:\s+[a-z])?|orig(?:inal)?\s*size)$/i;
+
 const T = {
   blackMax: 0.2, whiteMin: 0.9, achroSat: 0.15,
   ringRmin: 1.2, ringRmax: 6,            // pt: a hoop circle (inner hole 1.84, outer 2.9 to 4.7)
@@ -79,7 +82,7 @@ const FIX = {
   "writer-changed-members": ["rewrite", "the file does not read back as the master draws it"], "rings-error": ["review", "ring welding failed on read-back"],
   "solid-black": ["read-time", "drawn as a cut line now; only the stored thumbnail PNG is still a black body"], "cut-chromatic": ["read-time", "colour role is decided when the file is read"], "hatch-not-blue": ["read-time", "colour role is decided when the file is read"],
   "engrave-not-red": ["read-time", "colour role is decided when the file is read"], "outline-not-cut-layer": ["read-time", "outline role is decided when the file is read"],
-  "sku-is-dimension": ["prune", "a size note was read as a SKU: remove the record (catalog-repair prune)"],
+  "sku-is-dimension": ["prune", "a size note or view word (11.4 MM, OPTION B, ORIGINAL SIZE) was read as a SKU: remove the record (catalog-repair prune)"],
   "text-undecodable": ["review", "text the parser cannot read"], "size-outlier": ["review", "far from the family's size"], "family-outlier": ["review", "differs from the family's convention"], "outline-noop": ["review", "the outline draws nothing"]
 };
 const fixOf = defects => { const f = defects.map(d => (FIX[d] || ["review"])[0]); return f.includes("rewrite") ? "rewrite" : f.includes("prune") ? "prune" : f.includes("read-time") ? "read-time" : f.length ? "review" : null; };
@@ -136,7 +139,7 @@ function classify(c, ctx) {
   if (lo.length) add("ring-orphan", `${lo.length} hoop-sized circle(s) ${Math.min(...lo.map(o => o.dNear)).toFixed(1)} pt away that belong to no charm`);
   // 8 · plausibility
   if (c.ob) { const w = (c.ob[2] - c.ob[0]) * MM, h = (c.ob[3] - c.ob[1]) * MM, mx = Math.max(w, h); if (mx > T.sizeMaxMm) add("size-outlier", `${w.toFixed(1)} × ${h.toFixed(1)} mm`); if (mx < T.sizeMinMm) add("size-outlier", `${w.toFixed(1)} × ${h.toFixed(1)} mm`); }
-  const dim = [c.sku, ...(c.extra || [])].filter(s => /^\s*\d+(\.\d+)?\s*(MM|CM|IN|")\s*$/i.test(String(s || "")));
+  const dim = [c.sku, ...(c.extra || [])].filter(s => NOT_SKU.test(String(s || "").trim()));
   if (dim.length) add("sku-is-dimension", `"${dim[0]}" is a size annotation read as a SKU`);
   if (ol && ol.k === "path" && ol.op === "n") add("outline-noop", "outline paint is a no-op");
   // 9 · read back through the per-SKU file (only when the dump was made with --rt)
@@ -160,7 +163,7 @@ function readFindings(dir) {
     const m = /^([A-Za-z]+)-affected\.json$/.exec(f); if (!m) continue;
     try {
       const j = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); const set = new Set();
-      const take = v => { if (typeof v === "string") set.add(v.toUpperCase()); else if (v && typeof v === "object") { if (v.sku) set.add(String(v.sku).toUpperCase()); for (const k of ["skus", "affected", "offending", "list", "items"]) if (Array.isArray(v[k])) v[k].forEach(take); } };
+      const take = v => { if (typeof v === "string") set.add(v.toUpperCase()); else if (v && typeof v === "object") { if (v.sku) set.add(String(v.sku).toUpperCase()); for (const k of ["skus", "skusBefore", "affected", "offending", "list", "items", "entries"]) if (Array.isArray(v[k])) v[k].forEach(take); } };
       Array.isArray(j) ? j.forEach(take) : take(j); out[m[1].toUpperCase()] = set;
     } catch (e) { out[m[1].toUpperCase()] = { error: e.message }; }
   }
@@ -174,9 +177,9 @@ const EXAMPLES = [
 ];
 
 function main(argv) {
-  const files = [], o = { out: ".", findings: "" };
-  for (let i = 0; i < argv.length; i++) { if (argv[i] === "--out") o.out = argv[++i]; else if (argv[i] === "--findings") o.findings = argv[++i]; else if (!argv[i].startsWith("--")) files.push(argv[i]); }
-  if (!files.length) throw new Error("usage: audit-catalog.cjs report <dump.json>... --out <dir> [--findings <dir>]");
+  const files = [], o = { out: ".", findings: "", basis: "" };
+  for (let i = 0; i < argv.length; i++) { if (argv[i] === "--out") o.out = argv[++i]; else if (argv[i] === "--findings") o.findings = argv[++i]; else if (argv[i] === "--basis") o.basis = argv[++i]; else if (!argv[i].startsWith("--")) files.push(argv[i]); }
+  if (!files.length) throw new Error("usage: audit-catalog.cjs report <dump.json>... --out <dir> [--findings <dir>] [--basis <text>]");
   fs.mkdirSync(o.out, { recursive: true });
   const rows = [], stats = {}, byDesign = [];
   for (const f of files) {
@@ -222,7 +225,7 @@ function main(argv) {
     cross[name] = { workerCount: set.size, inMasters: inCatalogue.length, alsoFlaggedHere: both.length, notFlaggedHere: inCatalogue.filter(s => !mine.has(s)).slice(0, 25) };
   }
   // Paul's examples
-  const ex = EXAMPLES.map(([label, re]) => { const hit = rows.filter(r => re.test(r.sku) || re.test(r.name)); return { label, count: hit.length, rows: hit.slice(0, 12).map(r => ({ sku: r.sku, master: r.master, defects: r.defects })) }; });
+  const ex = EXAMPLES.map(([label, re]) => { const hit = rows.filter(r => re.test(r.sku) || re.test(r.name)).sort((a, b) => (b.defects.length > 0) - (a.defects.length > 0)); return { label, count: hit.length, flagged: hit.filter(r => r.defects.length).length, rows: hit.slice(0, 12).map(r => ({ sku: r.sku, master: r.master, defects: r.defects })) }; });
   // write
   // a SKU read from two masters is one record in the catalogue: whichever master is indexed last owns it (the other is blocked or replaced)
   const mastersOf = new Map(); for (const r of rows) { if (!mastersOf.has(r.sku)) mastersOf.set(r.sku, new Set()); mastersOf.get(r.sku).add(r.master); }
@@ -232,7 +235,7 @@ function main(argv) {
   const sorted = offending.sort((a, b) => a.master.localeCompare(b.master) || a.sku.localeCompare(b.sku));
   fs.writeFileSync(path.join(o.out, "CATALOG-offending.json"), JSON.stringify({ generatedAt: new Date().toISOString(), tool: "scripts/audit-catalog.cjs report", note: "offline audit of the three masters (current main code); one row per SKU; sharesFileWith lists the SKUs rewritten with it", thresholds: T, fixCounts, fixes: FIX, multiMaster, counts: Object.fromEntries(Object.entries(cat).map(([k, v]) => [k, { skus: v.skus, designs: v.designs.size }])), offending: sorted.map(({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith }) => ({ sku, name, master, charmIndex, defects, fix, detail, sharesFileWith })) }, null, 1));
   const L = [];
-  L.push("# Catalogue audit (offline, from the three master files)", "", `Generated ${new Date().toISOString()} by scripts/audit-catalog.cjs on the current main code. Nothing was read from the live site.`, "");
+  L.push("# Catalogue audit (offline, from the three master files)", "", `Generated ${new Date().toISOString()} by scripts/audit-catalog.cjs from dump files made ${o.basis || "with the code that was checked out when `audit-catalog.cjs dump` ran (the dump header names its commit)"}. Nothing was read from the live site.`, "");
   L.push("## Masters", "", "| master | charm outlines | labelled designs | SKU lines | unlabelled outlines | labels with no charm | duplicate labels | loose ink | designs flagged | SKU lines flagged |", "|---|---|---|---|---|---|---|---|---|---|");
   for (const s of Object.values(stats)) L.push(`| ${s.master} | ${s.charms} | ${s.labelled} | ${s.skuLines} | ${s.unlabelled} | ${s.orphanLabels} | ${s.duplicates} | ${s.orphanInk} | ${s.flaggedDesigns} | ${s.flaggedSkus} |`);
   const tl = Object.values(stats).reduce((a, s) => ({ l: a.l + s.labelled, k: a.k + s.skuLines, f: a.f + s.flaggedSkus, d: a.d + s.flaggedDesigns }), { l: 0, k: 0, f: 0, d: 0 });
@@ -242,9 +245,9 @@ function main(argv) {
   L.push("", "By what the repair has to do (a design with several defects counts once, under the strongest):", "");
   for (const k of ["rewrite", "prune", "read-time", "review"]) if (fixCounts[k]) L.push(`- **${k}**: ${fixCounts[k].designs} design(s), ${fixCounts[k].skuLines} SKU line(s), ${fixCounts[k].skus} distinct SKU(s)`);
   L.push("", "## Paul's examples", "");
-  for (const e of ex) { L.push(`- **${e.label}**: ${e.count} SKU line(s)`); for (const r of e.rows.slice(0, 8)) L.push(`  - ${r.sku} (${r.master}): ${r.defects.length ? r.defects.join(", ") : "nothing flagged"}`); }
+  for (const e of ex) { L.push(`- **${e.label}**: ${e.count} SKU line(s), ${e.flagged} flagged`); for (const r of e.rows.slice(0, 8)) L.push(`  - ${r.sku} (${r.master}): ${r.defects.length ? r.defects.join(", ") : "nothing flagged"}`); }
   L.push("", "## SKUs that sit in more than one master", "", `${multiMaster.length} SKU(s) are labelled in two masters. They are ONE record in the catalogue, and the master indexed last owns it, so a repair run per master must not rewrite them from the wrong one: ${multiMaster.slice(0, 40).map(x => `${x.sku} (${x.masters.map(m => m.replace(/^MASTER SKU_|_MV.*$/g, "")).join(" + ")}${x.flagged ? ", flagged" : ""})`).join(", ")}${multiMaster.length > 40 ? " …" : ""}`);
-  if (Object.keys(cross).length) { L.push("", "## Cross-check with the five workers", ""); for (const [k, v] of Object.entries(cross)) L.push(v.error ? `- ${k}: unreadable (${v.error})` : `- ${k}: ${v.workerCount} SKUs listed, ${v.inMasters} of them in the masters, ${v.alsoFlaggedHere} also flagged here${v.notFlaggedHere.length ? `; not flagged here: ${v.notFlaggedHere.join(", ")}` : ""}`); }
+  if (Object.keys(cross).length) { L.push("", "## Cross-check with the five workers", "", "A worker's SKU that is not flagged here has no defect baked into its per-SKU file or record (its fix is read-time, or it changes nothing for that SKU), so it needs no rewrite.", ""); for (const [k, v] of Object.entries(cross)) L.push(v.error ? `- ${k}: unreadable (${v.error})` : `- ${k}: ${v.workerCount} SKUs listed, ${v.inMasters} of them in the masters, ${v.alsoFlaggedHere} also flagged here${v.notFlaggedHere.length ? `; not flagged here: ${v.notFlaggedHere.join(", ")}` : ""}`); }
   fs.writeFileSync(path.join(o.out, "CATALOG-report.md"), L.join("\n") + "\n");
   console.log(`designs ${tl.l}, SKU lines ${tl.k}, flagged designs ${tl.d}, flagged distinct SKUs ${flaggedSet.size}`);
   for (const [k, v] of Object.entries(cat).sort((a, b) => b[1].skus - a[1].skus)) console.log(String(v.skus).padStart(6), String(v.designs.size).padStart(6), k);
