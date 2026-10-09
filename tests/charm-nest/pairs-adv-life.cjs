@@ -250,6 +250,24 @@ const R = n => F.rid(n), T = n => F.tx(n);
     });
     m.done();
   }
+  // ═══ 13 · a sheet save that would put the Right on a sheet facing the Left's way ═══
+  {
+    const m = mount({ orders: [{ rid: R(17), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', null] }] }], tracked: [] });
+    const [L, Rr] = m.idsOf(R(17), T(10), 2), gk = F.groupKey(R(17), T(10));
+    const charm = (id, side, mirror) => ({ id: 'c-' + id, poolId: id, side, mirror, bodyIndex: 0, groupKey: gk, groupSize: 2 });
+    await t('13a the Right (a mirror image in its piece record) added to GF Sheet 1 as a charm that says it is NOT mirrored: refused, nothing written; added as the mirror image: accepted', async () => {
+      const before = JSON.stringify(m.rec('sh-gf1'));
+      const bad = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L, Rr], charms: [charm(L, 'L', false), charm(Rr, 'R', false)] } });
+      assert.equal(bad.status, 409, JSON.stringify(bad)); assert(/GF Sheet 1/.test(bad.error) && /right earring/.test(bad.error) && /other way|wrong way|mirror/.test(bad.error), bad.error);
+      assert.equal(JSON.stringify(m.rec('sh-gf1')), before);
+      const ok = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L, Rr], charms: [charm(L, 'L', false), charm(Rr, 'R', true)] } }); assert(!ok.error, JSON.stringify(ok));
+      assert.deepEqual(m.rec('sh-gf1').poolIds, [L, Rr]);
+    });
+    await t('13b a plain charm (no side, no mirror) and a record without the pair fields save exactly as before', async () => {
+      const ok = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [L, Rr], charms: [{ id: 'c-a', poolId: L }, { id: 'c-b', poolId: Rr }] } }); assert(!ok.error, JSON.stringify(ok));
+    });
+    m.done();
+  }
   const bad = results.filter(r => r[1]);
   console.log(`\npairs-adv-life: ${results.length - bad.length} passed, ${bad.length} failed`);
   process.exit(bad.length ? 1 : 0);

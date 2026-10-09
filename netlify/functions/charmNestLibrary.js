@@ -794,10 +794,17 @@ async function op_putSheet(b) {
     // (poolTakeOff), so the piece is a NEW name here; Release re-pools the row first, which is the only way back. A piece the
     // record already lists is never in question, so a save of a sheet as it stands is never refused by this.
     if (Array.isArray(s.poolIds)) {
-      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [], sideOf = new Map();
-      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", "side", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) { off.push(r.id); sideOf.set(r.id, r.data().side); }
+      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [], sideOf = new Map(), rowOf = new Map();
+      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", "side", "mirror", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) { off.push(r.id); sideOf.set(r.id, r.data().side); } else if (r.exists) rowOf.set(r.id, r.data());
       // (a person reads the sheet as the Library names it and an earring as left or right, not a document id: ADVLIFE 8, 9 Oct 2026)
       const what = id => (sideOf.get(id) === "L" ? "the left earring " : sideOf.get(id) === "R" ? "the right earring " : "piece ") + id, name = Placement.labelOf(Object.assign({}, old, s)) || `Sheet ${s.id}`;
+      /* A piece added to the sheet faces the way its piece record says: the Right is the Left's mirror image, and a charm that says the other way (a page that
+         rebuilt it from the design as drawn) is never saved on a sheet, where it would be cut as the Left. Only a charm and a record that both say (side and a
+         true or false mirror) are compared; no extra read (the rows are the ones read above). (ADVLIFE 14, 9 Oct 2026) */
+      if (!off.length && Array.isArray(doc.charms)) {
+        const way = []; for (const c of doc.charms) { const r = c && c.poolId ? rowOf.get(String(c.poolId)) : null; if (r && (r.side === "L" || r.side === "R") && (c.side === "L" || c.side === "R") && typeof c.mirror === "boolean" && typeof r.mirror === "boolean" && (c.side !== r.side || c.mirror !== r.mirror)) way.push([String(c.poolId), r]); }
+        if (way.length) return { error: `${name} was not saved: ${way.length === 1 ? "the " + (way[0][1].side === "L" ? "left" : "right") + " earring " + way[0][0] : way.length + " earrings (" + way.slice(0, 3).map(w => w[0]).join(", ") + ")"} would be put on it facing the other way from its piece record (${way.length === 1 ? (way[0][1].mirror ? "the mirror image" : "as drawn") : "mirror image or as drawn"}). Reload the page to see the sheet as it is now`, status: 409, wrongWay: way.map(w => w[0]).slice(0, 20) };
+      }
       if (off.length) return { error: `${name} was not saved: it would put back ${off.length === 1 ? what(off[0]) : `${off.length} pieces (${off.slice(0, 3).map(what).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20) };
     }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
