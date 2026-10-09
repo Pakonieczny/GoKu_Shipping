@@ -2435,7 +2435,8 @@ const Master = window.Master = (() => {
       try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry',{charm:{outline:c.outline,members:c.members,bbox:c.bbox,widthPt:c.widthPt,heightPt:c.heightPt}}) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if(!window.CharmNestBackground)G.backView(c, { res: 6, upAngle }); }
       catch (e) { flipOk = false; reasons.push(e.message); }
       const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
-      entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
+      const sym = (() => { try { const Pr = window.CharmNestPair, b = Pr && Pr.bodiesOf ? Pr.bodiesOf(c)[0] : null; return b && Pr.symmetryOf ? Pr.symmetryOf(b).level : undefined; } catch (_) { return undefined; } })();   // does the design look the same in a mirror: the "faces" box in the Master tab is shown only when it does not
+      entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null, ...(sym ? { sym } : {}) });
       if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
       for (const x of c.extraSkus || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
       job.progress = `written ${++n}/${live.length}`; if (job.bar) job.bar.label(`Writing the charm library · ${job.name}`).set(n, live.length); if (n % 5 === 0) render();
@@ -2638,6 +2639,17 @@ const Master = window.Master = (() => {
       const r2 = grid.querySelector("#mRetry"); if (r2) r2.onclick = () => { B.master.error = null; load(true).then(render).catch(() => render()); };
       return;
     }
+    // which way the master draws a design (charm-nest-pair.js facingControl): a Left and a Right earring are mirror images, so the Right is cut turned over; shown only for a design that
+    // is not the same in a mirror (index field sym, or the copy the pool already holds) or one a person already set
+    const heldSym = e => { try { const Pr = window.CharmNestPair, g = Pool.sizeEntry(e, e.sizes ? Object.keys(e.sizes)[0] : null), src = g && g.aiPath && B.pool.sources.get(g.aiPath), c = src && src.charms && src.charms[0], b = c && Pr && Pr.bodiesOf(c)[0]; return b ? Pr.symmetryOf(b).level : ""; } catch (_) { return ""; } };
+    // a design this page has already read keeps the way it was told to face until the page is reloaded: tell the copy it holds (orders made up after this use the new word)
+    const facingLive = (skus, v) => { for (const sku of skus) { const en = entryFor(sku); if (!en) continue; for (const size of en.sizes ? Object.keys(en.sizes) : [null]) { const g = Pool.sizeEntry(en, size), src = g && g.aiPath && B.pool.sources.get(g.aiPath); if (src) for (const c of [].concat(src.charms || [], src.bodies || [])) if (c) { if (v === "") delete c.facing; else c.facing = v; } } } };
+    const facesBox = (e, keys) => {
+      const Pr = window.CharmNestPair, fc = Pr && Pr.facingControl ? Pr.facingControl(e, e.sym ? "" : heldSym(e)) : null;
+      if (!fc || !fc.show) return "";
+      return `<select data-faces="${keys}" title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` +
+        fc.options.map(([v, t]) => `<option value="${v}"${v === fc.value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+    };
     grid.innerHTML = shown.map(d => {
       const e = d.head, keys = esc(d.skus.join("|"));
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
@@ -2652,6 +2664,7 @@ const Master = window.Master = (() => {
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
         `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
+        facesBox(e, keys) +
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}">unblock</button>` : "") +
         (e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>`
                  : sizes.filter(([, s]) => s && s.aiUrl).map(([k, s]) => `<a class="btn ghost xs" href="${s.aiUrl}" target="_blank" rel="noopener">${esc(k)}.ai</a>`).join("")) +
@@ -2662,6 +2675,8 @@ const Master = window.Master = (() => {
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
     // a failed save says so (it used to fail in silence, the typed angle standing in the box as if kept)
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
+    // saved to every SKU that shares the charm, like the up angle; "" gives the word back (the drawing is taken as the Left again). The pieces of orders already made up are not changed.
+    each("faces", (sel, skus) => { let was = sel.value; sel.onchange = () => { const v2 = sel.value, say = v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (cut as drawn on both sides)" : "facing not set (the drawing is the Left)"; sel.disabled = true; patchMany(skus, { facing: v2 === "" ? null : v2 }).then(() => { was = v2; sel.disabled = false; facingLive(skus, v2); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
   return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
