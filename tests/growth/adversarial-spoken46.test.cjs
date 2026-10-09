@@ -221,7 +221,10 @@ async function chosen(h, p, { quantity = 1, engraved = false } = {}) {
   return variant;
 }
 
-function initialNecklace({id=74601,description='The lowercase pendant measures 6–9 mm depending on the letter. The necklace comes on a 14–18 inch chain.',materials=['Sterling Silver','14k Gold Filled','14k Solid Gold']}={}) {
+// Exact public DOM description, kept literal here so this independent fixture
+// covers the real unpunctuated headers and the late metric span.
+const INITIAL_DESCRIPTION="Elevate your personal style with our Lowercase Letter Necklace, a subtle yet elegant accessory that allows you to carry the essence of individuality wherever you go. Meticulously handcrafted in your choice of high-quality materials‚ gold filled, sterling silver, or rose gold filled‚ this necklace features a delicately designed lowercase letter charm, making it the perfect piece for those who appreciate the beauty of simplicity and personalized adornment. - We use the Highest Quality materials from the US and Italy. - Your purchase will come packaged in a lovely Jewelry Box ----------------------------------- O R D E R ‚Ä¢ D E T A I L S 6 - 9mm lowercase letter pendant (depending on letter) Available necklace lengths are 14 - 18 inches ------------------------------------ P E R S O N A L I Z E Y O U R O R D E R Custom Back Engraving available, please leave us a Personalization note Not sure exactly what size to order? Fine tune the fit with an extender! ------------------------------------ P A C K A G I N G Your purchase will come beautifully packaged. If you are ordering for a gift and would like each piece to be packaged separately please let me know. If this purchase is a gift, and you would like us to include a handwritten message, leave a note in the \"gift message\" box at checkout. ------------------------------------ E X P E D I T E D S H I P P I N G You will be able to choose faster shipping options in the drop down menu when you check out. Ship times do NOT include production times (1-3 business days). However, if you select expedited shipping, we will try to get your order done faster. ------------------------------------ E X P L O R E O U R S H O P Don't forget to check out the rest of our shop! We specialize in making handmade custom jewelry for every occasion. We take pride in making sure each order is made exactly to the customers specifications. We love collaborating with our customers to create special and unique pieces for themselves and their loved ones. Please don't hesitate to contact us with any questions you have. Happy Shopping :)";
+function initialNecklace({id=74601,description=INITIAL_DESCRIPTION,materials=['Sterling Silver','14k Gold Filled','14k Solid Gold']}={}) {
   const p=product(id,'Lowercase Initial Necklace','initial','necklace',materials);
   p.handle='lowercase-initial';p.url='https://britesjewelry.com/products/lowercase-initial';p.description=description;
   const lengths=['14 inch','16 inch','18 inch','20 inch'],words=['None','Engraved'];
@@ -244,12 +247,16 @@ for(const order of ['commit-before-final','final-before-commit','final-before-st
   const before=clone(h.cart());h.emit({type:'conversation.item.input_audio_transcription.completed',item_id:h.lastInput.itemId,transcript:'Select None then set quantity to 2 then add this to my cart'});await settle();assert.deepEqual(h.cart(),before,'A late duplicate native final cannot add twice');
 });
 
-for(const phrase of ['What are the dimensions?','How big is the pendant?','What is the pendant size?'])test('native ordinary dimensions answer gives a brief variable pendant measurement: '+phrase,async t=>{
+for(const phrase of ['What are the dimensions?','How big is the pendant?','What is the pendant size?','How big is the letter pendant?'])test('native ordinary dimensions answer gives a brief variable pendant measurement: '+phrase,async t=>{
   const p=initialNecklace(),h=await fixture(t,{rows:[p],nativeVoice:true});await h.open(p);const before=clone(h.store.snapshot().productControls);
   const r=await h.say(phrase);assert.equal(r.ok,true,JSON.stringify(r));const reply=shortReply(r,30);
   assert.match(reply,/6\s*[–-]\s*9\s*mm/i);assert.match(reply,/depending on (?:the )?letter/i);assert.doesNotMatch(reply,/Metal Choice|Engraving|shipping|tax|prices?|width|height/i,'A size answer must not invent axes or enumerate unrelated metal and engraving controls');
   if(phrase==='What are the dimensions?')assert.doesNotMatch(reply,/14\s*[–-]\s*18\s*inch/i,'A broad size answer must not quote an outdated chain range alongside the actual 20-inch choice');
   else assert.doesNotMatch(reply,/\b(?:14|16|18|20)\s*(?:inch|inches)/i,'An exact pendant question must retain only the pendant measurement');
+  if(phrase==='How big is the letter pendant?')for(const axis of ['width','diameter']){
+    const unknown=await h.say('What is the '+axis+' of the letter pendant?');assert.equal(unknown.ok,true,JSON.stringify(unknown));const wording=shortReply(unknown,30);
+    assert.match(wording,new RegExp('do not confirm.*'+axis,'i'),'An unlabelled variable size never establishes the pendant '+axis);assert.doesNotMatch(wording,/6\s*[–-]\s*9|\b(?:14|16|18|20)\s*(?:inch|inches)/i);assert.equal(h.responses().at(-1).response.tool_choice,'none');
+  }
   assert.deepEqual(clone(h.store.snapshot().productControls),before);assert.deepEqual(h.cart(),[]);assert.equal(h.responses().at(-1).response.tool_choice,'none');
 });
 
@@ -317,4 +324,25 @@ test('native actual two-karat ambiguity cues once for that input and never choos
 test('native ordinary inquiry, unknown option and cancellation never borrow the true-ambiguity face cue',async t=>{
   const p=initialNecklace(),h=await fixture(t,{rows:[p],nativeVoice:true});await h.open(p);const before=clone(h.store.snapshot().productControls);
   for(const words of ['How big is the pendant?','What chain lengths can I choose?','Select 17 inches','Select Platinum','No']){await h.say(words);assert.equal(h.avatarCalls.filter(([method,value])=>method==='cue'&&value==='ambiguity').length,0,words+' does not contain competing exact published choices');assert.deepEqual(clone(h.store.snapshot().productControls),before);assert.deepEqual(h.cart(),[]);}
+});
+
+test('native pendant facts never borrow packaging, a subcomponent or a negated size as a measurement',async t=>{
+  const narrations=[];
+  for(const description of ['PACKAGING: The jewelry box measures 10 mm and holds a charm.','PACKAGING: A 10 mm charm holder is included.','The 4 mm hole in the pendant is available.','Not a 9 mm charm. The pendant dimensions are not published.','The pendant is not 9 mm wide.','The pendant does not measure 10 mm wide.']){
+    const p=initialNecklace({description}),h=await fixture(t,{rows:[p],nativeVoice:true});await h.open(p);const before=clone(h.store.snapshot().productControls);
+    const r=await h.say('How big is the pendant?');assert.equal(r.ok,true,JSON.stringify(r));const reply=shortReply(r,30);narrations.push({description,reply});
+    assert.deepEqual(clone(h.store.snapshot().productControls),before);assert.deepEqual(h.cart(),[]);assert.equal(h.responses().at(-1).response.tool_choice,'none');
+  }
+  assert.ok(narrations.every(({reply})=>/do not confirm.*measurements/i.test(reply)),'Every source explicitly leaves pendant measurements unknown: '+JSON.stringify(narrations));
+  assert.ok(narrations.every(({reply})=>!/\b(?:4|9|10)\s*mm\b/i.test(reply)),'A box, holder, hole or negated number never establishes pendant size: '+JSON.stringify(narrations));
+});
+
+test('native explicit width and height retain their published metric values without inventing a diameter',async t=>{
+  const p=initialNecklace({description:'A 12 mm high pendant with an 18 mm width.'}),h=await fixture(t,{rows:[p],nativeVoice:true});await h.open(p);const before=clone(h.store.snapshot().productControls);
+  for(const [question,axis,value,other] of [['What is the width of the pendant?','width|wide',18,12],['What is the height of the pendant?','height|high',12,18]]){
+    const r=await h.say(question);assert.equal(r.ok,true,JSON.stringify(r));const reply=shortReply(r,30);assert.match(reply,new RegExp('\\b'+value+'\\s*mm\\b','i'));assert.match(reply,new RegExp('\\b(?:'+axis+')\\b','i'));assert.doesNotMatch(reply,new RegExp('\\b'+other+'\\s*mm\\b','i'),'Only the requested axis supplies this answer');assert.equal(h.responses().at(-1).response.tool_choice,'none');
+  }
+  const dimensions=await h.say('What are the dimensions of the pendant?');assert.equal(dimensions.ok,true,JSON.stringify(dimensions));const both=shortReply(dimensions,30);assert.match(both,/12\s*mm\s+(?:high|in height)|height.{0,12}12\s*mm/i);assert.match(both,/18\s*mm\s+(?:wide|in width|width)|width.{0,12}18\s*mm/i);
+  const missing=await h.say('What is the diameter of the pendant?');assert.equal(missing.ok,true,JSON.stringify(missing));const unknown=shortReply(missing,30);assert.match(unknown,/do not confirm.*diameter/i);assert.doesNotMatch(unknown,/\b(?:12|18)\s*mm\b/i);
+  assert.deepEqual(clone(h.store.snapshot().productControls),before);assert.deepEqual(h.cart(),[]);assert.equal(h.responses().at(-1).response.tool_choice,'none');
 });

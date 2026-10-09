@@ -52,6 +52,10 @@ test('native charm-size answer uses the published 6–9mm letter size and exclud
   const f=await fixture(t);await openInitial(f);const before=clone(f.store.snapshot()),answer=await f.say('How big is the letter pendant?');assert.equal(answer.result?.ok,true,JSON.stringify(answer.result));const text=f.lastSpoken();assert.match(text,/6\s*(?:[-–—]|to)\s*9\s*(?:mm|millimet)/i);assert.match(text,/letter|pendant/i);assert.doesNotMatch(text,/\b(?:inch|inches|Metal Choice|Gold Filled|Engraved)\b/i);shopperReply(text,{maximum:40});assert.deepEqual(clone(f.store.snapshot()),before);f.assertNativeOnly();
 });
 
+test('native generic charm-size question extracts the literal measurement from the exact published spaced-header description',async t=>{
+  const f=await fixture(t);await openInitial(f);const before=clone(f.store.snapshot()),answer=await f.say('How big is the charm?');assert.equal(answer.result?.ok,true,JSON.stringify(answer.result));const text=f.lastSpoken();assert.match(text,/6\s*(?:[-–—]|to)\s*9\s*(?:mm|millimet)/i);assert.match(text,/charm|pendant|letter/i);assert.doesNotMatch(text,/\b(?:inch|inches|Metal Choice|Gold Filled|Engraved)\b|\bO\s+R\s+D\s+E\s+R\b|\bP\s+A\s+C\s+K\s+A\s+G\s+I\s+N\s+G\b|\bS\s+H\s+I\s+P\s+P\s+I\s+N\s+G\b/i);shopperReply(text,{maximum:40});assert.deepEqual(clone(f.store.snapshot()),before);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});
+
 test('native available necklace-length answer lists actual 14,16,18,20 choices without every metal or engraving combination',async t=>{
   const f=await fixture(t);await openInitial(f);const before=clone(f.store.snapshot()),answer=await f.say('What necklace lengths can I choose?');assert.equal(answer.result?.ok,true,JSON.stringify(answer.result));const text=f.lastSpoken();for(const length of [14,16,18,20])assert.match(text,new RegExp('\\b'+length+'\\b'));assert.match(text,/inch/i);assert.doesNotMatch(text,/Sterling|Gold Filled|Solid Gold|Engraved|None|engraving/i);shopperReply(text,{maximum:40});assert.deepEqual(clone(f.store.snapshot()),before);f.assertNativeOnly();
 });

@@ -478,22 +478,36 @@
       return group.name+': '+values.join(', ')+'.';
     }).join(' ');
   }
-  function measurementReply(dimensions,component){
+  var METRIC_COMPONENT_MEASUREMENT=/\b(\d+(?:\.\d+|\/\d+)?\s*(?:[-–—]\s*\d+(?:\.\d+|\/\d+)?)?\s*(?:mm|cm|millimet(?:er|re)s?|centimet(?:er|re)s?))\s+((?:[a-z-]+\s+){0,5})(charm|pendant|disc|disk|hoop|huggie|stud)\b(?:\s*\(([^)]{0,60})\))?/i;
+  function negatedMeasurement(sentence,index){
+    var prefix=sentence.slice(0,index).split(/[.!?;:\n]/).at(-1).slice(-80);
+    return /\b(?:not|no|never|without|isn['’]?t|aren['’]?t|doesn['’]?t)\b/i.test(prefix);
+  }
+  function isComponentMeasurement(match,sentence){
+    // A box that "holds a charm" and a "charm holder" measure packaging,
+    // not the jewelry. Keep the unit attached directly to its component.
+    return !negatedMeasurement(sentence,match.index)&&!/\b(?:chains?|necklaces?|shipping|packages?|packaging|box(?:es)?|pouches?|holders?|holds?|contains?|and|with|for|to|from|in|on|of|inside)\b/i.test(match[2])&&!/^\s*(?:holders?|box(?:es)?|pouches?|packag(?:e|ing))\b/i.test(sentence.slice(match.index+match[0].length));
+  }
+  function measurementReply(dimensions,component,requestedAxes){
     return dimensions.map(function(sentence){
       // Keep a literal measurement clause, never surrounding listing headers,
       // packaging or shipping copy. A general pendant size is not a diameter.
-      var after=sentence.match(/\b(\d+(?:\.\d+|\/\d+)?\s*(?:[-–—]\s*\d+(?:\.\d+|\/\d+)?)?\s*(?:mm|cm|millimet(?:er|re)s?|centimet(?:er|re)s?))\s+((?:[a-z-]+\s+){0,5})(charm|pendant|disc|disk|hoop|huggie|stud)\b(?:\s*\(([^)]{0,60})\))?/i);
-      if(after&&!/\b(?:chain|necklace|shipping|package)\b/i.test(after[2])){
+      var axisNames={wide:'width',width:'width',high:'height',tall:'height',height:'height',diameter:'diameter',thick:'thickness',thickness:'thickness',long:'length',length:'length'},label=component?component.name:'piece';
+      var named=Array.from(sentence.matchAll(/\b(\d+(?:\.\d+|\/\d+)?\s*(?:[-–—]\s*\d+(?:\.\d+|\/\d+)?)?\s*(?:mm|cm|millimet(?:er|re)s?|centimet(?:er|re)s?|inch(?:es)?|["″]))\s*(?:in\s+)?(wide|width|high|height|tall|diameter|thick|thickness|long|length)\b/gi)).filter(function(match){return !negatedMeasurement(sentence,match.index)&&(!requestedAxes.length||requestedAxes.some(function(axis){return axis.name===axisNames[match[2].toLowerCase()];}));});
+      if(named.length)return named.map(function(match){return 'The '+label+'\u2019s '+axisNames[match[2].toLowerCase()]+' is '+match[1].replace(/\s*[-–—]\s*/g,'–').replace(/(\d)(mm|cm)\b/i,'$1 $2')+'.';});
+      var after=sentence.match(METRIC_COMPONENT_MEASUREMENT);
+      if(after&&isComponentMeasurement(after,sentence)&&!/\b(?:width|wide|height|high|tall|diameter|thickness|thick|length|long)\b/i.test(sentence)){
         var label=component?component.name:after[3].toLowerCase(),size=after[1].replace(/\s*[-–—]\s*/g,'–').replace(/(\d)(mm|cm)\b/i,'$1 $2'),qualifier=after[4]&&/^depending on (?:the )?letter$/i.test(after[4].trim())?', depending on the letter':'';
         return 'The '+label+' is '+size+qualifier+'.';
       }
       var start=sentence.search(/\b(?:the\s+)?(?:charm|pendant|disc|disk|chain|necklace|hoop|huggie|stud)\b/i);
+      if(after&&isComponentMeasurement(after,sentence))start=Math.min(start<0?after.index:start,after.index);
       var clause=start>=0?sentence.slice(start):sentence;
-      var end=clause.search(/\b(?:available necklace|packaging|shipping|personalize|your purchase|your order|jewelry box)\b|[-–—]{3,}/i);
+      var end=clause.search(/\b(?:available necklace|packaging|shipping|personalize|your purchase|your order|jewelry box|(?:and\s+)?(?:comes|arrives|is\s+shipped)\s+(?:in|with))\b|[-–—]{3,}/i);
       if(end>=0)clause=clause.slice(0,end);
       clause=clause.trim();
       return clause&&clause.length<=180&&/\d/.test(clause)?clause.replace(/[.!?]+$/,'')+'.':'';
-    }).filter(Boolean).filter(function(value,index,all){return all.indexOf(value)===index;}).slice(0,3).join(' ');
+    }).flat().filter(Boolean).filter(function(value,index,all){return all.indexOf(value)===index;}).slice(0,3).join(' ');
   }
   function productMeasurements(facts,text){
     var question=String(text||'').normalize('NFKC').toLowerCase();
@@ -503,8 +517,13 @@
     // Keep measurements attached to their published component and axis. A
     // chain length never establishes charm width, even in one mixed sentence.
     var split=/;\s*|,\s*(?:on|with)\s+|\s+(?:on|attached to|hanging from|and|with|while|plus)\s+(?=(?:(?:the|an?|included)\s+)?(?:\d+(?:\.\d+)?\s*(?:inches?|mm|cm)\s+)?(?:chains?|necklaces?|hoops?|huggies?|charms?|pendants?|discs?|disks?)\b)|\s+(?=Available\s+(?:chains?|necklaces?)\s+lengths?\b)/i;
-    var componentDimensions=(Array.isArray(facts.dimensions)?facts.dimensions:[]).flatMap(function(sentence){return sentence.split(split);}).map(function(sentence){return sentence.trim();}).filter(function(sentence){
-      if(!/\d+(?:\.\d+|\/\d+)?\s*(?:mm|cm|millimet(?:er|re)s?|centimet(?:er|re)s?|inch(?:es)?|grams?|oz|["″])/i.test(sentence))return false;
+    // Published descriptions can have spaced headings and no sentence break
+    // before a size. Extract only literal metric/component spans before the
+    // dimension snippets are shortened; never speak the surrounding prose.
+    var publishedDimensions=Array.isArray(facts.dimensions)?facts.dimensions:[],description=String(facts.description||'').slice(0,2400),descriptionSpans=Array.from(description.matchAll(new RegExp(METRIC_COMPONENT_MEASUREMENT.source,'gi'))).filter(function(match){return isComponentMeasurement(match,description);}).map(function(match){return match[0];});
+    var componentDimensions=publishedDimensions.concat(descriptionSpans).flatMap(function(sentence){return sentence.split(split);}).map(function(sentence){return sentence.trim();}).filter(function(sentence){
+      var unitAt=sentence.search(/\d+(?:\.\d+|\/\d+)?\s*(?:mm|cm|millimet(?:er|re)s?|centimet(?:er|re)s?|inch(?:es)?|grams?|oz|["″])/i),after=sentence.match(METRIC_COMPONENT_MEASUREMENT);
+      if(unitAt<0||negatedMeasurement(sentence,unitAt)||after&&!isComponentMeasurement(after,sentence)||!after&&/\b(?:shipping|packages?|packaging|box(?:es)?|pouches?|holders?)\b/i.test(sentence.slice(0,unitAt)))return false;
       if(component&&(!component.pattern.test(sentence)||components.some(function(other){return other!==component&&other.pattern.test(sentence);})))return false;
       return true;
     });
@@ -517,7 +536,7 @@
     // an older chain range. Retain independent pendant measurements.
     if(optionGroups.some(function(group){return /length/i.test(group.name)&&/chain|necklace/i.test(group.name);}))dimensions=dimensions.filter(function(sentence){return !/\b(?:chain|necklace)\b/i.test(sentence)||!/\d\s*(?:inch(?:es)?|["″])/i.test(sentence);});
     var unknown=unknownAxes.length||!dimensions.length&&(broad||!optionGroups.length)?'The published details do not confirm the '+requested+'. I can help you ask the studio for the exact measurement.':'';
-    var summary=measurementReply(dimensions,component);
+    var summary=measurementReply(dimensions,component,requestedAxes);
     return {dimensions:dimensions,optionGroups:optionGroups,unknown:unknown,summary:summary,reply:[summary,optionReply(optionGroups,broad||wantsSize),unknown].filter(Boolean).join(' ')};
   }
   return Object.freeze({ create: create, productMeasurements: productMeasurements, questionOptions:questionOptions, optionReply:optionReply });
