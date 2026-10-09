@@ -10,9 +10,9 @@ const root = path.join(__dirname, '../..');
 const STRICT = !!process.env.ADV_STRICT;
 const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 let passed = 0; const open = [];
-const ok = (name, fn) => { try { fn(); passed++; console.log('ok    ' + name); } catch (e) { console.error('FAIL  ' + name + '\n' + (e && e.stack || e)); process.exitCode = 1; } };
-/** An open finding: strict mode fails when `fn` throws; otherwise the failure is listed as OPEN (and a pass is celebrated). */
 const later = [];
+const ok = (name, fn) => { const good = () => { passed++; console.log('ok    ' + name); }, bad = e => { console.error('FAIL  ' + name + '\n' + (e && e.stack || e)); process.exitCode = 1; }; try { const r = fn(); if (r && typeof r.then === 'function') later.push(r.then(good, bad)); else good(); } catch (e) { bad(e); } };
+/** An open finding: strict mode fails when `fn` throws; otherwise the failure is listed as OPEN (and a pass is celebrated). */
 const finding = (id, name, fn) => {
   const good = () => { passed++; console.log('ok    [finding ' + id + ' settled] ' + name); };
   const bad = e => { if (STRICT) { console.error('FAIL  [finding ' + id + '] ' + name + '\n' + (e && e.message || e)); process.exitCode = 1; } else { open.push(id); console.log('OPEN  [finding ' + id + '] ' + name + '\n        ' + String(e && e.message || e).split('\n')[0]); } };
@@ -89,11 +89,11 @@ finding(2, 'a saved copy of a plain quantity-2 line stays on its top-up sheet wh
   assert.deepEqual(sh.placements.map(p => p.id), ['c1', 'c3'], 'saved copy lifted off: ' + JSON.stringify(sh.placements.map(p => p.id)));
 });
 
-/* ── finding 3: two stacked bars of different ink are not a Left / Right pair ───────────────────────────────────────────────────────── */
+/* ── finding 3 (fixed): two stacked bars of different ink are not a Left / Right pair ───────────────────────────────────────────────────────── */
 const Pair = require(path.join(root, 'charm-nest-pair.js'));
 const rect = (x0, y0, x1, y1, extra) => Object.assign({ kind: 'path', closed: true, stroke: true, fill: false, layer: 'CUT', strokeRGB: [0, 0, 0], lwPt: .25, bbox: [x0, y0, x1, y1], subpaths: [[['m', [x0, y0]], ['l', [x1, y0]], ['l', [x1, y1]], ['l', [x0, y1]], ['l', [x0, y0]]]] }, extra || {});
 const eng = (x0, y0, x1, y1, rgb) => Object.assign(rect(x0, y0, x1, y1), { layer: 'ENGRAVE', strokeRGB: rgb || [1, 0, 0] });
-finding(3, 'a master that draws two bars one ABOVE the other (BAR_BRACELET_1646, CUSTOMIZED_6964, GOLD_9976, VERTICAL_BAR_1277) is not read as a mismatched pair by its geometry', () => {
+ok('a master that draws two bars one ABOVE the other (BAR_BRACELET_1646, CUSTOMIZED_6964, GOLD_9976, VERTICAL_BAR_1277) is not read as a mismatched pair by its geometry (finding 3, fixed by PAIRMASTER 338dc247)', () => {
   const top = rect(11, 39, 96, 53), bottom = rect(11, 11, 96, 25), ink = [eng(15, 42, 90, 50), eng(15, 44, 20, 48)];
   const stacked = { outline: top, members: [top, ...ink, bottom], bbox: [11, 11, 96, 53] };
   assert.equal(Pair.isMismatched(stacked), false, 'bodies stacked in one column read as a Left and a Right (isMismatched true)');
@@ -103,8 +103,8 @@ ok('a row of two bodies of one cut shape and different engraving is still a mism
   assert.equal(Pair.isMismatched({ outline: o2, members: [o2, e2, o1, e1], bbox: [0, 0, 41, 26] }), true);
 });
 
-/* ── finding 4: hovering the piece count of a sheet with no pair reads nothing from the cloud ──────────────────────────────────────── */
-finding(4, 'onCountHover (Library / laser cards) does not call OrderPieces.loadSheet for a sheet that holds no pair', async () => {
+/* ── finding 4 (fixed): hovering the piece count of a sheet with no pair reads nothing from the cloud ──────────────────────────────────────── */
+ok('onCountHover (Library / laser cards) does not call OrderPieces.loadSheet for a sheet that holds no pair (finding 4, fixed by PAIRSHEETWIN c2c3ccc4)', async () => {
   const src = read('charm-nest-library.js'), fn = slice(src, 'function onCountHover(e) {', '\n  window.LibraryDone = ') ;
   const calls = []; const readOnce = new Set();
   const win = { PiecePlacement: { sheetWords: () => '' }, OrderPieces: { loadSheet: id => { calls.push(id); return Promise.resolve(true); } } };
