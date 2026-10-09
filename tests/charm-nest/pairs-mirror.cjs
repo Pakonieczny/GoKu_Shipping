@@ -282,6 +282,32 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   const plain = await cuts([place(Object.assign({}, left, { side: undefined }), 80, 100, 0)]);
   ok(plain.length === lefts.length && plain.every(l => !l.subpaths.some(sp => sp.length === 0)), 'G9 the as-drawn piece is written with the same parts as ever');
 
+  // G10 a REAL per-SKU file keeps the master's layers (CUT, ENGRAVE, HATCH) in the form that holds the charm: the mirrored ear goes back into the same layers, part for part
+  {
+    async function layered(w, h, layers) { const Lb = g.PDFLib, d = await Lb.PDFDocument.create(), p = d.addPage([w, h]); p.node.normalize(); const props = {}, refs = []; let o = ''; layers.forEach(([name, ops2], i) => { const ref = d.context.register(d.context.obj({ Type: 'OCG', Name: Lb.PDFString.of(name) })); refs.push(ref); props['L' + i] = ref; o += '/OC /L' + i + ' BDC ' + ops2 + ' EMC\n'; }); p.node.Resources().set(Lb.PDFName.of('Properties'), d.context.obj(props)); p.node.addContentStream(d.context.register(d.context.flateStream(o))); d.catalog.set(Lb.PDFName.of('OCProperties'), d.context.obj({ OCGs: refs, D: { Order: refs, ON: refs } })); return d.save({ useObjectStreams: false }); }
+    const master = await PDF.parseSource(await layered(40, 40, [['CUT', '0 0 0 RG 0.25 w ' + pathOps(THUMB_LEFT, true) + ' S ' + pathOps([[14, 20], [18, 20], [18, 24], [14, 24]], true) + ' S'], ['ENGRAVE', '1 0 0 RG 0.25 w ' + pathOps([[8, 3], [22, 3], [22, 6]], false) + ' S'], ['HATCH', '0 0 1 rg ' + pathOps([[9, 10], [20, 10], [20, 14], [9, 14]], true) + ' f']]), 'master');
+    const c0 = PDF.groupCharms(master).charms[0]; c0.name = 'MITTEN';
+    const per = await PDF.parseSource(await PDF.buildSingleCharm(c0, master), 'perSku'), c = PDF.groupCharms(per).charms[0];
+    const bb = c.bbox, w = bb[2] - bb[0], h = bb[3] - bb[1];
+    Object.assign(c, { id: 'a', sourceId: 's', name: 'DESIGN', side: 'L', centerPt: [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2], strokePt: .5 });
+    const R2 = Object.assign({}, Pair.pieceGeometry(c, { side: 'R', bodyIndex: 0, mirror: true }), { id: 'b', sourceId: 's', name: 'DESIGN', side: 'R' });
+    const W = 2 * w + 80, H = h + 60, bytes = await PDF.buildSheet({ sheet: { wPt: W, hPt: H }, sources: new Map([['s', per]]), placements: [place(c, w / 2 + 20, H / 2, 0), place(R2, w * 1.5 + 60, H / 2, 0)], title: 't' });
+    const sheet = await PDF.parseSource(bytes, 'sheet'), leaves = Ex.leaves(sheet).filter(l => !/^SHEET/.test(l.layer || '')), split = (w / 2 + 20 + w * 1.5 + 60) / 2, mid = l => (l.bbox[0] + l.bbox[2]) / 2;
+    const lay = ls => ls.map(l => l.layer).sort().join();
+    ok(lay(leaves.filter(l => mid(l) < split)) === 'CUT,CUT,ENGRAVE,HATCH' && lay(leaves.filter(l => mid(l) >= split)) === 'CUT,CUT,ENGRAVE,HATCH', 'G10 the Right ear is in the master\'s own layers (cut line and hole on CUT, engraving on ENGRAVE, hatching on HATCH), like the Left: ' + lay(leaves.filter(l => mid(l) >= split)));
+    const dx = Ex.dxf(Ex.productionPaths(sheet), Ex.layerNames(sheet)).text;
+    ok(!/DESIGN Right/.test(dx.split('ENTITIES')[1] || ''), 'G11 and the .dxf puts no part of it on a layer of its own');
+  }
+  // G12 a cut line chained from open strokes is a synthetic outline that is only geometry: the mirrored ear has the same parts, and the laser does not cut it twice
+  {
+    const a = ink([[0, 0], [10, 0], [10, 20]], { index: 1, layer: 'CUT', strokeRGB: [0, 0, 0] }), b2 = ink([[10, 20], [0, 20], [0, 0]], { index: 2, layer: 'CUT', strokeRGB: [0, 0, 0] });
+    const chained = Object.assign(poly([[0, 0], [10, 0], [10, 20], [0, 20]], { index: 3, synthetic: true }), { parts: [a, b2] });
+    const ch = { id: 'c', outline: chained, members: [a, b2], bbox: [0, 0, 10, 20], topIndices: [1, 2], extras: [] }, m2 = Pair.mirrorOf(ch);
+    ok(m2.members.length === 2 && !m2.members.includes(m2.outline) && m2.outline.parts.length === 2 && m2.outline.parts.every(q => m2.members.includes(q)), 'G12 a chained outline stays geometry only in the mirrored charm (its parts are the mirrored members, the outline is not written a second time)');
+    const loose = poly([[0, 0], [10, 0], [10, 20], [0, 20]], { index: 5 }), lc = { id: 'd', outline: loose, members: [], bbox: [0, 0, 10, 20], topIndices: [5], extras: [] };
+    ok(Pair.mirrorOf(lc).members.length === 1, 'G13 an outline that is a path of its own and is not among the members is still written (as before)');
+  }
+
   /* ── H · the Master tab's "faces" box (the real code of charm-nest-bridge.js, cut out and run over fakes) ── */
   {
     const ctl = Pair.facingControl;
