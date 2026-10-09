@@ -1187,6 +1187,10 @@
   }
   /** The operator and AI see the same assembled charm: black cuts, original artwork colours. */
   async function thumbnail(c, size) {
+    // a mismatched pair design (two different bodies under one SKU): both bodies side by side at one scale, Left / Right chips under them
+    // (charm-nest-pair-thumb.js, the one picture of it). Every other charm falls through to the drawing below, unchanged.
+    const PT = root.CharmNestPairThumb, pairCv = PT ? PT.canvasFor({ drawCharm }, c, { size, padPt: 2, bg: "#ece7dc", makeCanvas }) : null;
+    if (pairCv) return pairCv.convertToBlob ? await blobToDataUrl(await pairCv.convertToBlob({ type: "image/png" })) : pairCv.toDataURL("image/png");
     const b = c.bbox, pad = 2;
     const w = b[2] - b[0] + pad * 2, h = b[3] - b[1] + pad * 2, s = size / Math.max(w, h);
     const W = Math.max(8, Math.round(w * s)), H = Math.max(8, Math.round(h * s));
