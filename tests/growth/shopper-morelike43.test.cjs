@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const Voice = require('../../brites-concierge-voice.js');
+const publicOtter = require('./fixtures/otter-guide43.public.json');
 const project = path.resolve(__dirname, '../..');
 const read = name => fs.readFileSync(path.join(project, name), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -33,7 +34,7 @@ function product(id, title, motif, type = 'Earrings') {
     }))
   };
 }
-async function fixture(t, nativeVoice, suppliedRows) {
+async function fixture(t, nativeVoice, suppliedRows, savedPreferences) {
   const rows = suppliedRows || [product(43801, 'Butterfly Cutout Stud Earrings', 'butterfly'), product(43802, 'Butterfly Outline Stud Earrings', 'butterfly'), product(43803, 'Fox Stud Earrings', 'fox'), product(43804, 'Moon Necklace', 'moon', 'Necklace')];
   const errors = [], console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error));
@@ -41,6 +42,7 @@ async function fixture(t, nativeVoice, suppliedRows) {
   const w = dom.window, d = w.document, requests = [], packets = [];
   let client, channel, turn = 0;
   delete d.body.dataset.catalogueSeed;
+  if (savedPreferences) w.sessionStorage.setItem('brites-concierge-v1', JSON.stringify({ preferences: clone(savedPreferences), updatedAt: Date.now() }));
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.HTMLElement.prototype.scrollIntoView = function () {};
   w.scrollTo = () => {};
@@ -161,6 +163,38 @@ for (const nativeVoice of [false, true]) test('More like this uses the current b
   assert.deepEqual(clone(h.store.snapshot()), before);
   assert.deepEqual(h.cart(), bag);
   assert.equal(h.requests.length, reads, 'Warmed matching, typed/native deictics and rejection must cause zero HTTP');
+  assert.deepEqual(h.errors, []);
+});
+
+for (const nativeVoice of [false, true]) test('saved butterfly interests cannot veto exact current otter matching using recorded public facts through ' + (nativeVoice ? 'synthetic native realtime' : 'typed widget'), async t => {
+  // Only the three product records come from the timestamped public capture;
+  // the butterfly bag item and transport are synthetic regression setup.
+  const rows = clone(publicOtter.products).map(p => ({ ...p, description: '', detailState: 'checked', checkedAt: Date.now() })), current = rows[0], butterfly = product(43821, 'Butterfly Stud Earrings', 'butterfly');
+  const preferences = { interests: ['butterfly'], metal: 'silver', budget: 48, budgetCurrency: 'USD' };
+  const h = await fixture(t, nativeVoice, [...rows, butterfly], preferences), ask = text => nativeVoice ? h.say(text) : h.command(text);
+  for (const text of ['Open Butterfly Stud Earrings', 'Select Sterling Silver', 'Set quantity to 2', 'Add this to my cart']) checked(await h.command(text), text);
+  const bag = h.cart(); assert.equal(bag.length, 1); assert.equal(bag[0].quantity, 2);
+  assert.equal((await h.store.execute({ type: 'open', handle: current.handle })).ok, true);
+  await settle(); checked(await h.command('No thanks'), 'mute passive help on the manually opened charm');
+  if (nativeVoice) await h.startVoice();
+  await settle(); const before = clone(h.store.snapshot()), reads = h.requests.length, storedBefore = JSON.parse(h.w.sessionStorage.getItem('brites-concierge-v1')).preferences;
+  assert.deepEqual(storedBefore.interests, ['butterfly'], 'Earlier positive interest is actually restored through the production widget');
+  assert.equal(before.currentHandle, current.handle);
+  assert.equal(before.productControls.variantId, null);
+  assert.deepEqual(before.productControls.selectedOptions, []);
+  assert.equal(before.productControls.quantity, 1);
+  const answer = await ask('What earrings would go with this?'); checked(answer, 'exact current otter matching');
+  assert.deepEqual(clone(answer.recommendations).map(row => [row.handle, row.price, row.currency]), [['eating-otter-stud-earrings', 45, 'USD'], ['sea-otter-charm-stud-earrings-1', 48, 'USD']]);
+  for (const row of answer.recommendations) {
+    const p = rows.find(p => p.handle === row.handle), variant = p.variants[0];
+    assert.equal(row.variantId, variant.id); assert.equal(row.variantTitle, 'Sterling Silver');
+    assert.ok(Number.isFinite(row.checkedAt)); assert.match(row.why, /Shares the otter motif/); assert.match(row.why, /sold separately/);
+  }
+  assert.deepEqual(clone(h.store.snapshot()), before, 'Current literal options, quantity and all host state stay intact');
+  assert.deepEqual(h.cart(), bag);
+  assert.deepEqual(JSON.parse(h.w.sessionStorage.getItem('brites-concierge-v1')).preferences, storedBefore, 'Current motif scope does not mutate shopper preferences');
+  assert.equal(h.requests.length, reads, 'Warmed actual-fact matching needs no catalogue, product or model request');
+  assert.equal(h.root.querySelector('.shopping-help').hidden, false);
   assert.deepEqual(h.errors, []);
 });
 

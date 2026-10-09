@@ -56,7 +56,7 @@ function catalogue() {
   ];
 }
 
-async function fixture(t, { rows = catalogue(), mountWidget = true, partial = false, nativeVoice = false } = {}) {
+async function fixture(t, { rows = catalogue(), mountWidget = true, partial = false, nativeVoice = false, savedPreferences = null } = {}) {
   const errors = [], vc = new VirtualConsole();
   vc.on('jsdomError', error => errors.push(error));
   const dom = new JSDOM(source('concierge-sandbox.html'), { url: 'https://preview.example/concierge-sandbox.html', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: vc });
@@ -95,6 +95,7 @@ async function fixture(t, { rows = catalogue(), mountWidget = true, partial = fa
   await settle(); await w.BritesSandboxStorefront.preloadInventory(); await settle();
   const bridge = Bridge.create({ storefront: () => w.BritesSandboxStorefront });
   if (mountWidget) {
+    if (savedPreferences) w.sessionStorage.setItem('brites-concierge-v1', JSON.stringify({ preferences: savedPreferences, updatedAt: Date.now() }));
     if (nativeVoice) {
       w.HTMLMediaElement.prototype.play = async function () {};
       w.HTMLMediaElement.prototype.pause = function () {};
@@ -650,6 +651,44 @@ test('R01/R03/R04: actual matching request respects necklace type, shows native 
   assert.match(help.textContent, /\b35(?:\.00)?\b/); assert.match(help.textContent, /\bUSD\b/);
   assert.doesNotMatch(help.textContent, /Butterfly Outline Charm/);
   assert.deepEqual(h.cart(), []);
+});
+
+for (const nativeVoice of [false, true]) test('R02/R08: inherited positive motif follows the actual manually opened charm while exact variant and explicit negative preferences remain strict / ' + (nativeVoice ? 'synthetic realtime' : 'typed'), async t => {
+  for (const [scenario, extra, expectMatch] of [['current-motif', {}, true], ['explicit-otter-exclusion', { excludedInterests: ['otter'] }, false], ['explicit-material-exclusion', { excludedMetals: ['gold filled'] }, false], ['native-budget-cap', { budget: 50 }, false]]) {
+    const current = product(43251, 'Sea Otter Necklace Charm', { type: 'Charm', motif: 'otter', silver: 24, gold: 44 }); current.partsOnly = true;
+    const groups = ['Necklace Charm', 'Bracelet Charm']; current.options[1] = { name: 'Charm Type', values: groups };
+    current.variants.forEach((variant, index) => { variant.options[1] = { name: 'Charm Type', value: groups[index % 2] }; variant.title = variant.options.map(option => option.value).join(' / '); });
+    const good = product(43252, 'Eating Otter Stud Earrings', { motif: 'otter', silver: 42, gold: 56 });
+    const deceptive = product(43253, 'Sea Otter Hoop Earrings', { motif: 'otter', silver: 12, gold: 89 });
+    const unavailable = product(43254, 'Sea Otter Huggie Earrings', { motif: 'otter', silver: 18, gold: 45, unavailableGold: true });
+    const foreign = product(43255, 'Sea Otter Stud Earrings Canada', { motif: 'otter', silver: 19, gold: 39, currency: 'CAD' });
+    const preferences = { interests: ['butterfly'], materialQuery: 'gold filled', metal: 'gold', budget: 60, budgetCurrency: 'USD', ...extra };
+    const h = await fixture(t, { rows: [current, good, deceptive, unavailable, foreign], nativeVoice, savedPreferences: preferences });
+    const restored = JSON.parse(h.w.sessionStorage.getItem('brites-concierge-v1')).preferences;
+    assert.deepEqual(restored.interests, ['butterfly'], 'The real widget must load a prior positive theme rather than a convenient neutral fixture');
+    const link = h.d.querySelector('#demo-products [data-product-handle="' + current.handle + '"] a'); assert(link); link.click();
+    for (let n = 0; n < 5; n++) await settle();
+    assert.equal(h.store.snapshot().currentHandle, current.handle);
+    const select = h.d.querySelector('#piece-variant'), quantity = h.d.querySelector('input[aria-label="Quantity of this exact piece"]');
+    select.value = current.variants[1].id; select.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+    quantity.value = '2'; quantity.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+    const added = await h.command('Add this exact piece to my cart'); assert.equal(added.ok, true, JSON.stringify(added)); assert.equal(added.cartChanged, true);
+    const cart = clone(h.cart()); assert.equal(cart.length, 1); assert.equal(cart[0].quantity, 2);
+    if (nativeVoice) await h.startVoice();
+    const before = clone(h.store.snapshot()), count = h.requests.length;
+    const result = await (nativeVoice ? h.say('Show me matching earrings') : h.command('Show me matching earrings'));
+    assert.equal(result.ok, true, scenario + ': ' + JSON.stringify(result));
+    const rows = clone(result.recommendations || []);
+    if (expectMatch) {
+      assert.deepEqual(rows.map(row => row.handle), [good.handle], 'Exact current otter motif wins over a positive historical butterfly theme, while one available native variant must meet every actual preference');
+      assert.equal(rows[0].variantId, good.variants[2].id); assert.equal(rows[0].price, 56); assert.equal(rows[0].currency, 'USD');
+      assert.match(rows[0].variantTitle, /14k Gold Filled/); assert.match(rows[0].why, /Shares the otter motif/); assert.match(rows[0].why, /sold separately/);
+    } else { assert.deepEqual(rows, [], scenario + ' must remain an actual restriction'); assert.match(result.reply, /haven.t found.*matching earrings/i); }
+    assert.deepEqual(clone(h.store.snapshot()), before, scenario + ' preserves manually chosen material/style, quantity and exact current route');
+    assert.deepEqual(h.cart(), cart, scenario + ' preserves the nonempty exact cart');
+    assert.equal(h.requests.length, count, scenario + ' is checked local matching with zero new HTTP');
+    assert.deepEqual(h.errors, []);
+  }
 });
 
 test('R06: actual uncertainty support accepts dismissal without mutation and explicit suggestions can revive it', async t => {

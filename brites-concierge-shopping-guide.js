@@ -321,7 +321,10 @@
         var groups = p.evidence.groups.filter(function (g) { return other.evidence.groups.includes(g); });
         if (kind === 'matching' && !motifs.length) return;
         if (kind === 'alternatives' && p.evidence.motifs.length && !motifs.length && !groups.length) return;
-        if (pref.themes.length && !pref.themes.some(function (theme) { return matchesTheme(other, theme, vocabulary); }) || pref.excludedThemes.some(function (theme) { return matchesTheme(other, theme, vocabulary); })) return;
+        // A manual current design owns exact motif comparisons. Earlier
+        // positive discovery themes still constrain broader fallback designs;
+        // explicit exclusions apply even to a direct current-motif match.
+        if (!motifs.length && pref.themes.length && !pref.themes.some(function (theme) { return matchesTheme(other, theme, vocabulary); }) || pref.excludedThemes.some(function (theme) { return matchesTheme(other, theme, vocabulary); })) return;
         // A single real available variant must meet metal AND budget. Prices
         // from one option can never justify recommending another option.
         var variants = other.variants.filter(function (v) { return v.available && materialMatches(v.material, preferredMaterial) && !pref.excludedMaterials.some(function (m) { return materialMatches(v.material, m); }) && ((pref.max === null && pref.min === null) || budgetCurrency === other.currency && (pref.max === null || v.price <= pref.max) && (pref.min === null || v.price >= pref.min)) && (!comparison || comparison.kind !== 'cheaper' || other.currency === comparison.reference.currency && v.price < comparison.reference.price && (comparison.reference.materialIsPreference || v.material === comparison.reference.material && (!comparison.reference.materialLabel || key(v.options.filter(function (option) { return /metal|material|finish/i.test(option.name); }).map(function (option) { return option.value; }).join(' / ')) === key(comparison.reference.materialLabel)))) && (!comparison || !comparison.requireSmaller || isSmaller(dimensionsFor(other, v), comparison.reference.dimensions)); });

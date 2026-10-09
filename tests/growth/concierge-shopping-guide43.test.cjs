@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const guideAPI = require('../../brites-concierge-shopping-guide.js');
 const bridge = require('../../brites-storefront-bridge.js');
+const publicOtter = require('./fixtures/otter-guide43.public.json');
 const NOW = Date.parse('2026-10-08T22:00:00Z');
 
 // Synthetic public catalogue facts; no shop/provider/account is contacted.
@@ -184,6 +185,59 @@ test('ordinary published charms retain motif pairings and exact option help for 
   guide.updateProducts([current]);
   assert.match(guide.suggest({ context: view(current), message: 'Show me matching earrings' }).reply, /haven’t found checked matching earrings/);
 });
+test('recorded real otter product facts override an earlier positive butterfly theme only within the exact current motif', () => {
+  const preferences = { interests: ['butterfly'], type: 'earrings', metal: 'silver', budget: 48, budgetCurrency: 'USD' }, before = JSON.stringify(preferences);
+  const current = publicOtter.products[0], context = view(current);
+  const guide = guideAPI.create({ products: publicOtter.products, preferences, now: () => publicOtter.capturedAt });
+  guide.dismiss();
+  const answer = guide.suggest({ context, message: 'What earrings would go with this?' });
+  assert.deepEqual(answer.suggestion.products.map(row => [row.handle, row.price, row.currency]), [['eating-otter-stud-earrings', 45, 'USD'], ['sea-otter-charm-stud-earrings-1', 48, 'USD']]);
+  assert.ok(answer.suggestion.products.every(row => /Shares the otter motif/.test(row.why) && /sold separately/.test(row.why)));
+  assert.equal(JSON.stringify(preferences), before);
+  assert.deepEqual(guide.setPreferences(preferences).themes, ['butterfly']);
+  assert.equal(answer.pack.current.id, current.id);
+  assert.equal(context.productControls.variantId, null);
+  assert.deepEqual(context.productControls.selectedOptions, []);
+  const fox = piece(701, 'Fox Necklace'), exact = piece(702, 'Fox Outline Necklace'), butterfly = piece(703, 'Butterfly Necklace'), owl = piece(704, 'Owl Necklace');
+  const alternatives = create([fox, exact, butterfly, owl], { interests: ['butterfly'] });
+  assert.deepEqual(alternatives.prepare(view(fox)).alternatives.map(row => row.id), [exact.id]);
+  alternatives.updateProducts([fox, butterfly, owl]);
+  assert.deepEqual(alternatives.prepare(view(fox)).alternatives.map(row => row.id), [butterfly.id], 'A broader fallback still respects the positive theme');
+});
+test('real-fact stale-theme recovery retains every variant, currency, exclusion, dismissal, freshness and identity guard', () => {
+  const current = publicOtter.products[0], context = view(current), [sea, eating] = publicOtter.products.slice(1);
+  const cases = [
+    { preferences: { budget: 44, budgetCurrency: 'USD' }, expected: [] },
+    { preferences: { budget: 45, budgetCurrency: 'USD' }, expected: [eating.handle] },
+    { preferences: { budget: 100, budgetCurrency: 'CAD' }, expected: [] },
+    { preferences: { metal: 'gold filled', budget: 50, budgetCurrency: 'USD' }, expected: [eating.handle], variantId: eating.variants[1].id },
+    { preferences: { excludedInterests: ['otter'] }, expected: [] },
+    { preferences: { excludedTypes: ['earrings'] }, expected: [] },
+    { preferences: { metal: 'silver', excludedMetals: ['silver'] }, expected: [] },
+    { change: rows => { rows[0].cartHold = true; }, expected: [] },
+    { change: rows => { rows[0].recommendationHold = true; }, expected: [] },
+    { change: rows => { rows[1].recommendationHold = true; }, expected: [eating.handle] },
+    { change: rows => { rows[1].cartHold = true; }, expected: [eating.handle] },
+    { change: rows => { rows[1].variants.forEach(v => { v.available = false; }); }, expected: [eating.handle] },
+    { change: rows => { rows[1].variants.forEach(v => { v.availabilityKnown = false; }); }, expected: [eating.handle] },
+    { change: rows => { rows[1].variantsComplete = false; }, expected: [eating.handle] },
+    { change: rows => { rows[1].checkedAt = publicOtter.capturedAt - 300000; }, expected: [eating.handle] },
+    { change: rows => { rows[1].checkedAt = publicOtter.capturedAt + 60001; }, expected: [eating.handle] },
+    { change: rows => { rows[1].url = 'https://britesjewelry.com/products/another-product'; }, expected: [eating.handle] },
+    { change: rows => { rows[1].variants[1].id = rows[1].variants[0].id; }, expected: [eating.handle] },
+    { dismiss: sea.handle, expected: [eating.handle] },
+    { change: rows => { rows[1].currency = 'CAD'; }, preferences: { budget: 100, budgetCurrency: 'USD' }, expected: [eating.handle] }
+  ];
+  for (const row of cases) {
+    const products = JSON.parse(JSON.stringify(publicOtter.products)), preferences = { interests: ['butterfly'], ...row.preferences };
+    row.change?.(products);
+    const guide = guideAPI.create({ products, preferences, now: () => publicOtter.capturedAt });
+    if (row.dismiss) guide.dismiss({ handle: row.dismiss });
+    const answer = guide.suggest({ context, message: 'Show me matching earrings' });
+    assert.deepEqual(answer.suggestion.products.map(product => product.handle).sort(), row.expected.sort());
+    if (row.variantId) assert.equal(answer.suggestion.products[0].variantId, row.variantId);
+  }
+});
 test('expired, future-dated and incomplete catalogue cannot authorize readiness or availability guidance', () => {
   const p = piece(1, 'Butterfly Necklace'), stale = piece(2, 'Butterfly Earrings', 'Earrings', { checkedAt: NOW - 300000 }), future = piece(3, 'Butterfly Stud Earrings', 'Earrings', { checkedAt: NOW + 60001 }), incomplete = piece(4, 'Butterfly Hoop Earrings', 'Earrings', { variantsComplete: false });
   const guide = create([p, stale, future, incomplete]);
@@ -210,12 +264,14 @@ test('an obsolete motif in a legacy handle cannot override the currently named d
   const p = piece(1, 'Butterfly Necklace'), renamed = { ...piece(2, 'Butterfly Earrings', 'Earrings'), title: 'Cat Earrings' }, actual = piece(3, 'Butterfly Stud Earrings', 'Earrings');
   assert.deepEqual(create([p, renamed, actual]).prepare(view(p)).matching.map(row => row.id), [actual.id]);
 });
-test('stored positive and excluded design preferences remain applicable across listings', () => {
+test('stored positive themes guide fallback designs while exact current motifs retain all explicit exclusions', () => {
   const rows = fixtures(), guide = create(rows, { interests: ['animal'], excludedInterests: ['owl'] });
   const pack = guide.prepare(view(rows[0]));
   assert.ok(pack.alternatives.some(row => row.title === 'Butterfly Disc Necklace'));
   assert.ok(pack.alternatives.every(row => row.title !== 'Owl Necklace' && row.title !== 'Heart Necklace'));
   guide.setPreferences({ interests: ['bunny'] });
+  assert.deepEqual(guide.prepare(view(rows[0])).matching.map(row => row.id).sort(), [rows[1].id, rows[2].id].sort());
+  guide.setPreferences({ interests: ['bunny'], excludedInterests: ['butterfly'] });
   assert.deepEqual(guide.prepare(view(rows[0])).matching, []);
 });
 test('help choosing compares two priced actual materials without selecting either or guessing a length', () => {

@@ -1,0 +1,661 @@
+{
+  "schema": 1,
+  "note": "Recorded public product facts for deterministic regression. Availability/prices are evidence at capture time, not a current-stock claim. Product descriptions, images and nonpublic fields are omitted.",
+  "capturedAt": 1791503702536,
+  "sourceRevision": "346497b3822692577fe81095b67a32e75f3f6e31",
+  "sources": [
+    "https://brites-growth-sandbox.netlify.app/api/growth/product?handle=sea-otter-necklace-charm",
+    "https://brites-growth-sandbox.netlify.app/api/growth/product?handle=sea-otter-charm-stud-earrings-1",
+    "https://brites-growth-sandbox.netlify.app/api/growth/product?handle=eating-otter-stud-earrings"
+  ],
+  "products": [
+    {
+      "id": "gid://shopify/Product/9214853349539",
+      "handle": "sea-otter-necklace-charm",
+      "title": "Sea Otter Necklace Charm",
+      "type": "Charm",
+      "url": "https://britesjewelry.com/products/sea-otter-necklace-charm",
+      "currency": "USD",
+      "partsOnly": true,
+      "options": [
+        {
+          "name": "Metal Choice",
+          "values": [
+            "Sterling Silver",
+            "14k Gold Filled",
+            "14k Rose Gold Filled",
+            "10k Solid Gold",
+            "14k Solid Gold"
+          ]
+        },
+        {
+          "name": "Charm Type",
+          "values": [
+            "Necklace Charm",
+            "Huggie Charm"
+          ]
+        },
+        {
+          "name": "Engraving",
+          "values": [
+            "No",
+            "Yes"
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "id": "gid://shopify/ProductVariant/47952502882467",
+          "numericId": "47952502882467",
+          "title": "Sterling Silver / Necklace Charm / No",
+          "price": 28,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952502915235",
+          "numericId": "47952502915235",
+          "title": "Sterling Silver / Necklace Charm / Yes",
+          "price": 33,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952502948003",
+          "numericId": "47952502948003",
+          "title": "Sterling Silver / Huggie Charm / No",
+          "price": 30,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952502980771",
+          "numericId": "47952502980771",
+          "title": "Sterling Silver / Huggie Charm / Yes",
+          "price": 30,
+          "available": false,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503013539",
+          "numericId": "47952503013539",
+          "title": "14k Gold Filled / Necklace Charm / No",
+          "price": 33,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503046307",
+          "numericId": "47952503046307",
+          "title": "14k Gold Filled / Necklace Charm / Yes",
+          "price": 38,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503079075",
+          "numericId": "47952503079075",
+          "title": "14k Gold Filled / Huggie Charm / No",
+          "price": 36,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503111843",
+          "numericId": "47952503111843",
+          "title": "14k Gold Filled / Huggie Charm / Yes",
+          "price": 36,
+          "available": false,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503144611",
+          "numericId": "47952503144611",
+          "title": "14k Rose Gold Filled / Necklace Charm / No",
+          "price": 35,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Rose Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503177379",
+          "numericId": "47952503177379",
+          "title": "14k Rose Gold Filled / Necklace Charm / Yes",
+          "price": 40,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Rose Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503210147",
+          "numericId": "47952503210147",
+          "title": "14k Rose Gold Filled / Huggie Charm / No",
+          "price": 38,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Rose Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503242915",
+          "numericId": "47952503242915",
+          "title": "14k Rose Gold Filled / Huggie Charm / Yes",
+          "price": 38,
+          "available": false,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Rose Gold Filled"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503275683",
+          "numericId": "47952503275683",
+          "title": "10k Solid Gold / Necklace Charm / No",
+          "price": 131,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "10k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503308451",
+          "numericId": "47952503308451",
+          "title": "10k Solid Gold / Necklace Charm / Yes",
+          "price": 141,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "10k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503341219",
+          "numericId": "47952503341219",
+          "title": "10k Solid Gold / Huggie Charm / No",
+          "price": 123,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "10k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503373987",
+          "numericId": "47952503373987",
+          "title": "10k Solid Gold / Huggie Charm / Yes",
+          "price": 123,
+          "available": false,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "10k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503406755",
+          "numericId": "47952503406755",
+          "title": "14k Solid Gold / Necklace Charm / No",
+          "price": 154,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503439523",
+          "numericId": "47952503439523",
+          "title": "14k Solid Gold / Necklace Charm / Yes",
+          "price": 164,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Necklace Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503472291",
+          "numericId": "47952503472291",
+          "title": "14k Solid Gold / Huggie Charm / No",
+          "price": 145,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "No"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47952503505059",
+          "numericId": "47952503505059",
+          "title": "14k Solid Gold / Huggie Charm / Yes",
+          "price": 145,
+          "available": false,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Solid Gold"
+            },
+            {
+              "name": "Charm Type",
+              "value": "Huggie Charm"
+            },
+            {
+              "name": "Engraving",
+              "value": "Yes"
+            }
+          ]
+        }
+      ],
+      "variantsComplete": true,
+      "checkedAt": 1791503700954,
+      "cartHold": false,
+      "recommendationHold": false,
+      "meaningHold": false
+    },
+    {
+      "id": "gid://shopify/Product/9216006881443",
+      "handle": "sea-otter-charm-stud-earrings-1",
+      "title": "Sea Otter Charm Stud Earrings",
+      "type": "Earrings",
+      "url": "https://britesjewelry.com/products/sea-otter-charm-stud-earrings-1",
+      "currency": "USD",
+      "partsOnly": false,
+      "options": [
+        {
+          "name": "Metal Choice",
+          "values": [
+            "Sterling Silver",
+            "14k Gold Filled",
+            "14k Rose Gold Filled",
+            "10k Solid Gold",
+            "14k Solid Gold"
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "id": "gid://shopify/ProductVariant/47960185929891",
+          "numericId": "47960185929891",
+          "title": "Sterling Silver",
+          "price": 48,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47960185962659",
+          "numericId": "47960185962659",
+          "title": "14k Gold Filled",
+          "price": 52,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Gold Filled"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47960185995427",
+          "numericId": "47960185995427",
+          "title": "14k Rose Gold Filled",
+          "price": 55,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Rose Gold Filled"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47960186028195",
+          "numericId": "47960186028195",
+          "title": "10k Solid Gold",
+          "price": 248,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "10k Solid Gold"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47960186060963",
+          "numericId": "47960186060963",
+          "title": "14k Solid Gold",
+          "price": 298,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Solid Gold"
+            }
+          ]
+        }
+      ],
+      "variantsComplete": true,
+      "checkedAt": 1791503702363,
+      "cartHold": false,
+      "recommendationHold": false,
+      "meaningHold": false
+    },
+    {
+      "id": "gid://shopify/Product/9215941935267",
+      "handle": "eating-otter-stud-earrings",
+      "title": "Eating Otter Stud Earrings",
+      "type": "Earrings",
+      "url": "https://britesjewelry.com/products/eating-otter-stud-earrings",
+      "currency": "USD",
+      "partsOnly": false,
+      "options": [
+        {
+          "name": "Metal Choice",
+          "values": [
+            "Sterling Silver",
+            "14k Gold Filled",
+            "14k Rose Gold Filled",
+            "10k Solid Gold",
+            "14k Solid Gold"
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "id": "gid://shopify/ProductVariant/47959966679203",
+          "numericId": "47959966679203",
+          "title": "Sterling Silver",
+          "price": 45,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "Sterling Silver"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47959966711971",
+          "numericId": "47959966711971",
+          "title": "14k Gold Filled",
+          "price": 49,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Gold Filled"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47959966744739",
+          "numericId": "47959966744739",
+          "title": "14k Rose Gold Filled",
+          "price": 52,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Rose Gold Filled"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47959966777507",
+          "numericId": "47959966777507",
+          "title": "10k Solid Gold",
+          "price": 231,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "10k Solid Gold"
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/ProductVariant/47959966810275",
+          "numericId": "47959966810275",
+          "title": "14k Solid Gold",
+          "price": 277,
+          "available": true,
+          "options": [
+            {
+              "name": "Metal Choice",
+              "value": "14k Solid Gold"
+            }
+          ]
+        }
+      ],
+      "variantsComplete": true,
+      "checkedAt": 1791503701724,
+      "cartHold": false,
+      "recommendationHold": false,
+      "meaningHold": false
+    }
+  ]
+}
