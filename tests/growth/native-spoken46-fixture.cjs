@@ -31,10 +31,12 @@ function publishedProduct(index){
   const description=initial?INITIAL_DESCRIPTION:'The published leaf pendant is sold as a necklace with your selected material and chain length. PACKAGING Your purchase will come beautifully packaged.';
   return {id:'gid://shopify/Product/'+(46000+index),handle,title,type:initial||leaf?'Necklace':index%5===4?'Charm':index%5<2?'Necklace':'Earrings',url:'https://britesjewelry.com/products/'+handle,currency:'USD',image:'https://cdn.shopify.com/'+handle+'.jpg',description,options,variants,variantsComplete:true,checkedAt:Date.now(),detailState:'checked',storeCategories:[categories[index%5]]};
 }
-async function fixture(t,{providerFallback=false}={}){
+async function fixture(t,{providerFallback=false,query='',savedCart=null,holdInventory=false}={}){
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',error=>errors.push(error));
-  const dom=new JSDOM(source['concierge-sandbox.html'],{url:'https://preview.example/concierge-sandbox.html',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});
+  const dom=new JSDOM(source['concierge-sandbox.html'],{url:'https://preview.example/concierge-sandbox.html'+query,runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});
   const w=dom.window,d=w.document,products=Array.from({length:120},(_,i)=>publishedProduct(i)),requests=[],packets=[],controls=[],toolCalls=[],finals=[];
+  if(savedCart){w.sessionStorage.setItem('brites-sandbox-cart',JSON.stringify(savedCart(products)));w.sessionStorage.setItem('brites-sandbox-product-identities',JSON.stringify(products.map(p=>[p.id,p.handle])));}
+  let releaseInventory;const inventoryGate=holdInventory?new Promise(resolve=>releaseInventory=resolve):Promise.resolve();
   let channel,client,turn=0,providerSerial=0,typedAttempts=0,chatAttempts=0,lastReceiptStart=0;
   t.after(async()=>{w.BritesConcierge?.close();await client?.dispose();w.close();assert.deepEqual(errors,[]);assert.equal(typedAttempts,0);assert.equal(chatAttempts,0);});
   w.matchMedia=()=>({matches:false,addEventListener(){}});w.HTMLElement.prototype.scrollIntoView=function(){};w.scrollTo=()=>{};w.HTMLMediaElement.prototype.play=async function(){};w.HTMLMediaElement.prototype.pause=function(){};
@@ -42,6 +44,7 @@ async function fixture(t,{providerFallback=false}={}){
     const url=new URL(raw,w.location.href),body=init.body?JSON.parse(init.body):null;requests.push({url,init,body});let value;
     if(url.pathname==='/api/growth/catalogue')value={live:true,checkedAt:Date.now(),products:products.map(p=>({...p,detailState:'unconfirmed',variants:p.variants.map(v=>({...v,available:false,availabilityKnown:false}))})),pageInfo:{hasNextPage:false,endCursor:null},seed:{schema:1,target:120,minimum:100,loaded:120,complete:true,partial:false,sourcePages:1,categoryCounts:Object.fromEntries(categories.map(c=>[c,24])),unfilledCategories:[]}};
     else if(url.pathname==='/api/growth/inventory'){
+      await inventoryGate;
       const offset=Number(url.searchParams.get('offset')),rows=products.slice(offset,offset+24);value={live:true,checkedAt:Date.now(),products:rows,inventory:{schema:1,total:120,offset,limit:24,loaded:rows.length,detailsLoaded:rows.length,ready:false,partial:false,expiresAt:Date.now()+300000},pageInfo:{hasNextPage:offset+24<120,nextOffset:offset+24<120?offset+24:null}};
     }else if(url.pathname==='/api/growth/product')value={live:true,checkedAt:Date.now(),product:products.find(p=>p.handle===url.searchParams.get('handle'))};
     else if(url.pathname==='/api/concierge-voice')value=body.action==='capabilities'?{enabled:true,nativeAudio:true,publicDemo:true}:body.action==='start'?{sdp:SDP,stopToken:'native-spoken46-synthetic-only',maxDurationMs:120000}:{stopped:true};
@@ -64,7 +67,7 @@ async function fixture(t,{providerFallback=false}={}){
     });return client;
   }};
   w.BritesConciergeAvatar={create(){return {setState(){},setEmotion(){},setVisible(){},setPaused(){},triggerGreeting(){},clearFocus(){},focusProduct(){},setLevel(){},setSpeechSignal(){},clearProduct(){},showProduct(){},cancelPerformance(){},setFloating(){},cue(){}};}};
-  for(const name of ['brites-catalogue-intents.js','brites-concierge-shopping-guide.js','brites-storefront-bridge.js','concierge-sandbox.js'])w.eval(source[name]);await settle();const store=w.BritesSandboxStorefront;await store.preloadInventory();
+  for(const name of ['brites-catalogue-intents.js','brites-concierge-shopping-guide.js','brites-storefront-bridge.js','concierge-sandbox.js'])w.eval(source[name]);await settle();const store=w.BritesSandboxStorefront;if(!holdInventory)await store.preloadInventory();
   const execute=store.execute;w.BritesSandboxStorefront={...store,async execute(action,options){controls.push(clone(action));return execute(action,options);}};
   const script=d.createElement('script');script.src='/brites-concierge.js';script.dataset.sandbox='true';Object.defineProperty(d,'currentScript',{get:()=>script});w.eval(source['brites-concierge.js']);const root=d.querySelector('brites-concierge').shadowRoot;
   w.BritesConcierge.sendShopperCommand=()=>{typedAttempts++;throw Error('Typed shopper handler is forbidden in native acceptance46');};root.querySelector('.composer form').onsubmit=()=>{typedAttempts++;throw Error('Typed composer is forbidden in native acceptance46');};
@@ -76,6 +79,6 @@ async function fixture(t,{providerFallback=false}={}){
   async function tool(name,args){const request=responses().at(-1);assert.ok(request);const id='native46-provider-'+(++providerSerial),callId=id+'-tool';emit({type:'response.created',response:{id,metadata:request.response.metadata}});emit({type:'response.function_call_arguments.done',response_id:id,call_id:callId,name,arguments:JSON.stringify(args)});await settle();const packet=packets.find(p=>p.item?.type==='function_call_output'&&p.item.call_id===callId);assert.ok(packet);const host=toolCalls.find(c=>c.context.callId===callId)?.result,spoken=JSON.parse(packet.item.output);if(['control_storefront','prepare_jewellery_action'].includes(name)||host?.cartChanged===true){assert.ok(Object.keys(spoken).length>0);assert.ok(Object.keys(spoken).every(key=>['reply','customerMessage'].includes(key)),'The native provider must receive only the shopper reply for completed controls: '+Object.keys(spoken).join(', '));}return {host,spoken};}
   const choices=()=>Object.fromEntries((store.snapshot().productControls?.selectedOptions||[]).map(o=>[o.name,o.value])),cart=()=>JSON.parse(w.sessionStorage.getItem('brites-sandbox-cart')||'[]');
   function lastSpoken(){const current=receipts().slice(lastReceiptStart);assert.equal(current.length,1,'this finalized native input must emit exactly one new shopper-only receipt');const text=current[0].item.content[0].text;const value=JSON.parse(text.slice(text.indexOf('{')));assert.deepEqual(Object.keys(value),['reply']);return value.reply;}
-  return {w,d,root,store,products,requests,packets,controls,toolCalls,finals,emit,responses,receipts,begin,commit,final,say,tool,choices,cart,lastSpoken,assertNativeOnly(){assert.equal(typedAttempts,0);assert.equal(chatAttempts,0);},get client(){return client;}};
+  return {w,d,root,store,products,requests,packets,controls,toolCalls,finals,emit,responses,receipts,begin,commit,final,say,tool,choices,cart,lastSpoken,async releaseInventory(){releaseInventory?.();await store.preloadInventory();await settle();},assertNativeOnly(){assert.equal(typedAttempts,0);assert.equal(chatAttempts,0);},get client(){return client;}};
 }
 module.exports={fixture,clone,settle,INITIAL,LEAF};

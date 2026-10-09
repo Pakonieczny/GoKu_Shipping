@@ -88,3 +88,30 @@ test('native change engraving wording reaches the actual cart text field and kee
   assert.equal(f.d.querySelector('[data-bag-engraving]').value,'TEST46');assert.doesNotMatch(JSON.stringify(f.store.snapshot()),/TEST46/);assert.doesNotMatch(f.lastSpoken(),/TEST46/);shopperReply(f.lastSpoken());
   const cleared=await f.say('Clear engraving wording for the first item in my cart');assert.equal(cleared.result?.ok,true,JSON.stringify(cleared.result));assert.equal(f.cart()[0].engravingPreview||'','');assert.equal(f.d.querySelector('[data-bag-engraving]').value,'');assert.equal(f.cart()[0].variant,before.variant);assert.equal(f.cart()[0].quantity,before.quantity);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
 });
+
+test('native restored cart gains its exact controls after delayed product knowledge without reopening the listing',async t=>{
+  const f=await fixture(t,{query:'?cart=1',holdInventory:true,savedCart(products){const p=products[0],v=p.variants.find(v=>v.title==='14k Gold Filled / 18 inch / Engraved');return [{productId:p.id,title:p.title,variantId:v.id.split('/').pop(),variant:v.title,price:v.price,currency:p.currency,quantity:3,variantOptions:v.options,customizationPreview:true,engravingPreview:'SAVED_PRIVATE46'}];}});
+  const before=clone(f.cart()),row=f.d.querySelector('[data-bag-line]'),quantity=row.querySelector('.bag-quantity input');quantity.focus();
+  assert.equal(f.d.querySelectorAll('[data-bag-option]').length,0);await f.releaseInventory();
+  assert.equal(f.store.snapshot().pageKind,'bag');assert.equal(f.w.location.search,'?cart=1');assert.equal(f.d.querySelector('[data-bag-line]'),row);assert.equal(f.d.activeElement,quantity);assert.deepEqual(f.cart(),before);
+  assert.equal(f.d.querySelectorAll('[data-bag-option]').length,3);assert.equal(f.d.querySelector('[data-bag-option="Necklace Length"]').value,'18 inch');assert.equal(f.d.querySelector('[data-bag-engraving]').value,'SAVED_PRIVATE46');assert.equal(f.store.snapshot().bagControls.lines[0].optionGroups.length,3);assert.doesNotMatch(JSON.stringify(f.store.snapshot()),/SAVED_PRIVATE46/);
+  const change=await f.say('Change the engraving wording of the first item in my cart to TEST46');assert.equal(change.result?.ok,true,JSON.stringify(change.result));assert.equal(f.d.querySelector('[data-bag-engraving]').value,'TEST46');assert.equal(f.cart()[0].variant,before[0].variant);assert.equal(f.cart()[0].quantity,3);assert.doesNotMatch(f.lastSpoken(),/TEST46|SAVED_PRIVATE46/);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});
+
+test('native cart knowledge refresh preserves existing controls, focus and an unsaved private engraving draft',async t=>{
+  const f=await fixture(t);await openInitial(f);await chooseInitial(f);await f.say('Select Engraved');await f.say('Add this piece to my cart then open my cart');
+  const before=clone(f.cart()),row=f.d.querySelector('[data-bag-line]'),field=row.querySelector('[data-bag-engraving]'),select=row.querySelector('[data-bag-option="Necklace Length"]');field.value='UNSAVED_PRIVATE46';field.focus();
+  await f.store.preloadInventory({retry:true});await settle();assert.equal(f.d.querySelector('[data-bag-line]'),row);assert.equal(f.d.querySelector('[data-bag-engraving]'),field);assert.equal(f.d.querySelector('[data-bag-option="Necklace Length"]'),select);assert.equal(f.d.activeElement,field);assert.equal(field.value,'UNSAVED_PRIVATE46');assert.deepEqual(f.cart(),before);assert.doesNotMatch(JSON.stringify(f.store.snapshot()),/UNSAVED_PRIVATE46/);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});
+
+test('restored cart does not expose option controls when its saved price differs from fresh product knowledge',async t=>{
+  const f=await fixture(t,{query:'?cart=1',holdInventory:true,savedCart(products){const p=products[0],v=p.variants.find(v=>v.title==='14k Gold Filled / 18 inch / Engraved');return [{productId:p.id,title:p.title,variantId:v.id.split('/').pop(),variant:v.title,price:v.price+1,currency:p.currency,quantity:3,variantOptions:v.options,customizationPreview:true,engravingPreview:'PRICE_PRIVATE46'}];}});
+  const before=clone(f.cart());await f.releaseInventory();assert.equal(f.d.querySelectorAll('[data-bag-option]').length,0);assert.equal(f.d.querySelector('[data-bag-engraving]'),null);assert.equal(f.store.snapshot().bagControls.lines[0].optionGroups,undefined);
+  const change=await f.say('Change the chain length of the first item in my cart to 16 inches');assert.equal(change.result?.ok,false);assert.deepEqual(f.cart(),before);assert.doesNotMatch(JSON.stringify(f.store.snapshot()),/PRICE_PRIVATE46/);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});
+
+test('late cart knowledge respects a native homepage request and makes controls available on the next cart opening',async t=>{
+  const f=await fixture(t,{query:'?cart=1',holdInventory:true,savedCart(products){const p=products[0],v=p.variants.find(v=>v.title==='14k Gold Filled / 16 inch / None');return [{productId:p.id,title:p.title,variantId:v.id.split('/').pop(),variant:v.title,price:v.price,currency:p.currency,quantity:2,variantOptions:v.options}];}});
+  const before=clone(f.cart()),home=await f.say('Take me to the homepage');assert.equal(home.result?.ok,true,JSON.stringify(home.result));await f.releaseInventory();assert.equal(f.store.snapshot().pageKind,'collection');assert.equal(f.w.location.search,'');assert.equal(f.d.querySelector('[data-bag-line]'),null);assert.deepEqual(f.cart(),before);
+  const opened=await f.say('Open my cart');assert.equal(opened.result?.ok,true,JSON.stringify(opened.result));assert.equal(f.d.querySelectorAll('[data-bag-option]').length,3);assert.deepEqual(f.cart(),before);assert.equal(f.toolCalls.length,0);f.assertNativeOnly();
+});

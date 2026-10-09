@@ -401,7 +401,7 @@
       if(same)Object.assign(state.current,product);
       else{const ui=currentProductUI(),initialFocus=focusedElement(),selection=productSelection(),focus=ui&&initialFocus===ui.select?'select':ui&&initialFocus===ui.quantityInput?'quantityInput':ui&&initialFocus===ui.engravingInput?'engravingInput':null;state.current=product;renderProduct(product,selection);if(focus&&!document.hidden&&!initialFocus.isConnected&&focusedElement()===document.body)productUI?.[focus]?.focus({preventScroll:true});}
     }}
-    if(state.pageKind==='catalogue'&&main.querySelector('#demo-products'))drawGrid();publishInventory();publish();return info.total;
+    if(state.pageKind==='catalogue'&&main.querySelector('#demo-products'))drawGrid();refreshBagChoices();publishInventory();publish();return info.total;
   }
   function finishInventoryCycle(cycle){
     if(cycle.pages.size!==Math.ceil(cycle.total/24)||cycle.rows.size!==cycle.total)return false;
@@ -747,7 +747,7 @@
     retireImage();
     saveCurrentView();cancelPending();state.current=null;main.replaceChildren();const page=node('section',null,'bag-page view-enter');page.dataset.storeSection='bag';page.append(node('span','YOUR SESSION-ONLY SELECTION','eyebrow'),node('h1','Your sandbox bag'),node('p','A place to try your choices together. This test bag never places a shop order.','bag-intro'));const cart=readCart(),items=node('div',null,'bag-items');
     if(!cart.length)items.append(node('p','Your sandbox bag is empty.','bag-intro'));
-    const lineIds=cartIdentities(cart);cart.forEach((p,index)=>{const row=node('article',null,'bag-item'),copy=node('div');row.dataset.bagLine=lineIds[index];copy.append(node('h3',p.title),node('p',p.variant),button('Remove this test piece','text-link',()=>void execute({type:'bag-remove',lineId:lineIds[index]})));const label=node('label','Quantity','bag-quantity'),quantity=document.createElement('input');quantity.type='number';quantity.min='1';quantity.max='20';quantity.step='1';quantity.value=String(p.quantity||1);quantity.setAttribute('aria-label','Quantity of '+p.title+' · '+p.variant);quantity.addEventListener('change',async()=>{const result=await execute({type:'bag-quantity',lineId:lineIds[index],quantity:Number(quantity.value)});if(!result.ok&&quantity.isConnected){quantity.value=String(p.quantity||1);status(result.message);}});label.append(quantity);copy.append(label);renderBagChoices(copy,p,lineIds[index],index);const handle=identities.get(p.productId);if(handle)copy.append(button('View its live details','text-link',()=>void openProduct(handle)));row.append(copy,node('p',money(p.price*(p.quantity||1),p.currency)));items.append(row);});
+    const lineIds=cartIdentities(cart);cart.forEach((p,index)=>{const row=node('article',null,'bag-item'),copy=node('div');row.dataset.bagLine=lineIds[index];copy.append(node('h3',p.title),node('p',p.variant),button('Remove this test piece','text-link',()=>void execute({type:'bag-remove',lineId:lineIds[index]})));const label=node('label','Quantity','bag-quantity'),quantity=document.createElement('input');quantity.type='number';quantity.min='1';quantity.max='20';quantity.step='1';quantity.value=String(p.quantity||1);quantity.setAttribute('aria-label','Quantity of '+p.title+' · '+p.variant);quantity.addEventListener('change',async()=>{const result=await execute({type:'bag-quantity',lineId:lineIds[index],quantity:Number(quantity.value)});if(!result.ok&&quantity.isConnected){quantity.value=String(p.quantity||1);status(result.message);}});label.append(quantity);copy.append(label);const choices=node('div');choices.dataset.bagChoices='true';renderBagChoices(choices,p,lineIds[index],index);copy.append(choices);const handle=identities.get(p.productId);if(handle)copy.append(button('View its live details','text-link',()=>void openProduct(handle)));row.append(copy,node('p',money(p.price*(p.quantity||1),p.currency)));items.append(row);});
     page.append(items);const totals=new Map();cart.forEach(p=>totals.set(p.currency,(totals.get(p.currency)||0)+p.price*(p.quantity||1)));totals.forEach((amount,currency)=>{const total=node('div',null,'bag-total');total.append(node('span','Test item subtotal'),node('strong',money(amount,currency)));page.append(total);});if(cart.length)page.append(node('p','Items only. Shipping, taxes, gift services and any discounts are not calculated in this preview.','bag-subtext'));
     const actions=node('div',null,'bag-actions');actions.append(button('Continue exploring','secondary',()=>void execute({type:'search',query:''})));if(cart.length)actions.append(button('Try test checkout →','primary',()=>void execute({type:'checkout'})));page.append(actions);main.append(page);if(full)renderServicePanel(page);commitPage('bag','',push);updateBag();
   }
@@ -765,6 +765,16 @@
       label.append(field,node('span','Your words stay in this test bag. The shop must review engraved work and its final charge before checkout.','option-help'),save,clear);copy.append(label);
     }
     if(item.customizationPreview===true)copy.append(node('p','Local engraving preview · shop customization review is required before checkout.','option-help'));
+  }
+  function refreshBagChoices(){
+    if(state.pageKind!=='bag')return;
+    const cart=readCart(),ids=cartIdentities(cart),rows=[...main.querySelectorAll('[data-bag-line]')];
+    cart.forEach((item,index)=>{
+      const row=rows.find(row=>row.dataset.bagLine===ids[index]),slot=row?.querySelector('[data-bag-choices]');if(!slot||slot.children.length)return;
+      const binding=bagProductControls(item),checked=binding&&checkedInventory.get(binding.p.handle);
+      if(!binding||!checked||checked.expiresAt<=Date.now()||checked.product.id!==item.productId||binding.p.detailState!=='checked'||!binding.v.available||binding.v.availabilityKnown===false)return;
+      renderBagChoices(slot,item,ids[index],index);
+    });
   }
   async function verifyBag(cart,signal,{allowCustomizationPreview=false}={}){
     const requests=new Map();for(const item of cart){const handle=identities.get(item.productId);if(!handle)throw Error('One saved piece needs its product page checked before test checkout.');if(!requests.has(handle))requests.set(handle,get('/api/growth/product?handle='+encodeURIComponent(handle),signal));}
