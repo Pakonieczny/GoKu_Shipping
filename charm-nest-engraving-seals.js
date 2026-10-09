@@ -16,7 +16,10 @@
   function keep(job){const seals=list(job);job.engravingSeals=seals;if(job.row){job.row.engrave ||= {};job.row.engrave.seals=seals;}return seals;}
   function fromEvents(events,row){
     const rid=String(row.order?.receiptId || ''),tx=String(row.line?.transactionId || ''),copies=new Set(row.poolIds || []);
-    return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && (e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId))).map(e=>({id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''}))});
+    // one ear (or one disc) of a pair: only its own pieces' approvals are its seals (the line's transaction id is shared by the other ear: it must not count)
+    const slot=row.parentRow && row.slot ? row.slot : null,lineKey=slot ? row.parentRow.key : null;
+    const mine=e=>slot ? copies.has(e.data?.poolId) || e.type==='engraveChanged' && e.data?.slot===slot && e.lineKey===lineKey : e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId);
+    return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && mine(e)).map(e=>({id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''}))});
   }
   function add(job,how,by,at=Date.now()){keep(job);const seal={id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
   const regularSize=()=>root?.Seal?.BASE_SIZE || 50;

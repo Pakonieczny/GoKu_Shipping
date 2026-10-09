@@ -117,11 +117,13 @@
     }
     ctx.fill('nonzero'); ctx.restore(); return true;
   }
+  /** Which piece of its order a back is, in words: "Left ear", "Right ear", "Disc 2"; nothing for a back of a line that is not cut into slots (an old back has no slot). */
+  const pieceWords = b => { const k = (b && (b.slot || b.side)) || ''; return k === 'L' ? 'Left ear' : k === 'R' ? 'Right ear' : /^D\d+$/.test(k) ? 'Disc ' + k.slice(1) : ''; };
   function markup(backs, stock = {}) {
     if (!backs?.length) return '';
     return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
       const png = previewCache.get(previewKey(b)) || previewUrl(b.preview || b.outputs?.png?.url || b.png);
-      const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}`;
+      const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}${pieceWords(b) ? ' · ' + pieceWords(b) : ''}`;
       const dims = dimensions(b), label = 'Back: ' + (b.text || '') + ' — ' + identity;
       return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-approved-at="${+b.approvedAt || 0}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt=""></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
 
@@ -233,5 +235,5 @@
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
   }
-  return {placedIds, forSheet, markup, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave};
+  return {placedIds, forSheet, markup, pieceWords, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave};
 });

@@ -64,11 +64,15 @@
   function rowFor(ctx) {
     if (ctx.row) return ctx.row;
     const rows = ordersRows();
-    return rows.find(r => r.key === ctx.key) || (ctx.poolId && rows.find(r => (r.poolIds || []).includes(ctx.poolId))) || null;
+    // (a job's own key, "<line key>#L" for the left ear, names its line)
+    const lineKey = String(ctx.key == null ? '' : ctx.key).replace(/#(?:L|R|D\d{1,2})$/, '');
+    return rows.find(r => r.key === ctx.key) || rows.find(r => r.key === lineKey) || (ctx.poolId && rows.find(r => (r.poolIds || []).includes(ctx.poolId))) || null;
   }
-  function jobFor(row, poolId) {
+  function jobFor(row, poolId, key) {
     const E = root.Engrave; if (!E || !E.items) return null;
-    const hit = row && E.jobOf ? tryDo(() => E.jobOf(row), null) : null; if (hit) return hit;
+    // one ear (or one disc) of a pair has its own job: the key it was asked by, else its piece, before the line's
+    if (key && /#(?:L|R|D\d{1,2})$/.test(String(key))) { const own = tryDo(() => E.items().get(String(key)), null); if (own) return own; }
+    const hit = row && E.jobOf ? tryDo(() => (poolId ? E.jobOf(row, poolId) : E.jobOf(row)), null) : null; if (hit) return hit;
     if (!poolId) return null;
     for (const j of E.items().values()) if (!j.editingBack && (j.copies || []).includes(poolId)) return j;
     return null;
@@ -112,7 +116,7 @@
     const row = rowFor(ctx), poolId = ctx.poolId || (row && (row.poolIds || [])[0]) || '';
     if (row && row.loading) return { row, poolId, loading: true, job: null, eng: null };
     if (!root.Engrave || !root.CNEngravingSeals) return { row, poolId, job: null, eng: { kind: 'none' } };
-    const job = jobFor(row, poolId), saved = row && row.engrave || null;
+    const job = jobFor(row, poolId, ctx.key), saved = job && job.slot ? job.row.engrave || null : row && row.engrave || null;
     let eng;
     if (job) eng = fromJob(job, saved, poolId);
     else {
@@ -286,14 +290,14 @@
     const told = r => { if (typeof ctx.changed === 'function') tryDo(() => ctx.changed(r)); };
     const recompute = () => { const any = [...kids.values()].some(k => !k.el.hidden); host.hidden = !any; head.style.display = any ? '' : 'none'; };
     function sync() {
-      const want = (Array.isArray(ctx.pieces) ? ctx.pieces : []).filter(p => p && p.key);
-      const keys = new Set(want.map(p => p.key));
+      const want = (Array.isArray(ctx.pieces) ? ctx.pieces : []).filter(p => p && p.key).map(p => Object.assign({ kid: p.key + '|' + (p.poolId || '') }, p));
+      const keys = new Set(want.map(p => p.kid));
       for (const [k, v] of [...kids]) if (!keys.has(k)) { tryDo(() => v.handle.destroy()); v.el.remove(); kids.delete(k); }
       host.hidden = false;   // (a host we hid ourselves has no box: the cards inside are drawn only where they can be seen)
       let at = head;
       for (const p of want) {
-        let k = kids.get(p.key);
-        if (!k) { k = { el: doc().createElement('div'), handle: null }; kids.set(p.key, k); }
+        let k = kids.get(p.kid);
+        if (!k) { k = { el: doc().createElement('div'), handle: null }; kids.set(p.kid, k); }
         if (at.nextSibling !== k.el) host.insertBefore(k.el, at.nextSibling);
         at = k.el;
         const kctx = Object.assign({}, ctx, { key: p.key, poolId: p.poolId || '', row: p.row, piece: p.key, label: p.label || '', meta: p.meta || '', compact: true, pieces: undefined, sheetEng: p.sheetEng, changed: r => { recompute(); told(r); } });
@@ -319,7 +323,14 @@
     return handle;
   }
   /** The one door: a card for one piece, or (ctx.pieces, more than one) a compact card for each. */
-  const mount = (host, ctx0) => (ctx0 && Array.isArray(ctx0.pieces) && ctx0.pieces.length > 1 ? mountList(host, ctx0) : mountOne(host, ctx0));
+  /** A line cut into slots (a pair's two ears, a necklace's discs) asked for as a whole, with no piece named: a card for each of its jobs. */
+  function withSlots(ctx0) {
+    if (!ctx0 || Array.isArray(ctx0.pieces) || ctx0.poolId) return ctx0;
+    const E = root.Engrave; if (!E || !E.piecesOf) return ctx0;
+    const row = rowFor(ctx0), ps = row ? tryDo(() => E.piecesOf(row), null) : null;
+    return ps && ps.length > 1 ? Object.assign({}, ctx0, { pieces: ps }) : ctx0;
+  }
+  const mount = (host, ctx0) => { const ctx = withSlots(ctx0); return ctx && Array.isArray(ctx.pieces) && ctx.pieces.length > 1 ? mountList(host, ctx) : mountOne(host, ctx); };
   /** The way to Engrave while EngraveLink is not here: the Sheet tab's own (close the window, open that order's engraving). */
   async function fallbackOpen(r, t) {
     const E = root.Engrave; if (!E || !E.restoreView) throw new Error('Engraving is not ready');
