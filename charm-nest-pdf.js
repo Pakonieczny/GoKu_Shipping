@@ -715,6 +715,9 @@
       for (const c of charms) { const d = distToPolys(cx, cy, polysOf(c.outline)); if (d < nd) { nd = d; nearC = c; } }
       if (nearC) { nearC.members.push(s); nearC.bbox = bbUnion(nearC.bbox, s.bbox); nearC.extras.push(s); } else orphans.push(s);
     }
+    // Sample text on a piece (live text and its outlined letters) is not the design: not a member, not in the charm's box.
+    const sampleText = [];
+    if (!opts.keepSampleText) for (const c of charms) for (const t of takeSampleText(c)) sampleText.push(t);
     // Top-level membership: a nested segment brings its whole Do; a Do goes to the charm holding most of its children
     for (const c of charms) {
       const tops = new Map();
@@ -726,7 +729,60 @@
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
-    return { charms, frame, frames, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
+    return { charms, frame, frames, orphans, sampleText, rule, outlineCount: outlines.length, mergedCount: merged.size };
+  }
+
+  /* ═══ 5a′ · sample text ON a piece ════════════════════════════════════
+     A master is also the artists' workbook: beside and ON a charm they type the customer's example words (a belt's
+     "Taekwondo Black Belt 2015", "Aun así nos levantamos", "Summerfest Milwaukee, WI", a "Your Name" placeholder, a jersey
+     name), as live text, usually one text object per letter along a curve, and then outline it and keep the live copy.
+     Both copies were taken for the charm's own detail: the live copy drew as a grey placeholder box (a smear of overlapping
+     boxes along the curve, "blurred writing"), every outlined letter on the CUT layer counted as a through-cut (a belt
+     "had 22 holes", and the hanging-hole search took the letter nearest the edge, so the card said "up 103°"), the boxes
+     stretched the charm's size and silhouette, and the per-SKU file and every sheet carried the text, the letters to be cut.
+     Rule: a live text object is an editable sample or note, never the design; a charm's design that is words is outlined
+     artwork. So a live text object ON a piece, and the outlined letters on the same layer that sit in its box (its twin,
+     closed and letter-sized, never a hoop ring), are sample text and are taken out of the piece. Words that exist only
+     as outlined artwork (a script "Cheer", a monogram) have no live copy, are not touched and keep their text. */
+  /** Why a member of a charm is sample text (a live text object, or the outlined twin of one), or null. */
+  function sampleTextOf(c) {
+    // ON the piece = at least half of the text's own box lies over the outline's box. Text beside it, or only grazing it, is a
+    // callout, a badge, a note or a label: the marker and label rules take those.
+    const ob = c.outline.bbox, onPiece = t => {
+      const b = t.bbox, w = b[2] - b[0], h = b[3] - b[1];
+      if (w <= 1e-6 || h <= 1e-6) return (b[0] + b[2]) / 2 >= ob[0] && (b[0] + b[2]) / 2 <= ob[2] && (b[1] + b[3]) / 2 >= ob[1] && (b[1] + b[3]) / 2 <= ob[3];
+      const iw = Math.min(b[2], ob[2]) - Math.max(b[0], ob[0]), ih = Math.min(b[3], ob[3]) - Math.max(b[1], ob[1]);
+      return iw > 0 && ih > 0 && iw * ih >= 0.5 * w * h;
+    };
+    const live = c.members.filter(m => m.kind === "text" && m.bbox && onPiece(m));
+    const why = new Map();
+    for (const t of live) why.set(t, "live text");
+    if (!live.length) return why;
+    const boxesOf = t => (t.pieces && t.pieces.length > 1 ? t.pieces.map(p => p.bbox).filter(Boolean) : [t.bbox]);
+    for (const m of c.members) {
+      if (m === c.outline || m.kind !== "path" || !m.closed || !m.bbox || why.has(m) || ringLike(m)) continue;
+      const mw = m.bbox[2] - m.bbox[0], mh = m.bbox[3] - m.bbox[1], cx = (m.bbox[0] + m.bbox[2]) / 2, cy = (m.bbox[1] + m.bbox[3]) / 2;
+      twin: for (const t of live) {
+        if ((t.layer || null) !== (m.layer || null)) continue;
+        for (const b of boxesOf(t)) {
+          const h = Math.max(Math.min(b[2] - b[0], b[3] - b[1]), 3), pad = 0.8 * h;     // the box of a rotated string is only its baseline's box
+          if (cx < b[0] - pad || cx > b[2] + pad || cy < b[1] - pad || cy > b[3] + pad) continue;
+          if (Math.max(mw, mh) > 1.6 * h) continue;                                  // letter-sized only
+          why.set(m, "outlined letter of live text"); break twin;
+        }
+      }
+    }
+    return why;
+  }
+  /** Take every sample text out of a charm's members and out of its box; returns what was taken. */
+  function takeSampleText(c) {
+    const why = sampleTextOf(c), taken = [];
+    if (!why.size) return taken;
+    const keep = [];
+    for (const m of c.members) { const w = why.get(m); if (w) { m.sample = w; taken.push({ seg: m, charm: c.index, why: w }); } else keep.push(m); }
+    c.members = keep; c.extras = (c.extras || []).filter(x => keep.includes(x));
+    c.bbox = keep.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
+    return taken;
   }
 
   /** Chain open strokes by coincident endpoints into closed synthetic outlines. */
@@ -767,11 +823,16 @@
   // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
   const SKU_PATTERN_DEFAULT = /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/;
   const SKU_PATTERN_LEGACY = "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$";
+  /** A string an artist writes beside a charm that is not its SKU: a measurement ("11.4 mm", "1 in", "14MM") or a view / option
+      word ("FRONT", "BACK", "FRONT BACK", "OPTION A", "ORIGINAL SIZE"). The SKU pattern is free text, so each such callout was read
+      as the SKU of the charm it stood under: 136 of the 412 labelled charms of the customs master carry only one, and each became a
+      junk library entry ("11.4 MM", "OPTION B", "FRONT") whose card shows the callout's own box, bracket lines and sample text. */
+  const NOT_SKU = /^(?:[\d.,]+\s*(?:mm|cm|in|inch|inches|")|(?:front|back)(?:\s*(?:\/|&|AND)?\s*(?:front|back))?|option(?:\s+[a-z])?|orig(?:inal)?\s*size)$/i;
   /** "BR-CMP-01 · S" → { sku, size } or null. A size rides after " · " (or "•"); with a strict pattern a plain space works too. */
   function parseSkuLabel(str, pattern) {
     pattern = pattern || SKU_PATTERN_DEFAULT;
     const s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
-    if (!s) return null;
+    if (!s || NOT_SKU.test(s)) return null;                                       // a measurement or a view word is a callout, never a SKU
     const sep = /^(.+?)\s*[·•]\s*([A-Z0-9]{1,3})$/.exec(s);
     if (sep && pattern.test(sep[1])) return { sku: sep[1], size: sep[2] };
     if (pattern.test(s)) return { sku: s, size: null };
@@ -1576,5 +1637,5 @@
     return out;
   }
   root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
-    parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+    takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);
