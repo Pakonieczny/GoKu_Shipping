@@ -12423,8 +12423,6 @@ const OrderWin = window.OrderWin = (() => {
     return l.some(p => p.side === "L") && l.some(p => p.side === "R") ? l : [];
   }
   const sideWord = sd => sd === "L" ? "Left" : sd === "R" ? "Right" : "";
-  /** How many pieces a line makes for the order's count: the pieces of a mismatched pair (two for every unit), else its quantity. */
-  const pieceQtyOf = x => { const sd = pairSides(x); return sd.length || Math.max(1, Math.round(+((x.spec && x.spec.quantity) || (x.line && x.line.quantity)) || 1)); };
   /** Each line of the order as a piece: its key, transaction, count, pool pieces and the sheets they are on. */
   function piecesOf(sibs) {
     return sibs.map(x => {
@@ -12440,7 +12438,9 @@ const OrderWin = window.OrderWin = (() => {
       // (a mismatched pair line: its Left and Right are pieces of their own, `sides`: the line stays ONE piece for the pick, the timeline's lanes and the Review card; its rows are drawn per side)
       const sd = pairSides(x), tid = String(x.line.transactionId || "");
       const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, mirror: mine.some(c => c.mirror), pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
-      return Object.assign({ key: x.key, tid, qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
+      // (qty: the pieces the line makes, THE count the intake gives (CharmNestOrders.pieceCountOf: three discs are 3, an old line keeps the pieces it was pooled with); a pair's sides carry their own, so this is for the lines without sides)
+      const pcs = sides ? 0 : (() => { try { return Math.max(1, Math.round(+O.pieceCountOf(x)) || 1); } catch (_) { return 0; } })();
+      return Object.assign({ key: x.key, tid, qty: pcs || Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
         line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {});
     });

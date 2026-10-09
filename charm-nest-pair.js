@@ -546,7 +546,7 @@
     }
     return {
       show: !!set || lv === "directional", mismatched: false, value: set, bodies: null,
-      options: [["", "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]], hint
+      options: [["", !set && readsOneWay(e) ? "reads one way (name)" : "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]], hint   // (a letter, number or script by its name is cut as drawn without a word: the box says so)
     };
   }
 
@@ -568,7 +568,9 @@
       else { members.push(m); unmirrored.push(m); }   // text, image and shading objects have no geometry to reflect: they stay as drawn (sample text is never in a charm; engraving text is placed by the engraving code)
     }
     const out = Object.assign({}, c, { outline: map.get(c.outline) || mirrorSeg(c.outline, cx, true), members, bbox: [2 * cx - c.bbox[2], c.bbox[1], 2 * cx - c.bbox[0], c.bbox[3]], mirrored: !c.mirrored, mirror: !c.mirror, dropIndices: dropped, unmirrored });
-    if (!map.has(c.outline)) out.members = [out.outline].concat(members);
+    // a cut line chained from several open strokes is a synthetic outline that is only geometry (its real parts are members and are written themselves): it is never added as a member, or the laser would cut it twice
+    if (c.outline && Array.isArray(c.outline.parts)) out.outline.parts = c.outline.parts.map(q => map.get(q) || q);
+    else if (!map.has(c.outline)) out.members = [out.outline].concat(members);
     if (Array.isArray(c.extras)) out.extras = c.extras.map(e => map.get(e) || e);
     if (Array.isArray(c.centerPt)) out.centerPt = mx(c.centerPt, cx);
     if (Array.isArray(c.bboxOuter)) out.bboxOuter = [2 * cx - c.bboxOuter[2], c.bboxOuter[1], 2 * cx - c.bboxOuter[0], c.bboxOuter[3]];

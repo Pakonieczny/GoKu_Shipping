@@ -177,6 +177,24 @@ const discArt = (cx, cy, R) => [blob(cx, cy, 2 * R, 2 * R), rectCW(cx - 0.5 * R,
     assert.deepEqual(fillsOnly.map(m => m.layer).sort(), c.members.filter(m => m.fill && !m.stroke).map(m => m.layer).sort(), 'each copy keeps its layer'); assert(fillsOnly.some(m => m.layer === 'ENGRAVE'), 'and that layer is the ENGRAVE layer the master named');
   }
 
+  // 8c · a filled twin of the cut line (WOLF_89694: windows cut in a silhouette, the same shape filled black) stays the silhouette through a hoop weld and the per-SKU file:
+  //      the master and the file it wrote must give the same answer, or the wolf's linework would turn blue in every file that was welded
+  {
+    const f3 = v => (Math.round(v * 1000) / 1000).toString();
+    const ops = subs => subs.map(sp => sp.map(o => o[0] === 'h' ? 'h' : o[0] === 'c' ? [1, 2, 3].map(i => f3(o[i][0]) + ' ' + f3(o[i][1])).join(' ') + ' c' : f3(o[1][0]) + ' ' + f3(o[1][1]) + ' ' + o[0]).join(' ')).join(' ');
+    const sil = [blob(40, 40, 30, 36), blobCW(34, 40, 6, 14), blobCW(46, 40, 6, 14), blobCW(40, 28, 10, 5)], hoop = [blob(40, 62.5, 8, 8)];
+    const content = `/OC /MC0 BDC 0 0 0 rg ${ops(sil)} f* 0 0 0 RG 0.28 w ${ops(sil)} S ${ops(hoop)} S EMC\n`;
+    const doc = await PDFLib.PDFDocument.create(), page = doc.addPage([80, 80]); page.node.normalize();
+    page.node.Resources().set(PDFLib.PDFName.of('Properties'), doc.context.obj({ MC0: doc.context.register(doc.context.obj({ Type: 'OCG', Name: PDFLib.PDFString.of('CUT') })) }));
+    page.node.addContentStream(doc.context.register(doc.context.flateStream(new TextEncoder().encode(content))));
+    const parsed = await P.parseSource(await doc.save(), 'twin-weld'), c = P.groupCharms(parsed, { minPt: 6 }).charms[0];
+    assert(!c.members.some(m => m.hatchBlue), 'in the master the filled twin is the silhouette again');
+    const w = P.integrateRings(c); assert.equal(w.welded, 1, 'the hoop is welded: ' + JSON.stringify(w));
+    const copy = await P.parseSource(await P.buildSingleCharm(Object.assign({}, c, { name: 'twin-weld' }), parsed), 'twin-weld file'), c2 = P.groupCharms(copy, { minPt: 6 }).charms[0];
+    assert(!c2.members.some(m => m.hatchBlue), 'and in the welded per-SKU file it is still the silhouette (not hatching)');
+    assert.equal(draw(c2).fills.filter(f => f === BLUE).length, 0, 'nothing is painted blue');
+  }
+
   // 9 · the stored-picture route draws it blue too (scripts/index-master.cjs; resvg is not a dependency of the test run, so it is only checked when it can be loaded)
   let Resvg = null; for (const base of [path.join(__dirname, '..', '..'), '/tmp/catapply-deps']) { try { Resvg = require(require.resolve('@resvg/resvg-js', { paths: [base] })); break; } catch (_) {} }
   if (Resvg) {
