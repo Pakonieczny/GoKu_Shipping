@@ -155,7 +155,7 @@ async function partB() {
       await page.waitForTimeout(1200);
       return page.evaluate(() => {
         const txt = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : '';
-        return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owPcThumb'), name: txt(r.querySelector('.owPcName')) })),
+        return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), name: txt(r.querySelector('.owPcName')) })),
           head: txt(document.getElementById('owPcSum')?.querySelector('.owPcHd')), sub: txt(document.getElementById('owSub')), sku: txt(document.getElementById('owSku')), meta: txt(document.getElementById('owMeta')), split: txt(document.querySelector('#owNowCard .owSplit')), chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(txt),
           caption: [...document.querySelectorAll('#owPhoto, .owPics figcaption')].map(txt).join('|') };
       });

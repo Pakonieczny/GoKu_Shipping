@@ -12124,7 +12124,7 @@ const OrderWin = window.OrderWin = (() => {
       const sx = sideEach.get(sp.key); if (!sx) return "";
       const lineScope = scope && scope.find(q => q.key === x.p.key), ssp = lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null;
       const dot = `<i class="dot" style="--c:${esc(colorOf(sp.metal))}"></i>`, side = sideWord(sp.side), meta = pieceMeta(sp);
-      const nm = `<span class="owPcThumb" data-pc-thumb="${esc(sp.side)}" data-pc-thumb-line="${esc(x.p.key)}" aria-hidden="true"></span><b>${esc(x.p.name)}</b> · <span class="owPcSide" data-side="${esc(sp.side)}">${esc(side)}</span>${meta ? " · " + esc(meta) : ""}`;
+      const nm = `<span class="owSidePic" data-pc-thumb="${esc(sp.side)}" data-pc-thumb-line="${esc(x.p.key)}" aria-hidden="true"></span><b>${esc(x.p.name)}</b> · <span class="owPcSide" data-side="${esc(sp.side)}">${esc(side)}</span>${meta ? " · " + esc(meta) : ""}`;
       const aria = `${x.p.name} · ${side}${meta ? " · " + meta : ""}`;
       const ctl = i === 0 ? ctls.get(x.p.key) : null, hold = i === 0 ? holds.get(x.p.key) : "";
       const act = ctl ? `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>` : hold ? `<span class="pcAct" data-pc-hold>${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
