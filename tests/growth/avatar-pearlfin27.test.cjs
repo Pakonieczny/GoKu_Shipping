@@ -130,16 +130,16 @@ test('the 2-D fallback retains a closed expressive curve while measured emission
   assert.equal(guide.snapshot().fallback.format,'animated_svg_2d');
 });
 
-test('happy-to-curious shapes interpolate rather than snapping or cycling emotions on an idle timer', async t => {
+test('happy-to-friendly curious shapes interpolate rather than snapping or cycling emotions on an idle timer', async t => {
   const dom=new JSDOM('<div id="mount"></div>',{url:'https://sandbox.example/',pretendToBeVisual:true}),win=dom.window;let clock=1000,onFrame;
   Object.defineProperty(win.performance,'now',{value:()=>clock});win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
   const engine={setMotion(){},render(){},invalidate(){},destroy(){},snapshot(){return {};}};
   const guide=avatar.create({container:win.document.getElementById('mount'),visible:true,greetingOnOpen:false,loadScene:async()=>({createAvatarScene(config){onFrame=config.onFrame;return engine;}})});
   t.after(()=>{guide.destroy();win.close();});await guide.ready;
   const pose=()=>onFrame(clock/1000);guide.setEmotion('celebrate');for(let i=0;i<60;i++){clock+=16;pose();}const happy=pose();
-  guide.setEmotion('curious');const instant=pose();assert.equal(instant.faceBrowTilt,happy.faceBrowTilt,'no instantaneous geometry jump');clock+=60;const middle=pose();assert.ok(middle.faceBrowTilt>instant.faceBrowTilt && middle.faceBrowTilt<avatar.FACE_EXPRESSIONS.curious.faceBrowTilt);
-  for(let i=0;i<60;i++){clock+=16;pose();}const curious=pose();assert.ok(curious.faceBrowTilt>middle.faceBrowTilt);assert.ok(Math.abs(curious.faceBrowTilt-avatar.FACE_EXPRESSIONS.curious.faceBrowTilt)<.001);
-  clock+=5000;const stable=pose();assert.equal(stable.faceExpression,'curious');assert.ok(Math.abs(stable.faceBrowTilt-curious.faceBrowTilt)<.001,'no unrelated emotional loop');
+  guide.setEmotion('curious');const instant=pose();assert.equal(instant.smileCurve,happy.smileCurve,'no instantaneous geometry jump');clock+=60;const middle=pose();assert.ok(middle.smileCurve<instant.smileCurve && middle.smileCurve>avatar.FACE_EXPRESSIONS.curious.smileCurve);
+  for(let i=0;i<60;i++){clock+=16;pose();}const curious=pose();assert.ok(curious.smileCurve<middle.smileCurve);assert.ok(Math.abs(curious.smileCurve-avatar.FACE_EXPRESSIONS.curious.smileCurve)<.001);assert.equal(curious.eyeAsymmetry,0);assert.equal(curious.mouthSkew,0);assert.ok(curious.mouthCurve>0);
+  clock+=5000;const stable=pose();assert.equal(stable.faceExpression,'curious');assert.ok(Math.abs(stable.smileCurve-curious.smileCurve)<.001,'no unrelated emotional loop');
 });
 
 

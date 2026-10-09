@@ -39,8 +39,11 @@ test('normal explanation, reflective repair, inquiry, support and appreciation c
   const h=await rig(t),g=h.guide;g.setState('speaking');const samples=[];
   for(const [kind,intensity] of [['explain',.66],['reflect',.62],['inquiry',.78],['support',.8],['appreciate',.76],['celebrate',.86]]){g.setExpression({kind,intensity});h.advance(800);samples.push({kind,paths:svg(g),pose:g.snapshot().facePose});}
   for(const key of ['brow--left','brow--right','ribbon--left','ribbon--right','smile-signal'])assert.ok(new Set(samples.map(value=>value.paths[key])).size>=5,key+' changes by authored meaning, independent of colour');
-  assert.ok(samples[1].pose.mouthCurve<0,'a repair has an actual closed downcurve');assert.ok(samples[4].pose.mouthCurve>samples[1].pose.mouthCurve+.025,'appreciation is visibly distinct from repair');
-  assert.ok(samples[2].pose.eyeAsymmetry>samples[0].pose.eyeAsymmetry+.06);assert.ok(samples[3].pose.browConcern>samples[0].pose.browConcern+.35);
+  const explanation=samples[0].pose,repair=samples[1].pose,inquiry=samples[2].pose,support=samples[3].pose;
+  assert.ok(repair.mouthCurve>0&&repair.mouthCurve<explanation.mouthCurve-.005,'considerate repair keeps a small softened closed smile');assert.ok(repair.browConcern>explanation.browConcern+.1);assert.ok(repair.mouthTension>explanation.mouthTension+.02);
+  assert.ok(samples[4].pose.mouthCurve>repair.mouthCurve+.025,'appreciation is visibly distinct from repair');
+  for(const pose of [repair,inquiry,support]){assert.ok(Math.abs(pose.faceBrowTilt)<=.01);assert.equal(pose.eyeAsymmetry,0);assert.equal(pose.mouthSkew,0);}
+  assert.ok(inquiry.faceBrowLift>explanation.faceBrowLift+.07);assert.ok(inquiry.eyeRoundness>explanation.eyeRoundness+.02);assert.ok(support.browConcern>explanation.browConcern+.12&&support.browConcern<=.2,'support has bounded considerate concern');
   for(const {pose} of samples){assert.equal(pose.mouthOpen,0);assert.equal(pose.speechEnergy,0);assert.ok(Object.values(pose).every(Number.isFinite));}
 });
 

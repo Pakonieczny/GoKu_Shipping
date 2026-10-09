@@ -74,10 +74,12 @@ test('warmth and delight change smile curvature, cheek facets and both eye silho
   assert.equal(h.engine.snapshot().character.digitalEyes, 2);
 });
 
-test('curiosity makes a readable raised-brow asymmetry while reassurance relaxes it', t => {
+test('idle curiosity stays paired while only a short explicit ambiguity cue can lift one brow', t => {
   const h = harness(t); h.pose({faceExpression: 'curious', faceBrowLift: .38, faceBrowTilt: .75});
   const left = h.get('expression-brow-left'), right = h.get('expression-brow-right');
-  assert.ok(right.position.y - left.position.y > .05);
+  assert.equal(left.position.y, right.position.y, 'legacy curiosity cannot skew READY brows');
+  h.pose({faceExpression: 'curious', faceBrowLift: .38, faceBrowTilt: .18, ambiguityCueActive: true, ambiguityCue: 'confused'});
+  assert.ok(right.position.y - left.position.y > .01 && right.position.y - left.position.y < .03, 'explicit ambiguity remains restrained');
   const curiousRotation = right.rotation.z;
   h.pose({faceExpression: 'reassuring', faceBrowLift: -.16, faceBrowTilt: 0, smileCurve: .32});
   assert.equal(left.position.y, right.position.y); assert.notEqual(right.rotation.z, curiousRotation);

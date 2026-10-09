@@ -36,8 +36,8 @@ test('conversation modes retain distinct graphic expression controls and restrai
   assert.equal(listening.faceExpression, 'attentive');
   assert.equal(thinking.faceExpression, 'curious');
   assert.equal(speaking.faceExpression, 'explaining');
-  assert.ok(thinking.faceBrowLift > listening.faceBrowLift, 'curiosity raises the brow above quiet attention');
-  assert.notEqual(thinking.faceBrowTilt, speaking.faceBrowTilt);
+  assert.ok(thinking.faceBrowLift > avatar.FACE_EXPRESSIONS.neutral.faceBrowLift && thinking.faceBrowLift < listening.faceBrowLift, 'thought is attentive and softer than active listening');
+  assert.equal(thinking.faceBrowTilt, 0); assert.equal(thinking.eyeAsymmetry, 0); assert.notEqual(thinking.faceSignal, speaking.faceSignal);
   assert.ok(speaking.eyeSmile > thinking.eyeSmile);
   assert.equal(listening.speechEnergy, 0); assert.equal(thinking.speechEnergy, 0); assert.equal(speaking.speechEnergy, 1);
   assert.ok(Math.abs(listening.gazeX) < .02);

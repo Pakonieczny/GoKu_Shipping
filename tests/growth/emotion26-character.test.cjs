@@ -36,10 +36,12 @@ test('intensity scales distinct original warm and curious poses without changing
   const sample = intensity => avatar.poseFor({state: 'speaking', level: .8, emotion: 'curious', time: .5, mannerism: 'focus', mannerismElapsed: .5, performance: {...plan, intensity}, mannerismDurationMs: 1800});
   const quiet = sample(0), expressive = sample(1);
   assert.ok(expressive.headRoll > quiet.headRoll); assert.ok(Math.abs(expressive.headRoll) < .09);
-  assert.ok(expressive.faceBrowTilt > quiet.faceBrowTilt + .5); assert.ok(expressive.faceBrowLift > quiet.faceBrowLift + .3); assert.ok(expressive.eyeScaleX < quiet.eyeScaleX);
+  for (const pose of [quiet, expressive]) {assert.equal(pose.faceBrowTilt, 0); assert.equal(pose.eyeAsymmetry, 0); assert.equal(pose.mouthSkew, 0);}
+  assert.ok(expressive.eyeRoundness > quiet.eyeRoundness + .025); assert.ok(expressive.faceSignal > quiet.faceSignal + .2);
+  assert.ok(expressive.faceBrowLift > quiet.faceBrowLift + .25); assert.ok(expressive.eyeScaleX < quiet.eyeScaleX);
   assert.equal(quiet.speechEnergy, expressive.speechEnergy); assert.equal(quiet.mouthOpen, 0); assert.equal(expressive.mouthOpen, 0);
   const warm = avatar.poseFor({emotion: 'warm', performance: {...plan, mood: 'warm'}}), neutral = avatar.poseFor();
-  assert.ok(warm.eyeScaleY > neutral.eyeScaleY && warm.eyeScaleY <= 1.06, 'warmth retains a bounded open eye'); assert.ok(warm.eyeDeformation > 0); assert.ok(warm.smileCurve > neutral.smileCurve); assert.ok(warm.faceBrowTilt < expressive.faceBrowTilt);
+  assert.ok(warm.eyeScaleY > neutral.eyeScaleY && warm.eyeScaleY <= 1.06, 'warmth retains a bounded open eye'); assert.ok(warm.eyeDeformation > 0); assert.ok(warm.smileCurve > neutral.smileCurve); assert.ok(warm.smileCurve > expressive.smileCurve); assert.equal(warm.faceBrowTilt, 0);
 });
 test('controller expires once, restores previous mood and ignores overwritten completion', async t => {
   const f = await fixture(t); f.guide.setEmotion('warm'); assert.equal(f.guide.perform(plan), true);

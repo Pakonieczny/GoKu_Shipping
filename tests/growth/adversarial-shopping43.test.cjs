@@ -561,15 +561,16 @@ for (const nativeVoice of [false, true]) for (const phrase of ['What am I lookin
   assert.equal(result.verified, true); assert.equal(result.live, true); assert.equal(result.cached, true);
   assert(Number.isFinite(result.checkedAt) && Date.now() - result.checkedAt < 300000);
   assert.deepEqual(clone(result.productFacts.sources), [{ title: 'Published Brites product details', url: p.url, checkedAt: result.checkedAt }]);
-  assert.equal(result.productFacts.selectedVariant.id, selected.id); assert.equal(result.productFacts.quantity, 2);
-  assert.match(result.reply, /Butterfly Stud Earrings/);
+  if (!nativeVoice || /much/i.test(phrase)) { assert.equal(result.productFacts.selectedVariant.id, selected.id); assert.equal(result.productFacts.quantity, 2); }
+  else { assert.equal(result.productFacts.selectedVariant, null, 'Unasked selection and price data stay outside native factual grounding'); assert.equal(result.productFacts.quantity, null); }
+  if (!nativeVoice || !/size|much|metals/i.test(phrase)) assert.match(result.reply, /Butterfly Stud Earrings/);
   assert.doesNotMatch(result.reply, /Synthetic server fallback|choose a listing|select a piece|connect with animal|Rabbit Huggie|Elephant Hoop/i, 'Old discovery or another card cannot answer the current-product question');
   if (/size/i.test(phrase)) { assert.match(result.reply, /11\s*mm/); assert.match(result.reply, /7\s*mm/); }
   else if (/much/i.test(phrase)) {
     assert.match(result.reply, /USD 53\.00.*each.*quantity 2.*USD 106\.00/i, 'Quote the actual manual selected unit price and two-item subtotal');
     assert.equal(result.productFacts.selectedVariant.price, 53); assert.equal(result.productFacts.itemTotalPrice, 106);
   } else if (/metals/i.test(phrase)) { assert.match(result.reply, /Sterling Silver/); assert.match(result.reply, /14k Gold Filled/); }
-  else { assert.match(result.reply, /charm measures 11 mm wide and 7 mm high/i, 'An identity answer includes this listing’s checked details'); }
+  else { assert.equal(result.reply, 'This is the '+p.title+'.', 'An identity answer names the checked piece without reciting its description'); }
   assert.deepEqual(clone(h.store.snapshot()), before, 'Factual answers preserve the manually chosen controls, current page, quantity and navigation');
   assert.equal(h.requests.length, count, 'The checked current facts must use zero new model/product HTTP after the manual view is warm');
   assert.deepEqual(h.cart(), []); assert.deepEqual(h.errors, []);
@@ -613,8 +614,8 @@ for (const nativeVoice of [false, true]) for (const kind of ['metal-only', 'hoop
   } else {
     const group = kind === 'hoop-size' ? 'Hoop Size' : 'Necklace Length';
     assert.match(result.reply, new RegExp(group, 'i'), 'Published option sizes must keep their actual axis label');
-    assert.match(result.reply, kind === 'hoop-size' ? /8\.5\s*mm/ : /16\s*inch/i);
-    assert.match(result.reply, kind === 'hoop-size' ? /10\s*mm/ : /18\s*inch/i);
+    assert.match(result.reply, kind === 'hoop-size' ? /8\.5\s*mm/ : /\b16\b/i);
+    assert.match(result.reply, kind === 'hoop-size' ? /10\s*mm/ : /\b18\b.*inches/i);
     assert.doesNotMatch(result.reply, /(?:charm|pendant)\s+(?:is|measures|diameter)\s+(?:8\.5|10|16|18)\s*(?:mm|inch)/i);
     const specific = await ask(kind === 'hoop-size' ? 'What width is the charm?' : 'What width is the pendant?');
     assert.equal(specific.ok, true, JSON.stringify(specific));

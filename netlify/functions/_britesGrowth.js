@@ -955,9 +955,7 @@ async function currentProductFacts({request,service,shopify,context,preferences,
   if(requested.has('options'))lines.push(options.length?'Published options: '+options.map(option=>option.name+' — '+option.values.join(', ')).join('; ')+'.':'No option groups are specified in the checked listing.');
   if(requested.has('dimensions')){
     const measurements=productMeasurements(facts,request.measurementQuestion||'What are its dimensions?');
-    if(measurements.dimensions.length)lines.push('Published measurements: '+measurements.dimensions.join(' '));
-    if(measurements.optionGroups.length)lines.push('Published size choices: '+measurements.optionGroups.map(group=>group.name+' — '+group.values.join(', ')).join('; ')+'.');
-    if(measurements.unknown)lines.push(!dimensions.length?'The checked listing does not specify dimensions or weight. '+measurements.unknown:measurements.unknown);
+    if(measurements.reply)lines.push(measurements.reply);
   }
   if(requested.has('price')){
     if(selected){lines.push('Your selected '+selected.title+' is '+product.currency+' '+selected.price.toFixed(2)+' per item.'+(quantity!=null?' For quantity '+quantity+', the item subtotal is '+product.currency+' '+facts.itemTotalPrice.toFixed(2)+', before shipping and taxes.':''));}

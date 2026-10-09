@@ -195,7 +195,7 @@
     if(new URL(endpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
     let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,expiryNotice=null,disconnectDeadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false,lastError=null,playbackBlocked=false,outputMeterState='waiting';
-    let continuation=null,continuationUsed=false,continuationCount=0,speechRecoveryUsed=false,queuedResponse=null,hostSpeechReply=null,interruptedReply=null,contextSnapshot='',inputMeter=null,outputMeter=null,localMediaClock=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',activePlaybackResponseId='',playbackNotice='',turnPerformanceUsed=false,performanceContinuationUsed=false,finalizedInput=null,finalizedDeadline=null,commitWait=null,responseWait=null,outputWait=null,turnReleased=false;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),completedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set(),responseOutputItems=new Map(),listeningEvents=new Map(),drainedOutputs=new Map();
+    let continuation=null,continuationUsed=false,continuationCount=0,speechRecoveryUsed=false,queuedResponse=null,hostSpeechReply=null,interruptedReply=null,contextSnapshot='',inputMeter=null,outputMeter=null,localMediaClock=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',activePlaybackResponseId='',playbackNotice='',turnPerformanceUsed=false,performanceContinuationUsed=false,finalizedInput=null,finalizedDeadline=null,commitWait=null,responseWait=null,outputWait=null,turnReleased=false;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),completedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set(),responseOutputItems=new Map(),responseFunctionItems=new Map(),listeningEvents=new Map(),drainedOutputs=new Map();
     const eventId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u001f\u007f]/.test(value)?value:'';
     function remember(map,key,value){if(!key||map.has(key))return;map.set(key,value);if(map.size>100)map.delete(map.keys().next().value);}
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
@@ -449,7 +449,7 @@
       if(ctx){ctx.onstatechange=null;try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
       if(dc){dc.onopen=dc.onmessage=dc.onerror=dc.onclose=null;dc.close();dc=null;}
       if(pc){pc.ontrack=pc.onconnectionstatechange=null;pc.close();pc=null;}
-      continuation=null;continuationUsed=false;continuationCount=0;speechRecoveryUsed=false;queuedResponse=null;hostSpeechReply=interruptedReply=null;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=turnReleased=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;finalizedInput=null;finalizedDeadline=null;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();completedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();drainedOutputs.clear();notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
+      continuation=null;continuationUsed=false;continuationCount=0;speechRecoveryUsed=false;queuedResponse=null;hostSpeechReply=interruptedReply=null;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=turnReleased=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;finalizedInput=null;finalizedDeadline=null;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();completedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();responseFunctionItems.clear();listeningEvents.clear();drainedOutputs.clear();notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
     }
     function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;if(channel==='output')analyser.smoothingTimeConstant=0;source.connect(analyser);sources.push(source,analyser);const count=analyser.frequencyBinCount;return {channel,stream,analyser,samples:new Float32Array(analyser.fftSize),frequencies:typeof analyser.getFloatFrequencyData==='function'&&Number.isInteger(count)&&count===analyser.fftSize/2?new Float32Array(count):null};}catch{return null;}}
     function blockPlayback(current,playbackAudio,stream){
@@ -520,6 +520,32 @@
       notify('onLevel',levels);notify('onInputSignal',inputFrame);const current=epoch,context=ctx;try{raf=rt.requestAnimationFrame?.(()=>{if(current===epoch&&ctx===context)sample();});}catch{raf=null;}
     }
     function settleState(){if(state==='idle'||state==='closing')return;if(outputPlaying)setState('speaking');else if(inputSpeaking)setState('listening');else if(toolControllers.size||responsePending)setState('thinking');else setState('listening');}
+    function rememberFunctionItem(responseId,item){
+      const bound=currentResponse(responseId),itemId=eventId(item?.id),callId=eventId(item?.call_id),name=eventId(item?.name);
+      if(!bound||bound.toolsDisabled||!activeInputCommitted||bound.inputItemId!==activeInputItemId||inputSpeaking||doc?.hidden||item?.type!=='function_call'||!itemId||!callId||!name)return null;
+      const previous=responseFunctionItems.get(itemId);
+      if(previous){if(previous.responseId!==responseId||previous.callId!==callId||previous.name!==name)previous.invalid=true;return previous.invalid?null:previous;}
+      // Provider items identify one call in one exact client-issued response.
+      // A call/name from another output item or old turn cannot be borrowed.
+      for(const record of responseFunctionItems.values())if(record.callId===callId)return null;
+      const record={responseId,itemId,callId,name,invalid:false};remember(responseFunctionItems,itemId,record);return record;
+    }
+    function dispatchFunctionCall(event,current){
+      const responseId=eventId(event.response_id),itemId=eventId(event.item_id),record=itemId?responseFunctionItems.get(itemId):null;
+      if(responseTurns.get(responseId)?.toolsDisabled||completedResponses.has(responseId)||continuationUsed&&!responseId)return;
+      if(event.item_id!=null&&!itemId||record&&(record.invalid||record.responseId!==responseId||record.callId!==eventId(event.call_id)||event.name!=null&&event.name!==record.name))return;
+      // The complete output item carries the function identity. Some native
+      // argument-complete events omit the name; wait for a complete item when
+      // no matching identity has arrived instead of consuming the call as a
+      // failed read and discarding its later, valid control completion.
+      const name=record?.name||event.name;if(typeof name!=='string'||!name)return;
+      const normalized={...event,name};if(name==='set_avatar_performance')executePerformance(normalized);else void executeTool(normalized,current);
+    }
+    function dispatchCompletedFunction(responseId,item,current,terminal=false){
+      if(typeof item?.arguments!=='string'||(terminal?item.status!=null&&item.status!=='completed':item.status!=='completed'))return;
+      const record=rememberFunctionItem(responseId,item);if(!record)return;
+      dispatchFunctionCall({response_id:responseId,item_id:record.itemId,call_id:record.callId,name:record.name,arguments:item.arguments},current);
+    }
     function executePerformance(event){
       const responseId=eventId(event.response_id),callId=eventId(event.call_id),bound=responseId?responseTurns.get(responseId):null,performance=performanceResponses.get(responseId);
       // Presentation has no shopping/action authority and never uses the host's
@@ -547,7 +573,7 @@
       toolCalls.add(callId);if(toolCalls.size>100){await stop('limit');return;}
       const responseId=eventId(event.response_id),bound=responseId?responseTurns.get(responseId):null;
       const performance=performanceResponses.get(responseId);if(performance)performance.otherTool=true;
-      const version=responseId?(bound?.turnVersion??null):turnVersion,controller=new rt.AbortController();toolControllers.add(controller);settleState();let result,checkedRead=false,attributedRead=false;
+      const version=responseId?(bound?.turnVersion??null):turnVersion,controller=new rt.AbortController();toolControllers.add(controller);settleState();let result,checkedRead=false,attributedRead=false,customerControl=['prepare_jewellery_action','control_storefront'].includes(event.name),customerText='';
       try{
         const actionTool=['prepare_jewellery_action','control_storefront'].includes(event.name);
         if(version===turnVersion){turnTools++;if(actionTool)turnChainClosed=true;if(turnTools>3)throw Error('Turn tool limit reached.');}
@@ -559,10 +585,12 @@
         // still checks the actual final shopper words before any preparation.
         if(actionTool&&(!bound||bound.turnVersion!==turnVersion||!bound.inputItemId||bound.inputItemId!==activeInputItemId||!activeInputCommitted))throw Error('Action authority unavailable.');
         result=await bounded(options.onTool(args,{name:event.name,signal:controller.signal,callId,responseId,turnVersion:version,inputItemId:bound?.inputItemId||activeInputItemId,currentTurn:version===turnVersion}),14000,'The catalogue check timed out.',controller.signal);
+        if(result&&typeof result==='object'&&!Array.isArray(result))customerControl=customerControl||Object.hasOwn(result,'customerMessage');
         if(controller.signal.aborted||version!==turnVersion||current!==epoch)throw Error('Tool interrupted.');
         // Only the existing public, current, checked catalogue projection is
         // supplied by the host. Operator dossiers and credentials stay private.
         if(!result||typeof result!=='object'||Array.isArray(result))throw Error('Catalogue answer unavailable.');
+        const hostResult=result;
         if(event.name==='find_jewellery'&&(Object.hasOwn(result,'guidanceReadCompleted')||Object.hasOwn(result,'serviceKnowledge'))){
           const guidance=serviceGuidanceResult(result);
           if(guidance){if(!bound||bound.turnVersion!==turnVersion||!bound.inputItemId||bound.inputItemId!==activeInputItemId||!activeInputCommitted||doc?.hidden)throw Error('Guidance turn unavailable.');result=guidance;attributedRead=true;turnChainClosed=true;bound.toolsDisabled=true;}
@@ -570,21 +598,25 @@
           else{const {guidanceReadCompleted,serviceKnowledge,productsVerified,...ordinary}=result;result=ordinary;}
         }
         checkedRead=!result.error&&(attributedRead||(event.name==='read_storefront_services'?result.readCompleted===true&&result.schema===1&&Number.isSafeInteger(result.checkedAt)&&result.checkedAt>0:['find_jewellery','inspect_jewellery'].includes(event.name)&&(result.verified===true||result.live===true)));
-        if(version===turnVersion&&!checkedRead)turnChainClosed=true;
-        const text=JSON.stringify(result);if(typeof text!=='string'||new TextEncoder().encode(text).length>30000)throw Error('Catalogue result too large.');result=text;
+        if(version===turnVersion&&(!checkedRead||customerControl))turnChainClosed=true;
+        const text=JSON.stringify(customerControl?hostResult:result);if(typeof text!=='string'||new TextEncoder().encode(text).length>30000)throw Error('Catalogue result too large.');
+        // Host success, preparation and cart flags inform local decisions only.
+        // The provider receives the customer sentence, including when it chose
+        // a catalogue tool for a request the host resolved as a page control.
+        if(customerControl){customerText=shopperReply(hostResult);result=JSON.stringify({reply:customerText});}else result=text;
       }catch{
         if(version===turnVersion)turnChainClosed=true;
         const cancelled=controller.signal.aborted||version!==turnVersion;
-        result=JSON.stringify(['prepare_jewellery_action','control_storefront'].includes(event.name)?{verified:false,prepared:false,cancelled,reply:'I couldn\u2019t finish that change. Please check the visible options.',message:'I couldn\u2019t finish that change. Please check the visible options.'}:{verified:false,cancelled,reply:'I couldn\u2019t check those details. Please try again.',message:'I couldn\u2019t check those details. Please try again.'});
+        if(customerControl){customerText='I couldn\u2019t finish that change. Please check the visible options.';result=JSON.stringify({reply:customerText});}
+        else result=JSON.stringify({verified:false,cancelled,reply:'I couldn\u2019t check those details. Please try again.',message:'I couldn\u2019t check those details. Please try again.'});
       }
       finally{controller.abort();toolControllers.delete(controller);}
       if(current!==epoch||disposed||state==='closing'||state==='idle')return;
       send({type:'conversation.item.create',item:{type:'function_call_output',call_id:callId,output:result}});
-      // Interrupted results are fixed, unverified cancellation notices, never
-      // a preparation that a later response could mistake for a current action.
+      // Interrupted controls return only a fixed customer sentence, never a
+      // preparation that a later response could mistake for a current action.
       if(version===turnVersion&&!inputSpeaking&&!toolControllers.size){
         const mayContinue=checkedRead&&!turnChainClosed&&turnTools<3&&activeInputCommitted&&activeInputItemId&&bound?.inputItemId===activeInputItemId;
-        const customerControl=['prepare_jewellery_action','control_storefront'].includes(event.name),customerText=customerControl?shopperReply(JSON.parse(result)):'';
         requestResponse(customerControl?{tool_choice:'none',instructions:'Speak only this exact customer reply in a relaxed, natural voice: '+JSON.stringify(customerText)+'. Do not add explanations, describe technical details, call tools or perform another website action.'}:attributedRead?{tool_choice:'none',instructions:'Answer the current shopper using the completed studio-guidance read. Attribute merchant-provided information to the studio; it is not independently verified policy or a product-specific promise. Explain any published discrepancy. Confirm piece-specific options, availability, charges, timing and offer eligibility with the studio or checkout. Only products marked productsVerified were freshly checked. Do not claim an order, discount, page control or cart change. Do not call tools in this reply.'}:{tool_choice:mayContinue?'auto':'none'},version,bound?.inputItemId||activeInputItemId);
       }flushQueuedResponse();settleState();
     }
@@ -608,12 +640,19 @@
       }
       else if(event.type==='response.output_item.added'){
         if(staleResponse(event))return;const responseId=eventId(event.response_id),itemId=eventId(event.item?.id);if(currentResponse(responseId)&&itemId&&event.item?.type==='message'&&event.item?.role==='assistant')remember(responseOutputItems,responseId,itemId);
+        else if(!completedResponses.has(responseId))rememberFunctionItem(responseId,event.item);
       }
+      else if(event.type==='response.output_item.done'){if(staleResponse(event))return;dispatchCompletedFunction(eventId(event.response_id),event.item,current);}
       else if(event.type==='output_audio_buffer.started'){if(staleResponse(event)||drainedOutputs.has(eventId(event.response_id)))return;const responseId=eventId(event.response_id),performance=performanceResponses.get(responseId);if(!responseId&&(responseWait?.responseId||activePlaybackResponseId))return;if(performance)performance.hadContent=true;if(currentResponse(responseId)){if(activePlaybackResponseId!==responseId){if(activePlaybackResponseId)remember(drainedOutputs,activePlaybackResponseId,true);localMediaClock=null;}activePlaybackResponseId=responseId;}outputPlaying=true;awaitOutputDrain(responseId);noteResponseProgress(event);reportPlayback(responseId,true);setState('speaking');}
       else if(event.type==='output_audio_buffer.stopped'||event.type==='output_audio_buffer.cleared'){if(staleResponse(event))return;const responseId=eventId(event.response_id),cleared=event.type==='output_audio_buffer.cleared';if(activePlaybackResponseId&&responseId!==activePlaybackResponseId)return;if(outputWaitMatches(outputWait,event))retireOutputWait();outputPlaying=false;localMediaClock=null;if(currentResponse(responseId))remember(drainedOutputs,responseId,true);notify('onLevel',noOutputLevels());reportPlayback(responseId,false,cleared);if(activePlaybackResponseId===responseId)activePlaybackResponseId='';if(!cleared)continueAudioTail();else continuation=null;flushQueuedResponse();settleState();}
       else if(event.type==='response.done'){
         if(staleResponse(event))return;
-        const responseId=eventId(event.response?.id);if(completedResponses.has(responseId))return;remember(completedResponses,responseId,true);
+        const responseId=eventId(event.response?.id);if(completedResponses.has(responseId))return;
+        // response.done includes complete function items even when streamed
+        // argument events were not available. The same call-ID dedupe handles
+        // all three completion forms; no cart operation can be replayed.
+        if(event.response?.status==='completed'&&Array.isArray(event.response.output))event.response.output.slice(0,50).forEach(item=>dispatchCompletedFunction(responseId,item,current,true));
+        remember(completedResponses,responseId,true);
         const pendingResponse=finishResponseWait(event),playingResponse=outputWaitMatches(outputWait,event);
         if(event.response?.status==='failed'&&(pendingResponse||playingResponse)){if(recoverFailedSpeech(event)){settleState();return;}releaseCurrentTurn({epoch,turnVersion,inputItemId:activeInputItemId},'That reply could not finish. Please ask again; voice is still connected.');return;}
         finishPerformanceResponse(event);
@@ -622,7 +661,7 @@
         // Do not freeze the talking pose before output_audio_buffer.stopped.
         if(event.response?.status==='failed')notify('onTurnWarning','That reply could not finish. Please ask again; voice is still connected.');flushQueuedResponse();settleState();
       }
-      else if(event.type==='response.function_call_arguments.done'){if(responseTurns.get(eventId(event.response_id))?.toolsDisabled||continuationUsed&&!eventId(event.response_id))return;if(event.name==='set_avatar_performance')executePerformance(event);else void executeTool(event,current);}
+      else if(event.type==='response.function_call_arguments.done')dispatchFunctionCall(event,current);
       else if(event.type==='response.output_audio_transcript.delta'||event.type==='response.audio_transcript.delta'){if(staleResponse(event))return;markPerformanceContent(event);notify('onTranscript',{role:'assistant',delta:typeof event.delta==='string'?event.delta.slice(0,2000):'',final:false,...transcriptIdentity(event)});}
       else if(event.type==='response.output_audio_transcript.done'||event.type==='response.audio_transcript.done'){if(staleResponse(event))return;markPerformanceContent(event);notify('onTranscript',{role:'assistant',text:typeof event.transcript==='string'?event.transcript.slice(0,8000):'',final:true,...transcriptIdentity(event)});}
       else if(event.type==='conversation.item.input_audio_transcription.delta')listeningTranscript(event,false);

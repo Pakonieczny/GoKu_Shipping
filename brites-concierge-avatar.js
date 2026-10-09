@@ -63,17 +63,17 @@
   }
   const PERFORMANCE_GESTURES=Object.freeze(['none','greet','acknowledge','focus','explain','present','reassure','confirm']);
   const FACE_EXPRESSIONS=Object.freeze({
-    neutral:Object.freeze({faceBrowLift:.15,faceBrowTilt:0,eyeSmile:.06,cheekGlow:.2,smileCurve:.34,faceSignal:.12,eyeRoundness:1,eyeAsymmetry:0,browConcern:0,browArch:.28,mouthTension:.12,mouthSkew:0}),
+    neutral:Object.freeze({faceBrowLift:.24,faceBrowTilt:0,eyeSmile:.12,cheekGlow:.27,smileCurve:.48,faceSignal:.12,eyeRoundness:1.02,eyeAsymmetry:0,browConcern:0,browArch:.36,mouthTension:.08,mouthSkew:0}),
     attentive:Object.freeze({faceBrowLift:.7,faceBrowTilt:0,eyeSmile:.02,cheekGlow:.3,smileCurve:.32,faceSignal:.9,eyeRoundness:1.09,eyeAsymmetry:0,browConcern:.08,browArch:.42,mouthTension:.28,mouthSkew:0}),
-    curious:Object.freeze({faceBrowLift:.84,faceBrowTilt:.66,eyeSmile:.02,cheekGlow:.3,smileCurve:.16,faceSignal:.55,eyeRoundness:1.12,eyeAsymmetry:.14,browConcern:.16,browArch:.66,mouthTension:.52,mouthSkew:.36}),
+    curious:Object.freeze({faceBrowLift:.54,faceBrowTilt:0,eyeSmile:.08,cheekGlow:.3,smileCurve:.46,faceSignal:.4,eyeRoundness:1.055,eyeAsymmetry:0,browConcern:.025,browArch:.46,mouthTension:.1,mouthSkew:0}),
     explaining:Object.freeze({faceBrowLift:.42,faceBrowTilt:.01,eyeSmile:.12,cheekGlow:.48,smileCurve:.48,faceSignal:.65,eyeRoundness:1.02,eyeAsymmetry:0,browConcern:0,browArch:.48,mouthTension:.12,mouthSkew:0}),
     delighted:Object.freeze({faceBrowLift:.62,faceBrowTilt:0,eyeSmile:.55,cheekGlow:.9,smileCurve:.96,faceSignal:.8,eyeRoundness:1.04,eyeAsymmetry:0,browConcern:0,browArch:.85,mouthTension:0,mouthSkew:0}),
-    reassuring:Object.freeze({faceBrowLift:.4,faceBrowTilt:-.2,eyeSmile:.06,cheekGlow:.36,smileCurve:.18,faceSignal:.18,eyeRoundness:.98,eyeAsymmetry:0,browConcern:.7,browArch:.18,mouthTension:.46,mouthSkew:0}),
+    reassuring:Object.freeze({faceBrowLift:.32,faceBrowTilt:0,eyeSmile:.09,cheekGlow:.36,smileCurve:.42,faceSignal:.18,eyeRoundness:1,eyeAsymmetry:0,browConcern:.2,browArch:.3,mouthTension:.14,mouthSkew:0}),
     warm:Object.freeze({faceBrowLift:.36,faceBrowTilt:0,eyeSmile:.38,cheekGlow:.65,smileCurve:.78,faceSignal:.3,eyeRoundness:1.04,eyeAsymmetry:0,browConcern:0,browArch:.65,mouthTension:.03,mouthSkew:0})
   });
   // Waiting is quiet attention, not the exaggerated question face used for a
   // spoken inquiry. Keep both eyes balanced and a small relaxed closed smile.
-  const THINKING_FACE=Object.freeze({faceBrowLift:.74,faceBrowTilt:.12,eyeSmile:.065,cheekGlow:.27,smileCurve:.44,faceSignal:.28,eyeRoundness:1.055,eyeAsymmetry:.012,browConcern:.025,browArch:.38,mouthTension:.09,mouthSkew:0});
+  const THINKING_FACE=Object.freeze({faceBrowLift:.64,faceBrowTilt:0,eyeSmile:.065,cheekGlow:.27,smileCurve:.44,faceSignal:.28,eyeRoundness:1.055,eyeAsymmetry:0,browConcern:.025,browArch:.38,mouthTension:.09,mouthSkew:0});
   const QUIET_THINKING_FACE=Object.freeze({...THINKING_FACE,faceBrowLift:.34,faceBrowTilt:0,eyeSmile:.04,cheekGlow:.2,smileCurve:.31,eyeRoundness:1.03,eyeAsymmetry:0,browConcern:.18,browArch:.3,mouthTension:.11});
   const THINKING_CYCLE=23.7;
   const THINKING_CUES=Object.freeze([
@@ -97,6 +97,15 @@
       return{...rest,kind:cue.kind,active:true,intensity:strength*gain,face:cue.face,faceAmount:strength*cue.amount*gain,gazeX:cue.x*glance,gazeY:cue.y*glance,headRoll:cue.roll*glance,headPitch:cue.pitch*glance};
     }
     return rest;
+  }
+  // Only an actual unresolved request triggers this one-shot sequence. Normal
+  // questions, pointer attention and restored semantic moods stay friendly.
+  const AMBIGUITY_DURATION=2.2;
+  function ambiguityFor(elapsed,reducedMotion=false){
+    if(reducedMotion||!Number.isFinite(elapsed)||elapsed<0||elapsed>=AMBIGUITY_DURATION)return {phase:null,active:false,face:null};
+    if(elapsed<.75)return {phase:'confused',active:true,face:{...FACE_EXPRESSIONS.curious,faceBrowTilt:.18,eyeAsymmetry:.028,smileCurve:.29,browConcern:.14,browArch:.4,mouthTension:.16,mouthSkew:0}};
+    if(elapsed<1.3)return {phase:'considerate',active:true,face:{...FACE_EXPRESSIONS.reassuring,faceBrowLift:.25,smileCurve:.26,browConcern:.3,browArch:.24,mouthTension:.17}};
+    return {phase:'reassuring',active:true,face:{...FACE_EXPRESSIONS.reassuring,eyeSmile:.12,smileCurve:.5,browConcern:.1,mouthTension:.08}};
   }
   // Acts are bounded presentation cues, never shopper feeling classifications.
   const EXPRESSION_KINDS=Object.freeze(['neutral','attentive','inquiry','explain','emphasize','reflect','support','celebrate','appreciate','resolve']);
@@ -129,7 +138,7 @@
     const kind=quiet&&cue.kind==='celebrate'?'support':cue.kind,name=EXPRESSION_FACES[kind];
     const target={...FACE_EXPRESSIONS[name]};
     if(kind==='emphasize'){target.faceBrowLift=.92;target.faceBrowTilt=.04;target.eyeSmile=.03;target.smileCurve=.43;target.eyeRoundness=1.13;target.browArch=.7;}
-    if(kind==='reflect'){target.faceBrowLift=.3;target.faceBrowTilt=.25;target.eyeSmile=.02;target.smileCurve=.03;target.eyeRoundness=.96;target.eyeAsymmetry=.055;target.browConcern=.42;target.browArch=.14;target.mouthTension=.66;target.mouthSkew=.16;}
+    if(kind==='reflect'){target.faceBrowLift=.3;target.faceBrowTilt=0;target.eyeSmile=.04;target.smileCurve=.38;target.eyeRoundness=1;target.eyeAsymmetry=0;target.browConcern=.2;target.browArch=.28;target.mouthTension=.16;target.mouthSkew=0;}
     if(kind==='resolve'){target.faceBrowLift=.53;target.faceBrowTilt=-.04;target.eyeSmile=.16;target.smileCurve=.62;target.browArch=.56;target.mouthTension=.08;}
     const amount=cue.intensity*(quiet? .65:1),face={...base,faceExpression:name,expressionKind:kind,expressionHeadRoll:({inquiry:.027,reflect:-.02,support:-.016,appreciate:-.013,resolve:.011}[kind]||0)*amount};
     for(const key of Object.keys(FACE_EXPRESSIONS.neutral))face[key]+=(target[key]-face[key])*amount;
@@ -180,7 +189,7 @@
     const mobile=hints.mobile===true||(hints.width>0&&hints.width<600)||(hints.memory>0&&hints.memory<=4);
     return{name:mobile?'adaptive':'high',pixelRatio:Math.min(mobile?1.5:2,Math.max(1,hints.pixelRatio||1)),shadowSize:mobile?1024:2048,textureSize:mobile?1024:2048,fps:mobile?30:60,geometryScale:mobile? .8:1,bloom:!mobile&&hints.bloom!==false};
   }
-  function poseFor({state='idle',time=0,elapsed=0,level=0,speechSignal=null,inputSignal=null,gaze={x:0,y:0},headGaze=null,reducedMotion=false,emotion=null,expression=null,mannerism=null,mannerismElapsed=0,productFocus=null,speechBeatElapsed=null,appreciationElapsed=0,performance=null,mannerismDurationMs=null,thinkingElapsed=undefined,attentionActive=false}={}){
+  function poseFor({state='idle',time=0,elapsed=0,level=0,speechSignal=null,inputSignal=null,gaze={x:0,y:0},headGaze=null,reducedMotion=false,emotion=null,expression=null,mannerism=null,mannerismElapsed=0,productFocus=null,speechBeatElapsed=null,appreciationElapsed=0,performance=null,mannerismDurationMs=null,thinkingElapsed=undefined,attentionActive=false,ambiguityElapsed=null}={}){
     state=validState(state);time=reducedMotion?0:Number.isFinite(time)?time:0;elapsed=Number.isFinite(elapsed)?Math.max(0,elapsed):0;
     gaze=gaze&&typeof gaze==='object'?gaze:{};const gazeX=Number.isFinite(gaze.x)?gaze.x:0,gazeY=Number.isFinite(gaze.y)?gaze.y:0;
     const plan=validateAvatarPerformance(performance),emotionalGain=plan?plan.intensity:1;
@@ -196,6 +205,9 @@
     // A final listener question may survive into this wait. Bound its semantic
     // shape here so it cannot restore the crooked mouth or mismatched eyes.
     if(thoughtful){face.faceBrowTilt=clamp(face.faceBrowTilt,-.16,.18);face.eyeAsymmetry=clamp(face.eyeAsymmetry,-.018,.018);face.mouthSkew=clamp(face.mouthSkew,-.025,.025);face.mouthTension=Math.min(face.mouthTension,.2);face.smileCurve=clamp(face.smileCurve,.31,calm?.4:.58);face.eyeSmile=Math.min(face.eyeSmile,calm?.08:.17);face.browConcern=Math.min(face.browConcern,.3);face.browArch=clamp(face.browArch,.24,.55);face.faceBrowLift=Math.min(face.faceBrowLift,.78);face.expressionHeadRoll=clamp(face.expressionHeadRoll,-.01,.01);}
+    const ambiguity=ambiguityFor(ambiguityElapsed,reducedMotion);
+    if(ambiguity.active){Object.assign(face,ambiguity.face);face.expressionHeadRoll=0;}
+    if(state==='idle'&&!ambiguity.active){face.faceBrowTilt=0;face.eyeAsymmetry=0;face.mouthSkew=0;face.smileCurve=Math.max(.42,face.smileCurve);face.mouthTension=Math.min(.16,face.mouthTension);face.expressionHeadRoll=0;}
     const incoming=validateSpeechSignal(inputSignal),inputEnergy=listening&&!reducedMotion&&incoming?.valid?incoming.amplitude:0,inputAttention=Math.sqrt(inputEnergy);
     // Measured incoming sound means attention, never a guess about feelings.
     face.faceBrowLift=clamp(face.faceBrowLift+inputAttention*.14,0,1);
@@ -217,7 +229,7 @@
     const rightArm=calm? .025:thoughtful? .065:happy? .16:listening? .07:0;
     return{
       mannerism:expressive.name,mannerismCue:expressive.cue,mannerismPhase:expressive.phase,mannerismActive:expressive.active,nod:expressive.nod,offer:expressive.offer,helloWave,speechEnergy:audioEnergy,speechBands,speechBrightness,speechSignalValid:signalUsable&&audioEnergy>.015,inputEnergy,inputSignalValid:inputEnergy>.015,phraseGesture,productFocused:!!product,present,targetX:product?.x||0,targetY:product?.y||0,speechAccent,lean:expressive.body*(acknowledgement? .04:.02)+phraseGesture*.018,
-      state,heart,...face,lidClosure:clamp(blink+face.eyeSmile*.08,0,1),stanceScale:1,bodyDepth:0,bodyYaw:0,eyeColor:heart>.01?'#ed93aa':MOODS[state].color,emotion:emotion||MOODS[state].emotion,blink,thinkingCue:waiting.kind,thinkingCueActive:waiting.active,thinkingCueIntensity:waiting.intensity,
+      state,heart,...face,lidClosure:clamp(blink+face.eyeSmile*.08,0,1),stanceScale:1,bodyDepth:0,bodyYaw:0,eyeColor:heart>.01?'#ed93aa':MOODS[state].color,emotion:emotion||MOODS[state].emotion,blink,thinkingCue:waiting.kind,thinkingCueActive:waiting.active,thinkingCueIntensity:waiting.intensity,ambiguityCue:ambiguity.phase,ambiguityCueActive:ambiguity.active,
       eyeDeformation:(thoughtful?0:warm? .1:curious?-.055:emotion==='reassuring'? .05:0)*emotionalGain+(calm?-.025:happy? .24:thoughtful?-.015:listening? .1:concerned?-.08:greeting?expressive.eye*.1:0)+apertureAccent+inputAttention*.04,
       eyeScaleX:(curious&&!thoughtful?1-.04*emotionalGain:1)*(happy?1.08:1)+expressive.comfort*.025,
       eyeScaleY:(thoughtful?1.02:warm||emotion==='reassuring'?1+.025*emotionalGain:curious?1+.055*emotionalGain:1)*(happy?1.04:listening?1.08:talking?1.06:1)+expressive.listen*.025,
@@ -229,7 +241,7 @@
       headYaw:clamp(clamp(targetX,-1,1)*.1+(greeting?-.018*expressive.head:0),-.1,.1),
       // A positive X rotation tips a forward-facing Three head DOWN. Gaze y is UP.
       headPitch:clamp(-clamp(targetY,-1,1)*.09+expressive.nod*.035+expressive.head*(acknowledgement? .018:focus?-.008:0)+waiting.headPitch,-.09,.09),
-      headRoll:(curious&&!thoughtful? .045:warm&&!thoughtful?-.02:0)*emotionalGain+(calm?-.008:concerned?-.025:thoughtful? .004:listening?-.018:happy? .012:0)+expressive.head*(greeting?-.03:acknowledgement?-.018:focus? .006:0)+waiting.headRoll,
+      headRoll:(curious&&!thoughtful&&state!=='idle'? .012:warm&&!thoughtful?-.02:0)*emotionalGain+(calm?-.008:concerned?-.025:thoughtful? .004:listening?-.018:happy? .012:0)+expressive.head*(greeting?-.03:acknowledgement?-.018:focus? .006:0)+waiting.headRoll,
       eyeOpen:Math.max(.035,(happy?1.02:listening?1.06+inputAttention*.055:talking?1.08:greeting?1-expressive.eye*.04:1)*(1-blink)),
       gazeX:clamp(gazeX+waiting.gazeX,-1,1)*.07,
       gazeY:clamp(gazeY+waiting.gazeY,-1,1)*.07,
@@ -293,7 +305,7 @@
     let frameReady=false,pendingReadyType=null,fallbackPresented=false,expression=null,blinkTimer=null,lastFacePose=null,speechSignal=EMPTY_SPEECH_SIGNAL,displayedSpeech={...EMPTY_SPEECH_SIGNAL,bands:[...EMPTY_SPEECH_SIGNAL.bands]},signalAt=null,signalSettling=false,lastSpeechVisual=null;
     let inputSignal=EMPTY_SPEECH_SIGNAL,displayedInput={...EMPTY_SPEECH_SIGNAL,bands:[...EMPTY_SPEECH_SIGNAL.bands]},inputAt=null,inputSettling=false,inputTimer=null;
     let pointerTarget={x:0,y:0},pointerAt=-Infinity,lastPointer=null,lastPointerBox=null,gazeSource='rest',poseSettling=false,headPoseAt=null;
-    let thinkingAt=null,lastThinkingCue=null;
+    let thinkingAt=null,lastThinkingCue=null,ambiguityAt=null,ambiguityTimer=null,ambiguityEpoch=0;
     const gazeVelocity={x:0,y:0},headVelocity={x:0,y:0};
     const displayedHead={headYaw:{position:0,velocity:0},headPitch:{position:0,velocity:0},headRoll:{position:0,velocity:0}};
     const media=win.matchMedia?win.matchMedia('(prefers-reduced-motion: reduce)'):null;
@@ -303,8 +315,11 @@
     const now=()=>{const stamp=win.performance?.now?.();return(Number.isFinite(stamp)?stamp:Date.now())/1000;};
     stateAt=gazeAt=now();
     if(state==='thinking'&&canDisplay()&&!paused&&!reducedMotion)thinkingAt=stateAt;
-    function cancelAppreciation(restore=true){if(appreciationTimer!==null)win.clearTimeout(appreciationTimer);appreciationTimer=null;appreciationEpoch++;if(restore&&emotion==='appreciated')emotion=previousEmotion;previousEmotion=null;}
-    function cancelPerformance(restore=true){if(performanceTimer!==null)win.clearTimeout(performanceTimer);performanceTimer=null;performanceEpoch++;if(!performance)return;const prior=performancePreviousEmotion;performance=null;performancePreviousEmotion=null;delete frame.dataset.performance;if(restore){if(emotion==='appreciated')previousEmotion=prior;else emotion=prior;}cancelMannerism();}
+    const restingEmotion=value=>value==='curious'||value==='celebrate'?null:value;
+    function cancelAmbiguity(){if(ambiguityTimer!==null)win.clearTimeout(ambiguityTimer);ambiguityTimer=null;ambiguityAt=null;ambiguityEpoch++;delete frame.dataset.ambiguityCue;}
+    function ambiguityMoving(){return ambiguityAt!==null&&canDisplay()&&!paused&&!reducedMotion&&now()-ambiguityAt<AMBIGUITY_DURATION;}
+    function cancelAppreciation(restore=true){if(appreciationTimer!==null)win.clearTimeout(appreciationTimer);appreciationTimer=null;appreciationEpoch++;if(restore&&emotion==='appreciated')emotion=restingEmotion(previousEmotion);previousEmotion=null;}
+    function cancelPerformance(restore=true){cancelAmbiguity();if(performanceTimer!==null)win.clearTimeout(performanceTimer);performanceTimer=null;performanceEpoch++;if(!performance)return;const prior=restingEmotion(performancePreviousEmotion);performance=null;performancePreviousEmotion=null;delete frame.dataset.performance;if(restore){if(emotion==='appreciated')previousEmotion=prior;else emotion=prior;}cancelMannerism();}
     function cancelMannerism(){if(mannerismTimer!==null)win.clearTimeout(mannerismTimer);mannerismTimer=null;mannerism=null;mannerismDurationMs=null;delete frame.dataset.mannerism;}
     function playMannerism(name,durationMs=null){
       cancelMannerism();
@@ -375,7 +390,7 @@
       displayedInput={...inputSignal,amplitude:Math.abs(inputSignal.amplitude-current)<.0005?inputSignal.amplitude:current+(inputSignal.amplitude-current)*gain,bands:[...inputSignal.bands]};
       inputSettling=Math.abs(inputSignal.amplitude-displayedInput.amplitude)>=.0005;
     }
-    function poseAt(time){time=Number.isFinite(time)?time:gazeAt;advanceGaze(time);advanceSignal(time);advanceInput(time);const pose=poseFor({state,time,elapsed:time-stateAt,level,speechSignal:displayedSpeech,inputSignal:displayedInput,gaze,headGaze,productFocus,reducedMotion,emotion,expression,mannerism,mannerismElapsed:time-mannerismAt,speechBeatElapsed:speechBeatAt===null?-1:time-speechBeatAt,appreciationElapsed:time-appreciationAt,performance,mannerismDurationMs,thinkingElapsed:thinkingAt===null?null:time-thinkingAt,attentionActive:gazeSource!=='rest'});
+    function poseAt(time){time=Number.isFinite(time)?time:gazeAt;advanceGaze(time);advanceSignal(time);advanceInput(time);const pose=poseFor({state,time,elapsed:time-stateAt,level,speechSignal:displayedSpeech,inputSignal:displayedInput,gaze,headGaze,productFocus,reducedMotion,emotion,expression,mannerism,mannerismElapsed:time-mannerismAt,speechBeatElapsed:speechBeatAt===null?-1:time-speechBeatAt,appreciationElapsed:time-appreciationAt,performance,mannerismDurationMs,thinkingElapsed:thinkingAt===null?null:time-thinkingAt,attentionActive:gazeSource!=='rest',ambiguityElapsed:ambiguityAt===null?null:time-ambiguityAt});
       const keys=[...Object.keys(FACE_EXPRESSIONS.neutral),'eyeScaleX','eyeScaleY','eyeDeformation','expressionHeadRoll'];
       const delta=faceAt===null?0:clamp(time-faceAt,0,.12);faceAt=time;
       if(!displayedFace||reducedMotion||paused||!canDisplay())displayedFace=Object.fromEntries(keys.map(key=>[key,pose[key]]));
@@ -394,8 +409,8 @@
     function hasWebglFrame(){return!!engine&&!failed&&frameReady;}
     function fallbackMoving(){return fallbackPresented&&canDisplay()&&!paused&&!reducedMotion&&!hasWebglFrame();}
     function snapshot(){
-      const scene=engine?.snapshot?.()||{};
-      return{...scene,state,emotion,expression:expression?{...expression}:null,facePose:lastFacePose?{...lastFacePose}:null,thinkingCue:lastThinkingCue?{...lastThinkingCue}:null,speechSignal:{...speechSignal,bands:[...speechSignal.bands]},inputSignal:{...inputSignal,bands:[...inputSignal.bands]},speechVisual:lastSpeechVisual?{...lastSpeechVisual,bands:[...lastSpeechVisual.bands]}:null,performance:performance?{...performance}:null,gaze:{target:{...gazeTarget},eye:{...gaze},head:{...headGaze},source:gazeSource,velocity:{eye:{...gazeVelocity},head:{...headVelocity}},pose:Object.fromEntries(Object.entries(displayedHead).map(([key,value])=>[key,{...value}])),continuous:true,scope:'visible-page-pointer'},floating,shownProduct:shownProduct?{id:shownProduct.id,handle:shownProduct.handle,title:shownProduct.title,format:'verified-product-photo'}:null,productFocus:productFocus?{...productFocus}:null,visible,intersecting,paused,reducedMotion,motionPreferences:{system:systemReducedMotion,manual:manualReducedMotion},mode:hasWebglFrame()?'webgl':failed?'fallback':'pending',loading,destroyed,
+      const scene=engine?.snapshot?.()||{},ambiguity=ambiguityFor(ambiguityAt===null?null:now()-ambiguityAt,reducedMotion);
+      return{...scene,state,emotion,expression:expression?{...expression}:null,facePose:lastFacePose?{...lastFacePose}:null,thinkingCue:lastThinkingCue?{...lastThinkingCue}:null,ambiguityCue:ambiguity.active?{phase:ambiguity.phase,elapsed:now()-ambiguityAt}:null,speechSignal:{...speechSignal,bands:[...speechSignal.bands]},inputSignal:{...inputSignal,bands:[...inputSignal.bands]},speechVisual:lastSpeechVisual?{...lastSpeechVisual,bands:[...lastSpeechVisual.bands]}:null,performance:performance?{...performance}:null,gaze:{target:{...gazeTarget},eye:{...gaze},head:{...headGaze},source:gazeSource,velocity:{eye:{...gazeVelocity},head:{...headVelocity}},pose:Object.fromEntries(Object.entries(displayedHead).map(([key,value])=>[key,{...value}])),continuous:true,scope:'visible-page-pointer'},floating,shownProduct:shownProduct?{id:shownProduct.id,handle:shownProduct.handle,title:shownProduct.title,format:'verified-product-photo'}:null,productFocus:productFocus?{...productFocus}:null,visible,intersecting,paused,reducedMotion,motionPreferences:{system:systemReducedMotion,manual:manualReducedMotion},mode:hasWebglFrame()?'webgl':failed?'fallback':'pending',loading,destroyed,
         mannerism:{name:mannerism,cue:BEHAVIOR_CUES[mannerism]||null,id:mannerismId,duration:mannerismDurationMs?mannerismDurationMs/1000:MANNERISMS[mannerism]||0,active:!!mannerism&&canDisplay()&&!paused&&!reducedMotion,elapsed:mannerism?Math.max(0,now()-mannerismAt):0},
         animated:hasWebglFrame()?active()&&!reducedMotion&&scene.animated===true:fallbackMoving(),
         fallback:{format:'animated_svg_2d',active:fallbackPresented&&canDisplay()&&!hasWebglFrame(),animated:fallbackMoving(),reason:failureReason},
@@ -448,6 +463,7 @@
       frame.dataset.expressionKind=pose.expressionKind||'';
       frame.dataset.faceExpression=pose.faceExpression;
       frame.dataset.thinkingCue=pose.thinkingCue||'';
+      frame.dataset.ambiguityCue=pose.ambiguityCue||'';
       const browY=96-pose.faceBrowLift*7.5,browArc=browY-1.2-pose.browArch*8,browTilt=pose.faceBrowTilt*7,concern=pose.browConcern*6.5;
       faceNodes['brow--left'].setAttribute('d',`M115 ${(browY+browTilt*1.2+concern*.25).toFixed(2)}Q130 ${(browArc+browTilt*.8-concern*.5).toFixed(2)} 145 ${(browY+browTilt*.4-concern).toFixed(2)}`);
       faceNodes['brow--right'].setAttribute('d',`M175 ${(browY-browTilt*.4-concern).toFixed(2)}Q190 ${(browArc-browTilt*.8-concern*.5).toFixed(2)} 205 ${(browY-browTilt*1.2+concern*.25).toFixed(2)}`);
@@ -470,7 +486,7 @@
       const statusLabel=state==='success'&&(emotion==='calm'||emotion==='reassuring')?'Here with you':MOODS[state].label;
       const pending=!hasWebglFrame()&&!fallbackPresented;
       caption.textContent=pending?'':statusLabel+(fallbackPresented?' \u00b7 2-D companion':'');
-      if(faceSettling||signalSettling||inputSettling||headMoving()||gazeMoving()||thinkingMoving())queuePointerFrame();
+      if(faceSettling||signalSettling||inputSettling||headMoving()||gazeMoving()||thinkingMoving()||ambiguityMoving())queuePointerFrame();
       scheduleBlink();
       frame.setAttribute('aria-label','Brites jewellery gift guide. '+(pending?'Preparing your guide.':statusLabel)+(fallbackPresented?'. Animated 2-D companion; 3-D unavailable.':'')+(paused?'. Animation paused.':''));
     }
@@ -478,7 +494,7 @@
     function sync(){
       if(!canDisplay()||paused||reducedMotion)thinkingAt=null;
       if(!canDisplay()||paused){stopPointerFrame();stopBlink();expression=null;gaze={x:0,y:0};headGaze={...gaze};gazeTarget={...gaze};pointerTarget={...gaze};pointerAt=-Infinity;lastPointer=lastPointerBox=null;gazeSource='rest';for(const axis of['x','y'])gazeVelocity[axis]=headVelocity[axis]=0;for(const key of Object.keys(displayedHead))displayedHead[key]={position:0,velocity:0};gazeAt=headPoseAt=now();poseSettling=false;cancelPerformance();clearProduct();cancelAppreciation();cancelMannerism();productFocus=null;clearSpeechSignal();clearInputSignal();speechBeatAt=null;speechRested=true;}
-      else if(reducedMotion){stopPointerFrame();stopBlink();expression=null;clearSpeechSignal();clearInputSignal();cancelMannerism();}
+      else if(reducedMotion){stopPointerFrame();stopBlink();expression=null;clearSpeechSignal();clearInputSignal();cancelPerformance();cancelAppreciation();cancelMannerism();}
       frame.hidden=!visible;syncFallback();
       if(engine){
         try{
@@ -509,11 +525,11 @@
         renderingFailure();
       }finally{loading=false;}
     }
-    function setState(value){if(destroyed)return;const next=validState(value);if(next===state)return;if(next==='listening'||next==='error'||next==='idle')cancelPerformance();state=next;expression=null;stateAt=now();thinkingAt=state==='thinking'&&canDisplay()&&!paused&&!reducedMotion?stateAt:null;lastThinkingCue=null;stopBlink();clearSpeechSignal();clearInputSignal();speechBeatAt=null;speechRested=true;if(!performance)playMannerism({listening:'acknowledge',thinking:'focus',speaking:'explain',success:'confirm',error:'reassure'}[state]);frame.dataset.state=state;try{engine?.invalidate();}catch{renderingFailure();}emit('state',{state});sync();}
+    function setState(value){if(destroyed)return;const next=validState(value);if(next===state)return;cancelAmbiguity();if(next==='listening'||next==='error'||next==='idle')cancelPerformance();state=next;if(state==='idle'){cancelAppreciation();emotion=restingEmotion(emotion);}expression=null;stateAt=now();thinkingAt=state==='thinking'&&canDisplay()&&!paused&&!reducedMotion?stateAt:null;lastThinkingCue=null;stopBlink();clearSpeechSignal();clearInputSignal();speechBeatAt=null;speechRested=true;if(!performance)playMannerism({listening:'acknowledge',thinking:'focus',speaking:'explain',success:'confirm',error:'reassure'}[state]);frame.dataset.state=state;try{engine?.invalidate();}catch{renderingFailure();}emit('state',{state});sync();}
     function setVisible(value){if(destroyed)return;const opening=value===true&&!visible;visible=value===true;if(!visible||opening)greetedThisOpening=false;if(opening&&options.greetingOnOpen!==false)triggerGreeting();sync();}
     // Scene retry is explicit; fallback respects visibility and pause.
     function retry(){if(destroyed||loading||engine||!failed||!visible||!intersecting||doc.hidden)return false;failed=false;sync();return loading;}
-    function setEmotion(value,fromPerformance=false){if(destroyed)return;if(performance&&!fromPerformance)cancelPerformance(false);const next=validEmotion(value);if(next==='appreciated'&&(!canDisplay()||paused))return;const prior=emotion==='appreciated'?previousEmotion:emotion;cancelAppreciation(false);emotion=next;if(next==='appreciated'){previousEmotion=prior;appreciationAt=now();const epoch=appreciationEpoch;appreciationTimer=win.setTimeout(()=>{if(destroyed||epoch!==appreciationEpoch)return;appreciationTimer=null;emotion=previousEmotion;previousEmotion=null;sync();},1450);playMannerism('reassure');}if((emotion==='calm'||emotion==='reassuring')&&mannerism==='confirm')playMannerism('reassure');sync();emit('emotion',{emotion});}
+    function setEmotion(value,fromPerformance=false){if(destroyed)return;if(!fromPerformance)cancelAmbiguity();if(performance&&!fromPerformance)cancelPerformance(false);const next=validEmotion(value);if(next==='appreciated'&&(!canDisplay()||paused))return;const prior=emotion==='appreciated'?previousEmotion:emotion;cancelAppreciation(false);emotion=next;if(next==='appreciated'){previousEmotion=restingEmotion(prior);appreciationAt=now();const epoch=appreciationEpoch;appreciationTimer=win.setTimeout(()=>{if(destroyed||epoch!==appreciationEpoch)return;appreciationTimer=null;emotion=restingEmotion(previousEmotion);previousEmotion=null;sync();},1450);playMannerism('reassure');}if((emotion==='calm'||emotion==='reassuring')&&mannerism==='confirm')playMannerism('reassure');sync();emit('emotion',{emotion});}
     function setPaused(value){if(destroyed)return;paused=value===true;sync();emit('pause',{paused});}
     function setReducedMotion(value){if(destroyed)return false;manualReducedMotion=value===true;reducedMotion=systemReducedMotion||manualReducedMotion;sync();emit('motion-preference',{reducedMotion});return reducedMotion;}
     function setExpression(value){if(destroyed)return false;const next=value===null?null:validateExpression(value);if(value!==null&&(!next||!canDisplay()||paused||reducedMotion))return false;expression=next;sync();emit('expression',next?{...next}:null);return true;}
@@ -529,12 +545,12 @@
     function stopPointerFrame(){if(pointerFrame!==null)win.cancelAnimationFrame?.(pointerFrame);pointerFrame=null;}
     function queuePointerFrame(){
       if(pointerFrame!==null||!canDisplay()||paused||reducedMotion||!win.requestAnimationFrame)return;
-      if(!faceSettling&&!signalSettling&&!inputSettling&&!headMoving()&&!gazeMoving()&&!thinkingMoving())return;
+      if(!faceSettling&&!signalSettling&&!inputSettling&&!headMoving()&&!gazeMoving()&&!thinkingMoving()&&!ambiguityMoving())return;
       pointerFrame=win.requestAnimationFrame(()=>{
         pointerFrame=null;
         if(!canDisplay()||paused||reducedMotion)return;
         syncFallback();
-        if(faceSettling||signalSettling||inputSettling||headMoving()||gazeMoving()||thinkingMoving())queuePointerFrame();
+        if(faceSettling||signalSettling||inputSettling||headMoving()||gazeMoving()||thinkingMoving()||ambiguityMoving())queuePointerFrame();
       });
     }
     function lookAt(x,y){
@@ -553,7 +569,7 @@
       if(beginPresentation)playMannerism('explain');sync();emit('product-focus',{...productFocus});return true;
     }
     function perform(value){
-      const plan=validateAvatarPerformance(value);if(!plan||destroyed||!canDisplay()||paused)return false;
+      const plan=validateAvatarPerformance(value);if(!plan||destroyed||!canDisplay()||paused||reducedMotion)return false;
       cancelPerformance();performancePreviousEmotion=emotion==='appreciated'?previousEmotion:emotion;performance=plan;const epoch=performanceEpoch;
       if(emotion==='appreciated'&&plan.mood!=='appreciated')previousEmotion=plan.mood;else if(emotion!=='appreciated'||plan.mood!=='appreciated')setEmotion(plan.mood,true);
       frame.dataset.performance=plan.gesture;
@@ -574,7 +590,7 @@
       emit('product-showcase',{id:photo.id,handle:photo.handle,format:'product-photo'});return true;
     }
     function clearFocus(){if(destroyed)return;productFocus=null;resolveGazeTarget(now());sync();}
-    function cue(name){if(destroyed||!canDisplay()||paused||reducedMotion)return false;const key=name==='present'?'explain':name;if(!Object.hasOwn(MANNERISMS,key))return false;playMannerism(key);sync();return mannerism===key;}
+    function cue(name){if(destroyed||!canDisplay()||paused||reducedMotion)return false;if(name==='ambiguity'){if(ambiguityAt!==null)return false;cancelPerformance();cancelAppreciation();cancelMannerism();expression=null;ambiguityAt=now();const epoch=ambiguityEpoch;ambiguityTimer=win.setTimeout(()=>{if(destroyed||epoch!==ambiguityEpoch)return;cancelAmbiguity();sync();},AMBIGUITY_DURATION*1000);sync();return true;}const key=name==='present'?'explain':name;if(!Object.hasOwn(MANNERISMS,key))return false;playMannerism(key);sync();return mannerism===key;}
     function setSpeechSignal(value){if(destroyed)return false;const next=value===null?EMPTY_SPEECH_SIGNAL:validateSpeechSignal(value);if(!next||!next.valid||next.amplitude===0||state!=='speaking'||paused||reducedMotion||!canDisplay()){if(clearSpeechSignal())sync();return value===null||!!next&&(!next.valid||next.amplitude===0);}
       speechSignal=next;level=next.amplitude;if(level<.045)speechRested=true;else if(level>.1&&speechRested&&(speechBeatAt===null||now()-speechBeatAt>2.5)){speechBeatAt=now();speechRested=false;}syncFallback();paintMeasuredFrame();return true;}
     // Native meter updates must also reach the visible 3-D scene when RAF is

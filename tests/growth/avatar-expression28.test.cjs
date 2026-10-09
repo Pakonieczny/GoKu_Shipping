@@ -57,7 +57,8 @@ test('a mixed spoken reply continuously changes real face paths without replayin
     assert.equal(guide.element.querySelector('.brites-avatar__smile-signal').getAttribute('opacity'), '1');
   }
   assert.equal(new Set(paths).size, 5); assert.ok(new Set(curves).size >= 4);
-  assert.ok(poses[2].faceBrowTilt > poses[0].faceBrowTilt + .4, 'question visibly differs from explanation');
+  assert.ok(poses[2].faceBrowLift > poses[0].faceBrowLift + .08 && poses[2].eyeRoundness > poses[0].eyeRoundness + .02, 'friendly question changes paired brow height and eye shape');
+  assert.equal(poses[2].eyeAsymmetry, 0); assert.equal(poses[2].mouthSkew, 0);
   assert.ok(poses[3].eyeSmile > poses[2].eyeSmile + .2, 'appreciation softens the open eye geometry');
   for (const pose of poses) {assert.equal(pose.speechEnergy, .6); for (const value of Object.values(pose)) assert.ok(Number.isFinite(value)); assert.ok(Math.abs(pose.headRoll) < .09);}
   guide.setLevel(0); assert.equal(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'), '0');

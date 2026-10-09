@@ -7,6 +7,8 @@ const client=require('../../brites-concierge-voice');
 const server=require('../../netlify/functions/_britesConciergeVoice');
 const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
 const HANDLE='simple-compass-necklace',VARIANT='gid://shopify/ProductVariant/101';
+const CONTROL_FAILURE='I couldn’t finish that change. Please check the visible options.';
+function refusedControl(output){assert.deepEqual(output,{reply:CONTROL_FAILURE});}
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};}
 function nativeFixture(t,{tool=async()=>({verified:true}),onSpeechStarted}={}){
@@ -26,7 +28,7 @@ function nativeFixture(t,{tool=async()=>({verified:true}),onSpeechStarted}={}){
   const runtime={document,navigator:{mediaDevices:{getUserMedia:async()=>{microphones++;return stream;}}},location:{origin:'https://preview.test'},RTCPeerConnection:Peer,AbortController,
     setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,at:at+ms});return id;},clearTimeout(id){timers.delete(id);},addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);},
     fetch:async(url,init)=>{const body=JSON.parse(init.body);requests.push(body);if(body.action==='capabilities')return Response.json({enabled:true});if(body.action==='start')return Response.json({sdp:SDP,stopToken:'fixture-stop-token',maxDurationMs:120000});return Response.json({stopped:true});}};
-  const voice=client.create({runtime,greeting:false,onTranscript:value=>transcripts.push(value),onSpeechStarted:value=>{speech.push(value);order.push('authority-invalidated');onSpeechStarted?.(value);},onTool:(args,context)=>{calls.push({args,context});return tool(args,context);}});
+  const voice=client.create({runtime,greeting:false,onTranscript:value=>transcripts.push(value),onSpeechStarted:value=>{speech.push(value);order.push('authority-invalidated');onSpeechStarted?.(value);},onTool:async(args,context)=>{const call={args,context};calls.push(call);call.result=await tool(args,context);return call.result;}});
   t.after(async()=>{await voice.dispose();assert.equal(timers.size,0);});
   const emit=event=>channel?.onmessage?.({data:JSON.stringify(event)});
   const issued=itemId=>sent.filter(value=>value.type==='response.create'&&value.response.metadata?.brites_input_item===itemId).at(-1)?.response.metadata;
@@ -105,7 +107,10 @@ test('search, inspect and preparation dispatch named contexts for one exact comm
   assert.equal(f.calls[0].args.message,'A compass gift');
   for(const call of f.calls){assert.equal(call.context.inputItemId,'input-current');assert.equal(call.context.responseId,'response-current');assert.equal(call.context.turnVersion,turn);assert.equal(call.context.currentTurn,true);assert.equal(call.context.signal.aborted,true,'host signal is retired after completion');}
   assert.deepEqual(f.transcripts.at(-1),{role:'user',text:'Show me the options for the compass necklace',final:true,itemId:'input-current',turnVersion:turn,currentTurn:true});
-  assert.equal(f.output('prepare').prepared,true);assert.equal(f.output('prepare').confirmationRequired,true);
+  assert.equal(f.calls[2].result.prepared,true);assert.equal(f.calls[2].result.confirmationRequired,true);
+  assert.deepEqual(f.output('prepare'),{reply:client.shopperReply(f.calls[2].result)});
+  assert.deepEqual(f.output('search'),{verified:true,product:{handle:HANDLE}});
+  assert.deepEqual(f.output('inspect'),{verified:true,product:{handle:HANDLE}});
 });
 
 test('invalid named arguments and missing or unknown tool names never reach host controls',async t=>{
@@ -113,14 +118,14 @@ test('invalid named arguments and missing or unknown tool names never reach host
   const events=[['inspect_jewellery',{handle:HANDLE,url:'https://evil.test'}],['prepare_jewellery_action',{handle:HANDLE,action:'view',variantId:VARIANT}],['prepare_jewellery_action',{handle:HANDLE,action:'cart'}],['find_jewellery',{message:'gift',handle:HANDLE}],['navigate',{message:'view'}],[undefined,{message:'gift'}]];
   events.forEach(([name,args],i)=>f.invoke(name,args,{callId:'invalid-'+i,responseId:'response-current'}));
   f.invoke('inspect_jewellery',null,{callId:'invalid-json',responseId:'response-current',raw:'{"handle":'});await flush();
-  assert.equal(f.calls.length,0);for(const event of f.sent.filter(value=>value.item)){const output=JSON.parse(event.item.output);assert.equal(output.verified,false);assert.notEqual(output.prepared,true);}
+  assert.equal(f.calls.length,0);for(const event of f.sent.filter(value=>value.item)){const output=JSON.parse(event.item.output);if(['invalid-1','invalid-2'].includes(event.item.call_id))refusedControl(output);else{assert.equal(output.verified,false);assert.notEqual(output.prepared,true);}}
 });
 
 test('preparation without a known current response binding cannot borrow current transcript authority',async t=>{
   const f=nativeFixture(t);await f.voice.start();f.begin('input-current');
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'missing-response'});
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'unknown-response',responseId:'not-known'});await flush();
-  assert.equal(f.calls.length,0);for(const id of ['missing-response','unknown-response']){assert.equal(f.output(id).prepared,false);assert.equal(f.output(id).verified,false);}
+  assert.equal(f.calls.length,0);for(const id of ['missing-response','unknown-response'])refusedControl(f.output(id));
 });
 
 test('a response created before its exact VAD input commit stays permanently unbound',async t=>{
@@ -128,7 +133,7 @@ test('a response created before its exact VAD input commit stays permanently unb
   f.emit({type:'input_audio_buffer.committed',item_id:'input-current'});
   f.emit({type:'response.created',response:{id:'response-unbound',metadata:f.issued('input-current')}});
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'options'},{responseId:'response-unbound'});await flush();
-  assert.equal(f.calls.length,0);assert.equal(f.output('call-1').prepared,false);
+  assert.equal(f.calls.length,0);refusedControl(f.output('call-1'));
 });
 
 test('a mismatched or missing input commit cannot authorize current product preparation',async t=>{
@@ -136,7 +141,7 @@ test('a mismatched or missing input commit cannot authorize current product prep
   f.emit({type:'input_audio_buffer.committed',item_id:'other-input'});f.emit({type:'input_audio_buffer.committed'});
   f.emit({type:'response.created',response:{id:'response-uncommitted'}});
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'options'},{responseId:'response-uncommitted'});await flush();
-  assert.equal(f.calls.length,0);assert.equal(f.output('call-1').prepared,false);assert.equal(f.transcripts.at(-1).currentTurn,false);
+  assert.equal(f.calls.length,0);refusedControl(f.output('call-1'));assert.equal(f.transcripts.at(-1).currentTurn,false);
 });
 
 test('speech authority is invalidated before abort and audio interruption; ignored abort cannot preserve preparation',async t=>{
@@ -146,7 +151,7 @@ test('speech authority is invalidated before abort and audio interruption; ignor
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'review',variantId:VARIANT},{callId:'preparation-a',responseId:'response-a'});
   assert.equal(signal.aborted,false);const responseCount=f.sent.filter(value=>value.type==='response.create').length;f.order.length=0;f.emit({type:'input_audio_buffer.speech_started',item_id:'input-b'});
   assert.deepEqual(f.order.slice(0,3),['authority-invalidated','host-aborted','response.cancel']);assert.equal(signal.aborted,true);
-  await flush();const cancelled=f.output('preparation-a');assert.equal(cancelled.prepared,false);assert.equal(cancelled.cancelled,true);assert.equal(cancelled.verified,false);
+  await flush();refusedControl(f.output('preparation-a'));
   const before=f.sent.length;pending.resolve({verified:true,prepared:true,secret:'stale-result'});await flush();assert.equal(f.sent.length,before);assert.doesNotMatch(JSON.stringify(f.sent),/stale-result/);assert.equal(f.sent.filter(value=>value.type==='response.create').length,responseCount);
 });
 
@@ -157,10 +162,10 @@ test('manual interruption expires current authority and discards a stale checked
   assert.equal(f.output('inspect-a').verified,false);assert.equal(f.output('inspect-a').cancelled,true);pending.resolve({verified:true,product:{handle:HANDLE,price:123}});await flush();assert.doesNotMatch(JSON.stringify(f.sent),/"price":123/);
 });
 
-test('tool deadline aborts a non-responsive preparation and produces only a fixed unprepared result',async t=>{
+test('tool deadline aborts a non-responsive preparation and produces only a fixed customer failure',async t=>{
   let signal;const f=nativeFixture(t,{tool:(args,context)=>{signal=context.signal;return new Promise(()=>{});}});
   await f.voice.start();f.begin('input-current',{responseId:'response-current'});f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'options'},{callId:'deadline',responseId:'response-current'});
-  f.advance(14000);await flush();assert.equal(signal.aborted,true);assert.equal(f.output('deadline').prepared,false);assert.equal(f.output('deadline').verified,false);assert.equal(f.output('deadline').message,'I couldn’t finish that change. Please check the visible options.');assert.doesNotMatch(f.output('deadline').message,/prepar|verified|authority|backend/);
+  f.advance(14000);await flush();assert.equal(signal.aborted,true);refusedControl(f.output('deadline'));assert.doesNotMatch(f.output('deadline').reply,/prepar|verified|authority|backend/);
 });
 
 test('late prior transcription remains labelled with its prior turn and cannot upgrade authority',async t=>{
@@ -173,7 +178,7 @@ test('late prior transcription remains labelled with its prior turn and cannot u
 
 test('an old bound response cannot dispatch a product action in a later committed speech turn',async t=>{
   const f=nativeFixture(t);await f.voice.start();f.begin('input-a',{responseId:'response-a'});f.begin('input-b',{responseId:'response-b'});
-  f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'old-preparation',responseId:'response-a'});await flush();assert.equal(f.calls.length,0);assert.equal(f.output('old-preparation').prepared,false);assert.equal(f.output('old-preparation').cancelled,true);
+  f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'old-preparation',responseId:'response-a'});await flush();assert.equal(f.calls.length,0);refusedControl(f.output('old-preparation'));
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'options'},{callId:'current-preparation',responseId:'response-b'});await flush();assert.equal(f.calls.length,1);assert.equal(f.calls[0].context.inputItemId,'input-b');
 });
 
@@ -184,7 +189,7 @@ test('A stops, B starts, delayed A response arrives: B completion never binds th
   f.emit({type:'input_audio_buffer.speech_stopped',item_id:'input-b'});f.emit({type:'input_audio_buffer.committed',item_id:'input-b'});
   f.emit({type:'conversation.item.input_audio_transcription.completed',item_id:'input-b',transcript:'Show this piece'});
   f.emit({type:'response.created',response:{id:'delayed-response-a',metadata:f.issued('input-b')}});
-  f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'delayed-a-action',responseId:'delayed-response-a'});await flush();assert.equal(f.calls.length,0);assert.equal(f.output('delayed-a-action').prepared,false);
+  f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'delayed-a-action',responseId:'delayed-response-a'});await flush();assert.equal(f.calls.length,0);refusedControl(f.output('delayed-a-action'));
 });
 
 test('all three tool types deduplicate exact call IDs before dispatch',async t=>{
@@ -196,7 +201,7 @@ test('all three tool types deduplicate exact call IDs before dispatch',async t=>
 test('bad or oversized host results never become checked preparation or leak failure details',async t=>{
   let mode=0;const f=nativeFixture(t,{tool:async()=>{mode++;if(mode===1)return {verified:true,prepared:true,text:'x'.repeat(30001)};if(mode===2)throw Error('private-account-secret');return null;}});
   await f.voice.start();f.begin('input-current',{responseId:'response-current'});
-  for(let i=1;i<=3;i++){f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'bad-result-'+i,responseId:'response-current'});await flush();assert.equal(f.output('bad-result-'+i).prepared,false);assert.equal(f.output('bad-result-'+i).verified,false);}
+  for(let i=1;i<=3;i++){f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'bad-result-'+i,responseId:'response-current'});await flush();refusedControl(f.output('bad-result-'+i));}
   assert.doesNotMatch(JSON.stringify(f.sent),/private-account-secret|x{100}/);
 });
 
@@ -219,14 +224,14 @@ test('A response first observed after B commit retains A identity through echoed
   f.emit({type:'response.created',response:{id:'delayed-response-a',metadata:metadataA}});
   const responses=f.sent.filter(value=>value.type==='response.create').length;
   f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'options'},{callId:'old-first-seen-after-b',responseId:'delayed-response-a'});await flush();
-  assert.equal(f.calls.length,0);assert.equal(f.output('old-first-seen-after-b').prepared,false);assert.equal(f.output('old-first-seen-after-b').cancelled,true);assert.equal(f.sent.filter(value=>value.type==='response.create').length,responses);
+  assert.equal(f.calls.length,0);refusedControl(f.output('old-first-seen-after-b'));assert.equal(f.sent.filter(value=>value.type==='response.create').length,responses);
 });
 
 test('missing, changed or reused response metadata never binds product action authority',async t=>{
   const f=nativeFixture(t);await f.voice.start();f.begin('input-current',{responseId:'response-current'});const metadata=f.issued('input-current');
   const responses=[{id:'missing'},{id:'forged',metadata:{...metadata,brites_voice_request:'not-issued'}},{id:'wrong-input',metadata:{...metadata,brites_input_item:'other-input'}},{id:'wrong-version',metadata:{...metadata,brites_turn_version:'999'}},{id:'reused',metadata}];
   for(const response of responses){f.emit({type:'response.created',response});f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{callId:'unbound-'+response.id,responseId:response.id});}
-  await flush();assert.equal(f.calls.length,0);for(const response of responses)assert.equal(f.output('unbound-'+response.id).prepared,false);
+  await flush();assert.equal(f.calls.length,0);for(const response of responses)refusedControl(f.output('unbound-'+response.id));
 });
 
 test('three successful read tools bound chaining; a fourth cannot call the host and speaks with tools disabled',async t=>{
@@ -269,7 +274,7 @@ test('unbound assistant response IDs cannot replace captions or state, while leg
 test('multi-byte host outputs are bounded by UTF-8 bytes and cannot restore a failed tool chain',async t=>{
   const f=nativeFixture(t,{tool:async()=>({verified:true,prepared:true,text:'💎'.repeat(8000)})});await f.voice.start();f.begin('input-current',{responseId:'response-current'});f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{responseId:'response-current'});await flush();
   f.emit({type:'response.done',response:{id:'response-current',status:'completed'}});
-  assert.equal(f.output('call-1').prepared,false);assert.equal(f.output('call-1').verified,false);assert.doesNotMatch(JSON.stringify(f.sent),/💎/);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
+  refusedControl(f.output('call-1'));assert.doesNotMatch(JSON.stringify(f.sent),/💎/);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
 });
 
 test('the existing total session tool limit still closes media and the signed session after 100 unique calls',async t=>{
