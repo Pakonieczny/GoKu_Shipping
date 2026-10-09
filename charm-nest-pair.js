@@ -311,22 +311,34 @@
    *  are both bodyIndex 0. `mirror` is true for a piece that is the mirror image of the as-drawn design (facingOf decides which of the two that is).
    *  Anything that is not an earring pair (a necklace of discs, a single earring): side null, mirror false. */
   function piecesFor(line, charm, opts) {
-    const key = groupKey(line), total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm), out = [];
-    const pair = total >= 2 && isEarringPair(line, charm), said = sidesSaid(line);   // (the intake's own sides win; without them the pieces alternate L, R)
-    const bodies = mis ? bodiesOf(charm) : null;
+    const key = groupKey(line), total = pieceCountOf(line, charm), pr = pairSpecOf(line), out = [];
+    // a mismatched design (by its geometry, or because the intake says so) is two bodies, unless the line is one glued copy per unit or an old line pinned to the pieces it had
+    const mis = !(pr && (pr.glued || pr.legacy)) && ((!!charm && isMismatched(charm)) || !!(pr && pr.mismatched === true));
+    const pair = total >= 2 && isEarringPair(line, charm);
+    let said = sidesSaid(line);   // (the intake's own sides win; without them the pieces alternate L, R)
+    if (!said && total === 1 && pr && pr.single && (pr.sideSaid === "L" || pr.sideSaid === "R")) said = [pr.sideSaid];   // a single earring that names its ear
+    const bodies = mis && charm ? bodiesOf(charm) : null, byBody = !!bodies && bodies.length >= 2;
     for (let i = 0; i < total; i++) {
       const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
       const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
-      if (side) { const f = (opts && opts.facing) || (bodies ? facingOfBody(bodies[bodyIndex], charm) : facingOf(charm)); mirror = side !== (f || "L"); }
+      if (side) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : facingOf(charm)); mirror = side !== (f || "L"); }
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
     }
     return out;
   }
   /** single (one piece) | pair (two pieces of one design) | mismatched (a left and a right body) | multi (three or more pieces, or several pairs). */
   function kindOf(line, charm) {
-    const total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm);
-    if (mis) return total === 2 ? "mismatched" : "multi";
+    const pr = pairSpecOf(line);
+    const total = pieceCountOf(line, charm);
+    if (pr && (typeof pr.mismatched === "boolean" || typeof pr.earring === "boolean")) {   // the intake's facts: the same rule as charm-nest-orders.js kindFor
+      if (total < 2) return pr.mismatched ? "mismatched" : "single";
+      if (pr.earring && !pr.glued && !pr.legacy && total === 2) return pr.mismatched ? "mismatched" : "pair";
+      return "multi";
+    }
+    if (pr && /^(single|pair|mismatched|multi)$/.test(pr.kind || "")) return pr.kind;   // the intake's own answer
+    const mis = !!charm && isMismatched(charm);
+    if (mis) return total === 2 ? "mismatched" : total <= 1 ? "mismatched" : "multi";   // (one glued copy of a mismatched design is still the mismatched kind)
     if (total <= 1) return "single";
     return total === 2 ? "pair" : "multi";
   }
