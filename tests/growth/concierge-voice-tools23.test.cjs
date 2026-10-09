@@ -160,7 +160,7 @@ test('manual interruption expires current authority and discards a stale checked
 test('tool deadline aborts a non-responsive preparation and produces only a fixed unprepared result',async t=>{
   let signal;const f=nativeFixture(t,{tool:(args,context)=>{signal=context.signal;return new Promise(()=>{});}});
   await f.voice.start();f.begin('input-current',{responseId:'response-current'});f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'options'},{callId:'deadline',responseId:'response-current'});
-  f.advance(14000);await flush();assert.equal(signal.aborted,true);assert.equal(f.output('deadline').prepared,false);assert.equal(f.output('deadline').verified,false);assert.match(f.output('deadline').message,/could not be prepared/);
+  f.advance(14000);await flush();assert.equal(signal.aborted,true);assert.equal(f.output('deadline').prepared,false);assert.equal(f.output('deadline').verified,false);assert.equal(f.output('deadline').message,'I couldn’t finish that change. Please check the visible options.');assert.doesNotMatch(f.output('deadline').message,/prepar|verified|authority|backend/);
 });
 
 test('late prior transcription remains labelled with its prior turn and cannot upgrade authority',async t=>{
@@ -231,20 +231,23 @@ test('missing, changed or reused response metadata never binds product action au
 
 test('three successful read tools bound chaining; a fourth cannot call the host and speaks with tools disabled',async t=>{
   const f=nativeFixture(t,{tool:async()=>({verified:true,product:{handle:HANDLE}})});await f.voice.start();f.begin('input-current',{responseId:'response-current'});
-  for(let i=1;i<=3;i++){f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'bounded-'+i,responseId:'response-current'});await flush();assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,i<3?'auto':'none');}
-  f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'bounded-4',responseId:'response-current'});await flush();assert.equal(f.calls.length,3);assert.equal(f.output('bounded-4').verified,false);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
-  f.begin('input-next',{responseId:'response-next'});f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'new-turn-read',responseId:'response-next'});await flush();assert.equal(f.calls.length,4);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'auto');
+  let active='response-current';for(let i=1;i<=2;i++){f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'bounded-'+i,responseId:active});await flush();f.emit({type:'response.done',response:{id:active,status:'completed'}});assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'auto');active='bounded-response-'+i;f.emit({type:'response.created',response:{id:active,metadata:f.issued('input-current')}});}
+  // A response can contain more than one function call. Its fourth co-issued
+  // read is refused before its terminal event and cannot restore the chain.
+  for(let i=3;i<=4;i++){f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'bounded-'+i,responseId:active});await flush();}assert.equal(f.calls.length,3);assert.equal(f.output('bounded-4').verified,false);f.emit({type:'response.done',response:{id:active,status:'completed'}});assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
+  f.begin('input-next',{responseId:'response-next'});f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'new-turn-read',responseId:'response-next'});await flush();f.emit({type:'response.done',response:{id:'response-next',status:'completed'}});assert.equal(f.calls.length,4);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'auto');
 });
 
 test('every preparation attempt closes chaining even when host says it could not prepare',async t=>{
   const f=nativeFixture(t,{tool:async()=>({error:'Please choose exact options.'})});await f.voice.start();f.begin('input-current',{responseId:'response-current'});f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'review',variantId:VARIANT},{responseId:'response-current'});await flush();
+  f.emit({type:'response.done',response:{id:'response-current',status:'completed'}});
   assert.equal(f.calls.length,1);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
 });
 
 test('invalid arguments close chaining and no unchecked host result can restore it in that turn',async t=>{
   const f=nativeFixture(t,{tool:async()=>({verified:true})});await f.voice.start();f.begin('input-current',{responseId:'response-current'});
-  f.invoke('inspect_jewellery',{handle:'../bad'},{callId:'invalid',responseId:'response-current'});await flush();assert.equal(f.calls.length,0);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
-  f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'checked-later',responseId:'response-current'});await flush();assert.equal(f.calls.length,1);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
+  f.invoke('inspect_jewellery',{handle:'../bad'},{callId:'invalid',responseId:'response-current'});await flush();assert.equal(f.calls.length,0);assert.equal(f.sent.filter(value=>value.type==='response.create').length,1);
+  f.invoke('inspect_jewellery',{handle:HANDLE},{callId:'checked-later',responseId:'response-current'});await flush();assert.equal(f.calls.length,1);f.emit({type:'response.done',response:{id:'response-current',status:'completed'}});assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
 });
 
 test('known stale assistant captions, audio state and response completion cannot overwrite a newer turn',async t=>{
@@ -265,6 +268,7 @@ test('unbound assistant response IDs cannot replace captions or state, while leg
 
 test('multi-byte host outputs are bounded by UTF-8 bytes and cannot restore a failed tool chain',async t=>{
   const f=nativeFixture(t,{tool:async()=>({verified:true,prepared:true,text:'💎'.repeat(8000)})});await f.voice.start();f.begin('input-current',{responseId:'response-current'});f.invoke('prepare_jewellery_action',{handle:HANDLE,action:'view'},{responseId:'response-current'});await flush();
+  f.emit({type:'response.done',response:{id:'response-current',status:'completed'}});
   assert.equal(f.output('call-1').prepared,false);assert.equal(f.output('call-1').verified,false);assert.doesNotMatch(JSON.stringify(f.sent),/💎/);assert.equal(f.sent.filter(value=>value.type==='response.create').at(-1).response.tool_choice,'none');
 });
 

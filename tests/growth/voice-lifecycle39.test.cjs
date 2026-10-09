@@ -106,7 +106,7 @@ test('normal generation completion retires only its response timer while playbac
 });
 
 test('an older same-turn generation completion cannot retire the latest response request timer',async t=>{
-  const f=fixture(t);await f.voice.start();f.speech();f.bind('first');f.emit({type:'response.function_call_arguments.done',response_id:'first',call_id:'inspect-once',name:'find_jewellery',arguments:'{"message":"A necklace"}'});await settle();assert.equal(f.responses().length,2);f.bind('second');f.emit({type:'response.done',response:{id:'first',status:'completed'}});assert.equal(f.voice.state,'thinking');assert.equal([...f.timers.values()].some(value=>value.ms===15000),true);
+  const f=fixture(t);await f.voice.start();f.speech();f.bind('first');f.emit({type:'response.function_call_arguments.done',response_id:'first',call_id:'inspect-once',name:'find_jewellery',arguments:'{"message":"A necklace"}'});await settle();assert.equal(f.responses().length,1);f.emit({type:'response.done',response:{id:'first',status:'completed'}});assert.equal(f.responses().length,2);f.bind('second');f.emit({type:'response.done',response:{id:'first',status:'completed'}});assert.equal(f.voice.state,'thinking');assert.equal([...f.timers.values()].some(value=>value.ms===15000),true);
   f.emit({type:'response.done',response:{id:'second',status:'completed'}});assert.equal(f.voice.state,'listening');f.onlySessionTimer();
 });
 

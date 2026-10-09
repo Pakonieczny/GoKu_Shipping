@@ -53,6 +53,14 @@ async function prepareExactBag(h){
 function assertBoundedOverview(result){
   assert.equal(result.ok,true,result.reply||result.error);assert.equal(result.browseAll,true);assert.equal(result.inventory.loaded,120);assert.equal(result.inventory.catalogueComplete,false);assert(result.products.length<=6,'The assistant response stays bounded independently of the native full collection');assert.match(result.reply,/120 checked listings/);assert.match(result.reply,/necklaces/);assert.match(result.reply,/earrings/);assert.match(result.reply,/charms/);assert.doesNotMatch(result.reply,/\b(?:rings?|bracelets?)\b/);
 }
+async function nativeSay(h,text){
+  const before=h.hostResults.length,repliesBefore=h.customerReplies.length,result=await h.say(text);
+  assert.equal(h.hostResults.length,before+1,'The real finalized widget callback runs once');
+  const captured=h.hostResults.at(-1);assert.equal(captured.text,text);assert.deepEqual(result,captured.result,'Browse facts and authority assertions use the actual widget result before voice projection');
+  assert.equal(h.customerReplies.length,repliesBefore+1);const customer=h.customerReplies.at(-1);assert.equal(customer.inputItemId,captured.inputItemId);assert.deepEqual(Object.keys(customer.payload),['reply']);assert.equal(customer.payload.reply,result.reply);
+  assert.doesNotMatch(JSON.stringify(customer.payload),/"(?:inventory|products|browseAll|publicContext|completedActions|plan|preferences|requestId|turnVersion)"\s*:/,'The speaker receives customer copy while complete checked facts remain inside the host');
+  return result;
+}
 
 test('typed explicit all restores all120 checked host pieces after a six-card search and retains local pagination',async t=>{
   const h=await warmFixture(t);const narrow=await h.command('Show animal earrings');assert.equal(narrow.ok,true,narrow.reply);assert.equal(h.handles().length,6);assert.equal(h.store.snapshot().loadedPieces.length,6);
@@ -67,13 +75,13 @@ test('typed explicit everything leaves exact product quantity and existing bag i
 
 test('synthetic native explicit all restores all120 after six presented matches and exposes remaining pages',async t=>{
   const h=await warmFixture(t,{nativeVoice:true});const narrow=await h.command('Show animal earrings');assert.equal(narrow.ok,true,narrow.reply);assert.equal(h.handles().length,6);await h.startVoice();
-  const before=h.requests.length,result=await h.say('Show me all pieces');assertBoundedOverview(result);assertFullBrowse(h);assert.equal(h.requests.length,before);assert.deepEqual(h.cart(),[]);await assertLocalMore(h,before);assert.deepEqual(h.errors,[]);
+  const before=h.requests.length,result=await nativeSay(h,'Show me all pieces');assertBoundedOverview(result);assertFullBrowse(h);assert.equal(h.requests.length,before);assert.deepEqual(h.cart(),[]);await assertLocalMore(h,before);assert.deepEqual(h.errors,[]);
 });
 
 test('synthetic native full browse from exact details preserves quantity and bag without another inference or product read',async t=>{
   const h=await warmFixture(t,{nativeVoice:true}),saved=await prepareExactBag(h);await h.startVoice();const before=h.requests.length;
-  const result=await h.say('Browse all jewelry');assertBoundedOverview(result);assertFullBrowse(h);assert.deepEqual(h.cart(),saved.cart);assert.equal(h.requests.length,before);
-  const reopened=await h.say('Open Butterfly Huggie Earrings');assert.equal(reopened.ok,true,reopened.reply||reopened.error);const controls=h.store.snapshot().productControls;assert.equal(controls.quantity,saved.controls.quantity);assert.equal(controls.variantId,saved.controls.variantId);assert.deepEqual(clone(controls.selectedOptions),saved.controls.selectedOptions);assert.deepEqual(h.cart(),saved.cart);assert.equal(h.requests.length,before);assert.deepEqual(h.errors,[]);
+  const result=await nativeSay(h,'Browse all jewelry');assertBoundedOverview(result);assertFullBrowse(h);assert.deepEqual(h.cart(),saved.cart);assert.equal(h.requests.length,before);
+  const reopened=await nativeSay(h,'Open Butterfly Huggie Earrings');assert.equal(reopened.ok,true,reopened.reply||reopened.error);const controls=h.store.snapshot().productControls;assert.equal(controls.quantity,saved.controls.quantity);assert.equal(controls.variantId,saved.controls.variantId);assert.deepEqual(clone(controls.selectedOptions),saved.controls.selectedOptions);assert.deepEqual(h.cart(),saved.cart);assert.equal(h.requests.length,before);assert.deepEqual(h.errors,[]);
 });
 
 test('ordinary inventory question remains a bounded overview and subsequent explicit all still restores actual host browsing',async t=>{

@@ -56,7 +56,7 @@ async function fixture(t, { rows = catalogue(), nativeVoice = false } = {}) {
   const errors = [], console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error));
   const dom = new JSDOM(read('concierge-sandbox.html'), { url: 'https://preview.example/concierge-sandbox.html', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: console });
-  const w = dom.window, d = w.document, requests = [], packets = [];
+  const w = dom.window, d = w.document, requests = [], packets = [], finalizedResults = new Map();
   let client, channel, turn = 0, conciergeRead = null;
   delete d.body.dataset.catalogueSeed;
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -102,7 +102,16 @@ async function fixture(t, { rows = catalogue(), nativeVoice = false } = {}) {
       RTCPeerConnection: Peer, AbortController: w.AbortController, fetch: w.fetch,
       setTimeout: w.setTimeout.bind(w), clearTimeout: w.clearTimeout.bind(w), addEventListener: w.addEventListener.bind(w), removeEventListener: w.removeEventListener.bind(w)
     };
-    w.BritesConciergeVoice = { publicContext: Voice.publicContext, create(options) { client = Voice.create({ ...options, runtime, greeting: false }); return client; } };
+    w.BritesConciergeVoice = { publicContext: Voice.publicContext, create(options) {
+      assert.equal(typeof options.onFinalizedTurn, 'function', 'The real widget must supply its current finalized-input handler');
+      client = Voice.create({ ...options, runtime, greeting: false, onFinalizedTurn: async input => {
+        // Inspect the actual completed widget answer before the audio-only
+        // projection, retaining all discovery/freshness/hold authority checks.
+        const result = await options.onFinalizedTurn(input);
+        finalizedResults.set(input.inputItemId, result);
+        return result;
+      } }); return client;
+    } };
   }
   w.BritesConciergeAvatar = { create() { return { setState() {}, setEmotion() {}, setVisible() {}, setPaused() {}, setLevel() {}, setFloating() {}, cancelPerformance() {}, triggerGreeting() {}, cue() {}, focusProduct() {}, clearFocus() {}, showProduct() {}, clearProduct() {}, destroy() {} }; } };
   const script = d.createElement('script'); script.src = '/brites-concierge.js'; script.dataset.sandbox = 'true';
@@ -134,7 +143,7 @@ async function fixture(t, { rows = catalogue(), nativeVoice = false } = {}) {
     },
     async say(text) {
       assert.ok(channel?.onmessage, 'Realtime must be connected before a transcript is injected');
-      const receipts = () => packets.filter(p => p.item?.content?.[0]?.text?.startsWith('Host-completed result'));
+      const receipts = () => packets.filter(p => p.item?.content?.[0]?.text?.startsWith('Customer reply for this finalized shopper request.'));
       const before = receipts().length, itemId = 'independent44-turn-' + (++turn), emit = event => channel.onmessage({ data: JSON.stringify(event) });
       emit({ type: 'input_audio_buffer.speech_started', item_id: itemId });
       emit({ type: 'input_audio_buffer.speech_stopped', item_id: itemId });
@@ -143,7 +152,14 @@ async function fixture(t, { rows = catalogue(), nativeVoice = false } = {}) {
       await eventually(() => receipts().length > before, 'The actual voice client must produce a current host result');
       assert.equal(receipts().length, before + 1);
       const textReceipt = receipts().at(-1).item.content[0].text;
-      return JSON.parse(textReceipt.slice(textReceipt.indexOf('{'))).result;
+      const spoken = JSON.parse(textReceipt.slice(textReceipt.indexOf('{')));
+      assert.deepEqual(Object.keys(spoken), ['reply'], 'The actual provider packet receives the customer sentence only');
+      assert.equal(typeof spoken.reply, 'string'); assert.ok(spoken.reply.trim());
+      assert.doesNotMatch(textReceipt, /completedActions|productFacts|variantId|matchingVariantIds|contextRevision|storefrontBinding|turnVersion|inputItemId|postcondition|backend|authority|no further action|\bmotif\s*[:=]/i, 'Internal plans, codes and fact envelopes must stay outside native narration');
+      const result = finalizedResults.get(itemId);
+      assert.ok(result && typeof result === 'object', 'Every original factual and control assertion must inspect the actual widget result');
+      assert.equal(result.handled, true);
+      return result;
     }
   };
   if (nativeVoice) await h.startVoice();

@@ -34,6 +34,7 @@ test('visible context is immediate bounded identity data, never prices, permissi
 });
 test('native storefront action is bound to exact committed item and echoed client response',async t=>{
   const f=fixture(t);await f.voice.start();f.begin();f.bind();f.tool('control_storefront',{type:'sort',sort:'price-asc'});f.tool('control_storefront',{type:'sort',sort:'price-asc'});await settle();
+  assert.equal(f.responses().length,1);f.emit({type:'response.done',response:{id:'response-current',status:'completed'}});
   assert.equal(f.calls.length,1);assert.equal(f.calls[0].context.inputItemId,'input-current');assert.equal(f.calls[0].context.responseId,'response-current');assert.equal(f.calls[0].context.currentTurn,true);assert.equal(f.responses().at(-1).response.tool_choice,'none','control cannot chain another website change');
 });
 test('missing metadata, uncommitted and stale spoken turns cannot reach native controls',async t=>{
@@ -41,7 +42,7 @@ test('missing metadata, uncommitted and stale spoken turns cannot reach native c
   f.emit({type:'input_audio_buffer.speech_started',item_id:'pending-input'});f.bind('pending-response',f.responses().at(-1).response.metadata);f.tool('control_storefront',{type:'checkout'},'pending-response','pending');await settle();assert.equal(f.calls.length,0);
 });
 test('services are read-only and leave a bounded checked continuation available',async t=>{
-  const f=fixture(t,{onTool:async()=>({verified:false,readCompleted:true,schema:1,checkedAt:1791349200000,guidance:{production:{needsConfirmation:true}},offers:[]})});await f.voice.start();f.begin();f.bind();f.tool('read_storefront_services',{});await settle();assert.equal(f.calls.length,1);assert.equal(f.calls[0].context.name,'read_storefront_services');assert.equal(f.responses().at(-1).response.tool_choice,'auto');
+  const f=fixture(t,{onTool:async()=>({verified:false,readCompleted:true,schema:1,checkedAt:1791349200000,guidance:{production:{needsConfirmation:true}},offers:[]})});await f.voice.start();f.begin();f.bind();f.tool('read_storefront_services',{});await settle();f.emit({type:'response.done',response:{id:'response-current',status:'completed'}});assert.equal(f.calls.length,1);assert.equal(f.calls[0].context.name,'read_storefront_services');assert.equal(f.responses().at(-1).response.tool_choice,'auto');
 });
 test('a newer spoken turn aborts pending controls and does not announce false success',async t=>{
   let resolve;const pending=new Promise(done=>resolve=done),f=fixture(t,{onTool:()=>pending});await f.voice.start();f.begin('first-input');f.bind('first-response');f.tool('control_storefront',{type:'open',handle:piece.handle},'first-response');await settle();assert.equal(f.calls.length,1);

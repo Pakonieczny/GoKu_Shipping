@@ -14,7 +14,7 @@ function fixture(t,{moduleAvailable=true}={}){
   const dom=new JSDOM('<!doctype html><body></body>',{url:'https://preview.example/concierge-sandbox.html',pretendToBeVisual:true,runScripts:'outside-only',virtualConsole:vc}),w=dom.window,d=w.document;
   const script=d.createElement('script');script.src='/brites-concierge.js';script.dataset.sandbox='true';Object.defineProperty(d,'currentScript',{get:()=>script});
   let hidden=false,clock=1791340000000,serial=0,controller=null;Object.defineProperty(d,'hidden',{get:()=>hidden});w.Date.now=()=>clock;
-  const timers=new Map(),calls={expressions:[],emotions:[],levels:[],states:[],performances:[],requests:[],starts:0,stops:0,interrupts:0};
+  const timers=new Map(),calls={expressions:[],emotions:[],levels:[],states:[],performances:[],requests:[],hostResults:[],starts:0,stops:0,interrupts:0};
   w.setTimeout=(fn,ms)=>{const id=++serial;timers.set(id,{fn,at:clock+Number(ms||0)});return id;};w.clearTimeout=id=>timers.delete(id);
   w.HTMLElement.prototype.scrollIntoView=function(){};
   if(moduleAvailable)w.BritesConciergeExpression={...expressionApi,create(options){controller=expressionApi.create({...options,now:()=>clock});return controller;}};
@@ -22,7 +22,7 @@ function fixture(t,{moduleAvailable=true}={}){
   let config;const client={state:'listening',outputMeterState:'ready',playbackBlocked:false,start:async()=>{calls.starts++;return true;},stop:async()=>{calls.stops++;},interrupt(){calls.interrupts++;},dispose:async()=>{}};
   w.BritesConciergeVoice={create:value=>{config=value;return client;}};
   w.fetch=async(url,init={})=>{const body=init.body?JSON.parse(init.body):{};calls.requests.push({url:String(url),body});return {ok:true,json:async()=>String(url).includes('/api/growth/product?')?{live:true,product}:body.message?{live:true,reply:'Current piece checked.',preferences:{},products:[product],meanings:[]}:{enabled:true}};};
-  w.eval(actions);w.eval(widget);const root=d.querySelector('brites-concierge').shadowRoot,button=label=>[...root.querySelectorAll('button')].find(value=>value.textContent.trim()===label||value.getAttribute('aria-label')===label);
+  w.eval(actions);const marker='function nativeControlReceipt(result){';assert.equal(widget.split(marker).length,2);w.__captureControl28=result=>calls.hostResults.push(JSON.parse(JSON.stringify(result)));w.eval(widget.replace(marker,marker+'window.__captureControl28(result);'));const root=d.querySelector('brites-concierge').shadowRoot,button=label=>[...root.querySelectorAll('button')].find(value=>value.textContent.trim()===label||value.getAttribute('aria-label')===label);
   async function start(){w.BritesConcierge.open();await settle();button('Talk to me').click();await settle();root.querySelector('script[src$="brites-concierge-voice.js"]')?.dispatchEvent(new w.Event('load'));await settle();}
   function advance(ms,output=null){const end=clock+ms;while(clock<end){clock=Math.min(end,clock+50);for(const [id,value] of [...timers])if(value.at<=clock){timers.delete(id);value.fn();}if(output!==null)config.onLevel({input:0,output});}}
   function state(value){client.state=value;config.onState(value);}
@@ -49,7 +49,7 @@ test('a single real-controller reply changes phrase intent with observed output,
 test('partial listening text can change presentation but cannot authorize options or save shopper history',async t=>{
   const h=fixture(t);await h.start();await h.config.onTool({message:'Show a compass necklace'},{name:'find_jewellery'});assert.equal(h.root.querySelectorAll('.card').length,1);const turn=h.speech();
   h.config.onListeningTranscript({delta:'Show options for the Compass Necklace.',final:false,itemId:turn.inputItemId,turnVersion:turn.turnVersion,currentTurn:true});h.advance(100);
-  const result=await h.config.onTool({handle:product.handle,action:'options'},{name:'prepare_jewellery_action',...turn});assert.match(result.error,/tell me which displayed piece/i);assert.equal(h.root.querySelector('select'),null);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);assert.equal(h.saved().history.some(value=>value.content==='Show options for the Compass Necklace.'),false);
+  const result=await h.config.onTool({handle:product.handle,action:'options'},{name:'prepare_jewellery_action',...turn});assert.match(h.calls.hostResults.at(-1).error,/tell me which displayed piece/i);assert.equal(result.ok,false);assert.equal(typeof result.reply,'string');assert.equal(result.customerMessage,result.reply);assert.doesNotMatch(JSON.stringify(result),/"(?:error|product|variantId|action|publicContext|completedActions)"|NO_ACTION_AUTHORITY|EXACT_OPTIONS_REQUIRED|\b(?:backend|authority|postcondition|metadata)\b/i);assert.equal(h.root.querySelector('select'),null);assert.equal(h.w.sessionStorage.getItem('brites-sandbox-cart'),null);assert.equal(h.saved().history.some(value=>value.content==='Show options for the Compass Necklace.'),false);
   assert.equal(h.calls.requests.some(value=>value.body.action==='add'||value.body.action==='checkout'),false);assert.equal(h.calls.starts,1);
 });
 

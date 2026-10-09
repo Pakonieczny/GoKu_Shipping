@@ -7,6 +7,15 @@ const fs=require('node:fs');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const widget=fs.readFileSync(require.resolve('../../brites-concierge.js'),'utf8');
 const actions=fs.readFileSync(require.resolve('../../brites-concierge-voice-actions.js'),'utf8');
+// Observe the real host outcome immediately before the shopper projection.
+// Only this evaluated fixture is instrumented; no authority, input or result
+// is replaced. Keying observations by the returned packet preserves concurrent
+// preparation and cancellation checks without exposing internals to speech.
+const receiptStart=widget.indexOf('  function nativeControlReceipt(result){'),receiptEnd=widget.indexOf('\n  async function replayVoiceFastResult',receiptStart);
+assert.ok(receiptStart>=0&&receiptEnd>receiptStart,'the shopper projection must remain an explicit observation boundary');
+const receiptSource=widget.slice(receiptStart,receiptEnd),receiptReturn='    return out;';
+assert.equal(receiptSource.split(receiptReturn).length,2,'capture the one real shopper receipt return');
+const observedWidget=widget.slice(0,receiptStart)+receiptSource.replace(receiptReturn,'    window.BritesVoiceReceiptFixtureObserver(out,result);\n'+receiptReturn)+widget.slice(receiptEnd);
 const clone=value=>JSON.parse(JSON.stringify(value));
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function settle(){await tick();await tick();}
@@ -17,12 +26,21 @@ const engraved={...clone(silver16),id:'gid://shopify/ProductVariant/103',numeric
 const piece={id:'gid://shopify/Product/1',handle:'compass-necklace',url:'https://britesjewelry.com/products/compass-necklace',title:'Compass Necklace',type:'Necklace',currency:'USD',variants:[silver16,silver18,engraved],variantsComplete:true,minPrice:54,suggestedVariantId:silver16.id,why:'A personal reminder of your milestone.',checkedAt:1790992501430};
 const other={...clone(piece),id:'gid://shopify/Product/2',handle:'bunny-necklace',url:'https://britesjewelry.com/products/bunny-necklace',title:'Bunny Necklace',variants:[{...clone(silver16),id:'gid://shopify/ProductVariant/201',numericId:'201'}]};
 const exactReview='Review adding the Compass Necklace with sterling silver, sixteen inch length and no engraving to my bag.';
+function assertShopperReceipt(packet,actual){
+  assert.equal(typeof packet.reply,'string');assert.ok(packet.reply.trim());assert.equal(packet.customerMessage,packet.reply);
+  assert.equal(packet.ok,actual?.ok===true||actual?.prepared===true&&actual?.ok!==false&&!actual?.error,'spoken success must match the actual host outcome');
+  assert.equal(packet.cartChanged,actual?.cartChanged===true);
+  for(const key of ['error','reason','action','actions','completedActions','stepResults','product','variant','variantId','snapshot','publicContext','authority','requestId','responseId','turnVersion'])assert.equal(Object.hasOwn(packet,key),false,key+' belongs outside the shopper receipt');
+  assert.doesNotMatch(packet.reply,/\b(?:backend|adapter|postcondition|precondition|metadata|authority|control_storefront|NO_ACTION_AUTHORITY|EXACT_OPTIONS_REQUIRED)\b|\bmotif\s*[:=]|\bno further actions?\b/i);
+  assert.doesNotMatch(JSON.stringify(packet),/PRIVATE_|privateNotes|giftNote|properties/);
+}
 function fixture(t,options={}){
   const errors=[],virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e));
   const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'https://growth-sandbox.example'+(options.path||'/concierge-sandbox.html'),runScripts:'outside-only',pretendToBeVisual:true,virtualConsole});
   const w=dom.window,d=w.document,script=d.createElement('script');script.src='https://growth-sandbox.example/brites-concierge.js';script.dataset.sandbox=options.sandbox===false?'false':'true';if(options.fixtureFlag)script.dataset.voiceFixture='true';Object.defineProperty(d,'currentScript',{get:()=>script});
   let hidden=false,config,turnVersion=0,callSerial=0;Object.defineProperty(d,'hidden',{get:()=>hidden});
-  const calls={start:0,stop:0,nativeFactory:0,fixtureFactory:0,requests:[],productReads:[],timers:[]};
+  const calls={start:0,stop:0,nativeFactory:0,fixtureFactory:0,requests:[],productReads:[],timers:[],nativeReceipts:[]},nativeOutcomes=new WeakMap();
+  w.BritesVoiceReceiptFixtureObserver=(packet,actual)=>nativeOutcomes.set(packet,actual);
   const client={start:async()=>{calls.start++;return true;},stop:async()=>{calls.stop++;},interrupt(){},dispose:async()=>{}};
   w.BritesConciergeVoice={create(value){calls.nativeFactory++;config=value;return client;}};
   w.BritesConciergeVoiceActionTestAdapter={create(value){calls.fixtureFactory++;config=value;return client;}};
@@ -39,9 +57,9 @@ function fixture(t,options={}){
     if(String(url).includes('/api/growth/product?')){calls.productReads.push(entry);const payload=options.readProduct?await options.readProduct(entry):{product:clone(live),live:true};return {ok:payload.ok!==false,json:async()=>payload};}
     return {ok:true,json:async()=>body.message?(currentAnswer?clone(currentAnswer):{live:true,reply:'Checked catalogue summary.',preferences:{},products:clone(products),meanings:clone(options.meanings||[])}):{}};
   };
-  w.HTMLElement.prototype.scrollIntoView=function(){};w.eval(widget);
+  w.HTMLElement.prototype.scrollIntoView=function(){};w.eval(observedWidget);
   const root=d.querySelector('brites-concierge').shadowRoot,button=label=>[...root.querySelectorAll('button')].find(n=>n.textContent.trim()===label||n.getAttribute('aria-label')===label);
-  const tool=(name,args,context={})=>config.onTool(args,{name,callId:'synthetic-call-'+(++callSerial),...context});
+  const tool=async(name,args,context={})=>{const packet=await config.onTool(args,{name,callId:'synthetic-call-'+(++callSerial),...context});if(nativeOutcomes.has(packet)){const actual=nativeOutcomes.get(packet);assertShopperReceipt(packet,actual);calls.nativeReceipts.push({packet:clone(packet),actual:clone(actual)});return actual;}return packet;};
   async function activate(){button('Talk to me').click();await settle();root.querySelector('script[src$="brites-concierge-voice.js"]')?.dispatchEvent(new w.Event('load'));await settle();}
   async function display(){await tool('find_jewellery',{message:'A necklace for graduation'});}
   function speak(text,onlyStart=false){const itemId='synthetic-input-'+(++turnVersion);config.onSpeechStarted({itemId,turnVersion,reason:'speech'});if(!onlyStart)config.onTranscript({role:'user',itemId,turnVersion,currentTurn:true,text,final:true});return {itemId,inputItemId:itemId,turnVersion,currentTurn:true};}

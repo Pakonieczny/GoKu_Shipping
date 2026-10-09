@@ -7,8 +7,8 @@
   var SORTS=['featured','price-asc','price-desc','title-asc','title-desc'];
   var FILTERS=['all','necklaces','regular-necklaces','beady-necklaces','earrings','stud-earrings','hoop-earrings','bracelets','rings','charms','charm-only','available'];
   var SECTIONS=['title','description','materials','length','engraving','price','details','options','story','shipping','gifts','customize','catalogue','image','bag','checkout','offers'];
-  var LEGACY_TYPES=['search','sort','filter','open','highlight','zoom','scroll','bag','checkout','gift','customize'];
-  var CONTROL_TYPES=['back','forward','gallery','options','close-options','close-image','undo','set-engraving','select-option','product-quantity','add','review-add','bag-quantity','bag-remove','gift-preferences','checkout-step','checkout-option','checkout-complete'];
+  var LEGACY_TYPES=['home','search','sort','filter','open','highlight','zoom','scroll','bag','checkout','gift','customize'];
+  var CONTROL_TYPES=['back','forward','gallery','options','close-options','close-image','undo','set-engraving','select-option','product-quantity','add','review-add','bag-quantity','bag-remove','bag-select-option','bag-set-engraving','gift-preferences','checkout-step','checkout-option','checkout-complete'];
   var TYPES=LEGACY_TYPES.concat(CONTROL_TYPES), LINE=/^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,199}$/;
   var PRODUCT_SECTIONS=['title','description','materials','length','engraving','price','details','options','story','image'];
   function plain(value,max){return typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value)?value.trim():'';}
@@ -19,7 +19,7 @@
   function literal(value,max){return plain(value,max).normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();}
   // Unit aliases apply only while matching a published length choice. Keep
   // private text, bare numbers, metal fineness and metric options literal.
-  function inchUnitText(value,max){return literal(plain(value,max).replace(/[\u2033\u201d]|\u2032\u2032/g,'"'),max).replace(/(^|[^\w.+-])(\d+(?:\.\d+)?)\s*(?:"|inches\b|inch\b|in\b)(?![a-z0-9])/g,function(all,before,number){return before+number+' inch';});}
+  function inchUnitText(value,max){return literal(plain(value,max).replace(/[\u2033\u201d]|\u2032\u2032/g,'"'),max).replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+(?:inches|inch|in)\b/g,function(all,word){return QUANTITIES[word]+' inch';}).replace(/(^|[^\w.+-])(\d+(?:\.\d+)?)\s*(?:-\s*)?(?:"|inches\b|inch\b|in\b)(?![a-z0-9])/g,function(all,before,number){return before+number+' inch';});}
   function selectedVariant(pc,groups,selected){
     var v=pc.selectedVariant,options=Array.isArray(v&&v.options)?v.options:null;
     if(!v||!VARIANT.test(v.id||'')||v.id!==pc.variantId||!plain(v.title,300)||!Number.isFinite(v.price)||v.price<0||!/^[A-Z]{3}$/.test(v.currency||'')||typeof v.available!=='boolean'||!options||options.length!==groups.length||selected.length!==groups.length)return null;
@@ -27,6 +27,15 @@
     return safe.length===groups.length?{id:v.id,title:plain(v.title,300),price:v.price,currency:v.currency,available:v.available,...(v.availabilityKnown===false?{availabilityKnown:false}:{}),options:safe}:null;
   }
   function identityPieces(values){var seen=new Set();return (Array.isArray(values)?values:[]).slice(0,200).flatMap(function(p){var h=handle(p&&p.handle),title=plain(p&&p.title,300);if(!h||!title||seen.has(h))return [];seen.add(h);var out={handle:h,title:title};if(PRODUCT.test(p.id||''))out.id=p.id;return [out];});}
+  function bagOptionFields(value){
+    var groups=(Array.isArray(value.optionGroups)?value.optionGroups:[]).slice(0,12).map(function(g){var values=(Array.isArray(g?.values)?g.values:[]).slice(0,250),name=plain(g?.name,120);return name&&values.length&&values.every(function(v){return !!plain(v,300);})&&new Set(values.map(function(v){return literal(v,300);})).size===values.length?{name:name,values:values.map(function(v){return plain(v,300);})}:null;});
+    if(!groups.length||groups.some(function(g){return !g;})||new Set(groups.map(function(g){return literal(g.name,120);})).size!==groups.length)return {};
+    var selected=(Array.isArray(value.selectedOptions)?value.selectedOptions:[]).slice(0,12).map(function(o){var group=groups.find(function(g){return g.name===o?.name;});return group&&group.values.includes(o.value)?{name:group.name,value:o.value}:null;});
+    if(selected.length!==groups.length||selected.some(function(o){return !o;})||new Set(selected.map(function(o){return o.name;})).size!==groups.length)return {};
+    var out={optionGroups:groups,selectedOptions:selected},engraving=value.engravingControls;
+    if(engraving?.available===true&&typeof engraving.enabled==='boolean'&&typeof engraving.hasText==='boolean'&&Number.isInteger(engraving.maxLength)&&engraving.maxLength>=1&&engraving.maxLength<=300)out.engravingControls={available:true,enabled:engraving.enabled,hasText:engraving.hasText,maxLength:engraving.maxLength};
+    return out;
+  }
   function capabilities(value){if(!value||value.controlVersion!==1||!['sandbox','shopify'].includes(value.mode)||!Array.isArray(value.actions))return null;return {controlVersion:1,mode:value.mode,actions:Array.from(new Set(value.actions.filter(function(v){return TYPES.includes(v);}))),reviewBeforeAdd:value.reviewBeforeAdd===true,finalOrder:false,checkoutMode:value.mode==='sandbox'&&value.checkoutMode==='simulation-only'?'simulation-only':'handoff',notesMode:value.mode==='sandbox'&&value.notesMode==='local-session'?'local-session':value.mode==='shopify'&&value.notesMode==='native-form'?'native-form':'unsupported'};}
   function snapshot(value){
     value=value&&typeof value==='object'?value:{};
@@ -41,7 +50,7 @@
     }
     if(value.controlVersion!==1)return out;
     var changes=value.changeControls,images=value.imageControls,engraving=value.engravingControls;
-    if(changes&&typeof changes.canUndo==='boolean'&&(changes.kind===null||['select-option','product-quantity','gallery','bag-add','bag-quantity','bag-remove','gift-preferences','checkout-step','checkout-option','sort','filter','set-engraving'].includes(changes.kind)))out.changeControls={canUndo:changes.canUndo,kind:changes.kind};
+    if(changes&&typeof changes.canUndo==='boolean'&&(changes.kind===null||['select-option','product-quantity','gallery','bag-add','bag-quantity','bag-remove','bag-select-option','bag-set-engraving','gift-preferences','checkout-step','checkout-option','sort','filter','set-engraving'].includes(changes.kind)))out.changeControls={canUndo:changes.canUndo,kind:changes.kind};
     if(images&&typeof images.open==='boolean')out.imageControls={open:images.open};
     if(engraving&&engraving.available===true&&typeof engraving.enabled==='boolean'&&typeof engraving.hasText==='boolean'&&Number.isInteger(engraving.maxLength)&&engraving.maxLength>=1&&engraving.maxLength<=300)out.engravingControls={available:true,enabled:engraving.enabled,hasText:engraving.hasText,maxLength:engraving.maxLength};
     var gifts=value.giftControls;if(gifts&&typeof gifts.wrappingAvailable==='boolean'&&typeof gifts.noteAvailable==='boolean'&&typeof gifts.wrapping==='boolean'&&typeof gifts.hasNote==='boolean')out.giftControls={wrappingAvailable:gifts.wrappingAvailable,noteAvailable:gifts.noteAvailable,wrapping:gifts.wrapping,hasNote:gifts.hasNote,savedKnown:gifts.savedKnown===true};
@@ -62,7 +71,7 @@
         }
       }
     }
-    var bag=value.bagControls;if(bag&&Array.isArray(bag.lines)){var seenLines=new Set(),lines=bag.lines.slice(0,50).flatMap(function(l){var lineId=plain(l&&l.lineId,200);if(!LINE.test(lineId)||seenLines.has(lineId)||!PRODUCT.test(l.productId||'')||!VARIANT.test(l.variantId||'')||!Number.isInteger(l.quantity)||l.quantity<1||l.quantity>20||!plain(l.title,300))return [];seenLines.add(lineId);var line={lineId:lineId,productId:l.productId,variantId:l.variantId,quantity:l.quantity,title:plain(l.title,300),variant:plain(l.variant,300)};if(Number.isFinite(l.price)&&l.price>=0&&/^[A-Z]{3}$/.test(l.currency||'')){line.price=l.price;line.currency=l.currency;line.lineTotalPrice=Math.round(l.price*l.quantity*100)/100;}return [line];});var renderedCount=lines.reduce(function(n,l){return n+l.quantity;},0);out.bagControls={lines:lines,itemCount:Number.isSafeInteger(bag.itemCount)&&bag.itemCount>=renderedCount&&bag.itemCount<=50000?bag.itemCount:renderedCount};if(typeof bag.countKnown==='boolean')out.bagControls.countKnown=bag.countKnown;if(bag.countKnown===false||bag.linesComplete===false||bag.lines.length!==lines.length||out.bagControls.itemCount!==renderedCount)out.bagControls.linesComplete=false;}
+    var bag=value.bagControls;if(bag&&Array.isArray(bag.lines)){var seenLines=new Set(),lines=bag.lines.slice(0,50).flatMap(function(l){var lineId=plain(l&&l.lineId,200);if(!LINE.test(lineId)||seenLines.has(lineId)||!PRODUCT.test(l.productId||'')||!VARIANT.test(l.variantId||'')||!Number.isInteger(l.quantity)||l.quantity<1||l.quantity>20||!plain(l.title,300))return [];seenLines.add(lineId);var line={lineId:lineId,productId:l.productId,variantId:l.variantId,quantity:l.quantity,title:plain(l.title,300),variant:plain(l.variant,300)};if(Number.isFinite(l.price)&&l.price>=0&&/^[A-Z]{3}$/.test(l.currency||'')){line.price=l.price;line.currency=l.currency;line.lineTotalPrice=Math.round(l.price*l.quantity*100)/100;}if(handle(l.handle)){line.handle=l.handle;Object.assign(line,bagOptionFields(l));}return [line];});var renderedCount=lines.reduce(function(n,l){return n+l.quantity;},0);out.bagControls={lines:lines,itemCount:Number.isSafeInteger(bag.itemCount)&&bag.itemCount>=renderedCount&&bag.itemCount<=50000?bag.itemCount:renderedCount};if(typeof bag.countKnown==='boolean')out.bagControls.countKnown=bag.countKnown;if(bag.countKnown===false||bag.linesComplete===false||bag.lines.length!==lines.length||out.bagControls.itemCount!==renderedCount)out.bagControls.linesComplete=false;}
     var cc=value.checkoutControls;if(cc&&[null,'review','shipping','confirm','complete'].includes(cc.step)&&['standard','express'].includes(cc.shipping))out.checkoutControls={step:cc.step,shipping:cc.shipping,acknowledged:cc.acknowledged===true,complete:cc.complete===true};
     return out;
   }
@@ -70,7 +79,7 @@
   function success(action,context){return {ok:true,handled:true,recognized:true,action:Object.freeze(action),contextRevision:context.contextRevision};}
   function validateAction(value){
     if(!value||typeof value!=='object'||Array.isArray(value)||!TYPES.includes(value.type))return null;
-    var keys={search:['type','query','sort','filter'],sort:['type','sort'],filter:['type','filter'],open:['type','handle'],highlight:['type','handle','section'],zoom:['type','handle'],back:['type'],forward:['type'],undo:['type'],'close-options':['type'],'close-image':['type'],'set-engraving':['type','handle','text'],gallery:['type','handle','index'],scroll:['type','handle','section','direction'],bag:['type'],checkout:['type'],gift:['type','section'],customize:['type','handle','section'],options:['type','handle','optionName'],'select-option':['type','handle','variantId','optionName','optionValue'],'product-quantity':['type','handle','quantity'],add:['type','handle','variantId'],'review-add':['type','handle','variantId'],'bag-quantity':['type','lineId','quantity'],'bag-remove':['type','lineId'],'gift-preferences':['type','wrapping','giftPackage','giftNote'],'checkout-step':['type','step'],'checkout-option':['type','option','value'],'checkout-complete':['type']}[value.type];
+    var keys={home:['type'],search:['type','query','sort','filter'],sort:['type','sort'],filter:['type','filter'],open:['type','handle'],highlight:['type','handle','section'],zoom:['type','handle'],back:['type'],forward:['type'],undo:['type'],'close-options':['type'],'close-image':['type'],'set-engraving':['type','handle','text'],gallery:['type','handle','index'],scroll:['type','handle','section','direction'],bag:['type'],checkout:['type'],gift:['type','section'],customize:['type','handle','section'],options:['type','handle','optionName'],'select-option':['type','handle','variantId','optionName','optionValue'],'product-quantity':['type','handle','quantity'],add:['type','handle','variantId'],'review-add':['type','handle','variantId'],'bag-quantity':['type','lineId','quantity'],'bag-remove':['type','lineId'],'bag-select-option':['type','lineId','optionName','optionValue'],'bag-set-engraving':['type','lineId','text'],'gift-preferences':['type','wrapping','giftPackage','giftNote'],'checkout-step':['type','step'],'checkout-option':['type','option','value'],'checkout-complete':['type']}[value.type];
     if(Object.keys(value).some(function(k){return !keys.includes(k);}))return null;
     var out={type:value.type};
     if(value.type==='search'){var q=plain(value.query,180);if(!q)return null;out.query=q;}
@@ -87,13 +96,14 @@
     if(value.type==='gift'&&out.section!=='gifts'||value.type==='customize'&&!['customize','options'].includes(out.section))return null;
     if(['highlight','scroll'].includes(value.type)&&PRODUCT_SECTIONS.includes(out.section)&&!out.handle)return null;
     if(['options','select-option','product-quantity','add','review-add','set-engraving'].includes(value.type)&&!out.handle)return null;
-    if(value.type==='set-engraving'){if(typeof value.text!=='string'||value.text.length>300||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value.text))return null;out.text=value.text;}
+    if(['set-engraving','bag-set-engraving'].includes(value.type)){if(typeof value.text!=='string'||value.text.length>300||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value.text))return null;out.text=value.text;}
     if(value.variantId!==undefined){if(!VARIANT.test(value.variantId||''))return null;out.variantId=value.variantId;}
     if(value.optionName!==undefined){var name=plain(value.optionName,120);if(!name)return null;out.optionName=name;}
     if(value.optionValue!==undefined){var val=plain(value.optionValue,300);if(!val)return null;out.optionValue=val;}
     if(value.type==='select-option'&&((!!out.variantId)===(!!out.optionName&&!!out.optionValue)||out.variantId&&(out.optionName||out.optionValue)||(!out.variantId&&(!out.optionName||!out.optionValue))))return null;
+    if(value.type==='bag-select-option'&&(!out.optionName||!out.optionValue))return null;
     if(['product-quantity','bag-quantity'].includes(value.type)){if(!Number.isInteger(value.quantity)||value.quantity<1||value.quantity>20)return null;out.quantity=value.quantity;}
-    if(['bag-quantity','bag-remove'].includes(value.type)){if(!LINE.test(value.lineId||''))return null;out.lineId=value.lineId;}
+    if(['bag-quantity','bag-remove','bag-select-option','bag-set-engraving'].includes(value.type)){if(!LINE.test(value.lineId||''))return null;out.lineId=value.lineId;}
     if(value.type==='gift-preferences'){if(!['wrapping','giftPackage','giftNote'].some(function(k){return Object.hasOwn(value,k);}))return null;for(var k of ['wrapping','giftPackage'])if(Object.hasOwn(value,k)){if(typeof value[k]!=='boolean')return null;out[k]=value[k];}if(Object.hasOwn(value,'giftNote')){if(typeof value.giftNote!=='string'||value.giftNote.length>300||/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(value.giftNote))return null;out.giftNote=value.giftNote;}}
     if(value.type==='checkout-step'){if(!['review','shipping','confirm'].includes(value.step))return null;out.step=value.step;}
     if(value.type==='checkout-option'){if(value.option!=='shipping'||!['standard','express'].includes(value.value))return null;out.option=value.option;out.value=value.value;}
@@ -190,9 +200,36 @@
     // Only an otherwise unnamed ordinal or pronoun can select a visible line.
     // An unknown title/option never borrows the only line in the bag.
     var ord=Object.keys(ORDINALS).filter(function(w){return has(message,w);}),rest=message;ord.forEach(function(w){rest=rest.replace(w,'');});
-    if(rest.replace(/\b(?:the|my|a|an|it|this|that|current|selected|item|piece|quantity|bag|cart|basket)\b/g,'').trim())return null;
+    if(rest.replace(/\b(?:the|my|a|an|it|this|that|current|selected|item|piece|line|quantity|bag|cart|basket)\b/g,'').trim())return null;
     if(ord.length===1)return lines[ORDINALS[ord[0]]]||null;
-    return !ord.length&&lines.length===1&&/\b(?:it|this|that|item|piece|quantity|bag|cart|basket)\b/.test(message)?lines[0]:null;
+    return !ord.length&&lines.length===1&&/\b(?:it|this|that|item|piece|line|quantity|bag|cart|basket)\b/.test(message)?lines[0]:null;
+  }
+  function bagRequestTarget(value,context){return bagTarget(norm(value).replace(/(?:^|\s)(?:in|from|within|inside) (?:my |the )?(?:(?:test|mock|demo|sandbox) )?(?:bag|cart|basket)$/,'').trim(),context);}
+  function bagControl(raw,command,context){
+    var rawCommand=raw.trim().replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|i'd like (?:you )?to)\s+)*/i,''),textRequest=/^(?:set|change|write|save)(?: the| my)? (?:engraving|engraved)(?: text| message)? (?:for|on|of) (.+?) (?:to|as)\s*[:=]?\s+([\s\S]+)$/i.exec(rawCommand),clearRequest=/^(?:clear|erase|remove)(?: the| my)? (?:engraving|engraved)(?: text| message| field)?(?: (?:for|on|of) (.+))?$/i.exec(rawCommand),directText=/^(?:set|change|write|save)(?: the| my)? (?:engraving|engraved)(?: text| message)? (?:to|as)\s*[:=]?\s+([\s\S]+)$/i.exec(rawCommand);
+    // Private wording is never a route hint. A cart reference inside the
+    // engraving itself cannot redirect a product field into a bag operation.
+    var targetWords=textRequest?norm(textRequest[1]):clearRequest?norm(clearRequest[1]):directText?'':command;
+    if(context.pageKind!=='bag'&&!/\b(?:cart|bag|basket)\b/.test(targetWords))return null;
+    if(textRequest||clearRequest||directText){
+      var requested=textRequest?textRequest[1]:clearRequest?clearRequest[1]:null,line=requested?bagRequestTarget(requested,context):bagTarget('this item',context),text=textRequest?textRequest[2]:directText?directText[1]:'';
+      if(!line)return failed('Which item in your bag would you like to engrave?',true);
+      if(!line.engravingControls?.available||!line.engravingControls.enabled)return failed('Choose the engraving option for this item first.',true);
+      var action={type:'bag-set-engraving',lineId:line.lineId,text:text};if(text.length>line.engravingControls.maxLength||!validateAction(action))return failed('Use up to '+line.engravingControls.maxLength+' characters for this engraving.',true);
+      return success(action,context);
+    }
+    if(!/^(?:choose|select|pick|set|change|use)\b/.test(command)||/\b(?:quantity|gift|shipping|checkout|search|sort|filter)\b/.test(command))return null;
+    var body=rawCommand.replace(/^(?:choose|select|pick|set|change|use)\s+/i,''),chosen=null,optionWords='',front=/^(.+?)\s+(?:to|as)\s+(.+)$/i.exec(body);
+    if(front){chosen=bagRequestTarget(front[1],context);if(chosen)optionWords=front[2];else {var subject=/(.+?)\s+(?:for|on|of)\s+(.+)$/i.exec(front[1]);if(subject){chosen=bagRequestTarget(subject[2],context);if(chosen)optionWords=subject[1]+' '+front[2];}}}
+    if(!chosen){var splits=Array.from(body.matchAll(/\s+(?:for|on|of)\s+/gi)).reverse();for(var split of splits){var target=bagRequestTarget(body.slice(split.index+split[0].length),context);if(target){chosen=target;optionWords=body.slice(0,split.index);break;}}}
+    if(!chosen){chosen=bagTarget('this item',context);optionWords=body;}
+    if(!chosen)return failed('Which item in your bag would you like to change? Use its position or exact options.',true);
+    if(!handle(chosen.handle)||!chosen.optionGroups?.length||!chosen.selectedOptions?.length)return failed('Open this item to check its options before changing the choice in your bag.',true);
+    // Reuse the same exact published-value matcher after the cart line itself
+    // is resolved. This scoped view cannot borrow another visible product.
+    var scoped={contextRevision:context.contextRevision,controlVersion:1,pageKind:'product',currentHandle:chosen.handle,visiblePieces:[],productControls:{handle:chosen.handle,productId:chosen.productId,quantity:chosen.quantity,variantId:chosen.variantId,optionGroups:chosen.optionGroups,selectedOptions:chosen.selectedOptions}},choice=controls('Select '+optionWords,norm('Select '+optionWords),scoped);
+    if(!choice?.ok||choice.action.type!=='select-option'||!choice.action.optionName||!choice.action.optionValue)return failed(choice?.reason||'Which published option would you like for this item?',true);
+    return success({type:'bag-select-option',lineId:chosen.lineId,optionName:choice.action.optionName,optionValue:choice.action.optionValue},context);
   }
   function optionGroup(words,pc){
     var exact=pc.optionGroups.filter(function(g){return has(words,g.name);});
@@ -232,6 +269,43 @@
     if(value===false)return failed('More than one published value matches. Name its exact label.',true);
     return value?success({type:'select-option',handle:pc.handle,optionName:group.name,optionValue:value},context):null;
   }
+  function compoundOptions(raw,context){
+    var words=norm(raw).replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*/,''),pc=context.productControls;
+    if(!/^(?:choose|select|pick|set|change|use)\b|^make (?:this|that|it|the (?:current|selected))\b/.test(words)||/\b(?:quantity|cart|bag|basket|gift|shipping|checkout|search|sort|filter)\b/.test(words))return null;
+    if(!pc||context.pageKind!=='product'||context.currentHandle!==pc.handle)return null;
+    var payload=inchUnitText(optionRequestText(raw,context,pc.handle,true),2000),choices=[],spans=[],vocabulary=root?.BritesCatalogueIntents||catalogue,error='';
+    function occurrences(key,numeric){var found=[],at=-1;while(key&&(at=payload.indexOf(key,at+1))!==-1)if((at===0||!(numeric?/[\w.+\-\u2212]/:/\w/).test(payload[at-1]))&&(at+key.length===payload.length||!/\w/.test(payload[at+key.length])))found.push({start:at,end:at+key.length});return found;}
+    var namedGroups=pc.optionGroups.filter(function(g){return has(words,g.name);});
+    pc.optionGroups.forEach(function(g){
+      var length=/\blength\b/i.test(g.name),metal=/^(?:metal(?: choice)?|materials?|finish)$/i.test(g.name),hits=[];
+      g.values.forEach(function(v){var key=length?inchUnitText(v,300):literal(v,300);occurrences(key,length).forEach(function(span){hits.push({value:v,...span});});});
+      hits=hits.filter(function(hit){return !hits.some(function(other){return other.value!==hit.value&&other.start<=hit.start&&other.end>=hit.end&&other.end-other.start>hit.end-hit.start;});});
+      if(metal&&typeof vocabulary?.material==='function'&&typeof vocabulary?.materialMatches==='function')for(var mention of payload.matchAll(/\b(?:(?:\d{1,2}\s*(?:k|kt|karats?|carats?)\s+)?(?:(?:solid|rose|white|yellow)\s+){0,2}(?:gold(?:[ -]+(?:filled|plated))?|sterling(?:\s+silver)?|silver|gf))\b/g)){
+        var material=vocabulary.material(mention[0])?.material,values=material?g.values.filter(function(v){return vocabulary.materialMatches(v,material);}):[];
+        if(values.length>1){error='Which '+g.name+' would you like: '+values.join(' or ')+'?';return;}
+        if(values.length===1)hits.push({value:values[0],start:mention.index,end:mention.index+mention[0].length});
+      }
+      var values=Array.from(new Set(hits.map(function(hit){return hit.value;})));
+      if(values.length>1){error='Which '+g.name+' would you like: '+values.join(' or ')+'?';return;}
+      if(values.length===1){choices.push({name:g.name,value:values[0]});spans.push(...hits);}
+    });
+    if(error)return failed(error,true);
+    // The same literal in two groups needs the requested group's exact label.
+    choices=choices.filter(function(choice){var peers=choices.filter(function(other){return other.value===choice.value;});return peers.length<2||namedGroups.some(function(g){return g.name===choice.name;});});
+    if(choices.length<2){
+      var lengthRequest=/\b\d+(?:\.\d+)?\s*inch\b/.test(payload),materialRequest=/\b(?:gold|silver|sterling|gf)\b/.test(payload),lengthGroup=pc.optionGroups.find(function(g){return /\blength\b/i.test(g.name);}),metalGroup=pc.optionGroups.find(function(g){return /^(?:metal(?: choice)?|materials?|finish)$/i.test(g.name);});
+      if(lengthRequest&&materialRequest&&lengthGroup&&metalGroup){var missing=choices.some(function(choice){return choice.name===lengthGroup.name;})?metalGroup:lengthGroup;return failed('For '+missing.name+', which would you like: '+missing.values.join(' or ')+'?',true);}
+      return null;
+    }
+    if(/\b(?:not|never|without|unless|if|when|once|after|or|except|instead|yesterday|tomorrow)\b/.test(words)||/(?:^|[^\w.])[+\-\u2212]\s*\d+(?:\.\d+)?\s*inch\b/.test(payload))return failed('Please give one clear choice for each option on this piece.',true);
+    var remainder=payload.split('');spans.forEach(function(span){for(var index=span.start;index<span.end;index++)remainder[index]=' ';});remainder=norm(remainder.join(''));
+    pc.optionGroups.slice().sort(function(a,b){return b.name.length-a.name.length;}).forEach(function(g){if(has(remainder,g.name))remainder=remainder.replace(norm(g.name),'');});
+    remainder=remainder.replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*/,'').replace(/^(?:choose|select|pick|set|change|use|make)\b/,'');
+    remainder=remainder.replace(/\b(?:me|the|my|a|an|and|with|at|to|for|of|on|in|this|that|it|its|current|selected|piece|product|listing|item|option|options|choice|choices|variants|published|available|metal|metals|material|materials|size|sizes|length|lengths|please|again)\b/g,'');
+    var type=norm(pc.productType);if(/\bnecklaces?\b/.test(type))remainder=remainder.replace(/\bnecklaces?\b/g,'');if(/\bearrings?\b/.test(type))remainder=remainder.replace(/\bearrings?\b/g,'');if(/\bcharms?\b/.test(type))remainder=remainder.replace(/\bcharms?\b/g,'');
+    if(remainder.trim())return failed('Please name the choices for this piece, or open the piece you mean first.',true);
+    return {ok:true,steps:choices.map(function(choice){return {text:'Select '+choice.name+' '+choice.value+' for '+pc.handle};})};
+  }
   function controls(raw,message,context){
     var command=message.replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*/,''),enhanced=context.controlVersion===1,pc=context.productControls,t;
     if(/^(?:use|choose|select|pick|set|change)\b/.test(command))command=command.replace(/\s+instead$/,'');
@@ -240,6 +314,7 @@
     // Recognize setters even on an older adapter. Never interpret a rejected
     // quantity or option request as a motif recommendation/search.
     var rawCommand=raw.trim().replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|i'd like (?:you )?to)\s+)*/i,'');
+    var bagChoice=bagControl(raw,command,context);if(bagChoice)return bagChoice;
     if(/^(?:clear|erase|remove)(?: the| my)? (?:gift (?:note|message)|(?:engraving|engraved)(?: text| message| field)?)$/.test(command)){if(!enhanced)return failed('The visible text controls are unavailable on this page.',true);if(/\bgift\b/.test(command))return success({type:'gift-preferences',giftNote:''},context);if(!pc||context.pageKind!=='product'||context.currentHandle!==pc.handle||!context.engravingControls?.available||!context.engravingControls.enabled)return failed('Open a piece with an enabled published engraving field before clearing its text.',true);return success({type:'set-engraving',handle:pc.handle,text:''},context);}
     if(/^(?:set|change|write|save)(?: the| my)? (?:engraving|engraved)(?: text| message)? (?:to|as)\s*[:=]?\s*$/i.test(rawCommand))return failed('Give the exact engraving text, or ask to clear the engraving field.',true);
     var engravingText=/^(?:(?:set|change|write|save)(?: the| my)? (?:engraving|engraved)(?: text| message)?(?:\s+(?:to|as))?\s*[:=]?\s+|fill(?: in)?(?: the| my)? engraving(?: text| field)?\s+(?:with|to)\s+)([\s\S]+)$/i.exec(rawCommand);
@@ -358,7 +433,8 @@
     if(/^(?:no\b|stop\b|cancel\b|wait\b|hold\b|not now|not yet)/.test(message)||/\b(?:do not|dont|never)\s+(?:(?:please|want|need|you|to|do)\s+){0,5}(?:search|sort|filter|show|open|zoom|enlarge|highlight|scroll|checkout|check|add|place|set|select|choose|change|remove|delete|use|enable|disable|complete|finish)\b/.test(message)||/\b(?:not yet|hold off)\b/.test(message))return failed('I will leave the website as it is.',control);
     if(/\b(?:place|submit|pay for|purchase|complete)\b.{0,50}\b(?:order|payment|purchase)\b|\breal checkout\b/.test(message))return failed('This test storefront can demonstrate checkout; it cannot place or pay for a real order.',true);
     if(/\b(?:then|and)\s+(?:(?:please|can you)\s+)?(?:open|highlight|zoom|enlarge|checkout|check out|add|place|pay|scroll|select|choose|set|change|remove|delete|enable|disable|finish|complete)\b/.test(message))return failed('Ask for one website action at a time so the target remains clear.',true);
-    var navCommand=message.replace(/^(?:(?:please|could you|would you|can you|will you)\s+)*/,'').replace(/\s+please$/,'');
+    var navCommand=message.replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*/,'').replace(/\s+please$/,'');
+    if(/^(?:(?:go|navigate|take me|bring me)(?: back)?(?: to)?|(?:return|return me)(?: back)?(?: to)?|(?:open|view|show(?: me)?|display|visit)) (?:the |your |our |my )?(?:home|homepage|home page|main page)$/.test(navCommand))return success({type:'home'},context);
     if(/^(?:undo|reverse|revert)(?: that| this| it| the last (?:change|action)| my last (?:change|action))?$/.test(navCommand)||/^(?:go|take me) back to (?:the )?(?:previous|last) (?:selection|choice|option)$/.test(navCommand))return success({type:'undo'},context);
     if(/^(?:close|hide|collapse|dismiss)(?: the| my)? (?:(?:metal|material|length|size|options?) )?(?:menu|dropdown|drop down|selector|options|choices)$/.test(navCommand))return success({type:'close-options'},context);
     if(/^(?:close|hide|dismiss)(?: the| my)? (?:(?:enlarged|zoomed|large|current) )?(?:image|photo|picture|zoom|image viewer)$/.test(navCommand))return success({type:'close-image'},context);
@@ -434,9 +510,11 @@
     for(var part of parts){
       if(privateTextRequest(part)&&parts.length>1)return failed('Give engraving or gift-note text as its own request so its exact content stays private.',true);
       var command=part.trim().replace(/^(?:(?:please|can you|could you|would you|will you|i want (?:you )?to|i would like (?:you )?to|i'd like (?:you )?to)\s+)*/i,'');
+      var compound=compoundOptions(part.trim(),context);if(compound&&!compound.ok)return compound;
       var adding=/^(?:add|put) (\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty) (?:of )?(.+?) (?:to|in|into) (?:my |the )?(?:(?:test|mock|demo|sandbox) )?(?:bag|cart|basket)[.!?]?$/i.exec(command);
       var indexed=/^(?:zoom|enlarge|magnify)(?: me)?(?: the)? ((?:image|photo|picture)(?: number)? \d+|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|next|previous) (?:image|photo|picture))(?: (?:for|of) (.+?))?[.!?]?$/i.exec(command);
-      if(adding){var quantity=Object.hasOwn(QUANTITIES,adding[1].toLowerCase())?QUANTITIES[adding[1].toLowerCase()]:Number(adding[1]),piece=target(norm(adding[2]),context,true);if(!Number.isInteger(quantity)||quantity<1||quantity>20)return failed('Choose a whole quantity from 1 to 20.',true);if(!piece.handle)return failed(piece.reason,true);steps.push({text:'Set quantity to '+quantity+' for '+piece.handle},{text:'Add '+adding[2]+' to my bag'});}
+      if(compound)steps.push(...compound.steps);
+      else if(adding){var quantity=Object.hasOwn(QUANTITIES,adding[1].toLowerCase())?QUANTITIES[adding[1].toLowerCase()]:Number(adding[1]),piece=target(norm(adding[2]),context,true);if(!Number.isInteger(quantity)||quantity<1||quantity>20)return failed('Choose a whole quantity from 1 to 20.',true);if(!piece.handle)return failed(piece.reason,true);steps.push({text:'Set quantity to '+quantity+' for '+piece.handle},{text:'Add '+adding[2]+' to my bag'});}
       else if(indexed){var imageText='Show '+indexed[1]+(indexed[2]?' for '+indexed[2]:''),image=resolveIntent(imageText,context);if(!image.ok&&parts.length===1)return image;steps.push({text:imageText},{text:'Enlarge '+(indexed[2]||'this piece')});}
       else {var question=parts.length>1?planQuestion(part.trim(),context,steps.length>0):null;if(question&&!question.ok)return failed(question.reason,true);steps.push({text:part.trim(),...(question?{kind:'question'}:{})});}
     }
@@ -514,10 +592,10 @@
         var result=await Promise.race([work,aborted]);
         if(destroyed||mine!==version||controller.signal.aborted||result&&result.cancelled)return Object.assign(failed('The website request was cancelled.',true),{cancelled:true});
         if(!result||result.ok!==true)return failed(plain(result&& (result.message||result.reason||result.error),500)||'The current shop view could not be checked. Please try again.',true);
-        var out={ok:true,handled:true,recognized:true,action:publicAction(action),reply:action.type==='set-engraving'?'The requested engraving text is filled in the visible field.':action.type==='gift-preferences'&&Object.hasOwn(action,'giftNote')?(manifest?.notesMode==='native-form'?'The requested gift note is filled in the visible shop field; saving is not yet confirmed.':'The requested gift note is saved in the visible local controls.'):plain(result.message||result.reply,800)||'The requested part of the test shop is ready.',snapshot:read()};
+        var out={ok:true,handled:true,recognized:true,action:publicAction(action),reply:['set-engraving','bag-set-engraving'].includes(action.type)?'Your engraving text is in the visible field.':action.type==='gift-preferences'&&Object.hasOwn(action,'giftNote')?(manifest?.notesMode==='native-form'?'The requested gift note is filled in the visible shop field; saving is not yet confirmed.':'The requested gift note is saved in the visible local controls.'):plain(result.message||result.reply,800)||'The requested part of the test shop is ready.',snapshot:read()};
         if(action.type==='review-add')out.prepared=result.prepared===true||out.snapshot.productControls?.reviewReady===true;
         if(result.navigationRequested===true)out.navigationRequested=true;
-        if(['add','bag-quantity','bag-remove'].includes(action.type)&&result.cartChanged===true)out.cartChanged=true;if(action.type.startsWith('checkout')&&manifest&&manifest.mode==='sandbox')out.mockCheckout=true;
+        if(['add','bag-quantity','bag-remove','bag-select-option','bag-set-engraving'].includes(action.type)&&result.cartChanged===true)out.cartChanged=true;if(action.type.startsWith('checkout')&&manifest&&manifest.mode==='sandbox')out.mockCheckout=true;
         if(result.live===true){var checkedAt=result.checkedAt;if(Number.isFinite(checkedAt)&&checkedAt>0||typeof checkedAt==='string'&&Number.isFinite(Date.parse(checkedAt))){out.live=true;out.checkedAt=checkedAt;var products=liveProducts(result.products);if(products.length||Array.isArray(result.products)&&result.products.length===0)out.products=products;}}
         operation.status='success';return out;
       }catch{return failed('The current shop view could not be checked. Please try again.',true);}finally{if(operation.status==='pending')operation.status='failure';clearTimeout(timeout);controller.signal.removeEventListener('abort',onAbort);if(options.signal)options.signal.removeEventListener('abort',abort);if(inflight&&inflight.version===mine)inflight=null;}
@@ -546,25 +624,25 @@
       var fresh=read(),again=resolvePlan(text,context);if(context.contextRevision===null||context.contextRevision!==fresh.contextRevision||JSON.stringify(context)!==JSON.stringify(fresh)||!again.ok||JSON.stringify(again.plan.steps)!==JSON.stringify(request.steps)||JSON.stringify(context)!==JSON.stringify(cap.context))return Object.assign(failed('The visible selection changed. Ask again for the page you are viewing now.',true),{stale:true});
       var authorityKey=source==='native'?'native:'+options.inputItemId+':'+options.turnVersion:plain(options.requestId,200)?'typed:'+options.requestId:'plan:'+ ++planSerial;
       if(consumed.has(authorityKey))return duplicate(consumed.get(authorityKey));cancel();var operation={at:clock(),status:'pending'},controller=new AbortController(),record={controller:controller},completed=[],receipts=[],expected=fresh,requestId=(plain(options.requestId,160)||'plan-'+ ++planSerial),abort=function(){controller.abort();};activePlan=record;cap.used=true;cap.record=operation;consumed.set(authorityKey,operation);if(options.signal)options.signal.addEventListener('abort',abort,{once:true});var timer=setTimeout(abort,30000);
-      function result(ok,reason,cancelled){var reply=receipts.map(function(r){return r.reply;}).filter(Boolean).join(' ');if(!ok)reply+=(reply?' ':'')+(completed.length?'Completed '+completed.length+' of '+request.steps.length+' requested actions. ':'')+(reason||'The remaining website actions were not completed.');var last=receipts[receipts.length-1];return {ok:ok,handled:true,recognized:true,action:'plan',reply:reply.slice(0,3500),reason:ok?'':reason||'',completedActions:completed,stepResults:receipts,partial:!ok&&completed.length>0,cancelled:cancelled===true,...(last?.navigationRequested===true?{navigationRequested:true}:{}),...(receipts.some(function(r){return r.cartChanged===true;})?{cartChanged:true}:{}),...(receipts.some(function(r){return r.mockCheckout===true;})?{mockCheckout:true}:{}),...(last?.live===true?{live:true,checkedAt:last.checkedAt,...(last.action?.type==='question'?{preserveSelection:true}:{products:last.products||[]})}:{}),...(last?.action?.type==='review-add'?{prepared:last.prepared===true,requiredCustomerClick:'Confirm add to bag'}:{}),snapshot:read()};}
+      function result(ok,reason,cancelled){var reply=receipts.map(function(r){return r.reply;}).filter(Boolean).join(' ');if(!ok)reply+=(reply?' ':'')+(reason||'Please try the next choice again.');var last=receipts[receipts.length-1];return {ok:ok,handled:true,recognized:true,action:'plan',reply:reply.slice(0,3500),reason:ok?'':reason||'',completedActions:completed,stepResults:receipts,partial:!ok&&completed.length>0,cancelled:cancelled===true,...(last?.navigationRequested===true?{navigationRequested:true}:{}),...(receipts.some(function(r){return r.cartChanged===true;})?{cartChanged:true}:{}),...(receipts.some(function(r){return r.mockCheckout===true;})?{mockCheckout:true}:{}),...(last?.live===true?{live:true,checkedAt:last.checkedAt,...(last.action?.type==='question'?{preserveSelection:true}:{products:last.products||[]})}:{}),...(last?.action?.type==='review-add'?{prepared:last.prepared===true,requiredCustomerClick:'Confirm add to bag'}:{}),snapshot:read()};}
       try{for(var index=0;index<request.steps.length;index++){
-        if(controller.signal.aborted||activePlan!==record)return result(false,'The remaining website actions were cancelled.',true);
+        if(controller.signal.aborted||activePlan!==record)return result(false,'Please ask for your next choice again.',true);
         var page=read();if(page.contextRevision!==expected.contextRevision||JSON.stringify(page)!==JSON.stringify(expected))return result(false,'The visible selection changed before the next action. Ask again.');
         if(request.steps[index].kind==='question'){
           var answered=await answerPlanQuestion(request.steps[index].text,{...options,source:source,requestId:requestId+'-step-'+(index+1)},page,record);
           if(!answered.ok)return result(false,answered.reason||answered.reply,answered.cancelled);
           completed.push(answered.action);var questionReceipt={...answered};delete questionReceipt.snapshot;receipts.push(questionReceipt);expected=answered.snapshot;continue;
         }
-        var step=resolve(request.steps[index].text,page);if(!step.ok)return result(false,step.reason||'That step could not be matched to one exact visible control.');
+        var step=resolve(request.steps[index].text,page);if(!step.ok)return result(false,step.reason||'Which option would you like to choose for this piece?');
         if(step.action.type==='checkout-complete')return result(false,'Use the separate visible confirmation to complete the test checkout.');
         if(step.action.type==='review-add'&&index!==request.steps.length-1)return result(false,'Bag review must be the final action so you can confirm its exact options.');
         var stepId=requestId+'-step-'+(index+1),review=['review-add','add'].includes(step.action.type)&&typeof options.reviewAuthority==='function'?options.reviewAuthority(step.action,stepId,page):undefined;
         var changed=await executeAction(step.action,{...options,context:page,transcript:request.steps[index].text,signal:controller.signal,requestId:stepId,reviewAuthority:review},authorityKey+':step-'+index);
         if(!changed.ok)return result(false,changed.reason||changed.reply,changed.cancelled);
         completed.push(publicAction(step.action));var receipt={...changed};delete receipt.snapshot;receipts.push(receipt);expected=changed.snapshot;
-        if(changed.navigationRequested===true&&index<request.steps.length-1)return result(false,'The new page is opening. Ask for the remaining controls after that page is ready.');
+        if(changed.navigationRequested===true&&index<request.steps.length-1)return result(false,'The new page is opening. Once it is ready, tell me what you would like to choose.');
       }operation.status='success';return result(true);
-      }catch{return result(false,'The remaining website actions could not be completed.');}finally{if(operation.status==='pending')operation.status='failure';clearTimeout(timer);if(options.signal)options.signal.removeEventListener('abort',abort);if(activePlan===record)activePlan=null;}
+      }catch{return result(false,'I could not finish that request. Please ask for your next choice again.');}finally{if(operation.status==='pending')operation.status='failure';clearTimeout(timer);if(options.signal)options.signal.removeEventListener('abort',abort);if(activePlan===record)activePlan=null;}
     }
     return {snapshot:read,resolve:resolve,resolvePlan:plan,execute:function(request,options){if(activePlan)cancel();return executeAction(request,options);},executePlan:executePlan,cancel:cancel,destroy:function(){destroyed=true;cancel();}};
   }

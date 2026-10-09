@@ -76,7 +76,7 @@ test('literal gift notes stay in their visible local field and never enter subse
 });
 test('typed partial completion exposes exact public receipts and the next question follows the actual opened product',async t=>{
   const f=await fixture(t);const requests=f.requests.length,result=await f.command('Open Daisy Necklace then select Platinum then show my cart');
-  assert.equal(result.ok,false);assert.equal(result.partial,true);assert.deepEqual(clone(result.completedActions),[{type:'open',handle:'daisy-necklace'}]);assert.equal(result.stepResults.length,1);assert.match(result.reply,/Completed 1 of 3/);assert.equal(result.snapshot.pageKind,'product');assert.equal(result.snapshot.currentHandle,'daisy-necklace');assert.equal(result.snapshot.bagControls.itemCount,0);
+  assert.equal(result.ok,false);assert.equal(result.partial,true);assert.deepEqual(clone(result.completedActions),[{type:'open',handle:'daisy-necklace'}]);assert.equal(result.stepResults.length,1);assert.match(result.reply,/product details are open/i);assert.match(result.reply,/Name one exact published option value/i);assert.doesNotMatch(result.reply,/\bCompleted\s+\d+\s+of\s+\d+\b|completedActions|backend|postcondition/i);assert.equal(result.snapshot.pageKind,'product');assert.equal(result.snapshot.currentHandle,'daisy-necklace');assert.equal(result.snapshot.bagControls.itemCount,0);
   assert.deepEqual([...f.root.querySelectorAll('.card')].map(card=>card.dataset.productId),[f.rows[0].id]);
   const question=await f.command('What is the price of this piece?');assert.equal(question.productFacts.handle,'daisy-necklace');assert.match(question.reply,/USD 50\.00 to USD 75\.00/);assert.equal(f.requests.length,requests);
 });

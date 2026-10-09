@@ -62,7 +62,7 @@ async function fixture(t, { rows = catalogue(), mountWidget = true, partial = fa
   const dom = new JSDOM(source('concierge-sandbox.html'), { url: 'https://preview.example/concierge-sandbox.html', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: vc });
   const w = dom.window, d = w.document, requests = [];
   let productRead = null, client = null, channel = null, turn = 0;
-  const packets = [];
+  const packets = [], hostResults = [], customerReplies = [];
   delete d.body.dataset.catalogueSeed;
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.HTMLElement.prototype.scrollIntoView = function () {};
@@ -112,7 +112,16 @@ async function fixture(t, { rows = catalogue(), mountWidget = true, partial = fa
         RTCPeerConnection: Peer, AbortController: w.AbortController, fetch: w.fetch,
         setTimeout: w.setTimeout.bind(w), clearTimeout: w.clearTimeout.bind(w), addEventListener: w.addEventListener.bind(w), removeEventListener: w.removeEventListener.bind(w)
       };
-      w.BritesConciergeVoice = { publicContext: Voice.publicContext, create(options) { client = Voice.create({ ...options, runtime, greeting: false }); return client; } };
+      w.BritesConciergeVoice = { publicContext: Voice.publicContext, create(options) {
+        client = Voice.create({ ...options, runtime, greeting: false, onFinalizedTurn: async value => {
+          // Observe the actual widget callback before the voice client reduces
+          // it to customer speech. Facts and authority assertions use this
+          // return value; provider packets must carry only the customer reply.
+          const result = await options.onFinalizedTurn(value);
+          hostResults.push({ turn: value.turnVersion, inputItemId: value.inputItemId, text: value.text, result: clone(result) });
+          return result;
+        } }); return client;
+      } };
     }
     w.BritesConciergeAvatar = { create() { return { setState() {}, setEmotion() {}, setVisible() {}, setPaused() {}, retry() {}, triggerGreeting() {}, clearFocus() {}, focusProduct() {}, setLevel() {}, setSpeechSignal() {}, clearProduct() {}, showProduct() {}, cancelPerformance() {}, setFloating() {}, cue() {}, destroy() {} }; } };
     const script = d.createElement('script'); script.src = '/brites-concierge.js'; script.dataset.sandbox = 'true';
@@ -134,21 +143,32 @@ async function fixture(t, { rows = catalogue(), mountWidget = true, partial = fa
     },
     async say(text) {
       assert(channel?.onmessage, 'Synthetic realtime must actually be connected before a transcript is injected');
-      const before = packets.filter(packet => packet.item?.content?.[0]?.text?.startsWith('Host-completed result')).length;
+      const before = packets.filter(packet => packet.item?.content?.[0]?.text?.startsWith('Customer reply for this finalized shopper request.')).length, hostBefore = hostResults.length, packetBefore = packets.length;
       const itemId = 'adversarial43-native-' + (++turn), emit = event => channel.onmessage({ data: JSON.stringify(event) });
       emit({ type: 'input_audio_buffer.speech_started', item_id: itemId });
       emit({ type: 'input_audio_buffer.speech_stopped', item_id: itemId });
       emit({ type: 'input_audio_buffer.committed', item_id: itemId });
       emit({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: text });
       for (let n = 0; n < 5; n++) await settle();
-      const receipts = packets.filter(packet => packet.item?.content?.[0]?.text?.startsWith('Host-completed result'));
+      const receipts = packets.filter(packet => packet.item?.content?.[0]?.text?.startsWith('Customer reply for this finalized shopper request.'));
       assert.equal(receipts.length, before + 1, text + ' must add exactly one receipt for this finalized current turn');
       const receipt = receipts.at(-1)?.item.content[0].text;
-      assert(receipt, text + ' must produce an actual host-completed voice receipt');
+      assert(receipt, text + ' must produce an actual customer-only voice receipt');
       const value = JSON.parse(receipt.slice(receipt.indexOf('{')));
-      return value.result;
+      assert.deepEqual(Object.keys(value), ['reply'], 'The speaker receives only customer copy, without facts, plans, diagnostics or control authority');
+      assert.equal(typeof value.reply, 'string'); assert(value.reply.trim()); assert(value.reply.length <= 4000);
+      assert.doesNotMatch(value.reply, /PRIVATE_|variantId|completedActions|matchingVariantIds|postcondition|tool_choice|function_call|turnVersion|inputItemId|storefrontBinding|schema\s*[:=]|no further action|no website action was confirmed|that preparation was interrupted|backend/i);
+      assert.equal(hostResults.length, hostBefore + 1, 'Exactly one real finalized widget callback supplies the internal result');
+      const completed = hostResults.at(-1); assert.equal(completed.inputItemId, itemId); assert.equal(completed.text, text);
+      const responses = packets.slice(packetBefore).filter(packet => packet.type === 'response.create');
+      assert.equal(responses.length, 1, 'Each host-handled current turn requests one spoken answer');
+      assert.equal(responses[0].response.tool_choice, 'none', 'The spoken receipt cannot authorize another model tool action');
+      assert(responses[0].response.instructions.includes(JSON.stringify(value.reply)), 'The exact customer sentence is the requested utterance');
+      assert.doesNotMatch(responses[0].response.instructions, /"(?:productFacts|products|actions|completedActions|snapshot|publicContext|variantId|matchingVariantIds|engravingText|giftNote)"\s*:|PRIVATE_/i);
+      customerReplies.push({ inputItemId: itemId, payload: value });
+      return completed.result;
     },
-    packets,
+    packets, hostResults, customerReplies,
     async bridgeSay(text) { const r = bridge.resolve(text); assert.equal(r.ok, true, text + ': ' + r.reason); return bridge.execute(r.action); }
   };
 }

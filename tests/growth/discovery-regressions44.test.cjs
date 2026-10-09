@@ -42,6 +42,13 @@ function assertActualSelection(h, result, expected) {
   assert.equal(snapshot.pageKind, 'collection');
   assert.deepEqual(ids(snapshot.visiblePieces), ids(result.products), 'Spoken checked matches and the actual host must show the same identities');
   assert.deepEqual(h.handles().sort(), Array.from(result.products, p => p.handle).sort(), 'Native rendered cards agree with the checked receipt');
+  const native = h.hostResults.find(turn => turn.result === result);
+  if (native) {
+    const spoken = h.customerReplies.find(reply => reply.inputItemId === native.inputItemId);
+    assert(spoken, 'The real finalized widget result and its customer reply belong to the same native input');
+    assert.deepEqual(Object.keys(spoken.payload), ['reply'], 'Checked identities stay in host evidence while spoken input contains only customer copy');
+    assert.doesNotMatch(JSON.stringify(spoken.payload), /"(?:products|productFacts|actions|completedActions|matchingVariantIds|snapshot|publicContext|preferences)"\s*:|gid:\/\/shopify\/(?:Product|ProductVariant)\/|PRIVATE_/i);
+  }
   if (expected) assert.deepEqual(ids(result.products), ids(expected));
   assert.deepEqual(h.errors, []);
 }

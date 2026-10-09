@@ -39,7 +39,7 @@ async function fixture(t, nativeVoice, suppliedRows, savedPreferences) {
   const errors = [], console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error));
   const dom = new JSDOM(read('concierge-sandbox.html'), { url: 'https://preview.example/concierge-sandbox.html', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: console });
-  const w = dom.window, d = w.document, requests = [], packets = [];
+  const w = dom.window, d = w.document, requests = [], packets = [], hostResults = [];
   let client, channel, turn = 0;
   delete d.body.dataset.catalogueSeed;
   if (savedPreferences) w.sessionStorage.setItem('brites-concierge-v1', JSON.stringify({ preferences: clone(savedPreferences), updatedAt: Date.now() }));
@@ -80,7 +80,7 @@ async function fixture(t, nativeVoice, suppliedRows, savedPreferences) {
       RTCPeerConnection: Peer, AbortController: w.AbortController, fetch: w.fetch,
       setTimeout: w.setTimeout.bind(w), clearTimeout: w.clearTimeout.bind(w), addEventListener: w.addEventListener.bind(w), removeEventListener: w.removeEventListener.bind(w)
     };
-    w.BritesConciergeVoice = { publicContext: Voice.publicContext, create(options) { client = Voice.create({ ...options, runtime, greeting: false }); return client; } };
+    w.BritesConciergeVoice = { publicContext: Voice.publicContext, create(options) { client = Voice.create({ ...options, runtime, greeting: false, onFinalizedTurn: async turn => { const result = await options.onFinalizedTurn(turn); hostResults.push({ turn, result }); return result; } }); return client; } };
   }
   w.BritesConciergeAvatar = { create() { return { setState() {}, setEmotion() {}, setVisible() {}, setPaused() {}, retry() {}, triggerGreeting() {}, clearFocus() {}, focusProduct() {}, setLevel() {}, setSpeechSignal() {}, clearProduct() {}, showProduct() {}, cancelPerformance() {}, setFloating() {}, cue() {}, destroy() {} }; } };
   const script = d.createElement('script'); script.src = '/brites-concierge.js'; script.dataset.sandbox = 'true';
@@ -99,16 +99,23 @@ async function fixture(t, nativeVoice, suppliedRows, savedPreferences) {
     },
     async say(text) {
       assert.ok(channel?.onmessage, 'Synthetic realtime must be connected');
-      const receipts = () => packets.filter(packet => packet.item?.content?.[0]?.text?.startsWith('Host-completed result'));
-      const before = receipts().length, itemId = 'deictic43-native-' + (++turn), emit = event => channel.onmessage({ data: JSON.stringify(event) });
+      const receipts = () => packets.filter(packet => packet.item?.content?.[0]?.text?.startsWith('Customer reply for this finalized shopper request.'));
+      const before = receipts().length, hostBefore = hostResults.length, itemId = 'deictic43-native-' + (++turn), emit = event => channel.onmessage({ data: JSON.stringify(event) });
       emit({ type: 'input_audio_buffer.speech_started', item_id: itemId });
       emit({ type: 'input_audio_buffer.speech_stopped', item_id: itemId });
       emit({ type: 'input_audio_buffer.committed', item_id: itemId });
       emit({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: text });
       for (let n = 0; n < 5; n++) await settle();
-      assert.equal(receipts().length, before + 1, text + ' must produce one current-turn host receipt');
+      assert.equal(hostResults.length, hostBefore + 1, text + ' must produce one actual widget result before voice projection');
+      const captured = hostResults.at(-1);assert.equal(captured.turn.inputItemId, itemId);assert.equal(captured.turn.text, text);assert.equal(captured.turn.currentTurn, true);assert.equal(captured.result.handled, true);
+      assert.equal(receipts().length, before + 1, text + ' must produce one current-turn customer reply');
       const receipt = receipts().at(-1).item.content[0].text;
-      return JSON.parse(receipt.slice(receipt.indexOf('{'))).result;
+      const spoken = JSON.parse(receipt.slice(receipt.indexOf('{')));assert.deepEqual(Object.keys(spoken), ['reply']);assert.equal(typeof spoken.reply, 'string');assert.equal(spoken.reply, captured.result.reply);
+      assert.doesNotMatch(receipt, /"(?:result|recommendations|products|publicContext|preferences|completedActions|resolvedActions|storefrontSteps|requestId|inputItemId|turnVersion|inventory|plan)"\s*:/);
+      const response = packets.filter(packet => packet.type === 'response.create').at(-1);assert.equal(response.response.tool_choice, 'none');assert.equal(response.response.metadata.brites_input_item, itemId);assert(response.response.instructions.includes(JSON.stringify(spoken.reply)));
+      // Retain complete internal facts for the original matching/authority
+      // assertions. Only the customer reply crosses the provider boundary.
+      return captured.result;
     }
   };
 }

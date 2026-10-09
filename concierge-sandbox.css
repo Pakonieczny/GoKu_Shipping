@@ -57,6 +57,9 @@
 .choice-changed{outline:2px solid #6d9874;outline-offset:3px;background:#e4eedb!important}
 .engraving-preview{display:flex!important;flex-direction:column;gap:8px;margin:14px 0;color:var(--ink)!important}
 .engraving-preview textarea{width:100%;min-height:90px;padding:12px;border:1px solid #bac8b5;border-radius:5px;background:#fdfcf8;color:var(--ink);font:inherit;resize:vertical}
+.bag-option{display:flex;flex-direction:column;gap:7px;margin:12px 0;color:var(--ink);font-size:13px}
+.bag-option select{width:100%;min-height:44px;padding:10px 12px;border:1px solid #bac8b5;border-radius:5px;background:#fdfcf8;color:var(--ink);font:inherit}
+.bag-option select:focus-visible{outline:2px solid var(--teal);outline-offset:3px}
 .zoom-controls{display:flex;justify-content:center;gap:12px;margin-top:16px}
 /* The image remains part of the page, beside the live guide rather than in the
    browser's modal top layer. A narrow viewport reserves a separate image band. */
