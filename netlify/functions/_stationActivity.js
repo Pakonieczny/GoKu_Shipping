@@ -12,6 +12,7 @@
 const ACT = "Station_Activity", DAILY = "Efficiency_Daily";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions and this
 let issueKinds = null; try { issueKinds = require("./_activityKinds"); } catch (_) {}   // (the issue counters are an extra: without the file the rollup is as before)
+const loginName = (issueKinds && issueKinds.loginName) || (n => n);   // (the one login name of a person with two records, "Anna" -> "Ana_M": _activityKinds.js)
 const deviceNo = (issueKinds && issueKinds.deviceNo) || (() => "");   // (the numbered stations' desk, "assembly-2": see _activityKinds.js)
 const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note", "matched"]);   // matched: one scan of an order at the Welding station's Matching task (never a completion)
 const UNATTRIBUTED = (issueKinds && issueKinds.UNATTRIBUTED) || "Unattributed", TASKS = (issueKinds && issueKinds.TASKS) || ["welding", "matching"];
@@ -51,7 +52,7 @@ function clean(e, now, prefix) {
   const action = typeof e.action === "string" && ACTIONS.has(e.action) ? e.action : "";
   // a scan made while nobody was signed in under Matching (Welding only): stored under the one name "Unattributed", never credited to a welder
   const unattributed = e.unattributed === true && station === "welding";
-  const person = unattributed ? UNATTRIBUTED : noPin(str(e.person, 200)).slice(0, 80);
+  const person = unattributed ? UNATTRIBUTED : loginName(noPin(str(e.person, 200)).slice(0, 80));   // (a person with two records is stored under her one login name: Ana_M, never Anna)
   if (!id || !station || !action || !person || !/\p{L}/u.test(person)) return { refused: true };   // no letter (digits, "123 456", "12-34-56") = a PIN, never a name
   const at0 = Number(e.at);
   let at = Number.isFinite(at0) && at0 > 1e12 ? Math.round(at0) : now;

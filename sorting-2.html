@@ -368,7 +368,9 @@
     const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
     const toast = html => { try { window.M && M.toast && M.toast({ html }); } catch (_) {} };
     // (a number alone is never a name)
-    const getEmployee = () => { const v = lsGet(EMP_KEY).trim(); return /^\d{4,}$/.test(v) ? "" : v; };
+    // (Paul, 9 Oct 2026: "Ana_M and Anna are the same person": her other spellings are the one login name, here and on the server: netlify/functions/_activityKinds.js loginName)
+    const oneLogin = s => { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; };
+    const getEmployee = () => { const v = oneLogin(lsGet(EMP_KEY).trim()); return /^\d{4,}$/.test(v) ? "" : v; };
     const kept = [];                         // phone batches that loaded while nobody was signed in (see scanned() below)
     const sessionIn = name => { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} release(); resume(); };
 
@@ -454,7 +456,7 @@
         const v = inp.value.replace(/\s+/g, " ").trim().slice(0, 40);
         inp.value = ""; inp.style.webkitTextSecurity = "";
         if (save && /^\d{6}$/.test(v)) signIn(v);
-        else if (save && v && !/^\d+$/.test(v)) { lsSet(EMP_KEY, v); lsSet(VIA_KEY, "name"); sessionIn(v); }
+        else if (save && v && !/^\d+$/.test(v)) { const nm = oneLogin(v); lsSet(EMP_KEY, nm); lsSet(VIA_KEY, "name"); sessionIn(nm); }
         else if (save && v) toast("An employee number has 6 digits");
         inp.hidden = true; btn.hidden = false;
         renderChip();

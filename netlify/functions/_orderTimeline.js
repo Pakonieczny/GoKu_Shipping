@@ -21,6 +21,8 @@
  *  No composite index: one equality query per order, sorted in memory (an order has tens of events, not thousands). */
 "use strict";
 const CutLine = require("../../charm-nest-rose.js");   // the metals that have a green line (Rose Gold, 10K, 14K)
+let loginName = n => n;   // a person with two records is one name, "Anna" -> "Ana_M" (Paul, 9 Oct 2026; _activityKinds.js): new events are stored under it and old ones are read under it, never rewritten
+try { loginName = require("./_activityKinds").loginName || loginName; } catch (_) {}
 const Placement = require("./_charmNestPlacement");   // where a piece is now: one set of rules for the sorter's reads and this derivation
 const COL = "Order_Timeline";
 const CANCELLED = "Charm_Nest_Cancelled";
@@ -59,7 +61,7 @@ function clean(e, opts = {}) {
   const at = n(e.at) > 1e12 && n(e.at) < Date.now() + 36e5 ? Math.round(n(e.at)) : Date.now();
   const station = STATIONS.has(e.station) ? e.station : (opts.station || "");
   const out = {
-    orderId, type, at, by: s(e.by || opts.by || "", 80), source: opts.source || s(e.source, 20) || "sorter", station, device: s(e.device, 40),
+    orderId, type, at, by: loginName(s(e.by || opts.by || "", 80)), source: opts.source || s(e.source, 20) || "sorter", station, device: s(e.device, 40),
     lineKey: s(e.lineKey, 80), transactionId: s(e.transactionId, 30), sheetId: s(e.sheetId, 100), sheet: s(e.sheet, 80), setId: s(e.setId, 100),
     // (a scan says where the order was seen and a label print is a step's detail: neither is ever a milestone)
     text: s(e.text, 200), data: small(e.data), milestone: type === "scan" || type === "labelPrinted" ? false : e.milestone === undefined ? MILESTONES.has(type) : !!e.milestone
@@ -182,8 +184,8 @@ async function get(db, orderId, opts = {}) {
     db.collection((opts.prefix || "") + CANCELLED).doc(id).get(),
     opts.derive === false ? null : withTimeout(deriveEvents(db, id, opts), DERIVE_MS)
   ]);
-  const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; });
-  const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
+  const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; if (typeof x.by === "string") x.by = loginName(x.by); return x; });
+  const cancelled = can.exists ? (x => { delete x.createdAt; if (typeof x.by === "string") x.by = loginName(x.by); return x; })(can.data()) : null;
   const sandbox = !!opts.prefix;
   if (!derived) { const events = chronology(recorded, { sandbox }).sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.truncated, leftOut: leftOutOf(snap) }; }
   const { events: raw, sheets, errors, timedOut, placementRev, placement } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };

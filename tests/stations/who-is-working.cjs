@@ -114,35 +114,36 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   const r0 = await post({ activity: batch }); assert.strictEqual(r0.status, 200, JSON.stringify(r0.body)); assert.strictEqual(r0.body.refused, 0, 'every event is accepted');
   // work at Assembly with nobody credited (a rollup under the one name "Unattributed": the same record the Welding door writes, here at a counted station)
   put('Efficiency_Daily', `${DAY}__Unattributed`, { day: DAY, person: 'Unattributed', v: 1, events: 3, firstAt: NOW - 50 * MIN, lastAt: NOW - 40 * MIN, stations: { assembly: { events: 3, scans: 2, completes: 1, parts: 3, orders: 1, firstAt: NOW - 50 * MIN, lastAt: NOW - 40 * MIN } }, touched: { [O(50)]: { assembly: true } } }, { merge: true });   // (merged into the Welding scan of nobody the door just wrote: ONE record)
-  for (const who of ['Anna', 'Anns', 'ANNS', 'Giovanna C.']) assert(col('Efficiency_Daily').get(`${DAY}__${who}`), 'the door stored one rollup per SPELLING: ' + who);
+  for (const who of ['Ana_M', 'Giovanna C.']) assert(col('Efficiency_Daily').get(`${DAY}__${who}`), 'the door stored the rollup under the person\'s one login name: ' + who);
+  for (const who of ['Anna', 'Anns', 'ANNS']) assert(!col('Efficiency_Daily').get(`${DAY}__${who}`), 'no new rollup under the old spelling (Paul, 9 Oct 2026: Anna and Anns are written as Ana_M): ' + who);
   const stored = JSON.stringify([...col('Efficiency_Daily')].map(([id, d]) => [id, d.person]));
-  say('1 the day is stored the way the stations write it: Anna, Anns and ANNS are three rollups of three spellings; nothing is merged on write');
+  say('1 the day is stored the way the stations write it: Anna, Anns and ANNS are written as ONE rollup, Ana_M (9 Oct 2026); Giovanna C. is still written as she signed in');
 
   /* ── the overview ── */
   dropCaches(); reads.length = 0; writes.length = 0;
   const ov = await ask({ op: 'overview', day: DAY, days: 1, trend: false, roster: true });
   const readsOverview = reads.slice(), writesOverview = writes.slice();
   const P = n => ov.people.find(p => p.name === n);
-  eq(ov.people.map(p => p.name).sort(), ['Anna', 'Giovanna'], 'ONE Anna (never Anns, ANNS or Anns.) and Giovanna; Ivy has nothing today');
+  eq(ov.people.map(p => p.name).sort(), ['Ana M.', 'Giovanna'], 'ONE Anna (never Anns, ANNS or Anns.) and Giovanna; Ivy has nothing today');
   assert(!ov.people.some(p => /anns/i.test(p.name)), 'no row spelled Anns');
-  eq([P('Anna').totals.parts, P('Anna').totals.orders, P('Anna').totals.signedInMin], [4 + 3 + 5 + 2, 4, 120], 'Anna = the sum of her spellings: pieces 14, orders 4 (1, 2, 3 and 4), signed in 60+30+20+10 min');
-  eq(P('Anna').stations.map(s => [s.station, s.parts, s.orders]).sort(), [['assembly', 12, 3], ['shipping', 2, 1]], 'Anna per station: Assembly 12 pieces 3 orders, Shipping 2 pieces 1 order');
-  eq(P('Anna').status, 'on', 'Anna is on (one of her spellings is open)'); eq(P('Anna').nowAt, ['shipping']); eq(P('Anna').nowDevices, ['shipping-2']);
-  eq(P('Anna').devices.map(d => [d.device, d.minutes]).sort(), [['assembly-1', 90], ['shipping-1', 20], ['shipping-2', 10]], 'her desks and minutes, the spellings added (10 minutes at Shipping 2 once, not twice)');
+  eq([P('Ana M.').totals.parts, P('Ana M.').totals.orders, P('Ana M.').totals.signedInMin], [4 + 3 + 5 + 2, 4, 120], 'Anna = the sum of her spellings: pieces 14, orders 4 (1, 2, 3 and 4), signed in 60+30+20+10 min');
+  eq(P('Ana M.').stations.map(s => [s.station, s.parts, s.orders]).sort(), [['assembly', 12, 3], ['shipping', 2, 1]], 'Anna per station: Assembly 12 pieces 3 orders, Shipping 2 pieces 1 order');
+  eq(P('Ana M.').status, 'on', 'Anna is on (one of her spellings is open)'); eq(P('Ana M.').nowAt, ['shipping']); eq(P('Ana M.').nowDevices, ['shipping-2']);
+  eq(P('Ana M.').devices.map(d => [d.device, d.minutes]).sort(), [['assembly-1', 90], ['shipping-1', 20], ['shipping-2', 10]], 'her desks and minutes, the spellings added (10 minutes at Shipping 2 once, not twice)');
   eq([P('Giovanna').totals.parts, P('Giovanna').totals.orders], [7, 3], 'Giovanna C. is Giovanna (the existing alias)');
   const bs = k => ov.business.stations.find(s => s.station === k);
-  eq(bs('assembly').peopleNow, ['Giovanna'], 'Assembly now: Giovanna (Anna is at Shipping 2)'); eq(bs('shipping').peopleNow, ['Anna'], 'Shipping now: Anna, once');
+  eq(bs('assembly').peopleNow, ['Giovanna'], 'Assembly now: Giovanna (Anna is at Shipping 2)'); eq(bs('shipping').peopleNow, ['Ana M.'], 'Shipping now: Anna (shown as Ana M.), once');
   eq(bs('assembly').devices.map(d => [d.device, d.peopleNow]).filter(x => x[1].length), [['assembly-2', ['Giovanna']]], 'desk rows: the right name');
-  eq(bs('shipping').devices.map(d => [d.device, d.peopleNow]).filter(x => x[1].length), [['shipping-2', ['Anna']]], 'Anns and Anna at one desk are ONE name there');
-  assert(ov.feed.length && ov.feed.every(f => !/anns/i.test(f.person)), 'the feed names Anna, not Anns'); assert(ov.feed.every(f => ['Anna', 'Giovanna', 'Unattributed'].includes(f.person)), 'the feed has Anna, Giovanna and the scan of nobody (Unattributed) only');
-  assert(ov.feed.some(f => f.person === 'Anna'), 'Anna has feed rows');
+  eq(bs('shipping').devices.map(d => [d.device, d.peopleNow]).filter(x => x[1].length), [['shipping-2', ['Ana M.']]], 'Anns and Anna at one desk are ONE name there');
+  assert(ov.feed.length && ov.feed.every(f => !/anns/i.test(f.person)), 'the feed names Anna, not Anns'); assert(ov.feed.every(f => ['Ana M.', 'Giovanna', 'Unattributed'].includes(f.person)), 'the feed has Anna, Giovanna and the scan of nobody (Unattributed) only');
+  assert(ov.feed.some(f => f.person === 'Ana M.'), 'Anna has feed rows (as Ana M.)');
   say('1a overview: one Anna with the spellings summed (pieces, orders, minutes, stations, desks, now, feed); Giovanna C. still Giovanna');
 
   /* ── the live board ── */
   dropCaches(); reads.length = 0; writes.length = 0;
   const live = await ask({ op: 'live' });
   const readsLive = reads.slice(), writesLive = writes.slice();
-  eq(live.signedIn.map(p => `${p.name}:${p.stationKey}:${p.device || ''}`).sort(), ['Anna:shipping:shipping-2', 'Giovanna:assembly:assembly-2'], 'Signed in now: Anns and Anna at one desk are ONE chip');
+  eq(live.signedIn.map(p => `${p.name}:${p.stationKey}:${p.device || ''}`).sort(), ['Ana M.:shipping:shipping-2', 'Giovanna:assembly:assembly-2'], 'Signed in now: Anns and Anna at one desk are ONE chip');
   assert(!JSON.stringify(live).match(/Anns|ANNS/), 'the live answer never says Anns');
   say('1b live board: one chip for Anns + Anna at one desk');
 
@@ -152,22 +153,22 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   eq(pa.kpis.parts.value, 14, 'the person page: Anna\'s 14 pieces are the sum of her spellings'); eq([pb.kpis.parts.value, pc.kpis.parts.value], [14, 14], 'asked as Anns or " ANNS ": the same person');
   eq(pb.kpis.orders.value, pa.kpis.orders.value);
   const old1 = await ask({ op: 'person', name: 'Anns', day: DAY, days: 2 });
-  eq([old1.name, old1.totals.parts, old1.totals.signedInMin], ['Anna', 14, 120], 'the plain person read (days) names Anna and sums too');
+  eq([old1.name, old1.totals.parts, old1.totals.signedInMin], ['Ana M.', 14, 120], 'the plain person read (days) names Anna and sums too');
   const ol = await ask({ op: 'personOrders', name: 'Anns', from: DAY, to: DAY, limit: 50 }), ol2 = await ask({ op: 'personOrders', name: 'Anna', from: DAY, to: DAY, limit: 50 });
   eq(ol.orders.map(o => o.rid).sort(), [O(1), O(2), O(3), O(4)], 'Anna\'s orders: those of every spelling'); eq(ol2.orders.map(o => o.rid).sort(), ol.orders.map(o => o.rid).sort());
   const tr = await ask({ op: 'orders', orderId: O(2) });
-  eq(tr.steps.map(s => `${s.station}:${s.person}`).sort(), ['assembly:Anna', 'assembly:Giovanna'], 'the order trace: Anna (typed Anna and Anns: one step), Giovanna');
-  eq(tr.totals.people, 2); const tr4 = await ask({ op: 'orders', orderId: O(4) }); eq(tr4.steps.map(s => s.person), ['Anna'], 'an order only ANNS touched is Anna\'s');
+  eq(tr.steps.map(s => `${s.station}:${s.person}`).sort(), ['assembly:Ana M.', 'assembly:Giovanna'], 'the order trace: Anna (typed Anna and Anns: one step), Giovanna');
+  eq(tr.totals.people, 2); const tr4 = await ask({ op: 'orders', orderId: O(4) }); eq(tr4.steps.map(s => s.person), ['Ana M.'], 'an order only ANNS touched is Anna\'s');
   say('1c person page, plain person read, order list, order trace: either spelling is Anna with the sum');
 
   /* ── the attendance reader and the Sign-ins list's name use the same table ── */
   const kf = att._t.keyFn(att._t.buildAliases(null));
-  eq([kf('Anns'), kf(' ANNS '), kf('Anns.'), kf('Ánns'), kf('Anna')], ['anna', 'anna', 'anna', 'anna', 'anna'], 'the attendance reader folds the spellings to one person');
-  eq([kf('Ana M.'), kf('Ann'), kf('Anna M')].map(k => k === 'anna'), [false, false, false], 'a different person is never merged on a guess ("Ana M.", "Ann", "Anna M")');
+  eq([kf('Anns'), kf(' ANNS '), kf('Anns.'), kf('Ánns'), kf('Anna')], ['ana m', 'ana m', 'ana m', 'ana m', 'ana m'], 'the attendance reader folds the spellings to one person (Ana_M since 9 Oct 2026)');
+  eq([kf('Ana M.'), kf('Ann'), kf('Anna M')].map(k => k === 'ana m'), [true, false, false], '"Ana M." is Ana_M (Paul, 9 Oct 2026); a different person is never merged on a guess ("Ann", "Anna M")');
   eq([kf('Giovanna C.'), kf('Ivy_Y'), kf('Ivy Y.')], ['giovanna', 'ivy', 'ivy'], 'Giovanna C. and Ivy_Y (the Employee Numbers spellings) fold to Giovanna and Ivy');
-  eq([KIND.personName(' ANNS '), KIND.personName('Anns'), KIND.personName('Anna'), KIND.personName('Bea K.'), KIND.personName('Ana M.')], ['Anna', 'Anna', 'Anna', 'Bea K.', 'Ana M.'], 'the Sign-ins list\'s own name: the built-in table alone, no read');
+  eq([KIND.personName(' ANNS '), KIND.personName('Anns'), KIND.personName('Anna'), KIND.personName('Bea K.'), KIND.personName('Ana M.')], ['Ana_M', 'Ana_M', 'Ana_M', 'Bea K.', 'Ana_M'], 'the Sign-ins list\'s own name: the built-in table alone, no read');
   assert(/personName\(str\(d\.person, 80\)\)/.test(fs.readFileSync(path.join(root, 'netlify/functions/charmNestLibrary.js'), 'utf8')), 'sessionsList uses it');
-  eq(JSON.stringify(Object.keys(KIND.PEOPLE_ALIASES)), '["Giovanna","Anna","Ivy"]'); assert(Object.isFrozen(KIND.PEOPLE_ALIASES));
+  eq(JSON.stringify(Object.keys(KIND.PEOPLE_ALIASES)), '["Giovanna","Ana_M","Ivy"]'); assert(Object.isFrozen(KIND.PEOPLE_ALIASES));
   const f = eff._t.fold; eq([f('Anns'), f(' ANNS '), f('anns.'), f('Ánns')].every(x => x === 'anns'), true);
   say('1d attendance, Sign-ins name and the built-in table: the same fold; strangers stay separate');
 
@@ -176,11 +177,11 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   sess('s7', 'Annie', 'sorting', 'sorting-1', 118, 115); sess('s8', 'Gio', 'sorting', 'sorting-1', 4, 2);
   dropCaches();
   const ovC = await ask({ op: 'overview', day: DAY, days: 1, trend: false, roster: true });
-  eq(ovC.people.map(p => p.name).sort(), ['Anna', 'Giovanna'], 'Annie (a plain string in the config doc) is Anna, Gio is Giovanna, and Anns still is, beside it');
-  eq([ovC.people.find(p => p.name === 'Anna').totals.signedInMin, ovC.people.find(p => p.name === 'Giovanna').stations.some(s => s.station === 'sorting')], [123, true], 'the 3 minutes of Annie are Anna\'s');
+  eq(ovC.people.map(p => p.name).sort(), ['Ana M.', 'Giovanna'], 'Annie (a plain string in the config doc) is Anna, Gio is Giovanna, and Anns still is, beside it');
+  eq([ovC.people.find(p => p.name === 'Ana M.').totals.signedInMin, ovC.people.find(p => p.name === 'Giovanna').stations.some(s => s.station === 'sorting')], [123, true], 'the 3 minutes of Annie are Anna\'s');
   const al = eff._t.buildAliases({ Anna: 'Annie', Anns: ['Anna'] }), key = n => { let k = eff._t.fold(n); const seen = []; while (al.map.has(k) && al.map.get(k) !== k && !seen.includes(k) && seen.length < 8) { seen.push(k); k = al.map.get(k); } return seen.includes(k) ? seen.slice(seen.indexOf(k)).sort()[0] : k; };
-  eq([key('Anns'), key('Anna'), key('Annie')], ['anna', 'anna', 'anna'], 'a loop in the config (Anns is Anna and Anna is Anns) settles on one person'); eq(al.display.get('anna'), 'Anna');
-  eq(eff._t.buildAliases({ Anna: 7, Ivy: null, '': ['x'], Zed: 'zed' }).map.get('anns'), 'anna', 'odd config values never break the built-in table');
+  eq([key('Anns'), key('Anna'), key('Annie'), key('Ana_M')], ['ana m', 'ana m', 'ana m', 'ana m'], 'a loop in the config (Anns is Anna and Anna is Anns) settles on one person: Ana_M'); eq(al.display.get('ana m'), 'Ana M.');
+  eq(eff._t.buildAliases({ Anna: 7, Ivy: null, '': ['x'], Zed: 'zed' }).map.get('anns'), 'ana m', 'odd config values never break the built-in table');
   col('config').delete('employeeAliases'); for (const id of ['s7', 's8']) col('Station_Sessions').delete(id);
   say('2 config/employeeAliases adds to the built-in table (string or list), loops settle, odd values are ignored');
 
@@ -193,19 +194,19 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   vm.runInContext(fs.readFileSync(path.join(root, 'charm-nest-efficiency.js'), 'utf8'), win);
   const Eff = win.Efficiency;
   const M = J(Eff.norm(wo));
-  eq(M.everyone.map(p => p.name).sort(), ['Anna', 'Giovanna', 'Ivy'], 'the console lists THREE people: Ivy, Anna, Giovanna'); eq(M.people.length, 2);
+  eq(M.everyone.map(p => p.name).sort(), ['Ana M.', 'Giovanna', 'Ivy'], 'the console lists THREE people: Ivy, Anna, Giovanna'); eq(M.people.length, 2);
   const ivy = M.everyone.find(p => p.name === 'Ivy');
   eq([ivy.absent, ivy.on, ivy.t.parts, ivy.source], [true, false, 0, 'none']);
   eq([Eff.whenText(ivy, Object.assign({}, M, { past: false })), Eff.whenText(ivy, Object.assign({}, M, { past: true })), Eff.whenText(ivy, Object.assign({}, M, { days: 7 })), Eff.absentText(M)], ['Not signed in today', 'Not signed in on this day', 'Not signed in in these days', 'Not signed in today'], 'plain words for a day, a past day and a week');
   assert(!M.people.some(p => p.name === 'Ivy') && M.biz.people === 2, 'the totals and counts do not include her');
   const ovY = await ask({ op: 'overview', day: YDAY, days: 1, trend: false, roster: true });
-  eq([ovY.people.length, ovY.absent.slice().sort()], [0, ['Anna', 'Giovanna', 'Ivy']], 'a day nobody worked lists all three as not signed in');
+  eq([ovY.people.length, ovY.absent.slice().sort()], [0, ['Ana M.', 'Giovanna', 'Ivy']], 'a day nobody worked lists all three as not signed in');
   const ov7 = await ask({ op: 'overview', day: DAY, days: 7, trend: false, roster: true }); eq(ov7.absent, ['Ivy'], 'a week in which she did nothing');
   // she signs in as "Ivy_Y" (the Employee Numbers spelling): she is a person now, and no longer listed as absent
   sess('s9', 'Ivy_Y', 'shipping', 'shipping-3', 6, null); put('Efficiency_Daily', `${DAY}__Ivy Y.`, { day: DAY, person: 'Ivy Y.', v: 1, events: 1, firstAt: NOW - 3 * MIN, lastAt: NOW - 3 * MIN, stations: { shipping: { events: 1, scans: 1, firstAt: NOW - 3 * MIN, lastAt: NOW - 3 * MIN } }, touched: { [O(7)]: { shipping: 'shipping-3' } } });
   dropCaches();
   const ovI = await ask({ op: 'overview', day: DAY, days: 1, trend: false, roster: true });
-  eq([ovI.people.map(p => p.name).sort(), ovI.absent], [['Anna', 'Giovanna', 'Ivy'], []], 'Ivy_Y / "Ivy Y." is Ivy once she has signed in, and nobody is absent');
+  eq([ovI.people.map(p => p.name).sort(), ovI.absent], [['Ana M.', 'Giovanna', 'Ivy'], []], 'Ivy_Y / "Ivy Y." is Ivy once she has signed in, and nobody is absent');
   eq([ovI.people.find(p => p.name === 'Ivy').status, ovI.people.find(p => p.name === 'Ivy').nowDevices], ['on', ['shipping-3']]);
   eq(J(Eff.norm(J(ovI))).everyone.length, 3);
   col('Station_Sessions').delete('s9'); col('Efficiency_Daily').delete(`${DAY}__Ivy Y.`);
@@ -227,7 +228,7 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   assert(checked >= 4, 'every station row reconciles (' + checked + ')');
   const as = ov4.business.stations.find(s => s.station === 'assembly');
   eq([as.parts, as.orders, as.shared, as.unattributed], [12 + 6 + 3, 5, 1, { parts: 3, scans: 2, orders: 1 }], 'Assembly: Anna 12 + Giovanna 6 + no one 3 = 21 pieces; 3 + 2 + 1 orders less the one both touched = 5');
-  eq(as.byPerson.map(b => [b.name, b.parts, b.orders]), [['Anna', 12, 3], ['Giovanna', 6, 2]], 'who it is made of: Anna once, with her spellings added');
+  eq(as.byPerson.map(b => [b.name, b.parts, b.orders]), [['Ana M.', 12, 3], ['Giovanna', 6, 2]], 'who it is made of: Anna once, with her spellings added');
   const sh = ov4.business.stations.find(s => s.station === 'shipping'); eq([sh.parts, sh.orders, sh.shared, 'unattributed' in sh], [3, 2, 0, false], 'Shipping: nothing unattributed, nothing shared: the line is only there when it has something');
   const wd = ov4.business.stations.find(s => s.station === 'welding'); eq([wd.matched, wd.unattributed.matched, wd.byPerson.map(b => [b.name, b.matched])], [2, 1, [['Giovanna', 1]]], 'Welding: the matched scan of nobody in Matching is in its figure and named');
   eq(ov4.business.unattributed, { parts: 3, scans: ov4.business.unattributed.scans, orders: 1, matched: 1 }, 'the whole line');
@@ -236,8 +237,8 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   assert(!ov4.people.some(p => /unattributed/i.test(p.name)), 'it is no person: no row in people');
   // what the console shows: the rows of a station's card add up, in plain words
   const M4 = Eff.norm(J(ov4)), asRow = M4.biz.stations.get('assembly'), shown = rows => J(rows.map(r => [r.k, r.v]));
-  eq(shown(Eff.madeOf(asRow, 'orders')), [['Anna', '3'], ['Giovanna', '2'], ['No one signed in at the desk', '1'], ['Counted by two people', '−1']], 'the Orders card: Anna 3, Giovanna 2, No one signed in at the desk 1, counted by two people −1 = 5');
-  eq(shown(Eff.madeOf(asRow, 'parts')), [['Anna', '12 pieces'], ['Giovanna', '6 pieces'], ['No one signed in at the desk', '3 pieces']]);
+  eq(shown(Eff.madeOf(asRow, 'orders')), [['Ana M.', '3'], ['Giovanna', '2'], ['No one signed in at the desk', '1'], ['Counted by two people', '−1']], 'the Orders card: Anna 3, Giovanna 2, No one signed in at the desk 1, counted by two people −1 = 5');
+  eq(shown(Eff.madeOf(asRow, 'parts')), [['Ana M.', '12 pieces'], ['Giovanna', '6 pieces'], ['No one signed in at the desk', '3 pieces']]);
   eq(Eff.NOONE, 'No one signed in at the desk'); eq(M4.biz.unattributed.orders, 1);
   const rows4 = J(Eff.stationRowsOf(M4)); const asHead = rows4.find(r => r.head === 'assembly'); eq([asHead.s.parts, asHead.s.orders], [21, 5], 'the caption row of the Assembly group carries the same totals, with the same people behind it');
   eq(J(Eff.madeOf(M4.biz.stations.get('sorting') || { byPerson: [] }, 'orders')), [], 'a station nobody worked at has no breakdown');
@@ -248,7 +249,7 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   dropCaches(); const plain = await ask({ op: 'overview', day: DAY, days: 1, trend: false });
   eq(Object.keys(plain).sort(), ['business', 'cursor', 'day', 'days', 'delta', 'feed', 'notes', 'now', 'ok', 'people', 'sources'], 'the plain answer\'s keys'); eq(Object.keys(plain.business).sort(), ['perHour', 'stations', 'totals', 'trend']);
   assert(plain.business.stations.every(s => !('byPerson' in s) && !('shared' in s) && !('unattributed' in s)), 'plain rows carry no breakdown');
-  eq(plain.people.map(p => p.name).sort(), ['Anna', 'Giovanna'], 'the plain answer has the one Anna too'); eq(plain.business.stations.find(s => s.station === 'welding').matched, 1, 'and the figures it always had');
+  eq(plain.people.map(p => p.name).sort(), ['Ana M.', 'Giovanna'], 'the plain answer has the one Anna too'); eq(plain.business.stations.find(s => s.station === 'welding').matched, 1, 'and the figures it always had');
   say('4 unattributed: every station row = people + "No one signed in at the desk" - shared; the cards say it; an older answer reads as before');
 
   /* ═══ 5 · a phone scan is input at its desk ═══ */

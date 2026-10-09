@@ -322,8 +322,10 @@ const normName = raw => {
   let words = s.split(" ").filter(Boolean).map(w => w.split(/([-'’.])/).map((seg, i) => (i % 2 ? seg : part(seg))).join(""));
   if (words.length > 1) words = words.map(w => (/^\p{L}$/u.test(w) ? w + "." : w));
   const out = words.join(" ").slice(0, 80).trim();
-  return /\p{L}/u.test(out) ? out : "";
+  return /\p{L}/u.test(out) ? ONE_LOGIN(out) : "";
 };
+/* One person, one name (Paul, 9 Oct 2026: "Ana_M and Anna are the same person ... standardize her login under Ana_M"): her other spellings are the one login name. The server folds the same way (netlify/functions/_activityKinds.js loginName). */
+function ONE_LOGIN(s) { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; }
 const employeeName = () => B.employee || (B.link && B.link.state() && B.link.state().employee) || "";
 /* The last name used in this browser (cn.lastEmployee: kept after a sign-out, midnight or an idle end clears cn.employee), so the next
    press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
