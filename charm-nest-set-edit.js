@@ -195,20 +195,26 @@
   async function relabel(step, o) {
     const C = root.CN, O = root.CharmNestOrders, Sx = root.Sets; if (!C || !O || !Sx || !Sx.renderLabelPng) throw new Error('the page is not ready');
     const set = sound(await cloud({ op: 'setGet', setId: str(step.setId) })).set; if (!set) throw new Error('the set could not be read');
-    for (const id of step.sheetIds || []) {
-      const rec = sound(await cloud({ op: 'getSheet', id: str(id) }, 'Reading the sheet')).sheet; if (!rec) throw new Error('a sheet could not be read');
+    // (the sheets of this step are read first: sheets put in together say where each other's pieces are on their labels)
+    const recs = [];
+    for (const id of step.sheetIds || []) { const rec = sound(await cloud({ op: 'getSheet', id: str(id) }, 'Reading the sheet')).sheet; if (!rec) throw new Error('a sheet could not be read'); recs.push(rec); }
+    const PL = root.CharmNestPairLabels, placedOf = r => { const m = new Map((r.charms || []).map(c => [c.id, c])); return (r.placements || []).map(p => m.get(p.id)).filter(Boolean); };
+    const together = PL ? recs.map(r => ({ sheetId: r.id, sheet: r.fileBase || r.folder || r.id, pieces: PL.piecesOfCharms(placedOf(r)) })) : [];
+    for (const rec of recs) {
       const byId = new Map((rec.charms || []).map(c => [c.id, c])), ids = [...new Set((rec.placements || []).map(p => byId.get(p.id)).filter(Boolean).map(c => str(c.order || c.id).split('/')[0]).filter(Boolean))];
       if (!ids.length) throw new Error(`${wordOf(rec)} has no order placed on it`);
       const metal = O.CARD_TO_METAL[rec.metal] || rec.metal, parts = O.safeChunks(ids, metal, 1000, 500, 8), name = rec.fileBase || rec.folder || rec.id, no = rec.sheetIndex || rec.page || 1;
       const base = rec.outputs && rec.outputs.ai && rec.outputs.ai.path ? rec.outputs.ai.path.replace(/\/[^/]*$/, '') : `charmnest/sheets/${rec.day}/${name}`, files = [];
+      // a group (pair, discs) with pieces on another sheet of the set is said on the label (pairs, 9 Oct, R3): the set's own record says where its pieces are, this sheet's from its record
+      const noteOf = slice => (PL && together.length ? PL.splitNotes(rec.id, PL.reconcile(PL.piecesOfOrders(set.orders), together), slice) : []);
       for (const [i, slice] of parts.entries()) {
-        const payload = O.encodeOrderList(slice, metal);
+        const payload = O.encodeOrderList(slice, metal), notes = noteOf(slice);
         const label = `${(C.METAL_TAG && C.METAL_TAG[rec.metal]) || ''} · ${set.name} · Sheet ${no}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ''} · ${slice.length} order${slice.length === 1 ? '' : 's'}`;
-        const png = await Sx.renderLabelPng(payload, label);
+        const png = await Sx.renderLabelPng(payload, label, undefined, notes);
         const up = await C.uploadBytes(`${base}/${name}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ''}.png`, png.blob, 'image/png', 'Saving the sheet label');
-        files.push({ path: up.path, url: up.url, sheet: name, sheetId: rec.id, metal, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
+        files.push(Object.assign({ path: up.path, url: up.url, sheet: name, sheetId: rec.id, metal, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label }, notes.length ? { notes } : {}));
       }
-      const made = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label })), orders: ids };
+      const made = { files: files.map(f => Object.assign({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label }, f.notes ? { notes: f.notes } : {})), orders: ids };
       sound(await cloud({ op: 'putSheet', sheet: { id: rec.id, label: made } }, 'Saving the sheet label'));
       labelsMade.set(rec.id, files);
       try { for (const pg of (C.allSheets ? C.allSheets() : [])) if (pg.sheetId === rec.id) pg.label = made; } catch (_) { /* the page's copy follows at its next load */ }
@@ -232,16 +238,16 @@
     line(`${set.name} · ${set.day} · run ${set.runId}`, { size: 15, font: bold });
     line(`${own.size} sheet(s) · materials ${(set.materials || []).join(', ')} · ${orders.length} order(s) · edited after commit`); y -= 6;
     line('Orders and sheets', { font: bold, size: 11 });
-    for (const [rid, od] of orders.sort((a, b) => (a[0] < b[0] ? -1 : 1))) { const lines = Array.isArray(od.lines) ? od.lines : Object.values(od.lines || {}); line(`${rid}  ${lines.flatMap(l => (l.copies || []).map(c => `${l.sku || ''}${(l.copies || []).length > 1 ? '#' + c.copy : ''}${sideTag(c)}->${c.sheet || names.get(c.sheetId) || ''}`)).join('  ')}`); }
+    for (const [rid, od] of orders.sort((a, b) => (a[0] < b[0] ? -1 : 1))) { const lines = Array.isArray(od.lines) ? od.lines : Object.values(od.lines || {}); line(`${rid}  ${(root.CharmNestPairLabels ? root.CharmNestPairLabels.manifestEntries(lines, c => c.sheet || names.get(c.sheetId) || '') : lines.flatMap(l => (l.copies || []).map(c => `${l.sku || ''}${(l.copies || []).length > 1 ? '#' + c.copy : ''}${sideTag(c)}->${c.sheet || names.get(c.sheetId) || ''}`))).join('  ')}`); }
     const spans = spanLines(set.orders, id => names.get(id));
     if (spans.length) { y -= 6; line('Orders on more than one sheet (they stay in one set)', { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line('Engraving', { font: bold, size: 11 });
-    const backs = sheets.flatMap(s => (s.backs || []).filter(b => b && !b.invalidated).map(b => `${names.get(s.id)}: ${b.order || ''} ${b.sku || ''} #${b.copy || 1} "${str(b.text).replace(/\n/g, ' / ')}" ${b.capMm ? b.capMm + ' mm' : ''} · ${b.approvedBy || '?'}`));
+    const backs = sheets.flatMap(s => (s.backs || []).filter(b => b && !b.invalidated).map(b => `${names.get(s.id)}: ${b.order || ''} ${b.sku || ''} #${b.copy || 1}${root.CharmNestPairLabels ? root.CharmNestPairLabels.backWord(b) : ''} "${str(b.text).replace(/\n/g, ' / ')}" ${b.capMm ? b.capMm + ' mm' : ''} · ${b.approvedBy || '?'}`));
     if (backs.length) backs.forEach(b => line(b)); else line('no engraving in this set');
     y -= 6; line('Labels', { font: bold, size: 11 }); files.forEach(f => line(`${f.label || f.sheet}  ${f.path || '(not uploaded)'}`));
     const edits = (Array.isArray(set.flowHistory) ? set.flowHistory : []).filter(h => h && h.type === 'setEdit');
     if (edits.length) { y -= 6; line('Changes after the commit', { font: bold, size: 11 }); edits.slice(-12).forEach(h => line(`${new Date(+h.at || 0).toISOString().slice(0, 16).replace('T', ' ')}  ${h.by || ''}: ${h.note || ''}`)); }
-    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheets.map(s => ({ sheetId: s.id, name: names.get(s.id), metal: s.metal, sheetIndex: s.sheetIndex, orders: s.orders || [], placements: s.placedCount || 0, backs: (s.backs || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, text: b.text, approvedBy: b.approvedBy })), verification: s.verification ? { ok: !!s.verification.ok } : null, outputs: s.outputs || null })),
+    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheets.map(s => ({ sheetId: s.id, name: names.get(s.id), metal: s.metal, sheetIndex: s.sheetIndex, orders: s.orders || [], placements: s.placedCount || 0, backs: (s.backs || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === 'L' || b.side === 'R' ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy })), verification: s.verification ? { ok: !!s.verification.ok } : null, outputs: s.outputs || null })),
       orders: Object.fromEntries(orders.map(([rid, od]) => [rid, { held: od.held || null, lines: Array.isArray(od.lines) ? od.lines : Object.values(od.lines || {}) }])), labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, edited: edits.slice(-12), generatedAt: new Date().toISOString() };
     const folder = set.folder, up = (p, bytes, type, label) => C.uploadBytes(`${folder}/${p}`, bytes, type, label);
     const [lp, mp, jp] = await Promise.all([up(`labels/${set.name}_labels.pdf`, await labels.save({ useObjectStreams: false }), 'application/pdf', "Saving the set's labels PDF"), up(`${set.name}_manifest.pdf`, await man.save({ useObjectStreams: false }), 'application/pdf', 'Saving the manifest'), up('set.json', new TextEncoder().encode(JSON.stringify(json, null, 1)), 'application/json', 'Saving the set data')]);

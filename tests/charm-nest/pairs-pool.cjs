@@ -15,22 +15,10 @@ const PP = require(path.join(root, 'charm-nest-pool-pieces.js'));
 const O = require(path.join(root, 'charm-nest-orders.js'));
 const refuseNestedArrays = require('./_noNestedArrays.cjs');
 const pass = name => console.log('  ✓', name);
-// charm-nest-pair.js as amendment 2 will have it (PAIRMASTER / PAIRINTAKE): an earring pair always makes a Left and a Right per unit, copies alternating;
-// the Right of a matching pair is the mirror image of the drawing; a mismatched pair's pieces are its two bodies (mirror: whichever faces the wrong way).
-// This shim stands in until that lands, so this test does not move when the real module does; the real module is exercised below too.
-const PairAmended = Object.assign({}, Pair, {
-  piecesFor(line, charm) {
-    const ear = !!(line && line.spec && line.spec.ear), mis = !!charm && Pair.isMismatched(charm), q = Math.max(1, Math.round(+(line.spec && line.spec.quantity || line.quantity) || 1)), key = Pair.groupKey(line);
-    if (!ear && !mis) return Pair.piecesFor(line, charm);
-    const out = [], flip = (line.spec && line.spec.flipBody1) ? 1 : 0;
-    for (let u = 0; u < q; u++) for (const side of ['L', 'R']) out.push({ side, bodyIndex: mis && side === 'R' ? 1 : 0, mirror: mis ? (side === 'R' && !!flip) : side === 'R', groupKey: key, n: out.length + 1, of: 2 * q });
-    return out;
-  },
-  pieceGeometry(charm, piece) { return piece && piece.mirror ? { outline: Object.assign({}, charm.outline, { mirrored: !charm.outline.mirrored }), members: charm.members.slice(), bbox: charm.bbox.slice() } : {}; },
-  pieceCountOf(line, charm) { return (line.spec && line.spec.ear) || (charm && Pair.isMismatched(charm)) ? 2 * Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)) : Pair.pieceCountOf(line, charm); }
-});
+// the real charm-nest-pair.js (amendment 2: an earring pair always makes a Left and a Right per unit, copies alternating; the Right is the mirror image
+// of the drawing; a mismatched pair's pieces are its two bodies) and, below, a module that calls every line plain (what the app did before pairs)
 // a pair module that calls every line plain (what the app did before pairs)
-const PairPlain = Object.assign({}, Pair, { piecesFor: (line, charm) => Pair.piecesFor(line, null), pieceCountOf: (line, charm) => Pair.pieceCountOf(line, null) });
+const PairPlain = Object.assign({}, Pair, { piecesFor: line => { const q = Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)); return Array.from({ length: q }, (_, i) => ({ side: null, bodyIndex: 0, groupKey: Pair.groupKey(line), n: i + 1, of: q, mirror: false })); }, pieceCountOf: line => Math.max(1, Math.round(+(line.spec && line.spec.quantity) || 1)) });
 const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and objects come from another realm: compare by value
 
 (async () => {
@@ -116,17 +104,17 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
   }
   const lineRow = (rid, tid, sku, qty, extra) => ({ key: `${rid}_${tid}`, state: 'pulled', order: { receiptId: rid, createTs: 1791500000, updateTs: 1791500001 }, line: { transactionId: tid, listingId: '1', sku }, spec: Object.assign({ designSku: sku, material: 'gold', quantity: qty, size: null, form: 'earrings', chain: null }, extra || {}), problems: [], poolIds: [], engrave: null, arrivedAt: 0 });
   // the record the code before pairs wrote for a plain line (same keys, same order)
-  const was = (rid, tid, sku, copy, q, charmHash) => JSON.stringify({ poolId: `${rid}_${tid}_${copy}`, runId: null, setId: null, sheetId: null, orderId: rid, orderDate: 1791500000, arrivedAt: 0, transactionId: tid, sku, material: 'gold', size: null, form: 'earrings', chain: null, copy, quantity: q, charmHash, masterHash: 'mh-' + sku, aiPath: 'charmnest/master/sku/' + sku + '.ai', engrave: false, state: 'ready', lineKey: `${rid}_${tid}`, updateTs: 1791500001 });
+  const was = (rid, tid, sku, copy, q, charmHash, form) => JSON.stringify({ poolId: `${rid}_${tid}_${copy}`, runId: null, setId: null, sheetId: null, orderId: rid, orderDate: 1791500000, arrivedAt: 0, transactionId: tid, sku, material: 'gold', size: null, form: form || 'earrings', chain: null, copy, quantity: q, charmHash, masterHash: 'mh-' + sku, aiPath: 'charmnest/master/sku/' + sku + '.ai', engrave: false, state: 'ready', lineKey: `${rid}_${tid}`, updateTs: 1791500001 });
 
   // plain lines: single charm, matching pair (two copies), discs: byte-identical, and no pair field anywhere
-  for (const [sku, qty, mod] of [['ONE-PENDANT', 1, Pair], ['DISC-14', 1, Pair], ['ONE-PENDANT', 1, PairPlain], ['PAIR-STUD', 2, PairPlain], ['DISC-14', 1, PairPlain], ['PAIR-HOOP', 3, PairPlain]]) {
+  for (const [sku, qty, mod, form] of [['ONE-PENDANT', 1, Pair, 'pendant'], ['DISC-14', 3, Pair, 'necklace'], ['ONE-PENDANT', 1, PairPlain, 'earrings'], ['PAIR-STUD', 2, PairPlain, 'earrings'], ['DISC-14', 1, PairPlain, 'necklace'], ['PAIR-HOOP', 3, PairPlain, 'earrings']]) {
     const w = world([sku], null, mod); w.use(sku);
-    const row = lineRow('4190000101', '5000000101', sku, qty);
+    const row = lineRow('4190000101', '5000000101', sku, qty, { form });
     await w.Pool.poolAdd(row, null);
     const put = w.calls.find(x => x.body.op === 'poolPut'); assert(put, sku + ': recorded');
     assert.strictEqual(put.body.pools.length, qty, sku + ': quantity pieces, as before');
     const charmHash = put.body.pools[0].charmHash;
-    put.body.pools.forEach((p, i) => assert.strictEqual(JSON.stringify(p), was('4190000101', '5000000101', sku, i + 1, qty, charmHash), sku + ' copy ' + (i + 1) + ': the record is byte-identical to the one written before pairs'));
+    put.body.pools.forEach((p, i) => assert.strictEqual(JSON.stringify(p), was('4190000101', '5000000101', sku, i + 1, qty, charmHash, form), sku + ' copy ' + (i + 1) + ': the record is byte-identical to the one written before pairs'));
     assert(!put.body.pools.some(p => 'side' in p || 'bodyIndex' in p || 'groupKey' in p || 'groupSize' in p));
     assert.deepStrictEqual(J(row.poolIds), put.body.pools.map(p => p.poolId));
     const charms = w.pages.gold.charms; assert.strictEqual(charms.length, qty);
@@ -138,7 +126,7 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
 
   // a mismatched pair: two bodies, two pieces per unit
   for (const qty of [1, 2]) {
-    const w = world(['TENNIS-MIS'], null, PairAmended); w.use('TENNIS-MIS');
+    const w = world(['TENNIS-MIS']); w.use('TENNIS-MIS'); w.entries['TENNIS-MIS'].facings = ['L', 'R'];   // a person set it: the left body faces left, the right body faces right
     const row = lineRow('4190000102', '5000000102', 'TENNIS-MIS', qty);
     await w.Pool.poolAdd(row, null);
     const put = w.calls.find(x => x.body.op === 'poolPut'), pools = put.body.pools, n = 2 * qty;
@@ -171,8 +159,8 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
   }
   // a mismatched pair whose right body is drawn facing the wrong way: that piece is the mirror image of its body
   {
-    const w = world(['TENNIS-MIS'], null, PairAmended); w.use('TENNIS-MIS');
-    const row = lineRow('4190000110', '5000000110', 'TENNIS-MIS', 1, { flipBody1: true });
+    const w = world(['TENNIS-MIS']); w.use('TENNIS-MIS'); w.entries['TENNIS-MIS'].facings = ['L', 'L'];   // a person set it: both bodies face left, so the Right is the second body turned over
+    const row = lineRow('4190000110', '5000000110', 'TENNIS-MIS', 1);
     await w.Pool.poolAdd(row, null);
     const pools = w.calls.find(x => x.body.op === 'poolPut').body.pools, charms = w.pages.gold.charms;
     assert.deepStrictEqual(J(pools.map(p => [p.side, p.mirror, p.bodyIndex])), [['L', false, 0], ['R', true, 1]]);
@@ -183,8 +171,8 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
 
   // a MATCHING earring pair (stud, hoop): a Left and a Right per unit too; the Right is the mirror image of the drawing (amendment 2)
   for (const [sku, qty] of [['PAIR-STUD', 1], ['PAIR-STUD', 2], ['PAIR-HOOP', 1]]) {
-    const w = world([sku], null, PairAmended); w.use(sku);
-    const row = lineRow('4190000111', '5000000111', sku, qty, { ear: true });
+    const w = world([sku]); w.use(sku);
+    const row = lineRow('4190000111', '5000000111', sku, qty);
     await w.Pool.poolAdd(row, null);
     const pools = w.calls.find(x => x.body.op === 'poolPut').body.pools, charms = w.pages.gold.charms, n = 2 * qty, gk = '4190000111:5000000111';
     assert.strictEqual(pools.length, n, sku + ' ×' + qty + ': a Left and a Right per unit'); assert.strictEqual(charms.length, n);
@@ -200,15 +188,15 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
   }
   // a line that is not an earring pair keeps its record, whatever the module says about earrings
   {
-    const w = world(['ONE-PENDANT'], null, PairAmended); w.use('ONE-PENDANT');
-    await w.Pool.poolAdd(lineRow('4190000112', '5000000112', 'ONE-PENDANT', 1), null);
-    assert.strictEqual(JSON.stringify(w.calls.find(x => x.body.op === 'poolPut').body.pools[0]), was('4190000112', '5000000112', 'ONE-PENDANT', 1, 1, w.calls[0].body.pools[0].charmHash));
+    const w = world(['ONE-PENDANT']); w.use('ONE-PENDANT');
+    await w.Pool.poolAdd(lineRow('4190000112', '5000000112', 'ONE-PENDANT', 1, { form: 'pendant' }), null);
+    assert.strictEqual(JSON.stringify(w.calls.find(x => x.body.op === 'poolPut').body.pools[0]), was('4190000112', '5000000112', 'ONE-PENDANT', 1, 1, w.calls[0].body.pools[0].charmHash, 'pendant'));
   }
   // the module cannot mirror: the line is held and said so, never drawn the wrong way round
   {
-    const NoMirror = Object.assign({}, PairAmended, { pieceGeometry: undefined, mirrorOf: undefined });
+    const NoMirror = Object.assign({}, Pair, { pieceGeometry: undefined, mirrorOf: undefined });
     const w = world(['PAIR-STUD'], null, NoMirror); w.use('PAIR-STUD');
-    const row = lineRow('4190000113', '5000000113', 'PAIR-STUD', 1, { ear: true });
+    const row = lineRow('4190000113', '5000000113', 'PAIR-STUD', 1);
     await w.Pool.poolAdd(row, null);
     assert.strictEqual(row.state, 'held'); assert(/mirror/.test(row.reason)); assert(!w.calls.length, 'nothing recorded'); assert.strictEqual(w.pages.gold.charms.length, 0);
   }
@@ -218,7 +206,7 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
   {
     for (const sku of ['TENNIS-MIS', 'PAIR-STUD', 'ONE-PENDANT']) {
       const w = world([sku]); w.use(sku);
-      const row = lineRow('4190000114', '5000000114', sku, 2, { ear: true });
+      const row = lineRow('4190000114', '5000000114', sku, 2);
       await w.Pool.poolAdd(row, null);
       const pools = w.calls.find(x => x.body.op === 'poolPut').body.pools;
       pools.forEach((p, i) => { refuseNestedArrays(p, 'pool row'); const f = PP.cleanFields(p); if (p.side) assert.deepStrictEqual(J(f), J(PP.fieldsOf(p)), sku + ': what is recorded is what the server keeps'); else assert.strictEqual(Object.keys(f).length, 0); });
@@ -236,7 +224,9 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     assert.deepStrictEqual(J([P0.side, P1.side, P0.kind, P0.groupSize, P1.unit]), ['L', 'R', 'mismatched', 2, 1]);
     assert.strictEqual(w.Pool.pieceCountOf(row), 2, 'its pool ids are the fact');
     assert.strictEqual(w.Pool.pieceCountOf(lineRow('1', '2', 'TENNIS-MIS', 3)), 6, 'before pooling a mismatched design makes two per unit (the entry says pair)');
-    assert.strictEqual(w.Pool.pieceCountOf(lineRow('1', '2', 'PAIR-STUD', 3)), 3, 'every other design makes quantity pieces, as the app does today');
+    assert.strictEqual(w.Pool.pieceCountOf(lineRow('1', '2', 'PAIR-STUD', 3)), 6, 'an earring pair makes two per unit');
+    assert.strictEqual(w.Pool.pieceCountOf(lineRow('1', '2', 'PAIR-STUD', 3, { form: 'necklace' })), 3, 'every other line makes quantity pieces, as the app does today');
+    assert.strictEqual(w.Pool.pieceCountOf(lineRow('1', '2', 'PAIR-STUD', 3, { form: 'necklace', pieceCount: 5 })), 5, 'the count the intake set wins');
     const g = w.Pool.groupOf(row.poolIds[0]); assert.strictEqual(g.size, 2); assert.strictEqual(g.split, false, 'neither is on a sheet yet: nothing is split'); assert.strictEqual(g.sided, true); assert.strictEqual(g.off.length, 2);
     // an old glued row of a mismatched design
     w.c.B.pool.rows.set('4190000104_5000000104_1', { poolId: '4190000104_5000000104_1', sku: 'TENNIS-MIS', quantity: 1, copy: 1, sheetId: 's1' });
@@ -253,8 +243,8 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
 
   // a source recovered from a checkpoint has its traced charm and bytes but not the derived bodies or mirrored charm: ensureBase makes them again
   {
-    const w = world(['TENNIS-MIS'], null, PairAmended); w.use('TENNIS-MIS');
-    await w.Pool.poolAdd(lineRow('4190000115', '5000000115', 'TENNIS-MIS', 1, { flipBody1: true }), null);
+    const w = world(['TENNIS-MIS']); w.use('TENNIS-MIS');
+    w.entries['TENNIS-MIS'].facings = ['L', 'L']; await w.Pool.poolAdd(lineRow('4190000115', '5000000115', 'TENNIS-MIS', 1), null);
     const s0 = w.c.B.pool.sources.values().next().value;
     delete s0.bodies; delete s0.bodiesChecked; delete s0.mirrors;
     assert.strictEqual(w.Pool.baseFor(s0, { side: 'R', mirror: true, bodyIndex: 1 }), null);
@@ -277,13 +267,13 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
     assert(!('side' in put.body.pools[0]), 'and no pair field on it');
     assert.strictEqual(w.pages.gold.charms[0].members.length, F.charmOf('TENNIS-MIS').members.length, 'the glued charm: both bodies');
     // an older matching pair (rows made before pieces had a side, one still on a sheet) is not rewritten as a Left and a Right: it stays as it was
-    const wm = world(['PAIR-STUD'], null, PairAmended); wm.use('PAIR-STUD');
-    const rowm = lineRow('4190000116', '5000000116', 'PAIR-STUD', 2, { ear: true }), ids = ['4190000116_5000000116_1', '4190000116_5000000116_2'];
+    const wm = world(['PAIR-STUD']); wm.use('PAIR-STUD');
+    const rowm = lineRow('4190000116', '5000000116', 'PAIR-STUD', 2), ids = ['4190000116_5000000116_1', '4190000116_5000000116_2'];
     rowm.poolIds = ids; ids.forEach((id, i) => wm.c.B.pool.rows.set(id, { poolId: id, sku: 'PAIR-STUD', quantity: 2, copy: i + 1, sheetId: i ? null : 'sh-9', state: i ? 'ready' : 'written' }));
     await wm.Pool.poolAdd(rowm, null);
     { const ps = wm.calls.find(x => x.body.op === 'poolPut').body.pools; assert.strictEqual(ps.length, 2, 'the pieces it had'); assert(!ps.some(p => 'side' in p || 'mirror' in p || 'groupKey' in p), 'and no pair field on them'); }
-    assert.strictEqual(wm.Pool.pieceCountOf(lineRow('1', '2', 'PAIR-STUD', 3, { ear: true })), 6, 'before pooling an earring pair counts two per unit (the pair module\'s word)');
-    assert.strictEqual(wm.Pool.pieceCountOf(lineRow('1', '2', 'ONE-PENDANT', 3)), 3);
+    assert.strictEqual(wm.Pool.pieceCountOf(lineRow('1', '2', 'PAIR-STUD', 3)), 6, 'before pooling an earring pair counts two per unit (the pair module\'s word)');
+    assert.strictEqual(wm.Pool.pieceCountOf(lineRow('1', '2', 'ONE-PENDANT', 3, { form: 'pendant' })), 3);
     const w2 = world(['TENNIS-MIS']); w2.use('TENNIS-MIS');
     const row2 = lineRow('4190000106', '5000000106', 'TENNIS-MIS', 1); row2.poolIds = ['4190000106_5000000106_1'];
     w2.c.B.pool.rows.set(row2.poolIds[0], { poolId: row2.poolIds[0], sku: 'TENNIS-MIS', quantity: 1, copy: 1, sheetId: null, state: 'abandoned', heldAt: 5 });

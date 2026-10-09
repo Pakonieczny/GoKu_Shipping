@@ -153,7 +153,7 @@ function slim(d) {
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), ...(typeof bk.mirror === "boolean" && bk.side ? { mirror: bk.mirror } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
@@ -728,11 +728,12 @@ async function op_listCharms(b) {
    manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
    picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
    per back used to count toward the sheet document's 1 MiB. */
-const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "bodyIndex", "groupKey"];   // (side: the ear of a mismatched pair this back is for, "L" or "R"; absent on every other back)
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "mirror", "bodyIndex", "groupKey"];   // (side: the ear of an earring pair this back is for, "L" or "R", and mirror: that piece is the mirror image of the drawn design; absent on every other back)
 function sheetBack(bk) {
   if (!bk || typeof bk !== "object") return bk;
   const out = {};
   for (const k of SHEET_BACK_FIELDS) if (bk[k] !== undefined) out[k] = bk[k];
+  Placement.cleanPiece(out);   // (the pair fields it carries are kept only when sound: side L or R, mirror true or false, bodyIndex, groupKey from the pool id)
   if (bk.verified) out.verified = { geometry: { ok: !!(bk.verified.geometry && bk.verified.geometry.ok) }, file: { ok: !!(bk.verified.file && bk.verified.file.ok) } };
   if (bk.outputs) out.outputs = Object.fromEntries(["ai", "png"].filter(k => bk.outputs[k]).map(k => [k, { path: bk.outputs[k].path || null, url: bk.outputs[k].url || null }]));
   return out;
@@ -756,6 +757,9 @@ async function op_putSheet(b) {
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
   delete doc.log;
+  // the pair fields of its pieces (side, mirror, bodyIndex, groupKey, groupSize on each charm; pieceSides) are kept only when sound, and a record without them is saved as it was
+  if (Array.isArray(s.charms)) doc.charms = Placement.cleanCharms(s.charms);
+  if (Object.prototype.hasOwnProperty.call(s, "pieceSides")) { const m = Placement.cleanPieceSides(s.pieceSides); if (m) doc.pieceSides = m; else delete doc.pieceSides; }
   // a sheet is marked cut only by op_laserDone: a save of the open run's copy of it keeps the mark it has
   delete doc.laserDoneAt; delete doc.laserDoneBy; delete doc.processSeals; delete doc.processReady;
   // the step completions (stepStamps, stepState) are the server's record of when each step was done: a page can neither write nor clear them
@@ -1194,6 +1198,8 @@ async function op_masterPatch(b) {
   if (p.labelSource) doc.labelSource = str(p.labelSource, 20);
   // a person's decision on a doubtful design (charm-nest-pair.js): `pair` {bodies 2 to 8, mismatched}, or null for "one charm"; a re-index keeps it (putIndex)
   if (p.pair !== undefined) { const x = Master.cleanPair(p.pair); if (x !== undefined) { doc.pair = x === null ? FV.delete() : x; doc.pairBy = "operator"; } }
+  // the way the drawing faces, "L" or "R", as a person says it (amendment 2); null gives the decision back to the indexer; a re-index keeps it (putIndex)
+  if (p.facing !== undefined) { const x = Master.cleanFacing(p.facing); if (x !== undefined) { if (x === null) { doc.facing = FV.delete(); doc.facingBy = FV.delete(); } else { doc.facing = x; doc.facingBy = "operator"; } } }
   if (p.confirmedBy) { doc.confirmedBy = str(p.confirmedBy, 80); doc.confirmedAt = FV.serverTimestamp(); }
   const ref = db.collection(Master.INDEX).doc(sku); if (!(await ref.get()).exists) return { error: "not indexed: " + sku };   // a patch never creates a shell entry
   await ref.set(doc, { merge: true });
@@ -3114,6 +3120,8 @@ async function op_customPut(b) {
   const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
   const now = Date.now(), ref = col(CUSTOM).doc(key), snap = await ref.get(), cur = snap.exists ? snap.data() : null;
   const button = b.how === "button", who = str(b.by || "operator", 80);
+  // a mismatched pair's sticker is a Left and a Right page (the label's `pieces`): the seal on the timeline says so (pairs, 9 Oct)
+  const ears = label && Array.isArray(label.pieces) ? label.pieces.filter(p => p && (p.side === "L" || p.side === "R")).length : 0;
   const doc = { key, receiptId: str(b.receiptId, 40), transactionId: str(b.transactionId, 40), sku: str(b.sku, 60), title: str(b.title, 200),
     category: str(b.category, 60), kind: str(b.kind, 40), state: "completed", updatedAtMs: now, updatedAt: FV.serverTimestamp() };
   if (!cur || cur.state !== "completed" || !cur.completedAt) Object.assign(doc, { completedAt: now, completedBy: who, how: button ? "button" : "print" });
@@ -3128,7 +3136,7 @@ async function op_customPut(b) {
   await ref.set(doc, { merge: true });
   // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
   await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
-    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120), ...pressedIn(b) }, id: `${key}-${now}` }), "custom seal");
+    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`, ears ? "Left + Right" : ""].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120), ...(ears ? { pieces: ears } : {}), ...pressedIn(b) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 const STAMPS_MAX = 2000;
