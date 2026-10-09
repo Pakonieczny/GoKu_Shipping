@@ -3194,7 +3194,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1"></script>
-<script src="charm-nest-pair-thumb.js?v=20261009-pt2"></script>
+<script src="charm-nest-pair-thumb.js?v=20261009-pt3"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1"></script>
@@ -3203,7 +3203,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
@@ -3212,9 +3212,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3"></script>
-<script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1"></script>
+<script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1"></script>
-<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb1"></script>
+<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb1-pt3"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -4166,6 +4166,24 @@ function groupOf(c) {
 }
 /** "Left" / "Right" for a charm whose side is known (a mismatched pair), else "". */
 const sideWord = c => (c && c.side === "L" ? "Left" : c && c.side === "R" ? "Right" : "");
+/** The pieces of one line are an earring PAIR when there are exactly two and each carries a side (Left and Right, matching or mismatched:
+    Paul, 9 Oct, amendment 2), or, in a record that has no sides yet, their form says earrings. Two discs are a group, not a pair. */
+function isPairLine(pieces) {
+  return !!pieces && pieces.length === 2 && (pieces.every(c => c && (c.side === "L" || c.side === "R")) || pieces.every(c => c && /earring|stud|hoop|huggie/i.test(String(c.orderInfo && c.orderInfo.form || ""))));
+}
+/** What a saved sheet's charm descriptor says of a piece that belongs to a pair or a group (side L/R, mirror, bodyIndex, groupKey, groupSize), so the sheet window and
+    every reader of a saved sheet can draw each piece in its own direction (a Right earring is the mirror of its Left). Only fields the piece has; {} for every
+    other charm, so a normal charm's descriptor is what it always was. `mirror` is written exactly as the piece says (true only for a mirrored design). */
+function pairDescriptor(c) {
+  if (!c) return {};
+  const out = {};
+  if (c.side === "L" || c.side === "R") out.side = c.side;
+  if (typeof c.mirror === "boolean" && out.side) out.mirror = c.mirror;
+  if (Number.isInteger(c.bodyIndex) && c.bodyIndex >= 0) out.bodyIndex = c.bodyIndex;
+  if (Number.isInteger(c.groupSize) && c.groupSize > 1) out.groupSize = c.groupSize;
+  if (out.side || out.groupSize) { const g = c.groupKey && String(c.groupKey).length > 1 ? String(c.groupKey) : groupOf(c); if (g) out.groupKey = g; }
+  return out;
+}
 /** The groups (of `only`, a Set of group keys, or all) with pieces on two or more of these sheets (pages of one metal: a group never
     spans metals). Pure: reads the pages it is given, no cloud call. [{ group, pieces:[{c, sh}], pages:[sh] }] */
 function splitGroups(pages, only) {
@@ -4214,9 +4232,9 @@ function keepOrdersWhole(sh, byId, pocket) {
 function orderSummary(charms) {
   const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
   const multi = [...by.values()].filter(n => n > 1).length;
-  // (pairs: lines of exactly two pieces, a Left and a Right or two of one design; none is cut in half by a move)
-  const lines = new Map(), gid = typeof groupOf === "function" ? groupOf : () => null; for (const c of charms) { const g = gid(c); if (g) lines.set(g, (lines.get(g) || 0) + 1); }
-  const pairs = [...lines.values()].filter(n => n === 2).length;
+  // (pairs: lines of exactly two pieces, a Left and a Right; none is cut in half by a move)
+  const lines = new Map(), gid = typeof groupOf === "function" ? groupOf : () => null; for (const c of charms) { const g = gid(c); if (g) { if (!lines.has(g)) lines.set(g, []); lines.get(g).push(c); } }
+  const pairs = typeof isPairLine === "function" ? [...lines.values()].filter(isPairLine).length : 0;
   return { orders: by.size, multi, pairs, text: `${by.size} order(s)${multi ? `, ${multi} multi-piece` : ""}${pairs ? `, ${pairs} pair(s)` : ""}` };
 }
 function overflowToNextSheet(sh, announce = true) {
@@ -4225,9 +4243,10 @@ function overflowToNextSheet(sh, announce = true) {
   const gid = typeof groupOf === "function" ? groupOf : () => null;
   if (!sh.placements.length) {
     // (nothing is split here, Paul's standing rule; a pair or a line of pieces among them is named, so the stop says why it is stuck)
-    const lines = new Map(); for (const c of moving) { const g = gid(c); if (g) lines.set(g, (lines.get(g) || 0) + 1); }
-    const most = Math.max(0, ...lines.values());
-    sh.problem = `The oldest order cannot fit on an empty sheet at these settings.${most > 1 ? ` It holds ${most === 2 ? "a pair" : `a line of ${most} pieces`} that must stay on one sheet, so it is not split.` : ""} Review its size or the fill ceiling before continuing.`;
+    const lines = new Map(); for (const c of moving) { const g = gid(c); if (g) { if (!lines.has(g)) lines.set(g, []); lines.get(g).push(c); } }
+    const big = [...lines.values()].sort((a, b) => b.length - a.length)[0] || [];
+    const what = big.length < 2 ? "" : typeof isPairLine === "function" && isPairLine(big) ? "a pair" : `a line of ${big.length} pieces`;
+    sh.problem = `The oldest order cannot fit on an empty sheet at these settings.${what ? ` It holds ${what} that must stay on one sheet, so it is not split.` : ""} Review its size or the fill ceiling before continuing.`;
     renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(new Error(sh.problem), {sheetPending:true})); return null;
   }
   sh.charms = sh.charms.filter(c => !ids.has(c.id)); sh.rejects = [];
@@ -5316,7 +5335,7 @@ async function persistSheet(sh, items, context) {
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}) })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
@@ -7123,7 +7142,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow1-plb1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb1-pt3-pset2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7176,7 +7195,7 @@ try {
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow1"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
