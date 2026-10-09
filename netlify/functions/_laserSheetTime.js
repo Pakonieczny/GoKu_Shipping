@@ -39,9 +39,11 @@ const TZ = "America/New_York";
 const str = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 const num = v => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 const ms = v => v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number.isFinite(+v) ? +v : 0;
+let loginName = n => n;
+try { loginName = require("./_activityKinds").loginName || loginName; } catch (_) {}
 const noPin = s => (s.match(/\p{Nd}/gu) || []).length >= 4 ? s.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim() : s;
 /** The name as a station keeps it (digits runs of four or more are a PIN that slipped in and are dropped), or "" when it is nobody. */
-const cleanName = v => { const s = noPin(str(v, 200)).slice(0, 80); return /\p{L}/u.test(s) ? s : ""; };
+const cleanName = v => { const s = noPin(str(v, 200)).slice(0, 80); return /\p{L}/u.test(s) ? loginName(s) : ""; };   // (a person with two records is one name, "Anna" -> "Ana_M": Paul, 9 Oct 2026; _activityKinds.js)
 /** One person however the login spelled the name: strip accents, case-fold, drop apostrophes, every other punctuation mark is a space ("Michael_V" = "Michael V."). */
 const personKey = v => cleanName(v).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['‘’`´]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
@@ -96,7 +98,7 @@ function pickPrevious(docs, key, at, loginAt) {
   const undone = undoneSet(docs);
   let best = null;
   for (const d of docs || []) {
-    if (!d || d.kind !== DONE || d.personKey !== key) continue;
+    if (!d || d.kind !== DONE || personKey(d.personKey) !== key) continue;     // (a key stored before Anna and Ana_M were one person, "anna", is read as "ana m")
     const t = ms(d.at); if (!(t > 0) || t >= at || t < loginAt) continue;
     if (undone.has(`${d.sheetId}|${t}`)) continue;
     if (!best || t > best.at) best = { at: t, sheetId: str(d.sheetId, 100) };
@@ -244,7 +246,7 @@ async function lastFor(db, prefix, by, now) {
   // asks this every 5 minutes for as long as a Laser person is signed in (Firebase cost, FC6).
   let d = null;
   for (const span of [LAST_NEAR_MS, LOOKBACK_MS]) {
-    d = standing(await readSince(db, prefix, now - span)).filter(x => x.personKey === key)[0];
+    d = standing(await readSince(db, prefix, now - span)).filter(x => personKey(x.personKey) === key)[0];
     if (d) break;
   }
   if (!d) return null;

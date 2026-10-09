@@ -37,7 +37,7 @@ exports.handler = async (event) => {
     const raw = new Uint8Array(Buffer.from(String(p.bits || ""), "base64"));
     const n = (p.w | 0) * (p.h | 0);
     const bits = p.packed ? unpackBits(raw, n) : raw;
-    return { id: String(p.id), order: p.order || p.id, orderDate: +p.orderDate || 0, w: p.w | 0, h: p.h | 0, scale: +p.scale || 6, bits, areaPt2: +p.areaPt2 || 0, pinned: p.pinned || null };
+    return { id: String(p.id), order: p.order || p.id, orderDate: +p.orderDate || 0, w: p.w | 0, h: p.h | 0, scale: +p.scale || 6, bits, areaPt2: +p.areaPt2 || 0, pinned: p.pinned || null, ...Solver.pairFields(p) };
   }).filter(p => p.w > 0 && p.h > 0 && p.bits.length === p.w * p.h);
   const solverJob = Object.assign({}, job, { pieces, timeBudgetMs: Math.min(+job.timeBudgetMs || 180000, MAX_BUDGET_MS) });
 

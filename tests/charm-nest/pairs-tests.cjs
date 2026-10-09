@@ -35,9 +35,6 @@ const T10 = F.tx(10), gkey = o => `${F.rid(o)}:${T10}`;
       ok(pcs.every(p => p.mirror === F.expectedMirror(p.sku, p.side, p.bodyIndex)), `${kind} x${qty}: the mirror flag is side !== facing for every piece`);
       ok(pcs.every((p, i) => i % 2 === 0 || kind === 'mismatched' || pcs[i - 1].mirror !== p.mirror), `${kind} x${qty}: of a Left and a Right of one body exactly one is the mirror`);
     } else ok(pcs.every(p => p.side === null && p.mirror === false && p.bodyIndex === 0), `${kind} x${qty} ${count || ''}: no side, never mirrored`);
-    // (informational: what the shared module says when the line carries NO explicit pieceCount and no pair kind)
-    const bare = Object.assign({}, w.orders[0].lines[0].line); delete bare.pieceCount; delete bare.pair; const free = Pair.pieceCountOf(bare, w.orders[0].lines[0].charm);
-    if (free !== pcs.length) differ.push(`${kind} x${qty}${count ? ' ' + count : ''}: plan ${pcs.length}, module without an explicit count ${free}`);
     void per;
   }
   const mis = F.world({ orders: [{ rid: F.rid(1), lines: [{ n: 10, kind: 'mismatched', qty: 2 }] }] }).pieces;
@@ -187,6 +184,19 @@ const T10 = F.tx(10), gkey = o => `${F.rid(o)}:${T10}`;
     // what the sorter will make of each arriving line (the shared module, from the receipt line alone): the same pieces the world expects
     for (const o of w.orders) for (const l of o.lines) { const arrived = came.get(o.rid).transactions.find(x => String(x.transaction_id) === F.tx(l.n)); ok(arrived.quantity === l.qty && /\d discs/.test(JSON.stringify(arrived.variations)) === (l.kind === 'discs'), `${o.rid}/${l.n}: the disc count rides in the variation`); }
   } finally { fns4.restore(); }
-  if (differ.length) console.log(`  note: ${differ.length} difference(s) between the plan and the code today, e.g. ${differ.slice(0, 3).join('; ')} (the intake must set the count: PAIRINTAKE)`);
+  // 7. the intake (CharmNestOrders.interpretLine, PAIRINTAKE) reads the fixture receipts as the fixtures count them: one Left and one Right per unit of an earring pair, a Single option one piece per unit, n discs n pieces
+  {
+    const O = require('../../charm-nest-orders.js');
+    const w = F.world({ orders: [{ rid: F.rid(31), lines: [{ n: 10, kind: 'pair' }, { n: 11, kind: 'pair', qty: 2 }, { n: 12, kind: 'hoop' }, { n: 13, kind: 'mismatched', sku: 'TENNIS-MIS' }, { n: 14, kind: 'mismatched', sku: 'MITTENS-MIS', qty: 2 }, { n: 15, kind: 'earring-single', qty: 2 }, { n: 16, kind: 'discs', discs: 3 }, { n: 17, kind: 'discs', discs: 2, qty: 2 }, { n: 18, kind: 'single' }] }] });
+    const rec = F.receipts(w)[0], MASTER = Object.fromEntries(Object.entries(w.designs).map(([sku, d]) => [sku, d.entry])), ctx = { optionMaps: {}, aliases: {}, noDesign: {}, masterEntry: sku => MASTER[sku] || null }, order = { receiptId: String(rec.receipt_id), updateTs: rec.update_timestamp };
+    for (const t of rec.transactions) {
+      const f = w.orders[0].lines.find(l => F.tx(l.n) === String(t.transaction_id)), line = { transactionId: String(t.transaction_id), listingId: String(t.listing_id), sku: t.sku, title: t.title, quantity: t.quantity, metalKey: 'gold', metalLabel: 'Gold', personalization: [], variations: t.variations.map(v => ({ name: v.formatted_name, value: v.formatted_value })) };
+      const spec = O.interpretLine(order, line, ctx), sides = (spec.pair && spec.pair.sides || []).map(x => x || '').join('');
+      ok(spec.pieceCount === f.pieces.length, `intake: ${f.kind} x${f.qty} makes ${spec.pieceCount} piece(s), the fixture ${f.pieces.length}`);
+      if (f.kind === 'pair' || f.kind === 'hoop' || f.kind === 'mismatched') ok(sides === f.pieces.map(p => p.side).join(''), `intake: ${f.kind} x${f.qty} sides ${sides}, the fixture ${f.pieces.map(p => p.side).join('')}`);
+      else ok(!/[LR]/.test(sides), `intake: ${f.kind} x${f.qty} has no side (${sides})`);
+    }
+  }
+  if (differ.length) console.log(`  note: ${differ.length} difference(s) between the plan and the code today, e.g. ${differ.slice(0, 3).join('; ')}`);
   console.log(`pairs-tests: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

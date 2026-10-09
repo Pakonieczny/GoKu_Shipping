@@ -25,7 +25,7 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 // Shared by waiting and decided engravings; choices remain read-only purchase facts.
 function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec);
-  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong></div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
+  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
 }
 // Zoom/pan ported from Index(20260922-153718).html, wireTiles review viewer.
 // Keep its transform order, clamp, wheel steps, drag damping and click maths.
@@ -184,8 +184,10 @@ const ListMedia = (() => {
     for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);watched.delete(e.target);queue.push(e.target);}pump();
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
+  // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
+  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)); } catch (_) { return false; } };
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${pairRow(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false,zoomKey=key) {
@@ -245,14 +247,22 @@ const ListMedia = (() => {
   }
   const catalog=new Map();
   // (`px`, from the picture viewer, draws the same design large from the same source: never the thumbnail enlarged)
-  async function vector(row,px) {
+  // (an earring's direction, Paul 9 Oct 18:47: the Right is the Left turned over about the vertical axis. A picture asked for ONE piece of a matching pair (opts.side "L" | "R", opts.mirror: true for the
+  //  piece that is the mirror image of the drawing) is the design as drawn, turned over by the renderers' own `mirror` option for the mirror piece (a charm already held mirrored is not turned twice);
+  //  a mismatched pair's piece is the pair picture with the other body washed out (opts.highlight), each body already facing its own side)
+  async function vector(row,px,opts) {
     if(!row || row.spec?.noDesign)return null;
-    const charm=(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
-    if(charm)return P.frontPreview ? P.frontPreview(charm,px || 220) : Engrave.renderFront(charm,px || 220);
+    // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
+    const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
+    const charm=(pairRow(row) || sideOne)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
+    const ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
+    if(charm)return P.frontPreview ? (ro ? P.frontPreview(charm,px || 220,ro) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
+    if(ro)return px ? Pool.masterFront(entry,row.spec?.size,px,ro) : Pool.masterPreview(entry,row.spec?.size,true,ro);
     return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
   }
   /** A line's vector design drawn large on white (about 1600 px) for the picture viewer, as an address the viewer's picture
@@ -263,15 +273,16 @@ const ListMedia = (() => {
   }
   /** A line's vector design as ONE small picture for a hover card (the piece dots, charm-nest-piece-dots.js): the very picture the order window's
    *  "Vector design" shows (vector(row): its renderer and its master-preview cache), as a data address; null when the line has no design. Never a second renderer. */
-  async function vectorThumb(row) {
-    const out=await vector(row);
+  async function vectorThumb(row,opts) {
+    const out=await vector(row,opts?.px,opts);
     return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
-  function vectorKey(row) {
+  function vectorKey(row,opts) {
     if(!row || row.spec?.noDesign)return '';
     const sku=String(row.spec?.designSku || row.line?.sku || '').toUpperCase();
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '');
+    // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
@@ -297,10 +308,10 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
-window.PieceMedia = { vectorKey: ListMedia.vectorKey, vectorThumb: ListMedia.vectorThumb };
+window.PieceMedia = { vectorKey: ListMedia.vectorKey, vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow };
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -322,8 +333,10 @@ const normName = raw => {
   let words = s.split(" ").filter(Boolean).map(w => w.split(/([-'’.])/).map((seg, i) => (i % 2 ? seg : part(seg))).join(""));
   if (words.length > 1) words = words.map(w => (/^\p{L}$/u.test(w) ? w + "." : w));
   const out = words.join(" ").slice(0, 80).trim();
-  return /\p{L}/u.test(out) ? out : "";
+  return /\p{L}/u.test(out) ? ONE_LOGIN(out) : "";
 };
+/* One person, one name (Paul, 9 Oct 2026: "Ana_M and Anna are the same person ... standardize her login under Ana_M"): her other spellings are the one login name. The server folds the same way (netlify/functions/_activityKinds.js loginName). */
+function ONE_LOGIN(s) { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; }
 const employeeName = () => B.employee || (B.link && B.link.state() && B.link.state().employee) || "";
 /* The last name used in this browser (cn.lastEmployee: kept after a sign-out, midnight or an idle end clears cn.employee), so the next
    press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
@@ -2190,6 +2203,9 @@ const Master = window.Master = (() => {
      replaced only once every part has come: a part that fails leaves it as it was. A background reload ({ quiet: true },
      the arrivals check every ten minutes) shows no progress, and reads the entries again only when the index's signature
      (its count and when it was last indexed or edited, sent with the files list) changed since they were read.
+     A page that holds nothing yet starts from the last whole copy kept on this computer (charm-nest-master-cache.js) and asks
+     for the signatures only: the copy is used when they are unchanged, and a changed one reads everything, as it always did
+     (Paul, 9 Oct: a refresh read about 6,960 documents again; now about a dozen when nothing changed).
      load(true) reads everything now. */
   async function load(opts) {
     const o = opts && typeof opts === "object" ? opts : { force: !!opts }, quiet = { quiet: !!o.quiet };
@@ -2202,13 +2218,20 @@ const Master = window.Master = (() => {
     B.master.loading = (async () => {
       if (changed) render();
       try {
-        const sig = x => JSON.stringify(x || null), first = o.quiet && B.master.index ? await api("charmNestLibrary", B.master.filesSig ? { op: "masterListFiles", ifFilesSig: B.master.filesSig } : { op: "masterListFiles" }, quiet) : null;   // (the file records are sent again only when they changed)
-        const unchanged = !!(first && first.index && sig(first.index) === sig(B.master.index));
+        const sig = x => JSON.stringify(x || null), MC = window.CharmNestMasterCache;
+        // a page with nothing yet starts from the copy kept on this computer; it is believed only once the cloud's signatures say nothing changed
+        let held = null; if (MC && !B.master.index && !o.force) { try { held = await MC.read(); } catch (_) { held = null; } }
+        const base = held || (o.quiet && B.master.index ? B.master : null);
+        const first = base ? await api("charmNestLibrary", base.filesSig ? { op: "masterListFiles", ifFilesSig: base.filesSig } : { op: "masterListFiles" }, held && !o.quiet ? { label: "Checking the charm library" } : quiet) : null;   // (the file records are sent again only when they changed)
+        const unchanged = !!(first && first.index && sig(first.index) === sig(base.index));
         const [ix, fl] = await Promise.all([unchanged ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: "entries" }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
         if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; changed = true; }
-        if (fl.unchanged) fl.files = B.master.files || [];
+        else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; changed = true; }   // (the signatures agree: the copy is the index)
+        if (fl.unchanged) fl.files = held ? held.files : B.master.files || [];
         if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
         B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
+        // what was read whole is kept (serialised now, written in the background); files that changed under an unchanged index replace the kept ones
+        if (MC) { try { if (ix) { if (ix.index) MC.save({ index: ix.index, entries: ix.entries || [], files: B.master.files, filesSig: B.master.filesSig }); else MC.forget(); } else if (!fl.unchanged) MC.saveFiles(B.master.files, B.master.filesSig); } catch (_) { /* the page does not depend on it */ } }
         if (B.master.error) changed = true;
         B.master.error = null;
       } catch (e) { if (B.master.error !== e.message) changed = true; B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
@@ -2415,7 +2438,8 @@ const Master = window.Master = (() => {
       try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry',{charm:{outline:c.outline,members:c.members,bbox:c.bbox,widthPt:c.widthPt,heightPt:c.heightPt}}) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if(!window.CharmNestBackground)G.backView(c, { res: 6, upAngle }); }
       catch (e) { flipOk = false; reasons.push(e.message); }
       const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
-      entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
+      const sym = (() => { try { const Pr = window.CharmNestPair, b = Pr && Pr.bodiesOf ? Pr.bodiesOf(c)[0] : null; return b && Pr.symmetryOf ? Pr.symmetryOf(b).level : undefined; } catch (_) { return undefined; } })();   // does the design look the same in a mirror: the "faces" box in the Master tab is shown only when it does not
+      entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null, ...(sym ? { sym } : {}) });
       if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
       for (const x of c.extraSkus || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
       job.progress = `written ${++n}/${live.length}`; if (job.bar) job.bar.label(`Writing the charm library · ${job.name}`).set(n, live.length); if (n % 5 === 0) render();
@@ -2618,6 +2642,17 @@ const Master = window.Master = (() => {
       const r2 = grid.querySelector("#mRetry"); if (r2) r2.onclick = () => { B.master.error = null; load(true).then(render).catch(() => render()); };
       return;
     }
+    // which way the master draws a design (charm-nest-pair.js facingControl): a Left and a Right earring are mirror images, so the Right is cut turned over; shown only for a design that
+    // is not the same in a mirror (index field sym, or the copy the pool already holds) or one a person already set
+    const heldSym = e => { try { const Pr = window.CharmNestPair, g = Pool.sizeEntry(e, e.sizes ? Object.keys(e.sizes)[0] : null), src = g && g.aiPath && B.pool.sources.get(g.aiPath), c = src && src.charms && src.charms[0], b = c && Pr && Pr.bodiesOf(c)[0]; return b ? Pr.symmetryOf(b).level : ""; } catch (_) { return ""; } };
+    // a design this page has already read keeps the way it was told to face until the page is reloaded: tell the copy it holds (orders made up after this use the new word)
+    const facingLive = (skus, v) => { for (const sku of skus) { const en = entryFor(sku); if (!en) continue; for (const size of en.sizes ? Object.keys(en.sizes) : [null]) { const g = Pool.sizeEntry(en, size), src = g && g.aiPath && B.pool.sources.get(g.aiPath); if (src) for (const c of [].concat(src.charms || [], src.bodies || [])) if (c) { if (v === "") delete c.facing; else c.facing = v; } } } };
+    const facesBox = (e, keys) => {
+      const Pr = window.CharmNestPair, fc = Pr && Pr.facingControl ? Pr.facingControl(e, e.sym ? "" : heldSym(e)) : null;
+      if (!fc || !fc.show) return "";
+      return `<select data-faces="${keys}" title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` +
+        fc.options.map(([v, t]) => `<option value="${v}"${v === fc.value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+    };
     grid.innerHTML = shown.map(d => {
       const e = d.head, keys = esc(d.skus.join("|"));
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
@@ -2632,6 +2667,7 @@ const Master = window.Master = (() => {
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
         `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
+        facesBox(e, keys) +
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}">unblock</button>` : "") +
         (e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>`
                  : sizes.filter(([, s]) => s && s.aiUrl).map(([k, s]) => `<a class="btn ghost xs" href="${s.aiUrl}" target="_blank" rel="noopener">${esc(k)}.ai</a>`).join("")) +
@@ -2642,6 +2678,8 @@ const Master = window.Master = (() => {
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
     // a failed save says so (it used to fail in silence, the typed angle standing in the box as if kept)
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
+    // saved to every SKU that shares the charm, like the up angle; "" gives the word back (the drawing is taken as the Left again). The pieces of orders already made up are not changed.
+    each("faces", (sel, skus) => { let was = sel.value; sel.onchange = () => { const v2 = sel.value, say = v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (cut as drawn on both sides)" : "facing not set (the drawing is the Left)"; sel.disabled = true; patchMany(skus, { facing: v2 === "" ? null : v2 }).then(() => { was = v2; sel.disabled = false; facingLive(skus, v2); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
   return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
@@ -2676,7 +2714,7 @@ const Pool = window.Pool = (() => {
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
     // a design that draws two DIFFERENT bodies under one label (a mismatched pair, charm-nest-pair.js) also gets one charm per body
     // which way the drawing faces, when a person set it on the master record (charm-nest-pair.js facingOf reads these two): decides which piece of a pair is the mirror image
-    { const f = geom.facing || entry.facing; if (f === "L" || f === "R") charm.facing = f; if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
+    { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the design reads one way, letters and numbers: never turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
     await splitBodies(src);
     S.poolSources[srcId] = src; B.pool.sources.set(key, src);
     return src;
@@ -8262,11 +8300,22 @@ const RunCtl = window.RunCtl = (() => {
   let bannerDrawing = false;
   const bannerNow = () => { bannerDrawing = true; try { renderBanner(); } finally { bannerDrawing = false; } };
   const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
+  /** How many PIECES an order row counts for on the banner (Paul, 9 Oct: "a pair is two"): an earring pair makes a Left and a Right for every unit (CharmNestPair.pieceCountOf, the one count),
+   *  any other row one, as the banner always counted. */
+  function bannerPieces(x) {
+    try {
+      const CP = window.CharmNestPair; if (!x || !CP || typeof CP.isEarringPair !== "function") return 1;
+      const sp = x.spec || {}, sku = sp.designSku || (x.line && x.line.sku) || "", e = sku && window.Master && Master.entryFor ? Master.entryFor(sku) : null;
+      const arg = { form: sp.form || "", spec: sp, quantity: sp.quantity || (x.line && x.line.quantity) || 1 };
+      return CP.isEarringPair(arg, e) ? Math.max(1, CP.pieceCountOf(arg, e) || 1) : 1;
+    } catch (_) { return 1; }
+  }
   function stepDetail(r) {
     const sh = allSheets().filter(p => p.runId === r.runId);
     if (r.step === "nest" && sh.length) return ` · sheet ${Math.min(sh.filter(p => ["complete", "partial"].includes(p.status)).length + 1, sh.length)} of ${sh.length}`;
-    if (r.step === "pool") return ` · ${Orders.rows().filter(x => x.poolIds && x.poolIds.length).length} of ${Orders.rows().filter(x => x.state !== "gone").length} pieces`;
-    if (r.step === "pull" || r.step === "claim") return ` · ${Orders.rows().filter(x => x.state !== "gone").length} pieces`;
+    const pcs = list => list.reduce((n, x) => n + bannerPieces(x), 0);   // (pieces, not lines: a pair is two)
+    if (r.step === "pool") return ` · ${pcs(Orders.rows().filter(x => x.poolIds && x.poolIds.length))} of ${pcs(Orders.rows().filter(x => x.state !== "gone"))} pieces`;
+    if (r.step === "pull" || r.step === "claim") return ` · ${pcs(Orders.rows().filter(x => x.state !== "gone"))} pieces`;
     return "";
   }
   /* In Auto nobody may be at the bench. A run stopped by a passing failure (the network after a wake, a function's 5xx, a
@@ -8403,7 +8452,7 @@ const RunCtl = window.RunCtl = (() => {
     const outside = (r.lineArchive && r.lineArchive.base) || {}, nSheets = Object.keys(r.sheets || {}).length + (+outside.sheets || 0);   // with what a resumed run's record left out
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
-      `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} pieces`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+      `${(Object.keys(r.lines || {}).length ? Object.keys(r.lines).reduce((n, k) => n + (B.orders.byKey.get(k) ? bannerPieces(B.orders.byKey.get(k)) : 1), 0) : Orders.rows().filter(x => x.state !== "gone").reduce((n, x) => n + bannerPieces(x), 0)) + (+outside.lines || 0)} pieces`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
     return { tone, short, lead, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
       acts: `${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${sign ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`,
       more: `${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory" title="every run on record">Run history…</button>${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give up this run — the sheets and files already saved are kept">Abandon run…</button>` : ""}` };
@@ -8479,7 +8528,7 @@ const RunCtl = window.RunCtl = (() => {
     const open = rev ? `\n\n${rev} review item${rev === 1 ? " still waits" : "s still wait"} for a decision.` : "";
     if (confirm(`Give up run ${r.runId.slice(-8)}?${lost}${open}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
   }
-  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
+  return { bannerPieces, stepDetail, optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
 })();
 
 /* ═══ 23c · Custom Orders' QR sticker — the sorting station's own label, printed the sorting station's way ═══════════
@@ -12078,7 +12127,7 @@ const OrderWin = window.OrderWin = (() => {
       t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>`;
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
-    const qty = sibs.reduce((n, x) => n + (+((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);
+    const qty = sibs.reduce((n, x) => n + (pairSides(x).length || +((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);   // (a mismatched pair is two pieces for every unit: its Left and its Right)
     let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
     // (an order still being read: what is known of it, and a skeleton where the rest is coming)
     const sub = byId("owSub"), buyer = r.order.buyer && r.order.buyer.name;
@@ -12107,10 +12156,12 @@ const OrderWin = window.OrderWin = (() => {
     // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
     const sheetEngOf = x => () => { const m = SV.info && (SV.info.mine || []).find(y => y.poolId && (x.poolIds || []).includes(y.poolId)); return (m && m.eng) || null; };
     const here = multi && !all ? ps.find(p => p.key === r.key) : null;
-    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r, label: here ? here.name : "", meta: here ? meta(here) : "",
+    // (an earring pair: which pool piece is the Left and which the Right, and which is the mirror image, for a card that engraves each ear on its own; none for any other line)
+    const earsOf = x => { const sd = tryDo(() => pairSides(x)) || []; return sd.length ? sd.map(c => ({ poolId: String(c.poolId || c.key), side: c.side, mirror: !!c.mirror })) : undefined; };
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r, ears: earsOf(r), label: here ? here.name : "", meta: here ? meta(here) : "",
       events: () => (W.evFor === rid ? W.events : null),
       sheetEng: sheetEngOf(r),
-      pieces: all ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean).sort((a, b) => (b.key === r.key) - (a.key === r.key)) : undefined,   // (the line the order was opened on first)
+      pieces: all ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, ears: earsOf(x), label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean).sort((a, b) => (b.key === r.key) - (a.key === r.key)) : undefined,   // (the line the order was opened on first)
       // (an approval made elsewhere, or here: what hangs on it is drawn again: the Engraving cell, the Sheet tab)
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
     if (W.engCard && W.engCard.el === host && W.engCard.mode === (all ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
@@ -12137,7 +12188,7 @@ const OrderWin = window.OrderWin = (() => {
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
-    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—") + (pairSides(r).length ? " · Left + Right" : "");
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
@@ -12166,7 +12217,10 @@ const OrderWin = window.OrderWin = (() => {
       (placed ? mcell("Purchased", when(placed)) : r.arrivedAt ? mcell("Arrived", when(r.arrivedAt)) : "") +
       (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name + (r.order.isGift ? " · gift" : "")) : r.order.isGift ? mcell("Gift", "yes") : "") +
       (sp.special ? mcell("Custom order", sp.special.label + (sp.special.read && !sp.special.decided ? ` · Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "") + (sp.special.why ? " · " + sp.special.why : "")) : sp.customDone ? mcell("Custom order", sp.customDone.category || "completed") : "") +
-      mcell("Quantity", String(sp.quantity || r.line.quantity || 1)) +
+      mcell("Quantity", pairSides(r).length ? `${sp.quantity || r.line.quantity || 1} pair${(sp.quantity || r.line.quantity || 1) > 1 ? "s" : ""} · ${pairSides(r).length} pieces: Left and Right` : String(sp.quantity || r.line.quantity || 1)) +
+      (pairSides(r).length ? mcell("Pair", ListMedia.pairRow(r) ? "Mismatched: the Left and the Right are different charms of one listing" : "Matching: the Right is the Left turned over (its mirror image)") : "") +
+      // (what the intake says of the piece count in plain words: an old line already pooled keeps its pieces and the note says what the rule gives now; the pair's own notes)
+      (() => { const notes = [sp.pieceNote].concat(sp.pair && Array.isArray(sp.pair.notes) ? sp.pair.notes : []).filter(x => typeof x === "string" && x.trim()); return notes.length ? mcell("Pieces", notes.join(" ")) : ""; })() +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
       (sheetCell ? mcell("Sheet", sheetCell) : "") +
@@ -12304,6 +12358,14 @@ const OrderWin = window.OrderWin = (() => {
      and OrderWin.selectedPiece() are the same thing for other code. */
   const pieceName = x => String((x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
   const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? ` · ×${p.qty}` : "");
+  /** The Left and the Right of a MISMATCHED pair line (OrderPieces entries that carry a side), [] for every other line: a single, a matching pair, discs, an old glued record. */
+  function pairSides(x) {
+    const ps = window.OrderPieces && x && x.order ? tryDo(() => OrderPieces.ofRow(x)) : null, l = (ps || []).filter(p => p && (p.side === "L" || p.side === "R"));
+    return l.some(p => p.side === "L") && l.some(p => p.side === "R") ? l : [];
+  }
+  const sideWord = sd => sd === "L" ? "Left" : sd === "R" ? "Right" : "";
+  /** How many pieces a line makes for the order's count: the pieces of a mismatched pair (two for every unit), else its quantity. */
+  const pieceQtyOf = x => { const sd = pairSides(x); return sd.length || Math.max(1, Math.round(+((x.spec && x.spec.quantity) || (x.line && x.line.quantity)) || 1)); };
   /** Each line of the order as a piece: its key, transaction, count, pool pieces and the sheets they are on. */
   function piecesOf(sibs) {
     return sibs.map(x => {
@@ -12314,11 +12376,14 @@ const OrderWin = window.OrderWin = (() => {
       }
       for (const p of (x._pools || SV.pools || [])) if (p.sheetId && (p.lineKey === x.key || pools.includes(String(p.poolId)))) sheets.add(p.sheetId);
       if (window.OrderPieces) for (const p of tryDo(() => OrderPieces.ofRow(x)) || []) if (p.sheetId) sheets.add(p.sheetId);   // (the sheets' own records: a pool row that lost its sheet does not hide the piece's steps)
-      return { key: x.key, tid: String(x.line.transactionId || ""), qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
+      const lineObj = Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null,
+          engrave: x.engrave ? { state: x.engrave.state || "", needed: x.engrave.needed } : null, engraveCandidate: sp.engraveCandidate, noDesign: sp.noDesign });
+      // (a mismatched pair line: its Left and Right are pieces of their own, `sides`: the line stays ONE piece for the pick, the timeline's lanes and the Review card; its rows are drawn per side)
+      const sd = pairSides(x), tid = String(x.line.transactionId || "");
+      const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, mirror: mine.some(c => c.mirror), pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
+      return Object.assign({ key: x.key, tid, qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
-        line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null,
-          engrave: x.engrave ? { state: x.engrave.state || "", needed: x.engrave.needed } : null, engraveCandidate: sp.engraveCandidate, noDesign: sp.noDesign }),
-        name: pieceName(x), metal: m, form: sp.form || "" };
+        line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {});
     });
   }
   /** The pieces of an order of several, told to the timeline's two mounts (the header's rail, the Timeline). Which one is shown is picked on
@@ -12391,7 +12456,7 @@ const OrderWin = window.OrderWin = (() => {
       if (dot && !row.style.getPropertyValue("--pc")) row.style.setProperty("--pc", dot.style.getPropertyValue("--c") || "var(--gold)");
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
-    const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + x.qty, 0);
+    const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
     const html = p ? `Showing <b>${esc(p.name)}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
   }
@@ -12555,15 +12620,34 @@ const OrderWin = window.OrderWin = (() => {
     if (!all) { const key = W.piece || W.key, p = ps.find(x => x.key === key) || (r0 && !r0.loading && r0.key === key ? tryDo(() => piecesOf([r0])[0]) : null); list = p ? [p] : []; }
     // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
     const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled, placeOfKey)) : null;
-    W.pcSum = sum ? Object.assign({ rid }, sum) : null;   // (what the dots' cards read, pieceDotInfo)
+    // (a mismatched pair line: its Left and Right are summarised on their own, from their own events and placement; `each` of the order's cards holds them too, by their keys "<line>#L" / "<line>#R")
+    const sidePs = sum ? list.flatMap(p => p.sides || []) : [], sideSum = sidePs.length ? tryDo(() => UI.summary(W.events || [], sidePs, W.cancelled, placeOfKey)) : null;
+    const sideEach = sideSum ? new Map(sideSum.each.map(e => [e.p.key, e])) : null;
+    W.pcSum = sum ? Object.assign({ rid }, sum, sideSum ? { each: sum.each.concat(sideSum.each) } : {}) : null;   // (what the dots' cards read, pieceDotInfo)
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
-    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
+    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key) && !(sideEach && list[0].sides))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const at = s => UI.STAGES.indexOf(s);
     const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
-    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + sum.each.map(x => {
+    // The rows of a mismatched pair line, one for its Left and one for its Right (Paul, 9 Oct 2026: "each charm identified as the left and right of the same order"): a small picture of the
+    // pair with the other body washed out, the side's own name, status chip (its own sheet), dots and seals. The line stays the one thing picked: a press on either row picks the line.
+    // The Review card's buttons (or the Hold) of the line stand on the first row, once: they act on the whole order.
+    const sideRows = (x, slow) => x.p.sides.map((sp, i) => {
+      const sx = sideEach.get(sp.key); if (!sx) return "";
+      const lineScope = scope && scope.find(q => q.key === x.p.key), ssp = lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null;
+      const dot = `<i class="dot" style="--c:${esc(colorOf(sp.metal))}"></i>`, side = sideWord(sp.side), meta = pieceMeta(sp);
+      const nm = `<span class="owSidePic" data-pc-thumb="${esc(sp.side)}" data-pc-thumb-line="${esc(x.p.key)}"${sp.mirror ? ' data-pc-mirror="1"' : ""} aria-hidden="true"></span><b>${esc(x.p.name)}</b> · <span class="owPcSide" data-side="${esc(sp.side)}">${esc(side)}</span>${meta ? " · " + esc(meta) : ""}`;
+      const aria = `${x.p.name} · ${side}${meta ? " · " + meta : ""}`;
+      const ctl = i === 0 ? ctls.get(x.p.key) : null, hold = i === 0 ? holds.get(x.p.key) : "";
+      const act = ctl ? `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>` : hold ? `<span class="pcAct" data-pc-hold>${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
+      return `<div class="owPcRow owPcSideRow hasAct hasHold hasWords${all ? "" : " solo"}${slow ? " slow" : ""}" data-side="${esc(sp.side)}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
+        (all ? `<button type="button" class="nm owPcName" title="Show only this order line">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
+        pieceStatusHtml(sx, ssp, { inButton: false }) + act + pieceDotsHtml(sx, rid) + `</div>`;
+    }).join("");
+    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : list[0] && list[0].sides ? "Its pieces" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + sum.each.map(x => {
       const slow = all && x.D.step === sum.step;
+      if (x.p.sides && sideEach) return sideRows(x, slow);
       const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
       const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
@@ -12596,6 +12680,8 @@ const OrderWin = window.OrderWin = (() => {
     const held = pdotHeld(box);
     box._h = html; box.innerHTML = html; pdotBack(box, held);
     wirePcSheet(box);
+    // (the small pictures of the Left and Right rows: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
+    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => { const o = { highlight: h.dataset.pcThumb, side: h.dataset.pcThumb, mirror: h.dataset.pcMirror === "1", px: 120 }; ListMedia.watch(h, () => ListMedia.vectorThumb(pr, o), ListMedia.vectorKey(pr, o)); }); });
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
     markPieces();
@@ -12655,7 +12741,7 @@ const OrderWin = window.OrderWin = (() => {
   function wirePcSheet(box) {
     box.querySelectorAll("button[data-pc-sheet]").forEach(b => b.addEventListener("click", e => {
       e.stopPropagation();
-      const key = b.dataset.pcSheet, sid = b.dataset.sheet, pool = b.dataset.pool;
+      const key = String(b.dataset.pcSheet).replace(/#[LR]$/, ""), sid = b.dataset.sheet, pool = b.dataset.pool;   // (a side's chip opens its own sheet; the piece picked is the line)
       if (!W.dlg || !W.dlg.open || !rowOf(W.key)) return;
       if (W.piece && W.piece !== key) (typeof selectPiece === "function" ? selectPiece : pickPiece)(key);
       openSheetOf(key, sid, pool);
@@ -12799,6 +12885,9 @@ const OrderWin = window.OrderWin = (() => {
   function sheetCellOf(r) {
     const ps = window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) : null;
     const labels = ps ? [...new Map(ps.filter(p => p.nested && p.sheetLabel).map(p => [p.sheetId || p.sheetLabel, p.sheetLabel])).values()] : [];
+    // (a mismatched pair whose Left and Right are not on one sheet says which is where, "Left GF Sheet 1 · Right SS Sheet 1")
+    const sd = ps ? ps.filter(p => p.side === "L" || p.side === "R") : [];
+    if (sd.length > 1 && (labels.length > 1 || sd.some(p => !p.nested)) && sd.some(p => p.nested)) return ["L", "R"].map(k => { const p = sd.find(q => q.side === k); return p ? `${sideWord(k)} ${p.nested && p.sheetLabel ? p.sheetLabel : "not on a sheet yet"}` : ""; }).filter(Boolean).join(" · ");
     if (labels.length) return labels.join(" + ");
     const where = tryDo(() => Orders.placeOf(r)); return where ? (where.set ? where.set + " · " : "") + (where.sheet || "") : "";
   }
@@ -12855,7 +12944,7 @@ const OrderWin = window.OrderWin = (() => {
     // the blocker is the card's own line then, so it is never said twice
     const head = bl && String(bl.text || "").trim() ? { k: bl.label, t: bl.text, row: "" } : { k: n.k, t: n.t || "", row: recent };
     // (with a seal, no "who · time" line beside it: the seal says who and when, Paul 29 Sep 00:19, "the Seal is what matters")
-    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${st && st.seal ? "" : who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${sh.btn}</div></div><div class="shs">${sh.chips}</div>`;
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${splitLine(r)}${st && st.seal ? "" : who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${sh.btn}</div></div><div class="shs">${sh.chips}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
     card.querySelectorAll("[data-pc]:not([aria-disabled])").forEach(b => b.onclick = () => openSheetOf(b.dataset.pc, b.dataset.sheet, b.dataset.pool));
@@ -12864,6 +12953,15 @@ const OrderWin = window.OrderWin = (() => {
     const rid = String(r.order.receiptId);
     // (the card reads the rail's own derived state and the placement: the same answer as the dots, the rail and the rows)
     if (UI && UI.explainOn) tryDo(() => UI.explainOn(card, () => ({ events: W.evFor === rid ? shownEvents() || [] : [], cancelled: W.cancelled, context: tlContext(rid), stages: tlStages(rid, true), D: W.rail && W.rail.state ? W.rail.state() : null, place: placeInScope() }), stp => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(stp)); }));
+  }
+  /** One plain line when a mismatched pair's Left and Right are not together (R3: "for any reason" they end up on different sheets, or one is not placed): where each is.
+   *  "" for every other order (a pair on one sheet, a matching pair, discs, a single). */
+  function splitLine(r) {
+    const OP = window.OrderPieces, rid = String(r.order.receiptId); if (!OP) return "";
+    const g = ((tryDo(() => OP.spread(rid)) || {}).splitGroups || []).find(x => x.sides && x.sides.length > 1); if (!g) return "";
+    const ps = (tryDo(() => OP.of(rid)) || []).filter(p => p.lineKey === g.lineKey && p.side);
+    const say = k => { const p = ps.find(q => q.side === k); return p ? `${sideWord(k)} ${p.nested && p.sheetLabel ? "on " + p.sheetLabel : "not on a sheet yet"}` : ""; };
+    return `<div class="owSplit" role="status">Its pair is split: ${esc(["L", "R"].map(say).filter(Boolean).join(", "))}</div>`;
   }
   /** The order's own steps (stagesFor its lines: Welded only when a piece is a stud earring); the piece shown's own when
    *  one is picked (piece). null while the order's row is not read. */
@@ -12879,7 +12977,7 @@ const OrderWin = window.OrderWin = (() => {
     const r = rowOf(W.key); if (!r || String(r.order.receiptId) !== String(rid)) return null;
     const R = window.CharmNestReadiness, all = tryDo(() => linesOf(r)) || [r], pages = new Set();
     // one piece shown (picked on the Its pieces list): its own line only; (pieceKey: one piece's row asks for its own piece, whichever is shown)
-    const only = pieceKey || W.piece, rows = only && all.some(x => x.key === only) ? all.filter(x => x.key === only) : all;
+    const only = String(pieceKey || W.piece || "").replace(/#[LR]$/, "") || null, rows = only && all.some(x => x.key === only) ? all.filter(x => x.key === only) : all;   // (a side of a pair asks for its line)
     const lines = rows.map(x => {
       const sp = x.spec || {}, ids = x.poolIds || [];
       let onSheet = ids.length > 0;
@@ -13286,14 +13384,22 @@ const OrderWin = window.OrderWin = (() => {
     const rid = String(r.order.receiptId); let op = null;
     try { op = window.OrderPieces && OrderPieces.of ? OrderPieces.of(rid) : null; } catch (_) { op = null; }
     const dead = p => !!p && ["abandoned", "superseded"].includes(p.state);
-    return linesOf(r).map(x => {
-      const sp = x.spec || {}, key = x.key, pools = (x.poolIds || []).map(String), sheets = new Map(), on = new Set(), qty = Math.max(1, Math.round(+(sp.quantity || (x.line && x.line.quantity)) || 1));
+    // (a mismatched pair line: its Left and its Right are each a scope piece of their own, `sides` on the line's, worked out from the copies of that side alone: Paul, 9 Oct 2026)
+    const lineEntry = x => {
+      const res = one(x, null, null);
+      if (!Array.isArray(op)) return res;
+      const mineAll = op.filter(c => c && c.lineKey === x.key && (c.side === "L" || c.side === "R"));
+      if (mineAll.some(c => c.side === "L") && mineAll.some(c => c.side === "R")) res.sides = ["L", "R"].map(sd => Object.assign(one(x, mineAll.filter(c => c.side === sd), sd), { side: sd, lineKey: x.key }));
+      return res;
+    };
+    const one = (x, only, side) => {
+      const sp = x.spec || {}, key = x.key, pools = (x.poolIds || []).map(String), sheets = new Map(), on = new Set(), qty = only ? only.length : Math.max(1, Math.round(+(sp.quantity || (x.line && x.line.quantity)) || 1));
       const put = (pid, id, page, o) => {
         on.add(pid); const k = id || page || "?", cur = sheets.get(k) || { id: id || null, page: id ? null : page || null, pools: [] };
         for (const a of ["metal", "n", "label", "setId", "cut"]) if (o[a] != null && o[a] !== "" && cur[a] == null) cur[a] = o[a];
         if (!cur.pools.includes(pid)) cur.pools.push(pid); sheets.set(k, cur);
       };
-      const mine = Array.isArray(op) ? op.filter(c => c && c.lineKey === key) : [];
+      const mine = only || (Array.isArray(op) ? op.filter(c => c && c.lineKey === key) : []);
       let loading = false, why = "";
       if (mine.length) {
         // (OrderPieces: one entry per copy; records not read yet, or not readable just now: the piece is not said to be on no sheet)
@@ -13322,9 +13428,10 @@ const OrderWin = window.OrderWin = (() => {
         if (!on.size && pools.length && !read && !pools.some(id => B.pool && B.pool.rows && B.pool.rows.has(id))) loading = true;
       }
       const nested = on.size > 0, hand = !nested && !x.hold && !!(handOfRow(x) || mine.some(c => c && c.hand));
-      return { key, name: pieceName(x), metal: x.material || sp.material || null, form: sp.form || "", qty, nested, hand, loading: loading && !nested && !hand, row: x,
+      return { key: side ? key + "#" + side : key, pools: only ? only.map(c => String(c.poolId || c.key)) : undefined, name: pieceName(x) + (side ? " · " + (side === "L" ? "Left" : "Right") : ""), metal: x.material || sp.material || null, form: sp.form || "", qty, nested, hand, loading: loading && !nested && !hand, row: x,
         sheets: [...sheets.values()].map(s => Object.assign(s, { label: s.label || sheetName(s) })), why: nested ? "" : hand ? HAND_WHY : why || pieceWhy(x) };
-    });
+    };
+    return linesOf(r).map(lineEntry);
   }
   /** The scope: all (every piece of the order), shown (the piece the window shows), sel (the piece picked, else null), focus
    *  (sel, else shown), mine (the pieces the Sheet view answers for). */
@@ -13361,14 +13468,22 @@ const OrderWin = window.OrderWin = (() => {
     const UI = window.OrderTimelineUI, rid = String(r.order.receiptId), evs = W.evFor === rid && Array.isArray(W.events) ? W.events : null;
     let sc = null; try { sc = scopePieces(r); } catch (e) { console.warn("order view: placement", e); }
     if (!sc || !sc.length) { W.place = null; W.placeAll = null; W.placeRid = ""; W.placeSig = ""; return ""; }
-    const minis = sc.map(p => ({ key: p.key, tid: String((p.row && p.row.line && p.row.line.transactionId) || ""), pools: ((p.row && p.row.poolIds) || []).map(String), sheets: p.sheets.map(h => h.id).filter(Boolean) })), m = new Map();
+    const minis = sc.map(p => ({ key: p.key, tid: String((p.row && p.row.line && p.row.line.transactionId) || ""), pools: ((p.row && p.row.poolIds) || []).map(String), sheets: p.sheets.map(h => h.id).filter(Boolean) })), m = new Map(), lineM = new Map();
     for (const p of sc) {
       const mine = minis.find(q => q.key === p.key), own = evs && UI && UI.ofPiece ? evs.filter(e => UI.ofPiece(e, mine, minis)) : evs;
       let pl = PP.resolve(placeFacts(p, cancelIn(own)));
       if (own && evs && UI && UI.ofPiece) pl = PP.withHistory(pl, own);
-      m.set(p.key, pl);
+      m.set(p.key, pl); lineM.set(p.key, pl);
+      // (the Left and the Right of a mismatched pair: each its own placement, from its own copies, its own events: the rows, dots and chips of a side read them by the side's key)
+      for (const sd of p.sides || []) {
+        const sm = { key: sd.key, lineKey: p.key, side: sd.side, tid: mine.tid, pools: sd.pools || [], sheets: sd.sheets.map(h => h.id).filter(Boolean) };
+        const sown = evs && UI && UI.ofPiece ? evs.filter(e => UI.ofPiece(e, sm, minis)) : evs;
+        let spl = PP.resolve(placeFacts(sd, cancelIn(sown)));
+        if (sown && evs && UI && UI.ofPiece) spl = PP.withHistory(spl, sown);
+        m.set(sd.key, spl);
+      }
     }
-    W.place = m; W.placeAll = PP.roll([...m.values()]); W.placeRid = rid; W.placeSig = W.placeAll.sig;
+    W.place = m; W.placeAll = PP.roll([...lineM.values()]); W.placeRid = rid; W.placeSig = W.placeAll.sig + "|" + [...m].filter(([k]) => /#[LR]$/.test(k)).map(([k, v]) => k + v.sig).join("|");
     return W.placeSig;
   }
   /** The Placement of one piece (its line key), or the order's roll-up (no key); null while it is not worked out (or PiecePlacement is not loaded). */
@@ -13396,7 +13511,11 @@ const OrderWin = window.OrderWin = (() => {
   /** The Overview card's own Sheet affordances: its Sheet button and one chip for each sheet of the scope's pieces (all pieces:
    *  each piece's own, named; a piece on none: a muted chip, inert). */
   function sheetCard(r) {
-    const sc = sheetScope(r), block = sheetBlock(r), named = sc.multi && !sc.sel, list = SV.list && SV.rid === String(r.order.receiptId) ? SV.list : null, chips = [];
+    const sc0 = sheetScope(r), block = sheetBlock(r), list = SV.list && SV.rid === String(r.order.receiptId) ? SV.list : null, chips = [];
+    // (a mismatched pair: when its Left and its Right are not both on ONE sheet each has its own box, "<design> · Left" / "· Right"; both on one sheet it is one box for the pair)
+    const together = p => p.sides && p.sides.length > 1 && p.sides.every(q => q.nested) && new Set(p.sides.flatMap(q => q.sheets.map(h => h.id || h.page || h.label))).size === 1;
+    const sc = Object.assign({}, sc0, { mine: sc0.mine.flatMap(p => p.sides && p.sides.length > 1 ? (together(p) ? [Object.assign({}, p, { name: p.name + " · Left + Right" })] : p.sides) : [p]) });
+    const named = (sc0.multi && !sc0.sel) || sc0.mine.some(p => p.sides && p.sides.length > 1);
     for (const p of sc.mine) {
       if (p.loading) continue;
       if (p.nested) for (const h of p.sheets) {
@@ -13419,6 +13538,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** A chip for one piece's own sheet: the Sheet view opens on that sheet, with that piece's charm chosen. */
   function openSheetOf(key, sid, pool) {
+    key = String(key).replace(/#[LR]$/, "");   // (a side's box opens its own sheet; the line is the piece)
     const r = rowOf(W.key); if (!r) return;
     const sc = sheetScope(r), p = sc.all.find(x => x.key === key); if (!p || !p.nested) return;
     setView("sheet", { noLoad: true }); sheetShow(sid || null, pool || (p.sheets[0] && p.sheets[0].pools[0]) || null);

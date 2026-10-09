@@ -435,7 +435,7 @@
     const {job}=R.demoBatch(state.batch,state.profile);
     progress='Nesting batch '+state.batch+' into '+(state.profile?'the saved remainder':'a fresh sheet')+'…';render();
     const placements=await new Promise((resolve,reject)=>{
-      worker=new Worker('charm-nest-worker.js?v=20261009-unjam1');
+      worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2');
       const timer=setTimeout(()=>finish(new Error('Nesting took too long. Try this batch again.')),60000);
       function finish(err,result){clearTimeout(timer);worker?.terminate();worker=null;err?reject(err):resolve(result);}
       worker.onerror=e=>finish(new Error(e.message||'Could not load the nesting worker'));
