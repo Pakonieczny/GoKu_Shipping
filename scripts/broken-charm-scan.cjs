@@ -26,7 +26,7 @@
  *        READ-ONLY GETs of the stored per-SKU .ai files of the SKUs in the list (the affected list is fine): what each file holds
  *        (outline size, members, cut lines), read back with the repo's reader. Use it for the handful of flagged designs, not for all.
  *
- *    node scripts/broken-charm-scan.cjs report --scan a.json b.json c.json [--stored stored.json] [--index index.json] --out <dir>
+ *    node scripts/broken-charm-scan.cjs report --scan a.json b.json c.json [--stored stored.json] [--index index.json] [--files files.json] --out <dir>
  *        merges the scans, compares each design with its siblings (same name before the number, same variant), with the live
  *        record when the index is given, and writes BROKENCHARM-affected.json and BROKENCHARM-rewrite-skus.json.
  *  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
@@ -234,6 +234,8 @@ function report(a) {
     add(o.sku, { rule: "label-without-charm", openBodies: o.openCut, gaps: o.gaps, why: `its label has ${o.looseInk} drawing(s) right above (${o.layers.join("/")}${o.cutBodies ? `, ${o.cutBodies} body-sized cut line(s), ${o.openCut} open${o.gaps && o.gaps.length ? ", gap " + o.gaps.join("/") + " pt" : ""}` : ""}) that no charm holds: the design is missing from the library` }, { master: o.master, charm: null, atMm: o.atMm });
   }
   // what each design needs: the reader now reads it right (a re-index writes it), the stored data is stale, the artist must fix the master, or a person looks
+  const stored1 = arg(a, "--files") ? JSON.parse(fs.readFileSync(arg(a, "--files"), "utf8")).files : {};
+  for (const e of affected.values()) { const sf = stored1[e.sku]; if (sf) e.storedFile = sf; const lv = live.get(e.sku); if (lv) e.library = { widthMm: r1(lv.widthPt * MM), heightMm: r1(lv.heightPt * MM), areaMm2: r1(lv.areaPt2 * MM * MM), holes: lv.holes, members: lv.members, file: lv.aiPath, picture: lv.thumbPath }; }
   const rowBySku = new Map(); for (const r of rows) for (const sku of r.skus) rowBySku.set(sku.toUpperCase(), r);
   const rewrite = new Map(), addRewrite = (sku, why) => { const k = String(sku).toUpperCase(); if (!rewrite.has(k)) rewrite.set(k, why); };
   for (const e of affected.values()) {
