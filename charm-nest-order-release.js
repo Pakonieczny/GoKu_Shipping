@@ -113,6 +113,35 @@
   }
   const piecesOnSheets = rid => { const out = []; for (const sh of allSheets()) for (const c of sh.charms || []) if (c.poolId && ridOfCharm(c) === str(rid)) out.push({ sh, c }); return out; };
 
+  /* ── pairs (Paul, 9 Oct 2026): a line makes one piece, a pair or n pieces; a mismatched pair is a Left and a Right. A line is one GROUP
+     (charm-nest-pair.js: receipt + transaction) and goes back on a sheet whole; one whose other pieces stay on a sheet already cut is
+     split (rule R3), and the preview and the order's timeline say so in plain words. Everything here is additive: a line that is a
+     single piece, or a matching pair with every piece on hold, reads and writes exactly what it did. ── */
+  const PAIR = () => G.CharmNestPair || null;
+  /** What the pair module and the intake say a line is: { kind: 'single'|'pair'|'mismatched'|'multi', pieces }. The intake's own reading (spec.pair, spec.pieceCount) first. */
+  function lineKind(r) {
+    const sp = (r && r.spec) || {}, P = PAIR(), qty = Math.max(1, +sp.quantity || +(r && r.line && r.line.quantity) || 1);
+    let kind = sp.pair && sp.pair.kind ? String(sp.pair.kind) : '';
+    if (!kind && P && P.kindOf) { try { kind = P.kindOf(r, null) || ''; } catch (_) { kind = ''; } }
+    if (!kind) kind = qty > 2 ? 'multi' : qty === 2 ? 'pair' : 'single';
+    const mis = kind === 'mismatched' || !!(sp.pair && sp.pair.mismatched);
+    return { kind, mismatched: mis, pieces: +sp.pieceCount || (mis ? 2 * qty : qty) };
+  }
+  /** The lines of the order whose pieces are partly on a sheet already cut and partly to be placed now: [{ lineKey, groupKey, label, stays:[sheet label], fresh:n }]. */
+  function splitLines(rid, rows, stayIds, freshIds) {
+    const fresh = new Set(freshIds), on = piecesOnSheets(rid), out = [];
+    for (const r of rows) {
+      const ids = (r.poolIds || []).map(String); if (ids.length < 2) continue;
+      const stayHere = ids.filter(id => stayIds.has(id)), go = ids.filter(id => fresh.has(id));
+      if (!stayHere.length || !go.length) continue;
+      const where = [...new Set(on.filter(x => stayHere.includes(String(x.c.poolId))).map(x => label(x.sh)))];
+      const P = PAIR(); let key = ''; try { key = P && P.groupKey ? P.groupKey(r) : ''; } catch (_) { key = ''; }
+      out.push({ lineKey: r.key, groupKey: key || `${rid}:${str(r.line && r.line.transactionId)}`, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), stays: where, fresh: go.length, stayed: stayHere.length });
+    }
+    return out;
+  }
+  const splitWords = x => `${word(x.stayed, 'piece', 'pieces')} of ${x.label} stay${x.stayed === 1 ? 's' : ''} on ${x.stays.join(' and ') || 'a sheet already cut'}, so ${x.stayed + x.fresh === 2 ? 'this pair is' : 'these pieces are'} on two sheets (both sheets must go in one set)`;
+
   /* ── the plan: read only ── */
   function planOf(rid) {
     rid = str(rid);
@@ -123,10 +152,14 @@
     if (!held.length && !resumed) { base.blockedWhy = 'This order is not on hold.'; return base; }
     base.canRelease = true;
     const mine = rows.filter(r => r.hold || r.releasing), byMetal = new Map();
+    const pairs = [];
     for (const r of mine) {
       const m = metalOf(r), qty = Math.max(1, +(r.spec && r.spec.quantity) || +(r.line && r.line.quantity) || 1);
-      base.pieces.push({ lineKey: r.key, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), metal: m, qty });
-      if (m) byMetal.set(m, (byMetal.get(m) || 0) + qty);
+      const lk = lineKind(r), pc = { lineKey: r.key, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), metal: m, qty };
+      // (a mismatched pair makes two pieces for each unit, a Left and a Right; every other line keeps the count it had)
+      if (lk.mismatched) { pc.kind = lk.kind; pc.pieces = lk.pieces; pc.sides = ['Left', 'Right']; pairs.push(pc); }
+      base.pieces.push(pc);
+      if (m) byMetal.set(m, (byMetal.get(m) || 0) + (lk.mismatched ? lk.pieces : qty));
     }
     const open = runOpen(), fx = base.effects;
     fx.push(`Order ${rid} goes to the front of the queue, ahead of the orders coming in from Etsy.`);
@@ -141,10 +174,15 @@
       fx.push(t.inSet ? `The QR label of ${t.label} is made again.` : `${t.label} is still filling, so its QR label is made when it is released to its set.`);
     }
     base.target = base.targets[0] || null;
+    for (const pc of pairs) fx.push(`${pc.label}: its ${word(pc.pieces, 'piece', 'pieces')} (Left and Right of one pair) go on the same sheet, together.`);
     // pieces of the order that stay where they are: on a sheet already cut
-    const had = new Map();
-    for (const { sh, c } of piecesOnSheets(rid)) if (cutSheet(sh)) had.set(label(sh), (had.get(label(sh)) || 0) + 1);
+    const had = new Map(), stayIds = new Set();
+    for (const { sh, c } of piecesOnSheets(rid)) if (cutSheet(sh)) { had.set(label(sh), (had.get(label(sh)) || 0) + 1); stayIds.add(String(c.poolId)); }
     for (const [sheetLabel, n] of had) { base.stays.push({ label: word(n, 'piece', 'pieces'), sheetLabel }); fx.push(`${word(n, 'piece', 'pieces')} stay${n === 1 ? 's' : ''} on ${sheetLabel}, already cut.`); }
+    // a pair or line with pieces on a sheet already cut and pieces released now is split (R3): said plainly, and kept on the plan
+    const cutIds = new Set([...stayIds]), freshIds = mine.flatMap(r => (r.poolIds || []).map(String)).filter(id => !cutIds.has(id));
+    const split = splitLines(rid, mine, cutIds, freshIds);
+    if (split.length) { base.split = split; for (const x of split) fx.push(`${splitWords(x)}.`); }
     if (mine.some(r => (r.problems || []).length)) fx.push('A piece needs a look in Review before it can be placed; it stays at the front of the queue.');
     return base;
   }
@@ -309,6 +347,7 @@
     const stuck =after.filter(r => (r.problems || []).length);
     if (stuck.length) { for (const r of after) delete r.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but it needs a look in Review: ${str(stuck[0].reason || (stuck[0].problems[0] && stuck[0].problems[0].reason) || 'a piece has no design yet')}`, 'review', { released: true }); }
     const ids = [...new Set(after.filter(r => r.releasing).flatMap(r => r.poolIds || []))], fresh = ids.filter(id => !stay.has(id));
+    const split = splitLines(rid, after.filter(r => r.releasing), new Set([...stay].map(String)), fresh);   // (a pair or line with pieces on a sheet already cut: split, R3)
     const done = ['pooled', 'written', 'labelled', 'committed'];
     // (a line that is never cut, a chain only line or one completed by hand, has nothing to put on a sheet: it is "noDesign" with no pieces, and no reason to stop the release)
     const unplaced = after.filter(r => !done.includes(r.state) && !(r.state === 'noDesign' && !(r.poolIds || []).length));
@@ -317,7 +356,8 @@
     const finish = async (pages, placed, why) => {
       const first = pages[0], where = pages.map(label).join(', ');
       if (G.SheetEvents && G.SheetEvents.order) G.SheetEvents.order({ type: 'released', orderId: rid, id: `oh-rel-${rid}-${frontAt}`, by: who, at: Date.now(), sheetId: first ? first.sheetId || '' : '', sheet: where, setId: first && inSet(first) ? first.setId : '',
-        text: placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`, data: { frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length } });
+        text: (placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`) + (split.length ? ` · pair split: ${split.map(splitWords).join('; ')}` : ''),
+        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, split.length ? { split: split.map(x => x.groupKey) } : {}) });
       for (const r of rowsOfOrder(rid)) delete r.releasing;
       for (const sh of kept) unkeep(sh);
       refresh(); await persist();

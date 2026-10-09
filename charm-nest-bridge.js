@@ -2785,14 +2785,20 @@ const Pool = window.Pool = (() => {
     const on = new Set(pools.map(p => p.poolId).filter(id => saved.has(id) || charmOf(id)));
     // (a custom order's own designs may be on more than one metal: each goes on the sheet of its own)
     const byMetal = new Map(); for (const c of charms) { if (on.has(c.poolId)) continue; const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
+    // the sheets that already hold other pieces of this line (a pair's other piece, a disc necklace's other discs): a late piece goes to them (rule R2)
+    const matePages = on.size ? [...holding(on)] : [];
     for (const [metal, list] of byMetal) {
       let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
       // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
+      // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
+      { const open = matePages.filter(p => p.metal === metal && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (open.length && !open.includes(page)) page = open[0]; }
       if((run && page.runId && page.runId!==run.runId) || shut(page))page=addPage(metal);
       S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active);   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
       for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
+      // a line with pieces on a sheet that is closed (released full, cut) cannot join them: it is split, and said so (rule R3; the sets read it from the pool ids)
+      if (matePages.length && !matePages.includes(page) && typeof splitGroups === "function") for (const g of splitGroups(pagesOf(metal), new Set(list.map(groupOf).filter(Boolean))).slice(0, 3)) agent({ metal, pool: true }, "warn", `Split pair/line ${g.group} (its other pieces are on a closed sheet): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
       if (row.releasing && window.Gate?.keep) { Gate.keep(page); if (page.keepRelease) page.keepRelease.rid = String(row.order.receiptId); }   // (an order released from hold, OrderHold.release: a sheet already in its set keeps its set while it takes the order, from this moment: the set assembly would drop it while it nests)
       if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
@@ -3707,12 +3713,18 @@ const Gate = window.Gate = (() => {
     const pages = [target, ...sources], count = list => list.reduce((n, p) => n + p.charms.length, 0);
     return { target, sources, pages, moving: count(sources), total: count(pages) };
   }
+  /** " (3 pairs, each kept whole)" for the pairs (lines of exactly two pieces) among these sheets' charms; "" when there is none. */
+  const pairsNote = pages => {
+    if (typeof groupOf !== "function") return "";
+    const by = new Map(); for (const p of pages) for (const c of p.charms) { if (c.excluded) continue; const g = groupOf(c); if (g) by.set(g, (by.get(g) || 0) + 1); }
+    const n = [...by.values()].filter(v => v === 2).length; return n ? ` (${n} pair${n === 1 ? "" : "s"}, each kept whole)` : "";
+  };
   /** What a press will do, in the words the panel asks with. */
   function mergeWords(plan, kind) {
     const t = plan.target, inSet = plan.pages.some(p => p.setId && !p.draft), rest = plan.sources.length === 1 ? `Sheet ${plan.sources[0].page}` : "the later sheets";
-    if (kind === "move") return `${charmsWord(plan.moving)} from ${sheetsWord(plan.sources)} go into Sheet ${t.page}'s free room, oldest orders first. Sheet ${t.page}'s charms stay where they are, and whatever does not fit stays on ${rest}. A sheet left empty is removed.` +
+    if (kind === "move") return `${charmsWord(plan.moving)}${pairsNote(plan.sources)} from ${sheetsWord(plan.sources)} go into Sheet ${t.page}'s free room, oldest orders first. Sheet ${t.page}'s charms stay where they are, and whatever does not fit stays on ${rest}. A sheet left empty is removed.` +
       (picked(t) ? (inSet ? ` Sheet ${t.page} gets a new QR label once they are placed.` : "") : plan.sources.some(p => picked(p)) ? ` Sheet ${t.page} is not in the current set, so these orders leave it.` : "");
-    return `All ${charmsWord(plan.total)} on ${sheetsWord(plan.pages)} are nested again from scratch, oldest orders first, for the tightest packing. A sheet left empty is removed.` + (inSet ? " Sheets in the current set get new QR labels once nested." : "");
+    return `All ${charmsWord(plan.total)}${pairsNote(plan.pages)} on ${sheetsWord(plan.pages)} are nested again from scratch, oldest orders first, for the tightest packing. A sheet left empty is removed.` + (inSet ? " Sheets in the current set get new QR labels once nested." : "");
   }
   // a sheet that goes: its saved record is archived at the run's next checkpoint (LiveNest.finish), as a repacked open
   // sheet's is, and the run forgets its hold and its note (only a record the cloud has: archiving an unknown one would stop the run)
