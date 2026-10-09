@@ -28,21 +28,24 @@ const O = require('../../charm-nest-orders.js');
 const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 const ok = m => console.log('  ✓ ' + m);
 const noNest = (v, w) => refuseNestedArrays(JSON.parse(JSON.stringify(v)), w);
+let g;
 
 (async () => {
   /* ── 1 · the words ── */
   assert.equal(PL.sideOf({ side: 'L' }), 'L'); assert.equal(PL.sideOf({ side: 'x' }), null); assert.equal(PL.sideOf({}), null); assert.equal(PL.sideOf(null), null);
   assert.equal(PL.wordOf({ side: 'R' }), 'Right'); assert.equal(PL.wordOf('L'), 'Left'); assert.equal(PL.wordOf({}), '');
-  assert.equal(PL.copyWord('MITTENS-MIS', 1, 2, { side: 'L' }), 'MITTENS-MIS Left');
+  assert.equal(PL.copyWord('MITTENS-MIS', 1, 2, { side: 'L' }), 'MITTENS-MIS#1 (Left)');
+  assert.equal(PL.copyWord('MITTENS-MIS', 1, 1, { side: 'R' }), 'MITTENS-MIS (Right)');
   assert.equal(PL.copyWord('PAIR-STUD', 2, 2, {}), 'PAIR-STUD#2', 'a matching pair copy is worded as before');
   assert.equal(PL.copyWord('ONE', 1, 1, {}), 'ONE', 'a lone copy too');
   const old = lines => Object.values(lines).flatMap(l => l.copies.map(c => `${l.sku}${l.copies.length > 1 ? '#' + c.copy : ''}->${c.sheet}`));   // the text the two manifest makers wrote before
   const plain = { a: { transactionId: 'a', sku: 'PAIR-STUD', copies: [{ copy: 1, sheetId: 's1', sheet: 'GF Sheet 1' }, { copy: 2, sheetId: 's1', sheet: 'GF Sheet 1' }] }, b: { transactionId: 'b', sku: 'ONE', copies: [{ copy: 1, sheetId: 's2', sheet: 'GF Sheet 2' }] } };
   assert.deepEqual(PL.manifestEntries(plain), old(plain), 'unsplit lines: the old manifest words, byte for byte');
   const mis = [{ transactionId: 'm', sku: 'MITTENS-MIS', copies: [{ copy: 1, side: 'L', sheetId: 's1', sheet: 'GF Sheet 1' }, { copy: 2, side: 'R', sheetId: 's2', sheet: 'GF Sheet 2' }] }];
-  assert.deepEqual(PL.manifestEntries(mis), ['MITTENS-MIS Left->GF Sheet 1', 'MITTENS-MIS Right->GF Sheet 2', '[split over 2 sheets]']);
+  assert.deepEqual(PL.manifestEntries(mis), ['MITTENS-MIS#1 (Left)->GF Sheet 1', 'MITTENS-MIS#2 (Right)->GF Sheet 2']);
+  assert.deepEqual(PL.manifestEntries(mis, undefined, '→'), ['MITTENS-MIS#1 (Left)→GF Sheet 1', 'MITTENS-MIS#2 (Right)→GF Sheet 2'], 'the bridge arrow');
   const split = [{ transactionId: 'p', sku: 'PAIR-STUD', copies: [{ copy: 1, sheetId: 's1', sheet: 'GF Sheet 1' }, { copy: 2, sheetId: 's2', sheet: 'GF Sheet 2' }] }];
-  assert.deepEqual(PL.manifestEntries(split), ['PAIR-STUD#1->GF Sheet 1', 'PAIR-STUD#2->GF Sheet 2', '[split over 2 sheets]'], 'a matching pair split over sheets is said too (R3)');
+  assert.deepEqual(PL.manifestEntries(split), ['PAIR-STUD#1->GF Sheet 1', 'PAIR-STUD#2->GF Sheet 2'], 'a pair without sides: the old words (the set editor\'s span lines say the split, R3)');
   assert.deepEqual(PL.manifestEntries(split, c => 'X' + c.copy).slice(0, 2), ['PAIR-STUD#1->X1', 'PAIR-STUD#2->X2']);
   // split notes
   const P = (rid, tid, copy, sheetId, sheet, side) => ({ rid, tid, sku: 'S', copy, poolId: `${rid}_${tid}_${copy}`, sheetId, sheet, side: side || null });
@@ -67,7 +70,7 @@ const noNest = (v, w) => refuseNestedArrays(JSON.parse(JSON.stringify(v)), w);
   const bridge = read('charm-nest-bridge.js');
   const section = (name, end) => { const a = bridge.indexOf(`const ${name} = window.${name} =`); return bridge.slice(a, bridge.indexOf(end, a)); };
   let setsSrc = section('Sets', '/* ═══ 23');
-  { const a = setsSrc.indexOf('  async function renderLabelPng('), b = setsSrc.indexOf('  /** After a sheet', a); assert(a > 0 && b > a); setsSrc = setsSrc.slice(0, a) + '  async function renderLabelPng(payload,label,scale,notes){pngCalls.push({payload,label,notes});return {blob:new Uint8Array([1]),dataUrl:"data:image/png;base64,AA==",ecc:"M"};}\n' + setsSrc.slice(b); }
+  { const a = setsSrc.indexOf('  async function renderLabelPng('), b = setsSrc.indexOf('  /** The lines a sheet\'s QR label carries', a); assert(a > 0 && b > a); setsSrc = setsSrc.slice(0, a) + '  async function renderLabelPng(payload,label,scale,notes){pngCalls.push({payload,label,notes});return {blob:new Uint8Array([1]),dataUrl:"data:image/png;base64,AA==",ecc:"M"};}\n' + setsSrc.slice(b); }
   const prelude = `
 const O=CharmNestOrders,windowRef=window;
 const S={cloud:{ok:true},mode:'library',settings:{},library:{kind:'sets'}};
@@ -96,20 +99,19 @@ ${setsSrc}
   const callOf = sheet => pngCalls().filter(c => c.label.includes('Sheet ' + sheet)).pop();
   function pngCalls() { return vm.runInContext('pngCalls', ctx); }
   // sheet 1 holds the left ear: its label says where the right one is; sheet 2 the other way round; both labels' payload is still the order list
-  assert.deepEqual(callOf(1).notes, ['4190000009 Left here, Right on Sheet 2'], 'sheet 1 label note: ' + JSON.stringify(callOf(1)));
-  assert.deepEqual(callOf(2).notes, ['4190000009 Right here, Left on Sheet 1']);
+  assert.deepEqual(JSON.parse(JSON.stringify(callOf(1).notes)), ['4190000009 Left here, Right on Sheet 2'], 'sheet 1 label note: ' + JSON.stringify(callOf(1)));
+  assert.deepEqual(JSON.parse(JSON.stringify(callOf(2).notes)), ['4190000009 Right here, Left on Sheet 1']);
   assert.equal(callOf(1).payload, O.encodeOrderList(['4190000009', '4190000090'], 'gold'), 'the QR payload stays the order list');
-  assert.deepEqual(A.label.files[0].notes, ['4190000009 Left here, Right on Sheet 2'], 'the note rides on the label file record');
-  assert.deepEqual(Bp.label.files[0].notes, ['4190000009 Right here, Left on Sheet 1']);
+  assert.deepEqual(JSON.parse(JSON.stringify(A.label.files[0].notes)), ['4190000009 Left here, Right on Sheet 2'], 'the note rides on the label file record');
+  assert.deepEqual(JSON.parse(JSON.stringify(Bp.label.files[0].notes)), ['4190000009 Right here, Left on Sheet 1']);
   assert(set.labelFiles.every(f => f.notes), 'and on the set record\'s label list');
   assert(vm.runInContext('Sets.labelsReady(__A,__set)', ctx) && vm.runInContext('Sets.labelsReady(__B,__set)', ctx), 'both labels are current');
   // 4 · copies carry the side for the mismatched pair only
   const copies = Object.values(set.orders['4190000009'].lines)[0].copies;
-  assert.deepEqual(copies.map(c => [c.copy, c.side, c.bodyIndex]), [[1, 'L', 0], [2, 'R', 1]], 'copies: side and body index');
-  const filler = Object.values(set.orders['4190000090'].lines)[0].copies[0]; assert(!('side' in filler) && !('bodyIndex' in filler), 'a normal copy gets no new field: ' + JSON.stringify(filler));
-  noNest(set, 'set'); for (const p of puts) noNest(p, 'sheet put'); for (const p of vm.runInContext('setPuts', ctx)) noNest(p, 'set put');
+  assert.deepEqual(JSON.parse(JSON.stringify(copies.map(c => [c.copy, c.side]))), [[1, 'L'], [2, 'R']], 'copies: the side');
+  const filler = Object.values(set.orders['4190000090'].lines)[0].copies[0]; assert(!('side' in filler), 'a normal copy gets no new field: ' + JSON.stringify(filler));
+  noNest(set, 'set'); for (const p of vm.runInContext('puts', ctx)) noNest(p, 'sheet put'); for (const p of vm.runInContext('setPuts', ctx)) noNest(p, 'set put');
   // the filler orders: no note
-  assert(!('notes' in A.label.files[0]) === false, 'sheet 1 has a note');   // (sanity)
   ok('sheet labels: the note names Left and Right and the other sheet; payload and normal copies are untouched');
 
   // 3 · the sibling moves onto sheet 1: sheet 1's label (notes now none) is out of date; the repair path makes it current without a note
@@ -132,61 +134,63 @@ ${setsSrc}
   /* ── 5 · the manifest of the real finalize and the real remakeFiles ── */
   const SE = require('../../charm-nest-set-edit.js');
   const finalizeSrc = (() => { const a = bridge.indexOf('    for (const [rid, o] of Object.entries(set.orders).sort()) { const copies ='); return bridge.slice(a, bridge.indexOf('\n', a)); })();
-  assert(/CharmNestPairLabels\.manifestEntries\(o\.lines\)/.test(finalizeSrc), 'finalize uses the helper');
+  assert(/CharmNestPairLabels\.manifestEntries\(o\.lines, undefined, "→"\)/.test(finalizeSrc), 'finalize uses the helper');
   const lines = []; const mk = vm.createContext({ window: { CharmNestPairLabels: PL }, CharmNestPairLabels: PL, set: { orders: { A1: { lines: { t1: { transactionId: 't1', sku: 'MITTENS-MIS', copies: [{ copy: 1, side: 'L', sheetId: 's1', sheet: 'GF Sheet 1' }, { copy: 2, side: 'R', sheetId: 's2', sheet: 'GF Sheet 2' }] } } }, A2: { lines: { t2: { transactionId: 't2', sku: 'PAIR-STUD', copies: [{ copy: 1, sheetId: 's1', sheet: 'GF Sheet 1' }, { copy: 2, sheetId: 's1', sheet: 'GF Sheet 1' }] } } } } }, ev: { held: {} }, line: t => lines.push(t) });
   vm.runInContext(finalizeSrc, mk);
-  assert.deepEqual(lines, ['A1  MITTENS-MIS Left->GF Sheet 1  MITTENS-MIS Right->GF Sheet 2  [split over 2 sheets]', 'A2  PAIR-STUD#1->GF Sheet 1  PAIR-STUD#2->GF Sheet 1'], 'finalize manifest lines: ' + JSON.stringify(lines));
+  assert.deepEqual(lines, ['A1  MITTENS-MIS#1 (Left)→GF Sheet 1  MITTENS-MIS#2 (Right)→GF Sheet 2', 'A2  PAIR-STUD#1→GF Sheet 1  PAIR-STUD#2→GF Sheet 1'], 'finalize manifest lines: ' + JSON.stringify(lines));
   // remakeFiles: the real function over a stub CN that records the manifest page text via a fake PDFLib
   const draws = [], jsonSaved = {};
   const fakePDF = { PDFDocument: { create: async () => { const pages = []; const d = { embedFont: async () => ({}), embedPng: async () => ({}), addPage: () => { const pg = { drawText: t => draws.push(t), drawImage() {} }; pages.push(pg); return pg; }, save: async () => new Uint8Array([1]) }; return d; } }, StandardFonts: { Helvetica: 'h', HelveticaBold: 'hb' } };
   const setDoc = { setId: 'set-1', name: 'Set-1', day: '2026-10-09', runId: 'run-pairs', folder: 'f', sheetIds: ['sh-gf1', 'sh-gf2'], materials: ['gold'], labelFiles: [{ sheetId: 'sh-gf1', sheet: 'GF_Sheet-1', url: 'u1', path: 'p1', part: 1, label: 'L1' }],
     orders: { 4190000009: { lines: [{ transactionId: 't', sku: 'MITTENS-MIS', copies: [{ copy: 1, side: 'L', sheetId: 'sh-gf1', sheet: 'GF Sheet 1' }, { copy: 2, side: 'R', sheetId: 'sh-gf2', sheet: 'GF Sheet 2' }] }] }, 4190000090: { lines: [{ transactionId: 'u', sku: 'ONE', copies: [{ copy: 1, sheetId: 'sh-gf1', sheet: 'GF Sheet 1' }] }] } } };
-  const cloud = async b => { if (b.op === 'setGet') return { set: setDoc }; if (b.op === 'listSheets') return { sheets: world.sheets.filter(s => s.setId === 'set-1').map(s => Object.assign({}, s, { backs: [{ poolId: '4190000009_5000000010_1', order: '4190000009', sku: 'MITTENS-MIS', copy: 1, side: 'L', groupKey: '4190000009:5000000010', text: 'A', approvedBy: 'T' }] })) }; if (b.op === 'flowApply') { noNest(b, 'flowApply'); return { ok: true }; } return {}; };
+  const cloud = async (name, b) => { if (b.op === 'setGet') return { set: setDoc }; if (b.op === 'listSheets') return { sheets: world.sheets.filter(s => s.setId === 'set-1').map(s => Object.assign({}, s, { backs: [{ poolId: '4190000009_5000000010_1', order: '4190000009', sku: 'MITTENS-MIS', copy: 1, side: 'L', groupKey: '4190000009:5000000010', text: 'A', approvedBy: 'T' }] })) }; if (b.op === 'flowApply') { noNest(b, 'flowApply'); return { ok: true }; } return {}; };
   const sandbox = { CN: { api: cloud, uploadBytes: async (p, bytes) => { if (/set\.json$/.test(p)) Object.assign(jsonSaved, JSON.parse(new TextDecoder().decode(bytes))); return { path: p, url: 'u:' + p }; } }, PDFLib: fakePDF, CharmNestAssets: { bytes: async () => new Uint8Array([1]) }, CharmNestPairLabels: PL };
   const seLoad = new Function('self', 'module', 'require', fs.readFileSync(path.join(root, 'charm-nest-set-edit.js'), 'utf8') + '\nreturn module.exports;');
   const SEp = seLoad(Object.assign({}, sandbox, { document: undefined }), { exports: {} }, require);
   // (the page exposes it as root.SetEdit; here the function bound to our sandbox as root)
   assert(SEp && typeof SEp.remakeFiles === 'function'); await SEp.remakeFiles({ setId: 'set-1' }, { by: 'T' });
-  const man = draws.map(d => d.x === undefined ? d : '').filter(Boolean);
   const txt = draws.join('\n');
-  assert(/4190000009  MITTENS-MIS Left->GF Sheet 1  MITTENS-MIS Right->GF Sheet 2  \[split over 2 sheets\]/.test(txt), 'remakeFiles manifest: ' + txt.slice(0, 600));
+  assert(/4190000009  MITTENS-MIS#1 \(Left\)->GF Sheet 1  MITTENS-MIS#2 \(Right\)->GF Sheet 2/.test(txt), 'remakeFiles manifest: ' + txt.slice(0, 600));
   assert(/4190000090  ONE->GF Sheet 1/.test(txt), 'a single charm line is the old text');
   assert(/MITTENS-MIS #1 · Left "A"|#1 - Left "A"/.test(txt), 'the Engraving line names the ear: ' + txt.slice(0, 900));
   assert.equal(jsonSaved.sheets[0].backs[0].side, 'L'); assert.equal(jsonSaved.sheets[0].backs[0].groupKey, '4190000009:5000000010');
   noNest(jsonSaved, 'set.json');
-  ok('manifest and set.json (finalize and remakeFiles): Left/Right, "[split over 2 sheets]", engraving ear; every other order line is the old text');
+  ok('manifest and set.json (finalize and remakeFiles): (Left) / (Right), engraving ear; every other order line is the old text');
 
   /* ── 7 · layer names in the real sheet builder, 8 · export ── */
-  g = globalThis; if (!g.window) g.window = g; g.PDFLib = require('../../vendor/pdf-lib-1.17.1.min.js');
+  g = globalThis; if (!g.window) g.window = g; g.self = g; g.PDFLib = require('../../vendor/pdf-lib-1.17.1.min.js');
   require('../../charm-nest-pdf.js'); const PDF = g.CharmNestPDF;
   const Ex = require('../../charm-nest-export.js');
-  const mini = await g.PDFLib.PDFDocument.create(); const pg = mini.addPage([200, 100]); pg.drawRectangle({ x: 10, y: 10, width: 20, height: 20 });
-  const src = await PDF.parseSource(await mini.save(), 'm');
-  const mkCharm = (name, extra) => Object.assign({ name, sourceId: 's', topIndices: [], members: [], strokePt: .25, bbox: [10, 70, 30, 90], centerPt: [20, 80] }, extra);
-  const sheetBytes = await PDF.buildSheet({ sheet: { wPt: 300, hPt: 150 }, sources: new Map([['s', src]]), placements: [
-    { charm: mkCharm('4190000009 · MITTENS-MIS', { side: 'L' }), angle: 0, cxPt: 30, cyPt: 30 }, { charm: mkCharm('4190000009 · MITTENS-MIS', { side: 'R' }), angle: 0, cxPt: 90, cyPt: 30 },
-    { charm: mkCharm('4190000001 · PAIR-STUD · 1/2'), angle: 0, cxPt: 150, cyPt: 30 }, { charm: mkCharm('4190000001 · PAIR-STUD · 2/2'), angle: 0, cxPt: 210, cyPt: 30 },
-    { charm: mkCharm('A'.repeat(70), { side: 'R' }), angle: 0, cxPt: 30, cyPt: 90 }, { charm: mkCharm('X Left', { side: 'L' }), angle: 0, cxPt: 90, cyPt: 90 }], title: 't' });
+  async function vector(name, w, h, ops) { const L = g.PDFLib, d = await L.PDFDocument.create(), p = d.addPage([w, h]); p.node.normalize(); const ref = d.context.register(d.context.obj({ Type: 'OCG', Name: L.PDFString.of(name) })); p.node.Resources().set(L.PDFName.of('Properties'), d.context.obj({ art: ref })); p.node.addContentStream(d.context.register(d.context.flateStream('/OC /art BDC ' + ops + ' EMC'))); d.catalog.set(L.PDFName.of('OCProperties'), d.context.obj({ OCGs: [ref], D: { Order: [ref], ON: [ref] } })); return d.save({ useObjectStreams: false }); }
+  const src = await PDF.parseSource(await vector('Artwork', 40, 30, '1 0 0 RG 0.5 w 0 0 m 40 0 l 40 30 l 0 30 l h S'), 'sample');
+  const mkCharm = (name, extra) => Object.assign({ id: name, sourceId: 's', name, bbox: [0, 0, 40, 30], centerPt: [20, 15], strokePt: .5, topIndices: [0, 1], members: src.segments }, extra);
+  const place = (c, x, y) => ({ charm: c, angle: 0, cxPt: x, cyPt: y, scale: 1 });
+  const sheetBytes = await PDF.buildSheet({ sheet: { wPt: 400, hPt: 200 }, sources: new Map([['s', src]]), placements: [
+    place(mkCharm('4190000009 · MITTENS-MIS', { side: 'L' }), 30, 30), place(mkCharm('4190000009 · MITTENS-MIS', { side: 'R' }), 100, 30),
+    place(mkCharm('4190000001 · PAIR-STUD · 1/2'), 170, 30), place(mkCharm('4190000001 · PAIR-STUD · 2/2'), 240, 30),
+    place(mkCharm('A'.repeat(70), { side: 'R' }), 30, 100), place(mkCharm('X Left', { side: 'L' }), 100, 100)], title: 't' });
   const out = await PDF.parseSource(sheetBytes, 'sheet'), layers = Ex.layerNames(out);
   assert(layers.includes('4190000009  MITTENS-MIS Left') && layers.includes('4190000009  MITTENS-MIS Right'), 'ear layers: ' + JSON.stringify(layers));
   assert(layers.includes('4190000001  PAIR-STUD  1/2') && layers.includes('4190000001  PAIR-STUD  2/2'), 'matching pair layers are named as before');
   const long = layers.find(n => /^A+ Right$/.test(n)); assert(long && long.length <= 60, 'long name cut, side kept, at most 60: ' + long);
   assert(layers.includes('X Left'), 'a name already ending in Left is not doubled');
-  const dxf = Ex.dxf(Ex.productionPaths(out), layers); assert(dxf.layers.some(([, n]) => n === '4190000009  MITTENS-MIS Left') && dxf.layers.some(([, n]) => n === '4190000009  MITTENS-MIS Right'), 'the DXF layers carry the ear');
+  const dxf = Ex.dxf(Ex.productionPaths(out), layers); assert(dxf.text.includes('4190000009  MITTENS-MIS Left') && dxf.text.includes('4190000009  MITTENS-MIS Right'), 'the DXF layers carry the ear (a DXF layer is the sheet layer name)');
   ok('layer names: the .ai and the DXF say Left and Right for a piece with a side; other names unchanged; at most 60 characters');
 
   // back layer and the export's back list
-  const front = await PDF.buildSheet({ sheet: { wPt: 300, hPt: 150 }, sources: new Map([['s', src]]), placements: [{ charm: mkCharm('4190000009 · MITTENS-MIS', { side: 'L' }), angle: 0, cxPt: 30, cyPt: 30 }], title: 't' });
-  const backDoc = await g.PDFLib.PDFDocument.create(); backDoc.addPage([40, 40]).drawRectangle({ x: 5, y: 5, width: 20, height: 20 });
-  const parsedFront = await PDF.parseSource(front, 'f'), formLayer = parsedFront.segments.find(s => s.kind === 'xobj').layer;
-  const sheetRec = { id: 'sh-1', fileBase: 'GF_x', charms: [{ id: 'c0', poolId: '4190000009_5000000010_1', side: 'L' }], placements: [{ id: 'c0', layerName: formLayer, scale: 1 }] };
-  const composed = await Ex.compose(front, sheetRec, [{ poolId: '4190000009_5000000010_1', bytes: await backDoc.save() }]);
+  const ch = mkCharm('4190000009 · MITTENS-MIS', { side: 'L', poolId: '4190000009_5000000010_1' });
+  const front = await PDF.buildSheet({ sheet: { wPt: 200, hPt: 120 }, sources: new Map([['s', src]]), placements: [place(ch, 60, 60)], title: 't' });
+  const back = await vector('CUT OUTLINE', 50, 40, '1 0 0 RG 0.5 w 5 5 m 45 5 l 45 35 l 5 35 l h S');
+  const sheetRec = { id: 'sh-1', fileBase: 'GF_x', charms: [{ id: ch.id, poolId: ch.poolId, side: 'L' }], placements: [{ id: ch.id, n: 1, layer: '4190000009  MITTENS-MIS Left', scale: 1 }] };
+  const composed = await Ex.compose(front, sheetRec, [{ poolId: ch.poolId, bytes: back }]);
   assert.equal(composed.layout[0].side, 'L'); assert.equal(composed.layout[0].groupKey, '4190000009:5000000010');
-  const backLayers = Ex.layerNames(await PDF.parseSource(composed.ai, 'c'));
+  const backLayers = Ex.leaves(await PDF.parseSource(composed.ai, 'c')).map(p => p.layer);
   assert(backLayers.some(n => /^BACK 4190000009_5000000010_1 Left \/ /.test(n)), 'back layer says the ear: ' + JSON.stringify(backLayers));
-  const plainRec = { id: 'sh-2', charms: [{ id: 'c0', poolId: '4190000001_5000000010_1' }], placements: [{ id: 'c0', layerName: formLayer, scale: 1 }] };
-  const composed2 = await Ex.compose(front, plainRec, [{ poolId: '4190000001_5000000010_1', bytes: await backDoc.save() }]);
-  assert(!('side' in composed2.layout[0]) && Ex.layerNames(await PDF.parseSource(composed2.ai, 'c')).some(n => /^BACK 4190000001_5000000010_1 \/ /.test(n)), 'a back with no side: the old layer and the old layout entry');
+  const ch2 = mkCharm('4190000001 · PAIR-STUD', { poolId: '4190000001_5000000010_1' });
+  const front2 = await PDF.buildSheet({ sheet: { wPt: 200, hPt: 120 }, sources: new Map([['s', src]]), placements: [place(ch2, 60, 60)], title: 't' });
+  const plainRec = { id: 'sh-2', charms: [{ id: ch2.id, poolId: ch2.poolId }], placements: [{ id: ch2.id, n: 1, layer: '4190000001  PAIR-STUD', scale: 1 }] };
+  const composed2 = await Ex.compose(front2, plainRec, [{ poolId: ch2.poolId, bytes: back }]);
+  assert(!('side' in composed2.layout[0]) && Ex.leaves(await PDF.parseSource(composed2.ai, 'c')).map(p => p.layer).some(n => /^BACK 4190000001_5000000010_1 \/ /.test(n)), 'a back with no side: the old layer and the old layout entry');
   ok('export: the back layer and the layout name the ear; a back with no side is as before');
   const ui = read('charm-nest-export-ui.js');
   assert(/pairPieces:earPieces/.test(ui) && /A layer ending Left or Right is one ear/.test(ui) && /files\.some\(f=>f\.metadata\.pairPieces\)/.test(ui), 'IMPORT.txt explains the layers only for a sheet with such a piece');
@@ -211,7 +215,7 @@ ${setsSrc}
   const pairDoc = doc([{ side: 'L', n: 1, of: 1 }, { side: 'R', n: 1, of: 1 }]), texts = pairDoc.content.map(c => c.text).filter(Boolean);
   assert.equal(pairDoc.content.filter(c => c.pageBreak).length, 1, 'two pages'); assert(texts.includes('LEFT') && texts.includes('RIGHT') && texts.filter(t => t === '4190000009').length === 2, 'LEFT and RIGHT of the same order on a page each: ' + JSON.stringify(texts));
   const four = doc([{ side: 'L', n: 1, of: 2 }, { side: 'R', n: 1, of: 2 }, { side: 'L', n: 2, of: 2 }, { side: 'R', n: 2, of: 2 }]); assert(four.content.map(c => c.text).includes('2/2') && four.content.filter(c => c.pageBreak).length === 3, 'two pairs: four pages, n/of');
-  assert.deepEqual(vm.runInContext(`piecesOf({pieces:[{side:'L'},{side:'Q'},null,{side:'R'}]})`, pr).map(p => p.side), ['L', 'R']);
+  assert.deepEqual(Array.from(vm.runInContext(`piecesOf({pieces:[{side:'L'},{side:'Q'},null,{side:'R'}]})`, pr).map(p => p.side)), ['L', 'R']);
   // the bridge wires the pieces into the label object and the efficiency count
   assert(/label = rows\.length \? withPieces\(O\.sortingLabel\(rows\[0\]\.order, rows\[0\]\.line\), rows\) : null/.test(bridge) && /label = withPieces\(O\.sortingLabel\(rows\[0\]\.order, rows\[0\]\.line\), rows\)/.test(bridge), 'printAs and completeAs build the label with its pieces');
   assert.equal((bridge.match(/parts: piecesN\(/g) || []).length, 3, 'the three efficiency records count pieces');
@@ -236,7 +240,7 @@ ${setsSrc}
   } finally { fns.restore(); }
   // welding: the real rule of weld-1.html (one welded event per stud LINE, so one seal for a pair)
   const weld = read('weld-1.html'), a = weld.indexOf('function weldDone('), b = weld.indexOf('/* Employee efficiency (station-activity.js)', a);
-  const recorded = []; const wctx = vm.createContext({ window: { StationTimeline: { did(...x) { recorded.push(['did', ...x]); } }, OrderTimeline: { record: e => recorded.push(['record', e]), config() {} } }, StationTimeline: { did(...x) { recorded.push(['did', ...x]); } }, console });
+  const recorded = []; const wctx = vm.createContext({ window: { StationTimeline: { did(...x) { recorded.push(['did', ...x]); } }, OrderTimeline: { record: e => recorded.push(['record', e]), config() {} } }, StationTimeline: { did(...x) { recorded.push(['did', ...x]); } }, OrderTimeline: { record: e => recorded.push(['record', e]) }, console });
   vm.runInContext(`const WELD_STUD=/\\bstuds?\\b/i,WELD_NOT_STUD=/\\b(?:huggies?|hoops?|necklaces?|bracelets?|anklets?|key\\s*(?:chains?|rings?))\\b|\\bcharms?\\s+only\\b/i;
     function weldIsStud(t){const text=[t&&t.title,...((t&&Array.isArray(t.variations))?t.variations.map(v=>v&&(v.formatted_value||v.value)):[])].filter(Boolean).join(" ");return WELD_STUD.test(text)&&!WELD_NOT_STUD.test(text);}
     function weldRefusal(d){return "";} function weldTell(){} function weldSignedIn(){return "Marco";}
@@ -261,4 +265,3 @@ ${setsSrc}
 
   console.log('\nPAIRLABELS OK');
 })().catch(e => { console.error(e); process.exit(1); });
-let g;
