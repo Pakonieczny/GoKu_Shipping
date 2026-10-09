@@ -599,6 +599,21 @@ humanAct.set = (undone, ids, name) => {
    exactly as before when the live layer is missing or down.
    A Laser or Design person's two windows share ONE slot (their role's card): the window that opened last shows, closing the other
    one leaves it alone, and when the window that shows is closed the one still open shows again. With no role they are two slots. */
+/* The pair fields of the pieces one sorter line makes (Paul, 9 and 10 Oct 2026: every earring pair is one LEFT and one RIGHT piece per unit, matching or mismatched):
+   [{ side, grp, of, n, both }] in order, or [] for a line that is not one (it is told exactly as before). CharmNestPair.piecesFor reads the line's own facts first
+   (its pool ids, spec.pieceCount, spec.pair, the design's master entry); a mismatched design the pool still makes as ONE glued piece per unit is `both` (the live
+   board draws its left and its right together and shows it as Left + Right). */
+const livePairOf = (r, rid) => {
+  try {
+    const P = window.CharmNestPair, M = window.Master;
+    if (!P || typeof P.piecesFor !== "function" || !r || !r.line) return [];
+    const e = M && typeof M.entryFor === "function" ? M.entryFor(String((r.spec && r.spec.designSku) || r.line.sku || "")) : null;
+    const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
+    if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
+    if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+  } catch (_) {}
+  return [];
+};
 const CNLive = window.CNLive = (() => {
   const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null }, owner = {}, last = {};
   const A = () => { const a = window.StationActivity; return a && typeof a.working === "function" ? a : null; };
@@ -611,10 +626,16 @@ const CNLive = window.CNLive = (() => {
       rid = String(rid || "").replace(/\D/g, ""); const w = who();
       if (!rid || !w) return false;
       const all = (rows || []).filter(r => r && r.order && r.line && !r.loading), here = all.filter(r => r.state !== "gone"), use = (here.length ? here : all).slice(0, 24);
-      const pieces = use.map((r, i) => {
+      const pieces = []; let total = 0;
+      use.forEach((r, i) => {
         const l = r.line, sp = r.spec || {}, q = Math.floor(+l.quantity) || 1, sku = String(sp.designSku || l.sku || "");
         const title = String(l.title || (r.snap && r.snap.title) || "").replace(/\s+/g, " ").trim().slice(0, 50);
-        return { id: rid + "_" + (String(l.transactionId || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + (title || sku || "Piece " + (i + 1)), sku, listingId: l.listingId, size: sp.size };
+        const one = { id: rid + "_" + (String(l.transactionId || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + (title || sku || "Piece " + (i + 1)), sku, listingId: l.listingId, size: sp.size };
+        const sd = livePairOf(r, rid);
+        total += sd.length || 1;
+        if (!sd.length) { pieces.push(one); return; }
+        // an earring pair: one piece per ear, Left then Right, one group (a pair goes in whole or not at all)
+        if (pieces.length + sd.length <= 24) sd.forEach((d, k) => pieces.push(Object.assign({}, one, { id: one.id + "-" + (k + 1), label: title || sku || "Piece " + (i + 1) }, d)));
       });
       const customer = String((use[0] && use[0].order.buyer && use[0].order.buyer.name) || "");
       const fp = JSON.stringify([w.person, w.device, rid, customer, pieces]);
@@ -622,7 +643,7 @@ const CNLive = window.CNLive = (() => {
       if (seen.sorter === fp) return true;
       seen.sorter = fp;
       if (!since.sorter || since.sorter.rid !== rid) since.sorter = { rid, at: Date.now() };       // (one scan time for the whole opening, however often the lines are read again)
-      const ok = A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+      const ok = A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: Math.max(total, pieces.length), holdMs: HOLD, scannedAt: since.sorter.at });
       if (ok) owner[at("sorter")] = "sorter";
       return ok;
     } catch (_) { return false; }
@@ -718,7 +739,9 @@ const TL = window.CNTimeline = (() => {
       if (!row || !row.order) return false;
       const { once, ...rest } = o || {}, tid = row.line && row.line.transactionId;
       const at = +rest.at > 1e12 ? +rest.at : Date.now();
-      const recorded = rec(Object.assign({ orderId: String(row.order.receiptId), type, lineKey: row.key }, tid != null ? { transactionId: String(tid) } : {}, rest, {at}), once);
+      // (an event about one ear or one disc belongs to the line, and says which piece in its data)
+      if (row.slot && row.parentRow) rest.data = Object.assign({ slot: row.slot }, row.side ? { side: row.side } : {}, rest.data || {});
+      const recorded = rec(Object.assign({ orderId: String(row.order.receiptId), type, lineKey: row.parentRow ? row.parentRow.key : row.key }, tid != null ? { transactionId: String(tid) } : {}, rest, {at}), once);
       if (!once || (recorded && !["interpreted","needsDecision","engraveNeeded"].includes(type))) CNListActivity.touch(row, at);
       return recorded;
     } catch (_) { return false; }
@@ -1499,7 +1522,7 @@ const Orders = window.Orders = (() => {
     // (only a line with no pool ids: the card a person completes was never pooled, and the server looks up exactly those lines)
     const cd = row.spec && row.spec.customDone, hand = !!cd && cd.state !== "open" && cd.how !== "sheet" && !(row.poolIds || []).length;
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
-      engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null } : null,
+      engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null, ...(row.engrave.pieces ? { pieces: row.engrave.pieces } : {}) } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
       engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign: hand ? !!(row.spec.special && row.spec.special.notCut) : !!row.spec?.noDesign,
@@ -1666,11 +1689,18 @@ const Orders = window.Orders = (() => {
         if (opt.after) opt.after(sh, mine);
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is no longer open on Etsy (${row.reason || "gone"})`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
+      // a pair (or n discs) of this line that stays on a sheet that cannot give it up (cut, sent) is said too: the other piece came off, this one is set aside
+      try {
+        if (off.length && window.PairRemove) {
+          const offSet0 = new Set(off), stay = [...ids].filter(id => !offSet0.has(id)).map(id => { const o = allSheets().find(p => (p.charms || []).some(x => x.poolId === id)); return o ? { id, where: sheetName(o) } : null; }).filter(Boolean);
+          if (stay.length) agent({ pool: true }, "warn", `${row.order.receiptId}: ${off.length === 1 ? "1 piece" : off.length + " pieces"} taken off, but ${stay.length === 1 ? "1 piece" : stay.length + " pieces"} of the same line stay on ${[...new Set(stay.map(x => x.where))].join(", ")} (cut or sent): set ${stay.length === 1 ? "it" : "them"} aside`);
+        }
+      } catch (_) { /* a log line only */ }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
       // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
       const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
-      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
+      try { const res = await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); const more = ((res && res.extended) || []).filter(id => !offSet.has(id)); if (more.length) { for (const id of more) B.pool.rows.delete(id); row.poolIds = row.poolIds.filter(id => !more.includes(id)); agent({ pool: true }, "warn", `${row.order.receiptId}: the server took ${more.length === 1 ? "1 more piece" : more.length + " more pieces"} of the same line off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`); } } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
     return out;
@@ -2114,8 +2144,37 @@ const Master = window.Master = (() => {
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
-  let previewObserver=null, previewQueue=[], previewRunning=0;
+  /* A design's stored picture as a small <img>, for the lists that offer designs (the SKU picker). The page's COEP (require-corp) blocks
+     a plain <img> of the Storage address (no CORP header), so it goes through the same-origin asset function, kept on this computer and
+     asked for only when near the screen (charm-nest-thumbs.js, mountPictures); without the module it is the plain image through `cors`. */
+  const pictureTag = e => {
+    const u = e && thumbOf(e); if (!u) return "";
+    const T = window.CharmNestThumbs, via = typeof cors === "function" ? cors(u) : u;
+    return T ? `<img alt="" crossorigin="anonymous" data-pic="${esc(via)}" data-pic-key="${esc(T.weeklyKey("s|" + (e.thumbPath || e.sku) + "|" + (e.indexedAt || "")))}">` : `<img alt="" crossorigin="anonymous" src="${esc(via)}">`;
+  };
+  const picMounts = new WeakMap();
+  const mountPictures = host => { try { picMounts.get(host)?.stop(); if (window.CharmNestThumbs) picMounts.set(host, CharmNestThumbs.mountImages(host)); } catch (_) { /* the pictures stay as they are */ } };
+  /* The tiles' pictures (charm-nest-thumbs.js): only what is on screen and a little way ahead is asked for, the nearest first
+     (a tile scrolled past is never asked for), a finished picture is kept on this computer under the design's file, its
+     indexing time and the drawing code, so a refresh draws nothing and asks for nothing. The picture itself is still drawn by
+     Pool.masterPreview, the tile's look is unchanged. Without the module the plain loader below runs as it always did. */
+  let previewMount=null;
   function mountMasterPreviews(grid) {
+    const T=window.CharmNestThumbs;
+    previewMount?.stop();previewMount=null;
+    if(!T||typeof T.mount!=="function")return mountMasterPreviewsPlain(grid);
+    const sizeOf=entry=>entry?.sizes && Object.keys(entry.sizes)[0] || null;
+    previewMount=T.mount(grid,{
+      selector:'[data-preview-sku]',concurrency:6,keep:false,   // (Pool.masterPreview keeps the picture itself, under this same key, for every list that draws a design)
+      // (a design the pool already holds is drawn from that copy at once, no download: nothing to keep, and its picture stays as it was)
+      keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath,geom.charmHash||entry.charmHash,entry.indexedAt):"";},
+      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry)):null;},
+      paint:(host,thumb)=>{const img=document.createElement("img");img.alt="";img.src=thumb;host.replaceChildren(img);},
+      fail:host=>{if(host.isConnected&&entryFor(host.dataset.previewSku))host.textContent="Preview unavailable";}
+    });
+  }
+  let previewObserver=null, previewQueue=[], previewRunning=0;
+  function mountMasterPreviewsPlain(grid) {
     previewObserver?.disconnect();previewQueue=[];
     const paint=async host=>{
       const entry=entryFor(host.dataset.previewSku);
@@ -2591,7 +2650,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
-  return { entryFor, looseFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -2686,7 +2745,11 @@ const Pool = window.Pool = (() => {
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
     const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
-    const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
+    // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
+    const T=window.CharmNestThumbs,geom=sizeEntry(entry,size),keep=T&&T.designKey?T.designKey(key,geom.charmHash||entry.charmHash,entry.indexedAt):"";
+    const make=()=>readMasterCharm(entry,size).then(({charm})=>draw(charm));
+    const task=keep?T.picture(keep,make):make();
     masterPreviewCache.set(key,task);
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
@@ -3035,7 +3098,7 @@ const Pool = window.Pool = (() => {
   }
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
   // (the page's row is stamped: a row read from the cloud before this change is older than it, OrderPieces)
-  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); }
+  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } const extended = []; if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) { const res = await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); if (res && Array.isArray(res.extended)) extended.push(...res.extended.map(String)); } return { extended }; }   // (extended: the other pieces of the same lines that the server took off with the ones named, a line comes off whole; [] almost always)
   /* charmOf and sheetOf walked every charm of every sheet at each call (sheetOf every placement against every charm), and
      a classify pass or a restore asks once a line, so an update took longer the more sheets the table held. One index
      answers both, first match first as the walks did; it is made again when a page comes or goes or a sheet's charms or
@@ -3105,7 +3168,7 @@ const Carry = window.Carry = (() => {
     if (!B.run || B.run.status !== "complete") return;
     const rows = Orders.rows().filter(r => !["gone", "committed"].includes(r.state));
     const keys = new Set(rows.map(r => r.key));
-    B.carry = Session.copy({ rows, jobs: [...Engrave.items().values()].filter(j => keys.has(j.key)), pools: B.pool.rows });
+    B.carry = Session.copy({ rows, jobs: [...Engrave.items().values()].filter(j => keys.has(j.rowKey || j.key)), pools: B.pool.rows });
   }
   function adopt() {
     if (!B.carry) return;
@@ -3119,9 +3182,9 @@ const Carry = window.Carry = (() => {
       if (!written) { row.state = "pulled"; row.poolIds = []; row.wait = null; row.reason = null; }
       B.orders.rows[i] = row; B.orders.byKey.set(row.key, row);
       for (const id of row.poolIds) if (B.carry.pools.has(id)) B.pool.rows.set(id, B.carry.pools.get(id));
-      const j = B.carry.jobs.find(j => j.key === row.key);
-      if (j) { j.row = row; if (!written && j.state === "written") j.state = "approved"; if (!written) j.backs = []; B.engrave.items.set(j.key, j); }
+      for (const j of B.carry.jobs.filter(j => (j.rowKey || j.key) === row.key)) { j.row = row; if (!written && j.state === "written") j.state = "approved"; if (!written) j.backs = []; B.engrave.items.set(j.key, j); }
     }
+    Engrave.relinkAll();
     delete B.carry;
   }
   return { capture, adopt };
@@ -4591,7 +4654,9 @@ const Engrave = window.Engrave = (() => {
   const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
   const fitOpts = job => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
   const items = () => B.engrave.items;
-  const charmFor = job => job.editCharm || Pool.charmOf(job.copies[0]);
+  /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
+  const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
+  const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]), { slot: job.slot, side: job.row && job.row.side });
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
   let openingBack = null, openingBackId = null;
   async function openBack(poolId, sheetId) {
@@ -4616,6 +4681,7 @@ const Engrave = window.Engrave = (() => {
         charm=Pool.cloneCharm(base,poolId); charm.poolId=poolId; if(piece) Object.assign(charm,CharmNestPoolPieces.fieldsOf(piece));
         if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
       }
+      charm=pieceCharmOf(poolId,charm,{ side:saved.side, slot:saved.slot, mirror:saved.mirror, bodyIndex:saved.bodyIndex });   // a Right ear's back is edited on the mirrored geometry it was cut and written on
       const sheet=Object.assign({},d,{sheetId:d.id,seq:d.setSeq,backPool:d.backPool || [],fileBase:d.fileBase || d.folder,
         folderPath:d.outputs?.ai?.path?.replace(/\/[^/]+$/,"")});
       if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
@@ -4664,8 +4730,82 @@ const Engrave = window.Engrave = (() => {
     if(S.mode === "library") await CN.loadLibrary();
   }
 
-  const jobOf = row => items().get(row.key) || null;
-  function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, lineGap:.216, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); return j; }
+  /* ── one job per PIECE for a mismatched pair (left ear, right ear) or a disc necklace (each disc): charm-nest-engrave-sides.js ──
+     A line whose pieces fall into two or more slots (L, R, D1..Dn) has one job per slot, keyed `<line key>#<slot>`; each job has its own side row (the
+     line's row with its own key, pool ids and engrave record), so the two ears never share a text, a fit, an approval, a record or a seal. Every other
+     line (a single charm, a matching pair) has the one job under its line key, exactly as before. Old jobs have no slot and read as they always did. */
+  const SIDES = () => window.CharmNestEngraveSides || null;
+  const sidesCtx = { poolRow: id => B.pool.rows.get(id), charmOf: id => Pool.charmOf(id), entryFor: sku => Master.entryFor(sku), get pair() { return window.CharmNestPair || null; }, mergeSeals: (...r) => CNEngravingSeals.merge(...r) };
+  const SLOT_PROBE = [null, "L", "R"].concat(Array.from({ length: 24 }, (_, i) => "D" + (i + 1)));
+  const lineOf = row => (row && row.parentRow) || row;
+  const slotKey = (row, slot) => (slot ? `${row.key}#${slot}` : row.key);
+  /** Every job of one line: the line's own, or one for each of its slots (a few map reads, no scan). */
+  function jobsOf(row) { row = lineOf(row); if (!row) return []; const out = []; for (const s of SLOT_PROBE) { const j = items().get(slotKey(row, s)); if (j) out.push(j); } return out; }
+  /** The job of a row. A side row gives its own. A line with one job gives it; a line cut into slots gives the one named (`which`: a slot or a pool id) or, for
+   *  a caller that shows the line as one, the first still to settle. */
+  const jobOf = (row, which) => {
+    if (!row) return null;
+    if (row.parentRow) return items().get(row.key) || null;
+    const whole = items().get(row.key);
+    if (whole) return whole;
+    const S = SIDES(); if (!S) return null;
+    const jobs = jobsOf(row); if (!jobs.length) return null;
+    if (which) { const slot = SLOT_PROBE.includes(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
+    return jobs.find(j => !DECIDED.includes(j.state) && j.state !== "none") || jobs[0];
+  };
+  const newJob = (key, row) => ({ key, row, lineGap:.216, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() });
+  function ensureOne(row, slot) {
+    const key = slotKey(row, slot); let j = items().get(key);
+    if (!j) { j = newJob(key, row); if (slot) Object.assign(j, { slot, rowKey: row.key, groupKey: String(row.order && row.order.receiptId || "") + ":" + String(row.line && row.line.transactionId || "") }); items().set(key, j); }
+    if (slot) { if (!j.row || j.row.parentRow !== row) j.row = SIDES().sideRow(sidesCtx, row, slot, j); }
+    j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id));
+    return j;
+  }
+  /** All the jobs of a line (made when missing): [the one job] for a line that is not cut into slots. */
+  function ensureJobs(row) {
+    row = lineOf(row); const S = SIDES();
+    const have = jobsOf(row), pl = S ? S.plan(sidesCtx, row, have) : { split: false, slots: [null] };
+    if (!pl.split) return [ensureOne(row, null)];
+    // an undecided job made under the plain line key before the line was known to be a pair: its words (already paid for) go to the slots, it goes
+    const old = have.find(j => !j.slot);
+    const jobs = pl.slots.map(s => ensureOne(row, s));
+    if (old && !DECIDED.includes(old.state)) {
+      for (const j of jobs) if (!j.text && old.text) Object.assign(j, { text: old.text, lines: (old.lines || []).slice(), source: old.source, quote: old.quote, confidence: old.confidence, requests: old.requests, questions: (old.questions || []).slice(), seededFrom: old.key });
+      items().delete(old.key); Review.remove("eng:" + old.key);
+    }
+    S.linkParent(sidesCtx, row, jobs);
+    return jobs;
+  }
+  /** The legacy one-job door: a line with one job gives it; a line cut into slots gives its first job (all are made). */
+  function ensureJob(row, slot) {
+    if (slot) { const line = lineOf(row); ensureJobs(line); return items().get(slotKey(line, slot)) || null; }
+    return ensureJobs(row)[0];
+  }
+  /** What a back record (and its events) says of the piece it is for: nothing for a line that is not cut into slots, so those records stay as they were. */
+  const pieceFields = job => (job && job.slot ? { slot: job.slot, ...(job.row && job.row.side ? { side: job.row.side } : {}), ...((job.editCharm || (job.copies && job.copies.length && charmFor(job)) || {}).mirrored ? { mirror: true } : {}), groupKey: job.groupKey || "" } : {});
+  /** The job that holds one piece (by its pool id): the line's only job, or the one of that piece's slot. */
+  function jobForPool(row, poolId) {
+    const js = ensureJobs(row); if (js.length === 1) return js[0];
+    const slot = SIDES().slotOfId(sidesCtx, lineOf(row), poolId) || null;
+    return js.find(j => (j.slot || null) === slot) || js[0];
+  }
+  /** A line leaves the pull (dropped, cancelled and cleared): every job of it goes with it. Seals live on in the order's timeline and the saved backs. */
+  function dropLine(row) { row = lineOf(row); const gone = jobsOf(row); for (const j of gone) { items().delete(j.key); Review.remove("eng:" + j.key); } return gone.length; }
+  /** The pieces of a line as the order window's "All pieces" list wants them: one entry for each job when the line is cut into slots, else null. */
+  function piecesOf(row) {
+    row = lineOf(row); const S = SIDES(); if (!S || !row) return null;
+    const jobs = jobsOf(row); if (!jobs.some(j => j.slot)) return null;
+    const of = jobs.length;
+    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: S.earOf(j.slot) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: S.tagOf(j.slot, of) }));
+  }
+  /** The line's pieces and jobs joined again after a restore (the sides are made from the saved jobs: nothing is read or paid for). */
+  function relinkAll() {
+    const S = SIDES(); if (!S) return 0; let n = 0;
+    const lines = new Map();
+    for (const j of items().values()) if (j.slot && j.rowKey) { if (!lines.has(j.rowKey)) lines.set(j.rowKey, []); lines.get(j.rowKey).push(j); }
+    for (const [k, jobs] of lines) { const row = B.orders.byKey.get(k); if (!row) continue; for (const j of jobs) j.row = S.sideRow(sidesCtx, row, j.slot, j); S.linkParent(sidesCtx, row, jobs.slice().sort((a, b) => SLOT_PROBE.indexOf(a.slot) - SLOT_PROBE.indexOf(b.slot))); n++; }
+    return n;
+  }
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
   const DECIDED = ["approved", "written", "skipped"];                    // the same set the Decided tab lists
@@ -4680,10 +4820,10 @@ const Engrave = window.Engrave = (() => {
       for (const bk of pg.backPool || []) {
         const row = rows.find(r => (bk.poolId && r.poolIds.includes(bk.poolId)) || (String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)));
         if (!row) continue;
-        const j = ensureJob(row);
+        const j = jobForPool(row, bk.poolId);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
         Object.assign(j, { state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: bk.approvedAt || null, engravingSeals:bk.engravingSeals || [], backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
-        row.engrave = { ...row.engrave, needed:true,state:"written",approved:true,text:j.text,approvedBy:j.approvedBy,approvedAt:j.approvedAt };CNEngravingSeals.keep(j);
+        j.row.engrave = { ...j.row.engrave, needed:true,state:"written",approved:true,text:j.text,approvedBy:j.approvedBy,approvedAt:j.approvedAt };CNEngravingSeals.keep(j);
       }
     }
     render();
@@ -4716,35 +4856,56 @@ const Engrave = window.Engrave = (() => {
     } catch (_) {}
   }
   async function classifyOnce(row) {
-    const job = ensureJob(row); const sp = row.spec; const owner = items();
-    CNEngravingSeals.keep(job);
-    if (!sp.engraveCandidate) { setNone(job, "no personalisation, message or note"); return job; }
+    const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
+    for (const j of jobs) CNEngravingSeals.keep(j);
+    if (!sp.engraveCandidate) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
     const engravable = true;
-    job.state = "classify"; row.engrave = { needed: false, state: "classify",seals:CNEngravingSeals.merge(row.engrave,job) };
-    // A fresh reading replaces the line split, size and decision kept for earlier words. The fit restored the first words
-    // it had seen, so an order whose words changed on Etsy showed its new words but was engraved with the old ones.
-    job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.decision = null;
+    // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
+    if (jobs.length > 1 && jobs.every(j => j.seededFrom && j.text)) {
+      for (const j of jobs) { const earOf = SIDES().earOf(j.slot); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
+      return job;
+    }
+    for (const j of jobs) {
+      j.state = "classify"; j.row.engrave = { needed: false, state: "classify",seals:CNEngravingSeals.merge(j.row.engrave,j) };
+      // A fresh reading replaces the line split, size and decision kept for earlier words. The fit restored the first words
+      // it had seen, so an order whose words changed on Etsy showed its new words but was engraved with the old ones.
+      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
+    }
     let r = null;
     // the Claude job already asked about these very words is taken up again (its poll cut off by the network, a reload)
     // rather than paid for a second time; one that failed is replaced once
-    const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages };
+    // (a line cut into slots names them in the question, so the model says which words go on which ear or disc; any other line asks exactly as before)
+    const slots = jobs.length > 1 ? jobs.map(j => j.slot).filter(Boolean) : null;
+    const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}) };
     let key = 2166136261; for (const ch of JSON.stringify(ask)) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
     const prior = job.claudeJob && job.claudeJob.ask === key ? job.claudeJob.id : null;
     try { r = await agentCall("engraveIntent", ask, { label: `Claude reads the words of ${row.order.receiptId}`, background: true, existingId: prior, retryFailed: !!prior, onStarted: id => { job.claudeJob = { id, ask: key }; } }); }
     catch (e) { r = { skipped: e.message }; }
-    if (items() !== owner || items().get(job.key) !== job || row.state === "gone" || job.state !== "classify") return job;
+    const live = jobs.filter(j => items().get(j.key) === j && j.state === "classify");
+    if (items() !== owner || row.state === "gone" || !live.length) return job;
+    for (const j of live) await settleReading(j, r);
+    return job;
+  }
+  /** One job takes the reading (a line cut into slots hands each its own: `r.pieces` names the words of each ear or disc; without them every slot gets the one text). */
+  async function settleReading(job, r) {
+    const row = job.row, sp = row.spec;
     if (!r || r.skipped || r.error) {
       // Keep the verbatim proposal reviewable even when the classifier is unavailable.
       job.text = sp.personalization.join("\n"); job.lines = sp.personalization.slice(); job.source = "personalization"; job.confidence = 0; job.questions = [`Claude was unavailable (${(r && (r.skipped || r.error)) || "no answer"}) — confirm the words`]; job.requests = { side: "back", font: null, handwriting: false, image: false };
       return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
+    }
+    if (job.slot && Array.isArray(r.pieces) && r.pieces.length) {
+      const mine = r.pieces.find(x => x && x.slot === job.slot);
+      if (!mine) { Object.assign(job, { text: r.text || "", lines: String(r.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean), source: r.source, quote: r.sourceQuote, confidence: r.confidence, requests: r.requests, questions: (r.questions || []).slice() }); return toWords(job, `Say which words go on the ${(SIDES().earOf(job.slot) || "piece").toLowerCase()}`); }
+      r = Object.assign({}, r, { text: String(mine.text || ""), engrave: !!String(mine.text || "").trim() });
     }
     job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null;
     const originalLines=[(sp.personalization || []).join("\n"),sp.buyerMessage,sp.staffNote,job.quote].filter(Boolean)
       .map(t=>String(t).split(/\r?\n/).map(t=>t.trim()).filter(Boolean))
       .find(lines=>lines.length && lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
     if(originalLines) {job.lines=originalLines;job.text=originalLines.join("\n");}
-    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}`, { reason: r.reasoning || null });
+    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().earOf(job.slot) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}`, { reason: r.reasoning || null });
     // Confidence describes the interpretation, not whether a preview can be drawn.
     // Nothing here approves or exports a proposed inscription.
     if (!r.engrave && !job.lines.length) {
@@ -4758,7 +4919,7 @@ const Engrave = window.Engrave = (() => {
     return setReady(job);
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
-  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why }); RunCtl.poke(); return job; }
+  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (owner.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
@@ -4766,9 +4927,9 @@ const Engrave = window.Engrave = (() => {
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
     if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
-    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
+    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: F_.error }); return job; }
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
-    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
+    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { ...job.row.engrave, needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
@@ -4833,7 +4994,7 @@ const Engrave = window.Engrave = (() => {
     // one bar for the whole pass, not one per order: what a person needs to know is how far along the reading is
     const bar = rows.length && window.CNProgress ? CNProgress.start(`Reading the words of ${rows.length} piece${rows.length === 1 ? "" : "s"}`, { total: rows.length }) : null;
     try {
-      await Promise.all(Array.from({ length: 3 }, async () => { while (q.length && items() === owner) { const r = q.shift(); try { await classify(r); } catch (e) { if(items() !== owner)break; agent({ engrave: true }, "warn", `${r.order.receiptId}: classifier failed — ${e.message}`); toWords(ensureJob(r), e.message); } done++; if (bar) bar.set(done, rows.length, r.order.receiptId); render(); } }));
+      await Promise.all(Array.from({ length: 3 }, async () => { while (q.length && items() === owner) { const r = q.shift(); try { await classify(r); } catch (e) { if(items() !== owner)break; agent({ engrave: true }, "warn", `${r.order.receiptId}: classifier failed — ${e.message}`); for (const j of ensureJobs(r)) toWords(j, e.message); } done++; if (bar) bar.set(done, rows.length, r.order.receiptId); render(); } }));
     } finally { if (bar) bar.end(); }
     if(items() !== owner)return done;
     if(Orders.rows().some(r=>["pooled","written"].includes(r.state) && r.spec?.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify") && (!Gate.modern() || Pool.sheetOf(r.poolIds[0]))))
@@ -4845,8 +5006,8 @@ const Engrave = window.Engrave = (() => {
     for (const r of Orders.rows()) {
       if (!["pooled", "written"].includes(r.state) || !r.spec || r.spec.engraveCandidate || !r.engrave) continue;
       if (!(["classify", "reclassify"].includes(r.engrave.state) || (r.engrave.state === "words" && !r.engrave.text))) continue;
-      const j = items().get(r.key);
-      if (j && ["classify", "words"].includes(j.state) && !j.decision) setNone(j, "no personalisation, message or note"); else if (!j) r.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(r.engrave) };
+      const js = jobsOf(r);
+      if (js.length) { for (const j of js) if (["classify", "words"].includes(j.state) && !j.decision) setNone(j, "no personalisation, message or note"); } else r.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(r.engrave) };
       plain++;
     }
     // a pass with nothing to read changes nothing: the lists and the run record are left as they are
@@ -4902,7 +5063,7 @@ const Engrave = window.Engrave = (() => {
     catch (e) {
       if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
       job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
-      Review.add({ kind: e.stage === "flip" ? "flipFailed" : "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason, checks:e.checks, images:e.images });
+      Review.add({ kind: e.stage === "flip" ? "flipFailed" : "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason, checks:e.checks, images:e.images });
       agent({engrave:true}, "warn", `${job.row.order.receiptId}: ${job.reason}`);
       // A failed back check holds this engraving; other jobs and sheets continue.
       render(); return job;
@@ -4917,13 +5078,13 @@ const Engrave = window.Engrave = (() => {
     job.view=view; job.mask=mask; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
     if(!fit) {
       job.state="review";job.reason=result.reason;job.row.engrave.state="review";
-      if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:job.row,job,why:result.reason});
+      if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:result.reason});
       render();return job;
     }
     job.wantSize=fit.size; job.verify={geometry:check,at:Date.now()};
     job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
-    if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job });
+    if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job });
     render(); return job;
   }
   async function claudeRead(job) {
@@ -4940,7 +5101,7 @@ const Engrave = window.Engrave = (() => {
     const owner = items(), jobs = [...owner.values()].filter(j => !j.editingBack && j.state === "ready" && j.row.state !== "gone" && canFit(j) && !isWorking(j));
     let fitted = 0;
     // a job counts only when the fit moved it on: one left "ready" (its charm not found on the sheet yet) changed nothing
-    for (const j of jobs) { if (items() !== owner || owner.get(j.key) !== j || j.state !== "ready" || j.row.state === "gone") continue; const row = j.row, sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { if (items() !== owner || owner.get(j.key) !== j || j.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvalPreparing || j.stamping) continue; j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } if (items() === owner && owner.get(j.key) === j && j.state !== "ready") fitted++; }
+    for (const j of jobs) { if (items() !== owner || owner.get(j.key) !== j || j.state !== "ready" || j.row.state === "gone") continue; const row = j.row, sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { if (items() !== owner || owner.get(j.key) !== j || j.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvalPreparing || j.stamping) continue; j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: (j.row.parentRow || j.row), job: j, why: e.message }); } if (items() === owner && owner.get(j.key) === j && j.state !== "ready") fitted++; }
     if (items() !== owner || !fitted) return 0;
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
@@ -4979,7 +5140,8 @@ const Engrave = window.Engrave = (() => {
     const task = window.CharmNestOperations ? window.CharmNestOperations.run({key:'back-remove:'+job.key,label:'Updating engraving',resources:['production:'+(job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || 'manual')]},invalidate) : backQueue.catch(()=>{}).then(invalidate);
     backQueue = task; task.catch(e=>{ job.reason = "Back removal not saved: " + e.message; RunCtl.stopIfRunning(job.reason, "Reconnect and reopen this engraving before continuing."); toast(job.reason,"bad"); });
   }
-  function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit && (({ layout, glyphs, cmds, ...f }) => f)(j.fit), approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
+  function invalidate(row, why) { for (const j of jobsOf(row)) { invalidateJob(j, why); if (j.slot && j.engraveRec) Object.assign(j.engraveRec, { invalidatedBy: why, approved: false, state: "reclassify" }); } }
+  function invalidateJob(j, why) { if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit && (({ layout, glyphs, cmds, ...f }) => f)(j.fit), approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
   /* One fitting policy for dragging, rotation and manual size: change the
@@ -5046,13 +5208,13 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
-  function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
+  function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   async function prepareApproval(job, by, at) {
     const charm=charmFor(job),view=job.view,fit=job.fit;
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
     const src=sourceOf(charm.sourceId),poolId=job.copies[0];
     const glyphs=fit.glyphs.map(g=>({cmds:g.cmds.map(c=>{const o={type:c.type};if(c.type!=="Z"){o.x=c.x-view.cx;o.y=c.y-view.cy;}if(c.type==="C" || c.type==="Q"){o.x1=c.x1-view.cx;o.y1=c.y1-view.cy;}if(c.type==="C"){o.x2=c.x2-view.cx;o.y2=c.y2-view.cy;}return o;})}));
-    const built=await P.buildBackFile({charm,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:"Source Sans 3",weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
+    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:"Source Sans 3",weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
     const verified=await verifyBackFile(built.bytes,job);
     if(!verified.ok)throw new Error(`The back file needs adjustment (${verified.why}). Move or resize the words before approving.`);
     return {fit,view};
@@ -5071,7 +5233,7 @@ const Engrave = window.Engrave = (() => {
         const sh = sheetFor(job, poolId), copy = B.pool.rows.get(poolId)?.copy || 1;
         TL.rec({ orderId: rid, type: "engraveApproved", id: `${poolId}-${at}`, at, by, station: "sorter", device: "charm-nest-1", lineKey: String(poolId).replace(/_\d+$/, ""), transactionId: String(row.line?.transactionId || String(poolId).split("_")[1] || ""),
           ...(sh?.sheetId ? { sheetId: sh.sheetId, sheet: SheetEvents.label(sh), setId: sh.setId && !sh.draft ? sh.setId : "" } : {}),
-          text: words ? `“${words}”` : "", data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true } }, true, true);
+          text: (words ? `“${words}”` : "") + (job.slot ? `${words ? " · " : ""}${SIDES().earOf(job.slot)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
       }
     } catch (e) { console.warn("[Engrave] timeline", e); }
   }
@@ -5184,7 +5346,7 @@ const Engrave = window.Engrave = (() => {
       // approved the same words again. Only a file that fails its own checks goes back to review.
       if (!e.engravingInvalid) {
         job.backPending = e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: the approved back file waits for the cloud (${e.message})`); retryBacksLater(); render(); }
-      else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); } }
+      else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); } }
     finally { job.backSaving = false; Session.schedule(); }
     // the run looks again only when the save changed something (a save with nothing to write would start it over and over)
     if(!job.editingBack && (job.state !== was || (job.backs || []).length !== had)) RunCtl.backgroundSettled();
@@ -5319,7 +5481,7 @@ const Engrave = window.Engrave = (() => {
     if(!host || !job)return;
     const revision=host._thumbRevision=(host._thumbRevision || 0)+1;
     const current=()=>host.isConnected && host._thumbRevision === revision;
-    const charm=(job.copies || job.row.poolIds || []).map(id=>Pool.charmOf(id)).find(Boolean);
+    const charm=(job.copies || job.row.poolIds || []).map(id=>pieceCharmOf(id,Pool.charmOf(id),{ slot:job.slot, side:job.row && job.row.side })).find(Boolean);
     const paint=c=>{if(current())host.replaceChildren(renderFront(c,220));};
     if(charm?.outline && charm.members?.length){paint(charm);return;}
     const sku=job.row.spec.designSku || job.row.line.sku;
@@ -5346,7 +5508,7 @@ const Engrave = window.Engrave = (() => {
       if (!(j.view && j.fit) && F_.ok && hasPlacement(j) && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) { try { restoreWritten(j); } catch (_) { /* written when it can be (writeBacks says why) */ } }
       if (j.view && j.fit && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) {
         if (!j._backPreview || j._previewAt !== j.approvedAt) { const cv = renderBack(j, 360, {hatch:false}); j._backPreview = cv.toDataURL("image/png"); j._previewSize = cv._sizePt; j._previewAt = j.approvedAt; }
-        for (const poolId of j.copies) if (!(j.backs || []).some(b => b.poolId === poolId && b.approvedAt === j.approvedAt)) records.push({poolId, order:j.row.order.receiptId, sku:j.row.spec.designSku, copy:B.pool.rows.get(poolId)?.copy, text:j.text, approvedAt:j.approvedAt, preview:j._backPreview, previewWPt:j._previewSize?.w, previewHPt:j._previewSize?.h, pending:true});
+        for (const poolId of j.copies) if (!(j.backs || []).some(b => b.poolId === poolId && b.approvedAt === j.approvedAt)) records.push({poolId, order:j.row.order.receiptId, sku:j.row.spec.designSku, copy:B.pool.rows.get(poolId)?.copy, ...pieceFields(j), text:j.text, approvedAt:j.approvedAt, preview:j._backPreview, previewWPt:j._previewSize?.w, previewHPt:j._previewSize?.h, pending:true});
       }
     }
     // Older compact history records did not include placements; their saved back membership is authoritative.
@@ -5391,7 +5553,7 @@ const Engrave = window.Engrave = (() => {
         if(e.engravingInvalid){
           job.state="blocked";job.reason=e.message;
           job.row.engrave={...job.row.engrave,state:"blocked",approved:false,reason:e.message};
-          try{Review.add({kind:"placement",key:"eng:"+job.key,row:job.row,job,why:e.message});}catch(viewError){console.warn("Engraving review view",viewError);}
+          try{Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:e.message});}catch(viewError){console.warn("Engraving review view",viewError);}
         }else{job.backPending=e.message || "Back files wait for saving";retryBacksLater();}
         Session.schedule();
         for(const show of [()=>agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`),render])try{show();}catch(viewError){console.warn("Engraving save view",viewError);}
@@ -5436,12 +5598,12 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
-        const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written back file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
         // Keep the exact uploaded payload before sending it. A lost reply must replay
         // these same file tokens, not upload again and look like a different edit.
@@ -5580,10 +5742,10 @@ const Engrave = window.Engrave = (() => {
     const backs = sh.backPool.slice(), when = at => at ? new Date(at).toLocaleString() : "";
     const items = await Promise.all(backs.map(async b => ({
       png: b.outputs && b.outputs.png && b.outputs.png.url ? await CharmNestAssets.bytes(b.outputs.png.url).catch(() => null) : null,
-      lines: [`${b.order} · ${b.sku} · copy ${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
+      lines: [`${b.order} · ${b.sku} · copy ${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""}${b.slot && !b.side && SIDES() ? " · " + SIDES().earOf(b.slot) : ""}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
     })));
     const pdf = await CharmNestExport.backIndexPdf({ title: sh.fileBase, backs: items });
-    const report = backs.map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
+    const report = backs.map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), ...(b.slot ? { slot: b.slot } : {}), text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
     const [idx, rep] = await Promise.all([uploadBytes(`${sh.folderPath}/back/back-index.pdf`, pdf, "application/pdf", "Saving back index"), uploadBytes(`${sh.folderPath}/back/back-report.json`, new TextEncoder().encode(JSON.stringify(report, null, 1)), "application/json")]);
     sh.backOutputs = { index: { path: idx.path, url: idx.url }, report: { path: rep.path, url: rep.url }, count: backs.length };
     // the record is written in turn with the run's own sheet saves, which carry backOutputs too
@@ -5702,7 +5864,7 @@ const Engrave = window.Engrave = (() => {
   const waitingReason = job => ["ready", "fitting"].includes(job.state)
     ? (canFit(job) ? "Preparing this engraving preview…" : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
     : job.state === "classify" ? "Processing stopped before these words were read. Confirm the inscription below or resume the run." : "the words need a decision";
-  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title].some(x => String(x || "").toLowerCase().includes(q)); };
+  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().earOf(j.slot) : ""].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
     // a recalled set names itself, even while a finished run is still remembered underneath
@@ -5956,7 +6118,7 @@ const Engrave = window.Engrave = (() => {
                 </dl>
                 <div class="ctl">${j2.recalledFrom ? `<span class="hint">this set is recalled — reopening rebuilds its sheet from the master files first</span>` : ""}</div>
               </div>`;
-            return `<div class="doneRow decidedRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="View engraving details">${ListMedia.pair(j2.row)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span></div><span class="purchaseLabel">Words on the back</span><span class="w">${w}</span></div><div class="purchaseSummary">${purchaseMarkup(j2.row)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span>${CNEngravingSeals.html(j2) || '<span class="by">Decision details not recorded</span>'}</div><button class="btn ghost sm" data-a="reopen" title="Reopen this engraving for changes">Reopen</button></div>${detail}</div>`;
+            return `<div class="doneRow decidedRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="View engraving details">${ListMedia.pair(j2.row)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span>${j2.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(j2.slot)}">${esc(SIDES().tagOf(j2.slot, jobsOf(j2.row).length))}</span>` : ""}</div><span class="purchaseLabel">Words on the back</span><span class="w">${w}</span></div><div class="purchaseSummary">${purchaseMarkup(j2.row)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span>${CNEngravingSeals.html(j2) || '<span class="by">Decision details not recorded</span>'}</div><button class="btn ghost sm" data-a="reopen" title="Reopen this engraving for changes">Reopen</button></div>${detail}</div>`;
           }).join("") + `</div>`
         : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
@@ -6055,7 +6217,7 @@ const Engrave = window.Engrave = (() => {
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
     const fromOrder = `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, jobsOf(job.row).length))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the back file">Approved</button></span>` : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
@@ -6300,7 +6462,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, jobForPool, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -7997,7 +8159,7 @@ const RunCtl = window.RunCtl = (() => {
       pg.persisted = Promise.resolve();
       computeSaturation(pg); renderCard(pg);
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
-      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
+      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.jobForPool(row, b.poolId); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); j.row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
       // sheet must be rebuilt and verified before it can acquire set membership.
       if (pg.draft || pg.placements.length !== (d.placements || []).length) {
@@ -10203,9 +10365,10 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
-        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.thumbOf(Master.entryFor(k) || {}) ? `<img alt="" src="${esc(Master.thumbOf(Master.entryFor(k)))}">` : ""}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
+        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.pictureTag(Master.entryFor(k))}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
+      Master.mountPictures(c);
       const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
       const put = async (field, value) => {
         const who = by(); if (!who) return;
@@ -10279,7 +10442,7 @@ const Review = window.Review = (() => {
     } else if (it.kind === "engraveWords" || it.kind === "notRepresentable" || it.kind === "fontMissing") {
       const j = it.job; const miss = j.missing || [];
       const hl = t => esc(t).replace(/\n/g, "<br>"); const marked = miss.length ? [...(j.text || "")].map(ch => miss.includes(ch) ? `<span class="miss">${esc(ch)}</span>` : esc(ch) === "\n" ? "<br>" : esc(ch)).join("") : hl(j.text || "");
-      c.innerHTML = head(it.kind === "notRepresentable" ? "Not representable" : it.kind === "fontMissing" ? "Font files missing" : "Engraving words", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Customer typed", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q>`)}${evRow("Buyer message", `<q>${esc(sp.buyerMessage || "—")}</q>`)}${evRow("Staff note", `<q>${esc(sp.staffNote || "—")}</q>`)}${sp.messages && sp.messages.length ? evRow("Staff messages", sp.messages.map(m => `<q>${esc(m.senderName)}: ${esc(m.text)}</q>`).join(" ")) : ""}${evRow("Claude read", claudeVerdict(j))}${j.questions && j.questions.length ? evRow("Claude asks", j.questions.map(q => `<q>${esc(q)}</q>`).join(" ")) : ""}${j.requests && (j.requests.font || j.requests.handwriting || j.requests.image || (j.requests.side && !["back", "unspecified"].includes(j.requests.side))) ? evRow("Customer asks", esc(JSON.stringify(j.requests))) : ""}</div><div class="why">${esc(it.why || j.reason || "")}</div>
+      c.innerHTML = head(it.kind === "notRepresentable" ? "Not representable" : it.kind === "fontMissing" ? "Font files missing" : "Engraving words", r.order.receiptId + (j.slot ? " · " + Engrave.earOf(j.slot) : ""), orderSub) + `<div class="ev">${evRow("Customer typed", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q>`)}${evRow("Buyer message", `<q>${esc(sp.buyerMessage || "—")}</q>`)}${evRow("Staff note", `<q>${esc(sp.staffNote || "—")}</q>`)}${sp.messages && sp.messages.length ? evRow("Staff messages", sp.messages.map(m => `<q>${esc(m.senderName)}: ${esc(m.text)}</q>`).join(" ")) : ""}${evRow("Claude read", claudeVerdict(j))}${j.questions && j.questions.length ? evRow("Claude asks", j.questions.map(q => `<q>${esc(q)}</q>`).join(" ")) : ""}${j.requests && (j.requests.font || j.requests.handwriting || j.requests.image || (j.requests.side && !["back", "unspecified"].includes(j.requests.side))) ? evRow("Customer asks", esc(JSON.stringify(j.requests))) : ""}</div><div class="why">${esc(it.why || j.reason || "")}</div>
         <div class="fixes"><textarea data-f="text">${esc(j.text || (sp.personalization || []).join("\n"))}</textarea></div>
         <div class="fixes"><button class="btn gold sm" data-a="confirm">Engrave this text</button><button type="button" class="btn ghost sm emBtn" data-emoji title="choose an emoji the laser can engrave and put it in the words">Emoji</button>${miss.length ? `<button class="btn ghost sm" data-a="drop">Drop the character${miss.length > 1 ? "s" : ""} ${esc(miss.join(" "))}</button>` : ""}<button class="btn ghost sm" data-a="msg">Ask the customer</button><button class="btn ghost sm" data-a="none">Don't engrave</button>${it.kind === "fontMissing" ? `<button class="btn ghost sm" data-a="fonts">Retry font files</button>` : ""}</div>`;
       { const eb = c.querySelector("[data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: c.querySelector("[data-f=text]"), button: eb, key: "review:" + it.key }))) eb.remove(); }
@@ -10290,7 +10453,7 @@ const Review = window.Review = (() => {
       const fb = c.querySelector("[data-a=fonts]"); if (fb) fb.onclick = async () => { B.engrave.fonts.ok = false; B.engrave.fonts.error = null; await Engrave.loadFonts(); if (B.engrave.fonts.ok) { remove(it.key); await Engrave.setReady(j); RunCtl.poke(); } };
     } else if (it.kind === "flipFailed") {
       const j = it.job; const ch = it.checks || (j.flipError && j.flipError.checks) || {};
-      c.innerHTML = head("Flip check failed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Checks", Object.keys(ch).length ? Object.entries(ch).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "<b style='color:#8a3a26'>✗</b>"}`).join(" · ") : esc(it.why || ""))}</div><div class="imgs" style="display:flex;gap:8px"></div><div class="why">${esc(it.why || j.reason || "")}</div><div class="fixes"><button class="btn gold sm" data-a="rerun">Re-run</button><button class="btn ghost sm" data-a="noeng">No engraving for this order</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head("Flip check failed", r.order.receiptId + (j.slot ? " · " + Engrave.earOf(j.slot) : ""), orderSub) + `<div class="ev">${evRow("Checks", Object.keys(ch).length ? Object.entries(ch).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "<b style='color:#8a3a26'>✗</b>"}`).join(" · ") : esc(it.why || ""))}</div><div class="imgs" style="display:flex;gap:8px"></div><div class="why">${esc(it.why || j.reason || "")}</div><div class="fixes"><button class="btn gold sm" data-a="rerun">Re-run</button><button class="btn ghost sm" data-a="noeng">No engraving for this order</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       const imgs = it.images || (j.flipError && j.flipError.images); if (imgs) { for (const [k, m] of [["front", imgs.F], ["back", imgs.B], ["front flipped", imgs.flipF]]) { if (!m) continue; const cv = document.createElement("canvas"); cv.width = m.w; cv.height = m.h; cv.style.cssText = "width:150px;border:1px solid var(--line);background:#fff"; cv.title = k; const ctx = cv.getContext("2d"); const img = ctx.createImageData(m.w, m.h); for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) { const i = ((m.h - 1 - y) * m.w + x) * 4, v = m.bits[y * m.w + x] ? 40 : 255; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255; } ctx.putImageData(img, 0, 0); c.querySelector(".imgs").appendChild(cv); } }
       c.querySelector("[data-a=rerun]").onclick = () => { remove(it.key); j.state = "ready"; Engrave.fitJob(j).catch(e => toast(e.message, "bad")); };
       c.querySelector("[data-a=noeng]").onclick = async () => { const who = by(); if (!who) return; remove(it.key); Engrave.decideWords(j, { none: true, by: who }); };
@@ -15104,11 +15267,12 @@ const Session = window.Session = (() => {
         }
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
-      B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.key)).map(j => {
-        j.lineGap ??= .18; j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.key); if (j.state === "fitting") j.state = "ready";
+      B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.rowKey || j.key)).map(j => {
+        j.lineGap ??= .18; j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.rowKey || j.key); if (j.state === "fitting") j.state = "ready";
         return [j.key, j];
       }));
-      B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey), job: B.engrave.items.get(it.jobKey) }));
+      Engrave.relinkAll();                                              // (a job of a pair's ear or a disc gets its own row again from its line)
+      B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey) || B.engrave.items.get(it.jobKey)?.row, job: B.engrave.items.get(it.jobKey) }));
       Engrave.recoverApprovals?.();
       CustomRead.later();                                                // the lines come back with their last reading: look again
       Engrave.restoreView?.(d.engravingView);
@@ -15262,6 +15426,14 @@ const Cleanups = window.Cleanups = (() => {
     const charmIds = new Set([...(sh.charms || []).filter(off).map(x => x.id), ...(c.removedCharmIds || [])]);
     const poolIds = new Set([...(sh.charms || []).filter(off).map(x => x.poolId).filter(Boolean), ...(c.removedPoolIds || [])]);
     const onIt = (sh.charms || []).filter(off).length + (sh.placements || []).filter(p => p && charmIds.has(p.id)).length;
+    // a pair (or n discs) with a piece taken off here and another piece left on a sheet is said in the log, never in silence (PairRemove: the cleanup names pieces, not groups)
+    try {
+      if (window.PairRemove && poolIds.size) {
+        const where = id => { const o = allSheets().find(p => p !== sh && (p.charms || []).some(x => x.poolId === id)); return o ? nameOf(o) : ""; };
+        const left = PairRemove.partnersOutside([...poolIds], { rows: (B.orders && B.orders.rows) || [], pools: B.pool.rows, charms: allSheets().flatMap(p => p.charms || []) }, where).filter(x => x.where);
+        if (left.length) agent({ metal: sh.metal, run: sh.runId || null }, "warn", `${nameOf(sh)}: the cloud's cleanup ${c.id} took ${poolIds.size === 1 ? "1 piece" : poolIds.size + " pieces"} off, and ${left.length === 1 ? "1 piece" : left.length + " pieces"} of the same pair or group stay on ${[...new Set(left.map(x => x.where))].join(", ")}`);
+      }
+    } catch (_) { /* a log line only */ }
     // 1 · the sheet: the pieces taken off leave it, and whatever of this page still names them
     const keep = p => !(p && charmIds.has(p.id));
     sh.charms = (sh.charms || []).filter(x => !off(x));
@@ -15875,7 +16047,7 @@ const Upkeep = window.Upkeep = (() => {
     if (orders.size) {
       const keys = new Set(), la = r.lineArchive || (r.lineArchive = {}), base = la.base || (la.base = {});
       for (const [, o] of orders) for (const row of o.rows) {
-        keys.add(row.key); B.orders.byKey.delete(row.key); Engrave.items().delete(row.key);
+        keys.add(row.key); B.orders.byKey.delete(row.key); Engrave.dropLine(row);
         for (const id of row.poolIds || []) B.pool.rows.delete(id);
       }
       B.orders.rows = B.orders.rows.filter(row => !keys.has(row.key));

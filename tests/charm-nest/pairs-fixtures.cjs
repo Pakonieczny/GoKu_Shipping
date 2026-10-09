@@ -17,9 +17,10 @@
 //   * a matching pair's pieces now carry side "L" then "R" (they used to carry null), and `mirror` (true on the piece that is the mirror of the drawing)
 //   * kinds: 'pair' | 'hoop' | 'mismatched' (earring pairs: 2 pieces per unit) | 'earring-single' (the "Single" line: 1 piece per unit, no side) |
 //            'single' (a pendant or charm) | 'discs' (n discs) | 'letters' (n letters): the last four never have a side
-//   * the default pair design is PAIR-FACE-L (drawn facing left, asymmetric, so mirroring is visible); PAIR-FACE-R faces right; PAIR-SET-R carries a person's `facing: "R"`
+//   * the default pair design is PAIR-FACE-L (drawn facing left, asymmetric, so mirroring is visible); PAIR-FACE-R faces right (a person set `facing: "R"` on it: a shape cannot say which way it faces); PAIR-SET-R carries a person's `facing: "R"`
 //   * every sheet charm of a world carries `shapeJson`: its laid outline as a JSON STRING (a list of polygons is an array in an array: Firestore refuses it)
 //   * F.problems has new codes: side-missing, side-unexpected, mirror-missing, mirror-mismatch, mirror-pairing, mirror-unexpected, shape-mismatch, reflected, not-mirror
+//   * the set records of a world list each copy with its sheet and side, as a committed set does (orders[rid].lines[{ transactionId, sku, copies:[{ copy, sheetId, sheet, poolId, side }] }]); a split inside one set stores no tracking field of its own, so `tracked` stays an input of the checker
 //   * a world is `{ ..., kinds }` (groupKey -> kind) and the run record's lines carry `kind` and `pieceCount`, as the intake will set spec.pair.kind / spec.pieceCount
 //
 // ── THE NAMED CASES (F.cases) — each is a ready world, ids fixed, `expect` says what the checker must find ───────────────────────────────────
@@ -103,6 +104,7 @@
 //        metal-mismatch    the pieces of one group (or a sheet and its pieces) differ in metal
 //        set-disagree      a sheet's setId, the set's sheetIds and the pieces' setId do not agree
 //        half-held         some pieces of a group are on hold or cancelled and some are not
+//        set-copy-disagree a committed set record (orders[rid].lines[].copies[]: copy, sheetId, poolId, side) lists a piece on another sheet than the sheet records have it, or with another side than its pool row
 //   The kind of a group comes from docs.kinds, else the run records' lines (`kind`), else the rows' sides and the design and form.
 //   F.sheetsOf(group, docs) / F.groupsOf(docs)   the groups (key -> pieces with their sheet) as the checker reads them
 //   Legacy records (no pair fields) are checked only for the things that need none: sheet-disagree, duplicate-piece, untracked-split, split-across-sets,
@@ -169,7 +171,7 @@ function charmOf(sku) {
   const bodies = src(), members = [];
   for (const b of bodies) { members.push(b.outline); for (const i of b.inks) members.push(i); if (b.ring) members.push(b.ring); }
   const bbox = members.reduce((u, m) => [Math.min(u[0], m.bbox[0]), Math.min(u[1], m.bbox[1]), Math.max(u[2], m.bbox[2]), Math.max(u[3], m.bbox[3])], [1e9, 1e9, -1e9, -1e9]);
-  return { sku, ...(sku === 'PAIR-SET-R' ? { facing: 'R' } : {}), outline: bodies[0].outline, members, bbox, widthPt: bbox[2] - bbox[0], heightPt: bbox[3] - bbox[1], areaPt2: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) };
+  return { sku, ...(sku === 'PAIR-SET-R' || sku === 'PAIR-FACE-R' ? { facing: 'R' } : {}), outline: bodies[0].outline, members, bbox, widthPt: bbox[2] - bbox[0], heightPt: bbox[3] - bbox[1], areaPt2: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) };
 }
 /** The master index entry of a design: `pair` only when it draws more than one body (the contract's Charm_Master_Index field). */
 function entryOf(sku) {
@@ -271,7 +273,10 @@ function world(spec) {
     return { id: s.id, setId: s.set, setSeq: SET_SEQ[s.set] || 1, sheetIndex: s.n, runId: RUN, metal: s.metal, day: DAY, fileBase: fileBase(s), folder: fileBase(s), status: 'complete', placedCount: placements.length, charmCount: charms.length, density: .5,
       stock: { wPt: 300, hPt: 150 }, placements, charms, poolIds: charms.map(c => c.poolId), orders: [...new Set(charms.map(c => c.order))], verification: { ok: true }, outputs: {}, label: { files: [], orders: [...new Set(charms.map(c => c.order))] }, archived: false, createdAt: T0, updatedAt: T0 + 5000 };
   }).filter(Boolean);
-  const sets = [...new Set(sheets.map(s => s.setId))].map(id => { const mine = sheets.filter(s => s.setId === id); return { setId: id, seq: SET_SEQ[id] || 1, day: DAY, runId: RUN, sheetIds: mine.map(s => s.id), materials: [...new Set(mine.map(s => s.metal))], orders: {}, labelFiles: [], status: 'labelled' }; });
+  const sets = [...new Set(sheets.map(s => s.setId))].map(id => {
+    const mine = sheets.filter(s => s.setId === id), ord = {};   // (a set record lists each copy with its sheet and side: orders[rid].lines[{ transactionId, sku, copies:[{ copy, sheetId, sheet, poolId, side }] }])
+    for (const sh of mine) for (const c of sh.charms) { const pc = pieces.find(p => p.poolId === c.poolId), o = ord[pc.orderId] = ord[pc.orderId] || { held: null, lines: [] }; let line = o.lines.find(l => l.transactionId === pc.transactionId); if (!line) { line = { transactionId: pc.transactionId, sku: pc.sku, copies: [] }; o.lines.push(line); } line.copies.push({ copy: pc.copy, sheetId: sh.id, sheet: sh.fileBase, poolId: pc.poolId, backPoolId: null, ...(pc.side ? { side: pc.side } : {}) }); }
+    return { setId: id, seq: SET_SEQ[id] || 1, day: DAY, runId: RUN, sheetIds: mine.map(s => s.id), materials: [...new Set(mine.map(s => s.metal))], orders: ord, labelFiles: [], status: 'labelled' }; });
   const lines = {}, kinds = {}; for (const o of orders) for (const l of o.lines) { lines[lineKey(o.rid, tx(l.n))] = { orderId: o.rid, transactionId: tx(l.n), sku: l.sku, state: l.pieces.every(p => p.on) ? 'written' : 'pooled', quantity: l.qty, material: l.metal, poolIds: l.pieces.map(p => p.poolId), kind: KINDS[l.kind].pair, pieceCount: l.pieces.length }; kinds[groupKey(o.rid, tx(l.n))] = KINDS[l.kind].pair; }
   const run = { runId: RUN, status: 'running', step: 'nest', day: DAY, lines, orders: orders.map(o => o.rid), sheets: {}, holds: {}, errors: [], resumable: true };
   return { orders, pieces, pool, sheets, sets, run, designs: designMap, kinds, tracked: (spec.tracked || []).slice(), sheetDefs };
@@ -282,6 +287,7 @@ function legacy(w) {
   const c = clone(w); for (const p of c.pool) for (const k of PAIR_FIELDS) delete p[k];
   for (const s of c.sheets) for (const ch of s.charms) { for (const k of PAIR_FIELDS) delete ch[k]; delete ch.shapeJson; }
   for (const p of c.pieces) for (const k of PAIR_FIELDS) delete p[k];
+  for (const set of c.sets) for (const o of Object.values(set.orders || {})) for (const l of o.lines) for (const cp of l.copies) delete cp.side;
   for (const l of Object.values(c.run.lines)) { delete l.kind; delete l.pieceCount; }
   c.kinds = {}; c.legacy = true; return c;
 }
@@ -475,6 +481,14 @@ function problems(docs, opts) {
     for (const p of ps) { const s = p.sheets[0]; if (s && p.row && HEALTHY(p.row) && p.row.setId != null && (s.setId || null) !== (p.row.setId || null)) add('set-disagree', g, `${p.poolId}: the pool row says set ${p.row.setId}, its sheet ${sheetLabel2(s)} is in ${s.setId || 'none'}`, p.poolId); }
     // held
     const heldN = rows.filter(r => held(r)).length; if (heldN && heldN < rows.length) add('half-held', g, `${g.key}: ${heldN} of ${rows.length} piece(s) are on hold or cancelled, the rest are not`);
+  }
+  // the set record lists each copy with its sheet and side (orders[rid].lines[].copies[]): it must say where the piece is and which ear it is
+  const rowById = new Map((docs.pool || []).map(r => [r.poolId, r])), sheetOfPiece = new Map(); for (const s of sheetById.values()) for (const id of s.poolIds || []) sheetOfPiece.set(id, sid(s));
+  for (const set of docs.sets || []) for (const [rid_, od] of Object.entries(set.orders || {})) for (const ln of (Array.isArray(od && od.lines) ? od.lines : Object.values((od && od.lines) || {}))) for (const cp of (ln && ln.copies) || []) {
+    const where = sheetOfPiece.get(cp.poolId), row = rowById.get(cp.poolId), k = gkOfPool(cp.poolId), bad = t => out.push({ code: 'set-copy-disagree', groupKey: k, poolId: cp.poolId, text: `set ${set.setId || set._id}, order ${rid_}: ${cp.poolId} ${t}` });
+    if (where && cp.sheetId && where !== cp.sheetId) bad(`is listed on ${cp.sheetId}, the sheet records have it on ${where}`);
+    else if (!where && cp.sheetId && sheetById.has(cp.sheetId) && row && HEALTHY(row)) bad(`is listed on ${cp.sheetId}, which does not hold it`);
+    if (cp.side && row && row.side !== undefined && (row.side || null) !== cp.side) bad(`is listed as the ${word(cp.side)}, the pool row says ${word(row.side)}`);
   }
   for (const set of docs.sets || []) for (const id of set.sheetIds || []) { const s = sheetById.get(id); if (s && (s.setId || null) !== (set.setId || set._id)) out.push({ code: 'set-disagree', groupKey: '', poolId: null, text: `set ${set.setId || set._id} lists ${id}, whose own record says set ${s.setId || 'none'}` }); }
   for (const s of sheetById.values()) if (s.setId && (docs.sets || []).length) { const set = (docs.sets || []).find(x => (x.setId || x._id) === s.setId); if (set && !(set.sheetIds || []).includes(sid(s))) out.push({ code: 'set-disagree', groupKey: '', poolId: null, text: `${sid(s)} says set ${s.setId}, which does not list it` }); }
