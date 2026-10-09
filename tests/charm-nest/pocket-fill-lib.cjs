@@ -116,6 +116,7 @@ async function runStream(opts) {
     clearancePt: -.5, angles: CAREFUL_ANGLES, fineRes: 2, coarseRes: .5, timeBudgetMs: 180000, fullBudget: false, stallMs: 60000, maxTrials: 2000, seed: opts.seed || 1,
     lockedPlacements: sh.appendOnly ? sh.nestInitial || sh.placements : sh.nestInitial?.length ? sh.nestInitial : null,
     careful: true, roomCheck: fast, block: cut, initialLayout: sh.nestInitial || null, maxFill: .8, nearFullContact: !cut,
+    ...(opts.unjam !== false && metal !== 'rose' ? { unjam: true, ...(opts.unjamMs ? { unjamMs: opts.unjamMs } : {}) } : {}),   // the page's own job (buildJob); the older solver of a BEFORE run ignores it
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : (+c.orderDate || 0), pinned: c.pinned ? { ...c.pinned } : null })),
     ...(opts.job || {}),
   });
@@ -129,10 +130,15 @@ async function runStream(opts) {
     sh.placements = kept.map(p => ({ ...p })); sh.rejects = [];
     const job = buildJob(sh, items), t0 = Date.now();
     const result = await S.solve(job, {});
-    const ms = Date.now() - t0; sh.ms += ms; sh.searches++; ctl.searches.push({ page: sh.page, ms, n: items.length - kept.length, placed: result.placements.length - kept.length, pocket: result.careful && result.careful.pocket, rejects: result.rejects.length });
+    if (opts.onSearch) opts.onSearch(job, result, sh);
+    const ms = Date.now() - t0; sh.ms += ms; sh.searches++; ctl.searches.push({ page: sh.page, ms, n: items.length - kept.length, placed: result.placements.length - kept.length, pocket: result.careful && result.careful.pocket, unjam: result.unjam || null, rejects: result.rejects.length });
     sh.status = 'finishing'; sh.endedBy = result.endedBy; sh.placements = result.placements.map(p => ({ ...p })); sh.rejects = result.rejects.slice();
     const byId = new Map(items.map(c => [c.id, c]));
     ctx.keepOrdersWhole(sh, byId, new Set(result.pocketFilled || []));
+    // a saved charm the unjam lifted and seated again is saved at its new spot (the page does the same with sh.nestInitial)
+    const movedIds = new Set((result.unjam && result.unjam.moved) || []);
+    if (movedIds.size && job.lockedPlacements) job.lockedPlacements = job.lockedPlacements.map(p => movedIds.has(p.id) ? { ...sh.placements.find(q => q.id === p.id) } : p);
+    sh.unjamMoved = (sh.unjamMoved || []).concat([...movedIds]);
     sh.verification = { ok: S.verify(job, sh.placements, 4).ok };
     if (!sh.verification.ok) throw new Error('layout failed verification on page ' + sh.page);
     sh.result = result; sh.density = result.density; sh.usablePt2 = result.usablePt2; sh.freePt2 = result.freePt2; sh.placedPt2 = result.placedPt2;

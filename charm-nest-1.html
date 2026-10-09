@@ -4440,7 +4440,8 @@ const CHARM_SCALE = 0.975;
 const layoutKey = (sh, byId) => JSON.stringify([sh.sheetId, (sh.placements || []).map(p => { const c = byId.get(p.id); return [String(p.id), +(+p.cxPt).toFixed(3), +(+p.cyPt).toFixed(3), p.angle, p.scale || 1, c ? c.hash : null, c ? c.name : null]; }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)]);
 /** One charm at a time on every sheet (Paul, 24 Sep): Gold, Silver, Rose Gold past its green line, a sheet's first
     charms as much as later ones. Each is graded spot by spot at 2° steps with the others looked ahead, nudged into
-    place, and never moved again; a sheet is never re-arranged. */
+    place, and never moved again; a sheet is never re-arranged, except that an order turned away from a sheet with room left
+    lifts the few newest charms around the bottleneck and seats them again with it (9 Oct, "making room"). */
 const CAREFUL_ANGLES = Array.from({ length: 180 }, (_, i) => i * 2);
 const carefulNest = sh => sh.nestFlow !== "learned";
 function buildJob(sh) {
@@ -4454,11 +4455,14 @@ function buildJob(sh) {
     protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null,
     // a Gold or Silver sheet also reports whether one of the shop's smallest charms could still go in (see topupSettle)
     careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
+    // an order turned away from a sheet with room left lifts the few newest charms near the bottleneck and seats them again beside it ("making room"; Rose Gold never, see the solver's unjam)
+    // (a sheet whose attempts found no arrangement tries less each time, and not at all after three)
+    unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 8000 } : {}),
     // Rose Gold, 10K and 14K (the metals with a green line) go on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS)
     block: careful && (sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     // filling its gaps, a sheet takes any later order that fits, not only the oldest
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin)
   };
 }
 function packingKey(sh, items) {
@@ -4830,7 +4834,12 @@ function onWorkerMessage(sh, m, idx) {
     const pr = m.probe;
     // a lifted charm leaves the sheet again: its order has a charm that fits nowhere, or a second pass starts over
     if (pr.stage === "place") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id).concat(pr); sh.probe = null; }
-    else if (pr.stage === "lift") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id); if (sh.probe?.id === pr.id) sh.probe = null; }
+    else if (pr.stage === "lift") {
+      sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id); if (sh.probe?.id === pr.id) sh.probe = null;
+      // making room: a saved charm the search lifts leaves the card until it is seated again (finishNest puts back what is still off)
+      const was = pr.saved && sh.placements.find(p => p.id === pr.id);
+      if (was) { (sh._unjamLift ||= new Map()).set(pr.id, was); sh.placements = sh.placements.filter(p => p !== was); }
+    }
     else sh.probe = pr;
     // the bar counts the charms as they land, not the rotations prepared before the first one (it read "preparing 100%"
     // and "0/134 placed" over a sheet filling up, 25 Sep)
@@ -4839,7 +4848,7 @@ function onWorkerMessage(sh, m, idx) {
     if (pr.stage === "place" || pr.stage === "lift" || !sh._probeStageAt || t - sh._probeStageAt > 250) {
       sh._probeStageAt = t;
       const name = byId.get(pr.id)?.name || "charm";
-      sh.stage = pr.stage === "place" ? `Placed ${name} at ${pr.angle}°` : pr.stage === "lift" ? `Took ${name} off again` : `${{ turn: "Turning", try: "Trying spots for", nudge: "Nudging" }[pr.stage] || "Trying"} ${name} · ${pr.angle}° · ${pr.graded} spots graded`;
+      sh.stage = (pr.unjam ? "Making room · " : "") + (pr.stage === "place" ? `Placed ${name} at ${pr.angle}°` : pr.stage === "lift" ? `Took ${name} off again` : `${{ turn: "Turning", try: "Trying spots for", nudge: "Nudging" }[pr.stage] || "Trying"} ${name} · ${pr.angle}° · ${pr.graded} spots graded`);
       renderProgress(sh);
     }
     // a full redraw of the sheet about 12 times a second is enough to follow the charm and keeps the page responsive
@@ -4907,7 +4916,7 @@ function onWorkerMessage(sh, m, idx) {
       sh.liveTrial = m.info.trial;
       break;
     }
-    case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
+    case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } else if (m.stage === "unjam") { sh.stage = "Making room · the room left is too thin or awkward for the charm that missed, so a few of the newest charms are being moved"; renderProgress(sh); } break;
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
       if (sh.nestFlow === "learned") break;
@@ -4966,6 +4975,8 @@ async function finishNest(sh, { result, error }) {
   // Release the search heaps before PDF export and verification allocate theirs.
   for (const w of sh.workers || []) w.terminate();
   sh.workers = []; sh.worker = null;
+  // a saved charm the search lifted to make room, and did not seat again (stopped, failed), is back where it was saved
+  if (sh._unjamLift) { for (const [id, p] of sh._unjamLift) if (!sh.placements.some(q => q.id === id)) sh.placements.push(p); sh._unjamLift = null; }
   if (result) {
     acceptBestLayout(sh, result, { trial: result.trial });
     result = CharmNestSolver.bestResult(result, sh.best, stockFor(sh.metal, sh));
@@ -4999,6 +5010,13 @@ async function finishNest(sh, { result, error }) {
   { const gone = sh.placements.filter(p => !byId.has(p.id)).length + sh.rejects.filter(id => !byId.has(id)).length;
     if (gone) { sh.placements = sh.placements.filter(p => byId.has(p.id)); sh.rejects = sh.rejects.filter(id => byId.has(id)); sh.dirty = true; log(sh, `${gone === 1 ? "A piece" : gone + " pieces"} left the sheet while it was searched; the sheet is arranged again next`); } }
   keepOrdersWhole(sh, byId, new Set(result.pocketFilled || []));
+  // Making room: the saved charms the search moved are saved at their new spots, so the check and the next search hold them there
+  if (result.unjam?.moved?.length && sh.nestInitial) {
+    const moved = new Set(result.unjam.moved), now = new Map(sh.placements.map(p => [p.id, p]));
+    sh.nestInitial = sh.nestInitial.map(p => moved.has(p.id) && now.has(p.id) ? { ...now.get(p.id), scale: p.scale } : p);
+  }
+  if (result.unjam?.attempts && !result.unjam.committed) sh._unjamFails = (sh._unjamFails || 0) + 1;
+  if (result.unjam?.committed) { const lifted = result.unjam.tries.filter(t => t.ok).reduce((n, t) => n + t.k, 0); agent({ metal: sh.metal }, "nest", `Making room: the ${lifted} newest charm(s) around the bottleneck were moved (none older) so that ${result.unjam.filled.length} more charm(s) fit this sheet instead of the next: ${result.unjam.filled.slice(0, 6).map(id => byId.get(id)?.name || id).join(", ")}`); }
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · ${sh.resumeWait ? "waiting for Resume" : "did not fit"}: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };

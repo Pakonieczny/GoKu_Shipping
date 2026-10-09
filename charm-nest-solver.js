@@ -310,6 +310,7 @@
     out.placements = (layout.placements || []).map(p => ({ ...p }));
     for (const key of ["rejects", "capped", "liftedForOrders", "pocketFilled"]) if (Array.isArray(layout[key])) out[key] = layout[key].slice();
     if (layout.pocket) out.pocket = { ...layout.pocket };
+    if (layout.unjam) out.unjam = { ...layout.unjam, moved: layout.unjam.moved.slice(), filled: layout.unjam.filled.slice(), tries: layout.unjam.tries.map(t => ({ ...t })) };
     if (layout.params) out.params = { ...layout.params, ...(layout.params.angles ? { angles: layout.params.angles.slice() } : {}), ...(layout.params.pieceOrder ? { pieceOrder: layout.params.pieceOrder.slice() } : {}) };
     return out;
   }
@@ -354,11 +355,19 @@
     if(guard)Rose.validate(guard.profile,job.sheet.wPt,job.sheet.hPt);
     if(ids.size!==fixed.length || fixed.some(p=>!job.pieces.some(c=>c.id===p.id)))throw new Error('Reload the saved charms before appending to this sheet');
     const usable=makeSheetGrid(job.sheet,job.clearancePt,job.fineRes||2).usableCells/Math.pow(job.fineRes||2,2);
-    const remainderSheet={...job.sheet,...(guard?{remnant:guard.profile}:{}),fixedPieces:fixed.map(placement=>({piece:job.pieces.find(p=>p.id===placement.id),placement}))};
+    /* Unjam (see carefulAppend): the most recently placed charms of this sheet that nothing protects may be lifted and seated
+       again beside a charm that missed. Never one the green line holds (a Rose Gold or cut-leftover sheet's saved charms), never a
+       one an operator pinned (the piece's `hold`; the pin the run puts on every placed charm is not one), never one older than the last UNJAM_WINDOW; the rest of the saved layout is a wall, as before. */
+    const guardIds=new Set((guard?.placements||[]).map(p=>p.id)), pieceOf=id=>job.pieces.find(c=>c.id===id);
+    const movable=job.unjam&&job.careful?new Set(fixed.filter(p=>!guardIds.has(p.id)&&!pieceOf(p.id)?.hold).slice(-Math.max(1,+job.unjamWindow||UNJAM_WINDOW)).map(p=>p.id)):new Set();
+    const remainderSheet={...job.sheet,...(guard?{remnant:guard.profile}:{}),fixedPieces:fixed.map(placement=>({piece:pieceOf(placement.id),placement,...(movable.has(placement.id)?{movable:true}:{})}))};
     const remaining=makeSheetGrid(remainderSheet,job.clearancePt,job.fineRes||2).usableCells/Math.pow(job.fineRes||2,2);
     const fixedArea=fixed.reduce((n,p)=>{const v=prepareVariant(job.pieces.find(c=>c.id===p.id),p.angle,job.clearancePt,job.fineRes||2);return n+(v?areaOf(v.fine.bits)/Math.pow(job.fineRes||2,2):0);},0);
     const cap=Math.max(0,usable*(job.maxFill||.8)-fixedArea), pieces=job.pieces.filter(p=>!ids.has(p.id));
-    const merge=r=>({...r,placements:[...fixed.map(p=>({...p})),...(r.placements||[])],placedPt2:fixedArea+(r.placedPt2||0),usablePt2:usable,freePt2:r.freePt2??remaining,placedCells:(fixedArea+(r.placedPt2||0))*Math.pow(job.fineRes||2,2),density:(fixedArea+(r.placedPt2||0))/Math.max(1,usable),params:{seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,...r.params,maxFill:job.maxFill||.8}});
+    // a charm the unjam lifted comes back in the result's own placements, at its new spot: the saved one and its area leave the fixed part
+    const areaOfFixed=p=>{const v=prepareVariant(pieceOf(p.id),p.angle,job.clearancePt,job.fineRes||2);return v?areaOf(v.fine.bits)/Math.pow(job.fineRes||2,2):0;};
+    const merge=r=>{const moved=new Set(r.unjam?.moved||[]),kept=moved.size?fixed.filter(p=>!moved.has(p.id)):fixed,area=moved.size?fixedArea-fixed.filter(p=>moved.has(p.id)).reduce((n,p)=>n+areaOfFixed(p),0):fixedArea;
+      return {...r,placements:[...kept.map(p=>({...p})),...(r.placements||[])],placedPt2:area+(r.placedPt2||0),usablePt2:usable,freePt2:r.freePt2??remaining,placedCells:(area+(r.placedPt2||0))*Math.pow(job.fineRes||2,2),density:(area+(r.placedPt2||0))/Math.max(1,usable),params:{seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,...r.params,maxFill:job.maxFill||.8}};};
     const info=r=>({...r,placed:(r.placed||0)+fixed.length,total:job.pieces.length,...(r.placedPt2!=null?{placedPt2:r.placedPt2+fixedArea,usablePt2:usable}:{}),...(r.density!=null?{density:(r.density*remaining+fixedArea)/Math.max(1,usable)}:{})});
     if(!pieces.length || cap<=0 || remaining<=0)return merge({placements:[],rejects:pieces.map(p=>p.id),trials:0,elapsedMs:0,endedBy:'cap',params:{maxFill:job.maxFill||.8}});
     const next={...job,protectedRose:null,lockedPlacements:null,sheet:remainderSheet,pieces,maxFill:Math.min(1,cap/remaining),initialLayout:(job.initialLayout||[]).filter(p=>!ids.has(p.id))};
@@ -427,7 +436,7 @@
     const erodeFine = clearancePt < 0 ? Math.round(-clearancePt / 2 * fineRes) : 0;
     const wallFine = Math.round(insetPt * fineRes) + halfGapFine;
     const wallCoarse = Math.round(wallFine / ratio);
-    const baseFine = new Grid(FW, FH), baseCoarse = new Grid(CW, CH);
+    let baseFine = new Grid(FW, FH), baseCoarse = new Grid(CW, CH);   // (let: an unjam attempt seats charms on the sheet without the ones it lifted)
     for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) {
       if (x < wallFine || y < wallFine || x >= FW - wallFine || y >= FH - wallFine) baseFine.set(x, y); else baseFine.free[y * FW + x] = 1;
     }
@@ -444,8 +453,12 @@
     // not against the sheet's edge or the cut line, so an empty corner is not a cheap place to put a charm
     const edgeFine = new Uint8Array(FW * FH);
     for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) edgeFine[y * FW + x] = baseFine.get(x, y) ? 1 : 0;
-    stampFixed(baseFine,job.sheet.fixedPieces,clearancePt,fineRes);
-    stampFixed(baseCoarse,job.sheet.fixedPieces,clearancePt,coarseRes);
+    // the saved charms an unjam may lift (job.unjam, see solveAppend) are stamped last, on a copy of the sheet without them
+    const movableFixed = job.unjam ? (job.sheet.fixedPieces || []).filter(e => e.movable && e.piece) : [];
+    stampFixed(baseFine,movableFixed.length ? job.sheet.fixedPieces.filter(e => !movableFixed.includes(e)) : job.sheet.fixedPieces,clearancePt,fineRes);
+    stampFixed(baseCoarse,movableFixed.length ? job.sheet.fixedPieces.filter(e => !movableFixed.includes(e)) : job.sheet.fixedPieces,clearancePt,coarseRes);
+    const staticBase = movableFixed.length ? { fine: baseFine.clone(), coarse: baseCoarse.clone() } : null;
+    if (movableFixed.length) { stampFixed(baseFine,movableFixed,clearancePt,fineRes); stampFixed(baseCoarse,movableFixed,clearancePt,coarseRes); }
     baseCoarse.buildSAT();
     const usableCellsFine = baseFine.freeCells();
     // Walls constrain placement but are never counted as neighbouring charms.
@@ -485,7 +498,8 @@
       await yieldNow();
     }
 
-    const maxFill = job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : 1;   // hard ceiling on fill (solid cells / usable cells)
+    const maxFill0 = job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : 1;
+    let maxFill = maxFill0;   // hard ceiling on fill (solid cells / usable cells); raised by the area of the saved charms an unjam seats again
     /* ── partial Rose Gold sheet: the next green line's envelope ───────────
        The contour keeps, on each line of its axis, everything up to the
        farthest charm. frontier[i] is where free stock starts on line i now;
@@ -562,7 +576,7 @@
         const out = [];
         for (const a of list) {
           if (!p._v15.has(a)) {
-            const fb = resample(pieces[p.idx].bits, pieces[p.idx].w, pieces[p.idx].h, pieces[p.idx].scale, fineRes);
+            const src = p.src || pieces[p.idx], fb = resample(src.bits, src.w, src.h, src.scale, fineRes);
             const rot = rotateBitmap(fb.bits, fb.w, fb.h, a); if (!rot.w) { p._v15.set(a, null); continue; }
             const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
             if (!dil.w || !areaOf(dil.bits)) { p._v15.set(a, null); continue; }
@@ -749,7 +763,7 @@
     const carefulOn = !!job.careful;
     async function carefulAppend() {
       // dated charms wait oldest first, so the window below always holds the oldest orders still waiting
-      const byAge = (a, b) => rank.get(a.order) - rank.get(b.order) || a.idx - b.idx;
+      const byAge = (a, b) => (rank.get(a.order) ?? -1) - (rank.get(b.order) ?? -1) || a.idx - b.idx;
       const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders).sort(byAge) : prepared.slice();
       if (admitted.some(p => p.pinned)) return null;
       const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
@@ -803,11 +817,11 @@
       const envAt = (v, x, y) => envelopeGrowth(env, lineProfile(v.fine, envAxis), x, y, envAxis) - v.cells;
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let rec = [], cells = 0, lastProbe = -Infinity, graded = 0;
-      let lastStage = null;
+      let lastStage = null, unjamOn = false;   // (unjamOn: the charms seen moving are an unjam's, see below)
       // at most one probe every 40 ms, but always the first of each stage, so every step of the search is shown
       const probe = (p, v, x, y, stage, force) => {
         const t = now(); if (!cb.onProbe || (!force && stage === lastStage && t - lastProbe < 40)) return; lastProbe = t; lastStage = stage;
-        cb.onProbe({ id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, stage, graded });
+        cb.onProbe({ id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, stage, graded, ...(unjamOn ? { unjam: true, saved: !!p.locked } : {}) });
       };
       // what the free space on the whole sheet is worth before this charm (see PROBES), summed so any window reads it at once
       const all = { sh: new Float32Array(FW * FH), occ: new Uint8Array(FW * FH), A: new Int32Array(FW * FH), B: new Int32Array(FW * FH), out: new Uint8Array(FW * FH), label: new Int32Array(FW * FH), stack: new Int32Array(FW * FH), val: new Float32Array(FW * FH), regions: [] }, valSAT = new Float64Array((FW + 1) * (FH + 1)), valSATL = new Float64Array((FW + 1) * (FH + 1));
@@ -1127,9 +1141,11 @@
         return { x, y };
       };
       /** Every candidate spot of one charm, graded on the sheet as it stands; null when stopped. */
+      let fastSpots = 0;   // > 0 inside an unjam attempt: only this many of the snuggest spots (by touch) are graded
       async function gradeAll(p, front) {
         const spots = await spotsFor(p);
         if (stopped()) return null;
+        if (fastSpots && spots.length > fastSpots) { spots.sort((a, b) => b.touch - a.touch); spots.length = fastSpots; }
         for (let i = 0; i < spots.length; i++) {
           const s = spots[i], v = s.v;
           const lb = (lossLive(v, s.x, s.y) - lastBonus) * cellMm2, around = aroundAt(v, s.x, s.y) * cellMm2;
@@ -1144,7 +1160,8 @@
         const tops = [];
         for (let i = 0; i < spots.length; i++) {
           const s = spots[i];
-          if (tops.length >= LEADERS && s.fit <= tops[LEADERS - 1]) break;
+          const lead = fastSpots ? FAST_LEADERS : LEADERS;
+          if (tops.length >= lead && s.fit <= tops[lead - 1]) break;
           s.waste = lossAt(s.v, s.x, s.y) * cellMm2; s.fit = fitOf(s); s.staleWaste = false; exactN++;
           let k = tops.length; tops.push(s.fit); while (k > 0 && tops[k - 1] < s.fit) { tops[k] = tops[k - 1]; k--; } tops[k] = s.fit;
           if ((i & 63) === 63) { if (stopped()) return null; await yieldNow(); }
@@ -1163,6 +1180,16 @@
           if (!best || pick.fit > best.fit) best = pick;
         }
         return best;
+      };
+      /** The best `n` of a charm's graded spots that lie well apart, each nudged (an unjam weighs a missed charm's several places). */
+      const topDistinct = (p, spots, front, n) => {
+        const scored = spots.slice().sort((a, b) => b.fit - a.fit), picks = [];
+        for (const s of scored) {
+          const far = Math.max(8, Math.round(.35 * Math.min(s.v.fine.w, s.v.fine.h)));
+          if (picks.every(q => Math.abs(q.x - s.x) > far || Math.abs(q.y - s.y) > far)) picks.push(s);
+          if (picks.length >= n) break;
+        }
+        return picks.map(s => { const m = nudge(p, s.v, s.x, s.y), g = m.x === s.x && m.y === s.y ? s : { v: s.v, x: m.x, y: m.y, ...grade(s.v, m.x, m.y, front) }; return g.fit >= s.fit - .5 ? g : s; });
       };
       /* Look-ahead (Paul, 24 Sep: "look ahead for as many charms as you have available to choose the best one for the
          current situation"). Every waiting charm's spots are graded once on the sheet as it stands, and after each
@@ -1221,7 +1248,7 @@
           grades are brought up to date from the top of the list down until its leaders are all current, since only
           the leaders are ever picked, and a marked spot is graded when it rises among them. So each placement costs
           the other waiting charms a few dozen grades, not hundreds.                                               */
-      const LEADERS = 16, RESTING = 24;
+      const LEADERS = 16, RESTING = 24, FAST_LEADERS = 6;
       const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along + weights.env * t.claim);
       const refresh = (p, spots, events, front) => {
         const out = [], seen = new Set(), key = c => c.v.angle + ":" + c.x + ":" + c.y;
@@ -1242,7 +1269,7 @@
         }
         for (let changed = true; changed;) {
           out.sort((a, b) => b.fit - a.fit); changed = false;
-          for (let i = 0; i < Math.min(LEADERS, out.length); i++) {
+          for (let i = 0; i < Math.min(fastSpots ? FAST_LEADERS : LEADERS, out.length); i++) {
             const t = out[i]; if (!t.staleWaste && !t.staleAround) continue;
             if (t.staleWaste) { t.waste = lossAt(t.v, t.x, t.y) * cellMm2; t.staleWaste = false; }
             if (t.staleAround) { t.around = aroundAt(t.v, t.x, t.y) * cellMm2; t.staleAround = false; }
@@ -1310,13 +1337,14 @@
               const c = cache.get(q); if (!c || c.at < events.length) continue;
               let best = -Infinity;
               for (const s of c.spots) if (s.fit > best && (!meets(boxOf(s.v, s.x, s.y), box, 1) || fine.fits(s.v.fine.pm, s.x, s.y))) best = s.fit;
+              if (best === -Infinity && !mv.strand) mv.strand = q;
               score += best > -Infinity ? best : -STRANDS;
             }
           } finally { fine = keepFine; }
           return score;
         };
         // out of time, the charms placed so far are kept and the rest wait; stopped by the operator, nothing is kept
-        let timedOut = false;
+        let timedOut = false, mustFailed = null;
         sheetValue();
         while (left.length) {
           if (stopped()) { if (userStop()) return null; timedOut = true; break; }
@@ -1325,18 +1353,24 @@
           const firsts = left.filter(p => first.has(p)), moves = [];
           let lifted = false;
           // a pocket pass takes the oldest waiting order, every piece of it, before any younger one
-          for (const p of firsts.length ? firsts : refill ? left.filter(q => q.order === left[0].order) : left.slice(0, WINDOW)) {
+          // (an unjam weighs several places of the missed charm against what each leaves the lifted ones, so those are graded too)
+          const multi = refill && refill.multi && firsts.length ? refill.multi : 0;
+          for (const p of firsts.length ? (multi ? firsts.concat(left.filter(q => !first.has(q))) : firsts) : refill ? (refill.all ? left.slice(0, WINDOW) : left.filter(q => q.order === left[0].order)) : left.slice(0, WINDOW)) {
             if (!left.includes(p)) continue;
             const spots = await current(p, front);
             if (!spots || stopped()) { if (userStop()) return null; timedOut = true; break; }
-            const s = bestOf(p, spots, front);
+            if (multi && !first.has(p)) { if (spots.length) continue; mustFailed = p; break; }
+            if (multi) { const list = topDistinct(p, spots, front, multi); if (list.length) { hadRoom.add(p); for (const g of list) moves.push({ p, ...g }); continue; } }
+            const s = multi ? null : bestOf(p, spots, front);
             if (s) { hadRoom.add(p); moves.push({ p, ...s }); continue; }
             if (!refill && rec.length && (hadRoom.has(p) || fitsOn(p, baseFine))) stranded.push(p);
+            // an unjam attempt that must seat this charm cannot: it is over, nothing else is worth grading
+            if (refill && refill.must && refill.must.has(p)) { mustFailed = p; break; }
             cache.delete(p);
             // lifted charms free their space: every charm's spots are graded afresh
             if (setAside(p, noRoom)) { lifted = true; break; }
           }
-          if (timedOut) break;
+          if (timedOut || mustFailed) break;
           if (lifted) { cache.clear(); events.length = 0; sheetValue(); continue; }
           const live = moves.filter(m => left.includes(m.p)).sort((a, b) => b.fit - a.fit);
           if (!live.length) continue;
@@ -1344,12 +1378,14 @@
           let move = live[0];
           if (AHEAD && left.length > 1 && live.length > 1) {
             let top = -Infinity;
-            for (const mv of live.slice(0, AHEAD)) {
+            for (const mv of live.slice(0, multi || AHEAD)) {
               const score = ahead(mv, left.filter(q => q !== mv.p));
               if (score > top) { top = score; move = mv; }
             }
             aheadStats.rounds++; if (move !== live[0]) aheadStats.changed++;
           }
+          // an unjam attempt whose best move leaves a charm it must seat without a spot is over (that charm's spots were all graded)
+          if (multi && refill.must && move.strand && refill.must.has(move.strand)) { mustFailed = move.strand; break; }
           const { p, v, x, y } = move;
           if (!fine.fits(v.fine.pm, x, y)) return null;
           if ((cells + v.cells) / usableCellsFine > maxFill + 1e-9) { if (setAside(p, over)) { cache.clear(); events.length = 0; sheetValue(); } continue; }
@@ -1386,7 +1422,7 @@
             for (const r of off) { to.push(r.p); probe(r.p, r.v, r.x, r.y, "lift", true); }
           }
         }
-        return { rec, fine, coarse, cells, noRoom, over, stranded: stranded.filter(q => !rec.some(r => r.p === q)), timedOut, fit: rec.reduce((n, r) => n + r.fit, 0) };
+        return { rec, fine, coarse, cells, noRoom, over, stranded: stranded.filter(q => !rec.some(r => r.p === q)), timedOut, failed: !!mustFailed, failedPiece: mustFailed || null, fit: rec.reduce((n, r) => n + r.fit, 0) };
       }
       let out = await pass(new Set()), passes = 1;
       if (out && out.stranded.length && !out.timedOut) {
@@ -1451,6 +1487,203 @@
           }
         } finally { softUntil = Infinity; pocketMs = now() - t1; }
       }
+      /* ── Unjam (Paul, 9 Oct 2026) ───────────────────────────────────────────────────────────────────────────────────
+         "The system should have been smart enough to re-arrange some of the most recent placements near the edge of the
+         sheet to better expose usable space on the sheet for 2-3 more pieces ... a lot of surface area remaining but due to
+         poor placement decisions this remaining area is not accessible due to being too thin or awkwardly shaped."
+         The passes above and the pocket pass seat charms without moving any. Here an order that is still turned away from
+         a sheet whose free space would hold it by area (UNJAM_RATIO) is the bottleneck the detector looks for: the free
+         space is measured against the missed charm's own size (its widest inscribed circle, the distance to the nearest
+         charm or edge, as the thickness grade does), and the few most recent charms around it are found: whole orders only,
+         at most UNJAM_MAX charms out of the last UNJAM_WINDOW, never a pinned one or one the green line holds (solveAppend
+         hands over only the others, `movable`). They are lifted, the missed order is seated first and the lifted charms
+         after it, each graded like any other. The result is committed only when every lifted charm and the whole missed order
+         are seated again; the best of the attempts by charms seated, then by the worth of the free space left (the same
+         worth the grade reads), wins; otherwise the sheet stays exactly as it was. Rounds go on while orders still wait,
+         each followed by a pocket pass that seats whatever now fits without moving anything.                              */
+      const unjamStats = { rounds: 0, attempts: 0, moved: [], filled: [], ms: 0, reason: null, tries: [] };
+      const movedSaved = new Set();      // saved charms already lifted and seated again (they are in rec now)
+      const savedRecs = new Map();       // id → rec-like entry of a movable saved charm, prepared on first use
+      const savedEntry = e => {
+        const id = e.placement.id; let r = savedRecs.get(id); if (r) return r;
+        const piece = e.piece, p = { id, idx: -1, src: piece, order: piece.order || id, orderDate: +piece.orderDate || 0, areaPt2: piece.areaPt2 || 0, solidFineCells: 0, footprintCells: 0, variants: [], pinned: null, meta: null, locked: true };
+        const v = variantsFor(p, [((e.placement.angle % 360) + 360) % 360])[0]; if (!v) return null;
+        p.solidFineCells = p.footprintCells = v.cells; p.careful = [v];
+        r = { p, v, x: Math.round(e.placement.cxPt * fineRes - v.solid.cx), y: Math.round(e.placement.cyPt * fineRes - v.solid.cy), fit: 0, waste: 0, saved: true };
+        savedRecs.set(id, r); return r;
+      };
+      // the sheet without the saved charms in `off` (the static part, and the other movable ones stamped on it)
+      const baseWithout = off => {
+        if (!staticBase) return { fine: baseFine, coarse: baseCoarse };   // no saved charm to lift: the sheet as it is
+        const f = staticBase.fine.clone(), c = staticBase.coarse.clone();
+        for (const e of movableFixed) {
+          if (off.has(e.placement.id)) continue; const r = savedRecs.get(e.placement.id) || savedEntry(e); if (!r) continue;
+          f.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y);
+          for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < c.W && gy < c.H) c.set(gx, gy); }
+        }
+        c.buildSAT(); f.trackMaterial(true); c.trackMaterial(); c.material.buildSAT();
+        return { fine: f, coarse: c };
+      };
+      const savedCells = off => { let n = 0; for (const e of movableFixed) if (off.has(e.placement.id)) { const r = savedRecs.get(e.placement.id) || savedEntry(e); if (r) n += r.v.cells; } return n; };
+      // a light copy of a sheet grid for the questions below: occupied cells, free flags and the cut stock (what Grid.fits reads)
+      const liteOf = g => { const c = new Grid(FW, FH); c.occ.set(g.occ); c.free.set(g.free); c.remnant = g.remnant; return c; };
+      const clearEntries = (g, list) => {
+        for (const r of list) { const b = r.v.fine.bits, w = r.v.fine.w, h = r.v.fine.h; for (let rr = 0; rr < h; rr++) for (let cc = 0; cc < w; cc++) if (b[rr * w + cc]) { const gx = r.x + cc, gy = r.y + rr; g.occ[gy * g.words + (gx >> 5)] &= ~(1 << (gx & 31)); g.free[gy * FW + gx] = 1; } }
+        return g;
+      };
+      const occBuf = new Uint8Array(FW * FH), aBuf = new Int32Array(FW * FH), bBuf = new Int32Array(FW * FH), sBuf = new Uint8Array(FW * FH);
+      const readOcc = g => { for (let y = 0; y < FH; y++) for (let x = 0, i = y * FW; x < FW; x++, i++) occBuf[i] = (g.occ[y * g.words + (x >> 5)] >>> (x & 31)) & 1; };
+      /** The widest free circle on a grid: distance from its middle to the nearest occupied cell, in thirds of a cell. */
+      const widestFree = g => { readOcc(g); chamfer(occBuf, FW, FH, aBuf); let m = 0; for (let i = 0; i < occBuf.length; i++) if (!occBuf[i] && aBuf[i] > m) m = aBuf[i]; return m; };
+      /** The widest circle inside a charm's own mask, in the same units: what its thickest part needs of the free space. */
+      const thickestOf = v => {
+        const W2 = v.fine.w + 2, H2 = v.fine.h + 2, o = new Uint8Array(W2 * H2).fill(1);
+        for (let y = 0; y < v.fine.h; y++) for (let x = 0; x < v.fine.w; x++) if (v.fine.bits[y * v.fine.w + x]) o[(y + 1) * W2 + x + 1] = 0;
+        const D = chamfer(o, W2, H2, new Int32Array(W2 * H2)); let r = 0; for (let i = 0; i < D.length; i++) if (!o[i] && D[i] > r) r = D[i]; return r;
+      };
+      /** Whether a charm fits anywhere on a grid at every `k`-th of its angles (the fit test of the unjam's screening). */
+      const fitsSome = (p, g, k) => { const keep = p.careful; p.careful = keep.filter((v, i) => i % k === 0); try { return fitsOn(p, g); } finally { p.careful = keep; } };
+      /** The orders waiting (turned away or lifted), whole, oldest first, that the ceiling lets in and whose area the free space covers `ratio` times. */
+      const waitingGroups = (cur, ratio) => {
+        const placed = new Set(cur.rec.map(r => r.p.id)), by = new Map();
+        for (const p of prepared) if (!p.pinned && !placed.has(p.id)) by.set(p.order, (by.get(p.order) || []).concat(p));
+        if (!by.size) return [];
+        // all the free cells count, slivers too: gaps that are thin between charms as they lie are what moving charms closes up
+        const usable = ratio ? cur.fine.freeCells() : Infinity, groups = [];
+        for (const [order, pieces] of by) {
+          const need = pieces.reduce((n, p) => n + p.footprintCells, 0);
+          if ((cur.cells + need) / usableCellsFine > maxFill + 1e-9 || need * ratio > usable) continue;
+          groups.push({ order, pieces, need });
+        }
+        // the pocket pass takes the oldest first; an unjam the smallest first (the likeliest to be seated, and the most charms for the room made)
+        return groups.sort((a, b) => ratio ? a.need - b.need || byAge(a.pieces[0], b.pieces[0]) : byAge(a.pieces[0], b.pieces[0]));
+      };
+      const outWith = (cur, again) => {
+        const placed = new Set(again.rec.map(r => r.p.id));
+        return { ...cur, rec: again.rec, fine: again.fine, coarse: again.coarse, cells: again.cells, fit: again.rec.reduce((n, r) => n + r.fit, 0), noRoom: cur.noRoom.filter(q => !placed.has(q.id)), over: cur.over.filter(q => !placed.has(q.id)) };
+      };
+      /** Orders waiting that now fit without anything moving, seated like the pocket pass does (after a round has changed the sheet). */
+      async function seatWithoutMoving(cur) {
+        const groups = waitingGroups(cur, 0); if (!groups.length) return cur;
+        const pool = groups.flatMap(g => g.pieces); for (const p of pool) if (!p.careful) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
+        const again = await pass(new Set(), { rec: cur.rec, pool });
+        ({ rec, fine, coarse, cells } = cur);
+        if (!again || again.timedOut) return cur;
+        const had = new Set(cur.rec.map(r => r.p.id)), added = again.rec.filter(r => !had.has(r.p.id));
+        if (!added.length) return cur;
+        for (const r of added) { pocketFilled.push(r.p.id); unjamStats.filled.push(r.p.id); }
+        return outWith(cur, again);
+      }
+      async function unjamOne(cur, G) {
+        const t0u = now(), M = G.pieces.slice().sort((a, b) => b.footprintCells - a.footprintCells)[0];
+        const tryNote = { order: String(G.order), pieces: G.pieces.length, k: 0, ok: false, why: null, ms: 0 }; unjamStats.tries.push(tryNote);
+        const done = (why, res) => { tryNote.why = why; tryNote.ok = !!res; tryNote.ms = Math.round(now() - t0u); return res || null; };
+        for (const p of G.pieces) if (!p.careful) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
+        if (!M.careful.length) return done('no variants');
+        const need = thickestOf(M.careful[0]);
+        // the charms of the window, oldest first: the saved ones still in place, then this search's own; whole orders only
+        const saved = movableFixed.map(savedEntry).filter(r => r && !movedSaved.has(r.p.id)), chron = [...saved, ...cur.rec], win = chron.slice(-(+job.unjamWindow || UNJAM_WINDOW));
+        const inWin = new Set(win.map(r => r.p.id)), onSheet = new Map();
+        for (const e of job.sheet.fixedPieces || []) if (e.piece) { const o = e.piece.order || e.piece.id; (onSheet.get(o) || onSheet.set(o, new Set()).get(o)).add(e.placement.id); }
+        for (const r of cur.rec) (onSheet.get(r.p.order) || onSheet.set(r.p.order, new Set()).get(r.p.order)).add(r.p.id);
+        const byOrder = new Map(); for (const r of win) byOrder.set(r.p.order, (byOrder.get(r.p.order) || []).concat(r));
+        const units = [];
+        for (const [order, entries] of byOrder) { const all = onSheet.get(order); if (all && [...all].every(id => inWin.has(id))) units.push({ order, entries, age: Math.max(...entries.map(r => chron.indexOf(r))) }); }
+        units.sort((a, b) => b.age - a.age);   // the newest first
+        const maxK = Math.min(+job.unjamMax || UNJAM_MAX, win.length);
+        if (!units.length) return done('no whole order in the window');
+        // screening: what lifting charms does to the free space, on light copies of the grid, never the sheet itself
+        const g0 = liteOf(cur.fine), w0 = widestFree(g0);
+        const lifted = (g, list) => clearEntries(liteOf(g), list);
+        const count = list => list.reduce((n, u) => n + u.entries.length, 0), keyOf = list => list.flatMap(u => u.entries.map(r => r.p.id)).sort().join('|');
+        // the smallest set, taken in `order`, that lets the missed charm in (its widest circle and its shape, on light copies of the grid)
+        const grow = order => {
+          let g = g0; const chosen = [];
+          for (const u of order) {
+            if (count(chosen) + u.entries.length > maxK) continue;
+            chosen.push(u); g = lifted(g, u.entries);
+            if (widestFree(g) >= need && fitsSome(M, g, 3)) return { units: chosen.slice(), order };
+          }
+          return null;
+        };
+        const gain = new Map(units.map(u => [u, widestFree(lifted(g0, u.entries))]));
+        const byGain = units.slice().sort((a, b) => gain.get(b) - gain.get(a) || b.age - a.age);
+        const queue = [], seen = new Set();
+        for (const order of [units, byGain]) { const s = grow(order); if (s && !seen.has(keyOf(s.units))) { seen.add(keyOf(s.units)); queue.push(s); } }
+        if (!queue.length) return done('the missed charm does not fit even with the last ' + win.length + ' lifted');
+        queue.sort((a, b) => count(a.units) - count(b.units));
+        // an attempt: lift, seat the missed order first and the lifted charms after it
+        const keepCareful = new Map(), step = Math.max(1, Math.round((+job.unjamStep || 6) / (360 / angles.length)));
+        const reduce = (p, around) => { if (!keepCareful.has(p)) keepCareful.set(p, p.careful); p.careful = p.careful.filter((v, i) => i % step === 0 || v.angle === around); };
+        const attempt = async units => {
+          const U = units.flatMap(u => u.entries), uOwn = U.filter(r => !r.saved), uSaved = U.filter(r => r.saved);
+          const off = new Set([...movedSaved, ...uSaved.map(r => r.p.id)]), b = baseWithout(off), recKeep = cur.rec.filter(r => !uOwn.includes(r));
+          const keep = { fine: baseFine, coarse: baseCoarse, maxFill };
+          for (const r of U) probe(r.p, r.v, r.x, r.y, 'lift', true);
+          baseFine = b.fine; baseCoarse = b.coarse; maxFill = Math.min(1, maxFill0 + savedCells(off) / usableCellsFine);
+          const pool = [...G.pieces.slice().sort((a, c) => c.footprintCells - a.footprintCells), ...U.map(r => r.p).sort((a, c) => c.footprintCells - a.footprintCells)];
+          for (const r of U) { if (r.saved) { const l = angles.filter((a, i) => i % step === 0).concat(r.v.angle); r.p.careful = variantsFor(r.p, [...new Set(l)]); } else reduce(r.p, r.v.angle); }
+          for (const p of G.pieces) reduce(p, -1);
+          let again = null;
+          fastSpots = +job.unjamSpots || UNJAM_SPOTS;
+          try { again = await pass(new Set(G.pieces), { rec: recKeep, pool, all: true, must: new Set(pool), multi: +job.unjamMoves || UNJAM_MOVES }); }
+          finally {
+            fastSpots = 0; baseFine = keep.fine; baseCoarse = keep.coarse; maxFill = keep.maxFill;
+            for (const [p, c] of keepCareful) p.careful = c; keepCareful.clear();
+            for (const r of U) if (r.saved) r.p.careful = [r.v];
+          }
+          const good = again && !again.timedOut && !again.failed && pool.every(p => again.rec.some(r => r.p === p)) && recKeep.every(r => again.rec.includes(r));
+          let J = 0;
+          if (good) { sheetValue(); J = valSAT[FH * (FW + 1) + FW] * cellMm2; }
+          ({ rec, fine, coarse, cells } = cur);
+          if (!good) { for (const r of U) probe(r.p, r.v, r.x, r.y, 'place', true); return { failedPiece: again && again.failedPiece, timedOut: !!(again && again.timedOut) }; }
+          return { again, U, uSaved, off, b, maxFillNew: Math.min(1, maxFill0 + savedCells(off) / usableCellsFine), J, seated: again.rec.length };
+        };
+        /* The sets are tried smallest first. One whose charms do not all find a place again grows by the next newest charm of its
+           own order (the missed charm fitting is not enough: the lifted ones need room too); the best arrangement of those that
+           work, by charms seated and then by the worth of the free space left, is kept. */
+        let best = null, left = +job.unjamAttempts || UNJAM_ATTEMPTS; const tried = new Set(queue.map(s => keyOf(s.units)));
+        const t3 = now(), cap = +job.unjamMs || UNJAM_MS, spent = () => (now() - t3) > cap * .5, over = () => (now() - t3) > cap * .7;   // (a group may take 70% of the time, so the next waiting order still has some)
+        let more = UNJAM_MORE;   // attempts on other sets after the first that works, to take the better arrangement
+        while (queue.length && left > 0 && !stopped() && !over()) {
+          const s = queue.shift(); left--;
+          tryNote.k = count(s.units); unjamStats.attempts++;
+          const r = await attempt(s.units);
+          if (r && r.again) { if (!best || r.seated > best.seated || r.seated === best.seated && r.J > best.J) best = r; if (spent() || --more < 0) break; continue; }
+          if (best) { if (--more < 0) break; continue; }
+          const nextUnit = s.order.find(u => !s.units.includes(u) && count(s.units) + u.entries.length <= maxK);
+          if (nextUnit) { const grown = { units: [...s.units, nextUnit], order: s.order }; if (!tried.has(keyOf(grown.units))) { tried.add(keyOf(grown.units)); queue.push(grown); queue.sort((a, b) => count(a.units) - count(b.units)); } }
+        }
+        if (!best) return done(stopped() ? 'out of time' : 'no arrangement seats them all');
+        // commit: the lifted saved charms now live in rec, on a sheet without their saved places
+        baseFine = best.b.fine; baseCoarse = best.b.coarse; maxFill = best.maxFillNew;
+        for (const id of best.off) movedSaved.add(id);
+        const had = new Set(cur.rec.map(r => r.p.id)), added = best.again.rec.filter(r => !had.has(r.p.id) && !r.p.locked);
+        for (const r of added) { pocketFilled.push(r.p.id); unjamStats.filled.push(r.p.id); }
+        const next = outWith(cur, best.again);
+        ({ rec, fine, coarse, cells } = next);
+        tryNote.k = best.U.length;
+        return done('seated ' + G.pieces.length + ' with ' + best.U.length + ' lifted', next);
+      }
+      async function unjamRun(cur) {
+        let wins = 0, fails = 0; const skip = new Set();
+        while (wins < UNJAM_ROUNDS && fails < 2 && !stopped()) {
+          const groups = waitingGroups(cur, +job.unjamRatio || UNJAM_RATIO).filter(g => !skip.has(g.order));
+          if (!groups.length) { unjamStats.reason = unjamStats.reason || (wins ? null : 'nothing waiting that the free space covers'); break; }
+          if (cb.onStage) cb.onStage('unjam', wins, UNJAM_ROUNDS);
+          const next = await unjamOne(cur, groups[0]);
+          if (next) { cur = await seatWithoutMoving(next); wins++; unjamStats.rounds = wins; }
+          else { fails++; for (const g of groups) if (g.need >= groups[0].need) skip.add(g.order); }   // one that is no smaller cannot be seated either
+        }
+        if (cb.onStage) cb.onStage('careful', cur.rec.length, admitted.length);
+        return cur;
+      }
+      if (job.unjam && !out.timedOut && !userStop() && prepared.some(p => !out.rec.some(r => r.p === p))) {
+        const t2 = now(); softUntil = t2 + (+job.unjamMs || UNJAM_MS); unjamOn = true;
+        try { out = await unjamRun(out); }
+        finally { softUntil = Infinity; unjamOn = false; unjamStats.ms = Math.round(now() - t2); ({ rec, fine, coarse, cells } = out); }
+        unjamStats.moved = [...movedSaved];
+      }
       /* Room for later orders (Paul, 24 Sep): a nearly full Gold or Silver sheet lets the next 35 orders try its gaps
          before it is released, unless not even one of the shop's smallest charms (see SMALL_PROBES) fits it. Each is
          tried at 15° steps over the whole sheet, 4×4 positions at a time as in legalMap. */
@@ -1473,7 +1706,7 @@
       metrics.layouts++; reportMetrics(true);
       return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, pocketFilled, careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats, pocket: { filled: pocketFilled.length, orders: pocketTried, ms: Math.round(pocketMs), stages: pocketStages } } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, pocketFilled, ...(job.unjam ? { unjam: { ...unjamStats, moved: [...movedSaved], committed: unjamStats.rounds > 0 } } : {}), careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats, pocket: { filled: pocketFilled.length, orders: pocketTried, ms: Math.round(pocketMs), stages: pocketStages } } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
@@ -1900,6 +2133,13 @@
   /* The pocket pass (see carefulAppend) is given this long, at most, on a sheet that turned an order away: a few seconds
      in practice (one scan of the sheet per order it tries), a ceiling for a busy machine and a long waiting list.     */
   const POCKET_MS = 15000;
+  /* Unjam (Paul, 9 Oct 2026: "The system should have been smart enough to re-arrange some of the most recent placements near the
+     edge of the sheet to better expose usable space ... for 2-3 more pieces"). When an order is turned away from a sheet that still has
+     room by area (the free space, slivers included, is at least UNJAM_RATIO times the order's), the free space is measured for the missed charm's own
+     size, the few most recently placed charms around the bottleneck (at most UNJAM_MAX of the last UNJAM_WINDOW, whole orders only)
+     are lifted, and they are seated again with the missed order first. Committed only if every lifted charm and the missed order
+     are seated; otherwise the sheet stays exactly as it was. At most UNJAM_MS, and UNJAM_ROUNDS orders per search.            */
+  const UNJAM_MS = 20000, UNJAM_WINDOW = 10, UNJAM_MAX = 7, UNJAM_ROUNDS = 3, UNJAM_RATIO = 1.5, UNJAM_ATTEMPTS = 9, UNJAM_MORE = 2, UNJAM_MOVES = 8, UNJAM_SPOTS = 32;
   /** The library's smallest charms (see SMALL_PROBES) as variants on a grid of `fineRes` px/pt, grown or shrunk like
       the pieces, at 15° steps: { angle, fine: { bits, w, h, pm } } like a piece's. */
   function smallProbeVariants(fineRes, erodeFine, halfGapFine) {
