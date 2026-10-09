@@ -3835,7 +3835,7 @@ function autoNest(metal) {
 }
 function assignCharm(charm, metal) {
   const owner=allSheets().find(p=>p.charms.includes(charm));
-  if(owner){if(owner.metal===metal)return;if(manualSheetClosed(owner)||['nesting','finishing','queued'].includes(owner.status)){toast('Finish the current sheet operation before moving this charm.','bad');return;}if(owner.placements.some(p=>p.id===charm.id)){toast('This charm is already on a saved sheet. Its placement must stay with that sheet.','bad');return;}owner.charms=owner.charms.filter(c=>c!==charm);charm.pinned=null;delete charm.arrivalPin;if(owner.placements.length){owner.appendOnly=true;owner.dirty=true;owner.status='ready';renderCard(owner);}else sheetDirty(owner);}
+  if(owner){if(owner.metal===metal)return;{const g=typeof groupOf==='function'?groupOf(charm):null;if(g&&allSheets().some(p=>p.charms.some(c=>c!==charm&&!c.excluded&&groupOf(c)===g))){toast('This piece belongs to a pair (or a line of pieces) that stays together on one metal and one sheet. Change the order\'s metal in Orders instead.','bad');return;}}if(manualSheetClosed(owner)||['nesting','finishing','queued'].includes(owner.status)){toast('Finish the current sheet operation before moving this charm.','bad');return;}if(owner.placements.some(p=>p.id===charm.id)){toast('This charm is already on a saved sheet. Its placement must stay with that sheet.','bad');return;}owner.charms=owner.charms.filter(c=>c!==charm);charm.pinned=null;delete charm.arrivalPin;if(owner.placements.length){owner.appendOnly=true;owner.dirty=true;owner.status='ready';renderCard(owner);}else sheetDirty(owner);}
   S.unassigned=S.unassigned.filter(c=>c!==charm);charm.pendingMetal=metal;charm.arrivedAt ||= Date.now();charm.orderDate ||= charm.arrivedAt/1000;
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
@@ -4151,9 +4151,47 @@ function removePage(pg) {
   prim.pages.splice(i, 1); for (const p of prim.pages.slice(i)) p.page = Math.max(1, (+p.page || 1) - 1);
   showPage(pg.metal, Math.min(i, prim.pages.length - 1) );
 }
+/* Pairs and groups (Paul, 9 Oct 2026: every earring pair, matching or mismatched, and every n-disc necklace is tracked as one
+   group at every step). A GROUP is one order LINE (receipt + transaction): the pieces of a pair, of a mismatched pair (Left and
+   Right) and of an n-disc necklace. The unit this sorter keeps whole is the ORDER, which holds every group, so a pair is whole
+   whenever its order is (R2). The group is the second guard for the rare ways one line still comes apart (a copy that arrives
+   after its mates were saved, a mate dragged alone, a mate that stays on a cut sheet) and the name a split is reported by (R3).
+   The key is charm-nest-pair.js groupKey; a page that has not loaded it reads the same string from the charm's own order fields.
+   null: a charm with no receipt (artwork dropped by hand) has no group, and every rule below leaves it exactly as it was. */
+function groupOf(c) {
+  if (!c) return null;
+  let k = typeof CharmNestPair !== "undefined" && CharmNestPair.groupKey ? CharmNestPair.groupKey(c) : "";
+  if (!k || /^:/.test(k)) { const oi = c.orderInfo, m = /^(\d{4,20})_([^_]*)_\d{1,3}$/.exec(String(c.poolId || "")); k = oi && oi.receiptId != null && oi.transactionId != null ? `${oi.receiptId}:${oi.transactionId}` : m ? `${m[1]}:${m[2]}` : ""; }
+  return k && k.length > 1 && !/^:/.test(k) ? k : null;
+}
+/** "Left" / "Right" for a charm whose side is known (a mismatched pair), else "". */
+const sideWord = c => (c && c.side === "L" ? "Left" : c && c.side === "R" ? "Right" : "");
+/** The groups (of `only`, a Set of group keys, or all) with pieces on two or more of these sheets (pages of one metal: a group never
+    spans metals). Pure: reads the pages it is given, no cloud call. [{ group, pieces:[{c, sh}], pages:[sh] }] */
+function splitGroups(pages, only) {
+  const by = new Map();
+  for (const sh of pages || []) for (const c of sh.charms || []) {
+    if (c.excluded) continue;
+    const g = groupOf(c); if (!g || (only && !only.has(g))) continue;
+    if (!by.has(g)) by.set(g, []);
+    by.get(g).push({ c, sh });
+  }
+  const out = [];
+  for (const [group, pieces] of by) { const at = [...new Set(pieces.map(x => x.sh))]; if (pieces.length > 1 && at.length > 1) out.push({ group, pieces, pages: at }); }
+  return out;
+}
+/** A split in plain words: "Left on sheet 1, Right on sheet 2" (a pair of one design: "1 piece on sheet 1, 1 piece on sheet 2"). */
+function splitWords(g, nameOf) {
+  return g.pages.map(sh => { const here = g.pieces.filter(x => x.sh === sh).map(x => x.c), sides = here.map(sideWord).filter(Boolean);
+    return `${sides.length === here.length ? sides.join(" + ") : `${here.length} piece${here.length === 1 ? "" : "s"}`} on ${nameOf ? nameOf(sh) : "sheet " + sh.page}`; }).join(", ");
+}
 /** Whatever did not fit moves on to the next sheet of the same metal, which then nests on its own. */
-/** A multi-piece order is never split across sheets: if any of its pieces was held back, the whole order goes to the next sheet. */
+/** A multi-piece order is never split across sheets: if any of its pieces was held back, the whole order goes to the next sheet.
+    A pair (any line) is never left half on a sheet either: when a piece of a line did not fit and its saved mates sit locked on
+    the sheet, they are lifted with it, so the line moves on whole (never split unless it cannot fit one sheet). Rose Gold's
+    protected pieces and a piece a person pinned stay where they are; the line is then split, and overflowToNextSheet says so. */
 function keepOrdersWhole(sh, byId, pocket) {
+  const gid = typeof groupOf === "function" ? groupOf : () => null;
   const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
   const rank = typeof orderRank === "function" ? orderRank : c => +(c && c.orderDate) || 0;   // (the date the nest ranks an order by; one released from hold is ahead of every date)
   const bad = new Set(sh.rejects.map(orderOf));
@@ -4163,20 +4201,35 @@ function keepOrdersWhole(sh, byId, pocket) {
   const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
   // (an order the search seated in a pocket that every older order that missed does not fit is not lifted for being younger: result.pocketFilled, the solver's pocket pass)
   const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && !(pocket && pocket.has(p.id)) && rank(byId.get(p.id)) > cutoff)));
+  // the saved mates of a line that missed: lifted with it, except protected Rose Gold pieces and pieces a person pinned (those stay: a split);
+  // a Merge sheets rerun (_mergeNext) never lifts the target's saved charms: they stay where they are, as its design promises
+  const missed = new Set(sh.rejects.map(id => gid(byId.get(id))).filter(Boolean)), fixed = new Set((sh.roseProtected?.placements || []).map(p => p.id));
+  const mates = missed.size && !sh._mergeNext ? sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && missed.has(gid(byId.get(p.id))) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin)) : [];
+  lifted.push(...mates);
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
-  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one`);
+  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}`);
 }
 function orderSummary(charms) {
   const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
   const multi = [...by.values()].filter(n => n > 1).length;
-  return { orders: by.size, multi, text: `${by.size} order(s)${multi ? `, ${multi} multi-piece` : ""}` };
+  // (pairs: lines of exactly two pieces, a Left and a Right or two of one design; none is cut in half by a move)
+  const lines = new Map(), gid = typeof groupOf === "function" ? groupOf : () => null; for (const c of charms) { const g = gid(c); if (g) lines.set(g, (lines.get(g) || 0) + 1); }
+  const pairs = [...lines.values()].filter(n => n === 2).length;
+  return { orders: by.size, multi, pairs, text: `${by.size} order(s)${multi ? `, ${multi} multi-piece` : ""}${pairs ? `, ${pairs} pair(s)` : ""}` };
 }
 function overflowToNextSheet(sh, announce = true) {
   const ids = new Set(sh.rejects); if (!ids.size) return null;
   const moving = sh.charms.filter(c => ids.has(c.id));
-  if (!sh.placements.length) { sh.problem = "The oldest order cannot fit on an empty sheet at these settings. Review its size or the fill ceiling before continuing."; renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(new Error(sh.problem), {sheetPending:true})); return null; }
+  const gid = typeof groupOf === "function" ? groupOf : () => null;
+  if (!sh.placements.length) {
+    // (nothing is split here, Paul's standing rule; a pair or a line of pieces among them is named, so the stop says why it is stuck)
+    const lines = new Map(); for (const c of moving) { const g = gid(c); if (g) lines.set(g, (lines.get(g) || 0) + 1); }
+    const most = Math.max(0, ...lines.values());
+    sh.problem = `The oldest order cannot fit on an empty sheet at these settings.${most > 1 ? ` It holds ${most === 2 ? "a pair" : `a line of ${most} pieces`} that must stay on one sheet, so it is not split.` : ""} Review its size or the fill ceiling before continuing.`;
+    renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(new Error(sh.problem), {sheetPending:true})); return null;
+  }
   sh.charms = sh.charms.filter(c => !ids.has(c.id)); sh.rejects = [];
   sh.movedOn = { n: moving.length, names: moving.map(c => c.name || `#${c.index + 1}`) };
   sh.status = sh.verification && sh.verification.ok ? "complete" : "partial";
@@ -4202,6 +4255,13 @@ function overflowToNextSheet(sh, announce = true) {
   next.isolated = sh.isolated;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
   agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} retained its best verified layout — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
+  // a pair (a line of pieces) that still has pieces on another sheet after the move is split: it is on record (the card's moved-on note, the log, a toast) and the sets read it from the pieces' pool ids (rule R3)
+  const lineKeys = new Set(moving.map(gid).filter(Boolean)), split = lineKeys.size && typeof splitGroups === "function" ? splitGroups(prim.pages, lineKeys) : [];
+  if (split.length) {
+    sh.movedOn.split = split.map(g => ({ group: g.group, where: splitWords(g, p => `sheet ${p.page}`) }));
+    for (const g of split.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split pair/line ${g.group} (it could not stay whole): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
+    if (announce) toast(`${labelOf(sh.metal)}: ${split.length === 1 ? "a pair/line is" : split.length + " pairs/lines are"} split across sheets — ${splitWords(split[0], p => `sheet ${p.page}`)}`, "bad", 7000);
+  }
   if (announce) toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);   // after a nest, its own toast already said "… still waiting for sheet N"
   renderRail(); updateTopSub();
   if (!after) startNest(next);
@@ -4623,7 +4683,12 @@ function feedTurn(sh, items) {
   const placed = new Set(sh.placements.map(p => p.id));
   const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b)));
   // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)
-  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
+  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS));
+  // a pair (a line of pieces) with a piece already placed on this sheet has its other pieces come in this turn, whatever their order's rank:
+  // they join their mate's sheet and are never left waiting to be passed on alone (rule R2; a line with nothing placed is unchanged)
+  const gid = typeof groupOf === "function" ? groupOf : () => null, placedLines = new Set(items.filter(c => placed.has(c.id)).map(gid).filter(Boolean));
+  if (placedLines.size) for (const c of fresh) if (!turn.has(orderKey(c)) && placedLines.has(gid(c))) turn.add(orderKey(c));
+  const wait = fresh.filter(c => !turn.has(orderKey(c)));
   if (!wait.length) return items;
   sh.feedWait = wait.map(c => c.id);
   const later = new Set(sh.feedWait);
@@ -6059,7 +6124,8 @@ function renderCard(sh) {
   q("report").classList.toggle("hidden", !(sh.verification && !sh.verification.ok) && !sh.charms.some(c => c.open) && !S.sources.some(src => src.group?.orphans?.length && sh.charms.some(c => c.sourceId === src.id)));
   // rejects tray
   const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
-  if (sh.movedOn && sh.movedOn.n) { rj.classList.remove("hidden"); rj.title = sh.movedOn.names.join(", "); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b><button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open it</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
+  // (a pair or line that could not stay whole says so here, beside the move: both sheets go in one set; see overflowToNextSheet)
+  if (sh.movedOn && sh.movedOn.n) { const sp = (sh.movedOn.split || []).map(x => x.where); rj.classList.remove("hidden"); rj.title = sh.movedOn.names.join(", ") + (sp.length ? `\nSplit (both sheets go in one set): ${sp.join("; ")}` : ""); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b>${sp.length ? `<span style="color:#b0563f"> · ${sp.length === 1 ? "a pair is split" : sp.length + " pairs are split"}</span>` : ""}<button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open it</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
   // (the pieces a Stop on the run banner left unplaced wait for Resume on this sheet: see resumeLater)
   else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length && !sh.resumeWait) { rj.classList.remove("hidden"); rj.title = sh.rejects.map(id => byId.get(id)?.name || id).join(", "); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? ", held back by the fill ceiling" : ""}</b><button type="button" class="btn ghost xs" data-r2="second">Move them on</button>`; $("[data-r2=second]", rj).onclick = () => moveOn(sh); }
   else { rj.classList.add("hidden"); rj.title = ""; }
@@ -7057,7 +7123,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-plb1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow1-plb1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7110,7 +7176,7 @@ try {
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel5-pf1"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
