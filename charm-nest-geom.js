@@ -5,7 +5,8 @@
  *  reviewer sees can be reproduced outside a browser.
  *
  *    backView(charm, opts)         mirror the cut geometry, verify the flip step by step, orient hoop-up (design §7.2)
- *    upAngleOf(charm, opts)        direction from the outline's centroid to its hanging hole (§6.3 item 7)
+ *    upAngleOf(charm, opts)        direction from the outline's centroid to its hanging hole (§6.3 item 7); a LONG charm
+ *                                  (long side >= LONG_ASPECT x short side) is turned to lie flat instead, see longAxisOf
  *    engraveMask(view, opts)       the back silhouette eroded by the engraving margin, keep-outs subtracted (§7.3)
  *    fitText(lines, font, mask, o) the largest Myriad Pro size whose ink sits entirely on solid material (§7.3)
  *    refitAt(...)                  the same, at a fixed centre (nudge)
@@ -375,13 +376,14 @@
   const FLIP_WHY = { pixels: "the flipped back does not match the front", holes: "a cut-out does not stay open when the charm is flipped", area: "the flipped back covers a different area", detailDropped: "front-only detail would show on the back" };
   class BackViewError extends Error { constructor(checks, images) { const bad = Object.keys(checks).filter(k => !checks[k]); super("flip check failed — " + bad.map(k => FLIP_WHY[k] || k).join("; ")); this.checks = checks; this.failed = bad; this.images = images; } }
 
-  /** Direction (degrees, y-up, 90 = straight up) from the outline's centroid to the hanging hole. No hole → 90 (as drawn). */
-  function upAngleOf(charm, opts) {
+  /** The hole direction alone (degrees, y-up, 90 = straight up): from the outline's centroid to the hanging hole. No hole → 90 (as drawn).
+   *  This is the original rule and the one every engraving decided before 9 Oct 2026 was made with. */
+  function holeUpAngle(charm, opts) {
     opts = opts || {}; const cut = opts.isCut || isCutLine;
     const outlinePolys = flatten(charm.outline, 12);
     const c = polyCentroid(outlinePolys[0]);
     const holes = charm.members.filter(m => m !== charm.outline && cut(m));
-    if (!holes.length) return { angle: 90, hole: null, source: "drawn" };
+    if (!holes.length) return { angle: 90, hole: null, source: "drawn", centroid: [c.x, c.y] };
     let best = null;
     for (const h of holes) {
       const b = h.bbox; const size = (b[2] - b[0]) * (b[3] - b[1]);
@@ -393,6 +395,85 @@
     const angle = Math.atan2(best.p[1] - c.y, best.p[0] - c.x) * 180 / Math.PI;
     return { angle: ((angle % 360) + 360) % 360, hole: best.hole, source: "hole", centroid: [c.x, c.y] };
   }
+
+  /* ═══ 3b · long charms lie flat (Paul, 9 Oct 2026) ═════════════════════
+     "Always place longer items horizontally, because typically that's how the text will be written." A bar, curb, plate,
+     tag or name bar was turned hoop-up like every charm, which stood a two-hoop bar almost upright (83°) with its words
+     running up the piece. A charm whose long side is at least LONG_ASPECT times its short side now has its long axis laid
+     horizontal in the back view, and the hoop kept as near the top as that allows. Every other charm keeps the hoop-up rule. */
+  const LONG_ASPECT = 1.4;
+  const wrap180 = d => { d = ((d % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
+  const round3 = v => Math.round(v * 1000) / 1000;
+  function convexHull(pts) {
+    pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (pts.length < 3) return pts;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    lo.pop(); up.pop(); return lo.concat(up);
+  }
+  /** The outline's smallest enclosing rectangle (turned, not the page's axes): { long, short, aspect, angle (deg, y-up, 0 <= angle < 180: the direction of the long side), isLong }. */
+  function longAxisOf(charm, opts) {
+    opts = opts || {};
+    const pts = flatten(charm.outline, 8).flat();
+    if (pts.length < 3) return null;
+    const hull = convexHull(pts); if (hull.length < 3) return null;
+    let best = null;
+    for (let i = 0, j = hull.length - 1; i < hull.length; j = i++) {
+      const dx = hull[i][0] - hull[j][0], dy = hull[i][1] - hull[j][1], L = Math.hypot(dx, dy); if (!(L > 1e-9)) continue;
+      const ux = dx / L, uy = dy / L; let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const p of hull) { const a = p[0] * ux + p[1] * uy, b = -p[0] * uy + p[1] * ux; if (a < a0) a0 = a; if (a > a1) a1 = a; if (b < b0) b0 = b; if (b > b1) b1 = b; }
+      const w = a1 - a0, h = b1 - b0, ar = w * h;
+      if (!best || ar < best.ar - 1e-9) best = { ar, w, h, ang: Math.atan2(uy, ux) * 180 / Math.PI };
+    }
+    if (!best || !(best.w > 0) || !(best.h > 0)) return null;
+    const alongU = best.w >= best.h, long = Math.max(best.w, best.h), short = Math.min(best.w, best.h);
+    let angle = alongU ? best.ang : best.ang + 90; angle = ((angle % 180) + 180) % 180;
+    if (angle < 0.01 || angle > 179.99) angle = 0;
+    const threshold = opts.minAspect > 0 ? opts.minAspect : LONG_ASPECT, aspect = long / short;
+    return { long, short, aspect, angle: round3(angle), isLong: aspect >= threshold - 1e-9 };
+  }
+
+  /** Direction (degrees, y-up, 90 = straight up) that backView turns to the top. A charm with a hanging hole is turned
+   *  hoop-up (the original rule) EXCEPT a long charm, which is turned so its long side lies flat: backView mirrors the
+   *  piece and then turns it CCW by 90 - up, so the mirrored long axis (-axis) is flat when 90 - up = axis (+180), and of
+   *  those two turns the one that leaves the hanging hole nearest the top is taken (no hole: the smaller turn).
+   *  opts.holeOnly asks for the original rule alone (a decision saved before the long-axis rule, or the old picture). */
+  function upAngleOf(charm, opts) {
+    opts = opts || {};
+    const base = holeUpAngle(charm, opts);
+    if (opts.holeOnly || opts.longFlat === false) return base;
+    const ax = longAxisOf(charm, opts);
+    if (!ax || !ax.isLong) return base;
+    let pick = null;
+    for (const turn of [ax.angle, ax.angle - 180]) {
+      const score = base.hole ? Math.abs(wrap180(180 - base.angle + turn - 90)) : Math.abs(turn);
+      if (!pick || score < pick.score - 1e-6 || (Math.abs(score - pick.score) <= 1e-6 && Math.abs(turn) < Math.abs(pick.turn) - 1e-9)) pick = { score, turn };
+    }
+    const up = ((90 - pick.turn) % 360 + 360) % 360;
+    return { angle: round3(up), hole: base.hole, source: "long", centroid: base.centroid, aspect: round3(ax.aspect), axis: ax.angle, holeAngle: base.hole ? base.angle : null };
+  }
+
+  /** The mark a placement's back view carries once it was made with the long-axis rule. */
+  const ORIENT = "flat1";
+  /** Which turn a placement's back view starts from (the one place the engraving fit decides it).
+   *    p = { editingBack, savedUp, charmUp, entry, nudged, viewUp, oriented }
+   *  · a back that was already decided or approved (editingBack) keeps the angle it was saved with, and the original
+   *    hoop-up rule if none was recorded: a saved engraving is never turned;
+   *  · a placement a person moved or turned before the long-axis rule, and not yet re-made with it, keeps its old view;
+   *  · an angle an operator typed on the library card (upSource "operator") is theirs and stands;
+   *  · everything else starts from the code default (upAngleOf): hoop-up, or flat for a long charm. The angle the
+   *    master index stored is only ever a computed one (hole direction), so it no longer decides. */
+  function viewOptionsFor(p) {
+    p = p || {}; const entry = p.entry || {}, o = { res: 6, materialVersion: 2 };
+    if (p.editingBack) { const up = p.savedUp != null ? p.savedUp : p.charmUp; if (up != null) o.upAngle = +up; o.holeOnly = true; return o; }
+    if (p.nudged && !p.oriented && p.viewUp != null) { o.upAngle = +p.viewUp; o.holeOnly = true; return o; }
+    if (entry.upSource === "operator" && entry.upAngle != null) o.upAngle = +entry.upAngle;
+    return o;
+  }
+  /** An undecided placement fitted before the long-axis rule that nobody has moved: it is made again. */
+  const orientStale = job => !!job && !job.editingBack && !job.nudged && job.orientVersion !== ORIENT && ["review", "blocked", "fitting"].includes(job.state);
 
   // Resolve outer metal and openings independently, as in Design Studio.
   // Union openings before subtraction: overlapping/duplicate cut paths must
@@ -411,7 +492,7 @@
 
   /**
    * charm = { outline, members[] }  (the sorter's charm; members are parsed segments)
-   * opts  = { res: 6, isCut, upAngle (deg, default from upAngleOf), tolPixels: 0.0005, tolArea: 0.001 }
+   * opts  = { res: 6, isCut, upAngle (deg, default from upAngleOf), holeOnly (default = the original hoop-up rule, no long-axis rule), tolPixels: 0.0005, tolArea: 0.001 }
    * Returns { members (mirrored + oriented cut geometry), mask (oriented back silhouette, holes open), cx, cy, M, R,
    *           angleDeg, upAngle, checks, F, B, frame }. Throws BackViewError with the diff images when a check fails.
    */
@@ -451,7 +532,7 @@
     };
     const detail = { filledArtwork: outline !== originalOutline, pixelDiff: diffFraction(B, flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
     if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B, flipF: flipX(F), detail });
-    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut }).angle;    // STEP 6
+    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut, holeOnly: opts.holeOnly }).angle;    // STEP 6
     const angleDeg = 90 - up;
     const R = rotateAbout(cx, cy, angleDeg);
     const members = mirrored.map(m => transformSeg(m, R));
@@ -801,7 +882,7 @@
 
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
-    pathRole, isCutLine, BackViewError, upAngleOf, backView, engraveMask, materialMask,
+    pathRole, isCutLine, BackViewError, upAngleOf, holeUpAngle, longAxisOf, LONG_ASPECT, ORIENT, viewOptionsFor, orientStale, backView, engraveMask, materialMask,
     glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, flowVariants, reflowAt, fitMultiline,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });
