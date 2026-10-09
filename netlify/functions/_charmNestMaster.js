@@ -33,14 +33,24 @@ function cleanFacing(f) {
   return f === "L" || f === "R" || f === "X" ? f : undefined;   // "X": a person says the design reads one way (letters, numbers, words) and is never turned over
 }
 
+/** The optional `facings` of a MISMATCHED design (a left body and a right body under one SKU): the way each body faces as a person said it, a flat list of "L" | "R" | null (null = not said),
+    at most 8. undefined = says nothing, null (or a list with nothing in it) = take it away, anything that is not a list is ignored. A re-index never writes it. */
+function cleanFacings(v) {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (!Array.isArray(v) || v.length > 8) return undefined;
+  const out = v.map(x => (x === "L" || x === "R" ? x : null));
+  return out.some(Boolean) ? out : null;
+}
+
 /** The optional `sym` of a design (PAIRMIRROR): how far the design is from its own mirror image, measured at indexing by charm-nest-pair.js symmetryOf:
     "symmetric" (the mirror image looks the same: nothing to decide), "slight", or "directional" (it differs: a person says which way it faces). Anything else is ignored. */
 function cleanSym(v) { return v === "symmetric" || v === "slight" || v === "directional" ? v : undefined; }
 
 function slimEntry(d) {
   if (!d) return null;
-  const pair = cleanPair(d.pair), facing = cleanFacing(d.facing), sym = cleanSym(d.sym);
-  return { ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes),
+  const pair = cleanPair(d.pair), facing = cleanFacing(d.facing), facings = cleanFacings(d.facings), sym = cleanSym(d.sym);
+  return { ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(Array.isArray(facings) ? { facings } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes),
     engravable: d.engravable !== false, engravableBy: d.engravableBy || null, upAngle: d.upAngle == null ? null : num(d.upAngle), upSource: d.upSource || null, backKeepOut: d.backKeepOut || [], aiPath: d.aiPath || null, thumbPath: d.thumbPath || null, aiUrl: d.aiUrl || null, thumbUrl: d.thumbUrl || null,
     sizes: d.sizes || null, blocked: d.blocked || null, conflict: d.conflict || null, sizeMoved: d.sizeMoved || null, labelSource: d.labelSource || "text", confirmedBy: d.confirmedBy || null, open: !!d.open, indexedAt: d.indexedAt && d.indexedAt.toMillis ? d.indexedAt.toMillis() : (num(d.indexedAtMs) || null), hashSource: d.hashSource || "browser" };
 }
@@ -131,4 +141,4 @@ async function putFile(db, FV, body) {
   return { ok: true, masterHash: hash };
 }
 
-module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanPair, cleanFacing, cleanSym, putIndex, putFile };
+module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanPair, cleanFacing, cleanFacings, cleanSym, putIndex, putFile };

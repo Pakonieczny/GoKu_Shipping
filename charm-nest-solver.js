@@ -315,15 +315,16 @@
     if (layout.params) out.params = { ...layout.params, ...(layout.params.angles ? { angles: layout.params.angles.slice() } : {}), ...(layout.params.pieceOrder ? { pieceOrder: layout.params.pieceOrder.slice() } : {}) };
     return out;
   }
-  /* ── pairs: earrings sold as a left and a right of two different charms (Paul, 9 Oct 2026) ──────────────────────────────────
-     A mismatched pair is two ordinary pieces (own bitmap, own id) that carry `group` (the order line they belong to), `side`
-     ("L" or "R") and `near`. Every path of this solver already seats the pieces that share an `order` together or turns them
-     away together; linkGroups makes `group` count too, whatever order key the page gave, and `near` asks the careful pass to seat a
-     piece close to the others of its group. A piece without these fields is nested exactly as before.
-     The Right earring of a pair is the Left MIRRORED (Paul, 9 Oct 2026, 18:47: "one is flipped on a vertical Y axis 180°"): the page
-     hands the solver its mirrored outline as that piece's own bits (`mirror: true` says so). The solver rotates pieces and never
-     reflects one, and every variant is made from the piece's own bits (nothing is shared between two pieces), so a Right is
-     always placed as a mirror of its Left under whatever rotation each has.                                                    */
+  // ── pairs: earrings sold as a left and a right, matching or of two different charms (Paul, 9 Oct 2026) ──────────────────────
+  // A pair is two ordinary pieces (own bitmap, own id) that carry `group` (the order line they belong to), `side`
+  // ("L" or "R") and `near`. Every path of this solver already seats the pieces that share an `order` together or turns them
+  // away together; linkGroups makes `group` count too, whatever order key the page gave, and `near` asks the careful pass to seat a
+  // piece close to the others of its group. A piece without these fields is nested exactly as before.
+  // The Right earring of a pair is the Left turned over about the vertical axis (Paul, 9 Oct 2026, 18:47): the page
+  // hands the solver that outline as the piece's own bits (flag `mirror` says so). The solver rotates pieces and never
+  // turns one over, and every variant is made from the piece's own bits (nothing is shared between two pieces), so a Right is
+  // always placed as the image of its Left under whatever rotation each has.
+  const PAIR_FLAG = "mirror";   // the information flag of a piece whose bits are the Right earring's (turned over) outline
   /** The pair fields of a charm (what the page keeps: groupKey or orderInfo, side, bodyIndex) as job-piece fields; {} for any other charm. A job piece gives its own back. */
   function pairFields(c) {
     if (!c) return {};
@@ -339,14 +340,14 @@
     if (c.near != null) out.near = !!c.near;
     if (c.bodyIndex != null && Number.isFinite(+c.bodyIndex)) out.bodyIndex = +c.bodyIndex;
     if (c.groupSize != null && Number.isFinite(+c.groupSize) && +c.groupSize > 0) out.groupSize = +c.groupSize;
-    if (c.mirror === true) out.mirror = true;   // (information: the charm's own bits ARE the mirrored outline; the solver never reflects anything)
+    if (c[PAIR_FLAG] === true) out[PAIR_FLAG] = true;   // (a plain flag: the charm's own bits ARE already the Right's outline; nothing here changes a bitmap)
     return out;
   }
   /** The pair fields a prepared piece keeps: its group, side, body, and whether it asks to be seated near its group (nothing at all for any other piece). */
   function pairKeys(p) {
     if (!p || p.group == null && !p.side) return {};
     const near = p.near != null ? !!p.near : p.side === "L" || p.side === "R";
-    return { ...(p.group != null ? { group: String(p.group) } : {}), ...(p.side ? { side: p.side } : {}), ...(p.bodyIndex != null ? { bodyIndex: p.bodyIndex } : {}), ...(p.mirror ? { mirror: true } : {}), near };
+    return { ...(p.group != null ? { group: String(p.group) } : {}), ...(p.side ? { side: p.side } : {}), ...(p.bodyIndex != null ? { bodyIndex: p.bodyIndex } : {}), ...(p[PAIR_FLAG] ? { [PAIR_FLAG]: true } : {}), near };
   }
   /** The job with the pieces of one `group` brought under one `order` (the first order met), so no path of the solver can part them;
       the same object when every group already shares its order (always, for the page as it is). */
