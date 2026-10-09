@@ -1338,7 +1338,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         c: null, poolId, rid: /^\d+$/.test(rid) ? rid : "", sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
         tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null,
         // (pairs: the ear a piece is, when the record says so; an old record says nothing and the window asks OrderPieces)
-        side: c.side === "L" || c.side === "R" ? c.side : null, bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0 });
+        // (amendment 2: every earring piece says its ear, and `mirror` when it is the mirror image of the drawn design; a record's own `pieceSides` map says the ear of a piece whose charm does not)
+        side: c.side === "L" || c.side === "R" ? c.side : poolId && rec.pieceSides && (rec.pieceSides[poolId] === "L" || rec.pieceSides[poolId] === "R") ? rec.pieceSides[poolId] : null,
+        bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0, mirror: c.mirror === true });
     }
     return pieces;
   }
@@ -1375,11 +1377,29 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (tok !== W.token) return;
     for (const x of W.pieces) {
       const g = got.get(x.sourceId); if (!g) continue;
-      if (g.pool) { const c = Pool.cloneCharm(g.base, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
+      if (g.pool) { const c = Pool.cloneCharm(await pieceBase(g, x), x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
       else { const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash); if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name }); }
     }
     if (failed.length) toast(`${failed.length} design${failed.length === 1 ? "" : "s"} could not be read (${failed.slice(0, 3).join(", ")}); ${failed.length === 1 ? "it shows" : "they show"} as outlines`, "bad", 7000);
     geometryReady(tok);
+  }
+  /** The drawing of THIS piece, from the design's master geometry (amendment 2: left and right earrings are mirror images). A piece that is the mirror image of the drawn
+      design (`mirror: true` on its saved descriptor) is drawn mirrored, and a body of a mismatched design is drawn alone (bodyIndex), by CharmNestPair.pieceGeometry, the one
+      place that turns geometry over. A piece whose record says neither, an old sheet, a page without that module, or a geometry that will not mirror is drawn exactly as it was
+      cut: the base, never guessed from the ear (a sheet cut before this was never mirrored). One answer per design, body and mirror, so a sheet of forty ears turns each once. */
+  const PIECE_BASES = new WeakMap();
+  async function pieceBase(g, x) {
+    const base = g && g.base, CP = window.CharmNestPair;
+    if (!base || !(x.mirror === true || x.bodyIndex != null) || !CP || typeof CP.pieceGeometry !== "function" || !base.outline) return base;
+    const key = (x.bodyIndex != null ? "b" + (+x.bodyIndex || 0) : "w") + (x.mirror === true ? "m" : "");
+    let m = PIECE_BASES.get(base); if (!m) PIECE_BASES.set(base, m = new Map());
+    if (!m.has(key)) m.set(key, (async () => {
+      const pg = CP.pieceGeometry(base, { bodyIndex: +x.bodyIndex || 0, mirror: x.mirror === true });
+      // (one body of a mismatched design has no silhouette of its own yet: traced once from the design's source)
+      if (pg && pg !== base && pg.needsSilhouette && g.src && g.src.parsed && window.CharmNestPDF && CharmNestPDF.buildSilhouettes) await CharmNestPDF.buildSilhouettes(g.src.parsed, [pg], +S.settings.silhouetteRes || 6);
+      return pg || base;
+    })().catch(e => { console.warn("sheet window: piece geometry", e); return base; }));
+    return m.get(key);
   }
   async function sourceGeom(s) {
     // Custom uploads share the pool, but have their own saved artwork rather than a master SKU. Older sheets kept
@@ -1745,6 +1765,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function paintPieces() {
     if (!W.dlg || !W.dlg.open || !W.rec) return;
     W.opMemo = null;
+    // (pairs: the strip's pair and half-pair counts come from the same pieces; redrawn only when they changed)
+    { const pc = pairCounts(); if (W.pairKey !== pc.pairs + ":" + pc.halves) renderStrip(); }
     if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
     lightChips(W.sel?.rid || null);
   }
@@ -1843,7 +1865,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!W.rec) return;   // (a window opened on its Back asks for its engraving before its record is read)
     const rec = W.rec, E = W.el, n = W.pieces.filter(x => !x.gone).length, orders = [...W.orders.keys()].filter(k => k !== "—").length;
     const backs = W.pieces.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = W.pieces.filter(x => x.eng?.kind === "approved").length;
-    const pc = pairCounts();
+    const pc = pairCounts(); W.pairKey = pc.pairs + ":" + pc.halves;
     E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span>${pc.pairs ? `<span title="Pairs with both pieces on this sheet"><b>${pc.pairs}</b> pair${pc.pairs === 1 ? "" : "s"}</span>` : ""}${pc.halves ? `<span class="swLegend" title="A piece of a pair is here and its other piece is on another sheet or on none"><i class="freed"></i><b>${pc.halves}</b> half pair${pc.halves === 1 ? "" : "s"}</span>` : ""}<span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
       `<span class="grow"></span>` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? `<span class="swLegend"><i></i>${backs} back${backs === 1 ? "" : "s"} to approve</span>` : "") + (ok ? `<span class="swLegend"><i class="ok"></i>${ok} back${ok === 1 ? "" : "s"} approved</span>` : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
       `<button class="swToggle" data-r2="face" aria-pressed="${backFace()}" title="${backFace() ? "Turn the sheet back to its front" : "Turn the sheet over: every charm's back engraving, where the laser burns it"}">${backFace() ? "Front" : "Back · engraving"}</button>` +
@@ -4356,8 +4378,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
     charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "" })) });
-  function attachGeom(x, g, rec) {
-    if (g.pool) { const c = Pool.cloneCharm(g.base, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
+  async function attachGeom(x, g, rec) {
+    if (g.pool) { const c = Pool.cloneCharm(await pieceBase(g, x), x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
     const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
     if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
   }
@@ -4649,7 +4671,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (ids.length) readOpts.onProgress(0, ids.length);
     const one = async sid => {
       const s = srcs.get(sid);
-      try { const g = await sourceGeom(s); if (active()) for (const x of need) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { if (active()) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); } }
+      try { const g = await sourceGeom(s); if (active()) for (const x of need) if (x.sourceId === sid) await attachGeom(x, g, rec); } catch (e) { if (active()) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); } }
       done++; readOpts.onProgress(done, ids.length); if (active()) soonPaint(G);
     };
     const queue = ids.slice();
@@ -4702,7 +4724,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
           while (queue.length) {
             const sid = queue.shift();
-            try { const g = await sourceGeom(srcs.get(sid)); for (const x of pieces) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { console.warn("card back: design", sid, e); }
+            try { const g = await sourceGeom(srcs.get(sid)); for (const x of pieces) if (x.sourceId === sid) await attachGeom(x, g, rec); } catch (e) { console.warn("card back: design", sid, e); }
             step();
           }
         }));
@@ -4896,7 +4918,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       freed: sheetId => (FREED.get(sheetId) || []).length,
     };
   })();
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  window.SheetWin = { pieceBase, remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is

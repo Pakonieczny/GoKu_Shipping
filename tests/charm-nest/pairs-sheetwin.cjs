@@ -119,18 +119,18 @@ if (process.argv.includes('--pure') || process.exitCode) return;
   const { start } = require('./bridge-server.cjs');
   const noNested = require('./_noNestedArrays.cjs');
   const SHEETS = 'Charm_Nest_Sheets', POOL = 'Charm_Pool', SETS = 'Charm_Nest_Sets';
-  const A = '4300000101', B = '4300000102', C = '4300000103';
+  const A = '4300000101', B = '4300000102', C = '4300000103', D = '4300000105';
   const pid = (rid, tx, copy) => `${rid}_${5000000000 + tx}_${copy}`;
   const srv = await start({ receipts: [] });
   const { st, sorterOrigin } = srv;
   // GF Sheet 1 (set-1): the pair's Left (A tx1 copy 1), the normal order B, the filler C. GF Sheet 2 (set-1): the pair's Right (A tx1 copy 2) and a filler.
-  const S1 = [[A, 1, 1], [B, 2, 1], [C, 3, 1]], S2 = [[A, 1, 2], ['4300000104', 4, 1]];
-  const sheet = (id, n, list) => ({ id, metal: 'gold', setId: 'set-1', charms: list.map(([r, t, c], i) => ({ id: id + i, poolId: pid(r, t, c), order: r, sku: 'TEST-' + t, name: `${r} · TEST-${t}`, ...(r === A ? { side: c === 1 ? 'L' : 'R', groupKey: `${A}:${5000000000 + t}` } : {}) })),
+  const S1 = [[A, 1, 1], [B, 2, 1], [C, 3, 1], [D, 5, 1], [D, 5, 2]], S2 = [[A, 1, 2], ['4300000104', 4, 1]];
+  const sheet = (id, n, list) => ({ id, metal: 'gold', setId: 'set-1', charms: list.map(([r, t, c], i) => ({ id: id + i, poolId: pid(r, t, c), order: r, sku: 'TEST-' + t, name: `${r} · TEST-${t}`, ...(r === A || r === D ? { side: c === 1 ? 'L' : 'R', mirror: c === 2, bodyIndex: r === A ? c - 1 : 0, groupKey: `${r}:${5000000000 + t}` } : {}) })),
     placements: list.map((x, i) => ({ id: id + i, cxPt: 30 + i * 40, cyPt: 40, angle: 0, wPt: 20, hPt: 20 })), poolIds: list.map(([r, t, c]) => pid(r, t, c)), orders: [...new Set(list.map(x => x[0]))], sheetIndex: n, fileBase: `GF_2026-10-09_Set-1_Sheet-${n}`, runId: 'run-test-1', placedCount: list.length, charmCount: list.length });
   for (const d of [sheet('gold-open-1', 1, S1), sheet('gold-open-2', 2, S2)]) { noNested(d); st.put(SHEETS, d.id, d); }
   st.put(SETS, 'set-1', { id: 'set-1', seq: 1, sheetIds: ['gold-open-1', 'gold-open-2'], runId: 'run-test-1' });
   for (const [sid, list] of [['gold-open-1', S1], ['gold-open-2', S2]]) for (const [r, t, c] of list) st.put(POOL, pid(r, t, c), { poolId: pid(r, t, c), orderId: r, sheetId: sid, setId: 'set-1', state: 'placed', material: 'gold', lineKey: `${r}_${5000000000 + t}`, sku: 'TEST-' + t,
-    ...(r === A ? { side: c === 1 ? 'L' : 'R', bodyIndex: c - 1, groupKey: `${A}:${5000000000 + t}`, groupSize: 2 } : {}) });
+    ...(r === A || r === D ? { side: c === 1 ? 'L' : 'R', mirror: c === 2, bodyIndex: r === A ? c - 1 : 0, groupKey: `${r}:${5000000000 + t}`, groupSize: 2, kind: r === A ? 'mismatched' : 'pair' } : {}) });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   await ctx.route(url => !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url.href), r => {
@@ -147,13 +147,13 @@ if (process.argv.includes('--pure') || process.exitCode) return;
   try {
     await page.goto(`${sorterOrigin}/charm-nest-1.html`);
     await page.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.SheetWin && window.OrderPieces && window.PiecePlacement && window.PiecePlacement.groups, null, { timeout: 60000 });
-    await page.evaluate(([a, b, c]) => {   // the lines the order rows carry (the pull): the pair is one line of quantity 1 that makes two pieces
+    await page.evaluate(([a, b, c, d]) => {   // the lines the order rows carry (the pull): the pair is one line of quantity 1 that makes two pieces
       const pid = (rid, tx, copy) => `${rid}_${5000000000 + tx}_${copy}`;
       const row = (rid, tx, n) => ({ key: `${rid}_${5000000000 + tx}`, order: { receiptId: rid, orderNumber: rid, createTs: 1790000000, updateTs: 1790000000, shipBy: 1790500000, buyer: { name: 'Buyer' }, lines: [], messages: [] },
         line: { transactionId: String(5000000000 + tx), listingId: '', sku: 'TEST-' + tx, title: 'Test ' + tx, quantity: 1, variations: [], personalization: [] }, spec: { designSku: 'TEST-' + tx, quantity: 1, material: 'gold', problems: [] },
         problems: [], state: 'written', reason: null, poolIds: Array.from({ length: n }, (_, i) => pid(rid, tx, i + 1)), engrave: null, material: 'gold', arrivedAt: Date.now() - 7200000 });
-      window.B.orders.rows = [row(a, 1, 2), row(b, 2, 1), row(c, 3, 1)]; window.B.orders.byKey = new Map(window.B.orders.rows.map(r => [r.key, r]));
-    }, [A, B, C]);
+      window.B.orders.rows = [row(a, 1, 2), row(b, 2, 1), row(c, 3, 1), row(d, 5, 2)]; window.B.orders.byKey = new Map(window.B.orders.rows.map(r => [r.key, r]));
+    }, [A, B, C, D]);
     await page.evaluate(id => SheetWin.open('gold-open-1', { select: id }), pid(A, 1, 1));
     await until(() => page.evaluate(() => /Right piece is on/.test((document.querySelector('.swPairNote:not([hidden])') || {}).innerText || '')), 25000, 'the pair note');
     const read = () => page.evaluate(() => ({
@@ -168,6 +168,31 @@ if (process.argv.includes('--pure') || process.exitCode) return;
     assert.ok(/Right/.test(v.rows[1]) && /GF Sheet 2/.test(v.rows[1]), 'row 2 is the Right piece on GF Sheet 2: ' + v.rows[1]);
     assert.equal(v.btn, 'gold-open-2', 'a link opens the other sheet');
     console.log('ok   sheet window: Left piece on Sheet 1 says "Right piece is on GF Sheet 2, in the same set" with a link, both pieces listed with their ears');
+    // amendment 2: the strip counts pairs (both ears here) and half pairs (one ear here, the other on another sheet); a matching pair is told with its ears too
+    const readStrip = () => page.evaluate(() => [...document.querySelectorAll('.swStrip span')].map(e => e.innerText.replace(/\s+/g, ' ').trim()));
+    await until(async () => (await readStrip()).includes('1 pair'), 8000, 'the pair count').catch(() => {}); const strip = await readStrip();
+    assert.ok(strip.includes('1 pair'), 'the matching pair D, both ears here, counts as a pair: ' + JSON.stringify(strip));
+    assert.ok(strip.includes('1 half pair'), 'the mismatched pair A, one ear here, is a half pair: ' + JSON.stringify(strip));
+    const flags = await page.evaluate(([a, d]) => Object.fromEntries(SheetWin._W.pieces.filter(x => x.rid === a || x.rid === d).map(x => [x.poolId, [x.side, x.mirror, x.bodyIndex]])), [A, D]);
+    assert.deepEqual(flags[pid(D, 5, 1)], ['L', false, 0]); assert.deepEqual(flags[pid(D, 5, 2)], ['R', true, 0]); assert.deepEqual(flags[pid(A, 1, 1)], ['L', false, 0]);
+    await page.evaluate(id => SheetWin.open('gold-open-1', { select: id }), pid(D, 5, 2));
+    await until(() => page.evaluate(() => /^Right piece · /.test((document.querySelector('[data-r2=mm]') || {}).textContent || '')), 20000, 'the Right piece of the matching pair');
+    const dn = await page.evaluate(() => { const n = document.querySelector('.swPairNote'); return { hidden: !n || n.hidden, rows: [...document.querySelectorAll('.swTrail li')].map(li => li.innerText.replace(/\s+/g, ' ').trim()) }; });
+    assert.equal(dn.hidden, true, 'a pair whose ears are both on this sheet says nothing about another sheet'); assert.ok(dn.rows.length === 2 && /Left/.test(dn.rows.join('|')) && /Right/.test(dn.rows.join('|')), 'both ears listed: ' + JSON.stringify(dn.rows));
+    console.log('ok   strip: "1 pair" (D, both ears here) and "1 half pair" (A); a matching pair names Left and Right, and says nothing when both are here; mirror flags read from the saved charms');
+    // the drawing of a piece: a mirrored piece is the design turned over (CharmNestPair.pieceGeometry), once per design; unmirrored and old pieces are the base itself
+    const pb = await page.evaluate(async () => {
+      const seg = { kind: 'path', index: 0, closed: true, subpaths: [[['m', [0, 0]], ['l', [10, 0]], ['l', [10, 4]], ['l', [0, 10]]]], bbox: [0, 0, 10, 10] };
+      const base = { id: 'x', outline: seg, members: [seg], bbox: [0, 0, 10, 10], bits: new Uint8Array([1, 0, 1, 1]), w: 2, h: 2, areaPt2: 70 }, g = { pool: true, base };
+      const same = await SheetWin.pieceBase(g, { mirror: false }), old = await SheetWin.pieceBase(g, {});
+      const m1 = await SheetWin.pieceBase(g, { mirror: true, bodyIndex: 0 }), m2 = await SheetWin.pieceBase(g, { mirror: true, bodyIndex: 0 });
+      const off = window.CharmNestPair; window.CharmNestPair = undefined; const noMod = await SheetWin.pieceBase(g, { mirror: true }); window.CharmNestPair = off;
+      return { same: same === base, old: old === base, noMod: noMod === base, m1base: m1 === base, cached: m1 === m2, first: m1.outline.subpaths[0][2][1], mirrored: !!m1.mirrored, bits: [...m1.bits], baseFirst: base.outline.subpaths[0][2][1], baseBits: [...base.bits] };
+    });
+    assert.ok(pb.same && pb.old && pb.noMod, 'an unmirrored piece, an old piece and a page without the pair module draw the base itself: ' + JSON.stringify(pb));
+    assert.ok(!pb.m1base && pb.cached && pb.mirrored, 'a mirrored piece is its own geometry, made once: ' + JSON.stringify(pb));
+    assert.deepEqual(pb.first, [0, 4], 'the point (10,4) turns to (0,4) about the design\'s own centre'); assert.deepEqual(pb.baseFirst, [10, 4], 'the base is never touched'); assert.deepEqual(pb.bits, [0, 1, 1, 1]); assert.deepEqual(pb.baseBits, [1, 0, 1, 1]);
+    console.log('ok   piece drawing: a Right (mirror true) piece is the design turned left to right once, the base and old pieces are untouched');
     // the orders list and the strip: the pair row names its ear, the normal order reads as before
     await page.evaluate(() => SheetWin.close()); await page.waitForTimeout(700);
     await page.evaluate(() => SheetWin.open('gold-open-1'));
