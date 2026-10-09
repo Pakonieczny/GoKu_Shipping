@@ -7817,10 +7817,12 @@ const Bridge = (() => {
   }
   const metalOf = tx => { const k = txMetalResolved(tx); return isRealMetal(k) ? k : (k === SOLID_UNKNOWN ? "solid_unknown" : ""); };
   function lineForBridge(tx, r) {
-    return { transactionId: String(tx.transaction_id), listingId: String(tx.listing_id || ""), sku: String(tx.sku || "").trim(), title: String(tx.title || ""), quantity: Number(tx.quantity) || 1,
+    /* productId and the variations' property/value ids are what Etsy already sent with the transaction; they let the sorter find
+       the SKU Etsy keeps for the purchased option (charm-nest-orders.js inventorySku) without asking Etsy anything more here */
+    return { transactionId: String(tx.transaction_id), listingId: String(tx.listing_id || ""), productId: String(tx.product_id || ""), sku: String(tx.sku || "").trim(), title: String(tx.title || ""), quantity: Number(tx.quantity) || 1,
       metalKey: metalOf(tx), metalLabel: metalLabelFor(tx) || "", personalization: Array.isArray(tx.personalization) ? tx.personalization.map(String) : (tx.personalization ? [String(tx.personalization)] : []),
       buyerMessage: String(tx.message_from_buyer || r.message_from_buyer || ""), expectedShipDate: Number(tx.expected_ship_date) || 0, isPersonalized: !!tx.is_personalized,
-      variations: (tx.variations || []).map(v => ({ name: String(v?.formatted_name || ""), value: String(v?.formatted_value || "").replace(/&quot;/g, '"') })) };
+      variations: (tx.variations || []).map(v => ({ name: String(v?.formatted_name || ""), value: String(v?.formatted_value || "").replace(/&quot;/g, '"'), propertyId: v?.property_id != null ? String(v.property_id) : null, valueId: v?.value_id != null ? String(v.value_id) : null })) };
   }
   /* Staff notes and messages read for the sorter: an answer is reused for 10 minutes (the sorter used to get a note as it
      stood when first read, for the life of the tab), for the 500 most recently used orders. */

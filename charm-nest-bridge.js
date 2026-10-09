@@ -19,7 +19,7 @@
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], index: null, loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], index: null, loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, listingSkus: {}, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 // Shared by waiting and decided engravings; choices remain read-only purchase facts.
@@ -1306,7 +1306,7 @@ const Orders = window.Orders = (() => {
     return out;
   }
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, masterEntry: sku => Master.entryFor(sku) });
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -1323,10 +1323,13 @@ const Orders = window.Orders = (() => {
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
+    const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
     return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
-      libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku)];
+      libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
+      // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
+      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) : ""];
   }
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
@@ -1367,6 +1370,81 @@ const Orders = window.Orders = (() => {
     // Read decisions for precisely these lines after a restore, pull or recall.
     // Recovery runs in the background only once checkpoint writes are enabled.
     if (window.Session?.ready?.()) window.CustomSheet?.load?.().catch(() => {});
+    wantTables();
+  }
+  /* The SKU Etsy keeps for each product of a listing (Paul, 9 Oct: a listing whose options carry SKUs). The transaction brings
+     the SKU of the product bought; the listing's table (Etsy's inventory, stored by the cloud for 7 days: charmNestLibrary
+     listingSkus, _charmNestListingSkus.js) is asked for only the listings with a line that still waits on its SKU (no SKU, a
+     SKU no master file holds, or an option nothing has answered) and whose ids the station gave (a line restored from a record
+     has none). The page keeps what it was told for the same 7 days, so a reload asks for nothing it already knows; a listing
+     the cloud could not ask Etsy about yet is asked again after 10 minutes, then 30, then 90… (6 hours at most). */
+  const TABLES_LS = "cn.listingSkus.v1", TABLES_ASK_MS = 7 * 86400000, TABLES_KEEP_MS = 14 * 86400000, tableTry = new Map();   // (listing id → { until, n }: not asked again before `until`)
+  let tableTimer = 0, tableBusy = false, tablesRead = false;
+  function tablesLoad() {
+    if (tablesRead) return; tablesRead = true;
+    try {
+      const raw = JSON.parse(localStorage.getItem(TABLES_LS) || "null"), now = Date.now(), kept = {};
+      if (raw && raw.v === 1 && raw.tables) for (const [id, t] of Object.entries(raw.tables)) if (t && typeof t === "object" && now - (+t.at || 0) < TABLES_KEEP_MS) kept[id] = t;
+      if (Object.keys(kept).length) B.maps.listingSkus = Object.assign({}, kept, B.maps.listingSkus);
+    } catch (_) {}
+  }
+  function tablesSave() {
+    try {
+      let tables = B.maps.listingSkus, text = JSON.stringify({ v: 1, tables });
+      if (text.length > 800000) { tables = Object.fromEntries(Object.entries(tables).sort((a, b) => (+b[1].at || 0) - (+a[1].at || 0)).slice(0, 60)); text = JSON.stringify({ v: 1, tables }); }
+      localStorage.setItem(TABLES_LS, text);
+    } catch (_) {}
+  }
+  tablesLoad();   // (what the page was told in the last 14 days is known before the first line is read)
+  /** Does this line still wait on its SKU: no SKU, a SKU no master file holds, or an option nothing has answered? */
+  function needsTable(r) {
+    const sp = r.spec, l = r.line;
+    if (!sp || !l || !l.listingId || r.state === "gone" || r.state === "committed" || sp.noDesign || sp.special || sp.customDone) return false;
+    if (!(l.productId || (l.variations || []).some(v => v.propertyId != null && v.valueId != null))) return false;
+    return (sp.problems || []).some(p => p.kind === "unmatchedSku" || p.kind === "needsMapping");
+  }
+  function wantTables() {
+    if (tableTimer || tableBusy || !S.cloud.ok) return;
+    tableTimer = setTimeout(() => { tableTimer = 0; askTables().catch(e => console.warn("SKU tables", e)); }, 800);
+  }
+  async function askTables() {
+    if (tableBusy || !S.cloud.ok) return;
+    const now = Date.now(), ids = [];
+    for (const r of rowsOf()) {
+      if (!needsTable(r)) continue;
+      const id = String(r.line.listingId), have = B.maps.listingSkus[id], t = tableTry.get(id);
+      if ((have && now - (+have.at || 0) < TABLES_ASK_MS) || (t && now < t.until) || ids.includes(id)) continue;
+      ids.push(id);
+    }
+    if (!ids.length) return;
+    tableBusy = true;
+    try {
+      for (let i = 0; i < ids.length; i += 25) {
+        const part = ids.slice(i, i + 25), r = await api("charmNestLibrary", { op: "listingSkus", listingIds: part }, { quiet: true }).catch(() => null);
+        const pending = new Set((r && r.pending || []).map(String));
+        for (const id of part) {
+          const t = tableTry.get(id), n = t ? t.n : 0;
+          if (r && r.tables && r.tables[id] && !pending.has(id)) tableTry.delete(id);
+          else if (r && r.why === "batch") tableTry.set(id, { until: Date.now() + 90000, n });   // (the cloud's six for this request were used: the rest come in the next)
+          else tableTry.set(id, { until: Date.now() + Math.min(6 * 3600000, 600000 * 3 ** n), n: Math.min(5, n + 1) });
+        }
+        if (r && r.tables) await takeTables(r.tables);
+      }
+    } finally { tableBusy = false; }
+  }
+  /** Tables the cloud sent: the lines of those listings are read again, and a line held for its SKU or its option that now reads clean is made up again. */
+  async function takeTables(fresh) {
+    const next = Object.assign({}, B.maps.listingSkus); let changed = false;
+    for (const [id, t] of Object.entries(fresh || {})) if (t && typeof t === "object" && +t.at && JSON.stringify(next[id]) !== JSON.stringify(t)) { next[id] = t; changed = true; }
+    if (!changed) return;
+    const waiting = new Set(rowsOf().filter(needsTable).map(r => r.key));
+    B.maps.listingSkus = next; tablesSave();
+    interpretAll();
+    for (const r of rowsOf()) {
+      if (!waiting.has(r.key) || !fresh[String(r.line.listingId)] || (r.problems || []).some(p => p.kind === "unmatchedSku" || p.kind === "needsMapping")) continue;
+      if (!["held", "unmatched"].includes(r.state) || r.hold || (r.poolIds || []).length) continue;
+      try { await Review.repool(r); } catch (e) { console.warn("SKU table repool", r.key, e); }
+    }
   }
   async function pull(run, { silent = false, receiptIds = null } = {}) {
     await DesignLink.ensure(); await Sandbox.ready(true);   // the sandbox order stream must exist before the station sweeps
@@ -2012,6 +2090,15 @@ const Orders = window.Orders = (() => {
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
 const Master = window.Master = (() => {
   const entryFor = sku => B.master.entries.get(String(sku || "").toUpperCase()) || null;
+  /* The master's own spelling of a SKU Etsy wrote with other spacing or punctuation ("SPORTS12- BULLSEYE" for the master's
+     "SPORTS 12 - BULLSEYE"): the one master SKU that reads the same without them, "" when none or two do. Made again when
+     the library held is replaced or grows. */
+  let looseIx = { entries: null, size: -1, map: null };
+  function looseFor(sku) {
+    const e = B.master.entries;
+    if (looseIx.entries !== e || looseIx.size !== e.size) { const m = new Map(); for (const k of e.keys()) { const key = O.looseKey(k); m.set(key, m.has(key) ? "" : k); } looseIx = { entries: e, size: e.size, map: m }; }
+    return looseIx.map.get(O.looseKey(sku)) || "";
+  }
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
@@ -2492,7 +2579,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
-  return { entryFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
