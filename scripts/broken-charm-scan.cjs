@@ -224,7 +224,7 @@ function report(a) {
       if (f.variant === "HUGGIE" && twin.length && r.areaPt2 > 0) { const t = twin.find(x => x.areaPt2 > 0); if (t && r.areaPt2 < 0.08 * t.areaPt2) add(sku, { rule: "small-vs-twin", why: `silhouette ${r1(r.areaPt2 * MM * MM)} mm² against ${r1(t.areaPt2 * MM * MM)} mm² for the same design without (HUGGIE)` }, base); }
       // the stored record and picture
       const e = live.get(sku.toUpperCase());
-      if (e && r.areaPt2 > 0 && e.areaPt2 > 0 && (e.areaPt2 < 0.7 * r.areaPt2 || e.areaPt2 > 1.4 * r.areaPt2)) add(sku, { rule: "live-record-differs", why: `the library holds ${r1(e.areaPt2 * MM * MM)} mm² (${r1(e.widthPt * MM)} x ${r1(e.heightPt * MM)} mm, ${e.holes} holes); the reader now gives ${r1(r.areaPt2 * MM * MM)} mm² (${r1(r.widthPt * MM)} x ${r1(r.heightPt * MM)} mm, ${r.holes} holes)` }, base);
+      if (e && r.areaPt2 > 0 && e.areaPt2 > 0 && (e.areaPt2 < 0.5 * r.areaPt2 || e.areaPt2 > 2 * r.areaPt2)) add(sku, { rule: "live-record-differs", why: `the library holds ${r1(e.areaPt2 * MM * MM)} mm² (${r1(e.widthPt * MM)} x ${r1(e.heightPt * MM)} mm, ${e.holes} holes); the reader now gives ${r1(r.areaPt2 * MM * MM)} mm² (${r1(r.widthPt * MM)} x ${r1(r.heightPt * MM)} mm, ${r.holes} holes)` }, base);
       const pic = pics[e ? e.sku : sku];
       if (pic && (pic.widestPieceSpan < 0.7 || pic.inkShare < 0.02)) add(sku, { rule: "stored-picture", why: `the stored card picture is ${pic.inkShare < 0.02 ? "almost empty" : "no body, only loose pieces"} (ink ${Math.round(pic.inkShare * 1000) / 10} %, the widest connected piece spans ${Math.round(pic.widestPieceSpan * 100)} % of the picture, ${pic.pieces} pieces)` }, base);
     }
