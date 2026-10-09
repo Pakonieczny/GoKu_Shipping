@@ -185,6 +185,8 @@ async function main(argv, log = console.log) {
   const one = async ({ index, l, c }) => {
     const key = l.size ? `${l.sku}__${l.size}` : l.sku;
     if (progress.done[key]) { const d = progress.done[key]; entries.push(d.entry); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { entries.push(Object.assign({}, d.entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
+    // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
+    { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }
     const sil = G.silhouetteBits(c, 6, {});
     const charmHash = P.fnv(P.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
     const open = (() => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();

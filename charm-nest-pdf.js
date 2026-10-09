@@ -1574,10 +1574,9 @@
      A master draws a jump ring as its own small circle beside the body (cyan, usually), which the laser would cut as a
      loose washer. On a finished sheet the hoop is part of the cut line: one outline that runs around the body and over
      the top of the ring, and the ring's inner circle cut as a hole. That is what this does, for every small closed
-     circle a charm carries: the ring is moved to touch the body if it does not, the outer circle is welded into the
-     outline (curves are flattened within 0.002 mm), and the inner circle becomes a
-     black cut line. All contacts are united and all resulting apertures are retained. */
-  const ringLike = m => { if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.stroke || !m.closed) return false; const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1]; return Math.abs(w - h) < 1 && w >= 3.5 && w <= 8 && (m.subpaths || []).length >= 1 && (m.subpaths || []).length <= 2 && m.subpaths.every(sp => sp.length <= 8); };
+     circle a charm carries: the ring is united with the body where it touches it and joined to it by a short neck where it does
+     not (it is never moved), the outer circle is welded into the outline (curves are flattened within 0.002 mm), and the
+     inner circle becomes a black cut line. All contacts are united and all resulting apertures are retained. */
   function circlePath(cx, cy, r) {
     const k = 0.5522847498 * r;
     return [["m", [cx + r, cy]], ["c", [cx + r, cy + k], [cx + k, cy + r], [cx, cy + r]], ["c", [cx - k, cy + r], [cx - r, cy + k], [cx - r, cy]], ["c", [cx - r, cy - k], [cx - k, cy - r], [cx, cy - r]], ["c", [cx + k, cy - r], [cx + r, cy - k], [cx + r, cy]], ["h"]];
@@ -1633,45 +1632,127 @@
     out.push(["h"]);
     return out;
   }
-  /** Boolean union handles every body/ring contact, including separate lobes of
-   * a compound outline. Authored overlapping rings keep their original centre.
-   * Detached rings are seated once; the aperture is subtracted after the union. */
+  /* A hoop is found by its SHAPE, not by one size. The shop's masters draw it in two sizes and four ways:
+       6.5 pt outside / 3.7 pt hole   (the standard ring)         9.35 pt outside / 5.85 pt hole   (the HUGGIE ring)
+       one path holding both circles (cyan or black), or two separate circles (cyan or black), on CUT or LABELS.
+     An earlier rule accepted only a circle of 3.5 to 8 pt. The standard ring passed it; the HUGGIE ring's 9.35 pt
+     outside circle did not, so (a) a ring drawn as one path was never welded and stayed a loose, unattached washer, and
+     (b) a ring drawn as two circles had its 5.85 pt HOLE taken for the whole ring: that hole was welded into the outline
+     as a solid disc, and the real 9.35 pt outside circle was left behind as a big loose circle around it (and counted as
+     a second "hole"). Concentric circles are therefore grouped first: the largest is the hoop, the next one inside it is
+     its hole, an exact duplicate of either is the same hoop drawn twice. The hoop is then ALWAYS attached to the body:
+     united with it where it overlaps or touches, and joined by a short neck to the nearest point of the body edge where
+     it does not (the ring stays where the artist drew it; it is never moved). */
+  const HOOP_OUTER_MAX_PT = 13.6, HOOP_LONE_MIN_PT = 3.5, HOOP_LONE_MAX_PT = 8, HOOP_REACH_PT = 14, HOOP_LONE_REACH_PT = 3;
+  const vec = () => root.CharmNestVector || (typeof require === "function" ? require("./charm-nest-vector.js") : null);
+  /** A closed subpath that is a circle (four Béziers, a polygon, anything round): { cx, cy, r }, or null. */
+  function circleOf(sp, V) {
+    let pts; try { pts = V.flatten(sp).points; } catch (_) { return null; }
+    if (!pts || pts.length < 8) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+    const w = x1 - x0, h = y1 - y0, r = (w + h) / 4, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (!(r > 0) || Math.abs(w - h) > 0.08 * r + 0.1) return null;
+    let dev = 0; for (const p of pts) dev = Math.max(dev, Math.abs(Math.hypot(p[0] - cx, p[1] - cy) - r));
+    return dev <= 0.04 * r + 0.05 ? { cx, cy, r } : null;
+  }
+  /** A path that could be (part of) a hoop: closed, stroked, not artwork, hoop-sized and round by its box. */
+  const ringLike = m => {
+    if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.stroke || !m.closed) return false;
+    const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1], subs = m.subpaths || [];
+    return Math.abs(w - h) < 1 && w >= HOOP_LONE_MIN_PT && w <= HOOP_OUTER_MAX_PT && subs.length >= 1 && subs.length <= 3 && subs.every(sp => sp.length <= 8);
+  };
+  /** Every hoop a charm carries, from its concentric circles: [{ outer, aperture|null, members, items }], largest first. */
+  function findHoops(c, V) {
+    const items = [];
+    for (const m of c.members) {
+      if (!m || m === c.outline || !ringLike(m)) continue;
+      const cs = m.subpaths.map(sp => circleOf(sp, V)); if (cs.some(x => !x)) continue;   // one path holding anything but circles is not a hoop
+      cs.forEach((x, i) => items.push(Object.assign({ m, i }, x)));
+    }
+    items.sort((a, b) => b.r - a.r);
+    const clusters = [];
+    for (const it of items) {
+      const g = clusters.find(k => Math.hypot(k.cx - it.cx, k.cy - it.cy) <= 0.5);
+      if (g) g.items.push(it); else clusters.push({ cx: it.cx, cy: it.cy, items: [it] });
+    }
+    const same = (a, b) => Math.abs(a - b) <= Math.max(0.15, 0.03 * a);
+    const hoops = [];
+    for (const g of clusters) {
+      const outer = g.items[0];
+      const aperture = g.items.find(i => i !== outer && !same(i.r, outer.r) && i.r < outer.r * 0.92 && i.r > outer.r * 0.2) || null;
+      const d = outer.r * 2;
+      if (aperture ? d < HOOP_LONE_MIN_PT : (d < HOOP_LONE_MIN_PT || d > HOOP_LONE_MAX_PT)) continue;   // a lone circle keeps the old size window; a pair may be the larger HUGGIE ring (9.35 pt)
+      const used = g.items.filter(i => i === outer || i === aperture || same(i.r, outer.r) || (aperture && same(i.r, aperture.r)));
+      const members = [...new Set(used.map(i => i.m))];
+      // a path is replaced whole: every circle it holds must belong to this hoop
+      if (members.some(m => g.items.filter(i => i.m === m).length !== used.filter(i => i.m === m).length || m.subpaths.length !== used.filter(i => i.m === m).length)) continue;
+      hoops.push({ outer, aperture, members, cx: outer.cx, cy: outer.cy });
+    }
+    return hoops;
+  }
+  const polyArea = ps => Math.abs(ps.reduce((v, p, i) => v + p[0] * ps[(i + 1) % ps.length][1] - p[1] * ps[(i + 1) % ps.length][0], 0)) / 2;
+  /** Boolean union handles every body/hoop contact, including separate lobes of a compound outline. A hoop keeps the
+   * centre the artist gave it: where it overlaps the body it is united with it; where it only touches or stands clear a
+   * neck is added from the hoop wall to the nearest point of the body edge. The aperture is subtracted after the union. */
   function integrateRings(c) {
-    const res={welded:0,left:[]};if(!c?.outline?.subpaths)return res;
-    const V=root.CharmNestVector || (typeof require==='function'?require('./charm-nest-vector.js'):null);
+    const res={welded:0,left:[],bridged:[],skipped:[]};if(!c?.outline?.subpaths)return res;
+    const V=vec();
     if(!V)throw new Error("Vector geometry library is unavailable. Refresh the page.");
-    for(const ring of c.members.filter(m=>m!==c.outline&&ringLike(m))) {
-      if(!c.members.includes(ring))continue;
+    for(const hoop of findHoops(c,V)) {
+      if(hoop.members.some(m=>!c.members.includes(m)))continue;
       const original=c.outline, polys=original.subpaths.map(sp=>V.flatten(sp).points);
-      const ro=(ring.bbox[2]-ring.bbox[0])/2,cx0=(ring.bbox[0]+ring.bbox[2])/2,cy0=(ring.bbox[1]+ring.bbox[3])/2;
-      const near=nearestOnPolys(cx0,cy0,polys);
-      // Already enclosed circles are cut-outs, not loose jump rings.
-      if(pointInPolys(cx0,cy0,polys)&&near.d>=ro-.01)continue;
+      const ro=hoop.outer.r,cx=hoop.cx,cy=hoop.cy;
+      const near=nearestOnPolys(cx,cy,polys);
       if(!near.p){res.left.push("ring has no body outline");continue;}
-      let cx=cx0,cy=cy0;
-      if(near.d>=ro-.01) {
-        const distance=near.d-Math.max(.1,ro-Math.min(1,ro*.3));
-        cx+=(near.p[0]-cx)/Math.max(near.d,1e-9)*distance;
-        cy+=(near.p[1]-cy)/Math.max(near.d,1e-9)*distance;
-      }
-      const translate=sp=>sp.map(op=>[op[0],...op.slice(1).map(p=>[p[0]+cx-cx0,p[1]+cy-cy0])]);
-      const subs=ring.subpaths.map(sp=>({sp,points:V.flatten(sp).points}));
-      const area=ps=>Math.abs(ps.reduce((v,p,i)=>v+p[0]*ps[(i+1)%ps.length][1]-p[1]*ps[(i+1)%ps.length][0],0));
-      subs.sort((a,b)=>area(b.points)-area(a.points));
-      const outer=translate(subs[0].sp);
-      // Some masters store the inner aperture as a separate concentric circle.
-      const innerMember=c.members.find(m=>m!==ring&&m!==original&&ringLike(m)&&
-        Math.hypot((m.bbox[0]+m.bbox[2])/2-cx0,(m.bbox[1]+m.bbox[3])/2-cy0)<.15&&m.bbox[2]-m.bbox[0]<ro*1.8);
-      const inner=translate(subs[1]?.sp || innerMember?.subpaths[0] || circlePath(cx0,cy0,ro*.565));
-      const united=V.boolean(polys,[V.flatten(outer).points],'union',original.fill&&!original.paintOp?.endsWith('*')?'nonzero':'evenodd');
+      // Already enclosed circles are cut-outs, not loose jump rings.
+      const inside=pointInPolys(cx,cy,polys);
+      if(inside&&near.d>=ro-.01)continue;
+      // A circle that sits inside another piece of the same file (a plate beside the body, drawn with its own hole) is that
+      // piece's hole, not a hoop. A closed piece is tested by its shape; a plate drawn as open strokes by its box.
+      if(c.members.some(m=>{
+        if(!m||m===original||hoop.members.includes(m)||m.kind!=="path"||!m.stroke||!m.bbox||pathRole(m)==="artwork")return false;
+        const b=m.bbox;if(cx<b[0]+ro-.01||cx>b[2]-ro+.01||cy<b[1]+ro-.01||cy>b[3]-ro+.01)return false;
+        const sp=m.subpaths.map(s=>V.flatten(s).points).filter(p=>p.length>3);
+        if(!sp.length)return false;
+        if(!m.closed&&sp.every(p=>Math.hypot(p[0][0]-p[p.length-1][0],p[0][1]-p[p.length-1][1])>=1.5))return b[2]-b[0]>=ro*5&&b[3]-b[1]>=ro*3;
+        return pointInPolys(cx,cy,sp)&&nearestOnPolys(cx,cy,sp).d>=ro-.01;
+      }))continue;
+      // a circle well clear of the body is not this charm’s hoop (a plate’s hole, a stray mark): left as it is, never bridged across the sheet
+      if(near.d-ro>(hoop.aperture?HOOP_REACH_PT:HOOP_LONE_REACH_PT)){res.skipped.push({gapPt:+(near.d-ro).toFixed(2),lone:!hoop.aperture});continue;}
+      const outerPts=V.flatten(hoop.outer.m.subpaths[hoop.outer.i]).points;
+      const ri=hoop.aperture?hoop.aperture.r:ro*.565;
+      const innerPts=hoop.aperture?V.flatten(hoop.aperture.m.subpaths[hoop.aperture.i]).points:V.flatten(circlePath(cx,cy,ri)).points;
+      const rule=original.fill&&!original.paintOp?.endsWith('*')?'nonzero':'evenodd';
+      let united=V.boolean(polys,[outerPts],'union',rule);
       if(!united.length){res.left.push("ring union produced no material");continue;}
-      const cut=V.boolean(united.map(p=>p.points),[V.flatten(inner).points],'difference');
+      // The hoop's exterior must hold body material as well: a lone disc means it is not attached.
+      const attached=u=>{const e=u.filter(p=>!p.hole).find(p=>insidePoly(cx,cy,p.points));return !!e&&polyArea(e.points)>Math.PI*ro*ro*1.02+.5;};
+      const wall=Math.max(ro-ri,.5);
+      if(!inside&&(!attached(united)||2*Math.sqrt(Math.max(0,ro*ro-near.d*near.d))<1)) {
+        // the hoop stands clear of the body or only grazes it: a neck from the middle of the hoop wall, along the line to the
+        // nearest body-edge point, a little way into the body
+        const ux=(near.p[0]-cx)/near.d,uy=(near.p[1]-cy)/near.d,vx=-uy,vy=ux,s=ri+wall/2;
+        let done=false;
+        for(const [w,pen] of [[Math.max(1.4,Math.min(wall,2.4)),.8],[2.8,2],[4,4]]) {
+          const t=near.d+pen,h=w/2;
+          const neck=[[cx+ux*s+vx*h,cy+uy*s+vy*h],[cx+ux*t+vx*h,cy+uy*t+vy*h],[cx+ux*t-vx*h,cy+uy*t-vy*h],[cx+ux*s-vx*h,cy+uy*s-vy*h]];
+          const u2=V.boolean(united.map(p=>p.points),[neck],'union');
+          if(!u2.length)continue;
+          if(attached(u2)){united=u2;done=true;break;}
+        }
+        if(!done){res.left.push("ring could not be attached to its charm");continue;}
+        res.bridged.push({gapPt:+(near.d-ro).toFixed(3),sku:c.sku||null});
+      } else if(!attached(united)){res.left.push("ring could not be attached to its charm");continue;}
+      const cut=V.boolean(united.map(p=>p.points),[innerPts],'difference');
       if(!cut.length){res.left.push("ring aperture removes the entire body");continue;}
-      const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole);
-      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||ring.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
+      // a sliver the laser cannot cut (under 0.1 pt2, about 0.035 mm2) is not a hole: a hoop touching the body at a point leaves a
+      // zero-area one, a body path that touches itself leaves hair-thin ones along its edge. Real pockets between hoop and body stay.
+      const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole&&polyArea(p.points)>=.1);
+      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||hoop.outer.m.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
       const outline={...original,...base,subpaths:exteriors.map(p=>V.subpath(p.points)),bbox:bboxOf(exteriors.flatMap(p=>p.points)),welded:(original.welded||0)+1};
       const apertures=holes.map(p=>({...base,subpaths:[V.subpath(p.points)],bbox:bboxOf(p.points)}));
-      const replaced=new Set([original,ring,innerMember,...(original.parts||[])].filter(Boolean));
+      const replaced=new Set([original,...hoop.members,...(original.parts||[])].filter(Boolean));
       // A replaced path inside a Form must suppress that Form, not a local
       // child index which may name unrelated top-level artwork. Redraw its
       // remaining vector members in their already-transformed coordinates.
@@ -1699,4 +1780,6 @@
   }
   root.CharmNestPDF = { markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+  // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
+  root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
 })(typeof window !== "undefined" ? window : self);
