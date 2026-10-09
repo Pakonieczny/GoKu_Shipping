@@ -33,6 +33,7 @@
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const crypto = require("crypto");
+const PoolPieces = require("../../charm-nest-pool-pieces.js");   // a piece of a mismatched pair: side, bodyIndex, groupKey, groupSize (old rows derived)
 
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const ms = v => (v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : typeof v === "number" ? v : 0);
@@ -168,7 +169,18 @@ function reconcile(input) {
   }
   const vals = Object.values(placement), count = k => vals.filter(x => x.state === k).length;
   const summary = { pieces: vals.length, onSheet: count("sheet"), waiting: count("waiting"), held: count("held"), removed: count("removed"), cancelling: vals.filter(x => x.state === "removed" && x.cancel).length };
+  // a mismatched pair (a left and a right piece of one order line) whose pieces are on different sheets, or partly on none: said here, from the rows already read
+  const split = splitPairs([...pools.values()], placement);
+  if (split.length) summary.groups = split;
   return { pools: [...pools.values()], sheets, placement, repaired, summary };
+}
+
+/** The groups of MISMATCHED pairs (rows that carry a side) whose pieces are not all on one sheet: [{ groupKey, size, have, missing, sheets: { sheetId: [poolId] }, off: [poolId] }].
+    Pure; nothing is read. Plain lines (no side) are never listed, so a normal order's answer has no `groups`. A held or removed piece counts as off. */
+function splitPairs(rows, placement) {
+  const where = r => { const p = placement && placement[r.poolId]; return p && p.state === "sheet" ? p.sheetId || "page" : null; };
+  return PoolPieces.groupsOf((rows || []).filter(Boolean), where)
+    .filter(g => g.sided && g.split).map(g => ({ groupKey: g.groupKey, size: g.size, have: g.have, missing: g.missing, sheets: g.sheets, off: g.off }));
 }
 
 /** A pool row list as a poolList answers it: a row whose sheet record is deleted or archived says it is on no sheet any more.
@@ -177,4 +189,4 @@ function repairPoolRows(rows, gone) {
   return rows.map(r => (r && r.sheetId && gone.has(String(r.sheetId)) && !TAKE_OFF_STATES.has(r.state) ? Object.assign({}, r, { sheetId: null, sheetName: null, setId: null, sheetIdWas: r.sheetId, repaired: ["sheetGone"] }) : r));
 }
 
-module.exports = { isTakeOff, takenOff, editable, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES };
+module.exports = { splitPairs, isTakeOff, takenOff, editable, takeOffUpdate, reconcile, repairPoolRows, revOf, digest, labelOf, orderOfKey, REPOOLED, TAKE_OFF_STATES };
