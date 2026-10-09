@@ -342,8 +342,10 @@ const normName = raw => {
   let words = s.split(" ").filter(Boolean).map(w => w.split(/([-'’.])/).map((seg, i) => (i % 2 ? seg : part(seg))).join(""));
   if (words.length > 1) words = words.map(w => (/^\p{L}$/u.test(w) ? w + "." : w));
   const out = words.join(" ").slice(0, 80).trim();
-  return /\p{L}/u.test(out) ? out : "";
+  return /\p{L}/u.test(out) ? ONE_LOGIN(out) : "";
 };
+/* One person, one name (Paul, 9 Oct 2026: "Ana_M and Anna are the same person ... standardize her login under Ana_M"): her other spellings are the one login name. The server folds the same way (netlify/functions/_activityKinds.js loginName). */
+function ONE_LOGIN(s) { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; }
 const employeeName = () => B.employee || (B.link && B.link.state() && B.link.state().employee) || "";
 /* The last name used in this browser (cn.lastEmployee: kept after a sign-out, midnight or an idle end clears cn.employee), so the next
    press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
@@ -620,6 +622,9 @@ const livePairOf = (r, rid) => {
     const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
     if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
     if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+    // a line the count rules make into several separate pieces (a 3-disc necklace) is one group of n pieces with no side, as the stations tell it (ADVCOUNT); a plain quantity-2 line is told as before
+    const q = Math.max(1, Math.round(+(r.spec && r.spec.quantity) || +r.line.quantity || 1));
+    if (list.length >= 2 && list.length > q) return list.map((p, i) => ({ grp, of: list.length, n: i + 1 }));
   } catch (_) {}
   return [];
 };
@@ -2664,12 +2669,12 @@ const Master = window.Master = (() => {
     // is not the same in a mirror (index field sym, or the copy the pool already holds) or one a person already set
     const heldSym = e => { try { const Pr = window.CharmNestPair, g = Pool.sizeEntry(e, e.sizes ? Object.keys(e.sizes)[0] : null), src = g && g.aiPath && B.pool.sources.get(g.aiPath), c = src && src.charms && src.charms[0], b = c && Pr && Pr.bodiesOf(c)[0]; return b ? Pr.symmetryOf(b).level : ""; } catch (_) { return ""; } };
     // a design this page has already read keeps the way it was told to face until the page is reloaded: tell the copy it holds (orders made up after this use the new word)
-    const facingLive = (skus, v) => { for (const sku of skus) { const en = entryFor(sku); if (!en) continue; for (const size of en.sizes ? Object.keys(en.sizes) : [null]) { const g = Pool.sizeEntry(en, size), src = g && g.aiPath && B.pool.sources.get(g.aiPath); if (src) for (const c of [].concat(src.charms || [], src.bodies || [])) if (c) { if (v === "") delete c.facing; else c.facing = v; } } } };
+    const facingLive = (skus, patch) => { for (const sku of skus) { const en = entryFor(sku); if (!en) continue; for (const size of en.sizes ? Object.keys(en.sizes) : [null]) { const g = Pool.sizeEntry(en, size), src = g && g.aiPath && B.pool.sources.get(g.aiPath); if (src) for (const c of [].concat(src.charms || [], src.bodies || [])) if (c) { for (const k of ["facing", "facings"]) if (k in patch) { if (patch[k] == null) delete c[k]; else c[k] = patch[k]; } } } } };
     const facesBox = (e, keys) => {
       const Pr = window.CharmNestPair, fc = Pr && Pr.facingControl ? Pr.facingControl(e, e.sym ? "" : heldSym(e)) : null;
       if (!fc || !fc.show) return "";
-      return `<select data-faces="${keys}" title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` +
-        fc.options.map(([v, t]) => `<option value="${v}"${v === fc.value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+      const box = (value, options, extra) => `<select data-faces="${keys}"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+      return fc.bodies ? fc.bodies.map(bd => box(bd.value, bd.options, ` data-body="${bd.index}"`)).join("") : box(fc.value, fc.options);
     };
     grid.innerHTML = shown.map(d => {
       const e = d.head, keys = esc(d.skus.join("|"));
@@ -2697,7 +2702,13 @@ const Master = window.Master = (() => {
     // a failed save says so (it used to fail in silence, the typed angle standing in the box as if kept)
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
     // saved to every SKU that shares the charm, like the up angle; "" gives the word back (the drawing is taken as the Left again). The pieces of orders already made up are not changed.
-    each("faces", (sel, skus) => { let was = sel.value; sel.onchange = () => { const v2 = sel.value, say = v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (cut as drawn on both sides)" : "facing not set (the drawing is the Left)"; sel.disabled = true; patchMany(skus, { facing: v2 === "" ? null : v2 }).then(() => { was = v2; sel.disabled = false; facingLive(skus, v2); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
+    each("faces", (sel, skus) => { let was = sel.value; sel.onchange = () => {
+      const v2 = sel.value, two = sel.dataset.body != null;   // (a mismatched pair has one box per body: both words are saved together, body 0 is also `facing`)
+      const words = two ? [...sel.parentNode.querySelectorAll("select[data-faces][data-body]")].sort((x, y) => x.dataset.body - y.dataset.body).map(x => x.value || null) : null;
+      const patch = two ? { facing: words[0], facings: words.some(Boolean) ? words : null } : { facing: v2 === "" ? null : v2 };
+      const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (cut as drawn on both sides)" : "facing not set (the drawing is the Left)";
+      sel.disabled = true;
+      patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
   }
   return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };

@@ -70,6 +70,7 @@
   }
 
   async function solve(job, cb = {}) {
+    if (Sv.linkGroups) job = Sv.linkGroups(job);   // (the pieces of one pair share one order, whatever the page named it)
     const t0 = performance.now(), key = fingerprint(job), opts = job.learned || {};
     const restored = opts.checkpoint?.key === key ? opts.checkpoint : null;
     const priorMs = restored?.activeMs || 0;

@@ -1427,6 +1427,8 @@ const DsLive = (() => {
    browser goes through the same tidy once at load; it is idempotent and keeps mixed capitals ("McDonald") as they are. ── */
 const DsName = (() => {
   const MAX = 80;
+  /* One person, one name (Paul, 9 Oct 2026: "Ana_M and Anna are the same person ... standardize her login under Ana_M"): her other spellings are the one login name. The server folds the same way (netlify/functions/_activityKinds.js loginName). */
+  const ONE_LOGIN = s => { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; };
   const startsOnly = w => !/\p{Lu}/u.test(w.replace(/(^|[-'\u2019.])\p{L}/gu, "$1"));          // no capital except at the start of a part
   const recase = w => (w === w.toUpperCase() || startsOnly(w)) ? w.toLowerCase().replace(/(^|[-'\u2019.])(\p{L})/gu, (_, a, b) => a + b.toUpperCase()) : w;
   /** "  dana   d " → "Dana D.", "O'BRIEN-smith" → "O'Brien-Smith"; "" when nothing usable is left. */
@@ -1438,7 +1440,7 @@ const DsName = (() => {
     let words = s.split(" ").filter(Boolean).map(recase);
     if (words.length > 1) words = words.map(w => /^\p{L}$/u.test(w) ? w + "." : w);
     const out = words.join(" ").slice(0, MAX).trim();
-    return /\p{L}/u.test(out) ? out : "";
+    return /\p{L}/u.test(out) ? ONE_LOGIN(out) : "";
   }
   const stored = () => { try { return String(localStorage.getItem(LS.employee) || ""); } catch (_) { return ""; } };
   const current = () => normalize(stored());
@@ -8422,10 +8424,10 @@ window.DesignStation = {
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261006-st3"></script>
-<script src="station-activity.js?v=20261009-ps1"></script>
+<script src="station-activity.js?v=20261009-ps1-adv1"></script>
 <!-- The order in hand right now (the orders the person picked = working, labels printed or selection cleared = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
-  <script src="station-live-order.js?v=20261009-ps1"></script>
+  <script src="station-live-order.js?v=20261009-ps1-adv1"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
