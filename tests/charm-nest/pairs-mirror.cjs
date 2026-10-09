@@ -10,6 +10,7 @@
 //  F  the nester never reflects: no mirror code in the solver, lookahead, GPU, workers; a pair placed under every rotation is still a mirror pair; a Right is never a rotation of its Left
 //     (chiral); a real solve seats both with rotations only
 //  G  the laser file: the mirrored ear written by the real sheet builder and read back is the exact mirror of the Left (colours kept, holes kept), at any angle
+//  H  the Master tab's "faces" box (the real card code cut out of the bridge and run over fakes): shown for directional designs only, saves { facing } for every SKU, keeps a held copy in step
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const Pair = require('../../charm-nest-pair.js');
 const L = require('./pocket-fill-lib.cjs'), S = L.solverOf(L.REPO);
@@ -131,6 +132,8 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   Object.assign(sym, { outline: so, members: [so, sh, ink([[6, 4], [18, 4]], { index: 3 }), ink([[6, 8], [18, 8]], { index: 4 })], bbox: [2, 0, 22, 30] });
   const si = Pair.facingInfo(Pair.bodiesOf(sym)[0], sym);
   ok(si.directional === false && si.level === 'symmetric' && si.facing === null && !Pair.needsFacing(sym), 'D8 a symmetric design is not directional and needs nobody to say anything');
+  const IM = require('../../scripts/index-master.cjs');
+  ok(IM.symLevel(Pair, sym) === 'symmetric' && IM.symLevel(Pair, design()) === 'directional' && IM.symLevel(null, sym) === undefined && IM.symLevel(Pair, {}) === undefined, 'D8b the indexer stores sym: symmetric / directional from the first body, nothing when it cannot say');
   const sl = Pair.pieceGeometry(sym, { side: 'L', mirror: false }), sr = Pair.pieceGeometry(sym, { side: 'R', mirror: true });
   const key = g => g.members.filter(m => m.kind === 'path').map(m => [...new Set(ptsOf(m).map(p => p.map(v => v.toFixed(6)).join(',')))].sort().join(';')).sort().join('|');
   ok(key(sl) === key(sr), 'D9 the Right of a symmetric design looks the same as its Left (the same points)');
@@ -270,6 +273,44 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   // an as-drawn charm is written as before
   const plain = await cuts([place(Object.assign({}, left, { side: undefined }), 80, 100, 0)]);
   ok(plain.length === lefts.length && plain.every(l => !l.subpaths.some(sp => sp.length === 0)), 'G9 the as-drawn piece is written with the same parts as ever');
+
+  /* ── H · the Master tab's "faces" box (the real code of charm-nest-bridge.js, cut out and run over fakes) ── */
+  {
+    const ctl = Pair.facingControl;
+    ok(ctl({ sku: 'A', sym: 'directional' }).show && ctl({ sku: 'A', sym: 'directional' }).value === '' && !ctl({ sku: 'A', sym: 'symmetric' }).show && !ctl({ sku: 'A', sym: 'slight' }).show && !ctl({ sku: 'A' }).show, 'H1 the box is shown for a directional design only (a symmetric one or one not measured yet shows nothing)');
+    ok(ctl({ sku: 'A', sym: 'symmetric', facing: 'R' }).show && ctl({ sku: 'A', facing: 'X' }).value === 'X' && ctl({ sku: 'A' }, 'directional').show && ctl(null).show === false, 'H2 a word a person set stays visible and can be changed; the page may bring its own measure; nothing at all shows nothing');
+    ok(ctl({ sku: 'A', facing: 'sideways', sym: 'directional' }).value === '' && ctl({}).options.map(o => o[0]).join() === ',L,R,X', 'H3 four choices (not set, left, right, reads one way); junk is "not set"');
+    const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
+    const a = bridge.indexOf('    const heldSym = e =>'), b = bridge.indexOf('    grid.innerHTML = shown.map(d => {', a);
+    ok(a > 0 && b > a, 'H4 the Master card code is where the test expects it');
+    const esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const entries = { A: { sku: 'A', sizes: null, sym: 'directional', facing: 'R' }, B: { sku: 'B', sym: 'symmetric' }, C: { sku: 'C', sizes: { S: {}, L: {} } }, D: { sku: 'D', sym: 'directional' } };
+    const holder = { charms: [Object.assign(design(), { facing: 'R' })] }; holder.bodies = [Object.assign(design(), { facing: 'R' })];
+    const mk = new Function('window', 'Pool', 'B', 'esc', 'entryFor', bridge.slice(a, b) + '\nreturn { heldSym, facingLive, facesBox };');
+    const fakePool = { sizeEntry: (e, size) => ({ aiPath: 'path' + e.sku + (size || '') }) };
+    const Bf = { pool: { sources: new Map([['pathA', holder], ['pathCS', holder], ['pathCL', holder], ['pathE', { charms: [design()] }]]) } };
+    const M = mk({ CharmNestPair: Pair }, fakePool, Bf, esc, sku => entries[sku]);
+    const html = M.facesBox(entries.D, 'D'), none = M.facesBox(entries.B, 'B'), set = M.facesBox(entries.A, 'A|A2');
+    ok(/^<select data-faces="D"/.test(html) && /<option value="" selected>faces: not set<\/option>/.test(html) && /value="L">faces left/.test(html) && /value="R">faces right/.test(html) && /value="X">reads one way/.test(html) && /title="Which way the master file draws/.test(html), 'H5 a directional design gets the box with its four words and its explanation: ' + html.slice(0, 120));
+    ok(none === '' && /<option value="R" selected>/.test(set) && /data-faces="A\|A2"/.test(set), 'H6 a symmetric design gets nothing, one a person set shows the word (the box saves for every SKU of the charm)');
+    ok(M.facesBox({ sku: 'E' }, 'E') !== '' && M.facesBox({ sku: 'Q' }, 'Q') === '', 'H7 a design with no measure yet is judged from the copy the page already holds (a mitten is directional), and shown nothing when there is none');
+    // the handler: saves through patchMany for every SKU, tells the held copy, says "from now on"; a failure puts the old word back and says so
+    const hs = bridge.indexOf('    each("faces"'), he = bridge.indexOf('\n', hs), line = bridge.slice(hs, he);
+    ok(/patchMany\(skus, \{ facing: v2 === "" \? null : v2 \}\)/.test(line) && /applies to orders made up from now on/.test(line), 'H8 the box saves { facing } (null gives the word back) for every SKU and says it applies from now on');
+    const run = async (patchMany) => {
+      const toasts = [], sel = { value: 'L', disabled: false }, fake = { each: (attr, fn) => fn(sel, ['A', 'A2']), patchMany, toast: (m, k) => toasts.push([m, k]), facingLive: (...a) => { toasts.live = a; } };
+      new Function('each', 'patchMany', 'toast', 'facingLive', line)(fake.each, fake.patchMany, fake.toast, fake.facingLive);
+      sel.value = 'R'; sel.onchange(); await new Promise(r => setTimeout(r, 5)); return { sel, toasts };
+    };
+    const calls = []; const good = await run(async (skus, p) => { calls.push([skus.slice(), p]); });
+    ok(calls.length === 1 && calls[0][0].join() === 'A,A2' && calls[0][1].facing === 'R' && good.toasts[0][1] === 'ok' && /faces right/.test(good.toasts[0][0]) && good.toasts.live[1] === 'R' && good.sel.disabled === false, 'H9 choosing "faces right" saves { facing: "R" } for both SKUs and says so');
+    const bad = await run(async () => { throw new Error('offline'); });
+    ok(bad.toasts[0][1] === 'bad' && /not saved — offline/.test(bad.toasts[0][0]) && bad.sel.value === 'L' && bad.sel.disabled === false, 'H10 a save that fails says so and puts the old word back');
+    // a copy the page already holds hears the change; one it does not hold is left alone
+    M.facingLive(['A', 'D'], 'L'); ok(holder.charms[0].facing === 'L' && holder.bodies[0].facing === 'L', 'H11 the page\'s held copy of the design (and its bodies) takes the new word');
+    M.facingLive(['A'], ''); ok(!('facing' in holder.charms[0]) && !('facing' in holder.bodies[0]), 'H12 and gives it back when the word is cleared');
+    M.facingLive(['C'], 'X'); ok(holder.charms[0].facing === 'X', 'H13 every size of the design is told');
+  }
 
   console.log('pairs-mirror: ' + n + ' checks passed');
 })().catch(e => { console.error(e); process.exit(1); });
