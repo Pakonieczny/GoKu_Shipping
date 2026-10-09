@@ -82,7 +82,24 @@ function cleanPiece(p) {
   if (sku && isSku(sku) && !pinLike(sku)) out.sku = sku;
   if (/^\d{3,20}$/.test(listingId) && !pinLike(listingId)) out.listingId = listingId;
   if (/^[A-Za-z0-9]{1,6}$/.test(size)) out.size = size;
+  Object.assign(out, pairFields(p));
   return out.id || out.label || out.sku || out.listingId ? out : null;
+}
+/** The pair fields of a piece (Paul, 9 Oct 2026: a mismatched pair is a left and a right charm of one listing and one order): side (L | R), group
+ *  (receipt:transaction), the group's size and the piece's place in it. Nothing else is kept; a piece with none gets {}. */
+function pairFields(p) {
+  const out = {};
+  if (!p || typeof p !== "object") return out;
+  if (p.side === "L" || p.side === "R") out.side = p.side;
+  const grp = String(p.grp == null ? "" : p.grp).slice(0, 41);
+  if (/^\d{3,20}:\d{0,20}$/.test(grp)) {
+    out.grp = grp;
+    const of = Math.round(Number(p.of)), n = Math.round(Number(p.n));
+    if (of >= 2 && of <= 500) out.of = of;
+    if (n >= 1 && n <= 500) out.n = n;
+  }
+  if (p.both === true) out.both = true;
+  return out;
 }
 /** How far this computer's clock is from the server's: the server's now minus the clock the browser stamped on its request (`sentAt`),
  *  in whole seconds. Under 10 s (the request's own travel time, or a clock that is nearly right) it counts as none, and so does a
@@ -215,7 +232,8 @@ async function masters(ctx, skus) {
       const d = snaps[i] && snaps[i].exists ? (snaps[i].data() || {}) : null;
       const sizes = {}; if (d && d.sizes && typeof d.sizes === "object") for (const [k, v] of Object.entries(d.sizes)) { const u = httpsOnly(v && v.thumbUrl); if (u) sizes[k.toUpperCase()] = u; }
       const base = d ? httpsOnly(d.thumbUrl) : "";
-      keep(ctx, "master", s, base || Object.keys(sizes).length ? { thumbUrl: base, sizes } : null);
+      const pair = d && d.pair && typeof d.pair === "object" && Number(d.pair.bodies) > 1 ? { bodies: Math.round(Number(d.pair.bodies)), mismatched: d.pair.mismatched === true } : null;   // (the design draws more than one body: a mismatched pair is a left and a right)
+      keep(ctx, "master", s, base || Object.keys(sizes).length ? { thumbUrl: base, sizes, pair } : null);
     });
   }
   return new Map(skus.map(s => [s, remembered(ctx, "master", s) || null]));
@@ -254,6 +272,32 @@ async function archives(ctx, rids) {
   return new Map(rids.map(s => [s, remembered(ctx, "archive", mk(s)) || null]));
 }
 
+/** A piece whose design is a MISMATCHED pair (the master says it draws two different bodies) and that the page did not already split is a left and a right
+ *  charm: each such piece becomes a Left piece and a Right piece of one group, both marked `both` (the design's picture draws both bodies, so the console
+ *  shows ONE tile "Left + Right"), and the order's piece count grows by one per piece split. A piece the page already gave a side is left as it is. No read:
+ *  the master documents are the ones dress() reads for the thumbnails. */
+function expandPairs(c, M) {
+  if (!c || !Array.isArray(c.pieces) || !c.pieces.length) return;
+  const out = [], list = c.pieces; let added = 0;
+  const groupOfPiece = p => {                                              // receipt:transaction from the piece's id ("tid-1" from a page, "rid_tid_1" from the saved order)
+    if (p.grp && /^\d{3,20}:\d{0,20}$/.test(p.grp)) return p.grp;
+    const id = String(p.id || ""); let m = /^(\d{3,20})_(\d{1,20})_\d+$/.exec(id);
+    if (m) return m[1] + ":" + m[2];
+    m = /^(\d{1,20})-\d+$/.exec(id);
+    const rid = digits(c.rid, 20);
+    return rid.length >= 3 ? rid + ":" + (m ? m[1] : "") : "";
+  };
+  list.forEach((p, i) => {
+    const mm = p.sku && M ? M.get(String(p.sku).toUpperCase()) : null;
+    const room = out.length + 2 + (list.length - i - 1) <= MAX_PIECES;     // (what follows is kept whole too)
+    if (p.side || !mm || !mm.pair || !mm.pair.mismatched || mm.pair.bodies !== 2 || !room) { out.push(p); return; }
+    const grp = groupOfPiece(p);
+    for (const side of ["L", "R"]) { const q = Object.assign({}, p, { id: String(p.id || "p") + "-" + side, side, both: true, of: 2, n: side === "L" ? 1 : 2 }); if (grp) q.grp = grp; out.push(q); }
+    added++;
+  });
+  if (added) { c.pieces = out; c.pieceCount = Math.max(c.pieces.length, (c.pieceCount || 0) + added); }
+}
+
 /** fills each current order with its thumbnails and customer, from what is already stored */
 async function dress(ctx, list) {
   const errors = [];
@@ -280,11 +324,13 @@ async function dress(ctx, list) {
   const M = m.ok ? m.value : new Map(), L = l.ok ? l.value : new Map();
   for (const c of list) {
     const arc = c.arc; delete c.arc;
+    expandPairs(c, M);
     for (const p of c.pieces) {
       const mm = p.sku ? M.get(p.sku.toUpperCase()) : null;
       p.vectorUrl = mm ? (p.size && mm.sizes[p.size.toUpperCase()]) || mm.thumbUrl || Object.values(mm.sizes)[0] || "" : "";
       p.photoUrl = (p.listingId && L.get(p.listingId)) || p._url || "";
       p.thumbUrl = p.vectorUrl || p.photoUrl || "";
+      if (p.both && p.vectorUrl) p.thumbUrl = p.vectorUrl;                    // (a mismatched pair's picture is the design's own: both bodies side by side)
       delete p._url; delete p.listingId; delete p.size;
       if (!p.sku) delete p.sku;
     }
@@ -409,7 +455,7 @@ async function op(ctx, body, H) {
       const stn = displayStation(v.station);                             // (a document of the Sorter app or the QR Printer page is Sorting's)
       cur.push({ station: stn, person: H.display(v.person), device: dev, deviceLabel: deviceLabel(stn, dev), kind: v.kind === "sheet" ? "sheet" : "order",
         rid: idText(v.rid), orderNumber: idText(v.orderNumber) || idText(v.rid), customer: text(v.customer, 60), title: text(v.title, 80), scannedAt: ms(v.scannedAt) || ms(v.eventAt), beatAt: ms(v.beatAt), since: ms(v.sinceAt) || 0,
-        pieces: (Array.isArray(v.pieces) ? v.pieces : []).slice(0, MAX_PIECES).map(p => ({ id: str(p && p.id, 40), label: str(p && p.label, 60), sku: str(p && p.sku, 60), listingId: str(p && p.listingId, 20), size: str(p && p.size, 6) })),
+        pieces: (Array.isArray(v.pieces) ? v.pieces : []).slice(0, MAX_PIECES).map(p => Object.assign({ id: str(p && p.id, 40), label: str(p && p.label, 60), sku: str(p && p.sku, 60), listingId: str(p && p.listingId, 20), size: str(p && p.size, 6) }, pairFields(p))),
         pieceCount: Math.max(0, Number(v.pieceCount) || 0), note: text(v.note, 80) });
     } else if (v.state === "idle") idleLive.push(v);
   }
@@ -508,4 +554,4 @@ async function op(ctx, body, H) {
   return H.json(200, out);
 }
 
-module.exports = { LIVE, KEEPALIVE_MS, STALE_MS, COALESCE_MS, MAX_BODY_CHARS, MAX_PIECES, CATALOG, LABELS, cleanOrder, cleanPiece, skewOf, write, op, _t: { seen } };
+module.exports = { LIVE, KEEPALIVE_MS, STALE_MS, COALESCE_MS, MAX_BODY_CHARS, MAX_PIECES, CATALOG, LABELS, cleanOrder, cleanPiece, pairFields, expandPairs, skewOf, write, op, _t: { seen } };

@@ -112,15 +112,22 @@ function standing(docs) {
 /** { sheets, timed, unknown, avgSec, fastestSec, slowestSec, totalSec, pieces, orders } of standing rows. Only a row with `seconds` counts for the times; none = null, never 0. */
 function summarize(rows) {
   const out = { sheets: 0, timed: 0, unknown: 0, avgSec: null, fastestSec: null, slowestSec: null, totalSec: 0, pieces: 0, orders: 0 };
+  // Orders are counted ONCE however many sheets they sit on (Paul, 9 Oct 2026: a pair or a disc necklace whose pieces are on two sheets is one order, not two): a row that
+  // carries its order ids (`_oids`, written since pairs) adds them to one set; an older row, which only knows how many orders its sheet held, adds that number as before.
+  const seen = new Set();
   for (const r of rows || []) {
-    out.sheets++; out.pieces += Math.max(0, num(r.pieces)); out.orders += Math.max(0, num(r.orders));
+    out.sheets++; out.pieces += Math.max(0, num(r.pieces));
+    if (r && Array.isArray(r._oids) && r._oids.length) for (const id of r._oids) seen.add(id); else out.orders += Math.max(0, num(r && r.orders));
     const s = r.seconds; if (s == null || !Number.isFinite(+s)) { out.unknown++; continue; }
     out.timed++; out.totalSec += +s;
     out.fastestSec = out.fastestSec == null ? +s : Math.min(out.fastestSec, +s); out.slowestSec = out.slowestSec == null ? +s : Math.max(out.slowestSec, +s);
   }
+  out.orders += seen.size;
   if (out.timed) out.avgSec = Math.round(out.totalSec / out.timed);
   return out;
 }
+/** The order ids a record keeps: digits only, at most 100 (a flat list: Firestore has no arrays inside arrays). */
+const oidsOf = list => [...new Set((Array.isArray(list) ? list : []).map(x => String(x == null ? "" : x).replace(/\D/g, "").slice(0, 30)).filter(x => x.length >= 4))].slice(0, 100);
 
 /** What the page said, cleaned: { role, session, loginAgo, prevAgo, prevKnown, seconds, startedFrom } or null (nothing usable). The page sends AGES in ms before the press
  *  (loginAgo, prevAgo), never clock times, so a wrong clock on that computer cannot spoil a figure. */
@@ -215,7 +222,7 @@ async function recordDone(db, FV, prefix, o) {
     _id: `${m.sheetId}__${at}`, kind: DONE, v: 1, id: `${m.sheetId}__${at}`, sheetId: m.sheetId, sheet: str(m.sheet, 80), setId: str(m.setId, 100), setSeq: num(m.setSeq) || null, metal: str(m.metal, 20),
     person: by, personKey: personKey(by), at, day: nyDay(at), device: str(o.device, 40), via: str(o.via, 24),
     seconds: each, actionSeconds: figure.seconds, together, startedFrom: figure.startedFrom, startAt: figure.startAt, loginAt: figure.loginAt, session: figure.session, prevAt: figure.prevAt, prevSheetId: figure.prevSheetId,
-    pieces: Math.max(0, Math.round(num(m.pieces))), orders: Math.max(0, Math.round(num(m.orders))),
+    pieces: Math.max(0, Math.round(num(m.pieces))), orders: Math.max(0, Math.round(num(m.orders))), ...(oidsOf(m.orderIds).length ? { orderIds: oidsOf(m.orderIds) } : {}),
     source: figure.source, verified: figure.verified, clientSeconds: figure.clientSeconds, disagree: figure.disagree, note: str(figure.note, 300) }));
   try { await writeOnce(db, FV, prefix, docs); }
   catch (e) { console.warn("[laserSheetTime] not recorded:", (e && e.message) || e); }
@@ -249,7 +256,11 @@ async function lastFor(db, prefix, by, now) {
 /** One row as a reader shows it (no ids of other kinds, no personKey). */
 const rowOf = d => ({ at: ms(d.at), sheetId: str(d.sheetId, 100), sheet: str(d.sheet, 80), setId: str(d.setId, 100), person: str(d.person, 80), seconds: d.seconds == null ? null : Math.max(0, Math.round(num(d.seconds))),
   startedFrom: d.startedFrom === "login" || d.startedFrom === "previousSheet" ? d.startedFrom : "unknown", pieces: Math.max(0, Math.round(num(d.pieces))), orders: Math.max(0, Math.round(num(d.orders))), together: Math.max(1, Math.round(num(d.together)) || 1),
+  _oids: oidsOf(d.orderIds),   // (the order ids of the sheet, read only by summarize(); never sent to a page: see plain())
   source: d.source === "server" || d.source === "client" ? d.source : "none", disagree: !!d.disagree, day: str(d.day, 10) || nyDay(ms(d.at)) });
+
+/** A row as a page gets it: without the order ids summarize() read. */
+const plain = r => { const x = Object.assign({}, r); delete x._oids; return x; };
 
 /** The standing completions with `at` in [fromMs, toMs): { rows (newest first, as rowOf), capped }. One range on `at`; the query reaches two days past the window so the
  *  undo marker of a completion near its end is read too. */
@@ -294,7 +305,7 @@ async function opSheets(ctx, body, H) {
   const mine = got.rows.filter(x => H.nameKeyOf(ctx, x.person) === want);
   const totals = summarize(mine);
   const out = { ok: true, now: ctx.now, name: H.display(name), from, to, days: diffDays(from, to) + 1, found: mine.length > 0, spellings: [...new Set(mine.map(x => x.person))].slice(0, 8),
-    sheets: mine.slice(0, LIMIT.rows), totals, series: seriesOf(mine, from, to), notes: [] };
+    sheets: mine.slice(0, LIMIT.rows).map(plain), totals, series: seriesOf(mine, from, to), notes: [] };
   if (mine.length > LIMIT.rows) out.notes.push(`The list shows the newest ${LIMIT.rows} sheets; the figures count all ${mine.length}.`);
   if (mine.some(x => x.seconds == null)) out.notes.push("A sheet marked completed with no Laser sign-in has no time: it is listed, and left out of the average, fastest and slowest.");
   if (got.capped) { out.partial = true; out.notes.push("The window held more records than one read takes; the oldest are left out."); }
@@ -310,5 +321,5 @@ async function liveBlock(ctx, H) {
     last: last ? { at: last.at, person: H.display(last.person), sheet: last.sheet, sheetId: last.sheetId, seconds: last.seconds, startedFrom: last.startedFrom, pieces: last.pieces, orders: last.orders, together: last.together } : null };
 }
 
-module.exports = { COLL, DONE, UNDONE, SESSION_GONE_MS, LOOKBACK_MS, personKey, cleanName, computeStart, stillOpen, pickSession, pickPrevious, standing, summarize, cleanClient, decide, agree,
+module.exports = { plain, oidsOf, COLL, DONE, UNDONE, SESSION_GONE_MS, LOOKBACK_MS, personKey, cleanName, computeStart, stillOpen, pickSession, pickPrevious, standing, summarize, cleanClient, decide, agree,
   context, recordDone, recordUndone, lastFor, readRange, readSince, rowOf, seriesOf, opSheets, liveBlock, nyDay, addDays, validDay, diffDays };

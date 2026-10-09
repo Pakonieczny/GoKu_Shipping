@@ -47,6 +47,8 @@
   const uniq = list => [...new Set(list.filter(Boolean))];
   const whoNow = () => String((W.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })() || "").trim();
   const msOf = t => { t = +t || 0; return t > 0 && t < 1e11 ? t * 1000 : t; };
+  // does this design draw two different bodies (a mismatched pair: left and right)? (the master's `pair` field, read by CharmNestPair)
+  const misSku = sku => (W.PairRemove ? W.PairRemove.isMismatchedSku(sku) : false);
 
   /* ── what a person sees: one plain sentence per consequence ── */
   // The orders that fill the freed spots, each counted ONCE by its order id: one order that fills a spot on two sheets (its gold piece
@@ -70,6 +72,11 @@
     const out = [], on = P.pieces.filter(p => p.state === "onSheet"), loose = P.pieces.filter(p => p.state === "notOnSheet");
     const where = P.sheets.map(s => s.label + (s.setLabel ? ` (${s.setLabel})` : ""));
     if (on.length) out.push(`${plural(on.length, "piece")} of this order ${on.length === 1 ? "comes" : "come"} off ${joinAnd(where)}.`);
+    // a pair, a mismatched pair or n discs is said as one group: where each piece is, and that they come off together (nothing is added for a single piece)
+    if (on.length && W.PairRemove) {
+      try { for (const g of W.PairRemove.groupsOf(on.map(p => ({ id: p.poolId, groupKey: p.groupKey || "", side: p.side || null, form: p.form || "", where: p.sheetLabel || "" })))) if (g.text) out.push(g.kind === "pair" || g.kind === "mismatched" ? (g.size === 2 ? `Its pair comes off together: ${g.phrase}.` : `Its ${g.size} earrings come off together: ${g.phrase}.`) : g.text); }
+      catch (e) { console.warn("[OrderHold] pair words", e); }
+    }
     if (loose.length) out.push(`${plural(loose.length, "piece")} ${loose.length === 1 ? "is" : "are"} not on a sheet yet and simply ${loose.length === 1 ? "waits" : "wait"} under On hold.`);
     const into = P.fills.filter(f => f.source !== "none"), free = P.fills.filter(f => f.source === "none");
     if (into.length) {
@@ -100,7 +107,9 @@
   function planFrom(snap) {
     const P = { rid: String(snap.rid), label: snap.label || "", customer: snap.customer || "", shipBy: msOf(snap.shipBy), canHold: true, blockedWhy: null, estimate: true, pieces: [], sheets: [], fills: [], stays: [], effects: [] };
     const STATE = { off: "onSheet", none: "notOnSheet", cut: "onCutSheet", together: "onCutSheet", sent: "inCommittedSet", unloaded: "onSheet", last: "onSheet", completed: "completed" };
-    for (const p of snap.pieces || []) P.pieces.push({ poolId: p.poolId, lineKey: p.lineKey || "", label: p.label || "", metal: p.metal || "", state: STATE[p.status] || "onSheet", sheetId: p.sheetId || null, sheetLabel: p.sheetLabel || "", setId: p.setId || null, setLabel: p.setLabel || "" });
+    for (const p of snap.pieces || []) P.pieces.push(Object.assign({ poolId: p.poolId, lineKey: p.lineKey || "", label: p.label || "", metal: p.metal || "", state: STATE[p.status] || "onSheet", sheetId: p.sheetId || null, sheetLabel: p.sheetLabel || "", setId: p.setId || null, setLabel: p.setLabel || "" },
+      // (a piece of a pair: its side (L or R), its group (receipt:transaction) and its form; a piece with none of them is exactly as before)
+      p.side ? { side: p.side } : null, p.groupKey ? { groupKey: p.groupKey } : null, p.form ? { form: p.form } : null));
     const by = st => (snap.pieces || []).filter(p => p.status === st), labels = list => joinAnd(uniq(list.map(p => p.sheetLabel)));
     const off = by("off"), none = by("none"), stays = (snap.pieces || []).filter(p => p.status === "cut" || p.status === "together");
     for (const p of stays) P.stays.push({ poolId: p.poolId, label: p.label || "", sheetLabel: p.sheetLabel || "", why: p.why || "that sheet was already cut" });
@@ -161,7 +170,10 @@
       const sh = o.sh || holderOf(o.id), pr = (W.B && B.pool && B.pool.rows.get(o.id)) || null, ro = rowOf.get(o.id), r = ro && ro.r;
       const qty = r && r.spec ? r.spec.quantity || (r.line && r.line.quantity) || 1 : 1, name = o.sku || (r && r.spec && r.spec.designSku) || "a piece";
       const c = sh && sh.charms.find(z => z.poolId === o.id), set = setOf(sh);
-      snap.pieces.push({ poolId: o.id, lineKey: (r && r.key) || (c && c.lineKey) || "", label: qty > 1 && ro ? `${name} · ${ro.i + 1} of ${qty}` : name, metal: (sh && sh.metal) || (r && r.material) || (pr && pr.material) || "",
+      // a piece of a pair: its side (a mismatched pair reads "MITTENS · left earring"), its group and its form; any other piece reads "name · 1 of 2" as before
+      const side = W.PairRemove ? W.PairRemove.sideOfPiece(pr || { poolId: o.id }, misSku((pr && pr.sku) || name)) : null;
+      snap.pieces.push({ poolId: o.id, lineKey: (r && r.key) || (c && c.lineKey) || "", label: side ? W.PairRemove.pieceLabel(name, side) : qty > 1 && ro ? `${name} · ${ro.i + 1} of ${qty}` : name,
+        ...(side ? { side } : null), ...(W.PairRemove && (W.PairRemove.keyOf(pr || o.id) || W.PairRemove.keyOf(o.id)) ? { groupKey: W.PairRemove.keyOf(pr || o.id) || W.PairRemove.keyOf(o.id) } : null), ...((pr && pr.form) || (r && r.spec && r.spec.form) ? { form: (pr && pr.form) || r.spec.form } : null), metal: (sh && sh.metal) || (r && r.material) || (pr && pr.material) || "",
         status, why: o.why || "", sheetId: (sh && sh.sheetId) || (pr && pr.sheetId) || null, sheetLabel: o.where && o.where !== "not on a sheet yet" ? o.where : (sh ? K.word(sh) : ""), setId: set.id, setLabel: set.label,
         placed: !!(c && sh.placements.some(p => p.id === c.id)) });
     };
@@ -318,6 +330,11 @@
         const held = uniq(sheetPieces.filter(o => (r.poolIds || []).includes(o.id)).map(o => o.sh));
         for (let i = 1; i < held.length; i++) parent.set(find(held[i]), find(held[0]));
       }
+      // a pair (or n discs) is one group even when its pieces sit in more than one line: the sheets that hold it come off together too
+      for (const g of off.groups || []) {
+        const held = uniq(sheetPieces.filter(o => g.items.some(i => i.id === o.id)).map(o => o.sh));
+        for (let i = 1; i < held.length; i++) parent.set(find(held[i]), find(held[0]));
+      }
       const clusters = [];
       for (const o of sheetPieces) { const k = find(o.sh); let c = clusters.find(z => z.key === k); if (!c) clusters.push(c = { key: k, ok: [], sheets: [] }); c.ok.push(o); if (!c.sheets.includes(o.sh)) c.sheets.push(o.sh); }
       for (const c of clusters) c.sheets.sort((a, b) => pos(a) - pos(b));
@@ -391,7 +408,7 @@
         const counts = new Map(cl.sheets.map(sh => [sh, { n: cl.ok.filter(o => o.sh === sh).length, spots: rectsOf(sh, new Set(cl.ok.filter(o => o.sh === sh).map(o => o.id))).length }]));
         const prevLifted = (journal.all()[rid] || {}).lifted || [];
         journal.set(rid, { lifted: uniq([...prevLifted, ...cl.sheets.map(sh => sh.sheetId)]) });
-        try { await K.takeOff({ rid, whole: true, ids, ok: cl.ok, stay: off.stay }, who, note); }
+        try { await K.takeOff({ rid, whole: true, ids, ok: cl.ok, stay: off.stay, groups: off.groups || [], pairNotes: off.pairNotes || [] }, who, note); }
         catch (e) {
           // (nothing came off: the sheets are not lifted, and a run that changed nothing leaves no journal)
           let moved = false; try { const now = new Set(K.offPlan(rid).ok.map(o => o.id)); moved = cl.ok.some(o => !now.has(o.id)); } catch (_) { moved = true; }

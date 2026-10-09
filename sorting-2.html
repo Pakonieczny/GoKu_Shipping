@@ -353,10 +353,11 @@
        (station-activity.js), as on sorting.html: the "Sorting as" name or 6-digit employee number (checked by the
        server against "Employee Numbers"; the number is never kept or logged). Each piece is optional: the page works without it. -->
   <script src="station-session.js?v=20261006-st3"></script>
-  <script src="station-activity.js?v=20261006-st2"></script>
+  <script src="station-activity.js?v=20261009-ps1"></script>
   <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
        (station-live-order.js). Optional: without it nothing changes. -->
-  <script src="station-live-order.js?v=20261005-et2"></script>
+  <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
+  <script src="station-live-order.js?v=20261009-ps1"></script>
   <!-- The order's timeline (order-timeline.js): a printed sticker is stamped on its order as sorted and as a label printed here, as on
        sorting.html (7 Oct 2026; this page stamped nothing before). Optional: without it nothing changes. -->
   <script src="order-timeline.js?v=20261007-fc4"></script>
@@ -495,7 +496,7 @@
     function act(action, o) { try { return !!(window.StationActivity && StationActivity.log(action, o)); } catch (_) { return false; } }
     const idsOfItem = it => [it && it.receipt_id, it && it.receiptId, it && it.typedOrderNumber].filter(v => v != null && v !== "").map(String);
     function piecesOf(id) {
-      try { let n = 0; for (const it of (window.cachedOrderItems || [])) if (idsOfItem(it).includes(String(id))) n += Math.max(1, Math.floor(+it.quantity) || 1); return n; }
+      try { let n = 0; const mine = (window.cachedOrderItems || []).filter(it => idsOfItem(it).includes(String(id))); try { if (window.StationLiveOrder && StationLiveOrder.units) return StationLiveOrder.units(mine); } catch (_) {} for (const it of mine) n += Math.max(1, Math.floor(+it.quantity) || 1); return n; }
       catch (_) { return 0; }
     }
     const dayKey = () => { try { return (window.StationSession && StationSession.nyDay && StationSession.nyDay()) || new Date().toISOString().slice(0, 10); } catch (_) { return ""; } };
@@ -1446,6 +1447,8 @@ function openIframePrinterForListing(cellIndex) {
     items: itemsForOrder,
     userTypedOrderNum: item.typedOrderNumber || "UnknownOrder" // or whatever variable holds the typed Etsy order number
   };
+  // an earring pair (matching or mismatched) prints one sticker page for each ear, LEFT then RIGHT (QR Printer.html reads `pieces`); an order with none prints the one sticker it always did
+  try { const ears = window.StationLiveOrder && StationLiveOrder.ears ? StationLiveOrder.ears(itemsForOrder) : []; if (ears.length) dataToPrint.pieces = ears; } catch (_) {}
   
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
 
@@ -2132,6 +2135,7 @@ async function fillPreviewBoxes(items) {
     qtyInput.style.left = previewLeft + "px";
     qtyInput.style.top  = previewTop  + 107 + "px";
     qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
+    try { const pairTag = window.StationLiveOrder && StationLiveOrder.tag ? StationLiveOrder.tag(item) : ""; if (pairTag) qtyInput.value += " \u00b7 L+R"; qtyInput.title = pairTag || ""; } catch (_) {}   // an earring pair says so (a Left and a Right)
 
     const metalInput = document.createElement("input");
     metalInput.type  = "text";

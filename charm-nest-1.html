@@ -2978,7 +2978,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1">
 </head>
 <body>
 <div class="app" id="app">
@@ -3188,34 +3188,36 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-solver.js?v=20261009-unjam1"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc1"></script>
+<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc1-pe2-bf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col"></script>
-<script src="charm-nest-pair.js?v=20261009-pr1"></script>
-<script src="charm-nest-pair-thumb.js?v=20261009-pt3"></script>
+<script src="charm-nest-pair.js?v=20261009-pr1-mi1"></script>
+<script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache"></script>
-<script src="charm-nest-backs.js?v=20261005-engtog1"></script>
+<script src="charm-nest-thumbs.js?v=20261009-th1"></script>
+<script src="charm-nest-engrave-sides.js?v=20261009-pe1"></script>
+<script src="charm-nest-backs.js?v=20261005-engtog1-pe1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3"></script>
-<script src="charm-nest-export.js?v=20261009-cutfill-plb1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1"></script>
+<script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1"></script>
-<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc1"></script>
+<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc1-pe2-mi1-bf1"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -3269,6 +3271,11 @@ const TRAY = "#efe9de";   // the part of the 100 × 50 mm frame a smaller sheet 
 const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => { const t = Math.round(ms / 1000); return t < 60 ? t + "s" : Math.floor(t / 60) + "m " + (t % 60) + "s"; } };   // (whole seconds first: 539.6 s read "8m 60s")
 /* Storage redirects are read through the same-origin production asset route. */
 const cors = u => CharmNestAssets.url(u);
+/* A stored design picture (charm-nest-thumbs.js): kept on this computer and asked for only near the screen. The tag carries the address and a
+   key; mountPics(host) fills the images in. Without the module it is the plain lazy image it always was. */
+const picTag = (url, id) => !url ? "" : window.CharmNestThumbs ? `<img crossorigin="anonymous" data-pic="${esc(cors(url))}" data-pic-key="${esc(CharmNestThumbs.weeklyKey("c|" + id))}" alt="">` : `<img crossorigin="anonymous" src="${cors(url)}" loading="lazy" alt="">`;
+const picMounts = new WeakMap();
+const mountPics = host => { try { picMounts.get(host)?.stop(); if (window.CharmNestThumbs) picMounts.set(host, CharmNestThumbs.mountImages(host)); } catch (_) { /* the pictures stay as they are */ } };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 const today = () => CharmNestOrders.localDay(new Date(SimClock.now()));   // one local clock decides the folder date and the name date (the sandbox stream's simulated one while it plays)
@@ -6768,7 +6775,8 @@ async function openLibrarySheet(id) {
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${ProductionExports.sheetControls(d.id)}${d.outputs ? ["labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       ${LaserReview.labels(d)}
       <div class="section">Charms · ${(d.charms || []).length}</div>
-      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
+      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${picTag(c.thumbUrl, c.hash || c.name || c.index)}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
+    mountPics($("#lsBody"));
     $("#lsDownloads").onclick = () => ProductionExports.run([d.id], "ai");
     $("#lsRestore").onclick = () => restoreSheet(d).catch(e => toast('Restore stopped: '+e.message,'bad',7000));
     foot.forEach(b => { b.disabled = false; });
@@ -6777,7 +6785,7 @@ async function openLibrarySheet(id) {
     $("#lsDelete").onclick = async () => {
       const code = prompt(`Delete sheet ${d.folder || d.id} permanently — its record, .ai, proof, report and preview? Enter the passcode to confirm.`);
       if (code == null) return;
-      try { await api("charmNestLibrary", { op: "deleteSheet", id: d.id, code: String(code).trim() }, { label: "Deleting sheet" }); toast(`Sheet ${d.folder || d.id} deleted`, "ok"); closeDlg(dlg); loadLibrary(); }
+      try { const del = await api("charmNestLibrary", { op: "deleteSheet", id: d.id, code: String(code).trim() }, { label: "Deleting sheet" }); const alone = window.PairRemove && del ? PairRemove.deletedSplits(del.splits) : []; toast(`Sheet ${d.folder || d.id} deleted` + (alone.length ? ". " + alone.join(" ") : ""), "ok", alone.length ? 9000 : undefined); closeDlg(dlg); loadLibrary(); }
       catch (e) { toast(e.status === 403 ? "Wrong passcode — nothing was deleted" : "Delete failed: " + e.message, "bad", 5000); }
     };
   } catch (e) { $("#lsBody").innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
@@ -6840,9 +6848,10 @@ async function loadCharms() {
     CNListActivity.mount($("#charmsView .libBar"),"charms",loadCharms);
     const rows = CNListActivity.select("charms",r.charms || []);
     $("#charmCount").textContent = q ? `${rows.length} match${rows.length === 1 ? "" : "es"}` : `${rows.length} charm${rows.length === 1 ? "" : "s"}${rows.length >= 400 ? "+" : ""}`;
-    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile hoverItem" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile hoverItem" data-h="${c.hash}">${picTag(c.thumbUrl, c.hash)}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
         ? `No charm matches &ldquo;${esc(q)}&rdquo;.` + (r.truncated ? `<br><span style="font-size:12px">The search covered the ${r.scanned} most recently used charms.</span>` : "") + `<br><button class="btn ghost sm" type="button" id="charmClear" style="margin-top:12px">Clear search</button>`
         : `No charms yet &mdash; they appear here after the first sheet is nested.`}</div>`;
+    mountPics(body);
     { const clr = $("#charmClear"); if (clr) clr.onclick = () => { $("#charmSearch").value = ""; loadCharms(); }; }
     // a grid of 400 tiles used to be 400 focusable fields wired to a permanent rename in the shared library: a stray
     // click and a keystroke committed it on blur, with no way back. A name is read-only until its pencil is pressed.
@@ -7136,14 +7145,14 @@ boot();
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261006-st3"></script>
-<script src="station-activity.js?v=20261006-st2"></script>
+<script src="station-activity.js?v=20261009-ps1"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
 <script src="charm-nest-laser-time.js?v=20261007-fc2"></script>
 <script src="charm-nest-laser-act.js?v=20261006-sa5-ls2-gc1"></script>
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7190,13 +7199,14 @@ try {
   try { if (roleOn()) CNRole.start(); } catch (_) {}
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw1"></script>
+<script src="charm-nest-pair-remove.js?v=20261009-pr1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw1-pe1-pr2"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
@@ -7228,7 +7238,7 @@ try {
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3"></script>
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
-<script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1"></script>
+<script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1"></script>
 <script src="charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1"></script>
 <script src="charm-nest-efficiency-orders.js?v=20261006-eo6-in2"></script>
 <script src="charm-nest-efficiency-laser.js?v=20261006-int2"></script>
