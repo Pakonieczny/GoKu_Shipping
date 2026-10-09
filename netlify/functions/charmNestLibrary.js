@@ -1961,6 +1961,8 @@ async function op_setUpdate(b) {
         const split=await splitOfSet(id,ids);
         if(split.length){
           const there=[...new Set(split.flatMap(it=>it.there))];
+          // (a pair, a mismatched pair or an order of discs says what its pieces are: one read of at most 24 pool rows, only on this refusal)
+          if(split.length===1){const meta=await pieceMeta(tx,split).catch(()=>null);if(meta){SharedRule.describe(split,meta);if(split[0].words)throw new Error(`Set cannot be completed: order ${split[0].orderId} ${split[0].words}, and ${there.join(', ')} ${there.length===1?'is':'are'} not in this set. Sheets that share a multi-piece order stay in the same set: put them in one set, or take the order off one of the sheets.`);}}
           throw new Error(`Set cannot be completed: ${split.length===1?'order '+split[0].orderId+' also has pieces':split.length+' orders ('+split.slice(0,4).map(it=>it.orderId).join(', ')+(split.length>4?', ...':'')+') also have pieces'} on ${there.join(', ')}, which ${there.length===1?'is':'are'} not in this set. Sheets that share a multi-piece order stay in the same set: put them in one set, or take the order off one of the sheets.`);
         }
       }
@@ -3559,7 +3561,7 @@ async function pieceMeta(tx, items) {
   const ids = [...new Set((items || []).flatMap(i => (i.pieces || []).map(p => str(p && p.key, 80))).filter(isPoolId))].slice(0, 24);
   if (!ids.length) return null;
   const map = new Map();
-  for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "" }); }
+  for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "", bodyIndex: x.bodyIndex != null && Number.isFinite(+x.bodyIndex) ? +x.bodyIndex : null }); }
   return map.size ? (k => map.get(String(k)) || null) : null;
 }
 async function applySetMembers(step, by, device, via) {

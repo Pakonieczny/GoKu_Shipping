@@ -3143,6 +3143,12 @@ const Gate = window.Gate = (() => {
      sheets then you'd have to inform the user with a pop-up, and then let the user make the decision of what to do").
      splitWith lists the other sheets that share an order with this one and would stay on the other side of the set. */
   const ordersOn = sh => { const ids = new Set((sh.placements || []).map(p => p.id)); return new Set((sh.charms || []).filter(c => ids.has(c.id) && c.order).map(c => String(c.order).split("/")[0])); };
+  /** What a sheet shares with others, in words: "the left and right earrings of an order" when the pieces of a shared order on these sheets are a Left and a Right (a pair), else "an order" (as it always said). */
+  function sharedWhat(sh, others) {
+    const sides = new Set(), mine = ordersOn(sh), sd = p => { const ids = new Set((p.placements || []).map(x => x.id)); for (const c of p.charms || []) { const s = ids.has(c.id) && c.order && mine.has(String(c.order).split("/")[0]) ? c.side || (c.orderInfo && c.orderInfo.side) : null; if (s === "L" || s === "R") sides.add(s); } };
+    try { [sh, ...others].forEach(sd); } catch (_) { /* the plain words stand */ }
+    return sides.has("L") && sides.has("R") ? "the left and right earrings of an order" : "an order";
+  }
   function splitWith(sh, included) {
     const mine = ordersOn(sh); if (!mine.size) return [];
     return allSheets().filter(p => p !== sh && solid(p.metal) && (p.runId || null) === (sh.runId || null) && picked(p) !== !!included && membershipEditable(p))
@@ -3450,7 +3456,7 @@ const Gate = window.Gate = (() => {
     const rule = cardinalFor(sh, true);
     if (rule.blocked) no(rule.blocked);
     const split = rule.list.length > 1 ? rule.list.filter(p => p !== sh).map(p => ({ sheet: p })) : splitWith(sh, true);
-    if (split.length) no(`${sheetNameOf(sh)} shares an order with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
+    if (split.length) no(`${sheetNameOf(sh)} shares ${sharedWhat(sh, split.map(x => x.sheet))} with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
     await changeMembership(sh.metal, true, sh);
   }
   /** A sheet of a COMMITTED set whose page copy lost its place in it (Paul, 7 Oct: a partial sheet was chosen for it and it was nested again; the page drafted it out of its
@@ -3494,7 +3500,7 @@ const Gate = window.Gate = (() => {
   function errWords(res) {
     const n = res && res.plan && res.plan.needs && res.plan.needs[0]; if (n) return needWords(n);
     const t = String((res && res.error) || "");
-    if (/pieces on|shares? an order/i.test(t)) return WHY.sharedOrders;
+    if (/pieces on|shares? an order|they stay in one set|they go into one set together|multi-piece order/i.test(t)) return WHY.sharedOrders;   // (the refusal says what the pieces are when it knows: "has its left earring on ... and its right earring on ...")
     if (/all that is in|Undo set/i.test(t)) return WHY.lastSheet;
     if (/was already cut/i.test(t)) return WHY.sheetCut;
     if (/Set \d+ is completed|completed set|takes no more/i.test(t)) return WHY.setCompleted;

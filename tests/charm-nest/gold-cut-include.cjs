@@ -26,6 +26,10 @@ const piece = (p, id, order) => { p.charms.push({ id, poolId: 'p' + id, order })
   piece(pages[0], 'x1', '900/1'); piece(pages[1], 'x2', '900/2');
   await assert.rejects(() => Gate.cutInclude(pages[1]), /Not cut: .*shares an order with .*not in the set/, 'a sheet that splits an order is refused with the reason');
   assert.deepEqual(inSet(), [], 'a refused Cut Sheet changed nothing');
+  // the same split where the two pieces are a Left and a Right earring: the reason says so (Paul, 9 Oct, pairs in sets)
+  pages[0].charms.find(c => c.id === 'x1').side = 'L'; pages[1].charms.find(c => c.id === 'x2').side = 'R';
+  await assert.rejects(() => Gate.cutInclude(pages[1]), /Not cut: .*shares the left and right earrings of an order with .*not in the set/, 'a split pair is named');
+  delete pages[0].charms.find(c => c.id === 'x1').side; delete pages[1].charms.find(c => c.id === 'x2').side;
   // both orders' sheets are in: no split, so it goes in
   await Gate.changeMembership('gold14k', true, [pages[0]]);
   await Gate.cutInclude(pages[1]); assert.deepEqual(inSet().sort(), [1, 2]);
