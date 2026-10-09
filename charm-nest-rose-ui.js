@@ -83,6 +83,19 @@
     }
     await load(sh);window.Session?.schedule();
   }
+  // Pairs (PAIRPARTIAL): what this nest is about to place, as the server's AUTOMATIC choice of a leftover needs it: the pieces of the smallest order on the sheet and an average
+  // piece. Sent only when every order on the sheet has 2 or more pieces (a pair, a disc necklace): the server then skips a leftover whose most generous estimate cannot hold one
+  // whole order, because it could only strand a piece of a pair. Nothing is sent otherwise: the request is what it always was.
+  function fitHint(sh){
+    try{
+      const list=C.activeCharms?C.activeCharms(sh):(sh.charms||[]);if(!list.length)return {};
+      const by=new Map();for(const c of list){const k=c.order||c.id;by.set(k,(by.get(k)||0)+1);}
+      const unit=Math.min(...by.values());if(!(unit>1))return {};
+      const MM=25.4/72,area=list.reduce((n,c)=>n+(C.inflatedArea?C.inflatedArea(c):+c.areaPt2||0),0)/list.length*MM*MM;
+      const sides=list.map(c=>[(+c.widthPt||0)*MM,(+c.heightPt||0)*MM]).filter(x=>x[0]>0&&x[1]>0);
+      return {fit:{unit,areaMm2:+area.toFixed(1),...(sides.length?{minMm:+(sides.reduce((n,x)=>n+Math.min(...x),0)/sides.length).toFixed(2),maxMm:+(sides.reduce((n,x)=>n+Math.max(...x),0)/sides.length).toFixed(2)}:{})}};
+    }catch(_){return {};}
+  }
   // The start of a nest. Rose Gold takes its physical sheet here, always. 10K and 14K take one only when a leftover of their metal and
   // size fits (it was cut before: the layout must go around what is gone) or when the sheet already holds one; otherwise nothing is
   // claimed or written, and the size stays the person's to change.
@@ -98,8 +111,8 @@
       PN.newSheet(sh);
       return isRose(sh)?prepare(sh,{nesting:true,fresh:true}):undefined;
     }
-    if(isRose(sh)||sh.roseStock||sh.roseChoice||sh.roseProtected||sh.rosePlan)return prepare(sh,{nesting:true});
-    return prepare(sh,{nesting:true,onlyRemnant:true});
+    if(isRose(sh)||sh.roseStock||sh.roseChoice||sh.roseProtected||sh.rosePlan)return prepare(sh,{nesting:true,...fitHint(sh)});
+    return prepare(sh,{nesting:true,onlyRemnant:true,...fitHint(sh)});
   }
   // Partial sheets (charm-nest-partial-nest.js): a sheet in use moves onto the leftover the person chose. With swap the server gives back the physical
   // sheet the sheet holds (a fresh uncut gold sheet is deleted, a leftover returns to the list) and reserves the chosen leftover in ONE transaction
@@ -201,6 +214,8 @@
     //  only a copy of THIS cut, a retry of the same press, is replaced)
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)];
     refresh(sh);C.toast(`Sheet cut · the next ${word(sh)} charms nest past this green line`,'ok');
+    // a pair (or any order) with a piece on another sheet: said plainly once the cut is recorded (the cut and its record are permanent, nothing is blocked)
+    try{const n=window.PartialNest&&window.PartialNest.cutNote&&window.PartialNest.cutNote(sh);if(n)C.toast(n,'',9000);}catch(_){}
     // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the person pressed Cut Sheet and the cut is recorded;
     // the pieces are the sheet's charms, one event for each order on it. Cutting is the Laser station's work, not the sorter's.
     try{window.CNLaserAct&&window.CNLaserAct.rose(sh);}catch(_){}

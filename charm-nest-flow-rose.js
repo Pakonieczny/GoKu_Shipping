@@ -96,9 +96,21 @@
       return noPlan(base, lines ? 'Already has its green dash line' + (at ? ' (' + when(at) + ')' : '') : 'It is planned whole, so there is no green dash line to add');
     }
     const blocked = !sh.persistedDone || !sh.verification || !sh.verification.ok || sh.dirty || ['nesting', 'finishing', 'queued'].includes(sh.status) ? 'Its layout is still being nested or saved: wait for that to finish first' : '';
-    return { ...base, needsLine: true, needs: open.length, blocked,
-      why: lines ? `${plural(open.length, 'charm')} sit past its last green dash line` : `No green dash line yet: ${plural(open.length, 'charm')} not inside a cut line` };
+    const cut = straddling(sh);   // (an order with a piece inside a line and a piece outside it)
+    return { ...base, needsLine: true, needs: open.length, blocked, ...(cut.length ? { straddle: cut } : {}),
+      why: (lines ? `${plural(open.length, 'charm')} sit past its last green dash line` : `No green dash line yet: ${plural(open.length, 'charm')} not inside a cut line`) + (cut.length ? `. ${straddleWords(cut)}` : '') };
   }
+  // pairs (PAIRPARTIAL): the groups (order lines) of a live sheet with a piece inside a green line and a piece outside every line: [{ order, inside, outside }]
+  function straddling(sh) {
+    try {
+      const lined = new Set([...((sh.roseProtected && sh.roseProtected.placements) || []).map(p => p.id), ...((sh.rosePlan && !sh.dirty ? sh.rosePlan.shapes : null) || []).map(s => s.id)]);
+      if (!lined.size) return [];
+      const P = W.CharmNestPartial, key = P && P.groupKeyOf ? P.groupKeyOf : c => c.order || c.id, byId = new Map((sh.charms || []).map(c => [c.id, c])), by = new Map();
+      for (const p of sh.placements || []) { const c = byId.get(p.id); if (!c) continue; const k = key(c), g = by.get(k) || { order: String(c.order != null ? c.order : k).split('/')[0], inside: 0, outside: 0 }; if (lined.has(p.id)) g.inside++; else g.outside++; by.set(k, g); }
+      return [...by.values()].filter(g => g.inside > 0 && g.outside > 0);
+    } catch (_) { return []; }
+  }
+  const straddleWords = list => list.length === 1 ? `Order ${list[0].order} has ${plural(list[0].inside, 'piece')} inside a green line and ${plural(list[0].outside, 'piece')} outside it: its pieces would be cut in two lines` : `${list.length} orders have pieces inside a green line and pieces outside it (for example order ${list[0].order}): their pieces would be cut in two lines`;
   // a saved record (the Library's own copy): it has no geometry, so it can say whether a line exists, not draw one
   function verdictRecord(r, how) {
     const placed = +r.placedCount || (r.placements || []).length || (r.poolIds || []).length || 0;
