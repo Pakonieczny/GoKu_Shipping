@@ -30,7 +30,7 @@
  *        items: [ array of transactions for this order ],
  *        userTypedOrderNum: string (the typed Etsy order # from sorting.html),
  *        notesBlock?: { metal?, title4?, matrixNums?, matrixTitle?, matrixImageTitle?, ... },
- *        pieces?: [ { side: "L"|"R", n?, of? } ]   (a mismatched pair: one page for each ear, LEFT or RIGHT in large type, "n/of" under it
+ *        pieces?: [ { side: "L"|"R", n?, of? } ]   (an earring pair, matching or mismatched: one page for each ear, LEFT or RIGHT in large type, "n/of" under it
  *                                                  when more than one pair was bought; without it the one order sticker prints as always)
  *      }
  * 2) Build a 1×1 PDF label with:
@@ -131,7 +131,7 @@ window.addEventListener("load", async () => {
 });
 
 /* =================== Mismatched pairs: one page for each ear =================== */
-/** The ears to print for an order (dataObj.pieces: [{ side: "L"|"R", n, of }]); [] for any order that is not a mismatched pair. */
+/** The ears to print for an order (dataObj.pieces: [{ side: "L"|"R", n, of }]); [] for any order that is not an earring pair. */
 function piecesOf(dataObj) {
   const list = Array.isArray(dataObj && dataObj.pieces) ? dataObj.pieces : [];
   return list.filter(p => p && (p.side === "L" || p.side === "R")).slice(0, 40);
@@ -429,7 +429,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes, p
         absolutePosition: { x:33, y:0.5 }
       }
     ];
-  // a mismatched pair: one page for each ear (LEFT, RIGHT), same order, same label otherwise; no pieces: the one page it always was
+  // an earring pair: one page for each ear (LEFT, RIGHT), same order, same label otherwise; no pieces: the one page it always was
   const ears = Array.isArray(pieces) ? pieces : [];
   const content = ears.length
     ? ears.flatMap((p, i) => [...page(), ...pieceContent(p), ...(i < ears.length - 1 ? [{ text: "", pageBreak: "after" }] : [])])
@@ -462,7 +462,7 @@ async function printBatch(batchArr) {
     const dispatchDate = dataObj.dispatchDate || "N/A";
     const dotCount     = getCumulativeDotCount(items);
     const notes        = buildAggregatedNotes(dataObj, items);
-    const ears         = piecesOf(dataObj);   // a mismatched pair: a page for each ear
+    const ears         = piecesOf(dataObj);   // an earring pair: a page for each ear
 
     // ---- QR generation (same as single) ----
     hiddenQRContainer.innerHTML = "";

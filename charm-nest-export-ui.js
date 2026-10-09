@@ -14,7 +14,7 @@
       prepared.push({...b,bytes:await bytes(b.outputs?.ai||b.ai)});
     }
     const composed=await CharmNestExport.compose(await bytes(sheet.outputs?.ai),sheet,prepared);
-    // (pieces of mismatched pairs on this sheet: the manifest says how many, and the zip's IMPORT.txt explains the Left / Right layers; none: as before)
+    // (earring pieces on this sheet, each with its side: the manifest says how many, and the zip's IMPORT.txt explains the Left / Right layers; none: as before)
     const earPieces=(sheet.charms||[]).filter(c=>c&&(c.side==='L'||c.side==='R')&&(sheet.placements||[]).some(p=>p.id===c.id)).length;
     let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout,...(earPieces?{pairPieces:earPieces}:{})};
     if(format==='dxf') {
@@ -49,7 +49,7 @@
         const zip=new JSZip(),used=new Set();
         for(const file of files){let name=file.name;if(used.has(name))name=file.metadata.sheetId+'_'+name;used.add(name);zip.file(name,file.data);}
         zip.file('sheet-manifest.json',JSON.stringify(files.map(f=>f.metadata),null,2));
-        zip.file('IMPORT.txt','Import at 1:1 in millimetres. Back engravings are above the cut sheet, at the parent scale.\nDXF preserves named layers and RGB colours, with indexed colour fallback. Filled artwork is exported as solid hatches, with its holes retained. SHEET and BACK CUT OUTLINE are reference layers, not extra cuts. Verify pen mapping and dimensions in your LaserStar version before marking.\n'+(files.some(f=>f.metadata.pairPieces)?'A layer ending Left or Right is one ear of a mismatched pair; the layer with the same order number and the other word is the other ear. They are cut together and go in one bag.\n':''));
+        zip.file('IMPORT.txt','Import at 1:1 in millimetres. Back engravings are above the cut sheet, at the parent scale.\nDXF preserves named layers and RGB colours, with indexed colour fallback. Filled artwork is exported as solid hatches, with its holes retained. SHEET and BACK CUT OUTLINE are reference layers, not extra cuts. Verify pen mapping and dimensions in your LaserStar version before marking.\n'+(files.some(f=>f.metadata.pairPieces)?'A layer ending Left or Right is one ear of an earring pair. The Right is the Left turned over (a mirror image), drawn here exactly as it is cut: do not flip it. The layer with the same order number and the other word is the other ear; the two go together (the sheet label says where the other ear is when it is on another sheet).\n':''));
         CN.download(await zip.generateAsync({type:'uint8array'}),'charm-sheets-'+format+'.zip','application/zip');
       }
       CN.toast('Downloaded '+files.length+' sheet'+(files.length===1?'':'s')+' · '+format.toUpperCase(),'ok');
