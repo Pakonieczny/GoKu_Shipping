@@ -23,6 +23,15 @@ const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledA
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 // Shared by waiting and decided engravings; choices remain read-only purchase facts.
+/** An order line that is an EARRING PAIR (Paul, 9 Oct 2026, Amendment 2: its pieces are a Left and a Right): read from the line's own spec and master entry, no piece records, cheap enough for a list row. */
+function earPairRow(row) {
+  try {
+    const CP = window.CharmNestPair, sp = (row && row.spec) || {}, sku = sp.designSku || (row && row.line && row.line.sku) || "";
+    if (!CP || typeof CP.isEarringPair !== "function" || sp.noDesign) return false;
+    const e = sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null;
+    return !!CP.isEarringPair({ form: sp.form || "", spec: sp, quantity: sp.quantity || (row.line && row.line.quantity) || 1 }, e);
+  } catch (_) { return false; }
+}
 function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec);
   return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
@@ -1789,12 +1798,26 @@ const Orders = window.Orders = (() => {
   }
   const shipTxt = r => r.order.shipBy ? shipDay.format(new Date(r.order.shipBy * 1000)) : "—";
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
+  /** The Left and the Right of an earring pair that do not sit together, said by side: "Left GF Sheet 1 · Right SS Sheet 1" ("not on a sheet yet" for an ear on none); '' for any other line and for a pair on one sheet. */
+  function earsWhere(r) {
+    try {
+      if (!window.OrderPieces || !earPairRow(r)) return "";
+      const sd = OrderPieces.ofRow(r).filter(p => p.side === "L" || p.side === "R");
+      if (sd.length < 2 || !sd.some(p => p.nested)) return "";
+      const sheets = new Set(sd.filter(p => p.nested && p.sheetLabel).map(p => p.sheetId || p.sheetLabel));
+      if (sheets.size <= 1 && sd.every(p => p.nested)) return "";
+      const say = k => { const ps = sd.filter(p => p.side === k); if (!ps.length) return ""; const on = [...new Set(ps.filter(p => p.nested && p.sheetLabel).map(p => p.sheetLabel))]; return (k === "L" ? "Left " : "Right ") + (on.length ? on.join(" + ") + (ps.some(p => !p.nested) ? " (some not on a sheet yet)" : "") : "not on a sheet yet"); };
+      return ["L", "R"].map(say).filter(Boolean).join(" · ");
+    } catch (_) { return ""; }
+  }
   /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
   function placeOf(r) {
     // a piece the cloud holds on no sheet has no place, whatever this page's pool rows were last told (a hold, a take-off or a deleted sheet elsewhere)
     const pl = placeNow(r);
     if (pl && !pl.onSheet) return null;
     const seen = pl && pl.sheets.length ? pl.sheets : null;
+    // an earring pair whose Left and Right do not sit together says where each ear is ("Left GF Sheet 1 · Right SS Sheet 1")
+    const ears = earsWhere(r); if (ears) return { set: "", sheet: ears, sheetId: seen && seen[0] ? seen[0].id || null : null };
     // a piece with copies on two sheets says both (the order window and the Overview's Sheet cell do)
     if (seen && seen.length > 1 && seen.every(s => s.label)) return { set: "", sheet: seen.map(s => s.label).join(" + "), sheetId: seen[0].id || null };
     for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId) && (!seen || !p2.sheetId || seen.some(s => s.id === p2.sheetId))) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId, sheetId: p2.sheetId || null }; }
@@ -1967,7 +1990,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? " · Left + Right" : ""} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -10914,7 +10937,7 @@ const Review = window.Review = (() => {
     const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(ax?CustomPrint.failNote(ax)
       +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its piece is then completed by hand`,'sm')+CustomPrint.keptButtonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s piece completed now, made by hand, without printing its label`,'sm'):'')
       +(cs?CustomSheet.buttonsHtml(ax,true,false):''):'');
-    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} pieces</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
+    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
     if(ax||row)wireAct(node,ax||{key:'rvs:'+d.key,rows:[]},cs,row);
     if(was){const pair=was.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     settledRows.set(d, node); return node;
@@ -12966,6 +12989,9 @@ const OrderWin = window.OrderWin = (() => {
     const OP = window.OrderPieces, rid = String(r.order.receiptId); if (!OP) return "";
     const g = ((tryDo(() => OP.spread(rid)) || {}).splitGroups || []).find(x => x.sides && x.sides.length > 1); if (!g) return "";
     const ps = (tryDo(() => OP.of(rid)) || []).filter(p => p.lineKey === g.lineKey && p.side);
+    // the sentence is PairRemove's own (the words Hold, Cancel and Take off use): "Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2."
+    const PR = window.PairRemove, said = PR && typeof PR.describe === "function" ? tryDo(() => PR.describe(ps.map(p => ({ id: String(p.poolId || p.key), groupKey: p.groupKey, side: p.side, form: "earrings", where: p.nested && p.sheetLabel ? p.sheetLabel : "" })))) : null;
+    if (said && said.length) return `<div class="owSplit" role="status">${esc(said.join(" "))}</div>`;
     const say = k => { const p = ps.find(q => q.side === k); return p ? `${sideWord(k)} ${p.nested && p.sheetLabel ? "on " + p.sheetLabel : "not on a sheet yet"}` : ""; };
     return `<div class="owSplit" role="status">Its pair is split: ${esc(["L", "R"].map(say).filter(Boolean).join(", "))}</div>`;
   }
@@ -13520,7 +13546,8 @@ const OrderWin = window.OrderWin = (() => {
     const sc0 = sheetScope(r), block = sheetBlock(r), list = SV.list && SV.rid === String(r.order.receiptId) ? SV.list : null, chips = [];
     // (a mismatched pair: when its Left and its Right are not both on ONE sheet each has its own box, "<design> · Left" / "· Right"; both on one sheet it is one box for the pair)
     const together = p => p.sides && p.sides.length > 1 && p.sides.every(q => q.nested) && new Set(p.sides.flatMap(q => q.sheets.map(h => h.id || h.page || h.label))).size === 1;
-    const sc = Object.assign({}, sc0, { mine: sc0.mine.flatMap(p => p.sides && p.sides.length > 1 ? (together(p) ? [Object.assign({}, p, { name: p.name + " · Left + Right" })] : p.sides) : [p]) });
+    // (boxes are for the sheets a piece IS on, as they always were: an ear on no sheet gets no grey box when its pair has an ear on one, the sentence under the pill says where it is; a pair with no ear on a sheet is the line's one grey box)
+    const sc = Object.assign({}, sc0, { mine: sc0.mine.flatMap(p => p.sides && p.sides.length > 1 ? (together(p) ? [Object.assign({}, p, { name: p.name + " · Left + Right" })] : p.nested ? p.sides.filter(q => q.nested) : [p]) : [p]) });
     const named = (sc0.multi && !sc0.sel) || sc0.mine.some(p => p.sides && p.sides.length > 1);
     for (const p of sc.mine) {
       if (p.loading) continue;
