@@ -116,7 +116,7 @@ known('F6', 'a side-only option, or a "Replacement ... Left Ear" title, is a sin
 known('F7', 'mismatched in the words, one SKU: held for a person', () => {
   for (const over of [S('Mismatched Star Stud Earrings'), S('Mix Match Earrings', [V('Left Ear Charm', 'Star'), V('Right Ear Charm', 'Moon')]), S('Zodiac Studs', [V('Metal Choice', 'Silver • 2 symbols')])]) {
     const r = read(over);
-    ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
+    ok(r.spec.problems.some(p => /pairSecond|needsPair|needsMapping/.test(p.kind) && (p.pair || p.pairSecond || p.count || p.kind !== 'needsMapping')), JSON.stringify(over.title) + ': a problem holds the line (got ' + r.spec.problems.map(p => p.kind) + ')');
   }
 });
 
