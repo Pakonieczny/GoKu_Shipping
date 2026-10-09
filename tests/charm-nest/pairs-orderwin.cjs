@@ -117,6 +117,16 @@ const pairOf = l => (/^MISMATCHED/.test(l.sku) ? planFor(String(l.key).split('_'
   ok('A10e discs, letters, charms and a single earring have no side and no mirror');
 }
 
+/* ── the person page's order card (PAIRSTATIONS hand-over): a stored receipt's earring pair is a Left and a Right piece; every other line is told as before ── */
+{
+  const EP = require(path.join(root, 'netlify/functions/_employeeProfile.js'));
+  const t = (title, style, q) => ({ transaction_id: 77, listing_id: 88, title, sku: 'HEART_STUD', quantity: q, variations: [{ formatted_name: 'Style', formatted_value: style }] });
+  assert.deepEqual((EP.pairPiecesOf('4200000030', t('Heart stud earrings', 'Earrings', 1), 1) || []).map(x => x.side), ['L', 'R']);
+  assert.deepEqual((EP.pairPiecesOf('4200000030', t('Hoops', 'Huggie Hoops', 2), 2) || []).map(x => x.side), ['L', 'R', 'L', 'R']);
+  assert.equal(EP.pairPiecesOf('4200000030', t('Heart necklace', 'Necklace', 1), 1), null); assert.equal(EP.pairPiecesOf('4200000030', t('One stud', 'Single earring', 1), 1), null); assert.equal(EP.pairPiecesOf('4200000030', null, 1), null);
+  ok('A11 the person page card: an earring pair line is a Left and a Right per unit, a necklace, a single earring and an unreadable line are not');
+}
+
 /* ── B · the real order window (needs playwright; skipped without) ── */
 async function partB() {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');

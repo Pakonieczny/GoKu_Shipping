@@ -12073,6 +12073,8 @@ const OrderWin = window.OrderWin = (() => {
       (sp.special ? mcell("Custom order", sp.special.label + (sp.special.read && !sp.special.decided ? ` · Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "") + (sp.special.why ? " · " + sp.special.why : "")) : sp.customDone ? mcell("Custom order", sp.customDone.category || "completed") : "") +
       mcell("Quantity", pairSides(r).length ? `${sp.quantity || r.line.quantity || 1} pair${(sp.quantity || r.line.quantity || 1) > 1 ? "s" : ""} · ${pairSides(r).length} pieces: Left and Right` : String(sp.quantity || r.line.quantity || 1)) +
       (pairSides(r).length ? mcell("Pair", ListMedia.pairRow(r) ? "Mismatched: the Left and the Right are different charms of one listing" : "Matching: the Right is the Left turned over (its mirror image)") : "") +
+      // (what the intake says of the piece count in plain words: an old line already pooled keeps its pieces and the note says what the rule gives now; the pair's own notes)
+      (() => { const notes = [sp.pieceNote].concat(sp.pair && Array.isArray(sp.pair.notes) ? sp.pair.notes : []).filter(x => typeof x === "string" && x.trim()); return notes.length ? mcell("Pieces", notes.join(" ")) : ""; })() +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
       (sheetCell ? mcell("Sheet", sheetCell) : "") +
