@@ -368,6 +368,320 @@
     return !(words.length <= 3 && words.every(w => STAMP_WORDS.has(w) || /^[a-z]{1,3}\d{0,2}$/.test(w) || /^\d{1,2}$/.test(w)));
   }
 
+  /* ═══ 3c · pieces: how many cut pieces ONE unit of a line makes, which ear each is, and what a line says about it ═══════
+     (Paul, 9 Oct 2026, 18:46: "Pairs always make two pieces whether they are matching or mismatched ... some necklaces have options
+     for the amount of charms attached: each charm is an individual charm that must be on a sheet ... the system must check what
+     drop-down options the user chose and whether there is a quantity pertaining to them, and consider those as individual charms
+     that are part of just one necklace." And 18:47: each pair is a LEFT and a RIGHT earring, the Right the mirror of the Left.)
+     THE rule, in one place (every caller reads pieceCountOf / spec.pieceCount, nothing else counts a line's pieces):
+       pieces = Etsy quantity (units) x pieces per unit
+       an earring PAIR line (stud, hoop, huggie hoops, "earrings", Huggie CHARM SET): 2 per unit, a Left then a Right, matching or not;
+       a line whose chosen option or title says SINGLE: 1 per unit (side only if the line says left or right);
+       an option that names how many discs / charms / tags a necklace carries ("2 Disc", "Number of Discs: 3"): that many per unit,
+         each its own piece of the same group, never a multiple of the necklace;
+       an option that may name a count but does not say what is counted (letters, initials, "Set of 3", a range) or that disagrees
+         with the buyer's note: NOT guessed. The line waits for a person with a one-line question (a needsMapping problem with
+         `count`), whose answer is kept for that listing and value like every other option answer ({ field: "count", value: "3" });
+       a mismatched DESIGN (two bodies under one label) is 2 per unit, L and R, each cut from its own body (the pool's per-body pieces, PAIRPOOL);
+         when the pool cannot tell its two bodies apart it is made as the one glued copy per unit the app always made (glue(), spec.pair.glued),
+         and PIECE_RULES.mismatchedMakesTwo = false brings that back for every mismatched design at once.
+     Old records: a line already pooled keeps the pieces it has (Orders pins spec.pieceCount to its pool ids and notes the shortfall in
+     spec.pieceNote); the new count is for lines pooled from now on. */
+  const PIECE_RULES = { pairFormsMakeTwo: true, optionCountsMake: true, mismatchedMakesTwo: true };
+  const lvName = v => String(v && (v.name != null ? v.name : v.formatted_name) || "");
+  const lvValue = v => String(v && (v.value != null ? v.value : v.formatted_value) || "").replace(/&quot;/g, "\"");
+  const clip = (s, n = 60) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+  // what a listing, an option or a note says when the buyer wants two different charms (the shop's own staff fact stud-mismatch:
+  // "order the earrings and leave a note naming the two designs"; the snapshot's "Mismatched Tennis Ball and Raquet Huggie Hoops",
+  // "Silver • 2 symbols"). "left" or "right" alone never counts (a necklace font, "Left-facing wolf"): only an option NAMED for a side.
+  const MIS_WORD = /\bmis-?match(?:ed)?\b/i;
+  const TWO_DESIGNS = /\b(?:2|two)\s+(?:different\s+)?(?:symbols?|designs?|signs?)\b|\bdifferent\s+(?:designs?|charms?|symbols?)\b|\b(?:one|1)\s+of\s+each\b/i;
+  const SIDE_NAME = /\b(?:left|right)\b/i, SIDE_THING = /\b(?:ear(?:ring)?s?|charm|design|stud|huggie|hoop|side)\b/i;
+  const MISMATCH_NAME = /^MISMATCH(?:ED)?(?:[\s_.\-]|\d|$)/;
+  const DISC_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  /** n for "3 discs" / "2 Disc" / "three discs" in the title or an option VALUE (never a note), else 0: information only (the count of
+   *  pieces is countRead's, from the options). */
+  function discsIn(line) {
+    const re = /\b([1-9]|one|two|three|four|five)\s*-?\s*discs?\b/i, texts = [String(line && line.title || "")].concat(((line && line.variations) || []).filter(v => !isPersonalisation(lvName(v))).map(lvValue));
+    for (const t of texts) { const m = re.exec(t); if (m) return +m[1] || DISC_WORDS[m[1].toLowerCase()] || 0; }
+    return 0;
+  }
+
+  /* ── how many does an OPTION say (the drop-down a buyer chose) ───────────────────────────────────────────────────────
+     Read from option NAMES and VALUES only; a note is never a count (it is only compared, see noteCountOf). What is counted decides:
+       piece   discs, tags, charms, pendants, beads, pieces: separate cut pieces, so "2 Disc" is 2, settled (rules count:unit, count:name)
+       text    letters, initials, names, words, digits: marks on a piece. One piece each (a disc per letter) or all on one piece (a bar)? ASK
+       design  symbols, designs, signs: on an earring line the number of different designs (1 = the same on both ears, 2 = a mismatched
+               pair: no change of count); on any other line, does each symbol make a piece? ASK
+       length  characters: how long the engraving is (a price tier, "1-5 Character"), never a count of pieces: ignored
+       none    no unit named ("Quantity: 3", "Set of 3 ", "How many?: 2"), or a range ("1-3 discs"), or two numbers in one value
+               ("4 Silver / 2 Gold"): ASK
+     A number inside a length, a size or a purity ("16 inches", "8.5mm", "14K") is not a count. */
+  const NUMWORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+  const NUMRE = "(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)";
+  const U_PIECE = "discs?|disks?|tags?|charms?|pendants?|beads?|pieces?|pcs?", U_TEXT = "letters?|initials?|names?|words?|monograms?|digits?", U_DESIGN = "symbols?|designs?|signs?|icons?", U_LENGTH = "characters?|chars?";
+  const U_ALL = [U_PIECE, U_TEXT, U_DESIGN, U_LENGTH].join("|");
+  const unitClass = w => { w = String(w || "").toLowerCase(); return new RegExp("^(?:" + U_PIECE + ")$").test(w) ? "piece" : new RegExp("^(?:" + U_TEXT + ")$").test(w) ? "text" : new RegExp("^(?:" + U_DESIGN + ")$").test(w) ? "design" : new RegExp("^(?:" + U_LENGTH + ")$").test(w) ? "length" : ""; };
+  const numOf = s => { s = String(s || "").toLowerCase(); return /^\d+$/.test(s) ? +s : NUMWORDS[s] || 0; };
+  // "2 Disc", "three discs", "2-disc", "2x discs", "x3 discs", "Discs: 3", "Discs x 3", "1-5 Character" (the range is kept: from, to)
+  const COUNT_BEFORE = () => new RegExp("(?:^|[^\\w.])(?:[x×]\\s*)?(?:(\\d{1,2})\\s*[-–]\\s*)?" + NUMRE + "\\s*(?:[x×]\\s*|-\\s*)?(" + U_ALL + ")\\b", "gi");
+  const COUNT_AFTER = () => new RegExp("\\b(" + U_ALL + ")\\s*(?:[:=]|[x×])\\s*" + NUMRE + "\\b(?!\\s*(?:mm|cm|in\\b|inch|\"|”|k\\b))", "gi");
+  const SET_OF = () => new RegExp("\\b(?:set|pack|bundle|lot)\\s+of\\s+" + NUMRE + "\\b|\\b" + NUMRE + "\\s*(?:-\\s*)?(?:piece|pc|pcs|pack)\\b", "gi");
+  const NAME_CUE = /\bhow\s+many\b|\b(?:number|count|quantity|qty|amount|no\.?|#)\s+of\b|^\s*(?:quantity|qty|count)\b/i;
+  const SAFE_NUM = /\b\d+(?:\.\d+)?\s*(?:mm|cm|in\b|inch(?:es)?|"|”|''|k\b|kt\b|karat|ct\b|g\b|oz\b|us\b|st\b|nd\b|rd\b|th\b)/gi;
+  /** Every count a piece of text names: [{ n, from, cls, range }] (cls: piece | text | design | length | "" for no unit). */
+  function countsIn(text) {
+    const t = String(text || ""), out = [];
+    for (let m, re = COUNT_BEFORE(); (m = re.exec(t));) { const n = numOf(m[2]); if (n) out.push({ n, cls: unitClass(m[3]), unit: m[3].toLowerCase(), range: !!m[1] && numOf(m[1]) !== n, text: m[0].trim() }); }
+    for (let m, re = COUNT_AFTER(); (m = re.exec(t));) { const n = numOf(m[2]); if (n) out.push({ n, cls: unitClass(m[1]), unit: m[1].toLowerCase(), range: false, text: m[0].trim() }); }
+    for (let m, re = SET_OF(); (m = re.exec(t));) { const n = numOf(m[1] || m[2]); if (n) out.push({ n, cls: "", unit: "", range: false, text: m[0].trim() }); }
+    return out;
+  }
+  /** What ONE option (name, value) says about a count, or null. { n, cls, rule, certain, ask, why, unit, text }:
+   *  certain: n is settled; ask: a person must say (why is the one-line reason); design: n is a number of designs, not of pieces. */
+  function optionCount(name, value) {
+    const nm = String(name || ""), val = String(value || "").trim();
+    if (!val || isPersonalisation(nm) || isPriceOption(nm)) return null;
+    // 1 · the value names a number of something ("2 Disc", "3 discs • gold", "Silver • 2 symbols", "1-5 Character-SILVER")
+    let hits = countsIn(val.replace(SAFE_NUM, " "));
+    const lens = hits.filter(h => h.cls === "length");
+    hits = hits.filter(h => h.cls !== "length");
+    const cue = NAME_CUE.test(nm), nameUnit = (new RegExp("\\b(" + U_ALL + ")\\b", "i").exec(nm) || [])[1] || "";
+    if (!hits.length && !lens.length && cue) {
+      // 2 · the NAME asks "how many" / "number of" and the value is a bare number or a number word ("Number of Discs: 3", "How many charms?: Two")
+      const nums = [...new Set((val.replace(SAFE_NUM, " ").match(new RegExp("\\b" + NUMRE + "\\b", "gi")) || []).map(numOf).filter(Boolean))];
+      const w = /\b(single|double|triple)\b/i.exec(val), words = w ? { single: 1, double: 2, triple: 3 }[w[1].toLowerCase()] : 0;
+      const n = nums.length === 1 ? nums[0] : !nums.length && words ? words : 0, cls = unitClass(nameUnit);
+      if (nums.length > 1) return { n: 0, cls, rule: "count:two numbers", certain: false, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” names two numbers`, unit: nameUnit, text: val };
+      if (cls === "length") return null;
+      if (n) return finish({ n, cls, unit: nameUnit, range: false, text: val }, "count:name");
+      return null;
+    }
+    if (lens.length && !hits.length) return null;                                         // "1-5 Character": how long the engraving is
+    if (!hits.length) return null;
+    if (new Set(hits.map(h => h.n)).size > 1) return { n: 0, cls: "", rule: "count:two numbers", certain: false, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” names more than one number`, unit: "", text: val };
+    return finish(hits[0], "count:unit");
+    function finish(h, rule) {
+      const base = { n: h.n, cls: h.cls, rule, certain: false, ask: false, why: "", unit: h.unit, text: h.text };
+      if (h.range) return Object.assign(base, { n: 0, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” gives a range, not a number`, rule: "count:range" });
+      if (h.n === 1) return Object.assign(base, { certain: true });                          // one of anything is one piece
+      if (h.cls === "piece") return Object.assign(base, { certain: true });
+      if (h.cls === "design") return Object.assign(base, { rule: "count:designs" });         // decided with the line: an earring pair's designs, or a question
+      if (h.cls === "text") return Object.assign(base, { ask: true, rule: "count:text", why: `“${clip(nm, 40)}: ${clip(val, 40)}” counts ${h.unit}: separate pieces, or all on one?` });
+      return Object.assign(base, { ask: true, rule: "count:unclear", why: `“${clip(nm, 40)}: ${clip(val, 40)}” may count pieces, but does not say of what` });
+    }
+  }
+  /** What the buyer's NOTE says about a count of pieces ("Three discs", "2 charms", "Tag 1: J, Tag 2: Q"): { n, text } or null. Only
+   *  separate pieces (discs, tags, charms, pendants, beads) and numbered markers; never settles a count, it is compared with the options. */
+  function noteCountOf(line) {
+    const texts = [].concat(((line && line.variations) || []).filter(v => isPersonalisation(lvName(v))).map(lvValue), (line && line.personalization) || [], (line && (line.buyerMessage || line.message_from_buyer)) || []).map(s => visible(s));
+    const found = new Map();
+    for (const t of texts) {
+      for (const h of countsIn(t.replace(SAFE_NUM, " "))) if (h.cls === "piece" && h.n >= 2 && !h.range) found.set(h.n, h.text);
+      const marks = new Set(); for (let m, re = /\b(?:tag|disc|disk|charm|pendant)s?\s*#?\s*(\d)\s*[:=)\-.]/gi; (m = re.exec(t));) marks.add(+m[1]);
+      if (marks.size >= 2 && Math.max(...marks) === marks.size) found.set(marks.size, `${[...marks].map(k => "Tag " + k).join(", ")}`);
+    }
+    return found.size === 1 ? { n: [...found.keys()][0], text: [...found.values()][0] } : null;
+  }
+  /** The count a line's options give for ONE unit of the product: { n (0 = none), certain, answered, opts: [{ name, value, ...optionCount }],
+   *  asks: [{ name, value, guess, why, rule }], designs (n symbols/designs named, 0 = none), note }.
+   *  A person's answer for that listing and option value ({ field: "count", value: "3" }) settles it (1 = "just one piece"). */
+  function countRead(line, o) {
+    o = o || {}; const opts = [], asks = []; let answered = 0;
+    for (const v of (line && line.variations) || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isPersonalisation(name)) continue;
+      const hit = optionLookup(o.optionMaps, line.listingId, name, value);
+      if (hit && hit.field === "count") { const n = Math.max(1, Math.min(12, Math.floor(+hit.value) || 1)); opts.push({ name, value, n, cls: "", rule: "answer", certain: true, ask: false, why: "", answered: true }); if (!answered) answered = n; continue; }
+      const c = optionCount(name, value); if (c) opts.push(Object.assign({ name, value }, c));
+    }
+    const settled = opts.filter(c => c.certain && !c.answered && c.cls !== "design" && c.n > 1);
+    const ns = [...new Set(settled.map(c => c.n))];
+    const read = { n: answered || (ns.length === 1 ? ns[0] : 0), certain: !!answered || ns.length === 1, answered: !!answered, opts, asks, designs: 0, note: noteCountOf(line) };
+    if (!answered) {
+      for (const c of opts) if (c.ask) asks.push({ name: c.name, value: c.value, guess: c.n || 0, why: c.why, rule: c.rule });
+      if (ns.length > 1) { const c = settled[1]; asks.push({ name: c.name, value: c.value, guess: 0, why: `two options name different counts (${ns.join(" and ")})`, rule: "count:conflict" }); }
+      // the buyer's note names a different number of pieces than the option: a person reads the note
+      if (ns.length === 1 && read.note && read.note.n !== ns[0]) { const c = settled[0]; asks.push({ name: c.name, value: c.value, guess: ns[0], why: `the option says ${ns[0]}, the buyer's note says ${read.note.n} (“${clip(read.note.text, 30)}”)`, rule: "count:note" }); }
+    }
+    read.designs = Math.max(0, ...opts.filter(c => c.cls === "design" && !c.answered).map(c => c.n));
+    return read;
+  }
+
+  /** What a line's own words say: { says (the listing, an option or a note says "mismatched" / two designs / left and right), signals[],
+   *  soldAs ("pair" | "single" | null: earrings, studs, huggies are sold as a pair; an option or title that says Single is one),
+   *  soldBy ("option" | "title" | "words" | null), side ("L" | "R" | null: a single earring that names its ear), discs }.
+   *  Pure; takes the sorter's line or a raw Etsy transaction (formatted_name / formatted_value, message_from_buyer). No master, no network. */
+  function lineSignals(line) {
+    line = line || {};
+    const vars = (line.variations || []).map(v => ({ name: lvName(v), value: lvValue(v) })).filter(v => v.name || v.value);
+    const title = String(line.title || ""), signals = [];
+    if (MIS_WORD.test(title)) signals.push(`title “${clip(title)}”`);
+    for (const v of vars) {
+      if (isPersonalisation(v.name)) { if (MIS_WORD.test(v.value)) signals.push(`note “${clip(v.value)}”`); continue; }
+      if (MIS_WORD.test(v.value) || TWO_DESIGNS.test(v.value)) signals.push(`option “${clip(v.name, 30)}: ${clip(v.value, 40)}”`);
+      else if (SIDE_NAME.test(v.name) && SIDE_THING.test(v.name)) signals.push(`option “${clip(v.name, 40)}”`);
+    }
+    for (const s of [].concat(line.personalization || [], line.buyerMessage || line.message_from_buyer || [])) if (MIS_WORD.test(visible(s))) signals.push(`note “${clip(visible(s))}”`);
+    const opts = vars.filter(v => !isPersonalisation(v.name)).map(v => v.value), text = [title].concat(opts).join(" ");
+    const EAR = /\b(?:earrings?|studs?|huggies|huggie\s+(?:hoops?|charms?\s+set)|hoops?)\b/i;
+    const SINGLE_TXT = /\bsingle\s+(?:stud\s+|huggie\s+|hoop\s+)?(?:earring|stud|huggie|charm)\b|\b(?:1|one)\s+(?:single\s+)?(?:earring|stud|huggie)\b(?!s)/i, SINGLE_END = /\bsingle(?:\s+(?:earring|stud|huggie|hoop|charm))?\s*$/i;
+    const PAIR_OPT = /\bpair\b|\b(?:2|two)\s+(?:earrings|studs|huggies|hoops)\b|\bset\s+of\s+(?:2|two)\b/i;
+    const optSingle = opts.some(x => SINGLE_TXT.test(x) || SINGLE_END.test(x) || (EAR.test(text) && /\bsingle\b/i.test(x))), optPair = !optSingle && EAR.test(text) && opts.some(x => PAIR_OPT.test(x));
+    const soldBy = optSingle || optPair ? "option" : SINGLE_TXT.test(title) ? "title" : EAR.test(text) ? "words" : null;
+    const soldAs = optSingle ? "single" : optPair ? "pair" : SINGLE_TXT.test(title) ? "single" : EAR.test(text) ? "pair" : null;
+    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side: singleSideOf(line), discs: discsIn(line) };
+  }
+  /** Which ear a SINGLE earring is for, when the line names it: an option value ("Single - Left", "Right ear") or the buyer's note ("left ear
+   *  only", "for my right ear"). Both ears named, or neither: null (unspecified: flagged, never guessed). */
+  function singleSideOf(line) {
+    const got = new Set();
+    const tell = (t, strict) => {
+      t = visible(t);
+      for (const m of t.matchAll(/\b(left|right)\s+(?:ear(?:ring)?|stud|hoop|huggie|side)\b|\b(?:only|just|single)\s+(?:the\s+|a\s+|one\s+)?(left|right)\b|\b(?:for|on|in)\s+(?:my|the|her|his)\s+(left|right)\b|\b(left|right)\s+(?:one\s+)?only\b/gi)) got.add((m[1] || m[2] || m[3] || m[4]).toLowerCase());
+      if (strict && /^\s*(left|right)(?:\s+(?:ear(?:ring)?|side|one))?\s*$/i.test(t)) got.add(/left/i.test(t) ? "left" : "right");
+      if (strict) for (const m of t.matchAll(/\b(?:single|1)\b.*\b(left|right)\b|\b(left|right)\b.*\bsingle\b/gi)) got.add((m[1] || m[2]).toLowerCase());
+    };
+    for (const v of (line && line.variations) || []) { const name = lvName(v), value = lvValue(v); if (isPersonalisation(name)) tell(value, false); else if (/side|ear|earring/i.test(name) || /\b(?:single|ear|earring|stud|hoop|huggie)\b/i.test(value) || /^\s*(?:left|right)\b/i.test(value)) tell(value, true); }
+    for (const s of [].concat((line && line.personalization) || [], (line && (line.buyerMessage || line.message_from_buyer)) || [])) tell(s, false);
+    return got.size === 1 ? (got.has("left") ? "L" : "R") : null;
+  }
+  /** Does this line say it is a mismatched pair? A line only: for pages that hold raw Etsy transactions and no master. */
+  const lineMismatched = line => lineSignals(line).says || !!splitSkus(line && line.sku);
+  /** A SKU that names two designs ("MITTENS 1 + MITTENS 2", "A / B", "A & B", "A, B", "A and B"): [first, second], else null. Only a
+   *  reading of the text: a caller accepts it only when both parts are designs in the master. */
+  function splitSkus(sku) {
+    const parts = String(sku == null ? "" : sku).split(/\s*(?:\/|\+|&|;|,)\s*|\s+AND\s+/i).map(s => s.trim()).filter(Boolean);
+    return parts.length === 2 ? parts : null;
+  }
+  /** The two designs of a mismatched pair a line names, when both are in the master: [{ side: "L", sku }, { side: "R", sku }] or null.
+   *  From the SKU naming two ("Huggie Hoops-Tennis Ball/Racket3": the second part may leave out the first's prefix), or from two options
+   *  named for the left and the right (an option map answer, or a value that is a master SKU). → { members, source: "skus" | "options" } or null. */
+  function pairMembers(line, o) {
+    o = o || {}; const me = o.me; if (!me || !line) return null;
+    const has = s => masterSku(s, me, o.loose);
+    const parts = splitSkus(line.sku);
+    if (parts && !has(String(line.sku || ""))) {
+      // (the second part may leave out what the first starts with: "Huggie Hoops-Tennis Ball/Racket3" is "Huggie Hoops-Racket3")
+      const a = has(parts[0]); let b = has(parts[1]);
+      for (let i = parts[0].length - 1; !b && i > 0; i--) if (/[-_\s]/.test(parts[0][i])) b = has(parts[0].slice(0, i + 1) + parts[1]);
+      if (a && b && a !== b) return { members: [{ side: "L", sku: a }, { side: "R", sku: b }], source: "skus" };
+    }
+    const side = { L: "", R: "" };
+    for (const v of line.variations || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!value || !SIDE_THING.test(name)) continue;
+      const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : ""; if (!k || side[k]) continue;
+      const hit = optionLookup(o.optionMaps, line.listingId, name, value);
+      side[k] = hit && hit.field === "design" && hit.value ? upSku(hit.value) : has(value);
+    }
+    return side.L && side.R && side.L !== side.R ? { members: [{ side: "L", sku: side.L }, { side: "R", sku: side.R }], source: "options" } : null;
+  }
+  /** What a line is as a group of pieces. line: the sorter's line (or a raw Etsy transaction). o: { spec (form), sku, entry (the master index
+   *  entry of the design), members (pairMembers), optionMaps, count (a countRead already made) }.
+   *  mismatched is a fact about the DESIGN or two named designs (never about words alone: a line whose note says "mismatched" while its SKU is
+   *  one ordinary design has says:true and mismatched:false, and is made as a matching pair, with a note saying so).
+   *  → { earring (an earring pair line: a Left and a Right per unit), single, soldAs, mismatched, source, members, says, signals, discs, perUnit,
+   *      glued (a mismatched design counted as one glued copy per unit until the pool cuts a piece per ear), split, sideSaid, count, asks[], notes[] } */
+  function pairInfo(line, o) {
+    o = o || {}; const sig = lineSignals(line), form = o.form !== undefined ? o.form : o.spec && o.spec.form, e = o.entry, dp = e && e.pair && typeof e.pair === "object" ? e.pair : null;
+    const cr = o.count || countRead(line, { optionMaps: o.optionMaps });
+    // the option or title that says Single/Pair is the buyer's choice and wins; then the form the options gave; then the title's own words
+    const soldAs = sig.soldBy === "option" ? sig.soldAs : form === "earring-single" ? "single" : (form === "earrings" || form === "huggie") ? "pair" : form ? null : sig.soldAs;
+    const info = { earring: false, single: soldAs === "single", soldAs, mismatched: false, source: null, members: null, says: sig.says, signals: sig.signals, discs: sig.discs, perUnit: 1, glued: false, split: PIECE_RULES.mismatchedMakesTwo, sideSaid: soldAs === "single" ? sig.side : null, count: null, asks: [], notes: [] };
+    if (dp && +dp.bodies > 1 && dp.mismatched) { info.mismatched = true; info.source = "design"; }
+    else if (!dp && e && MISMATCH_NAME.test(upSku(o.sku))) { info.mismatched = true; info.source = "name"; }   // until the catalogue carries `pair`: MISMATCHED, MISMATCHED_6849, MISMATCHED_7134
+    else if (o.members) { info.mismatched = true; info.source = o.members.source; info.members = o.members.members; }
+    info.earring = soldAs === "pair" || (info.mismatched && soldAs !== "single");
+    if (cr.n > 1 || cr.answered) info.count = { n: cr.n, answered: cr.answered, rule: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).rule || "", from: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).name || "" };
+    // the questions: what the options cannot settle by themselves
+    for (const a of cr.asks) info.asks.push(a);
+    if (!cr.answered) {
+      const piece = cr.opts.find(c => c.certain && c.n > 1 && c.cls === "piece");
+      if (info.earring && piece && !info.asks.length) info.asks.push({ name: piece.name, value: piece.value, guess: 0, why: `an earring line names ${piece.n} ${piece.unit}: is that ${piece.n} pieces on each earring?`, rule: "count:earring" });
+      const des = cr.opts.find(c => c.cls === "design" && c.n > 1 && !c.answered);
+      if (des && !info.earring && !info.asks.length) info.asks.push({ name: des.name, value: des.value, guess: des.n, why: `“${clip(des.name, 40)}: ${clip(des.value, 40)}” names ${des.n} ${des.unit}: does each make a piece?`, rule: "count:designs" });
+    }
+    // pieces per unit
+    if (cr.answered) info.perUnit = cr.n;
+    else if (info.mismatched && info.earring) { if (PIECE_RULES.mismatchedMakesTwo) info.perUnit = 2; else info.glued = true; }
+    else if (info.earring && PIECE_RULES.pairFormsMakeTwo) info.perUnit = 2;
+    else if (!info.earring && !info.single && PIECE_RULES.optionCountsMake && cr.certain && cr.n > 1) info.perUnit = cr.n;
+    // what a person should see, plainly
+    if (info.single && !info.sideSaid) info.notes.push("single earring: the line does not say left or right");
+    if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but names one: made as a matching pair until a person names the second");
+    if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
+    return info;
+  }
+  const unitsOf = x => { const s = x && x.spec, l = x && x.line; return Math.max(1, Math.round(+(s && s.quantity) || +(x && x.quantity) || +(l && l.quantity) || 1)); };
+  const perUnitOf = p => Math.max(1, Math.floor(+(p && p.perUnit)) || 1);
+  /** The form a RAW line's options choose (necklace, earrings, huggie, charm...), by the deterministic rules interpretLine applies to a line with no
+   *  learned answers: a Huggie CHARM SET value, the default option map, a form word in a Type / Style / chain option. null when none. */
+  function formOfLine(line) {
+    for (const v of (line && line.variations) || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
+      if (HUGGIE_SET.test(value)) return "huggie";
+      const hit = optionLookup(null, line.listingId, name, value); if (hit && hit.field === "form") return hit.value;
+      const asForm = (isChainOption(name) || isFormOption(name)) ? formByWords(value) : null; if (asForm) return asForm;
+    }
+    return null;
+  }
+  /** the pair facts of anything that is a line (a spec, a row, a raw Etsy line): the spec's own when interpretLine made it, else read from the words */
+  function pairOf(x) {
+    if (x && x.spec && x.spec.pair) return x.spec.pair;
+    if (x && x.pair && typeof x.pair === "object") return x.pair;
+    const line = (x && x.line) || x || {}, sku = String(line.sku || "");
+    return pairInfo(line, { form: x && x.spec ? x.spec.form : formOfLine(line), sku, entry: MISMATCH_NAME.test(upSku(sku)) ? {} : null });
+  }
+  /** How many pieces a line makes: THE count every caller reads. x: a line spec (interpretLine), a row { spec, line, poolIds }, or a raw
+   *  Etsy line / transaction. An explicit x.pieceCount or spec.pieceCount wins (Orders pins it to the pieces an old line already has).
+   *  Else the units bought times the pieces per unit the line's words and options give. */
+  function pieceCountOf(x) {
+    if (!x || typeof x !== "object") return 1;
+    const own = Math.floor(+x.pieceCount || +(x.spec && x.spec.pieceCount) || 0);
+    if (own > 0) return own;
+    return unitsOf(x) * perUnitOf(pairOf(x));
+  }
+  /** The pieces of a line in order: [{ n, of, unit, side, bodyIndex }] (flat). An earring pair is a Left then a Right for every unit (L R L R),
+   *  matching or mismatched (bodyIndex 0 then 1 for a mismatched design's own bodies); a single earring has the side its line names, or null;
+   *  a glued mismatched copy, discs, letters and charms: no side. A piece an old line already has carries no side. */
+  function piecesOf(x) {
+    const p = pairOf(x), total = pieceCountOf(x), units = unitsOf(x), per = Math.max(1, Math.round(total / units)), natural = total === units * perUnitOf(p), out = [];
+    for (let i = 0; i < total; i++) {
+      let side = null, bodyIndex = 0;
+      if (natural && p.earring && !p.glued && per % 2 === 0) { side = i % 2 === 0 ? "L" : "R"; if (p.mismatched) bodyIndex = i % 2; }
+      else if (natural && p.single && units === 1) side = p.sideSaid || null;
+      out.push({ n: i + 1, of: total, unit: Math.floor(i / per) + 1, side, bodyIndex });
+    }
+    return out;
+  }
+  const sidesOf = x => piecesOf(x).map(p => p.side);
+  /** A mismatched pair whose two bodies the pool could not tell apart is made as the ONE glued copy per unit the app always made (both ears in one
+   *  copy, no side), never as two copies of the folded charm. Sets the count, the sides and the kind, and says so in spec.pair.notes. */
+  function glue(spec) {
+    if (!spec || !spec.pair || !spec.pair.mismatched || spec.pair.glued) return spec;
+    spec.pair.glued = true; spec.pair.perUnit = 1; spec.pair.split = false; delete spec.pieceRule; delete spec.pieceNote;
+    spec.pieceCount = unitsOf(spec); spec.pair.sides = sidesOf(spec); spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
+    spec.pair.notes.push("made as one glued piece for each unit (the pool could not cut its two bodies apart)");
+    return spec;
+  }
+  /** single | pair | mismatched | multi, as CharmNestPair.kindOf says it, from the pair facts and the number of pieces */
+  const kindFor = (p, n) => {
+    if (!p || n < 2) return p && p.mismatched ? "mismatched" : "single";                  // (one glued copy of a mismatched design is still the mismatched kind)
+    if (p.earring && !p.glued && !p.legacy && n === 2) return p.mismatched ? "mismatched" : "pair";
+    return "multi";                                                                      // 2 discs, 2 singles, a pinned old line, several pairs: pieces of one line, not one earring pair
+  };
+  /** An old line keeps the pieces it already has: spec.pieceCount becomes the number of pool ids, the count the rule gives is kept in
+   *  spec.pieceRule, and a shortfall (or a surplus) is said in plain words in spec.pieceNote. Nothing is added to or taken from the pool. */
+  function pinPieces(spec, have) {
+    have = Math.floor(+have) || 0; if (!spec || have < 1) return spec;
+    const rule = spec.pieceRule || spec.pieceCount || pieceCountOf(spec);
+    if (have === rule) { delete spec.pieceRule; delete spec.pieceNote; spec.pieceCount = have; if (spec.pair) { delete spec.pair.legacy; spec.pair.sides = sidesOf(spec); spec.pair.kind = kindFor(spec.pair, have); } return spec; }
+    spec.pieceRule = rule; spec.pieceCount = have; if (spec.pair) spec.pair.legacy = true;
+    spec.pieceNote = have < rule ? `pooled as ${have} piece${have === 1 ? "" : "s"} before the pair and count rule; the rule now gives ${rule}. Left as it was: tell a person if the other${rule - have === 1 ? "" : "s"} must be cut`
+      : `pooled as ${have} pieces; the rule now gives ${rule}. Left as it was`;
+    if (spec.pair) { spec.pair.sides = Array.from({ length: have }, () => null); spec.pair.kind = kindFor(spec.pair, have); }
+    return spec;
+  }
+
   /* ═══ 4 · the line spec ════════════════════════════════════════════════ */
   /**
    * order: the bridge order (design §4.4); line: one of its lines
@@ -402,6 +716,11 @@
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
     const picked = optionDesign(line, ctx.optionMaps), viaPick = !!picked && !tied(picked.variation);
     if (viaPick) { sku = picked.sku; skuSource = "option"; }
+    // two designs named by the line (a SKU that names two, or options for the left and the right earring), both in the master: the pair's
+    // members. Pooled as those two only once the pool makes a piece for each (PIECE_RULES.mismatchedMakesTwo); until then the line is
+    // read and held exactly as before, and the members are only told in spec.pair.
+    const members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps });
+    if (members && PIECE_RULES.mismatchedMakesTwo) { sku = members.members[0].sku; skuSource = "pair"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
@@ -422,6 +741,8 @@
     const byOption = special && special.signals[0] === "option";
     spec.readable = !listed && !done && !byOption && !set && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
     if (noDesign) spec.noDesignWhy = done ? "completed by hand (Custom Orders)" : listed ? "on the no-design list" : special.label.toLowerCase() + " · not laser cut";
+    // the options that name how many pieces ONE unit makes (2 Disc, Number of Discs: 3, a person's answer): read once, for the options below and for the count
+    const cr = countRead(line, { optionMaps: ctx.optionMaps });
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
       if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
@@ -438,10 +759,15 @@
         else if (isPriceOption(name) && looksLikePrice(value)) mapped = { field: "ignore", value: null, source: "rule:price" };
         // the SKU is this value's own (the inventory never gives it to another value of the option) and a design: it answers the option
         else if (!viaPick && tied(v)) mapped = { field: "design", value: sku, source: "sku" };
+        // an option that names a number of separate pieces answers itself ("ROSEGOLD - 2 Disc"); one that may, but does not say of what
+        // (letters, a range, "Set of 3"), is asked about below, once, in its own plain words, not as a generic unmapped option
+        const cx = cr.opts.find(c => c.name === name && c.value === value);
+        if (!mapped && cx && cx.ask) { spec.options.push({ name, value, mapped: null }); continue; }
+        if (!mapped && cx && cx.certain && cx.n > 1 && cx.cls !== "design") mapped = { field: "count", value: String(cx.n), source: "rule:" + cx.rule };
       }
       spec.options.push({ name, value, mapped });
       if (!mapped) { if (!noDesign) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }); continue; }
-      if (mapped.field === "ignore" || mapped.field === "design") continue;
+      if (mapped.field === "ignore" || mapped.field === "design" || mapped.field === "count") continue;
       if (mapped.field === "form" && !spec.form) spec.form = mapped.value;
       else if (mapped.field === "size" && !spec.size) spec.size = mapped.value;
       else if (mapped.field === "chain" && !spec.chain) spec.chain = mapped.value;
@@ -457,6 +783,13 @@
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
+    // pairs (Paul, 9 Oct): what the line says about being a pair, and the one count of its pieces (pieceCountOf: every caller reads it)
+    spec.pair = pairInfo(line, { spec, sku, entry: me && sku ? me(sku) : null, members, optionMaps: ctx.optionMaps, count: cr });
+    spec.pieceCount = pieceCountOf(spec);
+    spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
+    spec.pair.sides = sidesOf(spec);
+    // a count the options cannot settle waits for a person: one plain question per option, like an unmatched SKU
+    if (!noDesign) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && p.count)) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", count: { guess: a.guess || 0, why: a.why, rule: a.rule } });
     spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     return spec;
   }
@@ -814,7 +1147,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId,
+  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
