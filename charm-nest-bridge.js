@@ -8325,9 +8325,9 @@ const CustomPrint = window.CustomPrint = (() => {
   // the Print QR label button pressed last (a press on a seal over it is passed on to it as a click): its seal lands there
   document.addEventListener("click", e => { const b = e.target && e.target.closest && e.target.closest("[data-cu-print]"); if (b) pressedBtn = b; }, true);
   const frames2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-  /* A mismatched pair line (a left charm and a different right charm under one listing) prints a LEFT sticker and a RIGHT sticker of the same order,
-     one page each (pairs, 9 Oct: "Print QR Label per piece"); QR Printer.html prints one page for each entry of `pieces`. A card with no such line prints the
-     one order sticker exactly as before: the label object is returned untouched. */
+  /* An earring pair line (matching or mismatched: a Left earring and a Right one) prints a LEFT sticker and a RIGHT sticker of the same order,
+     one page each (pairs, 9 Oct: "Print QR Label per piece"); QR Printer.html prints one page for each entry of `pieces`. A card with no such line
+     (a single earring, a necklace, a charm) prints the one order sticker exactly as before: the label object is returned untouched. */
   const designEntryOf = r => (r && r.spec && r.spec.designSku ? (Master.entryFor(r.spec.designSku) || null) : null);
   function withPieces(label, rows) {
     try {
@@ -8336,7 +8336,7 @@ const CustomPrint = window.CustomPrint = (() => {
       return pieces ? Object.assign({}, label, { pieces }) : label;
     } catch (_) { return label; }
   }
-  /** Pieces behind a card's lines for the efficiency record: a mismatched pair makes two per unit; any other card counts as the page always counted. */
+  /** Pieces behind a card's lines for the efficiency record: an earring pair makes two per unit (one sticker each); any other card counts as the page always counted. */
   const piecesN = rows => { try { const L = window.CharmNestPairLabels, n = L && L.pieceCount(rows, designEntryOf); return n || piecesOfRows(rows); } catch (_) { return piecesOfRows(rows); } };
   function redraw() {
     try { Review.render(); } catch (_) {}
