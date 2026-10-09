@@ -231,4 +231,22 @@ known('F7', 'mismatched in the words, one SKU: held for a person', () => {
   eq(c.piecesOrdered(card(rowOf('Custom Star Stud Earrings'), rowOf('Custom Initial Necklace'))), 3, 'a pair and a necklace on one card');
 }
 
+/* ── 13 · a hoop word in a necklace / pendant / bracelet / anklet / key ring title is not an earring pair (ADVSTATION); the intake and the station pages say the same ─── */
+{
+  const src = fs.readFileSync(path.join(root, 'station-live-order.js'), 'utf8');
+  const win = { CharmNestOrders: O, StationActivity: null };
+  vm.runInContext(src, vm.createContext({ window: win, document: { addEventListener() {} }, console, Math, Date, String, Number, Array, Object, JSON, RegExp, Set, Map, Promise }));
+  const L = win.StationLiveOrder;
+  const tx = (title, vars, extra) => Object.assign({ transaction_id: 5200000001, listing_id: 1718, title, sku: 'A', quantity: 1, variations: [{ formatted_name: 'Metal Choice', formatted_value: 'Gold' }].concat((vars || []).map(([n, v]) => ({ formatted_name: n, formatted_value: v }))) }, extra || {});
+  const both = (title, vars, extra) => { const r = read(S(title, (vars || []).map(([n, v]) => V(n, v)), extra)); const st = tx(title, vars, extra); return { pieces: r.spec.pieceCount, earring: r.spec.pair.earring, station: L.kind(st), ears: L.ears([st]).length, tag: L.tag(st) }; };
+  for (const title of ['Gold Hoop Charm Necklace Pendant', 'Hoop Charm Necklace', 'Hoop Pendant', 'Star Charm Pendant Necklace Gold Hoop', 'Gold Hoop Charm Bracelet', 'Hoop Charm Anklet', 'Hoop Charm Key Ring', 'Hoop Charm Keychain']) {
+    const t = both(title); eq([t.pieces, t.earring, t.station.pieces, t.station.kind, t.ears, t.tag], [1, false, 1, 'single', 0, ''], title + ': one piece, no Left / Right, intake and station pages agree');
+  }
+  for (const [title, vars] of [['Hoop Earrings Charm Necklace Set', []], ['Gold Hoop Charm Necklace', [['Style', 'Hoop earrings']]], ['Gold Hoop Charm Necklace', [['Type', 'Huggie Hoops']]], ['Huggie Hoop Charm', []], ['Star Stud Earrings', []]]) {
+    const t = both(title, vars); eq([t.pieces, t.earring, t.station.pieces, t.ears], [2, true, 2, 2], title + ' ' + JSON.stringify(vars) + ': still a pair (an earring word, or a hoop in a chosen option)');
+  }
+  const set = both('Geometric Pendant Charm Add On Charm Handmade Jewelry', [['Charm Type', 'Huggie CHARM SET']]); eq([set.pieces, set.station.pieces], [2, 2], 'a Huggie CHARM SET option is two charms whatever the title says (the 9 snapshot lines)');
+  eq(both('Gold Hoop Charm Necklace Pendant', [], { quantity: 3 }).pieces, 3, 'three hoop-charm necklaces are 3 pieces');
+}
+
 console.log(`\npairs-adv-count: ${n} checks passed${open.length ? `, ${open.length} OPEN findings (${open.join(' ')}) for other owners` : ''}`);
