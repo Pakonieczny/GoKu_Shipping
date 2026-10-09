@@ -52,11 +52,17 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   st.blobs.set(thumbP, { buf: png, generation: 1, meta: { contentType: 'image/png', metadata: { firebaseStorageDownloadTokens: 't' } } });
   st.put('Charm_Master_Index', 'BR-TST-01', { thumbPath: thumbP, thumbUrl: urlOf(thumbP) });
 
+  // two junk records, as an older reader left them: a callout that shares a real design's file, and one with a file of its own
+  const mate = idx('BR-TST-05'), frontPath = 'charmnest/master/FRONT.ai';
+  st.blobs.set(frontPath, { buf: Buffer.from(st.blobs.get(otherPath).buf), generation: 1, meta: { contentType: 'application/illustrator', metadata: { firebaseStorageDownloadTokens: 't' } } });
+  st.put('Charm_Master_Index', '11.4 MM', { sku: '11.4 MM', masterHash: mate.masterHash, masterName: mate.masterName, aiPath: mate.aiPath, aiUrl: mate.aiUrl, charmHash: mate.charmHash, widthPt: mate.widthPt, heightPt: mate.heightPt });
+  st.put('Charm_Master_Index', 'FRONT', { sku: 'FRONT', masterHash: mate.masterHash, masterName: mate.masterName, aiPath: frontPath, aiUrl: urlOf(frontPath), charmHash: 'x', widthPt: 10, heightPt: 10 });
+
   // ── 2. backup: reads only ──
   const bk = path.join(tmp, 'backup'), stage = path.join(tmp, 'stage');
   const docsBefore = JSON.stringify([...st.docs.entries()]), blobsBefore = st.blobs.size;
   let c0 = st.calls.length; storageGets = 0;
-  const bkRes = await run(CR, ['backup', '--origin', sorterOrigin, '--out', bk, '--skus', 'BR-TST-01,BR-TST-05']);
+  const bkRes = await run(CR, ['backup', '--origin', sorterOrigin, '--out', bk, '--skus', 'BR-TST-01,BR-TST-05,FRONT']);
   assert.strictEqual(process.exitCode || 0, 0, 'the backup ended cleanly');
   const ops = st.calls.slice(c0).map(c => c.name + ':' + c.op);
   assert(ops.every(o => o === 'charmNestLibrary:masterList' || o === 'charmNestLibrary:masterListFiles'), 'backup only lists: ' + ops.join());
@@ -64,12 +70,12 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   assert.strictEqual(JSON.stringify([...st.docs.entries()]), docsBefore, 'a backup changes no document');
   assert.strictEqual(st.blobs.size, blobsBefore, 'a backup changes no file');
   const man = JSON.parse(fs.readFileSync(path.join(bk, 'manifest.json'), 'utf8'));
-  assert.deepStrictEqual(man.skus, ['BR-DUP-05', 'BR-TST-01', 'BR-TST-05'], 'the whole design of a named SKU is backed up (BR-DUP-05 shares BR-TST-05\'s file): ' + man.skus);
+  assert.deepStrictEqual(man.skus, ['11.4 MM', 'BR-DUP-05', 'BR-TST-01', 'BR-TST-05', 'FRONT'], 'the whole design of a named SKU is backed up (BR-DUP-05 shares BR-TST-05\'s file): ' + man.skus);
   assert(man.files.some(f => f.path === stalePath && f.sha256 === sha(st.blobs.get(stalePath).buf)), 'the stale file is in the backup as it was');
   assert(man.files.some(f => f.path === thumbP), 'the thumbnail is in the backup too');
   assert.strictEqual(storageGets, man.files.length, 'one Storage GET per file, no Netlify call for them');
   assert(!/token=(?!REDACTED)/.test(fs.readFileSync(path.join(bk, 'index-all.json'), 'utf8')), 'download tokens are redacted in the backup');
-  assert(bkRes.entries === 7 && JSON.parse(fs.readFileSync(path.join(bk, 'index-all.json'), 'utf8')).count === 7);
+  assert(bkRes.entries === 9 && JSON.parse(fs.readFileSync(path.join(bk, 'index-all.json'), 'utf8')).count === 9);
 
   // ── 3. staging touches no server ──
   c0 = st.calls.length;
@@ -129,6 +135,21 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   v = await run(CR, ['verify', '--origin', sorterOrigin, '--stage', stage, '--changed', path.join(stage, 'changed-skus.json')]);
   assert(v.bad.length > 0, 'after the rollback verify says the repair is not live (the files differ from the staged ones)'); process.exitCode = 0;
 
+  // ── junk records: listed, then removed (only with --write), then brought back by restore ──
+  const jl = await run(CR, ['junk', '--from', bk]);
+  assert.deepStrictEqual(jl.map(j => j.sku).sort(), ['11.4 MM', 'FRONT'], 'the callouts are junk, the SKUs are not: ' + jl.map(j => j.sku));
+  assert(jl.find(j => j.sku === '11.4 MM').shareGood.includes('BR-TST-05'), 'a callout that shares a real design\'s file says so (the file stays)');
+  c0 = st.calls.length;
+  const dr = await run(CR, ['prune', '--origin', sorterOrigin, '--from', bk]);
+  assert(dr.would === 2 && calls(c0) === 0 && idx('FRONT') && idx('11.4 MM'), 'prune without --write only lists');
+  fs.writeFileSync(path.join(tmp, 'busy.json'), '["FRONT"]');                       // FRONT is on a sheet
+  const pr = await run(CR, ['prune', '--origin', sorterOrigin, '--from', bk, '--write', '--exclude', path.join(tmp, 'busy.json')]);
+  assert(pr.removed === 1 && !idx('11.4 MM') && idx('FRONT'), 'a junk SKU that a sheet uses is left (the exclude list), the other is removed: ' + JSON.stringify(pr));
+  assert.strictEqual(calls(c0, 'charmNestLibrary', 'masterRemoveSku'), 1, 'one call per record removed');
+  assert(st.blobs.has(mate.aiPath) && idx('BR-TST-05'), 'the real design and its file are untouched');
+  const rj = await run(CR, ['restore', '--origin', sorterOrigin, '--from', bk, '--skus', '11.4 MM']);
+  assert(rj.bad === 0 && idx('11.4 MM'), 'restore brings a pruned record back');
+
   // ── the audit tool runs on a master and its report names a defect ──
   const dumpFile = path.join(tmp, 'dump.json'), outDir = path.join(tmp, 'audit');
   await AC.dump(file, dumpFile, {});
@@ -141,6 +162,6 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   assert(/Defects per category/.test(fs.readFileSync(path.join(outDir, 'CATALOG-report.md'), 'utf8')), 'and so is the report');
 
   global.fetch = realFetch;
-  console.log('catalog-repair OK ·', all.length, 'SKUs rehearsed');
+  console.log('catalog-repair OK ·', all.length + 2, 'SKU records rehearsed');
   srv.close();
 })().catch(e => { console.error(e); process.exit(1); });

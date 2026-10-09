@@ -15,12 +15,19 @@
  *    diff     READ-ONLY. Takes the files a staged run (index-master --out-dir) would write and compares each, drawn part by drawn
  *             part, with the .ai the site serves for that SKU now. The SKUs whose live file already draws the same are left
  *             out: only the ones that differ are written (DIR/changed-skus.json, which index-master --only takes).
+ *    junk     READ-ONLY. Lists the SKUs in a backed-up index that the reader no longer accepts as SKUs (a measurement such as "11.4 MM",
+ *             a view word such as "FRONT", and with --numbers a bare 1-3 digit number): callouts the master's artists wrote beside a
+ *             charm that an older reader took for its SKU. DIR/junk-skus.json.
+ *    prune    WRITES, and only with --write (without it, it lists what it would do). Removes those junk records from the index
+ *             (op masterRemoveSku, one call, one read and one delete each). The files stay in Storage; restore can bring any back.
  *    restore  WRITES. Puts the backed-up .ai / .png of the named SKUs back at their storage paths (same path, so every stored
  *             link keeps working) and writes their index records back as the backup holds them. --dry lists what it would do.
  *
  *    node scripts/catalog-repair.cjs backup  --origin https://goldenspike.app --out DIR [--skus FILE|A,B] [--no-files]
  *    node scripts/catalog-repair.cjs diff    --origin https://goldenspike.app --stage DIR [--skus FILE|A,B]
  *    node scripts/catalog-repair.cjs verify  --origin https://goldenspike.app --stage DIR --backup DIR [--changed FILE]
+ *    node scripts/catalog-repair.cjs junk    --from DIR [--numbers] [--exclude FILE]
+ *    node scripts/catalog-repair.cjs prune   --origin https://goldenspike.app --from DIR [--skus FILE|A,B] [--exclude FILE] [--numbers] [--write]
  *    node scripts/catalog-repair.cjs restore --origin https://goldenspike.app --from DIR [--skus FILE|A,B] [--dry]
  *
  *  The passcode (when the site has one) is read from the EDIT_PASSCODE environment variable and is never printed or saved.
@@ -41,7 +48,7 @@ function args(argv) {
     const a = argv[i], v = argv[i + 1];
     if (a === "--origin") { o.origin = String(v || "").replace(/\/+$/, ""); i++; }
     else if (a === "--out") { o.out = v; i++; } else if (a === "--from") { o.from = v; i++; } else if (a === "--stage") { o.stage = v; i++; } else if (a === "--backup") { o.backup = v; i++; }
-    else if (a === "--skus") { o.skus = v; i++; } else if (a === "--changed") { o.changed = v; i++; } else if (a === "--dry") o.dry = true; else if (a === "--no-files") o.noFiles = true;
+    else if (a === "--skus") { o.skus = v; i++; } else if (a === "--changed") { o.changed = v; i++; } else if (a === "--dry") o.dry = true; else if (a === "--no-files") o.noFiles = true; else if (a === "--numbers") o.numbers = true; else if (a === "--write") o.write = true; else if (a === "--exclude") { o.exclude = v; i++; }
     else if (a === "--concurrency") { o.concurrency = Math.max(1, Math.min(8, +v || 4)); i++; }
   }
   return o;
@@ -253,13 +260,61 @@ async function restore(o, log) {
   return { wrote, files: paths.size, bad };
 }
 
+/* ── junk · prune ── */
+/** The SKUs of a backed-up index that the reader's own SKU rule refuses now. */
+function junkOf(entries, o) {
+  const { CharmNestPDF: P } = require(path.join(__dirname, "..", "netlify/functions/_charmNestPdf.js"));
+  const out = [], byFile = new Map(), excluded = o.exclude ? onlySet(o.exclude) : new Set();
+  for (const e of entries) for (const f of filesOf(e)) if (f.kind === "ai") { if (!byFile.has(f.path)) byFile.set(f.path, []); byFile.get(f.path).push(e); }
+  const bad = new Set();
+  for (const e of entries) { const k = up(e.sku); if (!P.parseSkuLabel(k)) bad.add(k); else if (o.numbers && /^\d{1,3}(?:[.,]\d+)?$/.test(k)) bad.add(k); }
+  for (const e of entries) {
+    const k = up(e.sku); if (!bad.has(k)) continue;
+    const mates = [...new Set(filesOf(e).filter(f => f.kind === "ai").flatMap(f => (byFile.get(f.path) || []).map(x => up(x.sku))))].filter(x => x !== k);
+    out.push({ sku: e.sku, aiPath: e.aiPath || Object.values(e.sizes || {}).map(g => g.aiPath)[0] || null, sharesFileWith: mates, shareGood: mates.filter(x => !bad.has(x)), skipped: excluded.has(k) ? "on a sheet or in the pool (exclude list)" : null });
+  }
+  return out;
+}
+async function junk(o, log) {
+  if (!o.from) throw new Error("junk needs --from (a backup folder with index-all.json)");
+  const before = JSON.parse(fs.readFileSync(path.join(o.from, "index-all.json"), "utf8")), list = junkOf(before.entries, o);
+  fs.writeFileSync(path.join(o.from, "junk-skus.json"), json(list));
+  const keep = list.filter(x => !x.skipped);
+  log(`junk: ${list.length} of ${before.entries.length} index records are not SKUs by today's rule (${keep.length} to prune, ${list.length - keep.length} skipped: in use) · ${list.filter(x => x.shareGood.length).length} of them share a file with a real SKU, which keeps the file · ${o.from}/junk-skus.json`);
+  log(`  e.g. ${list.slice(0, 12).map(x => x.sku).join(", ")}`);
+  return list;
+}
+async function prune(o, log) {
+  if (!o.origin || !o.from) throw new Error("prune needs --origin and --from");
+  const before = JSON.parse(fs.readFileSync(path.join(o.from, "index-all.json"), "utf8")), want = o.skus ? onlySet(o.skus) : null;
+  let list = junkOf(before.entries, o).filter(x => !want || want.has(up(x.sku)));
+  const skipped = list.filter(x => x.skipped); list = list.filter(x => !x.skipped);
+  log(`prune: ${list.length} junk record(s) to remove${skipped.length ? `, ${skipped.length} left (in use): ${skipped.slice(0, 8).map(x => x.sku).join(", ")}` : ""}${o.write ? "" : " · DRY (add --write to remove them)"}`);
+  if (!o.write) { log(`  would remove: ${list.slice(0, 30).map(x => x.sku).join(", ")}${list.length > 30 ? " …" : ""}`); return { would: list.length }; }
+  // the backup must hold what is being removed, or restore could not bring it back
+  const man = JSON.parse(fs.readFileSync(path.join(o.from, "manifest.json"), "utf8")), have = new Set(man.files.map(f => f.path));
+  const unbacked = list.filter(x => x.aiPath && !have.has(x.aiPath));
+  if (unbacked.length) throw new Error(`${unbacked.length} record(s) have no backed-up file (${unbacked.slice(0, 5).map(x => x.sku).join(", ")}): back them up first (backup --skus <this list>). Nothing was removed.`);
+  let n = 0; const failed = [];
+  await pool(2, list, async x => { try { await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterRemoveSku", sku: x.sku }); n++; } catch (e) { failed.push({ sku: x.sku, error: e.message }); } });
+  const gone = new Set(); const skus = list.map(x => up(x.sku));
+  for (let i = 0; i < skus.length; i += 300) { const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterGetMany", skus: skus.slice(i, i + 300) }); for (const k of Object.keys(r.entries || {})) gone.add(up(k)); }
+  const still = skus.filter(k => gone.has(k));
+  fs.writeFileSync(path.join(o.from, "pruned.json"), json({ at: new Date().toISOString(), removed: n, failed, stillThere: still }));
+  log(`pruned ${n} record(s)${failed.length ? ` · ${failed.length} FAILED: ${failed.slice(0, 5).map(f => f.sku + " " + f.error).join("; ")}` : ""}${still.length ? ` · ${still.length} still in the index: ${still.slice(0, 8).join(", ")}` : " · read back: all gone"}`);
+  if (failed.length || still.length) process.exitCode = 1;
+  return { removed: n, failed: failed.length, still: still.length };
+}
+
 async function main(argv, log = console.log) {
   const o = args(argv);
   if (o.cmd === "backup") return backup(o, log);
   if (o.cmd === "diff") return diff(o, log);
   if (o.cmd === "verify") return verify(o, log);
   if (o.cmd === "restore") return restore(o, log);
-  throw new Error("usage: catalog-repair.cjs backup|diff|verify|restore --origin <site> …  (see the header of this file)");
+  if (o.cmd === "junk") return junk(o, log);
+  if (o.cmd === "prune") return prune(o, log);
+  throw new Error("usage: catalog-repair.cjs backup|diff|verify|junk|prune|restore --origin <site> …  (see the header of this file)");
 }
-module.exports = { main, affected, filesOf };
+module.exports = { main, affected, filesOf, junkOf };
 if (require.main === module) main(process.argv).catch(e => { console.error("catalog-repair:", e.message); process.exit(1); });
