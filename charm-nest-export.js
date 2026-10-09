@@ -159,7 +159,7 @@
       if(cutFill && path.cutSilhouette==='twin')continue;
       if(path.fill && !cutFill) {
         const loops=vector().filled(path);
-        if(loops.length) {const color=rgb(path.fillRGB);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
+        if(loops.length) {const color=rgb(path.hatchBlue?[0,0,1]:path.fillRGB);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
       }
       if(path.stroke || cutFill)for(const sub of path.subpaths||[]) {
         const f=flatten(sub);if(f.points.length<2)continue;

@@ -47,7 +47,10 @@ function thumbnailPng(Geom, charm, size, PDF) {
     // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
     const st = m.stroke ? (physical ? "#000" : (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB))) : "none";
-    parts.push(`<path d="${d}" fill="${m.fill ? (physical ? "#000" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`);
+    // a black fill INSIDE the charm (stamped by the grouping, charm-nest-pdf.js "a black FILL is blue hatching") is hatching: blue. A light fill a cut path carries stays as drawn (MAPLE_4007's
+    // white leaf was painted as a solid black body here: "physical" meant black for every fill), as drawCharm and scripts/index-master.cjs already draw it.
+    const lightFill = physical && m !== charm.outline && m.fill && m.fillRGB && (0.2126 * m.fillRGB[0] + 0.7152 * m.fillRGB[1] + 0.0722 * m.fillRGB[2]) > 0.35;
+    parts.push(`<path d="${d}" fill="${m.fill ? (m.hatchBlue && !m.stroke ? "rgb(0,0,255)" : physical && !lightFill ? "#000" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`);
   }
   parts.push(`<path d="${Geom.svgPathOf(charm.outline)}" fill="none" stroke="#000" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(8, Math.round(w * s))}" height="${Math.max(8, Math.round(h * s))}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#ece7dc"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)">${parts.join("")}</g></svg>`;
