@@ -429,7 +429,7 @@ async function deriveEvents(db, id, opts) {
   for (const p of pools) { const k = lineOf(p) || p.poolId; const l = lines.get(k) || lines.set(k, { rows: [] }).get(k); l.rows.push(p); }
   for (const [k, l] of lines) {
     const at = Math.min(...l.rows.map(p => msOf(p.createdAt)).filter(Boolean)), p0 = l.rows[0];
-    // a mismatched pair: its pieces are a left and a right charm (the pieces' own `side`, stored by the intake; none on any other line)
+    // an earring pair (matching or mismatched): its pieces are a left and a right one (the pieces' own `side`, stored by the intake; none on discs, letters or singles)
     const sides = l.rows.slice().sort((a, b) => n(String(a.poolId).split("_").pop()) - n(String(b.poolId).split("_").pop())).map(p => (p.side === "L" || p.side === "R" ? p.side : "")).filter(Boolean), both = sides.includes("L") && sides.includes("R");
     if (Number.isFinite(at)) ev("pooled", at, { id: `d-pooled-${k}`, lineKey: lineOf(p0), transactionId: s(p0.transactionId, 30), by: "System", source: "sorter", station: "sorter", text: `Ready to nest: ${p0.sku || "charm"}${p0.material ? " · " + p0.material : ""}${l.rows.length > 1 ? ` · ${l.rows.length} pieces` : ""}${both ? " (left and right)" : ""}`, data: Object.assign({ sku: s(p0.sku, 60), material: s(p0.material, 20), pieces: l.rows.length, runId: s(p0.runId, 80) }, sides.length ? { sides } : {}) });
   }

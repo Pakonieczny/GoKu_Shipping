@@ -11,6 +11,8 @@
 //   · poolPut keeps the pair fields it can vouch for (side, bodyIndex, groupSize, groupKey from the pool id) and writes a row without them as before;
 //   · the master index keeps `pair` (write, read, list), a re-index that says nothing leaves it, null takes it away, a person's decision stands;
 //   · a back keeps the ear it is for on the sheet record; the timeline says "left and right" and how many of the sheets that hold an order are cut;
+//   · amendment 2 (Paul, 9 Oct, 18:47): every earring piece says side L or R and a boolean mirror, matching pairs too; poolPut, putSheet (charms, backs, pieceSides)
+//     and the master index (facing) accept and check them, a group is counted by its key on both sides, and a group that has fewer pieces than its rows say is named;
 //   · no document the fake stores has an array inside an array (_noNestedArrays.cjs).
 //   node tests/charm-nest/pairs-server.cjs
 const path = require('path'), assert = require('assert/strict');
@@ -76,7 +78,7 @@ function seed(st) {
       const before = JSON.stringify([rec('sheet-pr-a'), rec('sheet-pr-b'), st.doc('Charm_Nest_Sets', SET)]);
       const r = await call({ op: 'flowApply', by: 'Paul', device: 'charm-nest-1', via: 'Library move', steps: [{ type: 'setMember', moves: [{ sheetId: 'sheet-pr-a', to: null }] }] });
       assert.equal(r.status, 409, JSON.stringify(r.body));
-      assert(new RegExp(`Order ${MIS.rid} has pieces on GF Sheet 1 and GF Sheet 2`).test(r.body.error), r.body.error);
+      assert(new RegExp(`Order ${MIS.rid} has (pieces on GF Sheet 1 and GF Sheet 2|its left earring on GF Sheet 1 and its right earring on GF Sheet 2)`).test(r.body.error), r.body.error);   // (PAIRSETS: a refusal says what the pieces are when the pool rows tell the side)
       assert(/stay in one set/.test(r.body.error));
       assert.equal(JSON.stringify([rec('sheet-pr-a'), rec('sheet-pr-b'), st.doc('Charm_Nest_Sets', SET)]), before, 'nothing was written');
     });
@@ -182,7 +184,7 @@ function seed(st) {
     // ═══ 5 · pool rows ═══
     await t('5a poolPut keeps the pair fields it can vouch for, rewrites groupKey from the pool id, drops what is not sound', async () => {
       const P = line('4200000010', '9100000010');
-      const r = await call({ op: 'poolPut', pools: [Object.assign(pool(P, 1), { sheetId: null, side: 'X', bodyIndex: 9, groupSize: 99, groupKey: 'zzz' }), Object.assign(pool(P, 2), { sheetId: null, groupKey: 'zzz' })] });
+      const r = await call({ op: 'poolPut', pools: [Object.assign(pool(P, 1), { sheetId: null, side: 'X', bodyIndex: 12, groupSize: 999, groupKey: 'zzz' }), Object.assign(pool(P, 2), { sheetId: null, groupKey: 'zzz' })] });
       assert.equal(r.status, 200, JSON.stringify(r.body)); const a = row(P.L), b = row(P.R);
       assert.equal('side' in a, false); assert.equal('bodyIndex' in a, false); assert.equal('groupSize' in a, false); assert.equal(a.groupKey, P.group);
       assert.equal(b.side, 'R'); assert.equal(b.bodyIndex, 1); assert.equal(b.groupSize, 2); assert.equal(b.groupKey, P.group);
@@ -265,6 +267,115 @@ function seed(st) {
       const s = (await call({ op: 'timelineGet', orderId: SOLO.rid })).body, one = (s.events || []).find(e => e.type === 'pooled');
       assert(one && !/left and right/.test(one.text) && !('sides' in one.data), JSON.stringify(one));
       st.deriveTimeline = false;
+    });
+
+    // ═══ 10 · Paul, amendment 2: every earring pair is a LEFT and a RIGHT piece (matching pairs too), the Right one mirrored ═══
+    const MATCH = line('4200000020', '9100000020');   // a MATCHING pair: one design, a left piece and its mirror image, on two sheets of a committed set
+    const mrow = (l, copy, o = {}) => pool(l, copy, Object.assign({ sku: 'HEART 55555', bodyIndex: 0, mirror: copy === 2 }, o));
+    await t('10a a matching pair (one design, Left and its mirrored Right) on two sheets of a set is held together by the same rule: the sheet cannot leave the set', async () => {
+      const SET2 = 'set-2026-10-09-2';
+      st.put('Charm_Nest_Sets', SET2, { setId: SET2, seq: 2, day: DAY, name: 'Set-2', runId: 'run-pr', committedAt: NOW - 30000, status: 'committed', sheetIds: ['sheet-pr-m1', 'sheet-pr-m2'], materials: ['gold'], orders: {}, committed: [MATCH.rid] });
+      st.put('Charm_Nest_Sheets', 'sheet-pr-m1', sheet('sheet-pr-m1', 1, [MATCH.L], { setId: SET2, setSeq: 2 })); st.put('Charm_Nest_Sheets', 'sheet-pr-m2', sheet('sheet-pr-m2', 2, [MATCH.R], { setId: SET2, setSeq: 2 }));
+      st.put('Charm_Pool', MATCH.L, mrow(MATCH, 1, { sheetId: 'sheet-pr-m1', setId: SET2 })); st.put('Charm_Pool', MATCH.R, mrow(MATCH, 2, { sheetId: 'sheet-pr-m2', setId: SET2 }));
+      assert.equal(row(MATCH.L).sku, row(MATCH.R).sku, 'one design');
+      const before = JSON.stringify([rec('sheet-pr-m1'), rec('sheet-pr-m2'), st.doc('Charm_Nest_Sets', SET2)]);
+      for (const sheetId of ['sheet-pr-m1', 'sheet-pr-m2']) {
+        const r = await call({ op: 'flowApply', by: 'Paul', steps: [{ type: 'setMember', moves: [{ sheetId, to: null }] }] });
+        assert.equal(r.status, 409, JSON.stringify(r.body)); assert(new RegExp('Order ' + MATCH.rid).test(r.body.error), r.body.error); assert(/stay in one set/.test(r.body.error), r.body.error);
+      }
+      assert.equal(JSON.stringify([rec('sheet-pr-m1'), rec('sheet-pr-m2'), st.doc('Charm_Nest_Sets', SET2)]), before, 'nothing was written');
+      const s = (await call({ op: 'getOrderPieces', orderIds: [MATCH.rid] })).body.orders[MATCH.rid];
+      assert.equal(s.splits.length, 1); assert.deepEqual(s.splits[0].pieces.map(x => [x.poolId, x.side, !!x.mirror]), [[MATCH.L, 'L', false], [MATCH.R, 'R', true]], 'the answer tells each piece\'s ear and which one is the mirror image');
+      assert.equal(s.placement[MATCH.R].mirror, true); assert.equal('mirror' in s.placement[MATCH.L], false);
+    });
+    await t('10b poolPut: side L or R and mirror true or false are kept on every earring piece; a mirror that is not a boolean is dropped; a piece with none writes as before', async () => {
+      const P = line('4200000021', '9100000021');
+      const r = await call({ op: 'poolPut', pools: [mrow(P, 1, { sheetId: null, mirror: 'yes' }), mrow(P, 2, { sheetId: null }), { poolId: '4200000022_9100000022_1', orderId: '4200000022', transactionId: '9100000022', sku: 'DUCK 38090', material: 'gold', copy: 1, quantity: 1, state: 'ready', runId: 'run-pr' }] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(row(P.L).side, 'L'); assert.equal('mirror' in row(P.L), false, 'a mirror that is not true or false is left out');
+      assert.equal(row(P.R).side, 'R'); assert.equal(row(P.R).mirror, true); assert.equal(row(P.R).groupSize, 2); assert.equal(row(P.R).groupKey, P.group);
+      const one = row('4200000022_9100000022_1'); for (const k of ['side', 'mirror', 'bodyIndex', 'groupKey', 'groupSize']) assert.equal(k in one, false, k);
+      assert.deepEqual(Placement.cleanPiece({ poolId: P.L, mirror: false, side: 'L', groupSize: 400, bodyIndex: 9 }), { poolId: P.L, mirror: false, side: 'L', groupSize: 400, bodyIndex: 9 });
+      assert.equal('groupSize' in Placement.cleanPiece({ poolId: P.L, groupSize: 401 }), false); assert.equal('bodyIndex' in Placement.cleanPiece({ poolId: P.L, bodyIndex: 10 }), false);
+    });
+    await t('10c putSheet: the pair fields on a sheet record\'s charms, backs and pieceSides are kept when sound and left out when not; a record without them saves as it was', async () => {
+      const P = line('4200000023', '9100000023');
+      st.put('Charm_Pool', P.L, mrow(P, 1, { sheetId: null, state: 'ready' })); st.put('Charm_Pool', P.R, mrow(P, 2, { sheetId: null, state: 'ready' }));
+      const charms = [{ id: 'c1', poolId: P.L, side: 'L', mirror: false, bodyIndex: 0, groupKey: 'zzz', groupSize: 2 }, { id: 'c2', poolId: P.R, side: 'sideways', mirror: 'yes', groupSize: 9999 }, { id: 'c3', poolId: SOLO.L, sku: 'DUCK 38090' }];
+      const r = await call({ op: 'putSheet', sheet: { id: 'sheet-pr-cc', poolIds: [P.L, P.R], charms, pieceSides: { [P.L]: 'L', [P.R]: 'R', junk: 'L', [SOLO.L]: 'Q' },
+        backPool: [{ poolId: P.R, sheetId: 'sheet-pr-cc', order: P.rid, sku: 'HEART 55555', copy: 2, side: 'R', mirror: true, text: 'Bea', approvedAt: NOW, approvedBy: 'Paul' }, { poolId: P.L, sheetId: 'sheet-pr-cc', order: P.rid, sku: 'HEART 55555', copy: 1, side: 'back', mirror: 'x', text: 'Ann', approvedAt: NOW, approvedBy: 'Paul' }] } });
+      assert.equal(r.status, 200, JSON.stringify(r.body)); const d = rec('sheet-pr-cc');
+      assert.deepEqual(d.charms[0], { id: 'c1', poolId: P.L, side: 'L', mirror: false, bodyIndex: 0, groupKey: P.group, groupSize: 2 });
+      assert.deepEqual(d.charms[1], { id: 'c2', poolId: P.R }); assert.deepEqual(d.charms[2], charms[2]);
+      assert.deepEqual(d.pieceSides, { [P.L]: 'L', [P.R]: 'R' });
+      const bR = d.backPool.find(b => b.poolId === P.R), bL = d.backPool.find(b => b.poolId === P.L);
+      assert.equal(bR.side, 'R'); assert.equal(bR.mirror, true); assert.equal('side' in bL, false); assert.equal('mirror' in bL, false);
+      const listed = (await call({ op: 'listSheets', limit: 80 })).body.sheets.find(x => x.id === 'sheet-pr-cc'); assert.equal(listed.backs.find(b => b.poolId === P.R).mirror, true); assert.equal('mirror' in listed.backs.find(b => b.poolId === P.L), false);
+      const plain = await call({ op: 'putSheet', sheet: { id: 'sheet-pr-plain', poolIds: [], charms: [{ id: 'x', poolId: SOLO.L }], pieceSides: 'junk' } });
+      assert.equal(plain.status, 200); assert.deepEqual(rec('sheet-pr-plain').charms, [{ id: 'x', poolId: SOLO.L }]); assert.equal('pieceSides' in rec('sheet-pr-plain'), false);
+    });
+    await t('10d the master index keeps `facing` (the way the drawing faces, L or R): silence leaves it, junk is ignored, null removes it, a person\'s word stands over a re-index', async () => {
+      const e = (o = {}) => Object.assign({ sku: 'HEART_FACINGTEST', masterHash: 'abcdef13', charmHash: 'ch2', widthPt: 40, heightPt: 40, areaPt2: 1200, members: 3, holes: 1 }, o);
+      const put = async entries => (await call({ op: 'masterPutIndex', entries, masterHash: 'abcdef13', masterName: 'test2.ai' })).body;
+      const get = async () => (await call({ op: 'masterGet', sku: 'HEART_FACINGTEST' })).body.entry;
+      assert.equal((await put([e({ facing: 'R' })])).written, 1); assert.equal((await get()).facing, 'R');
+      assert.equal((await call({ op: 'masterGetMany', skus: ['HEART_FACINGTEST'] })).body.entries.HEART_FACINGTEST.facing, 'R');
+      assert.equal((await call({ op: 'masterList', q: 'HEART_FACINGTEST' })).body.entries[0].facing, 'R');
+      await put([e()]); assert.equal((await get()).facing, 'R', 'a re-index that says nothing leaves it');
+      await put([e({ facing: 'sideways' })]); assert.equal((await get()).facing, 'R', 'a value that is not L or R is ignored');
+      await put([e({ facing: 'L' })]); assert.equal((await get()).facing, 'L');
+      assert.equal((await call({ op: 'masterPatch', sku: 'HEART_FACINGTEST', patch: { facing: 'R' } })).status, 200);
+      await put([e({ facing: 'L' })]); assert.equal((await get()).facing, 'R', 'a person\'s word stands over a re-index');
+      assert.equal((await call({ op: 'masterPatch', sku: 'HEART_FACINGTEST', patch: { facing: null } })).status, 200); assert.equal('facing' in (await get()), false, 'null gives it back');
+      await put([e({ facing: 'L' })]); assert.equal((await get()).facing, 'L', 'and the indexer may write it again');
+      await put([e({ sku: 'PLAIN_FACINGTEST' })]); assert.equal('facing' in (await call({ op: 'masterGet', sku: 'PLAIN_FACINGTEST' })).body.entry, false);
+      assert.equal(Master.cleanFacing('X'), undefined); assert.equal(Master.cleanFacing(undefined), undefined); assert.equal(Master.cleanFacing(null), null);
+    });
+    await t('10e a pair always has two pieces: a group whose rows say 2 and that has one piece left is named (missing), counted both sides; a made-up-again piece is counted once; rows that disagree say nothing', () => {
+      const A = MATCH.L, B = MATCH.R, rows = [{ poolId: A, side: 'L', groupSize: 2 }, { poolId: B, side: 'R', mirror: true, groupSize: 2 }];
+      const one = Placement.splitsOf({ [A]: { state: 'sheet', sheetId: 'a' } }, rows);
+      assert.equal(one.length, 1); assert.equal(one[0].missing, 1); assert.equal(one[0].of, 2); assert.deepEqual(one[0].sheets, ['a']);
+      assert.deepEqual(Placement.splitsOf({ [A]: { state: 'sheet', sheetId: 'a' }, [B]: { state: 'sheet', sheetId: 'a' } }, rows), [], 'both pieces on one sheet: whole');
+      const sp = Placement.splitsOf({ [A]: { state: 'sheet', sheetId: 'a' }, [B]: { state: 'sheet', sheetId: 'b' } }, rows);
+      assert.equal(sp.length, 1); assert.equal('missing' in sp[0], false); assert.deepEqual(sp[0].pieces.map(x => [x.side, !!x.mirror]), [['L', false], ['R', true]]);
+      assert.deepEqual(Placement.splitsOf({ [A]: { state: 'sheet', sheetId: 'a' } }, [{ poolId: A, side: 'L' }]), [], 'a row that does not say the size of its group says nothing');
+      assert.deepEqual(Placement.splitsOf({ [A]: { state: 'sheet', sheetId: 'a' }, [B]: { state: 'sheet', sheetId: 'a' } }, [{ poolId: A, groupSize: 2 }, { poolId: B, groupSize: 4 }]), [], 'rows that disagree on the size say nothing (and the pieces are on one sheet)');
+      assert.deepEqual(Placement.splitsOf({ [A]: { state: 'sheet', sheetId: 'a' }, [B]: { state: 'sheet', sheetId: 'a' } }, [{ poolId: A, groupSize: 3 }, { poolId: B, groupSize: 3 }])[0].missing, 1, 'rows that agree on 3 with two pieces left name one missing');
+    });
+    await t('10f a hold that names one piece of a MATCHING pair takes the other (the mirror image) off the same sheet, counted by the group key', async () => {
+      const W = line('4200000024', '9100000024');
+      st.put('Charm_Nest_Sheets', 'sheet-pr-mw', sheet('sheet-pr-mw', 8, [W.L, W.R, SINGLE.L]));
+      st.put('Charm_Pool', W.L, mrow(W, 1, { sheetId: 'sheet-pr-mw' })); st.put('Charm_Pool', W.R, mrow(W, 2, { sheetId: 'sheet-pr-mw' })); st.put('Charm_Pool', SINGLE.L, pool(SINGLE, 1, { side: null, groupSize: 1, quantity: 1, sku: 'DUCK 38090', sheetId: 'sheet-pr-mw', state: 'written', heldAt: null, heldBy: null }));
+      const r = await call({ op: 'poolUpdate', poolIds: [W.R], patch: HOLD() });
+      assert.equal(r.status, 200, JSON.stringify(r.body)); assert.deepEqual(r.body.extended, [W.L]);
+      assert.equal(row(W.L).state, 'abandoned'); assert.equal(row(W.R).state, 'abandoned'); assert.deepEqual(rec('sheet-pr-mw').poolIds, [SINGLE.L], 'the single charm of another order stays');
+    });
+
+    await t('10g poolUpdate of ONE piece of a sided group keeps side, mirror, bodyIndex, groupKey and groupSize intact; a patch that carries pair fields is checked like poolPut\'s (all valid or none); a take-off never changes them', async () => {
+      const W = line('4200000025', '9100000025'), keys = ['side', 'mirror', 'bodyIndex', 'groupKey', 'groupSize'];
+      st.put('Charm_Pool', W.L, mrow(W, 1, { state: 'ready', sheetId: null })); st.put('Charm_Pool', W.R, mrow(W, 2, { state: 'ready', sheetId: null }));
+      const mine = () => keys.map(k => row(W.R)[k]);
+      const want = mine(); assert.deepEqual(want, ['R', true, 0, W.group, 2]);
+      const r1 = await call({ op: 'poolUpdate', poolId: W.R, patch: { state: 'written', sheetId: 'sheet-pr-t1', setId: null } });
+      assert.equal(r1.status, 200, JSON.stringify(r1.body)); assert.equal(r1.body.count, 1); assert.equal('legacy' in r1.body, false); assert.equal(row(W.R).state, 'written'); assert.deepEqual(mine(), want, 'a plain patch leaves them as they are');
+      await call({ op: 'poolUpdate', poolId: W.R, patch: { heldNote: 'x', side: 'X', bodyIndex: 3, groupSize: 2, groupKey: 'zzz', mirror: false } });
+      assert.deepEqual(mine(), want, 'a patch whose pair fields are not all valid writes none of them');
+      await call({ op: 'poolUpdate', poolId: W.R, patch: { side: 'R', mirror: true, bodyIndex: 0, groupKey: 'zzz', groupSize: 2, runId: 'run-pr-2' } });
+      assert.deepEqual(mine(), want, 'a valid set is written with the group key from the pool id'); assert.equal(row(W.R).runId, 'run-pr-2'); assert.equal('poolId' in row(W.R) && row(W.R).poolId !== W.R, false);
+      const hold = await call({ op: 'poolUpdate', poolId: W.R, patch: HOLD({ side: 'L', mirror: false, groupSize: 9 }) });
+      assert.equal(hold.status, 200, JSON.stringify(hold.body)); assert.equal(row(W.R).state, 'abandoned'); assert.deepEqual(mine(), want, 'a take-off never changes what a piece is');
+    });
+    await t('10h poolUpdate: left and right named over an old glued row still in play is not written (`legacy`, like poolPut); another line in the same call is written; a plain piece takes them', async () => {
+      const G = line('4200000026', '9100000026'), F = line('4200000027', '9100000027'), N = line('4200000028', '9100000028');
+      st.put('Charm_Pool', G.L, { poolId: G.L, orderId: G.rid, transactionId: G.tid, sku: 'MISMATCHED_7134', copy: 1, quantity: 1, state: 'written', sheetId: 'sheet-pr-t1', runId: 'run-pr' });
+      st.put('Charm_Pool', F.L, { poolId: F.L, orderId: F.rid, transactionId: F.tid, sku: 'MISMATCHED_7134', copy: 1, quantity: 1, state: 'ready', runId: 'run-pr' });
+      st.put('Charm_Pool', N.L, { poolId: N.L, orderId: N.rid, transactionId: N.tid, sku: 'MISMATCHED_7134', copy: 1, quantity: 1, state: 'abandoned', removedAt: NOW, removedBy: 'Paul', runId: 'run-pr' });
+      const patch = { side: 'L', mirror: false, bodyIndex: 0, groupSize: 2, groupKey: 'x' };
+      const r = await call({ op: 'poolUpdate', poolIds: [G.L, F.L, N.L], patch });
+      assert.equal(r.status, 200, JSON.stringify(r.body)); assert.deepEqual(r.body.legacy, [G.L]); assert.equal(r.body.count, 2);
+      assert.equal('side' in row(G.L), false, 'the glued row in play is as it was'); assert.equal('groupSize' in row(G.L), false);
+      assert.equal(row(F.L).side, 'L'); assert.equal(row(F.L).groupKey, F.group, 'a plain piece not on a sheet takes them'); assert.equal(row(N.L).side, 'L', 'a piece taken off is free to become a left piece');
+      const same = await call({ op: 'poolUpdate', poolId: G.L, patch: { state: 'written', note: 'only a plain patch' } }); assert.equal('legacy' in same.body, false); assert.equal(same.body.count, 1);
     });
 
     // ═══ 9 · nothing the fake stored has an array inside an array ═══

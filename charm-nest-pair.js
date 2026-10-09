@@ -145,7 +145,8 @@
       // the biggest closed cut path may be bigger than the chosen outline (a custom outline): it competes on area, not on being first
       for (const s of seeds) {
         const polys = pl(s), pts = sampleOf(s, polys);
-        const holder = all.find(b => bbNear(s.bbox, b.bbox, 0) && pts.length && pts.filter(p => inPolys(p[0], p[1], b.polys)).length / pts.length >= 0.6);
+        const sameBox = b => { const iw = Math.min(s.bbox[2], b.outlineBbox[2]) - Math.max(s.bbox[0], b.outlineBbox[0]), ih = Math.min(s.bbox[3], b.outlineBbox[3]) - Math.max(s.bbox[1], b.outlineBbox[1]); return iw > 0 && ih > 0 && iw * ih >= 0.85 * (bbArea(s.bbox) + bbArea(b.outlineBbox) - iw * ih); };   // the same path drawn twice (a stroked outline and its twin)
+        const holder = all.find(b => sameBox(b) || (bbNear(s.bbox, b.bbox, 0) && pts.length && pts.filter(p => inPolys(p[0], p[1], b.polys)).length / pts.length >= 0.6));
         if (holder) continue;                                  // a cut-out or inner ring of a body
         const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
         const ringLike = maxDim <= RING_MAX_PT && (s.subpaths || []).length <= 2 && (s.subpaths || []).every(sp => sp.length <= 20);
@@ -274,28 +275,55 @@
     const m = /(\d{1,2})\s*(?:x\s*)?(?:discs?|disks?|circles?)\b/i.exec(texts) || /\b(?:discs?|disks?)\s*[:\-x]\s*(\d{1,2})\b/i.exec(texts);
     return m ? +m[1] : 0;
   }
-  /** How many pieces one order line makes. TODAY (every site of the app: makePool, footprint, OrderPieces, station-live-order ...) a line
-   *  makes max(1, round(quantity)) pieces whatever its form, so that is the rule here too; nothing doubles earrings or multiplies discs.
-   *  An explicit count wins (the intake sets spec.pieceCount: one source of truth in charm-nest-orders.js; a row's pool ids are the fact).
-   *  Only a MISMATCHED design makes two pieces per unit (its left and its right body). */
+  /* Earring pairs (Paul, 9 Oct 18:46-18:47): every earring pair (stud, hoop, huggie, matching or mismatched) is one LEFT and one RIGHT piece per
+     unit of quantity, side "L"/"R" on every piece; necklace discs, letters, charms and a single earring make pieces with side null and are never
+     mirrored. The intake says what a line is (spec.pair.kind, spec.pieceCount); a line without them is read by its form. */
+  const PAIR_FORMS = new Set(["earrings", "earring", "pair", "pair of earrings", "stud", "studs", "stud earrings", "hoop", "hoops", "hoop earrings", "huggie", "huggies", "huggie earrings", "huggie hoops", "huggie charm set"]);
+  const formOf = line => String((line && ((line.spec && line.spec.form) || line.form || (line.row && line.row.spec && line.row.spec.form))) || "").toLowerCase().trim();
+  const pairSpecOf = line => line && ((line.spec && line.spec.pair) || line.pair || (line.row && line.row.spec && line.row.spec.pair)) || null;
+  /** Is this line an earring PAIR (its pieces are a Left and a Right)? The intake's own answer wins (spec.pair.earring, which is true only for an earring pair line
+   *  that is not a mismatched design counted as one glued copy and not an old line pinned to the pieces it already has); else spec.pair.kind; else a mismatched
+   *  design is; else the form decides. */
+  function isEarringPair(line, charm) {
+    const pr = pairSpecOf(line);
+    if (pr && typeof pr.earring === "boolean") return pr.earring === true && !pr.glued && !pr.legacy;
+    if (pr && pr.kind) return pr.kind === "pair" || pr.kind === "mismatched";
+    if (charm && isMismatched(charm)) return true;
+    return PAIR_FORMS.has(formOf(line));
+  }
+  /** The side the intake gave each piece, in order (spec.pair.sides: "L" | "R" | null each, a flat array), or null when the line carries none. */
+  function sidesSaid(line) {
+    const pr = pairSpecOf(line);
+    return pr && Array.isArray(pr.sides) && pr.sides.length ? pr.sides.map(x => x === "L" || x === "R" ? x : null) : null;
+  }
+  /** How many pieces one order line makes. An explicit count wins (the intake sets spec.pieceCount: one source of truth in charm-nest-orders.js; a
+   *  row's pool ids are the fact). Without one: an earring pair (or a mismatched design) makes two per unit, anything else one per unit. */
   function pieceCountOf(line, charm) {
     const explicit = num(line && (line.pieceCount || (line.spec && line.spec.pieceCount) || (line.row && line.row.spec && line.row.spec.pieceCount))) ||
       (line && Array.isArray(line.poolIds) && line.poolIds.length) || (line && line.row && Array.isArray(line.row.poolIds) && line.row.poolIds.length) || 0;
     if (explicit) return explicit;
-    const q = quantityOf(line);
-    return charm && isMismatched(charm) ? 2 * q : q;
+    const q = quantityOf(line), form = formOf(line);
+    if (form === "earring-single" || form === "single earring" || form === "single") return q;   // one ear alone: one piece per unit
+    return isEarringPair(line, charm) ? 2 * q : q;
   }
-  /** The pieces one order line makes, in order: [{ side, bodyIndex, groupKey, n, of }]. A mismatched design: every unit makes its left piece
-   *  (bodyIndex 0, "L") then its right piece (bodyIndex 1, "R"); anything else: bodyIndex 0, side null. */
-  function piecesFor(line, charm) {
-    const key = groupKey(line), mis = !!charm && isMismatched(charm), total = pieceCountOf(line, charm), out = [];
+  /** The pieces one order line makes, in order: [{ side, bodyIndex, groupKey, n, of, mirror }]. An earring pair alternates Left, Right (L first) and every
+   *  piece has its side; a mismatched design's Left is its left body (bodyIndex 0) and its Right its right body (bodyIndex 1), a matching pair's pieces
+   *  are both bodyIndex 0. `mirror` is true for a piece that is the mirror image of the as-drawn design (facingOf decides which of the two that is).
+   *  Anything that is not an earring pair (a necklace of discs, a single earring): side null, mirror false. */
+  function piecesFor(line, charm, opts) {
+    const key = groupKey(line), total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm), out = [];
+    const pair = total >= 2 && isEarringPair(line, charm), said = sidesSaid(line);   // (the intake's own sides win; without them the pieces alternate L, R)
+    const bodies = mis ? bodiesOf(charm) : null;
     for (let i = 0; i < total; i++) {
-      const bodyIndex = mis ? i % 2 : 0;
-      out.push({ side: mis ? sideOf(bodyIndex, 2) : null, bodyIndex, groupKey: key, n: i + 1, of: total });
+      const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
+      const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
+      let mirror = false;
+      if (side) { const f = (opts && opts.facing) || (bodies ? facingOfBody(bodies[bodyIndex], charm) : facingOf(charm)); mirror = side !== (f || "L"); }
+      out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
     }
     return out;
   }
-  /** single (one piece) | pair (two pieces of one design) | mismatched (a left and a right body) | multi (three or more pieces, or several mismatched pairs). */
+  /** single (one piece) | pair (two pieces of one design) | mismatched (a left and a right body) | multi (three or more pieces, or several pairs). */
   function kindOf(line, charm) {
     const total = pieceCountOf(line, charm), mis = !!charm && isMismatched(charm);
     if (mis) return total === 2 ? "mismatched" : "multi";
@@ -348,10 +376,331 @@
   /** The `pair` field of a master index entry, or null (a normal design). */
   const designPair = entry => (entry && entry.pair && typeof entry.pair === "object" && +entry.pair.bodies > 1 ? { v: 1, bodies: +entry.pair.bodies, mismatched: !!entry.pair.mismatched } : null);
 
+  /* ═══ 5b · direction: Left and Right earrings are MIRROR images (Paul, 9 Oct 18:47) ═══════════════════════════════
+     "each pair contains a left and a right earring so they're not two identical charms: one is flipped on a vertical Y axis 180 degrees so that the
+     left one face is left and the right one face is right." The Right piece is the Left piece with x -> -x about its own box centre (cut outline,
+     holes, hoop, engraving art and hatching; engraved TEXT stays readable and is placed, not reversed, by the engraving code). The nester may
+     rotate a piece, never reflect it: a Right piece reaches the solver already mirrored. This is NOT the sheet "flip" used to engrave the back. */
+
+  /* WHICH WAY DOES A DESIGN FACE? (PAIRMIRROR, 9 Oct; evidence in plans/pairs-1009/PAIRMIRROR-facing.json and PAIRMIRROR-points.md)
+     Measured on the live library (3,843 design files, 6,827 SKUs), by eye on about 100 designs: the masters follow NO drawing convention. Profile animals
+     face left about as often as right (panda, wolf, duck, fox, iguana face left; horse, seal, beaver, penguin, boot, dragon face right), mittens are drawn
+     thumb-left, and no shape measure (centre of mass, where the ink sits, which end is heavier) predicts the side better than a coin flip (the old centre-of-mass
+     rule was right for 12 of 24 labelled designs). A shape cannot say which end is the head. So:
+       1. whether a design NEEDS a facing is measured (it is, when its mirror image differs: symmetryOf), and that is sound;
+       2. which way it faces is a person's word (`facing` on the master record, set in the Master tab; a re-index never overwrites it);
+       3. a second body of a mismatched pair is read from the first (drawn as the mirror image of it: it faces the other way; drawn the same: the same way);
+       4. everything else is UNKNOWN (null), and unknown means as drawn is the Left and the Right is the mirror (the way Paul's picture draws both mittens).
+     Nothing here guesses a side from a shape. */
+  const SYM_N = 64, SYM_CUT_OK = 0.06, SYM_CUT_DIR = 0.09, SYM_ART_OK = 0.10, SYM_ART_DIR = 0.16;
+  const symCache = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function rasterPolys(polys, k, cx, cy, N) {   // even-odd fill of closed polygons into an N x N mask, y up, the square k centred on (cx, cy)
+    const m = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const x = cx + ((i + 0.5) / N - 0.5) * k, y = cy + (0.5 - (j + 0.5) / N) * k; if (inPolys(x, y, polys)) m[j * N + i] = 1; }
+    return m;
+  }
+  function rasterStroke(polylines, lw, k, cx, cy, N, m) {   // a line of width lw into the mask
+    const cell = k / N, r = Math.max(0.5, lw / 2 / cell);
+    for (const pl of polylines) for (let i = 1; i < pl.length; i++) {
+      const a = pl[i - 1], b = pl[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]), st = Math.max(1, Math.ceil(L / (cell * 0.5)));
+      for (let s = 0; s <= st; s++) {
+        const t = s / st, gi = (a[0] + (b[0] - a[0]) * t - cx) / k * N + N / 2, gj = N / 2 - (a[1] + (b[1] - a[1]) * t - cy) / k * N;
+        for (let jj = Math.max(0, Math.floor(gj - r)); jj <= Math.min(N - 1, Math.ceil(gj + r)); jj++) for (let ii = Math.max(0, Math.floor(gi - r)); ii <= Math.min(N - 1, Math.ceil(gi + r)); ii++) if ((ii + 0.5 - gi) ** 2 + (jj + 0.5 - gj) ** 2 <= r * r + 0.25) m[jj * N + ii] = 1;
+      }
+    }
+  }
+  const flipRows = (m, N) => { const o = new Uint8Array(N * N); for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) o[j * N + i] = m[j * N + N - 1 - i]; return o; };
+  function fillHolesMask(m, N) {   // everything the outside cannot reach is part of the shape (a hoop's hole, a cut-out)
+    const out = new Uint8Array(N * N), st = [], push = (i, j) => { if (i < 0 || j < 0 || i >= N || j >= N) return; const q = j * N + i; if (out[q] || m[q]) return; out[q] = 1; st.push(q); };
+    for (let i = 0; i < N; i++) { push(i, 0); push(i, N - 1); push(0, i); push(N - 1, i); }
+    while (st.length) { const q = st.pop(), i = q % N, j = (q - i) / N; push(i + 1, j); push(i - 1, j); push(i, j + 1); push(i, j - 1); }
+    const r = new Uint8Array(N * N); for (let q = 0; q < N * N; q++) r[q] = out[q] ? 0 : 1; return r;
+  }
+  function edgeCells(m, N) { const e = new Uint8Array(N * N); for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const q = j * N + i; if (m[q] && (i === 0 || j === 0 || i === N - 1 || j === N - 1 || !m[q - 1] || !m[q + 1] || !m[q - N] || !m[q + N])) e[q] = 1; } return e; }
+  function distanceTo(m, N) {   // chamfer distance (in cells) from every cell to the nearest set cell
+    const D = new Float32Array(N * N).fill(1e9); for (let q = 0; q < N * N; q++) if (m[q]) D[q] = 0;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const q = j * N + i; let v = D[q]; if (i > 0) v = Math.min(v, D[q - 1] + 1); if (j > 0) { v = Math.min(v, D[q - N] + 1); if (i > 0) v = Math.min(v, D[q - N - 1] + 1.414); if (i < N - 1) v = Math.min(v, D[q - N + 1] + 1.414); } D[q] = v; }
+    for (let j = N - 1; j >= 0; j--) for (let i = N - 1; i >= 0; i--) { const q = j * N + i; let v = D[q]; if (i < N - 1) v = Math.min(v, D[q + 1] + 1); if (j < N - 1) { v = Math.min(v, D[q + N] + 1); if (i < N - 1) v = Math.min(v, D[q + N + 1] + 1.414); if (i > 0) v = Math.min(v, D[q + N - 1] + 1.414); } D[q] = v; }
+    return D;
+  }
+  function chamferP90(A, B, N) {   // the distance within which 90 percent of A's cells find a cell of B (and the other way round, the larger of the two), as a share of the drawing's size
+    const dB = distanceTo(B, N), dA = distanceTo(A, N), a = [], b = [];
+    for (let q = 0; q < N * N; q++) { if (A[q]) a.push(dB[q]); if (B[q]) b.push(dA[q]); }
+    const p90 = v => { if (!v.length) return 0; v.sort((x, y) => x - y); return v[Math.min(v.length - 1, Math.floor(0.9 * v.length))]; };
+    return Math.max(p90(a), p90(b)) / N;
+  }
+  /** How far a body is from its own mirror image: { cut, art, level, N }. cut = the cut line's distance from its mirror image (shares of the drawing's size, holes filled),
+   *  art = the engraving's (null when the body has none). level "symmetric" (the mirror image looks the same: nothing to decide), "directional" (it does not), "slight" (in between:
+   *  a hoop off to one side, a hand-drawn wobble). The mirror axis is the one mirrorOf uses: the vertical through the middle of the body's box. */
+  function symmetryOf(body) {
+    if (!body || !body.outline) return { cut: 0, art: null, level: "symmetric", N: SYM_N, none: true };
+    if (symCache) { const hit = symCache.get(body); if (hit) return hit; }
+    const N = SYM_N, bb = body.bbox || body.outlineBbox || body.outline.bbox, cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2, k = Math.max(bb[2] - bb[0], bb[3] - bb[1], 1e-6) * 1.04;
+    const S = fillHolesMask(rasterPolys(flatten(body.outline, 8), k, cx, cy, N), N), I = new Uint8Array(N * N);
+    for (const m of body.members || []) {
+      if (m === body.outline || m.kind !== "path" || !m.bbox || (isCut(m) && m.closed)) continue;   // a hole or a hoop belongs to the cut line, which S already holds
+      const polys = flatten(m, 6);
+      if (m.fill) { const f = rasterPolys(polys, k, cx, cy, N); for (let q = 0; q < I.length; q++) if (f[q]) I[q] = 1; }
+      if (m.stroke || !m.fill) rasterStroke(polys, m.lwPt || 0.5, k, cx, cy, N, I);
+    }
+    let sN = 0, iN = 0; for (let q = 0; q < N * N; q++) { sN += S[q]; iN += I[q]; }
+    const cut = chamferP90(edgeCells(S, N), edgeCells(flipRows(S, N), N), N);
+    const art = iN > 0.01 * sN ? chamferP90(edgeCells(I, N), edgeCells(flipRows(I, N), N), N) : null;
+    const level = cut >= SYM_CUT_DIR || (art != null && art >= SYM_ART_DIR) ? "directional" : cut < SYM_CUT_OK && (art == null || art < SYM_ART_OK) ? "symmetric" : "slight";
+    const out = { cut: +cut.toFixed(3), art: art == null ? null : +art.toFixed(3), level, N };
+    if (symCache) symCache.set(body, out);
+    return out;
+  }
+  /** The side a stored value says ("L" | "R") or null. */
+  const facingValue = v => (v === "L" || v === "R" ? v : null);
+  const opposite = f => (f === "L" ? "R" : f === "R" ? "L" : null);
+  /** The side a PERSON said this body faces, from the record (`facings[index]` of a mismatched record, or `facing`, which is body 0's), else null. */
+  function facingSetFor(body, charmOrEntry) {
+    const c = charmOrEntry || {}, rec = c.entry || c, idx = body && body.index != null ? body.index : 0;
+    const per = Array.isArray(rec.facings) && rec.facings[idx] != null ? facingValue(rec.facings[idx]) : null;
+    if (per) return per;
+    return idx === 0 ? facingValue(rec.facing) || facingValue(c.facing) : null;
+  }
+  /** Which way ONE body of the design faces, read from what is known: "L" | "R" | null (unknown, or symmetric: as drawn is the Left, the Right is the mirror).
+   *  A person's word (record `facing` / `facings[i]`) wins; else the second body of a mismatched pair from the first (drawn as its mirror image: it faces the
+   *  other way, drawn the same way: the same way); else null. No shape measure is used to guess a side (see the note above). */
+  function facingOfBody(body, charmOrEntry) {
+    const set = facingSetFor(body, charmOrEntry); if (set) return set;
+    return relationFacing(body, charmOrEntry);
+  }
+  function relationFacing(body, charmOrEntry) {
+    if (!body || !body.index || !charmOrEntry || !charmOrEntry.outline) return null;
+    const bodies = bodiesOf(charmOrEntry); if (bodies.length !== 2 || !bodies[0] || bodies[0] === body) return null;
+    const sim = shapeSimilarity(bodies[0], body), f0 = facingSetFor(bodies[0], charmOrEntry);
+    if (sim.mirrored >= PAIR_DEFAULTS.sameShapeIoU && sim.same < 0.85) return opposite(f0 || "L");   // drawn as a pair of ears already: the second faces away from the first
+    return null;   // drawn the same way (or not alike): unknown, so the Left as drawn and the Right turned
+  }
+  /** What is known about the way a body faces: { facing, confidence 0..1, source, directional, level, symmetry:{cut,art}, why }. source: "person" | "mirror-of-first" | "unknown" | "symmetric".
+   *  directional says the mirror image differs from the drawing (the design needs a facing); facing null with directional true is a design a person should set. */
+  function facingInfo(body, charmOrEntry) {
+    const sym = symmetryOf(body), set = facingSetFor(body, charmOrEntry);
+    const base = { directional: sym.level === "directional", level: sym.level, symmetry: { cut: sym.cut, art: sym.art } };
+    if (set) return Object.assign({ facing: set, confidence: 1, source: "person", why: "a person set it" }, base);
+    const rel = relationFacing(body, charmOrEntry);
+    if (rel) return Object.assign({ facing: rel, confidence: 0.9, source: "mirror-of-first", why: "drawn as the mirror image of the first body" }, base);
+    if (sym.level === "symmetric") return Object.assign({ facing: null, confidence: 1, source: "symmetric", why: "its mirror image looks the same" }, base);
+    return Object.assign({ facing: null, confidence: 0, source: "unknown", why: sym.level === "directional" ? "its mirror image differs and the drawing does not say which way it faces" : "nearly symmetric (a hoop off to one side or a wobble)" }, base);
+  }
+  /** Does this design need a person to say which way it faces? (directional, and nobody has said.) Takes a charm (geometry read) or a body. */
+  function needsFacing(charmOrBody, charm) {
+    const body = charmOrBody && charmOrBody.outline && charmOrBody.index == null ? bodiesOf(charmOrBody)[0] : charmOrBody, c = charm || charmOrBody;
+    if (!body) return false;
+    const info = facingInfo(body, c); return info.facing == null && info.directional;
+  }
+  /** Which way the design (its first body) faces in the master drawing: "L" | "R" | null (symmetric or unknown: then as drawn is the Left and the Right is the mirror).
+   *  A `facing` ("L" | "R") a person set on the record or charm wins and a re-index never overwrites it. */
+  function facingOf(charm) {
+    if (!charm || typeof charm !== "object") return null;
+    const rec = charm.entry || charm, set = facingValue(rec.facing) || facingValue(charm.facing);
+    if (set) return set;
+    if (!charm.outline) return null;
+    return facingOfBody(bodiesOf(charm)[0], charm);
+  }
+
+  const mx = (p, cx) => [2 * cx - p[0], p[1]];
+  const boxOfPts = pts => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const q of pts) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; } return pts.length ? [x0, y0, x1, y1] : null; };
+  function mirrorSeg(seg, cx, writable) {
+    const subpaths = (seg.subpaths || []).map(sub => sub.map(o => o[0] === "m" || o[0] === "l" ? [o[0], mx(o[1], cx)] : o[0] === "c" ? ["c", mx(o[1], cx), mx(o[2], cx), mx(o[3], cx)] : o.slice()));
+    const b = seg.bbox ? [2 * cx - seg.bbox[2], seg.bbox[1], 2 * cx - seg.bbox[0], seg.bbox[3]] : null;
+    const out = Object.assign({}, seg, { subpaths, bbox: b, mirrored: !seg.mirrored, original: seg.original || seg });
+    if (writable && seg.kind === "path") { out.synthetic = true; out.transformed = true; }   // no bytes in the source: the writer draws it from its geometry (syntheticOps)
+    return out;
+  }
+  const tops = members => [...new Set(members.map(m => (m.parent != null ? m.parent : m.index)).filter(i => i != null))];
+  function mirrorCharm(c, cx) {
+    if (cx == null) cx = (c.bbox[0] + c.bbox[2]) / 2;
+    const map = new Map(), members = [], dropped = new Set(c.dropIndices || []), unmirrored = [];
+    for (const m of c.members || [c.outline]) {
+      if (m.kind === "path") { const k = mirrorSeg(m, cx, true); map.set(m, k); members.push(k); const t = m.parent != null ? m.parent : m.index; if (t != null) dropped.add(t); }
+      else { members.push(m); unmirrored.push(m); }   // text, image and shading objects have no geometry to reflect: they stay as drawn (sample text is never in a charm; engraving text is placed by the engraving code)
+    }
+    const out = Object.assign({}, c, { outline: map.get(c.outline) || mirrorSeg(c.outline, cx, true), members, bbox: [2 * cx - c.bbox[2], c.bbox[1], 2 * cx - c.bbox[0], c.bbox[3]], mirrored: !c.mirrored, mirror: !c.mirror, dropIndices: dropped, unmirrored });
+    if (!map.has(c.outline)) out.members = [out.outline].concat(members);
+    if (Array.isArray(c.extras)) out.extras = c.extras.map(e => map.get(e) || e);
+    if (Array.isArray(c.centerPt)) out.centerPt = mx(c.centerPt, cx);
+    if (Array.isArray(c.bboxOuter)) out.bboxOuter = [2 * cx - c.bboxOuter[2], c.bboxOuter[1], 2 * cx - c.bboxOuter[0], c.bboxOuter[3]];
+    if (typeof c.upAngle === "number") out.upAngle = ((180 - c.upAngle) % 360 + 360) % 360;   // 90 (up) stays up; the direction turns about the vertical axis
+    if (c.bits && c.w) out.bits = flipMask(c.bits, c.w, c.h);
+    if (c.facing === "L" || c.facing === "R") out.facing = c.facing === "L" ? "R" : "L";   // the mirror image of a design that faces left faces right
+    delete out.thumb; delete out.hash2;
+    return out;
+  }
+  function flipMask(bits, w, h) { const o = new bits.constructor(bits.length); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) o[y * w + x] = bits[y * w + (w - 1 - x)]; return o; }
+  /** The mirror image (x -> -x about the body's own bounding-box centre, or about `cx` when given) of any geometry the app holds: a point list or a list of
+   *  them (polygons), a path segment, a list of segments, a charm ({ outline, members, bbox }) or a silhouette mask ({ bits, w, h }). Returns a new
+   *  value; the original is never touched. A mirrored path is marked synthetic (the writers draw it from its geometry) and its source Do is dropped. */
+  function mirrorOf(g, cx) {
+    if (g == null) return g;
+    if (Array.isArray(g)) {
+      if (!g.length) return [];
+      if (typeof g[0] === "number") return mx(g, cx == null ? g[0] : cx);   // one point about cx (itself when no axis is given)
+      if (Array.isArray(g[0]) && typeof g[0][0] === "number") { const c = cx == null ? (boxOfPts(g)[0] + boxOfPts(g)[2]) / 2 : cx; return g.map(p => mx(p, c)); }
+      if (Array.isArray(g[0]) && Array.isArray(g[0][0])) { const all = g.flat(), bx = boxOfPts(all), c = cx == null ? (bx[0] + bx[2]) / 2 : cx; return g.map(poly => poly.map(p => mx(p, c))); }
+      const bs = g.filter(m => m && m.bbox).reduce((a, m) => bbUnion(a, m.bbox), null), c = cx == null ? (bs ? (bs[0] + bs[2]) / 2 : 0) : cx;   // a list of segments
+      return g.map(m => (m && m.kind === "path" ? mirrorSeg(m, c, true) : m));
+    }
+    if (g.bits && g.w && g.h && !g.outline) return Object.assign({}, g, { bits: flipMask(g.bits, g.w, g.h) });
+    if (g.outline) return mirrorCharm(g, cx);
+    if (g.subpaths) return mirrorSeg(g, cx == null ? (g.bbox[0] + g.bbox[2]) / 2 : cx, true);
+    return g;
+  }
+  const geomCache = typeof WeakMap === "function" ? new WeakMap() : null;
+  /** One body of a charm as a charm of its own (the other body's members left out). */
+  function charmOfBody(charm, body) {
+    const c = Object.assign({}, charm, { outline: body.outline, members: body.members.slice(), bbox: body.bbox.slice(), extras: [], bodyIndex: body.index });
+    c.topIndices = tops(c.members);
+    for (const k of ["bits", "w", "h", "scale", "bboxOuter", "thumb", "areaPt2", "centerPt", "hash", "widthPt", "heightPt", "open"]) delete c[k];   // a single body has its own silhouette: the caller traces it
+    c.needsSilhouette = true;
+    return c;
+  }
+  /** The geometry of THIS piece: for a mismatched design the body the piece is (piece.bodyIndex), alone; mirrored (mirrorOf) when piece.mirror. A piece with
+   *  neither is the charm itself. Cached by charm, body and mirror (a mirrored variant is never taken for the as-drawn one). */
+  function pieceGeometry(charm, piece) {
+    if (!charm || typeof charm !== "object" || !charm.outline) return charm;
+    const bodyIndex = piece && piece.bodyIndex != null ? +piece.bodyIndex : 0, mirror = !!(piece && piece.mirror);
+    const bodies = bodiesOf(charm), whole = bodies.length === 2 && isMismatched(charm) ? false : true;
+    const key = (whole ? "w" : "b" + bodyIndex) + (mirror ? "m" : "");
+    let per = geomCache && geomCache.get(charm); if (per && per.sig === (charm.members || []).length && per.map.has(key)) return per.map.get(key);
+    let g = charm;
+    if (!whole) { const body = bodies[bodyIndex] || bodies[0]; g = charmOfBody(charm, body); }
+    if (mirror) g = mirrorOf(g);
+    if (geomCache) { if (!per || per.sig !== (charm.members || []).length) { per = { sig: (charm.members || []).length, map: new Map() }; geomCache.set(charm, per); } per.map.set(key, g); }
+    return g;
+  }
+
+  /* ═══ 6 · the master side: which designs draw two (or more) bodies under one label ═══════════════════════════════
+     The masters draw some designs as a ROW of bodies with ONE label centred under the whole row (MITTENS 1 beside MITTENS 2 under
+     "Mismatched_7134", a star beside a moon, a key beside a lock, bacon beside an egg). groupCharms reads each body as a charm of its
+     own; only the one the label sits under reaches the library, so the other body was never in the catalogue. This reads the row back
+     from the grouping (it changes nothing in it): connected components of touching charms of one size, exactly one of them labelled,
+     the label centred under the row. A row of two is a pair; of three or more is a set; size ladders (the same shape at two sizes)
+     and charm-plus-sample rows are told apart and are not pairs. */
+  const PAIR_DEFAULTS = { gx: 6, vo: 0.6, areaRatio: [0.4, 2.5], off: 0.18, maxBodies: 6, sameShapeIoU: 0.9, sameSizeTol: 0.08, maxOverlap: 0.3, stackIoU: 0.7, minLinearRatio: 0.55 };
+
+  /** Shape of an outline normalised to its own box (uniform scale, centred) as an N x N mask; `mirror` flips it left to right. */
+  function shapeMask(body, N, mirror) {
+    const polys = flatten(body.outline, 8), b = body.outlineBbox, w = b[2] - b[0], h = b[3] - b[1], k = Math.max(w, h) || 1;
+    const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, bits = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const u = (mirror ? N - 1 - i : i), x = cx + ((u + 0.5) / N - 0.5) * k, y = cy + (0.5 - (j + 0.5) / N) * k;
+      if (inPolys(x, y, polys)) bits[j * N + i] = 1;
+    }
+    return bits;
+  }
+  function iou(a, b) { let i = 0, u = 0; for (let k = 0; k < a.length; k++) { if (a[k] & b[k]) i++; if (a[k] | b[k]) u++; } return u ? i / u : 0; }
+  /** Do two bodies have one shape, whatever their scale? (silhouette overlap of the boxes laid over each other, 1 = identical). With mirror: the best of as drawn and flipped. */
+  function shapeSimilarity(a, b, N) { N = N || 40; const A = shapeMask(a, N, false); return { same: iou(A, shapeMask(b, N, false)), mirrored: iou(A, shapeMask(b, N, true)) }; }
+
+  /** Components of touching, similar charms. charms: groupCharms().charms. Returns arrays of charms, left to right. Pure geometry on outline boxes. */
+  function rowsOf(charms, opts) {
+    opts = Object.assign({}, PAIR_DEFAULTS, opts || {});
+    const live = (charms || []).filter(c => c && c.outline && c.outline.bbox && c.mergedInto == null);
+    const I = live.map(c => { const b = c.outline.bbox; return { c, b, w: b[2] - b[0], h: b[3] - b[1], a: (b[2] - b[0]) * (b[3] - b[1]) }; }).sort((x, y) => x.b[0] - y.b[0]);
+    const parent = I.map((_, i) => i), find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    for (let i = 0; i < I.length; i++) {
+      const a = I[i];
+      for (let j = i + 1; j < I.length; j++) {
+        const b = I[j]; if (b.b[0] > a.b[2] + opts.gx) break;   // sorted by left edge: nothing later can touch
+        const gx = Math.max(b.b[0] - a.b[2], a.b[0] - b.b[2]); if (gx > opts.gx) continue;
+        if (gx < -opts.maxOverlap * Math.min(a.w, b.w)) continue;   // one drawn over the other (a stacked twin, a layer): not a row
+        { const iw = Math.min(a.b[2], b.b[2]) - Math.max(a.b[0], b.b[0]), ih = Math.min(a.b[3], b.b[3]) - Math.max(a.b[1], b.b[1]); if (iw > 0 && ih > 0 && iw * ih >= opts.stackIoU * (a.a + b.a - iw * iw * 0 - iw * ih)) continue; }
+        const ov = Math.min(a.b[3], b.b[3]) - Math.max(a.b[1], b.b[1]); if (ov / Math.min(a.h, b.h) < opts.vo) continue;
+        const ar = a.a / b.a; if (ar < opts.areaRatio[0] || ar > opts.areaRatio[1]) continue;
+        parent[find(i)] = find(j);
+      }
+    }
+    const groups = new Map(); I.forEach((x, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(x.c); });
+    return [...groups.values()].filter(g => g.length >= 2 && g.length <= opts.maxBodies).map(g => g.sort((x, y) => x.outline.bbox[0] - y.outline.bbox[0] || y.outline.bbox[3] - x.outline.bbox[3]));
+  }
+
+  /** The rows a label is centred under, and what each is.
+   *    labelsOf(charm) -> [{ sku, bbox }] the label lines the sheet puts under that charm (first line first), or []
+   *  Returns [{ charms:[index left to right], labelled:[index], owner:index, skus:[sku], offset, bodies:n, kind, why, sim:[{same,mirrored}] }], where kind is
+   *    "mismatched"  two bodies that are not the same charm (a different shape, or one shape with different engraving)
+   *    "set"         three or more bodies under one label
+   *    "sizes"       one shape at two sizes (a size ladder: normal)
+   *    "twins"       two identical bodies drawn side by side (a matching pair drawn twice: doubtful)
+   *    "neighbours"  every body of the row has a label of its own (separate designs that touch: normal)
+   *    "tag"         a second labelled body whose label is not under the row (doubtful)
+   *    "tagged"      the same, where the other body's SKU says MISMATCHED (AVOCADO_1948 with MISMATCHED): which SKU is the pair? (doubtful)
+   *    "mirror"      the second body is the first flipped: a front and back view of one charm (custom samples), not a pair of designs (doubtful)
+   *    "sample"      a body far smaller than the other (charm plus sample: normal)
+   *  and `sure` says whether the layer may rewrite the design without a person looking (kind mismatched, one owner, a well centred label). */
+  function masterPairs(charms, labelsOf, opts) {
+    opts = Object.assign({}, PAIR_DEFAULTS, opts || {});
+    const out = [];
+    for (const row of rowsOf(charms, opts)) {
+      const labelled = row.filter(c => (labelsOf(c) || []).length);
+      if (!labelled.length) continue;
+      const ub = row.reduce((a, c) => bbUnion(a, c.outline.bbox), null), ucx = (ub[0] + ub[2]) / 2, uw = Math.max(1e-6, ub[2] - ub[0]);
+      const offOf = c => { let best = null; for (const L of labelsOf(c) || []) { if (!L.bbox) continue; const o = ((L.bbox[0] + L.bbox[2]) / 2 - ucx) / uw; if (best == null || Math.abs(o) < Math.abs(best)) best = o; } return best; };
+      const centred = labelled.filter(c => { const o = offOf(c); return o != null && Math.abs(o) <= opts.off; });
+      if (!centred.length) continue;
+      const owner = centred.reduce((a, c) => Math.abs(offOf(c)) < Math.abs(offOf(a)) ? c : a);
+      const rec = { charms: row.map(c => c.index), labelled: labelled.map(c => c.index), owner: owner.index, skus: (labelsOf(owner) || []).map(l => l.sku), offset: +offOf(owner).toFixed(3), bodies: row.length, kind: null, why: "", sim: [], sure: false, union: ub };
+      const others = labelled.filter(c => c !== owner);
+      if (others.length) {
+        const separate = others.every(c => { const o = offOf(c); return o == null || Math.abs(o) > opts.off; });   // each has its own label under itself
+        const bodies = row.map(c => bodiesOf(c)[0]);
+        // a neighbour whose label is its own and the row's label is not centred under all of it: separate designs that touch
+        const tagged = others.length === 1 && row.length === 2 && /MISMATCH/i.test((labelsOf(others[0])[0] || {}).sku || "");
+        rec.kind = tagged ? "tagged" : separate && others.length >= row.length - 1 ? "neighbours" : "tag";
+        if (tagged) { const A = bodies[0], B = bodies[1], sm = shapeSimilarity(A, B); rec.sim = [sm]; rec.partnerSku = (labelsOf(others[0])[0] || {}).sku; rec.why = "the other body carries the SKU " + rec.partnerSku + " (a tag beside the label, not under the row): is the pair " + (rec.skus[0] || "") + "?"; out.push(rec); continue; }
+        rec.why = rec.kind === "neighbours" ? "every body has a label of its own" : "a second body carries its own label (" + others.map(c => (labelsOf(c)[0] || {}).sku).join(", ") + ") beside the one centred under the row";
+        if (rec.kind === "tag") rec.sim = row.slice(1).map((c, i) => shapeSimilarity(bodies[i], bodies[i + 1]));
+        out.push(rec); continue;
+      }
+      const bodies = row.map(c => bodiesOf(c)[0]);
+      if (row.length > 2) { rec.kind = "set"; rec.why = row.length + " bodies under one label"; out.push(rec); continue; }
+      const A = bodies[0], B = bodies[1], sim = shapeSimilarity(A, B); rec.sim = [sim];
+      const la = Math.sqrt(A.area || bbArea(A.outlineBbox)), lb = Math.sqrt(B.area || bbArea(B.outlineBbox)), lin = Math.min(la, lb) / Math.max(la, lb);
+      rec.linearRatio = +lin.toFixed(3);
+      const sameShape = sim.same >= opts.sameShapeIoU;
+      if (lin < opts.minLinearRatio) { rec.kind = "sample"; rec.why = "one body is " + Math.round(lin * 100) + "% of the other's size (a charm and a sample)"; }
+      else if (sameShape && Math.abs(1 - lin) > opts.sameSizeTol) { rec.kind = "sizes"; rec.why = "one shape at two sizes (" + Math.round(lin * 100) + "%)"; }
+      else if (sameShape && sameBody(A, B)) { rec.kind = "twins"; rec.why = "two identical bodies, cut line and engraving"; }
+      else if (!sameShape && sim.mirrored >= opts.sameShapeIoU) { rec.kind = "mirror"; rec.why = "the second body is the first one flipped (a front and a back view, or a left and a right of one design)"; rec.mirrored = true; }
+      else { rec.kind = "mismatched"; rec.why = sameShape ? "one cut shape, different engraving" : "two different shapes"; rec.mirrored = false; }
+      const lab0 = rec.skus[0] || "", words = lab0.split(/[^A-Za-z0-9]+/).filter(Boolean);
+      const weak = lab0.replace(/[^A-Z0-9]/gi, "").length < 4 || (words.length > 0 && words.every(w => w.length <= 2));   // a label of a few characters, or of short words only ("V1 V2", "L R"), is a note, not a SKU
+      if (weak) rec.weak = "the label \"" + (rec.skus[0] || "") + "\" is too short to be a SKU";
+      rec.sure = rec.kind === "mismatched" && Math.abs(rec.offset) <= opts.off && !weak;
+      out.push(rec);
+    }
+    return out;
+  }
+
+  /** The design's charm with its row's other bodies folded in (a new object: the grouping's charms are left as they are), the same fold readMasterCharm does
+   *  for a per-SKU file that splits in two. Every body is welded with its own hoop first (integrateRings on each charm, passed in). */
+  function foldRow(owner, partners) {
+    const members = owner.members.slice(), seen = new Set(members);
+    let bbox = owner.bbox.slice(), top = new Set(owner.topIndices || []), extras = (owner.extras || []).slice();
+    const drop = new Set(owner.dropIndices || []);
+    for (const p of partners) {
+      for (const m of p.members) if (!seen.has(m)) { seen.add(m); members.push(m); }
+      bbox = bbUnion(bbox, p.bbox); for (const t of p.topIndices || []) top.add(t);
+      for (const e of p.extras || []) if (!extras.includes(e)) extras.push(e);
+      for (const d of p.dropIndices || []) drop.add(d);
+    }
+    const folded = Object.assign({}, owner, { members, bbox, topIndices: [...top], extras, strokePt: Math.max(owner.strokePt || 0.5, ...partners.map(p => p.strokePt || 0.5)) });
+    if (drop.size) folded.dropIndices = drop;
+    return folded;
+  }
+  /** The master index entry's `pair` field for a row: { v: 1, bodies, mismatched }. */
+  const pairField = rec => ({ v: 1, bodies: rec.bodies, mismatched: rec.kind === "mismatched" });
+
   return {
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet,
-    describe, sameBody, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
+    describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
+    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
+    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };
 });

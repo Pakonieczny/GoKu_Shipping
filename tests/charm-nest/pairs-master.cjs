@@ -45,20 +45,120 @@ ok(Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_44
 ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_9999_1' }), 'two lines of one order do not');
 ok(!Pair.mustShareSheet({ poolId: '3912345678_4455_1' }, { poolId: '3912345678_4455_1' }), 'a piece is not its own sibling');
 
-// pieces
-const pcs = Pair.piecesFor(line, pair);
-ok(pcs.length === 2 && pcs[0].side === 'L' && pcs[0].bodyIndex === 0 && pcs[1].side === 'R' && pcs[1].bodyIndex === 1 && pcs.every(p => p.groupKey === '3912345678:4455' && p.of === 2), 'a mismatched line makes L then R');
-ok(Pair.piecesFor(Object.assign({}, line, { quantity: 2 }), pair).length === 4, 'quantity 2 mismatched is two of each side');
+// pieces (Paul, 9 Oct 18:46-18:47: an earring pair is always a Left and a Right, quantity q = q of each; a mismatched design's bodies are its Left and Right)
 const one = { outline: o1, members: [o1, e1], bbox: [0, 0, 20, 26] };
-ok(Pair.piecesFor(line, one).length === 1, 'today a line makes quantity pieces (no doubling of earrings)');
-const two = Object.assign({}, line, { quantity: 2 });
-ok(Pair.piecesFor(two, one).length === 2 && Pair.piecesFor(two, one).every(p => p.side === null && p.bodyIndex === 0), 'a matching pair (quantity 2) has no sides');
-ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, spec: { quantity: 1, pieceCount: 2 } }, one).length === 2, 'spec.pieceCount wins');
+const earrings = Object.assign({}, line, { form: 'earrings' }), two = Object.assign({}, earrings, { quantity: 2 });
+const mp1 = Pair.piecesFor(earrings, pair);
+ok(mp1.length === 2 && mp1[0].side === 'L' && mp1[0].bodyIndex === 0 && mp1[1].side === 'R' && mp1[1].bodyIndex === 1 && mp1.every(p => p.groupKey === '3912345678:4455' && p.of === 2), 'a mismatched earring line makes its left body then its right body');
+ok(Pair.piecesFor(two, pair).map(p => p.side).join('') === 'LRLR' && Pair.piecesFor(two, pair).map(p => p.bodyIndex).join('') === '0101', 'quantity 2 mismatched: two of each side');
+const mm = Pair.piecesFor(earrings, one);
+ok(mm.length === 2 && mm[0].side === 'L' && mm[1].side === 'R' && mm.every(p => p.bodyIndex === 0), 'a matching pair: two pieces of one body, still Left and Right');
+ok(Pair.piecesFor(two, one).length === 4 && Pair.piecesFor(two, one).map(p => p.side).join('') === 'LRLR', 'pair quantity 2 gives 4 pieces');
+ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'earring-single' }, one).length === 1 && Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'earring-single' }, one)[0].side === null, 'a single earring is one piece, side null');
+ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'necklace' }, one).length === 1, 'a necklace is one piece');
+ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'huggie' }, one).length === 2 && Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'hoop' }, one).length === 2, 'huggie and hoop earrings are pairs too');
+ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, spec: { quantity: 1, pieceCount: 3, form: 'necklace' } }, one).every(p => p.side === null && p.mirror === false), '3 discs: three pieces, side null, never mirrored');
+ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, spec: { quantity: 1, pieceCount: 2, pair: { kind: 'pair' } } }, one).length === 2, 'spec.pieceCount and spec.pair.kind win');
 ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, poolIds: ['a', 'b', 'c'] }, one).length === 3, 'the pool ids are the fact');
-ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'earring-single' }, one).length === 1, 'a single earring is one piece');
-ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, pieceCount: 3 }, one).length === 3, 'an explicit piece count wins');
-ok(Pair.kindOf(line, pair) === 'mismatched' && Pair.kindOf(two, one) === 'pair' && Pair.kindOf(line, one) === 'single' && Pair.kindOf({ receiptId: 1, transactionId: 2, quantity: 1, form: 'earring-single' }, one) === 'single', 'kindOf');
-ok(Pair.kindOf({ receiptId: 1, transactionId: 2, quantity: 3 }, one) === 'multi' && Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, pieceCount: 3, discs: 3 }, one).length === 3, 'n discs (3 pieces) is multi');
-ok(Pair.discsOf({ title: 'Disc necklace, 3 discs' }) === 3 && Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, title: 'Disc necklace, 3 discs' }, one).length === 1, 'discs are information only: no extra pieces unless the intake says so');
+ok(Pair.kindOf(earrings, pair) === 'mismatched' && Pair.kindOf(earrings, one) === 'pair' && Pair.kindOf(two, one) === 'multi' && Pair.kindOf({ receiptId: 1, transactionId: 2, quantity: 1, form: 'earring-single' }, one) === 'single', 'kindOf');
+ok(Pair.discsOf({ title: 'Disc necklace, 3 discs' }) === 3, 'discs are read from the listing text as information');
+
+// direction: Left and Right earrings are mirror images (Paul, 9 Oct 18:47)
+const poly = (pts, extra) => { const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); return Object.assign({ kind: 'path', closed: true, stroke: true, fill: false, layer: 'CUT', strokeRGB: [0, 0, 0], lwPt: .25, bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], subpaths: [[['m', pts[0]]].concat(pts.slice(1).map(p => ['l', p])).concat([['l', pts[0]]])] }, extra || {}); };
+const thumbLeft = [[5, 0], [20, 0], [20, 26], [5, 26], [5, 14], [0, 14], [0, 8], [5, 8]];             // a mitten-like body: the thumb sticks out to the LEFT, the mass lies right
+const mitten = poly(thumbLeft, { index: 1 }), mink = eng(8, 2, 18, 6); mink.index = 2;
+const mCharm = { outline: mitten, members: [mitten, mink], bbox: [0, 0, 20, 26], upAngle: 30 };
+ok(Pair.facingOf(mCharm) === null && Pair.facingInfo(Pair.bodiesOf(mCharm)[0], mCharm).directional === true, 'a body with its thumb out left is directional, and nothing in its shape says which way it faces: unknown (as drawn is the Left)');
+ok(Pair.facingOf({ outline: o1, members: [o1], bbox: [0, 0, 20, 26] }) === null, 'a symmetric body has no facing');
+ok(Pair.facingOf(Object.assign({ facing: 'R' }, mCharm)) === 'R', 'a facing a person set wins over the heuristic');
+const mirrored = Pair.mirrorOf(mCharm);
+ok(mirrored.bbox.join() === '0,0,20,26' && mirrored.mirrored === true && mirrored !== mCharm && mCharm.mirrored === undefined, 'mirrorOf: a new charm, the same box, the original untouched');
+ok(mirrored.outline.subpaths[0][0][1][0] === 15 && mirrored.outline.subpaths[0][5][1][0] === 20 && mirrored.outline.synthetic === true, 'mirrorOf reflects x about the box centre and marks the path as written from geometry');
+ok(Pair.facingOf(Pair.mirrorOf(Object.assign({ facing: 'L' }, mCharm))) === 'R', 'the mirror image of a body a person set to face left faces right');
+ok(mirrored.upAngle === 150, 'the hole direction turns about the vertical axis (30 -> 150)');
+const back = Pair.mirrorOf(mirrored);
+ok(JSON.stringify(back.outline.subpaths) === JSON.stringify(mitten.subpaths) && back.bbox.join() === '0,0,20,26', 'mirroring twice gives the drawing back');
+ok(JSON.stringify(Pair.mirrorOf([[0, 0], [10, 0], [10, 5]])) === JSON.stringify([[10, 0], [0, 0], [0, 5]]), 'mirrorOf a polygon about its own box');
+ok(Pair.mirrorOf({ bits: new Uint8Array([1, 0, 0, 0, 1, 1]), w: 3, h: 2 }).bits.join('') === '001110', 'mirrorOf a mask flips its columns');
+// pieces carry mirror: as drawn faces left, so the Right piece is the mirror
+const mline = Object.assign({}, line, { form: 'earrings' });
+ok(Pair.piecesFor(mline, mCharm).map(p => p.side + (p.mirror ? 'm' : '')).join() === 'L,Rm', 'a left-facing master: Left as drawn, Right mirrored');
+ok(Pair.piecesFor(mline, Object.assign({}, mCharm, { facing: 'R' })).map(p => p.side + (p.mirror ? 'm' : '')).join() === 'Lm,R', 'a right-facing master: Left mirrored, Right as drawn');
+ok(Pair.piecesFor(mline, { outline: o1, members: [o1], bbox: [0, 0, 20, 26] }).map(p => p.side + (p.mirror ? 'm' : '')).join() === 'L,Rm', 'an unknown facing: as drawn is the Left, the Right is the mirror');
+ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'earring-single' }, mCharm).every(p => !p.mirror), 'a single earring is never mirrored');
+// a mismatched pair: each body faces its own ear (both bodies drawn thumb-left: the Right body is mirrored)
+const mA = poly(thumbLeft, { index: 11 }), mB = poly(thumbLeft.map(p => [p[0] + 25, p[1]]), { index: 12 });
+const mBink = eng(30, 3, 40, 7, [0, 0, 1]); mBink.index = 13;
+const mismatchedCharm = { outline: mA, members: [mA, mB, mBink], bbox: [0, 0, 45, 26] };
+const mmp = Pair.piecesFor(mline, mismatchedCharm);
+ok(mmp.length === 2 && mmp[0].side === 'L' && mmp[0].bodyIndex === 0 && mmp[0].mirror === false && mmp[1].side === 'R' && mmp[1].bodyIndex === 1 && mmp[1].mirror === true, 'a mismatched pair: the right body faces the wrong way and is mirrored');
+// piece geometry
+const gL = Pair.pieceGeometry(mismatchedCharm, mmp[0]), gR = Pair.pieceGeometry(mismatchedCharm, mmp[1]);
+ok(gL.outline.bbox.join() === '0,0,20,26' && gL.members.length === 1 && gL.mirrored !== true, 'pieceGeometry: the left body alone, as drawn');
+ok(gR.outline.bbox.join() === '25,0,45,26' && gR.mirrored === true && gR.outline.subpaths[0][0][1][0] === 40, 'pieceGeometry: the right body alone, mirrored about its own centre');
+ok(Pair.pieceGeometry(mismatchedCharm, mmp[1]) === gR && Pair.pieceGeometry(mismatchedCharm, mmp[0]) === gL, 'pieceGeometry is cached by body and mirror');
+const whole = Pair.pieceGeometry(mCharm, { bodyIndex: 0, mirror: false }), flipped = Pair.pieceGeometry(mCharm, { bodyIndex: 0, mirror: true });
+ok(whole === mCharm && flipped !== mCharm && flipped.mirrored === true, 'a one-body design: as drawn is the charm itself, the mirror is a separate variant');
 ok(Pair.splitAcross([{ poolId: '3912345678_4455_1', s: 'A' }, { poolId: '3912345678_4455_2', s: 'B' }, { poolId: '3912345678_9999_1', s: 'A' }], p => p.s).length === 1, 'a group on two sheets is found');
+// the intake's own answer (charm-nest-orders.js spec.pair): earring / glued / legacy / sides win over the form
+const ln = pr => ({ receiptId: 5, transactionId: 6, spec: { quantity: 2, pieceCount: pr.count, pair: pr } });
+const sd = l => Pair.piecesFor(l, null).map(x => x.side || '-').join('');
+ok(sd(ln({ count: 4, earring: true, kind: 'multi', sides: ['L', 'R', 'L', 'R'] })) === 'LRLR', 'a quantity-2 earring pair (kind multi) is four pieces, L R L R');
+ok(sd(ln({ count: 2, earring: false, kind: 'multi', sides: [null, null] })) === '--', 'a 2-disc necklace (kind multi, not an earring) has no sides');
+ok(sd(ln({ count: 1, earring: true, single: true, sides: ['R'] })) === 'R', 'a single earring that names its ear keeps it');
+ok(sd(ln({ count: 2, earring: true, glued: true, kind: 'mismatched' })) === '--', 'a mismatched design counted as one glued copy has no sides');
+ok(sd(ln({ count: 2, earring: true, legacy: true, kind: 'pair' })) === '--', 'an old line pinned to the pieces it had has no sides');
+ok(sd(ln({ count: 2, earring: true, kind: 'pair' })) === 'LR', 'an earring pair without sides alternates L R');
+ok(Pair.isEarringPair({ spec: { pair: { earring: false, kind: 'pair' } } }) === false && Pair.isEarringPair({ spec: { pair: { earring: true, kind: 'multi' } } }) === true, 'spec.pair.earring wins over spec.pair.kind');
+const mm2 = Pair.piecesFor(ln({ count: 1, earring: true, single: true, sides: ['R'] }), mismatchedCharm);
+ok(mm2.length === 1 && mm2[0].side === 'R' && mm2[0].bodyIndex === 1, 'a single Right earring of a mismatched design is its right body');
+
+// master side: a row of two touching bodies with one label centred under it
+const rowCharm = (idx, x0, ink, label) => { const o = rect(x0, 0, x0 + 20, 26); o.index = idx * 10; const i = eng(x0 + 4, 8, x0 + 12, 14, ink); i.index = idx * 10 + 1; return { index: idx, outline: o, members: [o, i], bbox: [x0, 0, x0 + 20, 26], topIndices: [idx * 10], extras: [], strokePt: 0.5 }; };
+const cA = rowCharm(1, 0, [1, 0, 0]), cB = rowCharm(2, 22, [0, 0, 1]);
+const lab1 = c => c.index === 1 ? [{ sku: 'MISMATCHED_9', bbox: [10, -12, 32, -4] }] : [];
+const rows = Pair.masterPairs([cA, cB], lab1);
+ok(rows.length === 1 && rows[0].kind === 'mismatched' && rows[0].sure && rows[0].owner === 1 && rows[0].charms.join() === '1,2', 'masterPairs: two touching bodies, one centred label, different engraving: a sure mismatched pair');
+ok(Pair.pairField(rows[0]).mismatched === true && Pair.pairField(rows[0]).bodies === 2 && Pair.pairField(rows[0]).v === 1, 'pairField is { v: 1, bodies: 2, mismatched: true }');
+const beforeA = JSON.stringify(cA), beforeB = JSON.stringify(cB);
+const fc = Pair.foldRow(cA, [cB]);
+ok(fc !== cA && fc.members.length === 4 && fc.bbox.join() === '0,0,42,26' && fc.outline === cA.outline && fc.topIndices.length === 2, 'foldRow: a new charm with both bodies, the box of both, the owner outline kept');
+ok(JSON.stringify(cA) === beforeA && JSON.stringify(cB) === beforeB, 'foldRow leaves the grouping alone');
+ok(Pair.bodiesOf(fc).length === 2 && Pair.isMismatched(fc), 'the folded charm reads back as two bodies');
+ok(Pair.masterPairs([cA, cB], c => c.index === 1 ? [{ sku: 'X_1', bbox: [28, -12, 50, -4] }] : []).every(r => !r.sure), 'a label that is not under the middle of the row makes no pair');
+ok(Pair.masterPairs([cA, cB], c => c.index === 1 ? [{ sku: 'V1 V2', bbox: [10, -12, 32, -4] }] : [])[0].sure === false, 'a label of short words ("V1 V2") is not sure');
+ok(Pair.masterPairs([cA, cB], c => [{ sku: 'ONE_' + c.index, bbox: [c.index === 1 ? 0 : 22, -12, c.index === 1 ? 20 : 42, -4] }]).every(r => !r.sure), 'two bodies with a label each are neighbours, not a pair');
+ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0].kind === 'twins', 'two identical bodies are twins, not a mismatched pair');
+
+// the indexer's pair layer (scripts/index-master.cjs pairLayer) on synthetic charms, with the geometry readers stubbed
+{
+  const IM = require('../../scripts/index-master.cjs');
+  const Pst = { integrateRings: () => ({ left: [] }), cutLinesOf: c => c.members.filter(m => m !== c.outline && m.layer === 'CUT') };
+  const Gst = { flatten: o => [[[o.bbox[0], o.bbox[1]], [o.bbox[2], o.bbox[1]], [o.bbox[2], o.bbox[3]], [o.bbox[0], o.bbox[3]], [o.bbox[0], o.bbox[1]]]], upAngleOf: () => ({ angle: 90, source: 'drawn' }), backView: () => ({}), engraveMask: () => ({}), largestRectangles: () => [{ wPt: 40, hPt: 40 }] };
+  const mk = () => {
+    const a = rowCharm(1, 0, [1, 0, 0]), b = rowCharm(2, 22, [0, 0, 1]), lone = rowCharm(7, 200, [1, 0, 0]);
+    const g = { charms: [a, b, lone] }, lab = { labels: new Map([[1, { sku: 'MISMATCHED_9', bbox: [10, -12, 32, -4], extra: [{ sku: 'EXTRA_9', size: null, bbox: [10, -20, 32, -14] }] }], [7, { sku: 'LONE_1', bbox: [200, -12, 220, -4], extra: [] }]]) };
+    return { g, lab, items: [...lab.labels].map(([index, l]) => ({ index, l, c: g.charms.find(x => x.index === index) })) };
+  };
+  let w = mk(); const before = JSON.stringify(w.g.charms);
+  const lg = [], r1 = IM.pairLayer(Pst, Gst, Pair, w.g, w.lab, w.items, { engraveMarginMm: .8 }, m => lg.push(m));
+  ok(r1.fold.size === 1 && r1.fold.has(1) && !r1.fold.has(7), 'pairLayer folds the sure row and nothing else');
+  const pm = r1.fold.get(1);
+  ok(pm.field.v === 1 && pm.field.bodies === 2 && pm.field.mismatched === true && pm.charm.members.length === 4 && pm.charm.bbox.join() === '0,0,42,26', 'the folded design: pair field, both bodies, the box of both');
+  ok(pm.view.outline.bbox.join() === '0,0,42,26' && pm.view.outline.subpaths.length === 2 && pm.charm.outline === w.g.charms[0].outline, 'the silhouette view has both outlines, the charm keeps a real body outline');
+  ok(pm.holes === 0 && pm.open === false && pm.engrave.engravable === true, 'holes, open and engravable are read from the bodies');
+  ok(JSON.stringify(w.g.charms) === before, 'the grouping\'s charms are left as they were');
+  ok(r1.rows.length === 1 && r1.rows[0].folded === true && r1.rows[0].sure === true && r1.rows[0].skus.join() === 'MISMATCHED_9,EXTRA_9', 'the report row says folded and names every SKU line');
+  w = mk(); ok(IM.pairLayer(Pst, Gst, Pair, w.g, w.lab, w.items, { noPairs: true }, () => {}).rows.length === 0, '--no-pairs: no rows, nothing folded');
+  w = mk(); ok(IM.pairLayer(Pst, Gst, Pair, w.g, w.lab, w.items.filter(i => i.index === 7), {}, () => {}).fold.size === 0, 'a row whose owner is not built in this run is not folded');
+  w = mk(); ok(IM.pairLayer(null, null, null, w.g, w.lab, w.items, {}, () => {}).fold.size === 0, 'without the module the layer does nothing');
+  // a doubtful row (identical bodies) is reported, not folded, unless a person names it
+  const twinCharms = () => { const a = rowCharm(1, 0, [1, 0, 0]), b = rowCharm(2, 22, [1, 0, 0]); return { g: { charms: [a, b] }, lab: { labels: new Map([[1, { sku: 'TWINS_1', bbox: [10, -12, 32, -4], extra: [] }]]) } }; };
+  let t = twinCharms(); let ti = [{ index: 1, l: t.lab.labels.get(1), c: t.g.charms[0] }];
+  const rt = IM.pairLayer(Pst, Gst, Pair, t.g, t.lab, ti, {}, () => {});
+  ok(rt.rows.length === 1 && rt.rows[0].kind === 'twins' && !rt.rows[0].folded && rt.fold.size === 0, 'identical twins are listed, not folded');
+  t = twinCharms(); ti = [{ index: 1, l: t.lab.labels.get(1), c: t.g.charms[0] }];
+  const rf = IM.pairLayer(Pst, Gst, Pair, t.g, t.lab, ti, { pairAlso: 'TWINS_1' }, () => {});
+  ok(rf.fold.size === 1 && rf.fold.get(1).field.mismatched === false && rf.fold.get(1).field.bodies === 2 && rf.rows[0].forced === true, '--pair-also folds a doubtful row a person named, as a matching pair drawn twice');
+}
 console.log(`pairs-master: ${n} checks passed`);

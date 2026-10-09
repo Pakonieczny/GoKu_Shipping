@@ -979,9 +979,10 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261006-st3"></script>
-  <script src="station-activity.js?v=20261006-st2"></script>
+  <script src="station-activity.js?v=20261009-ps1"></script>
   <!-- The order in hand right now (scan = working, Complete / cancelled = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
-  <script src="station-live-order.js?v=20261005-et2"></script>
+  <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
+  <script src="station-live-order.js?v=20261009-ps1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
@@ -1076,6 +1077,7 @@
       const act = (action, o) => { try { return !!(window.StationActivity && window.StationActivity.log(action, o || {})); } catch (_) { return false; } };
       /* pieces in an Etsy order: the sum of its transactions' quantities (one when a quantity is missing) */
       const piecesOf = list => {
+        try { if (window.StationLiveOrder && StationLiveOrder.units && Array.isArray(list)) return StationLiveOrder.units(list); } catch (_) {}   // (an earring pair is a Left and a Right piece per unit)
         try { let n = 0; for (const t of (Array.isArray(list) ? list : [])) { const q = Math.floor(Number(t && (t.quantity != null ? t.quantity : t.__qty))); n += q > 0 ? q : 1; } return n; }
         catch (_) { return 0; }
       };
@@ -3289,6 +3291,7 @@ function metalToBadge(label){
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
+              try { var pairTag = window.StationLiveOrder && StationLiveOrder.tag ? StationLiveOrder.tag(item) : ""; if (pairTag) qtyBox.value += " \u00b7 L+R"; qtyBox.title = pairTag || ""; } catch (_) {}   // an earring pair says so (a Left and a Right), every other line is as before
             }
             if (metalBox) {
               metalBox.classList.add("detail-box"); // optional: match your example style

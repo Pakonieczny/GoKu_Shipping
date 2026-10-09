@@ -29,7 +29,9 @@
  *        dispatchDate: string like "25 Sep 2025" or "N/A",
  *        items: [ array of transactions for this order ],
  *        userTypedOrderNum: string (the typed Etsy order # from sorting.html),
- *        notesBlock?: { metal?, title4?, matrixNums?, matrixTitle?, matrixImageTitle?, ... }
+ *        notesBlock?: { metal?, title4?, matrixNums?, matrixTitle?, matrixImageTitle?, ... },
+ *        pieces?: [ { side: "L"|"R", n?, of? } ]   (an earring pair, matching or mismatched: one page for each ear, LEFT or RIGHT in large type, "n/of" under it
+ *                                                  when more than one pair was bought; without it the one order sticker prints as always)
  *      }
  * 2) Build a 1×1 PDF label with:
  *     - QR of order number
@@ -120,13 +122,26 @@ window.addEventListener("load", async () => {
 
     // 5) Build & print the PDF label (with notes); a page that asked hears "started" once the label is made and its print
     //    dialog is about to open, and "done" when the dialog has closed (a label that cannot be made is a failure)
-    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes);
+    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, piecesOf(dataObj));
 
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);
     notifyParent({ phase: "done", ok: false, error: String((err && err.message) || err) });
   }
 });
+
+/* =================== Mismatched pairs: one page for each ear =================== */
+/** The ears to print for an order (dataObj.pieces: [{ side: "L"|"R", n, of }]); [] for any order that is not an earring pair. */
+function piecesOf(dataObj) {
+  const list = Array.isArray(dataObj && dataObj.pieces) ? dataObj.pieces : [];
+  return list.filter(p => p && (p.side === "L" || p.side === "R")).slice(0, 40);
+}
+/** What one ear's page adds to the sticker: its side in large type in the free space right of the QR, and "n/of" under it for several pairs. */
+function pieceContent(p) {
+  const out = [{ text: p.side === "L" ? "LEFT" : "RIGHT", fontSize: 10, bold: true, absolutePosition: { x: 33, y: 15 } }];
+  if (+p.of > 1) out.push({ text: (+p.n || 1) + "/" + (+p.of), fontSize: 6, bold: true, absolutePosition: { x: 33, y: 28 } });
+  return out;
+}
 
 /* =================== Aggregation Helpers =================== */
 
@@ -309,7 +324,7 @@ function getCumulativeDotCount(listings) {
 /********************************************************
  * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
  ********************************************************/
-async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
+async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, pieces) {
   // 1) Generate a large QR code (512×512) for high-res
   const hiddenQRContainer = document.createElement("div");
   hiddenQRContainer.style.display = "none";
@@ -336,7 +351,8 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
     dotCount,
     dispatchDate,
     orderNum,
-    notes
+    notes,
+    pieces
   );
 
   // the PDF is made first: an error making it reaches the caller (and the page that asked) instead of passing in silence
@@ -373,7 +389,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
 /********************************************************
  * buildPDFDocWithDots(dataUrl, dotCount, dispatchDate):
  ********************************************************/
-function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
+function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes, pieces) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
@@ -396,10 +412,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
   const normTitle4 = String(notes?.title4 ?? "").trim();
   const normMatch  = String(notes?.matrixNums ?? "").trim();
 
-  return {
-    pageSize: { width: 72, height: 72 }, // 1×1 label in points
-    pageMargins: [0, 0, 0, 0],
-    content: [
+  const page = () => [
       { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
       { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },              // QR −15%
       { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } }, // Ship Date −15%
@@ -415,7 +428,17 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
         lineHeight: 1.0,
         absolutePosition: { x:33, y:0.5 }
       }
-    ]
+    ];
+  // an earring pair: one page for each ear (LEFT, RIGHT), same order, same label otherwise; no pieces: the one page it always was
+  const ears = Array.isArray(pieces) ? pieces : [];
+  const content = ears.length
+    ? ears.flatMap((p, i) => [...page(), ...pieceContent(p), ...(i < ears.length - 1 ? [{ text: "", pageBreak: "after" }] : [])])
+    : page();
+
+  return {
+    pageSize: { width: 72, height: 72 }, // 1×1 label in points
+    pageMargins: [0, 0, 0, 0],
+    content
   };
 }
 
@@ -439,6 +462,7 @@ async function printBatch(batchArr) {
     const dispatchDate = dataObj.dispatchDate || "N/A";
     const dotCount     = getCumulativeDotCount(items);
     const notes        = buildAggregatedNotes(dataObj, items);
+    const ears         = piecesOf(dataObj);   // an earring pair: a page for each ear
 
     // ---- QR generation (same as single) ----
     hiddenQRContainer.innerHTML = "";
@@ -464,7 +488,8 @@ async function printBatch(batchArr) {
     const normTitle4 = String(notes?.title4 ?? "").trim();
     const normMatch  = String(notes?.matrixNums ?? "").trim();
 
-    allContent.push(
+    const pagesOfOrder = ears.length ? ears : [null];
+    pagesOfOrder.forEach((ear, e) => allContent.push(
       { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
       { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },
       { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } },
@@ -480,8 +505,9 @@ async function printBatch(batchArr) {
         lineHeight: 1.0,
         absolutePosition: { x:33, y:0.5 }
       },
-      ...(i < batchArr.length - 1 ? [{ text: "", pageBreak: "after" }] : [])
-    );
+      ...(ear ? pieceContent(ear) : []),
+      ...(i < batchArr.length - 1 || e < pagesOfOrder.length - 1 ? [{ text: "", pageBreak: "after" }] : [])
+    ));
   }
 
   const docDefinition = {

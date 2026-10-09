@@ -511,10 +511,11 @@
   <script src="station-session.js?v=20261006-st3"></script>
   <!-- What each person did here (scans, stickers printed, orders sorted, rejects) for the Employee efficiency console: the
        person, station and device are the StationSession's. Without the file nothing changes. -->
-  <script src="station-activity.js?v=20261006-st2"></script>
+  <script src="station-activity.js?v=20261009-ps1"></script>
   <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
        (station-live-order.js). Optional: without it nothing changes. -->
-  <script src="station-live-order.js?v=20261005-et2"></script>
+  <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1"></script>
+  <script src="station-live-order.js?v=20261009-ps1"></script>
   <script>
     try {
       StationSession.init({
@@ -1533,7 +1534,9 @@ window.SortTL = (function () {
   function piecesOf(id) {
     try {
       let n = 0;
-      for (const it of (window.cachedOrderItems || [])) if (idsOfItem(it).includes(String(id))) n += Math.max(1, Math.floor(+it.quantity) || 1);
+      const mine = (window.cachedOrderItems || []).filter(it => idsOfItem(it).includes(String(id)));
+      try { if (window.StationLiveOrder && StationLiveOrder.units) return StationLiveOrder.units(mine); } catch (_) {}   // (an earring pair is a Left and a Right piece per unit)
+      for (const it of mine) n += Math.max(1, Math.floor(+it.quantity) || 1);
       return n;
     } catch (_) { return 0; }
   }
@@ -2363,13 +2366,16 @@ function buildQrDataForCell(cellIndex) {
   const title4      = titlesArr.join(", ");
   const metalColour = metalsArr.join(", ");
 
-  return {
+  const qrData = {
     dispatchDate,
     items: itemsForOrder,
     userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
     primaryItemIndex: cellIndex,
     notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
   };
+  // an earring pair (matching or mismatched) prints one sticker page for each ear, LEFT then RIGHT (QR Printer.html reads `pieces`); an order with none prints the one sticker it always did
+  try { const ears = window.StationLiveOrder && StationLiveOrder.ears ? StationLiveOrder.ears(itemsForOrder) : []; if (ears.length) qrData.pieces = ears; } catch (_) {}
+  return qrData;
 }
 
 
@@ -3819,6 +3825,7 @@ async function fillPreviewBoxes(items) {
     qtyInput.style.left = previewLeft + "px";
     qtyInput.style.top  = previewTop  + 107 + "px";
     qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
+    try { const pairTag = window.StationLiveOrder && StationLiveOrder.tag ? StationLiveOrder.tag(item) : ""; if (pairTag) qtyInput.value += " \u00b7 L+R"; qtyInput.title = pairTag || ""; } catch (_) {}   // an earring pair says so (a Left and a Right)
 
     // bold Quantity if > 1
     {

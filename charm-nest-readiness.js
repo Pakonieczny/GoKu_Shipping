@@ -24,7 +24,8 @@
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
     for(const row of rows || [])for(const id of copyIds(row,lineKeyOf(row))) {
-      const e=row.engrave;
+      // (a line that splits its engraving per ear, `engrave.pieces[poolId] = {needed,state,approved}`: this piece's own decision; every other line: the line's, as always)
+      const e=row.engrave && row.engrave.pieces && typeof row.engrave.pieces[id]==='object' && row.engrave.pieces[id] ? row.engrave.pieces[id] : row.engrave;
       // a cancelled order's piece left on a released sheet is cut and set aside, so it waits on no engraving decision
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
       // The page reads that from the row's reading, the server from the run's line record.
@@ -117,7 +118,10 @@
   const titleOf=l=>String(l.line?.title || l.snap?.title || l.spec?.designSku || l.sku || '').replace(/\s+/g,' ').trim();
   // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
   function copyIds(l,key){
-    const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],want=qtyOf(l);
+    const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],q=Math.max(1,Math.floor(+(l.spec?.quantity ?? l.quantity) || 1));
+    // the pieces a line made are the pool ids it has: a line pooled before every earring pair made a Left and a Right piece has ONE id per unit and is never "missing" its Right
+    // piece. The intake's larger count (pairs: 2 per unit; discs: n) is waited for when the line has no ids yet; with ids, ids are invented only up to its quantity, as before.
+    const want=ids.length?Math.max(ids.length,Math.min(qtyOf(l),q)):qtyOf(l);
     for(let n=1;key && ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
     return ids.sort((a,b)=>tailNo(a)-tailNo(b));       // a piece is "piece 2" by its copy number, whatever order the record lists them in (OrderPieces numbers them alike)
   }

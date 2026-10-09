@@ -261,6 +261,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swTrail .where i{width:8px;height:8px;border-radius:50%;background:var(--c)}
 .swTrail .where svg{width:13px;height:13px;color:var(--ink45)}
 .swTrail .n{font:600 10px var(--mono);color:var(--ink45);width:18px;text-align:center}
+.swTrail .sku small.side{font:600 10px var(--mono);color:#6b5120;background:var(--goldSoft);border-radius:999px;padding:1px 7px;letter-spacing:.02em}
+.swPairNote{display:grid;gap:3px;margin:0 0 7px;padding:7px 10px;border-radius:10px;border:1px solid var(--gold2);background:var(--goldSoft);font:12px/1.35 var(--sans);color:var(--ink)}
+.swPairNote[hidden]{display:none}
+.swPairNote .btn{justify-self:start;margin-top:3px}
 .swMsgs{border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;height:380px;background:var(--paper)}
 .swMsgs .owTabs{background:var(--card)}
 .swMsgs>div:not(.owTabs){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
@@ -1332,7 +1336,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const m = / · (\d+)\/(\d+)$/.exec(name), copy = poolId ? +poolId.split("_").pop() || 1 : m ? +m[1] : 1;
       pieces.push({ id: p.id, p: { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || 10, hPt: +p.hPt || 10 },
         c: null, poolId, rid: /^\d+$/.test(rid) ? rid : "", sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
-        tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null });
+        tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null,
+        // (pairs: the ear a piece is, when the record says so; an old record says nothing and the window asks OrderPieces)
+        // (amendment 2: every earring piece says its ear, and `mirror` when it is the mirror image of the drawn design; a record's own `pieceSides` map says the ear of a piece whose charm does not)
+        side: c.side === "L" || c.side === "R" ? c.side : poolId && rec.pieceSides && (rec.pieceSides[poolId] === "L" || rec.pieceSides[poolId] === "R") ? rec.pieceSides[poolId] : null,
+        bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0, mirror: c.mirror === true });
     }
     return pieces;
   }
@@ -1369,11 +1377,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (tok !== W.token) return;
     for (const x of W.pieces) {
       const g = got.get(x.sourceId); if (!g) continue;
-      if (g.pool) { const c = Pool.cloneCharm(g.base, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
+      if (g.pool) { const b = await pieceBase(g, x); if (!b) continue; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
       else { const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash); if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name }); }
     }
     if (failed.length) toast(`${failed.length} design${failed.length === 1 ? "" : "s"} could not be read (${failed.slice(0, 3).join(", ")}); ${failed.length === 1 ? "it shows" : "they show"} as outlines`, "bad", 7000);
     geometryReady(tok);
+  }
+  /** The charm to draw THIS piece from (amendment 2: left and right earrings are mirror images). A piece that carries an ear and a body (an earring pair's piece, matching or mismatched)
+      is drawn from its own body, turned left to right when its saved descriptor says `mirror: true`: Pool.ensureBase makes it once per design and body (the one place that turns geometry
+      over, CharmNestPair.pieceGeometry). Every other piece, and an old sheet that never recorded an ear, is drawn from the design's one charm exactly as before; the mirror is never
+      guessed from the ear (a sheet cut before this was never mirrored). null when its own body cannot be made: the piece then shows as an outline, never from the wrong body or the wrong way. */
+  async function pieceBase(g, x) {
+    const base = g && g.base;
+    if (!base || !g.src || !(x.side === "L" || x.side === "R") || x.bodyIndex == null || !Number.isInteger(+x.bodyIndex) || !window.Pool || typeof Pool.ensureBase !== "function") return base;
+    try { return (await Pool.ensureBase(g.src, { side: x.side, bodyIndex: +x.bodyIndex, mirror: x.mirror === true })) || null; }
+    catch (e) { console.warn("sheet window: piece geometry", x.poolId, e); return null; }
   }
   async function sourceGeom(s) {
     // Custom uploads share the pool, but have their own saved artwork rather than a master SKU. Older sheets kept
@@ -1553,6 +1571,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         layHalo(ctx, haloOf(x, k, W.dpr, backFace(), mate ? { w: 1.3 } : { w: 1.3, color: "#4a6b78" }), plateX(x.p.cxPt), R + x.p.cyPt * k, 1, .72 * u); }
       ctx.restore();
       if (fs && !fs.f.gone) markMain(ctx, fs.f, t1);
+      if (fs) for (const x of new Set([fs.f, ...fs.mates])) if (!x.gone) markSide(ctx, x);   // (an ear: the pieces of a pair in hand wear a small L or R, so Left and Right are told apart on the plate)
     } else if (!W.geom && W.pre && W.pre.sel) markMain(ctx, W.pre.sel, t1);
     // the point clicked on a Library picture, until the charm there is drawn
     if (!W.geom && W.pre && W.pre.at && (!W.rec || W.sel)) markAt(ctx, W.pre.at);
@@ -1609,6 +1628,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     });
     // told apart by its own gold and this line along its outline (haloOf), never by dimming the sheet round it
     layHalo(ctx, haloOf(x, W.k, W.dpr, backFace(), { w: 1.9 }), plateX(x.p.cxPt), W.R + x.p.cyPt * W.k, s, 1);
+  }
+  /** A small L / R chip at the centre of a lit piece that is an ear of a pair. Nothing on any other charm. */
+  function markSide(ctx, x) {
+    const q = x.p && sideOfPiece(x); if (!q) return;
+    const cx = plateX(x.p.cxPt), cy = W.R + x.p.cyPt * W.k, r = Math.max(6, Math.min(9, 2.2 * W.k / W.dpr)) * W.dpr;
+    ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = "#fffefb"; ctx.fill(); ctx.lineWidth = 1.4 * W.dpr; ctx.strokeStyle = "#a9823f"; ctx.stroke();
+    ctx.fillStyle = "#6b5120"; ctx.font = `700 ${Math.round(r * 1.15)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(q, cx, cy + .5 * W.dpr); ctx.restore();
   }
   /** A charm marked above the plate keeps its words: they are drawn again over the mark, in full ink, never covered. */
   function markBack(ctx, x) {
@@ -1694,14 +1720,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function tip(p, e) {
     const t = W.el.tip; if (!p || !e) { t.classList.remove("on"); return; }
-    const mates = (p.rid && W.orders.get(p.rid)) || [p], elsewhere = otherSheets(p.rid);
-    const key = p.id + "|" + elsewhere.length;
+    const mates = (p.rid && W.orders.get(p.rid)) || [p], elsewhere = otherSheets(p.rid), side = sideOfPiece(p), pn = pairNote(p);
+    // (a pair's other piece is said plainly, once: the "also on" line stays for the sheets that hold something else of the order)
+    const plain = !!pn && elsewhere.every(e => pn.away.some(a => a.on && (a.sheetId === e.id || (e.name && a.sheetLabel === e.name))));
+    const key = p.id + "|" + elsewhere.length + "|" + (side || "") + "|" + (pn ? pn.text : "");
     if (t.dataset.k !== key) {
       t.dataset.k = key;
       const eng = p.eng && p.eng.kind !== "none" ? `<em style="--c:${p.eng.kind === "approved" ? "#7fb877" : "#e0876c"}"><i></i>Back · ${esc(p.eng.label)}</em>` : "";
-      t.innerHTML = `<b>${esc(p.rid || p.name || "Charm")}</b><span>${esc(p.sku || "")}${p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}</span>${eng}` +
+      t.innerHTML = `<b>${esc(p.rid || p.name || "Charm")}</b><span>${esc(p.sku || "")}${side ? ` · ${sideWord(side)} piece` : p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}</span>${eng}` +
         (mates.length > 1 ? `<em><i></i>${mates.length - 1} more of this order here</em>` : "") +
-        (elsewhere.length ? `<em><i></i>also on ${esc(elsewhere.map(s => `${CODE[s.metal] || ""} ${s.n}`).join(", "))}</em>` : "");
+        (pn ? `<em><i></i>${esc(pn.text)}</em>` : "") +
+        (elsewhere.length && !plain ? `<em><i></i>also on ${esc(elsewhere.map(s => `${CODE[s.metal] || ""} ${s.n}`).join(", "))}</em>` : "");
     }
     const { cx, cy } = toPlate(e), tw = t.offsetWidth, th = t.offsetHeight;
     let x = cx + 16, y = cy + 18; if (x + tw > W.cssW - 6) x = cx - tw - 14; if (y + th > W.cssH - 6) y = cy - th - 12;
@@ -1728,6 +1757,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function paintPieces() {
     if (!W.dlg || !W.dlg.open || !W.rec) return;
     W.opMemo = null;
+    // (pairs: the strip's pair and half-pair counts come from the same pieces; redrawn only when they changed)
+    { const pc = pairCounts(); if (W.pairKey !== pc.pairs + ":" + pc.halves) renderStrip(); }
     if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
     lightChips(W.sel?.rid || null);
   }
@@ -1742,6 +1773,35 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ids = new Set(); for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) if (c.sheetId && c.sheetId !== W.id) ids.add(c.sheetId);
     return [...ids].map(id => W.setSheets.find(s => s.id === id) || { id, metal: "", n: "?" });
   }
+  /* ── pairs, mismatched pairs and discs (Paul, 9 Oct 2026): the pieces of one order line are ONE group, and the window says plainly which piece is which and where the
+     others are. The pieces, their ears and sheets come from OrderPieces (the sheets' own records first) through PiecePlacement.groups, the one place that words it; a
+     record that knows no ear, a page without those helpers, or a line that is a single piece show exactly what they always showed. ── */
+  const PPL = () => { const q = window.PiecePlacement; return q && typeof q.groups === "function" && typeof q.pairWords === "function" ? q : null; };
+  const sideWord = s => s === "L" ? "Left" : s === "R" ? "Right" : "";
+  function groupsOf(rid) {
+    const P = PPL(), ps = P && orderPieces(rid); if (!ps) return [];
+    return ps._groups || (ps._groups = P.groups(ps));
+  }
+  /** The group a piece of this sheet belongs to (from OrderPieces) and its own entry in it: { g, part } or null. */
+  function groupOfPiece(x) {
+    if (!x || !x.poolId || !x.rid) return null;
+    for (const g of groupsOf(x.rid)) { const part = g.pieces.find(q => q.key === x.poolId); if (part) return { g, part }; }
+    return null;
+  }
+  const sideOfPiece = x => x.side || ((groupOfPiece(x) || {}).part || {}).side || null;
+  /** What to read of x's group from THIS sheet: { text, lines, away, here, set } when a piece of it is elsewhere, else null. */
+  function pairNote(x) { const P = PPL(), gp = groupOfPiece(x); if (!P || !gp || gp.g.n < 2) return null; const w = P.pairWords(gp.g, W.id); return w.text ? w : null; }
+  /** "Left + Right", "Left ×2 + Right ×2", "Left": the ears of a list of sides ("" when none is known). */
+  const sidesText = sides => { const L = sides.filter(q => q === "L").length, R = sides.filter(q => q === "R").length; return [L ? `Left${L > 1 ? ` ×${L}` : ""}` : "", R ? `Right${R > 1 ? ` ×${R}` : ""}` : ""].filter(Boolean).join(" + "); };
+  /** ": its Right piece" / ": 2 of its pieces": which pieces of this order's groups sit on that other sheet ("" when nothing says). */
+  function awayAt(rid, sheetId) {
+    const out = [];
+    for (const g of groupsOf(rid)) { if (g.n < 2) continue; const there = g.pieces.filter(q => q.on && q.sheetId === sheetId); if (!there.length || !g.pieces.some(q => q.on && q.sheetId === W.id)) continue; out.push(g.hasSides ? there.map(q => `its ${sideWord(q.side) || "other"} piece`).join(" and ") : `${there.length} of its ${g.n} pieces`); }
+    return out.length ? ": " + out.join("; ") : "";
+  }
+  /** The words before a piece's size: "Left piece · " for an ear, "Copy 2 of 3 · " for a copy, nothing for a single. */
+  const copyText = x => { const q = sideOfPiece(x); return q ? `${sideWord(q)} piece · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""; };
+  const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
   const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 
   /* ── engraving of a piece ── */
@@ -1778,12 +1838,27 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
 
   /* ── the sheet pane: its orders ── */
+  /** Pairs on this sheet: groups the line says are pairs (the kind OrderPieces gives them, or ears) with both pieces here, and half pairs with one piece here. Nothing when no group says so. */
+  function pairCounts() {
+    const out = { pairs: 0, halves: 0 }, P = PPL(); if (!P || !W.rec) return out;
+    for (const rid of W.orders.keys()) {
+      if (rid === "—") continue;
+      for (const g of groupsOf(rid)) {
+        if (!(g.kind === "pair" || g.kind === "mismatched") || !(g.hasSides || g.known)) continue;
+        const mine = g.pieces.filter(q => q.on && q.sheetId === W.id), here = mine.length; if (!here) continue;
+        if (g.hasSides) { const l = mine.filter(q => q.side === "L").length, r = mine.filter(q => q.side === "R").length; out.pairs += Math.min(l, r); out.halves += Math.abs(l - r) + (here - l - r > 0 ? 1 : 0); }   // (an ear is a pair only with its other ear on the same sheet)
+        else if (here === g.n) out.pairs += Math.floor(g.n / 2); else out.halves += 1;
+      }
+    }
+    return out;
+  }
   function renderStrip() {
     if(window.Seal?.defer('sheet-strip',renderStrip))return;
     if (!W.rec) return;   // (a window opened on its Back asks for its engraving before its record is read)
     const rec = W.rec, E = W.el, n = W.pieces.filter(x => !x.gone).length, orders = [...W.orders.keys()].filter(k => k !== "—").length;
     const backs = W.pieces.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = W.pieces.filter(x => x.eng?.kind === "approved").length;
-    E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
+    const pc = pairCounts(); W.pairKey = pc.pairs + ":" + pc.halves;
+    E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span>${pc.pairs ? `<span title="Pairs with both pieces on this sheet"><b>${pc.pairs}</b> pair${pc.pairs === 1 ? "" : "s"}</span>` : ""}${pc.halves ? `<span class="swLegend" title="A piece of a pair is here and its other piece is on another sheet or on none"><i class="freed"></i><b>${pc.halves}</b> half pair${pc.halves === 1 ? "" : "s"}</span>` : ""}<span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
       `<span class="grow"></span>` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? `<span class="swLegend"><i></i>${backs} back${backs === 1 ? "" : "s"} to approve</span>` : "") + (ok ? `<span class="swLegend"><i class="ok"></i>${ok} back${ok === 1 ? "" : "s"} approved</span>` : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
       `<button class="swToggle" data-r2="face" aria-pressed="${backFace()}" title="${backFace() ? "Turn the sheet back to its front" : "Turn the sheet over: every charm's back engraving, where the laser burns it"}">${backFace() ? "Front" : "Back · engraving"}</button>` +
       (W.backsWait ? `<span class="swLegend"><span class="spin"></span>${esc(W.backsWait)}</span>` : "") +
@@ -1879,13 +1954,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!list.length) { putRows(`<li class="swNone">${q ? "No order on this sheet matches." : W.filter === "backs" ? "No back engraving is waiting on this sheet." : W.filter === "multi" ? "Every order here is only on this sheet." : "This sheet has no charms."}</li>`); return; }
     putRows(list.map(([rid, xs]) => {
       const go = W.going.get(rid), kept = !!(go && go.keep) && !xs.some(x => !x.gone);
-      const live = kept ? xs : xs.filter(x => !x.gone), skus = new Map(); for (const x of live) skus.set(x.sku, (skus.get(x.sku) || 0) + 1);
-      const what = [...skus].map(([s, n]) => `${s}${n > 1 ? ` ×${n}` : ""}`).join(", ");
+      const live = kept ? xs : xs.filter(x => !x.gone), skus = new Map(), ears = new Map(); for (const x of live) { skus.set(x.sku, (skus.get(x.sku) || 0) + 1); const q = rid === "—" ? null : sideOfPiece(x); if (q) (ears.get(x.sku) || ears.set(x.sku, []).get(x.sku)).push(q); }
+      // (a mismatched pair says which ears are here: "MISMATCHED 7134 · Left + Right"; every other piece reads as it always did)
+      const what = [...skus].map(([s, n]) => (ears.get(s) || []).length === n && n ? `${s} · ${sidesText(ears.get(s))}` : `${s}${n > 1 ? ` ×${n}` : ""}`).join(", ");
       const need = live.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = live.filter(x => x.eng?.kind === "approved").length;
       const other = rid === "—" ? [] : otherSheets(rid);
       const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
         (need ? `<span class="swTag eng" title="Back engraving still to approve">${need > 1 ? need + " backs" : "back"}</span>` : ok ? `<span class="swTag engOk" title="Back engraving approved">back</span>` : "") +
-        other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
+        other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}${esc(awayAt(rid, s.id))}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
       return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span></li>`;
     }).join(""));
     E.orders.querySelectorAll(".swOrd").forEach(li => {
@@ -2013,6 +2089,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (show && E.menu.hidden) { E.menu.hidden = false; E.moreBtn.setAttribute("aria-expanded", "true"); animate(E.menu, [{ opacity: 0, transform: "translateY(-4px) scale(.97)" }, { opacity: 1, transform: "none" }], 160); }
     else if (!show && !E.menu.hidden) { E.menu.hidden = true; E.moreBtn.setAttribute("aria-expanded", "false"); if (W.rec) renderMenu(); }
   }
+  // Delete sheet: a pair (or n discs) with a piece here and a piece on another sheet is named before the passcode is asked (no read: the sheets and piece rows this page holds)
+  function deleteWarnings(rec) {
+    try {
+      if (!window.PairRemove || !rec) return [];
+      const here = new Set([...(rec.poolIds || []), ...(rec.charms || []).map(c => c && c.poolId)].filter(Boolean).map(String));
+      const live = allSheets().find(p => p.sheetId === rec.id); if (live) for (const c of live.charms || []) if (c.poolId) here.add(c.poolId);
+      if (!here.size) return [];
+      const src = pairSrc(), cut = PairRemove.splitBy(here, src, whereNow);
+      if (!cut.length) return [];
+      const items = PairRemove.itemsFor(cut.flatMap(g => g.inside.concat(g.outside.map(o => o.id))), src, id => (here.has(id) ? "this sheet" : whereNow(id)), (id, p) => misSku(p && p.sku));
+      return PairRemove.groupsOf(items).map(g => `Order ${String(g.key).split(":")[0]}: ${g.phrase}. Deleting this sheet frees the piece${g.items.filter(i => i.where === "this sheet").length === 1 ? "" : "s"} on it (waiting to be placed again); the ${g.kind === "multi" ? "others stay" : "other stays"} where ${g.kind === "multi" ? "they are" : "it is"}.`);
+    } catch (e) { console.warn("sheet window: delete check", e); return []; }
+  }
   function menuAct(m, b) {
     const rec = W.rec; if (!rec) return;
     if (m === "ai" || m === "dxf") { menu(false); return ProductionExports.run([rec.id], m); }
@@ -2025,12 +2114,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return;
     }
     if (m === "delete") {
-      W.el.menu.innerHTML = `<div style="padding:6px 8px 2px;font:12.5px/1.45 var(--sans);color:var(--ink70)">Delete <b>${esc(rec.folder || rec.id)}</b> for good: its record, .ai, proof, report and preview. Enter the passcode to confirm.</div><form class="swPass"><input type="password" placeholder="Passcode" autocomplete="off"><button class="btn danger xs" type="submit">Delete</button></form>`;
+      const split = deleteWarnings(rec);
+      W.el.menu.innerHTML = (split.length ? `<div style="padding:6px 8px 2px;font:12.5px/1.45 var(--sans);color:var(--warn,#a2591c)"><b>A pair would be left alone.</b> ${split.map(esc).join(" ")}</div>` : "") + `<div style="padding:6px 8px 2px;font:12.5px/1.45 var(--sans);color:var(--ink70)">Delete <b>${esc(rec.folder || rec.id)}</b> for good: its record, .ai, proof, report and preview. Enter the passcode to confirm.</div><form class="swPass"><input type="password" placeholder="Passcode" autocomplete="off"><button class="btn danger xs" type="submit">Delete</button></form>`;
       const form = W.el.menu.querySelector("form"), input = form.querySelector("input"); input.focus();
       form.onsubmit = async ev => {
         ev.preventDefault(); const code = input.value.trim(); if (!code) return;
         const btn = form.querySelector("button"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Deleting';
-        try { await api("charmNestLibrary", { op: "deleteSheet", id: rec.id, code }, { label: "Deleting sheet" }); toast(`Sheet ${rec.folder || rec.id} deleted`, "ok"); menu(false); close({ gone: true }); loadLibrary(); }
+        try { const del = await api("charmNestLibrary", { op: "deleteSheet", id: rec.id, code }, { label: "Deleting sheet" }); const alone = window.PairRemove && del ? PairRemove.deletedSplits(del.splits) : []; toast(`Sheet ${rec.folder || rec.id} deleted` + (alone.length ? ". " + alone.join(" ") : ""), "ok", alone.length ? 9000 : undefined); if (alone.length) agent({ pool: true }, "warn", `Sheet ${rec.folder || rec.id} deleted: ${alone.join(" ")}`); menu(false); close({ gone: true }); loadLibrary(); }
         catch (e) { btn.disabled = false; btn.textContent = "Delete"; input.value = ""; input.placeholder = e.status === 403 ? "Wrong passcode" : "Not deleted: " + e.message; input.focus(); }
       };
     }
@@ -2066,7 +2156,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     lightChips(x.rid);
     // (opened on it: it rings once the sheet has landed, its picture drawn now that its design is known)
     if (opts.land) { paintFx(); afterCue(() => { if (W.sel === x && W.dlg.open && W.rang !== keyOf(x)) { W.rang = keyOf(x); land(x); } }); } else pulse(x);
-    if (same && x.c) { const th = W.el.detail.querySelector("canvas.swThumb"), mm = W.el.detail.querySelector("[data-r2=mm]"); if (th && th._bare) drawThumb(th, x); if (mm) mm.textContent = `${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mmOf(x)}`; }
+    if (same && x.c) { const th = W.el.detail.querySelector("canvas.swThumb"), mm = W.el.detail.querySelector("[data-r2=mm]"); if (th && th._bare) drawThumb(th, x); if (mm) mm.textContent = `${copyText(x)}${mmOf(x)}`; }
     if (!same) renderPiece(x, opts);
     if (W.view !== "piece") showPane("piece", "forward");
     else if (!same && (opts.from === "prev" || opts.from === "next")) animate(W.el.detail, [{ opacity: 0, transform: `translateX(${opts.from === "prev" ? -16 : 16}px)` }, { opacity: 1, transform: "none" }], 220);
@@ -2092,9 +2182,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const mm = mmOf(x);
     E.detail.innerHTML = `
       <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc(x.rid || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
-      <div class="swPiece"><span class="swThumbBox" data-zp aria-label="Charm drawing"><canvas class="swThumb" width="184" height="184"></canvas></span><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
+      <div class="swPiece"><span class="swThumbBox" data-zp aria-label="Charm drawing"><canvas class="swThumb" width="184" height="184"></canvas></span><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${copyText(x)}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
       <section class="swSection" data-r2="eng"></section>
-      <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><ul class="swTrail" data-r2="trail"></ul></section>
+      <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><div class="swPairNote" data-r2="pairNote" role="status" hidden></div><ul class="swTrail" data-r2="trail"></ul></section>
       <section class="swSection" data-r2="off"></section>
       <section class="swSection" data-r2="msgs"><span class="fLabel">Messages</span></section>`;
     const ob = E.detail.querySelector("[data-r2=openOrd]"); if (ob) ob.onclick = () => toOrder(x, ob);
@@ -2161,7 +2251,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         let y = p.poolId ? W.byPool.get(p.poolId) || null : null;
         if (!y && onHere) y = mine.find(z => !used.has(z) && z.sku === p.sku && (z.copy || 1) === p.copy) || null;
         if (y) used.add(y);
-        list.push({ poolId: p.poolId, piece: onHere ? y : null, sku: p.sku, label: p.label === "Piece" ? "" : p.label, copy: p.copy, qty: p.qty, here: onHere, sheetId: p.nested ? p.sheetId : null,
+        list.push({ poolId: p.poolId, side: p.side === "L" || p.side === "R" ? p.side : null, setId: p.nested ? p.setId || null : null, piece: onHere ? y : null, sku: p.sku, label: p.label === "Piece" ? "" : p.label, copy: p.copy, qty: p.qty, here: onHere, sheetId: p.nested ? p.sheetId : null,
           metal: onHere ? W.rec.metal : METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal, n: onHere ? sheetNoOf(W.rec) : p.sheetNo,
           state: p.nested ? "" : p.hand ? "hand" : p.loading ? "loading" : p.unsure ? "unsure" : "none", reason: p.reason || "", hand: p.nested ? null : p.hand || null, lineKey: p.lineKey || "" });
       }
@@ -2190,6 +2280,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const rid = x.rid; if (!rid) { host.innerHTML = `<li class="off"><span class="n"></span><span class="sku">Not part of an order</span></li>`; return; }
     const list = trailItems(x, rid);
     headN.textContent = `This order · ${list.length} piece${list.length === 1 ? "" : "s"}`;
+    // (a pair or group with a piece on another sheet, or on none: said once, plainly, above the list: "Right piece is on RG Sheet 2, in the same set.")
+    const pnHost = W.el.detail.querySelector("[data-r2=pairNote]"), pn = pairNote(x);
+    if (pnHost) {
+      pnHost.hidden = !pn;
+      pnHost.innerHTML = pn ? pn.lines.map(l => `<span>${esc(l.charAt(0).toUpperCase() + l.slice(1))}.</span>`).join("") + pn.sheets.filter(q => q.id !== W.id).map(q => `<button type="button" class="btn ghost xs" data-open-sheet="${esc(q.id)}" data-pool="${esc(q.key)}" title="Open ${esc(q.label)} and select that piece">Open ${esc(q.label)}${ICON.go}</button>`).join("") : "";
+      pnHost.querySelectorAll("[data-open-sheet]").forEach(b => b.onclick = () => { b.disabled = true; b.innerHTML = `<span class="owSpin" style="width:11px;height:11px;flex-basis:11px"></span>opening…`; switchSheet(b.dataset.openSheet, { select: b.dataset.pool, from: "trail" }); });
+    }
     host.innerHTML = list.map((it, i) => {
       const here = it.here, cur = it.piece === x;
       const where = here ? `<span class="where" style="--c:${colorOf(W.rec.metal)}"><i></i>${cur ? "this charm" : "on this sheet"}</span>`
@@ -2198,7 +2295,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         : it.state === "loading" ? `<span class="where"><i style="background:var(--ink25)"></i>reading its sheet…</span>`
         : it.state === "unsure" ? `<span class="where" title="${esc(it.reason || "")}"><i style="background:var(--ink25)"></i>sheet not read just now</span>`
         : `<span class="where"${it.reason ? ` title="${esc(it.reason.charAt(0).toUpperCase() + it.reason.slice(1))}"` : ""}><i style="background:var(--ink25)"></i>not on a sheet yet</span>`;
-      return `<li data-i="${i}" class="${cur ? "cur" : !it.sheetId && !here ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || it.label || "No SKU")}${it.qty > 1 ? `<small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where}</li>`;
+      return `<li data-i="${i}" class="${cur ? "cur" : !it.sheetId && !here ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || it.label || "No SKU")}${it.side ? `<small class="side">${sideWord(it.side)}</small>` : it.qty > 1 ? `<small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where}</li>`;
     }).join("");
     host.querySelectorAll("li[data-i]").forEach(li => {
       const it = list[+li.dataset.i];
@@ -2418,6 +2515,46 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return m ? `${m[1]} Sheet ${m[2]}` : (name || "a sheet");
   }
   const poolRowOf = (id, rid) => (window.B && B.pool && B.pool.rows.get(id)) || (W.pools.get(rid) || []).find(p => p.poolId === id) || null;
+  /* ── pairs (charm-nest-pair-remove.js; Paul, 9 Oct: removing an order must know it has several pieces, matching or not, on several sheets) ──
+     A line's pieces come off together, and so does every piece of the same group (receipt + transaction) a second row or pool record holds.
+     A piece that must stay keeps its whole group, and the words name the partner and its side. A single piece says nothing new. */
+  const pairSrc = () => ({ rows: () => (window.Orders ? Orders.rows() : []), pools: () => (window.B && B.pool ? B.pool.rows : []), charms: () => allSheets().flatMap(sh => sh.charms || []) });
+  const misSku = sku => (window.PairRemove ? PairRemove.isMismatchedSku(sku) : false);
+  const pairSideOf = (id, rid) => { try { if (!window.PairRemove) return null; const pr = poolRowOf(id, rid) || { poolId: id }; return PairRemove.sideOfPiece(pr, misSku(pr.sku)); } catch (_) { return null; } };
+  const pairItems = (list, rid) => list.map(o => ({ id: o.id, groupKey: PairRemove.keyOf(poolRowOf(o.id, rid) || o.id) || PairRemove.keyOf(o.id), side: pairSideOf(o.id, rid), form: String((poolRowOf(o.id, rid) || {}).form || ""), where: o.sh ? sheetWord(o.sh.sheetId, o.sh.fileBase, o.sh) : (o.where && o.where !== "not on a sheet yet" ? o.where : "") }));
+  // where a piece is now, in a plain label ("" when it is on no sheet): a sheet this sorter holds, else the sheet its piece record names
+  const whereNow = id => { const sh = allSheets().find(p => (p.charms || []).some(c => c.poolId === id)); if (sh) return sheetWord(sh.sheetId, sh.fileBase, sh); const pr = window.B && B.pool && B.pool.rows.get(id); return pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state) ? sheetWord(pr.sheetId, pr.sheetName) : ""; };
+  // " (left earring)" / " (left earring and right earring)" for the sides among these pieces; "" when none has a side (every other piece reads as before)
+  const sideTag = (ids, rid, memo) => { try { const w = [...new Set(ids.map(id => (memo && memo.has(id) ? memo.get(id) : pairSideOf(id, rid))).filter(Boolean))].sort().map(sd => PairRemove.sideWord(sd)); return w.length ? ` (${w.join(" and ")})` : ""; } catch (_) { return ""; } };
+  // what a cancel record keeps of a line that made a pair (or several pieces): its piece count and kind; a single piece adds nothing (the record reads as before)
+  const masterEntry = sku => { try { return (window.Master && Master.entryFor && Master.entryFor(sku)) || null; } catch (_) { return null; } };
+  const lineExtra = (r, memo) => { try { const i = (memo && memo.get(r.key)) || (window.PairRemove ? PairRemove.lineInfo(r, { entryFor: masterEntry }) : null); return i && i.kind && i.kind !== "single" ? { pieces: i.pieces, kind: i.kind } : {}; } catch (_) { return {}; } };
+  // what a cancel's fate (one sheet's step) keeps when a pair or a mismatched pair was on it: how many pieces and which sides ("L,R"); nothing for any other piece
+  const fateExtra = (ids, groups, memo) => { try { const g = (groups || []).filter(z => z.kind === "pair" || z.kind === "mismatched"), mine = (ids || []).filter(id => g.some(z => z.items.some(i => i.id === id))); if (!mine.length) return {}; const sides = [...new Set(mine.map(id => memo && memo.get(id)).filter(Boolean))].sort().join(","); return Object.assign({ pieces: mine.length }, sides ? { sides } : {}); } catch (_) { return {}; } };
+  // what a removal's timeline event keeps of the group (additive data: kind, how many pieces, their sides)
+  const pairData = plan => { const g = ((plan && plan.groups) || []).find(z => z.text); return g ? { group: { kind: g.kind, pieces: g.size, sides: g.items.map(i => i.side || "-").join(",") } } : {}; };
+  /** The server's roseTakeOff says `partialGroups` when only some pieces of a group on that sheet were asked to leave (it should never be, every piece of a group is named): said, never silent. */
+  function roseParts(res, sh, rid) {
+    try {
+      const parts = (res && res.partialGroups) || [];
+      if (parts.length) agent({ pool: true }, "warn", `${rid || "an order"}: on ${sheetName(sh)} only ${parts.map(g => `${g.taken} of ${g.taken + g.left} pieces of ${g.order || "a group"}`).join(", ")} came off its green lines; the rest of the group is still there, check it`);
+    } catch (_) { /* a log line only */ }
+    return res;
+  }
+  /** The pieces the server took off beyond the ones this page named (poolUpdate answers `extended`: a line comes off whole, also when this page's
+   *  plan was out of date). They join the take-off here too: out of the pool rows, the order's lines and the engraving lists; said plainly. [] almost always. */
+  function serverExtra(res, ids, rid) {
+    const extra = ((res && res.extended) || []).map(String).filter(id => !ids.has(id));
+    if (!extra.length) return [];
+    for (const id of extra) { ids.add(id); B.pool.rows.delete(id); }
+    for (const r of Orders.rows()) {
+      if (!(r.poolIds || []).some(id => extra.includes(id))) continue;
+      r.poolIds = r.poolIds.filter(id => !extra.includes(id));
+      const jb = Engrave.items().get(r.key); if (jb) jb.copies = (jb.copies || []).filter(id => !extra.includes(id));
+    }
+    agent({ pool: true }, "warn", `${rid || "an order"}: the server took ${extra.length === 1 ? "1 more piece" : extra.length + " more pieces"} of the same line off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`);
+    return extra;
+  }
   function offPlan(x, whole, only) {
     const rid = x.rid, ids = new Set();
     if (only) {
@@ -2438,6 +2575,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const row = (window.Orders ? Orders.rows() : []).find(r => (r.poolIds || []).includes(x.poolId));
       if (row) for (const id of row.poolIds) ids.add(id);
     }
+    // a pair, a mismatched pair or n discs is one group even when its pieces sit in more than one line or piece record: they all come off
+    if (window.PairRemove) { try { for (const id of PairRemove.expand(ids, pairSrc()).added) ids.add(id); } catch (e) { console.warn("sheet window: pair expand", e); } }
     const holder = new Map(); for (const sh of allSheets()) for (const c of sh.charms) if (ids.has(c.poolId)) holder.set(c.poolId, sh);
     const ok = [], stay = [];
     for (const id of ids) {
@@ -2470,10 +2609,26 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const r of window.Orders ? Orders.rows() : []) {
       const line = new Set(r.poolIds || []); if (line.size < 2) continue;
       const held = stayF.find(o => line.has(o.id)); if (!held || !okF.some(o => line.has(o.id))) continue;
-      for (const o of okF.filter(o => line.has(o.id))) stayF.push(Object.assign(o, { kind: "together", why: `its piece stays together (a copy is on ${held.where}: ${held.why})` }));
+      const heldEar = sideWord(sideOfId(rid, held.id) || pairSideOf(held.id, rid));   // (a pair: which ear is the one that must stay)
+      for (const o of okF.filter(o => line.has(o.id))) stayF.push(Object.assign(o, { kind: "together", why: heldEar ? `its pair stays together (its ${heldEar} piece is on ${held.where}: ${held.why})` : `its piece stays together (a copy is on ${held.where}: ${held.why})` }));
       okF = okF.filter(o => !line.has(o.id));
     }
-    return { rid, whole, ids, ok: okF, stay: stayF };
+    // the same for a group wider than one line (two lines or piece records of one receipt + transaction): a piece that must stay keeps its whole group
+    let groups = [];
+    if (window.PairRemove) {
+      try {
+        const gk = PairRemove.expand(okF.concat(stayF).map(o => o.id), pairSrc()).groups;
+        for (const set of gk.values()) {
+          if (set.size < 2) continue;
+          const held = stayF.find(o => set.has(o.id) && o.kind !== "together"); if (!held || !okF.some(o => set.has(o.id))) continue;
+          const sd = pairSideOf(held.id, rid);
+          for (const o of okF.filter(o => set.has(o.id))) stayF.push(Object.assign(o, { kind: "together", why: sd ? `its pair stays together (its ${sideWord(sd)} piece is on ${held.where}: ${held.why})` : `its pair stays together (a piece is on ${held.where}: ${held.why})` }));
+          okF = okF.filter(o => !set.has(o.id));
+        }
+        groups = PairRemove.groupsOf(pairItems(okF.concat(stayF), rid));
+      } catch (e) { console.warn("sheet window: pair groups", e); }
+    }
+    return { rid, whole, ids, ok: okF, stay: stayF, groups, pairNotes: groups.map(g => g.text).filter(Boolean) };
   }
   const listWhere = list => [...new Set(list.map(o => o.where))].join(", ");
   function renderOffBtn(x) {
@@ -2486,25 +2641,26 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function renderOff(x) {
     const host = W.el.detail.querySelector("[data-r2=off]"); if (!host) return;
     const mates = x.rid ? offPlan(x, true) : null, one = offPlan(x, false);
-    const many = mates && mates.ids.size > one.ids.size, lineN = one.ids.size;
+    const many = mates && mates.ids.size > one.ids.size, lineN = one.ids.size, ear = !!sideOfPiece(x) && lineN > 1;   // (ear: the line is a pair whose ears are known)
     let pick = many ? "all" : "one", then = "hold", note = "";
     const paint = () => {
       const plan = pick === "all" ? mates : one, n = plan.ok.length;
       // only a whole order is cancelled: one charm of it comes off and waits on hold
       const whole = !!x.rid && (pick === "all" || !many);
       if (!whole) then = "hold";
-      const stay = plan.stay.length ? `<div class="stay"><b>${plan.stay.length === 1 ? "1 piece stays" : plan.stay.length + " pieces stay"}</b>: ${plan.stay.map(o => `${esc(o.sku)} on ${esc(o.where)} (${esc(o.why)})`).join("; ")}.</div>` : "";
+      const stay = plan.stay.length ? `<div class="stay"><b>${plan.stay.length === 1 ? "1 piece stays" : plan.stay.length + " pieces stay"}</b>: ${plan.stay.map(o => { const e = sideWord(sideOfId(x.rid, o.id)); return `${esc(o.sku)}${e ? ` · ${e}` : ""} on ${esc(o.where)} (${esc(o.why)})`; }).join("; ")}.</div>` : "";
       const text = then === "cancel"
         ? `The order leaves every list in the sorter. Its record is kept under Orders › Cancelled, where it can be restored.${n ? " Every other charm stays where it is, and each sheet gets a new QR label." : ""}`
         : !n ? "" : whole ? `The order waits under On hold, here and in Orders, until someone puts it back. Every other charm stays exactly where it is, and each sheet gets a new QR label.`
-        : `${lineN > 1 ? `Its piece (${lineN} copies) waits` : "Only this charm waits"} under On hold; the order's other pieces stay and are cut.`;
+        : `${ear ? `Its pair (Left and Right) waits` : lineN > 1 ? `Its piece (${lineN} copies) waits` : "Only this charm waits"} under On hold; the order's other pieces stay and are cut.`;
+      const pairs = (plan.pairNotes || []).length ? `<div class="note">${plan.pairNotes.map(esc).join(" ")}</div>` : "";
       const label = then === "cancel" ? (n ? "Take off and cancel" : "Cancel the order") : "Take off and hold";
       host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4>
         <div class="pick">${many ? `<label class="opt"><input type="radio" name="swOffWho" value="all"${pick === "all" ? " checked" : ""}><b>The whole order · ${mates.ids.size} pieces</b><small>${esc(listWhere(mates.ok.concat(mates.stay)))}</small></label>` : ""}
-        <label class="opt"><input type="radio" name="swOffWho" value="one"${pick === "one" ? " checked" : ""}><b>${lineN > 1 ? `This piece · ${lineN} copies` : many ? "Only this charm" : "This charm"}</b><small>${esc(x.sku || x.name)}${lineN > 1 ? ", its copies go together" : x.qty > 1 ? ` · copy ${x.copy} of ${x.qty}` : ""} · ${esc(lineN > 1 ? listWhere(one.ok.concat(one.stay)) : sheetWord(W.id, W.rec.fileBase))}</small></label></div>
+        <label class="opt"><input type="radio" name="swOffWho" value="one"${pick === "one" ? " checked" : ""}><b>${ear ? `This pair · ${lineN} pieces` : lineN > 1 ? `This piece · ${lineN} copies` : many ? "Only this charm" : "This charm"}</b><small>${esc(x.sku || x.name)}${ear ? ", Left and Right go together" : lineN > 1 ? ", its copies go together" : x.qty > 1 ? ` · copy ${x.copy} of ${x.qty}` : ""} · ${esc(lineN > 1 ? listWhere(one.ok.concat(one.stay)) : sheetWord(W.id, W.rec.fileBase))}</small></label></div>
         ${x.rid ? `<div class="then" role="radiogroup" aria-label="Then"><span class="fLabel">Then</span><button type="button" role="radio" data-then="hold" aria-checked="${then === "hold"}">${ICON.pause}Put on hold</button><button type="button" role="radio" data-then="cancel" aria-checked="${then === "cancel"}"${whole ? "" : ' disabled title="Only a whole order can be cancelled"'}>${ICON.off}Cancel the order</button></div>` : ""}
         <input class="swNote" type="text" maxlength="200" placeholder="${then === "cancel" ? "Why it was cancelled (optional)" : "Note for whoever puts it back (optional)"}" value="${esc(note)}" aria-label="Note">
-        ${stay}${text ? `<div class="note">${text}</div>` : ""}
+        ${stay}${pairs}${text ? `<div class="note">${text}</div>` : ""}
         <div class="acts">${n || then === "cancel" ? `<button type="button" class="btn ${then === "cancel" ? "danger" : "velvet"} sm" data-o="go">${then === "cancel" ? ICON.off : ICON.pause}${label}</button>` : ""}<button type="button" class="btn ghost sm" data-o="keep">${n || then === "cancel" ? "Keep" : "Close"}</button></div></div>`;
       host.querySelectorAll("input[name=swOffWho]").forEach(r => r.onchange = () => { pick = r.value; paint(); });
       host.querySelectorAll("[data-then]").forEach(b => b.onclick = () => { if (b.disabled) return; then = b.dataset.then; paint(); host.querySelector(".swNote")?.focus(); });
@@ -2632,6 +2788,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const pressedAt = Date.now();   // (a cancel's moment on its timeline: when it was pressed, not when the record was kept)
     const cancel = opt.then === "cancel" && !!plan.rid, note = opt.note || "";
     const ids = new Set(list.map(o => o.id)), rid = plan.rid;
+    // (the side of each piece, read before its piece record goes: the fates and the check below say "the left earring")
+    const sideMemo = new Map(list.concat(plan.stay || []).map(o => [o.id, pairSideOf(o.id, rid)]));
+    const lineMemo = window.PairRemove && rid ? new Map(rowsOfOrder(rid).map(r => [r.key, PairRemove.lineInfo(r, { entryFor: masterEntry })])) : null;   // (each line's piece count and kind, read before its piece ids go)
     const pages = [...new Set(list.map(o => o.sh).filter(Boolean))];
     // (headless: asked for by the shared-orders window, with no sheet window drawn: the same changes, nothing drawn)
     const ui = !opt.headless && !!(W.dlg && W.dlg.open && W.el.plate);
@@ -2679,7 +2838,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       // a Rose Gold sheet's saved green lines give up the pieces inside them first, on the server (a line with nothing left
       // inside it goes with them, one that keeps a piece stays as saved): nothing has changed yet if that cannot be done
-      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel });
+      for (const sh of pages) if ((sh.metal === "rose" || (window.CharmNestRose && CharmNestRose.cuts(sh.metal))) && window.RoseStock && RoseStock.takeOff) roseParts(await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel }), sh, rid);
       changed = true;
       holdRelease(pages);
       off.state = "now"; paint();
@@ -2701,19 +2860,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const mineRow = plan.whole && rid && String(r.order.receiptId) === rid;
         if (!mineRow && !(r.poolIds || []).some(id => ids.has(id))) continue;
         r.poolIds = (r.poolIds || []).filter(id => !ids.has(id));
-        const j = Engrave.items().get(r.key);
-        if (j) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(r.key); Review.remove("eng:" + r.key); } }
+        for (const j of Engrave.jobsOf(r)) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(j.key); Review.remove("eng:" + j.key); } }   // (each of a pair's ears or a necklace's discs has its own job: only the one whose pieces left goes)
         if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); r.holdSeen = false; CNListActivity.touch(r,r.heldAt); }
       }
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
       // (a hold is recorded as held, below, and only so: removedBy/At on the piece records would have the server stamp a
       // "removed" as well, and the order's history read one from them)
-      await Pool.update([...ids], Object.assign({ state: "abandoned", sheetId: null, setId: null }, cancel ? { removedBy: who, removedReason: "cancelled" + (note ? ": " + note : ""), removedAt: Date.now() } : { heldBy: who, heldReason: note || "on hold", heldAt: Date.now() }));
+      const poolRes = await Pool.update([...ids], Object.assign({ state: "abandoned", sheetId: null, setId: null }, cancel ? { removedBy: who, removedReason: "cancelled" + (note ? ": " + note : ""), removedAt: Date.now() } : { heldBy: who, heldReason: note || "on hold", heldAt: Date.now() }));
+      const serverMore = serverExtra(poolRes, ids, rid);
       for (const id of ids) B.pool.rows.delete(id);
       // on hold (a cancel is stamped by the server as the order is cancelled): on the order's timeline, with who
       // (no window drawn: the sheet it came off is named when it was one sheet, as the Hold of a whole order takes one sheet at a time)
       const evSheet = sheetId || (pages.length === 1 && pages[0].sheetId) || null;
-      if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${evSheet}-${Date.now()}`, by: who, sheetId: evSheet, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: { pieces: list.length, note: note || undefined } });
+      if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${evSheet}-${Date.now()}`, by: who, sheetId: evSheet, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: Object.assign({ pieces: list.length, note: note || undefined }, pairData(plan)) });
       // 3 · the set: the order leaves the sheets it was on (labels are remade when each sheet is saved again)
       await dropFromSets(ids);
       if (B.run) { B.run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(B.run).catch(e => console.warn("sheet window: run lines", e)); }
@@ -2727,12 +2886,25 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const ok = await verifySaved(rewrite.filter(r => r.st.state === "ok").map(r => ({ sh: r.sh, name: r.name, off: ids })), ids, p => p.state === "abandoned", check, paint);
         if (ok) await Pool.update([...ids], { removedVerifiedAt: Date.now() }).catch(() => {});
       }
+      // every group the pieces belonged to is looked at once more: a piece of it still on a sheet that the plan did not say stays (a sheet
+      // that changed while this ran) would leave a pair alone there. It is said plainly, never in silence.
+      let aloneNote = serverMore.length ? `The server took ${serverMore.length === 1 ? "1 more piece" : serverMore.length + " more pieces"} of the same line off too.` : "";
+      if (window.PairRemove) {
+        try {
+          const alone = PairRemove.partnersOutside(ids, pairSrc(), whereNow).filter(p => p.where && !(plan.stay || []).some(z => z.id === p.id));
+          if (alone.length) {
+            const words = alone.map(p => { const sd = pairSideOf(p.id, rid); return `${sd ? "the " + PairRemove.sideWord(sd) : "a piece"} on ${p.where}`; });
+            aloneNote = (aloneNote ? aloneNote + " " : "") + `Check: ${words.join(", ")} of the same ${alone.length === 1 ? "group is" : "groups are"} still on a sheet.`;
+            agent({ pool: true }, "warn", `${rid || "an order"}: taken off, but ${words.join(", ")} (same pair or group) ${alone.length === 1 ? "is" : "are"} still on a sheet`);
+          }
+        } catch (e) { console.warn("sheet window: pair check", e); }
+      }
       // 5 · a cancel: the record is kept first, then the order leaves every list
       if (cancel) {
         // (what became of it on each sheet goes on its record, as AutoCancel writes it: Orders › Cancelled reads it)
-        const fates = rewrite.map(r => ({ sheet: r.name, fate: "removed", text: `taken off ${r.name}` }));
-        for (const o of plan.stay) if (!fates.some(f => f.sheet === o.where)) fates.push({ sheet: o.where, fate: "cut", text: /already cut|completed|sent to the station/.test(o.why) ? `already cut on ${o.where}: set aside` : `stays on ${o.where}: set aside once cut` });
-        await cancelRecord(rid, { note, who, sheets: names, fates, at: pressedAt }, keep, gone, paint); if (cue) cue.done();
+        const fates = rewrite.map(r => ({ sheet: r.name, fate: "removed", text: `taken off ${r.name}${sideTag(list.filter(o => o.sh === r.sh).map(o => o.id), rid, sideMemo)}`, ...fateExtra(list.filter(o => o.sh === r.sh).map(o => o.id), plan.groups, sideMemo) }));
+        for (const o of plan.stay) if (!fates.some(f => f.sheet === o.where)) { const tg = sideTag(plan.stay.filter(z => z.where === o.where).map(z => z.id), rid, sideMemo); fates.push({ sheet: o.where, fate: "cut", text: /already cut|completed|sent to the station/.test(o.why) ? `already cut on ${o.where}${tg}: set aside` : `stays on ${o.where}${tg}: set aside once cut`, ...fateExtra(plan.stay.filter(z => z.where === o.where).map(z => z.id), plan.groups, sideMemo) }); }
+        await cancelRecord(rid, { note, who, sheets: names, fates, at: pressedAt, lineInfo: lineMemo }, keep, gone, paint); if (cue) cue.done();
       }
       if (window.RunCtl) RunCtl.poke();
       const open = rewrite.some(r => r.st.state === "now");
@@ -2743,7 +2915,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       work.state = "done";
       work.title = cancel ? `Order ${rid} cancelled` : open ? "Taken off · a sheet is still saving" : "Taken off";
       work.note = fates.join(" ") + (cancel ? ` The record is under Orders › Cancelled.` : rid && rowsOfOrder(rid).some(r => r.hold) ? ` Order ${esc(rid)} is under On hold.` : "") +
-        (plan.stay.length ? ` ${plan.stay.length === 1 ? "1 piece" : plan.stay.length + " pieces"} stayed (${esc(plan.stay.map(o => o.where + ": " + o.why).join("; "))})${cancel ? ": set them aside once cut" : ""}.` : "");
+        (plan.stay.length ? ` ${plan.stay.length === 1 ? "1 piece" : plan.stay.length + " pieces"} stayed (${esc(plan.stay.map(o => o.where + ": " + o.why).join("; "))})${cancel ? ": set them aside once cut" : ""}.` : "") +
+        ((plan.pairNotes || []).length ? ` ${esc(plan.pairNotes.join(" "))}` : "") + (aloneNote ? ` ${esc(aloneNote)}` : "");
       if (cue) cue.end();
       paint(); endFlow(work);
       if (sheetId && W.id === sheetId && W.dlg.open) open2(sheetId);
@@ -3105,7 +3278,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const kept = await Cancelled.put({ orderId: rid, by: o.who, why: o.note || "", at: +o.at || Date.now(), record: {
       buyer: (ord.buyer && ord.buyer.name) || ord.buyerName || ord.name || "", placedAt: r0 && window.CharmNestOrders ? CharmNestOrders.orderPlacedAt(r0) : 0, shipBy: ord.shipBy ? ord.shipBy * 1000 : 0,
       sheets: o.sheets ? String(o.sheets).split(", ") : [],
-      lines: rows.map(r => ({ transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", quantity: (r.spec && r.spec.quantity) || r.line.quantity || 1, material: r.material || "" })) } });
+      lines: rows.map(r => Object.assign({ transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", quantity: (r.spec && r.spec.quantity) || r.line.quantity || 1, material: r.material || "" }, lineExtra(r, o.lineInfo))) } });
     AutoCancel.mine(rid, kept && kept.record && kept.record.at);   // (what stays of it was said here: no second notice)
     const cancelAt = +(kept && kept.record && kept.record.at) || +o.at || 0;
     if (o.fates && o.fates.length) api("charmNestLibrary", { op: "cancelFates", orderId: rid, fates: o.fates, cancelAt, by: o.who }, { quiet: true }).catch(e => console.warn("sheet window: cancel fates", e.message));
@@ -3123,7 +3296,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function dropOrder(rid, all, keep) {
     rid = String(rid);
     const rows = (all ? Orders.rows().filter(r => String(r.order.receiptId) === rid && r.state !== "committed") : rowsOfOrder(rid)).filter(r => !(keep && keep(r))), keys = new Set(rows.map(r => r.key));
-    for (const r of rows) { B.orders.byKey.delete(r.key); Engrave.items().delete(r.key); for (const id of r.poolIds || []) if (!Pool.sheetOf(id)) B.pool.rows.delete(id); }
+    for (const r of rows) { B.orders.byKey.delete(r.key); Engrave.dropLine(r); for (const id of r.poolIds || []) if (!Pool.sheetOf(id)) B.pool.rows.delete(id); }
     B.orders.rows = B.orders.rows.filter(r => !keys.has(r.key));
     if (B.review && Array.isArray(B.review.items)) B.review.items = B.review.items.filter(it => String(it.rid || "") !== rid && !keys.has(it.line) && !keys.has(it.jobKey) && !(it.row && keys.has(it.row.key)) && !(it.rows || []).some(r => keys.has(r.key)));
     const run = B.run;
@@ -3244,17 +3417,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      *  pieces never placed. */
     function planOf(rid) {
       const ids = idsOf(rid), off = [], wait = [], left = new Map(), onPage = new Set(), loose = [], leftIds = new Set();
-      const stay = (where, n, w) => { const l = left.get(where); if (l) l.n += n; else left.set(where, Object.assign({ where, n }, w)); };
+      const stay = (where, n, w, pids) => { const l = left.get(where); if (l) { l.n += n; l.ids = (l.ids || []).concat(pids || []); } else left.set(where, Object.assign({ where, n, ids: (pids || []).slice() }, w)); };
       for (const sh of allSheets()) {
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length) continue;
         for (const c of mine) onPage.add(c.poolId);
         const w = leftWhy(sh, ids);
-        if (w && w.wait || !w && sheetWorking(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
+        if (w && w.wait || !w && sheetWorking(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w, mine.map(c => c.poolId)); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
       }
       for (const id of ids) {
         if (onPage.has(id)) continue;
         const p = B.pool.rows.get(id);
-        if (p && p.sheetId && !GONE.includes(p.state)) { stay(sheetWord(p.sheetId, p.sheetName), 1, p.state === "committed" ? { cut: true, why: "already cut" } : { open: true, sheetId: p.sheetId, why: "not open in this sorter" }); leftIds.add(id); }
+        if (p && p.sheetId && !GONE.includes(p.state)) { stay(sheetWord(p.sheetId, p.sheetName), 1, p.state === "committed" ? { cut: true, why: "already cut" } : { open: true, sheetId: p.sheetId, why: "not open in this sorter" }, [id]); leftIds.add(id); }
         else if (!p || !GONE.includes(p.state)) loose.push(id);
       }
       // a line with a piece that stays on a sheet (cut, released, held…) is kept, marked gone, as Etsy's own gone lines
@@ -3269,8 +3442,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (a saved sheet not cut yet that this sorter has not loaded: an earlier set's, or one only in the Library)
       const openTxt = open.length ? `take its pieces off ${joinAnd(open.map(l => l.where))} before cutting.` : "";
       if (open.length && !cut.length && !rest.length) return `Order ${rid} is cancelled: ${openTxt}`;
-      if (cut.length) say.push(`Its pieces are already cut on ${joinAnd(cut.map(l => l.where))}: set them aside.`);
-      for (const l of rest) say.push(l.only ? `It is the only order on ${l.where}: delete that sheet from its menu, or set its pieces aside once cut.` : `Its pieces on ${l.where} stay (${l.why}): set them aside once cut.`);
+      // (a mismatched pair says which side: "its pieces are already cut on GF Sheet 3 (right earring)"; any other piece reads as before)
+      const at = l => l.where + sideTag(l.ids || [], rid);
+      if (cut.length) say.push(`Its pieces are already cut on ${joinAnd(cut.map(at))}: set them aside.`);
+      for (const l of rest) say.push(l.only ? `It is the only order on ${l.where}: delete that sheet from its menu, or set its pieces aside once cut.` : `Its pieces on ${at(l)} stay (${l.why}): set them aside once cut.`);
       if (openTxt) say.push(openTxt.charAt(0).toUpperCase() + openTxt.slice(1));
       return `Order ${rid} was cancelled. ${say.join(" ")}`;
     }
@@ -3337,6 +3512,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // open as it is too): the run pill says to take them off before cutting, and the record says "open"
         const far = farSheets(pools, plan);
         if (far) for (const l of far) plan.left.push(l);
+        // (the side and group of each piece, read now: the pieces' records go once they are off, and the fates say "left earring" and how many)
+        const pairMemo = new Map(), pairGroups = (() => { try { if (!window.PairRemove) return []; for (const id of plan.ids) pairMemo.set(id, pairSideOf(id, rid)); return PairRemove.groupsOf(PairRemove.itemsFor([...plan.ids], pairSrc(), whereNow, (id, p) => misSku(p && p.sku))); } catch (_) { return []; } })();
         if (far && !j0 && !plan.ids.size && !plan.rows.length && !plan.left.length) { st = read(); st.done[rid] = { at, t: Date.now() }; delete st.jobs[rid]; save(); return "done"; }
         // the journal: written before anything moves, and each step as it is through (read afresh each time: a poll or a
         // Set aside meanwhile reads it too)
@@ -3366,8 +3543,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         fly();
         // pieces never placed (pooled, waiting) are let go the same way
         const loose = plan.loose;
-        if (loose.length) { await Pool.update(loose, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); for (const id of loose) B.pool.rows.delete(id); }
-        const offIds = new Set(taken.flatMap(t => t.poolIds).concat(loose));
+        let looseMore = [];
+        if (loose.length) { const lres = await Pool.update(loose, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); looseMore = serverExtra(lres, new Set(loose.concat(taken.flatMap(t => t.poolIds))), rid); for (const id of loose) B.pool.rows.delete(id); }
+        const offIds = new Set(taken.flatMap(t => t.poolIds).concat(loose, looseMore));
         j.ids = [...new Set(j.ids.concat([...offIds]))].slice(0, 300); upd(x => { x.ids = j.ids; });
         if (offIds.size) await dropFromSets(offIds);
         // 2 · its lines leave Orders and the run, and the run is saved (once more if that fails: a reload must not bring
@@ -3399,8 +3577,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // what became of it, sheet by sheet, on its cancel record (Orders › Cancelled reads it); kept in the journal until
         // written, so a failed write goes again with the next try
         const fates = new Map((j.fates || []).map(f => [f.sheet, f]));
-        for (const t of taken) fates.set(whereOf(t.sh), { sheet: whereOf(t.sh), fate: "removed", text: `taken off ${whereOf(t.sh)}` });
-        for (const l of plan.left) if (!fates.has(l.where)) fates.set(l.where, { sheet: l.where, fate: l.open ? "open" : "cut", text: l.cut ? `already cut on ${l.where}: set aside` : l.open ? `on ${l.where}, not cut yet: take its pieces off before cutting` : `stays on ${l.where} (${l.why}): set aside once cut` });
+        for (const t of taken) fates.set(whereOf(t.sh), { sheet: whereOf(t.sh), fate: "removed", text: `taken off ${whereOf(t.sh)}${sideTag(t.poolIds || [], rid, pairMemo)}`, ...fateExtra(t.poolIds, pairGroups, pairMemo) });
+        for (const l of plan.left) if (!fates.has(l.where)) { const tg = sideTag(l.ids || [], rid, pairMemo); fates.set(l.where, { sheet: l.where, fate: l.open ? "open" : "cut", text: l.cut ? `already cut on ${l.where}${tg}: set aside` : l.open ? `on ${l.where}${tg}, not cut yet: take its pieces off before cutting` : `stays on ${l.where}${tg} (${l.why}): set aside once cut`, ...fateExtra(l.ids, pairGroups, pairMemo) }); }
         if (fates.size !== (j.fates || []).length || taken.length) { j.fates = [...fates.values()]; j.fatesSaved = false; }
         if (j.fates && j.fates.length && !j.fatesSaved) {
           j.fatesSaved = await api("charmNestLibrary", { op: "cancelFates", orderId: rid, fates: j.fates, cancelAt: at, by }, { quiet: true }).then(() => true, () => false);
@@ -3592,8 +3770,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (window.Gate && Gate.modern(src.runId) && src.setId && !src.draft) return false;
     return true;
   }
+  /* A pair (or n discs) moves whole. An order whose group has a piece on a sheet other than the ones it moves from and the sheet it moves to (a cut, released,
+     sent or unloaded sheet, or none) is left where it is: moving the rest would carry half of a group and leave its partner alone (PairRemove). A single
+     piece, and a pair whose pieces are all on the sheets it moves from, are as before. */
+  function pairGuard(target) {
+    if (!window.PairRemove) return () => false;
+    let idx = null, sheetOf = null;
+    try { idx = PairRemove.index(pairSrc()); sheetOf = new Map(); for (const sh of allSheets()) for (const c of sh.charms || []) if (c.poolId) sheetOf.set(c.poolId, sh); } catch (_) { return () => false; }
+    return k => {
+      try {
+        const ids = k.pieces.map(z => z.c.poolId), home = new Set([...k.srcs, target]), homeIds = new Set([...home].map(sh => sh.sheetId).filter(Boolean));
+        return PairRemove.partnersOutside(ids, idx).some(p => { const sh = sheetOf.get(p.id); if (sh) return !home.has(sh); const pr = window.B && B.pool && B.pool.rows.get(p.id); return !(pr && pr.sheetId && homeIds.has(pr.sheetId)); });
+      } catch (_) { return false; }
+    };
+  }
   function candidatesFor(target) {
-    const by = new Map();
+    const halfGroup = typeof pairGuard === "function" ? pairGuard(target) : () => false, by = new Map();   // (a test that slices this function out alone has no pairGuard)
     for (const src of allSheets()) {
       if (!movableFrom(src, target)) continue;
       const placed = new Set(src.placements.map(p => p.id));
@@ -3608,10 +3800,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const k of by.values()) {
       const rs = rows.get(k.rid) || [];
       if (rs.some(r => r.hold || ["held", "skipped", "gone"].includes(r.state)) || Cancelled.has(k.rid)) continue;
+      if (halfGroup(k)) continue;
       // a saved sheet is never emptied by a move: its record would still name the pieces
       if ([...k.srcs].some(src => src.sheetId && src.placements.length && src.placements.every(p => k.pieces.some(z => z.src === src && z.c.id === p.id)))) continue;
       const at = rs.map(r => window.CharmNestOrders ? CharmNestOrders.orderPlacedAt(r) : 0).concat(k.pieces.map(z => +z.c.orderDate > 1e11 ? +z.c.orderDate : 0)).filter(Boolean);
       k.at = at.length ? Math.min(...at) : 0;
+      // a pair, or a group of pieces, never moves in halves: with a piece of one of its groups on a sheet that is not part of this move, it stays where it is
+      if (pairHold(k, rs, target)) continue;
       k.row = rs[0] || null; k.area = k.pieces.reduce((n, z) => n + (+z.c.areaPt2 || 0), 0);
       k.waiting = k.pieces.every(z => !z.placed);
       // a waiting order released from hold (frontAt) comes ahead of the other waiting orders, the one released first first (Paul, 5 Oct)
@@ -3619,6 +3814,23 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       out.push(k);
     }
     return out.sort((a, b) => (a.front && b.front ? a.front - b.front : b.front ? 1 : a.front ? -1 : 0) || (a.at || 9e15) - (b.at || 9e15) || a.rid.localeCompare(b.rid));
+  }
+  /** Why a candidate order must not move (R3, R4): a piece of one of its GROUPS (a pair, discs) sits on a sheet that is neither one of the sheets it comes from nor the one
+   *  it goes to (cut, in a set, sent, or just another sheet), so moving the rest would split the group further. "its Right piece is on GF Sheet 2", or "" to move.
+   *  Cheap first: a line whose every pool id is among the candidate's own pieces has nothing elsewhere, and OrderPieces is asked for no order that does not need it. */
+  function pairHold(k, rows, target) {
+    const P = typeof PPL === "function" ? PPL() : null; if (!P) return "";   // (a test that slices candidatesFor out alone has no PPL)
+    const have = new Map(); for (const z of k.pieces) { const lk = String(z.c.poolId || "").replace(/_\d+$/, ""); have.set(lk, (have.get(lk) || 0) + 1); }
+    if (![...rows].some(r => (r.poolIds || []).length > 1 && have.has(r.key) && have.get(r.key) < r.poolIds.length)) return "";
+    const ps = orderPieces(k.rid); if (!ps) return "";
+    const okIds = new Set(), mine = new Set(k.pieces.map(z => z.c.poolId));
+    for (const sh of [...k.srcs, target]) { if (sh.sheetId) okIds.add(sh.sheetId); okIds.add(sheetWord(sh.sheetId, sh.fileBase, sh)); }
+    for (const g of groupsOf(k.rid)) {
+      if (g.n < 2 || !g.pieces.some(q => mine.has(q.key))) continue;
+      const far = g.pieces.find(q => !mine.has(q.key) && q.on && !okIds.has(q.sheetId) && !okIds.has(q.sheetLabel));
+      if (far) return `its ${sideWord(far.side) ? sideWord(far.side) + " piece" : "other piece"} is on ${far.sheetLabel || "another sheet"}`;
+    }
+    return "";
   }
   function plateGrid(target) {
     const job = buildJob(target), byId = new Map(target.charms.map(c => [c.id, c]));
@@ -3790,9 +4002,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   // one waiting or filling order as a row: thumbnail, number, what it is, how old and where it is now
   function candRow(k) {
-    const skus = new Map(); for (const z of k.pieces) { const n = z.c.sku || (z.c.orderInfo && z.c.orderInfo.sku) || z.c.name || ""; skus.set(n, (skus.get(n) || 0) + 1); }
+    const skus = new Map(), ears = new Map(); for (const z of k.pieces) { const n = z.c.sku || (z.c.orderInfo && z.c.orderInfo.sku) || z.c.name || ""; skus.set(n, (skus.get(n) || 0) + 1); if (z.c.side === "L" || z.c.side === "R") (ears.get(n) || ears.set(n, []).get(n)).push(z.c.side); }
     const src = [...k.srcs][0], from = k.waiting ? `waiting on ${sheetWord(src.sheetId, src.fileBase, src)}` : `on ${sheetWord(src.sheetId, src.fileBase, src)}${src.draft || !src.setId ? " · filling" : ""}`;
-    return `<canvas class="th" width="88" height="88"></canvas><span class="t"><b>${esc(k.rid)}</b><small>${esc([...skus].map(([n, c]) => n + (c > 1 ? " ×" + c : "")).join(", "))}</small><small>${esc([k.at ? "ordered " + ago(k.at) : "", from].filter(Boolean).join(" · "))}</small></span>`;
+    return `<canvas class="th" width="88" height="88"></canvas><span class="t"><b>${esc(k.rid)}</b><small>${esc([...skus].map(([n, c]) => (ears.get(n) || []).length === c ? `${n} · ${sidesText(ears.get(n))}` : n + (c > 1 ? " ×" + c : "")).join(", "))}</small><small>${esc([k.at ? "ordered " + ago(k.at) : "", from].filter(Boolean).join(" · "))}</small></span>`;
   }
   const HAND_BTN = `<button type="button" class="swIcon" data-fl="hand" title="Place it by hand: move it on the sheet, scroll to turn, click to drop" aria-label="Place it by hand">${ICON.hand}</button>`;
 
@@ -3953,7 +4165,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const E = W.el, h = W.hand; if (!E.hand) return;
     if (!h) { E.hand.hidden = true; E.hand.innerHTML = ""; return; }
     const n = h.pieces.length;
-    E.hand.innerHTML = `<span class="t"><b>${esc(h.k.rid)}</b><small>${n > 1 ? `piece ${h.i + 1} of ${n} · ` : ""}<span data-h="deg">${h.a}°</span></small></span>` +
+    E.hand.innerHTML = `<span class="t"><b>${esc(h.k.rid)}</b><small>${n > 1 ? `${sideWord((h.pieces[h.i] && h.pieces[h.i].c || {}).side) ? sideWord(h.pieces[h.i].c.side) + " piece" : "piece"} ${h.i + 1} of ${n} · ` : ""}<span data-h="deg">${h.a}°</span></small></span>` +
       `<button type="button" class="swIcon" data-h="l" title="Turn left 10° ( [ or scroll; Shift for 2° )" aria-label="Turn left">${ICON.turnL}</button><button type="button" class="swIcon" data-h="r" title="Turn right 10° ( ] or scroll; Shift for 2° )" aria-label="Turn right">${ICON.turnR}</button>` +
       `<span class="k${h.msg ? " bad" : ""}">${esc(h.msg || (n > 1 && h.i ? "Click to drop the next piece" : "Scroll to turn · click to drop"))}</span>` +
       (h.spots.length ? `<button type="button" class="btn ghost xs" data-h="u" title="Take the last piece back (Backspace)">Undo</button>` : "") +
@@ -4012,6 +4224,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // passes waiting charms on), and the order must not have been put on hold or cancelled since
       for (const s of spots) { const on = allSheets().filter(sh => sh.charms.includes(s.c)); if (on.length !== 1 || on[0] !== s.src) throw new Error(`order ${rid} went to another sheet meanwhile; pick again from the new list`); }
       if (Cancelled.has(rid) || rowsOfOrder(rid).some(r => r.hold || ["held", "skipped", "gone"].includes(r.state))) throw new Error(`order ${rid} was put on hold or cancelled meanwhile`);
+      // a pair moves whole: a piece of its group on a sheet that is neither a sheet it leaves nor this one would be left alone (checked again now: the sheets may have changed since the list was made)
+      if (pairGuard(target)(k)) throw new Error(`order ${rid} has a pair with a piece on another sheet that cannot give it up, so it stays where it is`);
+      { const why = pairHold(k, rowsOfOrder(rid), target); if (why) throw new Error(`order ${rid} stays where it is: ${why} (a pair or group is never moved in halves)`); }
       // the room is tested again as the sheet now stands: something else may have gone into it meanwhile
       const G = plateGrid(target), g2 = G.grid;
       if (o.free) { if (!(await roomFor(k, G, async () => { await pause(0); }))) throw new Error(`there is no room for it on ${tName} now`); }
@@ -4266,8 +4481,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
     charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "" })) });
-  function attachGeom(x, g, rec) {
-    if (g.pool) { const c = Pool.cloneCharm(g.base, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
+  async function attachGeom(x, g, rec) {
+    if (g.pool) { const b = await pieceBase(g, x); if (!b) return; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
     const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
     if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
   }
@@ -4559,7 +4774,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (ids.length) readOpts.onProgress(0, ids.length);
     const one = async sid => {
       const s = srcs.get(sid);
-      try { const g = await sourceGeom(s); if (active()) for (const x of need) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { if (active()) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); } }
+      try { const g = await sourceGeom(s); if (active()) for (const x of need) if (x.sourceId === sid) await attachGeom(x, g, rec); } catch (e) { if (active()) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); } }
       done++; readOpts.onProgress(done, ids.length); if (active()) soonPaint(G);
     };
     const queue = ids.slice();
@@ -4612,7 +4827,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
           while (queue.length) {
             const sid = queue.shift();
-            try { const g = await sourceGeom(srcs.get(sid)); for (const x of pieces) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { console.warn("card back: design", sid, e); }
+            try { const g = await sourceGeom(srcs.get(sid)); for (const x of pieces) if (x.sourceId === sid) await attachGeom(x, g, rec); } catch (e) { console.warn("card back: design", sid, e); }
             step();
           }
         }));
@@ -4704,7 +4919,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     const plan = offPlan({ rid }, scope === "order", only), opt = { then: mode, note, headless: true };
     const stayed = plan.stay.map(x => ({ id: x.id, sku: x.sku, where: x.where, why: x.why }));
-    const removed = plan.ok.map(x => ({ id: x.id, sku: x.sku, where: x.where }));
+    // (a piece of a pair or a group also says its side and its group; any other piece is exactly { id, sku, where })
+    const pairBits = id => { const g = (plan.groups || []).find(z => z.items.some(i => i.id === id)), sd = g ? pairSideOf(id, rid) : null; return Object.assign({}, g ? { group: g.key } : null, sd ? { side: sd } : null); };
+    const removed = plan.ok.map(x => Object.assign({ id: x.id, sku: x.sku, where: x.where }, pairBits(x.id)));
     try {
       if (plan.ok.length) await takeOff(plan, opt, who);
       else if (mode === "cancel") { if (!(await cancelOnly(rid, opt, who))) return no("The order could not be cancelled."); }
@@ -4806,7 +5023,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       freed: sheetId => (FREED.get(sheetId) || []).length,
     };
   })();
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  window.SheetWin = { pieceBase, remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
