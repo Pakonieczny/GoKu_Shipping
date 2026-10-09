@@ -329,6 +329,10 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   eq(lineMismatchedAll(), [false, false, true, true], 'lineMismatched: a necklace SKU with a plus, "w/" in an earring SKU: not mismatched; two SKUs on an earring line and the word Mismatched are');
   function lineMismatchedAll() { return [O.lineMismatched(mk({ title: 'Cat Add On Charm', sku: 'CAT(+FISH) - Cat Only' })), O.lineMismatched(mk({ title: 'Triceratops Stud Earrings', sku: 'Cute Triceratops w/ hearts' })), O.lineMismatched(mk({ title: 'Stud Earrings', sku: 'MITTENS 1 + MITTENS 2' })), O.lineMismatched(mk({ title: 'Mismatched Stud Earrings', sku: 'A' }))]; }
 
+  { const lr = row({ title: 'Mix Match Earrings', sku: 'A', variations: [V('Left Ear Charm', 'A'), V('Right Ear Charm', 'B')] });
+    eq([lr.spec.pair.mismatched, lr.spec.pair.source, lr.spec.problems.length, counts(lr).sides], [true, 'options', 0, 'LR'], 'F7: Left and Right options that name two master designs are a mismatched pair: nothing is asked about them');
+    const ln = row({ title: 'Mix Match Earrings', sku: 'A', variations: [V('Left Ear Charm', 'Heart'), V('Right Ear Charm', 'Cat')] });
+    ok(ln.spec.problems.some(x => x.pairSecond) && !ln.spec.pair.mismatched, 'F7: the same options naming designs the master does not have: the line waits for the second design'); }
   // the run's line record carries the piece count (ADVLIFE): Readiness reads a pair of quantity 1 as 2
   { const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'); const lr = src.slice(src.indexOf('  function lineRecord(row) {'), src.indexOf('  function lineRecord(row) {') + 3000);
     ok(/pieceCount: row\.spec \? \(row\.spec\.pieceCount \|\| row\.spec\.quantity\) : 1/.test(lr), 'lineRecord stores pieceCount beside quantity'); }

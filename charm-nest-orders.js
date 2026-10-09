@@ -427,7 +427,7 @@
   // (up to two describing words may sit between the number and the unit: "3 Gold Discs", "2 Rose Gold Plated Charms"; "2 Tone" or "2 Initial" are not such words)
   const U_ADJ = "(?:gold|silver|rose|rosegold|rose-gold|white|yellow|black|plain|blank|small|large|big|mini|tiny|matching|engraved|round|heart|star|custom|personali[sz]ed|dainty|sterling|filled|plated|solid|separate|different|individual|gold-filled)\\s+";
   const COUNT_BEFORE = () => new RegExp("(?:^|[^\\w.])(?:[x×]\\s*)?(?:(\\d{1,2})\\s*[-–]\\s*)?" + NUMRE + "\\s*(?:[x×]\\s*|-\\s*)?(?:" + U_ADJ + "){0,3}(" + U_ALL + ")\\b", "gi");
-  const COUNT_WORD = () => new RegExp("\\b(double|triple|duo|trio|twin|dual|quad)[\\s-]+(?:" + U_ADJ + "){0,3}(" + U_ALL + ")\\b", "gi"), WORD_N = { double: 2, triple: 3, duo: 2, trio: 3, twin: 2, dual: 2, quad: 4 };
+  const COUNT_WORD = () => new RegExp("\\b(double|triple|duo|trio|twin|dual|quad)[\\s-]+(?:of\\s+)?(?:" + U_ADJ + "){0,3}(" + U_ALL + ")\\b", "gi"), WORD_N = { double: 2, triple: 3, duo: 2, trio: 3, twin: 2, dual: 2, quad: 4 };
   const COUNT_AFTER = () => new RegExp("\\b(" + U_ALL + ")\\s*(?:[:=]|[x×])\\s*" + NUMRE + "\\b(?!\\s*(?:mm|cm|in\\b|inch|\"|”|k\\b))", "gi");
   const SET_OF = () => new RegExp("\\b(?:set|pack|bundle|lot)\\s+of\\s+" + NUMRE + "\\b|\\b" + NUMRE + "\\s*(?:-\\s*)?(?:piece|pc|pcs|pack)\\b", "gi");
   const SECOND_OPT = "Two designs on this line";   // (the pseudo option a person's answer about a line that says two designs is kept under; its value is "<receipt>/<transaction>": one answer per line)
@@ -792,6 +792,8 @@
       if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       let mapped = hit ? { field: hit.field, value: hit.value, source: hit.source } : null;
+      // a Left-ear / Right-ear option whose value is a master design is that side's design (the pair's members): nothing to ask about it
+      if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         const asForm = formByWords(value);
         if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
@@ -835,7 +837,7 @@
     // a count the options cannot settle waits for a person: one plain question per option, like an unmatched SKU
     if (!noDesign) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && p.count)) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", count: { guess: a.guess || 0, why: a.why, rule: a.rule } });
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
-    if (!noDesign && spec.pair.second && !spec.pair.second.answered && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pairSecond: { why: spec.pair.second.why } });
+    if (!noDesign && spec.pair.second && !spec.pair.second.answered && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     return spec;
   }
