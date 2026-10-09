@@ -112,7 +112,8 @@
   const STAGE_WORDS={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
   const rank=k=>{const i=KEYS.indexOf(k);return i<0?KEYS.length:i;};
   const tailNo=k=>{const m=/_(\d+)$/.exec(String(k||''));return m?+m[1]:0;};
-  const qtyOf=l=>Math.max(1,Math.floor(+(l.spec?.quantity || l.quantity) || 1));
+  // how many pieces (pool copies) a line makes: its quantity, or the piece count the line states when it makes more (a pair of earrings makes 2 per unit, a mismatched pair a left and a right, a necklace its discs). A line that states none: its quantity, exactly as before.
+  const qtyOf=l=>{const q=Math.max(1,Math.floor(+(l.spec?.quantity || l.quantity) || 1)),n=Math.floor(+(l.spec?.pieceCount || l.pieceCount) || 0);return n>q?n:q;};
   const titleOf=l=>String(l.line?.title || l.snap?.title || l.spec?.designSku || l.sku || '').replace(/\s+/g,' ').trim();
   // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
   function copyIds(l,key){
