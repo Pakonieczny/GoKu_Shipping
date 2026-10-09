@@ -546,7 +546,7 @@
     }
     return {
       show: !!set || lv === "directional", mismatched: false, value: set, bodies: null,
-      options: [["", "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]], hint
+      options: [["", !set && readsOneWay(e) ? "reads one way (name)" : "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]], hint   // (a letter, number or script by its name is cut as drawn without a word: the box says so)
     };
   }
 
