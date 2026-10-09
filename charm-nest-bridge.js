@@ -2566,7 +2566,8 @@ const Master = window.Master = (() => {
         `<div data-preview-sku="${esc(e.sku)}" style="aspect-ratio:1;background:#ece7dc;border-radius:6px;overflow:hidden;display:grid;place-items:center;color:var(--ink45)">Loading preview…</div>` +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
-        `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
+        (e.pair && e.pair.mismatched ? `<div class="meta"><span class="pill ok" title="A mismatched pair: two different charms under one SKU, a left earring and a right earring. Both are drawn side by side, each marked Left or Right.">Left + Right pair</span></div>` : "") +
+        `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm${e.pair && e.pair.mismatched ? " both together" : ""} · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
@@ -2641,12 +2642,12 @@ const Pool = window.Pool = (() => {
   const masterPreviewCache=new Map();
   // `front` draws the charm as the Orders and Engrave lists show a pooled charm (white, a 3 mm margin), so an order's
   // picture keeps its look and size when its charm reaches the pool; the Master tab's tiles keep the tight thumbnail.
-  async function masterPreview(entry,size,front) {
+  async function masterPreview(entry,size,front,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220):P.thumbnail(charm,168);
+    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; any other design ignores it)
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
-    const key=(front&&P.frontPreview?"front:":"")+path;
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
     const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
     masterPreviewCache.set(key,task);
@@ -2655,11 +2656,11 @@ const Pool = window.Pool = (() => {
   }
   /** The same picture as masterPreview(…, true) drawn at `px` for the picture viewer. Looking registers nothing (no pool
    *  source, no cache of a large picture): the master is read, drawn and let go, or its pooled copy is drawn. */
-  async function masterFront(entry,size,px) {
+  async function masterFront(entry,size,px,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
     const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
-    return P.frontPreview ? P.frontPreview(charm,px) : Engrave.renderFront(charm,px);
+    return P.frontPreview ? P.frontPreview(charm,px,opts) : Engrave.renderFront(charm,px,opts);
   }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
@@ -5146,9 +5147,12 @@ const Engrave = window.Engrave = (() => {
     const top = world([(box.lx0 + box.lx1) / 2, box.ly1 + m]); pts.push([top[0] - sa * 2 * PT, top[1] + ca * 2 * PT]);
     return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
   }
-  function renderFront(charm, px) {
+  function renderFront(charm, px, opts) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
+    // a mismatched pair design: both bodies side by side with Left / Right chips (charm-nest-pair-thumb.js); any other charm is drawn below, unchanged
+    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
+    if (pairCv) return pairCv;
     const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }
   async function mountPlacementThumbnail(host,job) {

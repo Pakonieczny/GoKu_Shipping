@@ -102,14 +102,24 @@ async function upload(origin, passcode, p, buf, contentType) {
 }
 function thumbnailPng(Geom, charm, size, PDF) {
   let Resvg = null; try { ({ Resvg } = require("@resvg/resvg-js")); } catch (_) { return null; }
-  const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h);
+  // a mismatched pair design (two different bodies under one SKU) is stored as ONE picture of both bodies side by side at one scale with a
+  // Left and a Right chip under them (charm-nest-pair-thumb.js, the same picture the app draws); every other design keeps today's picture exactly
+  let PT = null; try { PT = require("../charm-nest-pair-thumb.js"); } catch (_) {}
+  const pair = PT ? PT.plan(charm) : null;
+  const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = pair ? PT.layout(pair, b, { size, padPt: pad }).s : size / Math.max(w, h);
   const css = c => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
   const parts = [];
   for (const m of charm.members) { if (m.kind !== "path") continue; const d = Geom.svgPathOf(m); if (!d) continue;
     // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
     const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; parts.push(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
-  parts.push(`<path d="${Geom.svgPathOf(charm.outline)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
+  // (the cut outline in red: both bodies' outlines for a pair, the charm's own for every other design)
+  for (const o of pair ? pair.bodies.map(x => x.outline).filter(Boolean) : [charm.outline]) parts.push(`<path d="${Geom.svgPathOf(o)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
+  if (pair) {
+    const pic = PT.svgPicture(pair, { bbox: b, padPt: pad, size, bg: "#ece7dc", inner: parts.join("") });
+    // the chip lettering is the repo's own Source Sans 3 Semibold, so it does not depend on a font this PC happens to have
+    try { return new Resvg(pic.svg, { fitTo: { mode: "width", value: pic.layout.W }, font: { fontFiles: [path.join(root, "vendor", "fonts", "SourceSans3-Semibold.otf")], loadSystemFonts: false, defaultFontFamily: "Source Sans 3 Semibold" } }).render().asPng(); } catch (_) { return null; }
+  }
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(8, Math.round(w * s))}" height="${Math.max(8, Math.round(h * s))}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#ece7dc"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)">${parts.join("")}</g></svg>`;
   try { return new Resvg(svg, { fitTo: { mode: "width", value: Math.max(8, Math.round(w * s)) } }).render().asPng(); } catch (_) { return null; }
 }
@@ -335,5 +345,5 @@ async function main(argv, log = console.log) {
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet, settleTwins, pinMap };
+module.exports = { main, api, upload, onlySet, settleTwins, pinMap, thumbnailPng };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });
