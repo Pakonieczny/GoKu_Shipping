@@ -9,7 +9,13 @@
  *    StationLiveOrder.note(text)                                                    the same order, a new short line (scan time kept)
  *    (sync: the same thing told again is a refresh, not a new scan; keepTime: what replaces what is in hand keeps its scan time)
  *    StationLiveOrder.end(rid?)                                                     it was completed, printed or closed: nothing in hand
- *    StationLiveOrder.pieces(transactions) → { pieces, pieceCount }                 one piece per unit of every Etsy line
+ *    StationLiveOrder.pieces(transactions) → { pieces, pieceCount }                 the pieces of every Etsy line (CharmNestOrders.pieceCountOf, the quantity as always); an EARRING PAIR (matching or mismatched)
+ *                                                                                    is a Left then a Right piece per unit (side "L" | "R", the line's group key, its size and number), a mismatched line the pool still makes as one piece per unit is one glued piece (both: true)
+ *    StationLiveOrder.units(transactions, filter?) → number                         the pieces (efficiency "parts") of a list of lines, the one count every station page uses
+ *    StationLiveOrder.kind(line) → { kind, mismatched, sided, pieces }              single | pair | mismatched | multi, read from the line alone (a station never holds the master)
+ *    StationLiveOrder.tag(line) → "" | "Pair: Left + Right"                         the short words a cell adds for an earring pair line ("" for every other line: nothing changes on screen)
+ *    StationLiveOrder.sides(line, rid?, max?) → [{ side, grp, of, n, both }]        the pair fields of the pieces one line makes, in order ([] for a line with no sides and no group)
+ *    StationLiveOrder.ears(lines) → [{ side, n, of }]                               the stickers an order prints (QR Printer.html dataObj.pieces): a Left then a Right per pair, [] for an order with no earring pair
  *
  *  `transactions` are the Etsy lines the page already holds (quantity, listing_id, sku, title, variations): the thumbnails, the QR and
  *  the customer are looked up by the server from what the app already stores; nothing here asks Etsy for anything. The call carries
@@ -42,22 +48,128 @@
     } catch (_) {}
     return "";
   }
-  /** One piece per unit of every line (a line with quantity 2 is two pieces), at most 24 told; pieceCount is the true total. */
-  function pieces(list) {
+  /* ── pairs (Paul, 9 and 10 Oct 2026): an earring pair (stud, hoop, huggie hoops, huggie charm set, "pair of earrings"; matching OR
+     mismatched) is one LEFT and one RIGHT piece per unit of quantity (q units = q Left + q Right); a mismatched pair is the same with
+     two different designs. Necklace discs, letters and singles are never sided. Station pages hold raw Etsy lines and never the master,
+     so the count and the words come from ONE place, charm-nest-orders.js (CharmNestOrders.pieceCountOf, lineSignals, lineMismatched and
+     PIECE_RULES, loaded by the pages before this file): the parts a station is credited with always agree with the pieces the pool
+     makes, and when Paul's rules change the count changes with them. Without it (not loaded, or older than that) the rule is the one in
+     force before: one piece per unit of every line, and a line is mismatched when its own words say so: the SKU (MISMATCHED,
+     MISMATCHED_7134) or a variation value the buyer chose ("Mismatched pair"). The listing TITLE is not read for that: a title such as
+     "Mismatched or matching studs" is on every line of the listing, whichever the buyer picked. The server's live layer
+     (_stationLive.js dress) knows a mismatched design from the master and shows Left and Right on a piece the page did not split.
+     A line that is not an earring pair and not mismatched is counted and told exactly as before. */
+  const SAYS = /(?:^|[^A-Za-z])mis-?matched(?![A-Za-z])/i;
+  const ordersLib = () => { try { const O = window.CharmNestOrders; return O && typeof O === "object" ? O : null; } catch (_) { return null; } };
+  const skuOf = t => String((t && (t.sku || t.__sku)) || "");
+  function saysMismatched(t) {
+    try {
+      if (!t || typeof t !== "object") return false;
+      if (t.__pair === "mismatched" || (t.__pair && t.__pair.mismatched === true)) return true;
+      if (SAYS.test(skuOf(t))) return true;
+      for (const v of (Array.isArray(t.variations) ? t.variations : [])) if (SAYS.test(String((v && (v.formatted_value != null ? v.formatted_value : v.value)) || ""))) return true;
+      const O = ordersLib(); if (O && typeof O.lineMismatched === "function" && O.lineMismatched(Object.assign({}, t, { title: "" })) === true) return true;   // (the listing title is on every line of the listing, whichever the buyer picked: not read)
+    } catch (_) {}
+    return false;
+  }
+  /** is this line sold as a PAIR of earrings (the line's own words: stud, hoop, huggie hoops, earrings; not "single earring")? */
+  function soldAsPair(t) {
+    try { const O = ordersLib(); return !!(O && typeof O.lineSignals === "function" && t && typeof t === "object" && O.lineSignals(t).soldAs === "pair"); } catch (_) { return false; }
+  }
+  const qtyOf = t => Math.max(1, Math.floor(Number(t && (t.quantity != null ? t.quantity : t.__qty))) || 1);
+  /** how many pieces one line makes: CharmNestOrders.pieceCountOf (the Etsy quantity times what the rules say), else the Etsy quantity as always */
+  function countOf(t) {
+    let n = qtyOf(t);
+    try { const O = ordersLib(); if (O && typeof O.pieceCountOf === "function") { const c = Math.floor(Number(O.pieceCountOf(t))); if (c >= 1) n = c; } } catch (_) {}
+    return n;
+  }
+  /** what a line is as pieces: n pieces for q units; sided = the pieces are Left / Right ears (an earring pair made as a Left and a Right piece per unit, or a
+   *  single earring whose line names its side); glued = a mismatched line the pool still makes as ONE piece per unit (left and right drawn together).
+   *  When the intake file can list the pieces itself (CharmNestOrders.piecesOf: side per piece) its list is the word; else the line's words decide. */
+  function describe(t) {
+    const q = qtyOf(t), n = countOf(t), mis = saysMismatched(t);
+    let sided = n === 2 * q && (mis || soldAsPair(t)), list = null;
+    try { const O = ordersLib(); if (O && typeof O.piecesOf === "function") { const l = O.piecesOf(t); if (Array.isArray(l) && l.length === n) { list = l; sided = l.some(p => p && (p.side === "L" || p.side === "R")); } } } catch (_) {}
+    return { q, n, mis, sided, list, glued: mis && !sided && n === q };
+  }
+  /** single | pair | mismatched | multi, from the line alone */
+  function kind(t) {
+    const d = describe(t);
+    return { kind: d.mis ? (d.q === 1 && d.n <= 2 ? "mismatched" : "multi") : d.sided && d.n >= 2 ? (d.n === 2 ? "pair" : "multi") : d.n <= 1 ? "single" : "multi", mismatched: d.mis, sided: d.sided, pieces: d.n };
+  }
+  /** the short words a cell adds: "" for a line with no sides (nothing on screen changes) */
+  const tag = t => { try { const d = describe(t); if (!d.mis && !(d.sided && d.n >= 2)) return ""; return d.q > 1 ? d.q + " pairs: Left + Right each" : "Pair: Left + Right"; } catch (_) { return ""; } };
+  /** the pieces (efficiency "parts") of a list of lines; filter picks the lines that count (the Welding station counts its stud lines) */
+  function units(list, filter) {
+    let n = 0;
+    try { for (const t of (Array.isArray(list) ? list : [])) { if (!t || typeof t !== "object") continue; if (typeof filter === "function" && !filter(t)) continue; n += countOf(t); } } catch (_) {}
+    return n;
+  }
+  /** receipt:transaction, the group key of one order line (CharmNestPair.groupKey's own shape) */
+  const groupOf = (t, rid) => {
+    const r0 = t && (t.receipt_id != null ? t.receipt_id : t.receiptId != null ? t.receiptId : t.typedOrderNumber);
+    const r = digits(r0, 20) || digits(rid, 20), x = digits(t && (t.transaction_id != null ? t.transaction_id : t.transactionId), 20);
+    return r ? r + ":" + x : "";
+  };
+  /** The pair fields of the pieces one line makes, in order (at most `max`): [{ side, grp, of, n, both }]; [] for a line that has no sides and no group.
+   *  A sided line alternates Left, Right (a Left is always followed by its own Right); a glued line is `both`; a line the rules make into several
+   *  pieces (n discs) is one group with no sides. A line the rules do not touch gets []. */
+  function sides(t, rid, max) {
+    const out = [];
+    try {
+      if (!t || typeof t !== "object") return out;
+      const d = describe(t); if (!d.sided && !d.glued && d.n <= d.q) return out;
+      const grp = groupOf(t, rid), cap = Math.max(0, Math.min(max == null ? MAX_PIECES : Number(max) || 0, 500));
+      for (let k = 1; k <= d.n && out.length < cap; k++) {
+        if (d.sided && d.n >= 2 && k % 2 === 1 && out.length + 2 > cap) break;           // (a left and a right go in together or not at all)
+        const p = {};
+        if (d.sided) { const w = d.list && d.list[k - 1] && d.list[k - 1].side; p.side = w === "L" || w === "R" ? w : d.list ? undefined : k % 2 === 1 ? "L" : "R"; if (p.side === undefined) delete p.side; } else if (d.glued) p.both = true;
+        if (grp) { p.grp = grp; if (!d.glued) { p.of = d.n; p.n = k; } }
+        out.push(p);
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  /** The ears an order's sticker prints (QR Printer.html, dataObj.pieces): [{ side, n, of }], a Left then a Right for every unit of every earring pair line
+   *  (matching or mismatched; the words of the line decide, whatever the count rules say: a sticker is a thing in the hand), n = the pair's number in the order
+   *  and of = how many pairs the order has. [] when the order has no earring pair: the one order sticker it always was. */
+  function ears(list) {
+    const out = [];
+    try {
+      const pairs = [];
+      for (const t of (Array.isArray(list) ? list : [])) {
+        if (!t || typeof t !== "object") continue;
+        if (!(saysMismatched(t) || soldAsPair(t))) continue;
+        for (let u = 0; u < Math.min(qtyOf(t), 20); u++) pairs.push(1);
+      }
+      for (let i = 0; i < pairs.length && out.length + 2 <= 40; i++) { out.push({ side: "L", n: i + 1, of: pairs.length }, { side: "R", n: i + 1, of: pairs.length }); }
+    } catch (_) {}
+    return out;
+  }
+
+  /** One piece per unit of every line (a line with quantity 2 is two pieces), at most 24 told; pieceCount is the true total.
+   *  An earring pair is a Left then a Right piece per unit, with the line's group key, the group's size and the piece's number
+   *  (a mismatched line the pool still makes as one piece per unit is one glued piece, `both`); every other line is exactly as before.
+   *  A pair is never cut in half by the limit of 24. */
+  function pieces(list, rid) {
     const out = []; let total = 0, i = 0;
     try {
       for (const t of (Array.isArray(list) ? list : [])) {
         i++;
         if (!t || typeof t !== "object") continue;
-        const q = Math.max(1, Math.floor(Number(t.quantity != null ? t.quantity : t.__qty)) || 1);
-        total += q;
+        const d = describe(t), n = d.n, sd = sides(t, rid, MAX_PIECES - out.length);
+        total += n;
+        if (!sd.length && (d.sided || d.glued || n > d.q)) continue;           // (no room left for the pieces of a group: all of them or none)
         const base = String(t.transaction_id || t.listing_id || i).replace(/[^\w.:-]/g, "_").slice(0, 30);
         const label = clean(t.title, 60), sku = clean(t.sku || t.__sku, 60), listingId = digits(t.listing_id, 20), size = sizeOf(t);
-        for (let k = 1; k <= q && out.length < MAX_PIECES; k++) {
+        for (let k = 1; k <= n && out.length < MAX_PIECES; k++) {
+          if (sd.length && k > sd.length) break;                              // (the pair fields stopped: the limit would cut a pair in half)
           const p = { id: base + "-" + k, label };
           if (sku) p.sku = sku;
           if (listingId) p.listingId = listingId;
           if (size) p.size = size;
+          if (sd.length) Object.assign(p, sd[k - 1]);
           out.push(p);
         }
       }
@@ -114,7 +226,7 @@
   function start(rid, transactions, o) {
     try {
       o = o || {};
-      const p = pieces(transactions);
+      const p = pieces(transactions, rid);
       return tell({ kind: "order", rid, title: o.title, orderNumber: o.orderNumber, customer: o.customer, note: o.note != null ? o.note : "",
         pieces: Array.isArray(transactions) ? p.pieces : (o.pieces || []), pieceCount: Array.isArray(transactions) ? p.pieceCount : (o.pieceCount || 0), holdMs: o.holdMs,
         sync: o.sync, keepTime: o.keepTime }, true);
@@ -130,7 +242,7 @@
         const mine = (Array.isArray(transactions) ? transactions : []).filter(t => { const r = digits(t && (t.typedOrderNumber || t.receipt_id || t.receiptId), 30); return !r || r === list[0]; });
         return start(list[0], mine, Object.assign({}, o, { title: "" }));
       }
-      const p = pieces(transactions);
+      const p = pieces(transactions, list[0]);
       return tell({ kind: "sheet", key: o.key != null ? "sheet|" + o.key : "sheet|" + list.join(","), title: o.title || "Batch of " + list.length + " orders", orderNumber: list[0],
         note: o.note != null ? o.note : "", pieces: p.pieces, pieceCount: p.pieceCount, holdMs: o.holdMs, sync: o.sync, keepTime: o.keepTime }, true);
     } catch (_) { return false; }
@@ -159,5 +271,5 @@
       return r;
     } catch (_) { cur = null; return false; }
   }
-  window.StationLiveOrder = { start, batch, sheet, note, end, pieces, current: () => (cur ? { kind: cur.kind, rid: cur.rid, title: cur.title, scannedAt: cur.scannedAt } : null) };
+  window.StationLiveOrder = { start, batch, sheet, note, end, pieces, units, kind, tag, sides, ears, current: () => (cur ? { kind: cur.kind, rid: cur.rid, title: cur.title, scannedAt: cur.scannedAt } : null) };
 })();
