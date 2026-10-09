@@ -1536,7 +1536,7 @@ const Orders = window.Orders = (() => {
     // would leave this copy stale) and trusts nothing here. Such a line is not noDesign for that reason, so a stale record can never keep a reopened piece resolved.
     // (only a line with no pool ids: the card a person completes was never pooled, and the server looks up exactly those lines)
     const cd = row.spec && row.spec.customDone, hand = !!cd && cd.state !== "open" && cd.how !== "sheet" && !(row.poolIds || []).length;
-    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
+    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1, pieceCount: row.spec ? (row.spec.pieceCount || row.spec.quantity) : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null, ...(row.engrave.pieces ? { pieces: row.engrave.pieces } : {}) } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
@@ -10282,7 +10282,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -10504,6 +10504,28 @@ const Review = window.Review = (() => {
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
+    } else if (it.kind === "needsMapping" && p.pairSecond) {
+      /* A line that says two different designs (a "Mismatched ..." title, "Silver • 2 symbols", Left and Right options) but names ONE is not guessed (Paul, 9 Oct 2026:
+         never guess, ambiguous waits). One press: the same design on both ears (the Right is the mirror of the Left), or the second design's SKU for the Right earring.
+         Both answers are kept for this line only, under the pseudo option "Two designs on this line" (optionMapPut: ignore = the same, design = the second). */
+      masterSkuList();
+      const notes = [].concat((sp && sp.personalization) || [], (sp && sp.buyerMessage) || []).filter(Boolean).join(" · ");
+      c.innerHTML = head("Two designs?", r.line.title, orderSub) +
+        `<div class="ev">${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" ") || "—")}${evRow("Note", esc(notes || "—"))}${evRow("Design", esc((sp && sp.designSku) || r.line.sku || "none"))}</div>` +
+        `<div class="ask">Which design goes on the other ear?</div><div class="why">${esc(p.pairSecond.why || "")}</div>
+        <div class="fixes"><input list="cnMasterSkus" data-f="second" placeholder="the second design (a master SKU)"><button class="btn gold sm" data-a="second" title="the line's own design is the Left earring, this one the Right">Use it for the other ear</button><button class="btn ghost sm" data-a="same" title="one design, a Left and a Right (the Right is the mirror image)">The same on both ears</button></div>`;
+      bindNeeds(c, "second", "second");
+      const keep = (field, value, words) => saving(c, async () => {
+        if (field === "design" && !p.listingId) { toast("This line has no listing number, so a second design cannot be kept for it: use “The same on both ears”, or Custom Orders", "bad", 7000); return; }
+        const who = by(); if (!who) return;
+        await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId || "*", optionName: p.optionName, optionValue: p.optionValue, map: { field, value }, by: who });
+        answered(it, "decided", words, { option: p.optionName, value: p.optionValue, field, to: String(value || ""), listing: String(p.listingId || "*") }, who);
+        await Orders.loadMaps(true);
+        toast(words, "ok");
+        for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
+      })();
+      c.querySelector("[data-a=same]").onclick = () => keep("ignore", null, "The same design on both ears");
+      c.querySelector("[data-a=second]").onclick = () => { const k = String(c.querySelector("[data-f=second]").value || "").trim().toUpperCase(); if (!Master.entryFor(k)) { toast("“" + k + "” is not in any master file", "bad"); return; } keep("design", k, `${k} is the design for the other ear`); };
     } else if (it.kind === "needsMapping" && p.count) {
       /* An option that may name how many separate pieces ONE of these makes (letters, initials, "Set of 3", a range), or that the buyer's note
          disagrees with, is not guessed (Paul, 9 Oct 2026): one press says how many, and the answer is kept for this listing and this value

@@ -127,7 +127,15 @@
     else if (by("sent").length) block(`Undo the set first: ${labels(by("sent"))} ${uniq(by("sent").map(p => p.sheetLabel)).length === 1 ? "is" : "are"} in a set that was already sent to the station.`);
     else if (by("unloaded").length) block(`${labels(by("unloaded"))} ${uniq(by("unloaded").map(p => p.sheetLabel)).length === 1 ? "is" : "are"} not open in this sorter, and a piece of this order is there. Reload the sorter and try again.`);
     else if (by("last").length) block(`This order is the only one on ${labels(by("last"))}, and a sheet is never left empty. Let another order fill that sheet first, or delete the sheet from its menu.`);
-    else if (!off.length && !none.length && stays.length) block("Every piece of this order is already cut, so there is nothing to take off.");
+    else if (!off.length && !none.length && stays.length) {
+      // (every piece cut: as it always read. A pair with one ear cut keeps the other ear with it: say which ear is cut and which one is only kept, each with its sheet,
+      //  so nobody looks for a cut that is not there. ADVLIFE 1, 9 Oct 2026)
+      const cutP = by("cut"), withP = by("together");
+      const earOf = p => (p.side === "L" ? "left earring" : p.side === "R" ? "right earring" : "piece");
+      const partOf = list => { const m = new Map(); for (const p of list) { const k = earOf(p) + "|" + (p.sheetLabel || "its sheet"); m.set(k, (m.get(k) || 0) + 1); } return joinAnd([...m].map(([k, n]) => { const [w, s] = k.split("|"); return `${n > 1 ? n + " " + (w === "piece" ? "pieces" : w + "s") : "the " + w} on ${s}`; })); };
+      if (withP.length && cutP.length) block(`Nothing can be taken off: ${partOf(cutP)} ${cutP.length === 1 ? "is" : "are"} already cut, and ${partOf(withP)} ${withP.length === 1 ? "is" : "are"} not cut but ${withP.length === 1 ? "stays" : "stay"} with ${cutP.length === 1 ? "it" : "them"}, so the ${stays.some(p => p.side) ? "pair" : "line"} is not split.`);
+      else block("Every piece of this order is already cut, so there is nothing to take off.");
+    }
     // what fills the spots (an estimate here; the room search of the live page replaces it, see plan())
     // (an order is taken once for a sheet of a metal: its gold piece for a gold sheet and its silver piece for a silver sheet are two moves of ONE order, as the run does them)
     const used = new Set(), usedKey = (c, metal) => c.rid + "|" + (c.metal ? metal : ""), cands = (snap.candidates || []).slice();
