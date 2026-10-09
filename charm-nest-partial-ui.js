@@ -63,7 +63,10 @@
     if (!e || !Number.isFinite(+e.pieces)) return { main: 'Fit not estimated', sub: '' };
     const n = Math.round(+e.pieces), low = Number.isFinite(+e.low) ? Math.round(+e.low) : n, high = Number.isFinite(+e.high) ? Math.round(+e.high) : n;
     if (n <= 0) return { main: 'Too small for a regular piece', sub: '' };
-    return { main: `About ${plural(n, 'piece')}`, sub: low !== high && high > 0 ? `roughly ${low} to ${high}` : '' };
+    // a pair needs TWO places: the pairs a leftover takes are half its pieces, said beside the pieces (a leftover for one piece takes no pair)
+    const pairs = Number.isFinite(+e.pairs) ? Math.round(+e.pairs) : Math.floor(n / 2), pw = pairs >= 1 ? `about ${plural(pairs, 'pair')}` : 'no room for a pair';
+    const range = low !== high && high > 0 ? `roughly ${low} to ${high}` : '';
+    return { main: `About ${plural(n, 'piece')}`, sub: range ? `${range} · ${pw}` : pw };
   }
   /** Who and which sheet last used it (the cut that left it counts as its first use). */
   function lastUseWords(c) {
@@ -212,7 +215,8 @@
     const cont = ans.continues || {};
     return { ok: true, pieces: Math.max(0, +ans.pieces || 0), fitsAll: !!ans.fitsAll, words: ans.words || '',
       links: (ans.links || []).map(l => ({ partialId: l.partialId, label: l.label || '', wMm: l.wMm, hMm: l.hMm, areaMm2: l.areaMm2, placed: Math.max(0, +l.placed || 0), densityPct: l.densityPct })),
-      rest: Math.max(0, +cont.n || 0), next: cont.next || 'none', nextPartialId: cont.nextPartialId || null, contWords: cont.words || '' };
+      rest: Math.max(0, +cont.n || 0), next: cont.next || 'none', nextPartialId: cont.nextPartialId || null, contWords: cont.words || '',
+      splitWords: ans.splitWords || '', sharedWords: ans.sharedWords || '' };   // (pairs: what the partial could hold only part of, and orders already on another sheet, in plain words)
   }
   function askHtml(m, sh, s) {
     const a = s.ask; if (!a) return '';
@@ -223,7 +227,7 @@
     let lead;
     if (!n) lead = `No pieces are nested on ${sheetWord(sh)} yet. It will nest on ${many ? 'these partial sheets' : 'this partial sheet'} from the start.`;
     else if (ans.fitsAll) lead = `All ${plural(n, 'piece')} on ${sheetWord(sh)} fit on ${many ? `these ${ans.links.length} partial sheets, filled in this order` : 'this partial sheet'}. They will be nested again onto ${many ? 'them' : 'it'}.`;
-    else if (!placed) lead = `No piece of ${sheetWord(sh)} fits on ${s.chain.length > 1 ? 'these partial sheets' : 'this partial sheet'}. Pick another one.`;
+    else if (!placed) lead = ans.splitWords ? `No whole order of ${sheetWord(sh)} fits on ${s.chain.length > 1 ? 'these partial sheets' : 'this partial sheet'}. Pick a bigger one.` : `No piece of ${sheetWord(sh)} fits on ${s.chain.length > 1 ? 'these partial sheets' : 'this partial sheet'}. Pick another one.`;
     else lead = `${placed} of the ${plural(n, 'piece')} on ${sheetWord(sh)} fit on ${many ? `the ${ans.links.length} partial sheets, filled in this order` : 'this partial sheet'}${rest ? ` (${rest} do not)` : ''}.`;
     // what takes the rest, in PS2's own words (and the sheet it names, when it names one)
     let sub = ''; const next = ans.nextPartialId && cards.get(ans.nextPartialId);
@@ -234,8 +238,9 @@
     }
     const list = ans.links.length && (!ans.fitsAll || many) ? `<ol class="psChainList">${ans.links.map((l, i) => { const c = cards.get(l.partialId); return `<li><span class="n">${i + 1}</span><span class="nm" title="${esc(cardName(c))}">${esc(cardName(c))}</span><span class="sz">${esc(mmWord(l.wMm || (c && c.wMm), l.hMm || (c && c.hMm)))}</span><span class="ft" title="${l.densityPct != null ? esc(l.densityPct + '% of this partial sheet filled') : ''}">${esc(plural(l.placed, 'piece'))}</span></li>`; }).join('')}</ol>` : '';
     const can = !a.noEngine && (!n || placed > 0), more = !a.noEngine && !ans.fitsAll && placed > 0 && availableOf(s.items, m).some(c => !s.chain.includes(c.id));
-    if (s.adding && !busy) return `<div class="psAsk" data-ps="ask" role="group"><p class="psWords">${esc(lead)}</p>${list}<p class="psSub">Pick the partial sheet that takes the rest. It is filled after the ones above.</p><div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="back-ask">Back</button></div></div>`;
-    return `<div class="psAsk" data-ps="ask" role="group" aria-label="What using ${many ? 'these partial sheets' : 'this partial sheet'} does"><p class="psWords">${esc(lead)}</p>${list}${sub ? `<p class="psSub">${esc(sub)}</p>` : ''}${ans.words && /trial/i.test(ans.words) ? '<p class="psSub">A quick trial pack: the real nest can place a few more or fewer.</p>' : ''}${a.noEngine ? '<p class="psSub">Seating pieces on a partial sheet is not ready on this page yet.</p>' : ''}`
+    const pairs = [ans.splitWords, ans.sharedWords].filter(Boolean).map(t => `<p class="psSub" data-ps="pairs">${esc(t)}</p>`).join('');   // (a pair is never split: said plainly, never silent)
+    if (s.adding && !busy) return `<div class="psAsk" data-ps="ask" role="group"><p class="psWords">${esc(lead)}</p>${list}${pairs}<p class="psSub">Pick the partial sheet that takes the rest. It is filled after the ones above.</p><div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="back-ask">Back</button></div></div>`;
+    return `<div class="psAsk" data-ps="ask" role="group" aria-label="What using ${many ? 'these partial sheets' : 'this partial sheet'} does"><p class="psWords">${esc(lead)}</p>${list}${pairs}${sub ? `<p class="psSub">${esc(sub)}</p>` : ''}${ans.words && /trial/i.test(ans.words) ? '<p class="psSub">A quick trial pack: the real nest can place a few more or fewer.</p>' : ''}${a.noEngine ? '<p class="psSub">Seating pieces on a partial sheet is not ready on this page yet.</p>' : ''}`
       + (busy ? `<div class="psBusy" role="status"><span class="psSpin" aria-hidden="true"></span>${esc(a.text || `Seating ${plural(n, 'piece')}…`)}</div>` : '')
       + `<div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="cancel"${busy ? ' disabled' : ''}>Cancel</button>${more ? `<button type="button" class="btn ghost xs" data-ps="add"${busy ? ' disabled' : ''}>Add another partial sheet</button>` : ''}<button type="button" class="btn sage xs" data-ps="use"${busy || !can ? ' disabled' : ''}>${many ? `Use these ${ans.links.length}` : 'Use this one'}</button></div></div>`;
   }
@@ -272,7 +277,7 @@
     if (s.repaint) { try { s.repaint(); } catch (e) { try { console.warn('partial sheets: repaint', e); } catch (_) {} } }
   }
   /** What the window needs to know to skip a redraw that would change nothing. */
-  const sig = m => { const s = stOf(m), pol = policyOf(m); return JSON.stringify([s.chain, s.adding, s.ask && [s.ask.phase, s.ask.text, s.ask.answer && [s.ask.answer.rest, s.ask.answer.fitsAll, s.ask.answer.links.length], s.ask.noEngine], lockedWhy(s.sh), piecesOn(s.sh), pol.mode === 'new' ? [pol.wMm, pol.hMm] : 0]); };
+  const sig = m => { const s = stOf(m), pol = policyOf(m); return JSON.stringify([s.chain, s.adding, s.ask && [s.ask.phase, s.ask.text, s.ask.answer && [s.ask.answer.rest, s.ask.answer.fitsAll, s.ask.answer.links.length, s.ask.answer.splitWords, s.ask.answer.sharedWords], s.ask.noEngine], lockedWhy(s.sh), piecesOn(s.sh), pol.mode === 'new' ? [pol.wMm, pol.hMm] : 0]); };
 
   /** The Use this one of a card (the window puts it in the card's actions): only for an available sheet of this sheet's metal. */
   function useButton(m, c) {
@@ -302,10 +307,12 @@
     const P = PS(), m = sh.metal, C = root.CN;
     if (!P || !P.plan) return { ok: false, reason: 'Partial sheets cannot be checked on this page yet.' };
     const items = availableOf(stOf(m).items, m), picked = ids.map(id => items.find(c => c.id === id)).filter(Boolean); if (!picked.length) return { ok: false, reason: 'This partial sheet is not available any more. Press Refresh.' };
-    const pieces = (sh.charms || []).map(c => ({ areaMm2: Math.max(1, (C && C.inflatedArea ? C.inflatedArea(c) : 0) * MM_PER_PT * MM_PER_PT) }));
+    const KEY = (root.CharmNestPartial && root.CharmNestPartial.groupKeyOf) || (c => c.order || c.id), pieces = (sh.charms || []).map(c => ({ areaMm2: Math.max(1, (C && C.inflatedArea ? C.inflatedArea(c) : 0) * MM_PER_PT * MM_PER_PT), group: KEY(c), ...(c.side === 'L' || c.side === 'R' ? { side: c.side } : {}) }));
     await P.plan(m, pieces, {});
+    // (a pair needs two places: each order goes whole onto a partial or on to the next, so a partial that holds 3 pieces takes one pair and not a pair and a half)
+    const sizes = []; { const by = new Map(); for (const c of sh.charms || []) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); } sizes.push(...by.values()); }
     let left = pieces.length; const links = [];
-    for (const c of picked) { const cap = Math.round((c.estimate && c.estimate.pieces) || 0), put = Math.min(left, cap); left -= put; if (put) links.push({ partialId: c.id, wMm: c.wMm, hMm: c.hMm, areaMm2: c.areaMm2, placed: put }); }
+    for (const c of picked) { let room = Math.round((c.estimate && c.estimate.pieces) || 0), put = 0; for (let i = 0; i < sizes.length; i++) if (sizes[i] > 0 && sizes[i] <= room) { room -= sizes[i]; put += sizes[i]; sizes[i] = 0; } left -= put; if (put) links.push({ partialId: c.id, wMm: c.wMm, hMm: c.hMm, areaMm2: c.areaMm2, placed: put }); }
     return { ok: true, noEngine: true, pieces: pieces.length, fitsAll: pieces.length > 0 && left === 0, links, rest: left, next: left ? 'new' : 'none', contWords: '', words: '' };
   }
   async function runPreview(m) {
