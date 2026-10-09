@@ -60,6 +60,12 @@ const T10 = F.tx(10), gkey = o => `${F.rid(o)}:${T10}`;
   ok(state(p2, 11, 1, 'PAIR-FACE-R') === 'mirrored' && state(p2, 11, 2, 'PAIR-FACE-R') === 'asDrawn', 'a right-facing pair: the Left is the mirror, the Right is as drawn');
   ok(charmsOf(p3, 13).map(c => c.side).join() === 'L,R,L,R' && [1, 2, 3, 4].every(k => state(p3, 13, k) === (k % 2 ? 'asDrawn' : 'mirrored')), 'quantity 2 lies as 2 Left (as drawn) and 2 Right (mirrored)');
   ok(new Set(sheetOf(p4, 'sh-gf1').placements.map(p => p.angle)).size === 4 && [1, 2, 3, 4].every(k => state(p4, 14, k) === (k % 2 ? 'asDrawn' : 'mirrored')), 'turned by 0, 90, 180 and 270 degrees the pieces keep their direction');
+  {   // shapes read from a raster (the nester's bits) carry noise: the verdict goes by the two distances and their ratio, not by one tight limit
+    const drawn = F.bodyPolys('PAIR-FACE-L', 0); let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 - .5; };
+    for (const amp of [.3, .6]) for (const [want, polys] of [['asDrawn', F.layPolys(drawn, 37, 10, 10)], ['mirrored', F.layPolys(F.mirrorPolys(drawn), 211, 10, 10)]]) ok(F.shapeState(polys.map(p => p.map(q => [q[0] + rnd() * 2 * amp, q[1] + rnd() * 2 * amp])), drawn) === want, `a noisy (${amp}) outline still reads ${want}`);
+    ok(F.shapeState(F.layPolys(F.bodyPolys('ONE-PENDANT', 0), 10, 0, 0), drawn) === 'none', 'another design\'s outline is none');
+    const stud = F.bodyPolys('PAIR-STUD', 0); ok(F.shapeState(F.layPolys(stud, 50, 0, 0), stud) === 'either' && F.shapeState(F.layPolys(F.mirrorPolys(stud), 20, 0, 0), stud) === 'either', 'a symmetric stud reads either way');
+  }
   ok(charmsOf(F.cases.pairSymmetric(), 12).every(c => F.shapeState(JSON.parse(c.shapeJson), F.bodyPolys('PAIR-STUD', 0)) === 'either'), 'a symmetric stud fits both ways (the checker cannot see a reflection there, only the flags)');
   ok(charmsOf(F.cases.discs3Sheets(), 4, 'sh-gf1').concat(charmsOf(F.cases.lettersNecklace(), 15)).every(c => c.side === null && c.mirror === false), 'discs and letters: no side, not mirrored');
   ok(charmsOf(F.cases.singleLine(), 16).length === 2 && charmsOf(F.cases.singleLine(), 16).every(c => c.side === null && c.mirror === false), 'a "Single" earring line, quantity 2: two pieces, no side, not mirrored');
