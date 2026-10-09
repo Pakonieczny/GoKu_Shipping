@@ -605,6 +605,9 @@
     if (m.kind === "shading") return grazing < 0.5 ? (onLabels ? "size badge (gradient)" : "gradient object") : null;
     if (m.kind === "image" || (m.kind === "xobj" && !(m.children && m.children.length))) return grazing < 0.5 ? "image or form object" : null;
     if (isDimensionLine(m)) { const pts = samples(m, new Map()); if (!polys || insideFrac(pts, polys) < 0.5) return "dimension line"; }
+    // Outlined lettering: a note or size badge whose letters were converted to shapes ("Cut/&Solid", "2") on the LABELS layer
+    // and stands beside the piece. The far fallback pulled such letters into the nearest charm, which then drew them.
+    if (onLabels && m.kind === "path" && m.fill && !m.stroke && grazing < 0.1) return "note lettering";
     return null;
   }
   /** Take every marker out of a charm's members and out of its box; returns the markers taken. */
@@ -663,6 +666,22 @@
     let frame = frames.length ? frames.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a) : null;
     const polysCache = new Map();
     const polysOf = s => { let p = polysCache.get(s); if (!p) { p = flatten(s, 8); polysCache.set(s, p); } return p; };
+    // A red outline left on the CUT layer INSIDE a black cut outline is engraving, not a hole. The laser engraves the red pen,
+    // and the master draws it so: the bars of a cross, a tulip's petal line, a basketball's seams, a gear. The layer outranks
+    // paint everywhere else (a red CUT outline that nothing black encloses is still a cut), so this is decided here, where the
+    // enclosing cut line is known, and recorded as the shop's own engrave role: the cut list, the holes and the drawing all
+    // follow it. A path the shop gave a role keeps it.
+    {
+      const redPen = c => !!c && c.length >= 3 && c[0] >= 0.7 && c[0] - Math.max(c[1], c[2]) >= 0.5;
+      const reds = drawable.filter(s => s.kind === "path" && s.closed && s.stroke && !s.fill && !s.manufacturingRole && redPen(s.strokeRGB) && pathRole(s) === "cut" && s.bbox);
+      if (reds.length) {
+        const black = drawableWithChains.filter(s => isOutline(s) && !reds.includes(s) && !redPen(s.strokeRGB) && !(s.fill && !s.stroke && !achromatic(s.fillRGB)));
+        for (const s of reds) {
+          const pts = samples(s, polysCache);
+          if (black.some(o => bbArea(o.bbox) > bbArea(s.bbox) && bbInter(s.bbox, o.bbox) && insideFrac(pts, polysOf(o)) >= 0.9)) s.manufacturingRole = "engrave";
+        }
+      }
+    }
     // A body drawn on an engraving layer. Some masters keep a charm's black cut line on HATCH or ENGRAVE, with only its
     // jump ring on CUT, or nothing on CUT at all. Labelled artwork alone left such a charm as its 2 mm ring, which the
     // nest packed its neighbours over while the sheet drew the whole body, or with no outline. A closed black, grey or
@@ -696,6 +715,37 @@
     cands.sort((a, b) => (isFillCand(a) - isFillCand(b)) || (bbArea(b.bbox) - bbArea(a.bbox)));
     const outlines = [], merged = new Map();
     const largestArea = cands.length ? bbArea(cands[0].bbox) : 0;
+    /* An attached ring: ring-sized, one simple subpath, and written next to its charm in the stream. Returns the outline it
+       belongs to among `among`, or null. Used when the ring is met (against the outlines accepted so far) and again once every
+       outline is known (a ring met before its host: a solid black body is only accepted after every stroked outline). */
+    const ringHostOf = (s, pts, among) => {
+      const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
+      const ringLike = maxDim <= opts.ringMaxPt && s.subpaths.length <= 2 && s.subpaths.every(sp => sp.length <= 20);
+      const small = ringLike && (bbArea(s.bbox) <= 0.12 * largestArea || maxDim <= 30);
+      if (!small) return null;
+      let bestD = Infinity, bestO = null, secondD = Infinity;
+      for (const o of among) { const g = Math.max(opts.touchPt, opts.nearPt); const grown = [s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g]; if (!bbInter(grown, o.bbox)) continue; const d = minDist(pts, polysOf(o)); if (d < bestD) { secondD = bestD; bestD = d; bestO = o; } else if (d < secondD) secondD = d; }
+      const touch = opts.touchPt + (s.lwPt || 0) / 2 + ((bestO && bestO.lwPt) || 0) / 2;
+      // touching wins outright; a ring that merely floats near two outlines (an already-nested sheet fed back
+      // in) attaches only when it is clearly closer to one of them — never to whichever neighbour is a hair nearer
+      if (bestO && (bestD <= touch || (bestD <= Math.max(opts.touchPt, opts.nearPt) + touch && (secondD === Infinity || secondD >= 2 * Math.max(bestD, 0.5))))) {
+        /* On a nested sheet fed back in, a ring can touch a neighbour's charm as well as its own: then the artist's
+           order decides, and it belongs to the outline written beside it. But that gate must not run when there is
+           nothing to disambiguate. A master drawn in layers writes every body, then every ring: a ring's stream
+           neighbours are other rings, and gating on them detached every ring in the shop's library (entries came
+           back with one member and no holes, and the nester packed bodies through rings it could not see). So:
+           one outline within reach, geometry decides; two within touch, the stream decides. */
+        const ambiguous = secondD <= touch;                    // only an outline that touches the ring as well competes with the one it sits on
+        const big = cands.filter(c => Math.max(c.bbox[2] - c.bbox[0], c.bbox[3] - c.bbox[1]) > opts.ringMaxPt).sort((a, b) => ord(a) - ord(b));
+        const o = ord(s); let prev = null, next = null; for (const c of big) { if (ord(c) < o) prev = c; else if (!next) next = c; }
+        if (!ambiguous || bestO === prev || bestO === next || (!prev && !next)) return bestO;
+        // the stream names neither (every ring is written after every body): the outline that holds more of the ring wins, then the nearer one
+        let pick = null, pickF = -1, pickD = Infinity;
+        for (const o2 of among) { const g = Math.max(opts.touchPt, opts.nearPt); if (!bbInter([s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g], o2.bbox)) continue; const d = minDist(pts, polysOf(o2)); if (d > touch) continue; const f = insideFrac(pts, polysOf(o2)); if (f > pickF + 0.05 || (Math.abs(f - pickF) <= 0.05 && d < pickD)) { pick = o2; pickF = f; pickD = d; } }
+        return pick;
+      }
+      return null;
+    };
     for (const s of cands) {
       const pts = samples(s, polysCache);
       let host = null;
@@ -708,32 +758,22 @@
         for (const o of outlines) { if (isFillCand(o) || !bbInter(s.bbox, o.bbox)) continue; const f = insideFrac(pts, polysOf(o)); if (f > bestR) { bestR = f; bestO = o; } }   // by real containment only: on a dense sheet boxes overlap, shapes do not
         if (bestO && bestR >= 0.3) host = bestO;
       }
-      if (!host) {
-        // an attached ring: ring-sized, one simple subpath, and written next to its charm in the stream
-        const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
-        const ringLike = maxDim <= opts.ringMaxPt && s.subpaths.length <= 2 && s.subpaths.every(sp => sp.length <= 20);
-        const small = ringLike && (bbArea(s.bbox) <= 0.12 * largestArea || maxDim <= 30);
-        if (small) {
-          let bestD = Infinity, bestO = null, secondD = Infinity;
-          for (const o of outlines) { const g = Math.max(opts.touchPt, opts.nearPt); const grown = [s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g]; if (!bbInter(grown, o.bbox)) continue; const d = minDist(pts, polysOf(o)); if (d < bestD) { secondD = bestD; bestD = d; bestO = o; } else if (d < secondD) secondD = d; }
-          const touch = opts.touchPt + (s.lwPt || 0) / 2 + ((bestO && bestO.lwPt) || 0) / 2;
-          // touching wins outright; a ring that merely floats near two outlines (an already-nested sheet fed back
-          // in) attaches only when it is clearly closer to one of them — never to whichever neighbour is a hair nearer
-          if (bestO && (bestD <= touch || (bestD <= Math.max(opts.touchPt, opts.nearPt) + touch && (secondD === Infinity || secondD >= 2 * Math.max(bestD, 0.5))))) {
-            /* On a nested sheet fed back in, a ring can touch a neighbour's charm as well as its own: then the artist's
-               order decides, and it belongs to the outline written beside it. But that gate must not run when there is
-               nothing to disambiguate. A master drawn in layers writes every body, then every ring: a ring's stream
-               neighbours are other rings, and gating on them detached every ring in the shop's library (entries came
-               back with one member and no holes, and the nester packed bodies through rings it could not see). So:
-               one outline within reach, geometry decides; two within touch, the stream decides. */
-            const ambiguous = secondD <= Math.max(opts.touchPt, opts.nearPt) + touch;
-            const big = cands.filter(c => Math.max(c.bbox[2] - c.bbox[0], c.bbox[3] - c.bbox[1]) > opts.ringMaxPt).sort((a, b) => ord(a) - ord(b));
-            const o = ord(s); let prev = null, next = null; for (const c of big) { if (ord(c) < o) prev = c; else if (!next) next = c; }
-            if (!ambiguous || bestO === prev || bestO === next || (!prev && !next)) host = bestO;
-          }
-        }
-      }
+      if (!host) host = ringHostOf(s, pts, outlines);
       if (host) merged.set(s, host); else outlines.push(s);
+    }
+    // A ring met before its host: stroked outlines are all accepted before the solid black bodies, so a jump ring drawn
+    // beside a solid body was kept as a charm of its own (the hoop then had nothing to weld to). Now that every outline is
+    // known, a ring-sized outline that touches a body accepted after it joins that body.
+    for (let i = 0; i < outlines.length; i++) {
+      const s = outlines[i];
+      if (Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]) > opts.ringMaxPt) continue;
+      const later = outlines.slice(i + 1).filter(o => Math.max(o.bbox[2] - o.bbox[0], o.bbox[3] - o.bbox[1]) > opts.ringMaxPt && isFillCand(o));
+      if (!later.length) continue;
+      const host = ringHostOf(s, samples(s, polysCache), later);
+      if (!host) continue;
+      merged.set(s, host);
+      for (const [k, v] of merged) if (v === s) merged.set(k, host);
+      outlines.splice(i, 1); i--;
     }
     // 2 · every other drawable segment → the outline whose polygon holds most of its
     //     points; ties → smaller outline; then contact distance; then box overlap;
@@ -878,7 +918,10 @@
       parts.forEach(pp => seen.add(pp.s || pp));
       const bb = parts.reduce((a, pp) => bbUnion(a, pp.bbox), null);
       const sub = poly.map((pt, i) => [i ? "l" : "m", pt]); sub.push(["h"]);
-      out.push({ kind: "path", synthetic: true, parts, stroke: true, fill: false, closed: true, strokeRGB: parts[0].strokeRGB, lwPt: Math.max(...parts.map(pp => pp.lwPt || 0)), paintOp: "S", subpaths: [sub], bbox: bb, start: Math.min(...parts.map(pp => pp.start)), end: Math.max(...parts.map(pp => pp.end)), depth: parts[0].depth, parent: parts[0].parent });
+      // the chain is on the layer its parts are on: without it a green plate drawn on CUT in open strokes was no cut line at all
+      // (a chromatic stroke counts only by its layer), so the plate had no outline and its ink went to the next charm
+      const sameLayer = parts.every(pp => pp.layer === parts[0].layer), sameRole = parts.every(pp => pp.manufacturingRole === parts[0].manufacturingRole);
+      out.push({ kind: "path", synthetic: true, parts, ...(sameLayer && parts[0].layer != null ? { layer: parts[0].layer } : {}), ...(sameRole && parts[0].manufacturingRole ? { manufacturingRole: parts[0].manufacturingRole } : {}), stroke: true, fill: false, closed: true, strokeRGB: parts[0].strokeRGB, lwPt: Math.max(...parts.map(pp => pp.lwPt || 0)), paintOp: "S", subpaths: [sub], bbox: bb, start: Math.min(...parts.map(pp => pp.start)), end: Math.max(...parts.map(pp => pp.end)), depth: parts[0].depth, parent: parts[0].parent });
       parts.forEach(pp => seen.add(pp));
     }
     return out;
@@ -1154,9 +1197,11 @@
     return cv.convertToBlob ? await blobToDataUrl(await cv.convertToBlob({ type: "image/png" })) : cv.toDataURL("image/png");
   }
   function drawCharm(ctx, c, tx, scale) {
-    // a cut silhouette that the master drew as a FILL (text turned to outlines, an expanded shape) is shown as the cut line it is
+    // a cut silhouette that the master drew as a FILL (text turned to outlines, an expanded shape) is shown as the cut line it is.
+    // A cut-line member's pen is the cut black, but a light fill it carries stays as drawn: the white lettering knocked out of
+    // a blue plate ("POLICE") is white in the master, not black.
     drawSegments(ctx, c.members.map(m => isCutSilhouetteFill(c, m) ? cutLineOf(m)
-      : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:[0,0,0]} : m), tx, scale);
+      : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:m !== c.outline && m.fill && m.fillRGB && lum(m.fillRGB) > 0.35 ? m.fillRGB : [0,0,0]} : m), tx, scale);
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
     ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
   }
@@ -1677,11 +1722,14 @@
     let dev = 0; for (const p of pts) dev = Math.max(dev, Math.abs(Math.hypot(p[0] - cx, p[1] - cy) - r));
     return dev <= 0.04 * r + 0.05 ? { cx, cy, r } : null;
   }
-  /** A path that could be (part of) a hoop: closed, stroked, not artwork, hoop-sized and round by its box. */
+  /** A path that could be (part of) a hoop: closed, not artwork, hoop-sized and round by its box. Stroked circles (a circle
+      drawn with eight Béziers is ten operators, not eight), or a washer drawn as ONE filled path of two circles on a cut
+      layer (the black ring of a solid-black design: it was never welded and stayed a loose ring). */
   const ringLike = m => {
-    if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.stroke || !m.closed) return false;
+    if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.closed) return false;
     const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1], subs = m.subpaths || [];
-    return Math.abs(w - h) < 1 && w >= HOOP_LONE_MIN_PT && w <= HOOP_OUTER_MAX_PT && subs.length >= 1 && subs.length <= 3 && subs.every(sp => sp.length <= 8);
+    if (!m.stroke && !(m.fill && subs.length === 2 && isCutLine(m))) return false;
+    return Math.abs(w - h) < 1 && w >= HOOP_LONE_MIN_PT && w <= HOOP_OUTER_MAX_PT && subs.length >= 1 && subs.length <= 3 && subs.every(sp => sp.length <= 12);
   };
   /** Every hoop a charm carries, from its concentric circles: [{ outer, aperture|null, members, items }], largest first. */
   function findHoops(c, V) {
@@ -1689,6 +1737,11 @@
     for (const m of c.members) {
       if (!m || m === c.outline || !ringLike(m)) continue;
       const cs = m.subpaths.map(sp => circleOf(sp, V)); if (cs.some(x => !x)) continue;   // one path holding anything but circles is not a hoop
+      // a filled washer is a ring only where the fill leaves the middle open: even-odd, or two circles wound opposite ways
+      if (!m.stroke) {
+        const sa = sp => { const ps = V.flatten(sp).points; return ps.reduce((v, p, i) => v + p[0] * ps[(i + 1) % ps.length][1] - p[1] * ps[(i + 1) % ps.length][0], 0); };
+        if (!String(m.paintOp || "").endsWith("*") && sa(m.subpaths[0]) * sa(m.subpaths[1]) > 0) continue;
+      }
       cs.forEach((x, i) => items.push(Object.assign({ m, i }, x)));
     }
     items.sort((a, b) => b.r - a.r);
@@ -1703,6 +1756,7 @@
       const outer = g.items[0];
       const aperture = g.items.find(i => i !== outer && !same(i.r, outer.r) && i.r < outer.r * 0.92 && i.r > outer.r * 0.2) || null;
       const d = outer.r * 2;
+      if (!aperture && g.items.some(i => !i.m.stroke)) continue;   // a lone filled disc is a dot, not a hoop
       if (aperture ? d < HOOP_LONE_MIN_PT : (d < HOOP_LONE_MIN_PT || d > HOOP_LONE_MAX_PT)) continue;   // a lone circle keeps the old size window; a pair may be the larger HUGGIE ring (9.35 pt)
       const used = g.items.filter(i => i === outer || i === aperture || same(i.r, outer.r) || (aperture && same(i.r, aperture.r)));
       const members = [...new Set(used.map(i => i.m))];
@@ -1770,7 +1824,8 @@
       // a sliver the laser cannot cut (under 0.1 pt2, about 0.035 mm2) is not a hole: a hoop touching the body at a point leaves a
       // zero-area one, a body path that touches itself leaves hair-thin ones along its edge. Real pockets between hoop and body stay.
       const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole&&polyArea(p.points)>=.1);
-      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||hoop.outer.m.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
+      // a solid body drawn as a fill carries whatever pen width the graphics state held (1 mm in the masters): the welded cut line is a hairline
+      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.stroke?(original.lwPt||hoop.outer.m.lwPt||.25):CUT_HAIRLINE_PT,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
       const outline={...original,...base,subpaths:exteriors.map(p=>V.subpath(p.points)),bbox:bboxOf(exteriors.flatMap(p=>p.points)),welded:(original.welded||0)+1};
       const apertures=holes.map(p=>({...base,subpaths:[V.subpath(p.points)],bbox:bboxOf(p.points)}));
       const replaced=new Set([original,...hoop.members,...(original.parts||[])].filter(Boolean));
