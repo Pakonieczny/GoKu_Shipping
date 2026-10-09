@@ -2187,6 +2187,9 @@ const Master = window.Master = (() => {
      replaced only once every part has come: a part that fails leaves it as it was. A background reload ({ quiet: true },
      the arrivals check every ten minutes) shows no progress, and reads the entries again only when the index's signature
      (its count and when it was last indexed or edited, sent with the files list) changed since they were read.
+     A page that holds nothing yet starts from the last whole copy kept on this computer (charm-nest-master-cache.js) and asks
+     for the signatures only: the copy is used when they are unchanged, and a changed one reads everything, as it always did
+     (Paul, 9 Oct: a refresh read about 6,960 documents again; now about a dozen when nothing changed).
      load(true) reads everything now. */
   async function load(opts) {
     const o = opts && typeof opts === "object" ? opts : { force: !!opts }, quiet = { quiet: !!o.quiet };
@@ -2199,13 +2202,20 @@ const Master = window.Master = (() => {
     B.master.loading = (async () => {
       if (changed) render();
       try {
-        const sig = x => JSON.stringify(x || null), first = o.quiet && B.master.index ? await api("charmNestLibrary", B.master.filesSig ? { op: "masterListFiles", ifFilesSig: B.master.filesSig } : { op: "masterListFiles" }, quiet) : null;   // (the file records are sent again only when they changed)
-        const unchanged = !!(first && first.index && sig(first.index) === sig(B.master.index));
+        const sig = x => JSON.stringify(x || null), MC = window.CharmNestMasterCache;
+        // a page with nothing yet starts from the copy kept on this computer; it is believed only once the cloud's signatures say nothing changed
+        let held = null; if (MC && !B.master.index && !o.force) { try { held = await MC.read(); } catch (_) { held = null; } }
+        const base = held || (o.quiet && B.master.index ? B.master : null);
+        const first = base ? await api("charmNestLibrary", base.filesSig ? { op: "masterListFiles", ifFilesSig: base.filesSig } : { op: "masterListFiles" }, held && !o.quiet ? { label: "Checking the charm library" } : quiet) : null;   // (the file records are sent again only when they changed)
+        const unchanged = !!(first && first.index && sig(first.index) === sig(base.index));
         const [ix, fl] = await Promise.all([unchanged ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: "entries" }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
         if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; changed = true; }
-        if (fl.unchanged) fl.files = B.master.files || [];
+        else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; changed = true; }   // (the signatures agree: the copy is the index)
+        if (fl.unchanged) fl.files = held ? held.files : B.master.files || [];
         if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
         B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
+        // what was read whole is kept (serialised now, written in the background); files that changed under an unchanged index replace the kept ones
+        if (MC) { try { if (ix) { if (ix.index) MC.save({ index: ix.index, entries: ix.entries || [], files: B.master.files, filesSig: B.master.filesSig }); else MC.forget(); } else if (!fl.unchanged) MC.saveFiles(B.master.files, B.master.filesSig); } catch (_) { /* the page does not depend on it */ } }
         if (B.master.error) changed = true;
         B.master.error = null;
       } catch (e) { if (B.master.error !== e.message) changed = true; B.master.error = e.message; throw e; }   // a failed load must not look like an empty library

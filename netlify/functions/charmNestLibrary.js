@@ -1152,12 +1152,14 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
-/** What changes whenever the index does: how many entries it holds, and when one was last indexed and last edited
-    (masterPatch). A background reload of the library that finds these as they were reads nothing more (Master.load). */
+/** What changes whenever the index does: how many entries it holds, and when one was last indexed (masterPutIndex: every write of an
+    entry stamps indexedAt) and last edited (masterPatch: pair, facing, angle, engravable ... all stamp updatedAt; a removal changes the
+    count), and the shape the entries are sent in (Master.SHAPE: the code that makes them). A background reload of the library, or a page
+    that kept a copy of it (charm-nest-master-cache.js), that finds these as they were reads nothing more (Master.load). */
 async function masterIndexSig() {
   const ix = db.collection(Master.INDEX);
   const [n, indexed, edited] = await Promise.all([ix.count().get(), ix.orderBy("indexedAt", "desc").limit(1).select("indexedAt").get(), ix.orderBy("updatedAt", "desc").limit(1).select("updatedAt").get()]);
-  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null };
+  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null, shape: Master.SHAPE };
 }
 /* The index in parts, in SKU (document id) order: a part holds up to `limit` entries, what fits in ANSWER_BYTES and what
    was read within ANSWER_MS, and `next` is the SKU after which the next part starts (null at the end of the index). It
