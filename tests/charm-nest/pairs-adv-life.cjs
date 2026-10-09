@@ -163,6 +163,66 @@ const R = n => F.rid(n), T = n => F.tx(n);
     });
     m.done();
   }
+  // ═══ 8 · Delete sheet on a sheet the laser already cut (passcode from the fixture, never printed) ═══
+  {
+    const m = mount({ orders: [{ rid: R(11), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(11), T(10))] });
+    const [L] = m.idsOf(R(11), T(10), 2);
+    m.fsx.put('Charm_Nest_Sheets', 'sh-gf1', Object.assign({}, m.rec('sh-gf1'), { laserDoneAt: NOW - 600000, laserDoneBy: 'Laser Lee' }));
+    await open('8a (finding 9, open question) deleting a sheet the laser already CUT frees its made Left earring to the pool as waiting, so it would be nested and cut a second time', async () => {
+      const r = await m.fns.lib('deleteSheet', { id: 'sh-gf1', code: process.env.CHARM_NEST_DELETE_CODE }); assert(!r.error, JSON.stringify(r));
+      assert(!(m.row(L).state === 'written' && !m.row(L).sheetId), 'the cut Left is waiting again: ' + JSON.stringify({ state: m.row(L).state, sheetId: m.row(L).sheetId, was: m.row(L).sheetIdWas }));
+    });
+    m.done();
+  }
+  {
+    await open('8b (finding 10, open question) a stale tab saves a CUT sheet with its piece list changed: the server writes it, so the record of what was cut loses the Left earring', async () => {
+      const m2 = mount({ orders: [{ rid: R(12), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }], tracked: [F.groupKey(R(12), T(10))] });
+      const [L2] = m2.idsOf(R(12), T(10), 2);
+      m2.fsx.put('Charm_Nest_Sheets', 'sh-gf1', Object.assign({}, m2.rec('sh-gf1'), { laserDoneAt: NOW - 600000, laserDoneBy: 'Laser Lee' }));
+      try { const r = await m2.fns.lib('putSheet', { sheet: { id: 'sh-gf1', poolIds: [] } }); assert(r.error || (m2.rec('sh-gf1').poolIds || []).includes(L2), 'the cut sheet now lists nothing: ' + JSON.stringify(m2.rec('sh-gf1').poolIds)); } finally { m2.done(); }
+    });
+  }
+  // ═══ 9 · a half-written group: the line says 2 pieces (pieceCount, as the intake now records it) but only its Left has a pool id ═══
+  {
+    const rid = R(13), key = rid + '_' + T(10), L = key + '_1', Rr = key + '_2';
+    await open('9a (finding 6, open) Readiness expects the Right earring of a line that says pieceCount 2 and lists only the Left: a sheet holding the Left must wait for it', async () => {
+      const lines = [{ key, orderId: rid, poolIds: [L], quantity: 1, pieceCount: 2, state: 'written' }];
+      const sheet = { id: 'a', setId: null, poolIds: [L], orders: [rid], laserDoneAt: 0, metal: 'gold' };
+      const pieces = Readiness.pieces(lines, [sheet])[rid]; assert.deepEqual(pieces.map(p => p.poolId), [L, Rr], 'the order reads ' + JSON.stringify(pieces.map(p => p.poolId)));
+    });
+  }
+  // ═══ 10 · two tabs nest the same ear on two sheets ═══
+  {
+    const m = mount({ orders: [{ rid: R(14), lines: [{ n: 10, kind: 'pair', on: ['sh-gf1', 'sh-gf2'] }] }, { rid: R(15), lines: [{ n: 10, kind: 'single', on: 'sh-gf3' }] }], tracked: [F.groupKey(R(14), T(10))] });
+    const [L] = m.idsOf(R(14), T(10), 2);
+    await open('10a (finding 12, open) a stale tab saves GF Sheet 3 with the Left earring that GF Sheet 1 already holds: the server must refuse a piece listed on two saved sheets', async () => {
+      const r = await m.fns.lib('putSheet', { sheet: { id: 'sh-gf3', poolIds: [F.poolId(R(15), T(10), 1), L] } });
+      assert(r.error, 'accepted: ' + JSON.stringify(m.rec('sh-gf3').poolIds) + ' and GF Sheet 1 still lists ' + JSON.stringify(m.rec('sh-gf1').poolIds));
+    });
+    m.done();
+  }
+  // ═══ 11 · rule A with units, a whole pair, a mismatched pair and letters ═══
+  {
+    const m = mount({ orders: [
+      { rid: R(21), lines: [{ n: 10, kind: 'pair', qty: 2, on: ['sh-gf1', 'sh-gf1', 'sh-gf2', 'sh-gf2'] }] },   // two units, each pair whole on its own sheet, the line on two sheets
+      { rid: R(22), lines: [{ n: 10, kind: 'pair', on: ['sh-gf3', 'sh-gf3'] }, { n: 11, kind: 'single', on: 'sh-gf3' }] },   // a whole pair and another line on ONE sheet
+      { rid: R(23), lines: [{ n: 10, kind: 'mismatched', on: ['sh-gf4', 'sh-ss1'] }] },   // a mismatched pair on two sheets of two sets
+      { rid: R(24), lines: [{ n: 10, kind: 'letters', letters: 4, on: ['sh-gf3', 'sh-gf3', 'sh-gf3', 'sh-ss1'] }] }], tracked: [F.groupKey(R(21), T(10)), F.groupKey(R(23), T(10)), F.groupKey(R(24), T(10))] });
+    await t('11a two units of one line, each pair whole on a sheet, the line on two sheets: both sheets are refused and the text names the order, its earrings and both sheets', async () => {
+      const r = await m.move('sh-gf2', null); assert.equal(r.status, 409, JSON.stringify(r)); assert(/GF Sheet 1/.test(r.error) && /GF Sheet 2/.test(r.error) && new RegExp(R(21)).test(r.error), r.error);
+      console.log('      text: ' + r.error);
+    });
+    await t('11b a pair whole on one sheet with another order that is split: the refusal names THAT order (and its sheets), not the whole pair', async () => {
+      // (order 24 has letters on GF Sheet 3 and the silver sheet)
+      const r = await m.move('sh-gf3', null); assert.equal(r.status, 409, JSON.stringify(r)); assert(new RegExp(R(24)).test(r.error), r.error); assert(!new RegExp(R(22)).test(r.error), 'the whole pair of order 22 is not the reason: ' + r.error);
+      console.log('      text: ' + r.error);
+    });
+    await t('11c a mismatched pair on two sheets of two different sets: moving either sheet into the other set is allowed to ask, but each leaves with a refusal that names left and right', async () => {
+      const r = await m.move('sh-gf4', 'set-1'); console.log('      join text: ' + (r.error || JSON.stringify(r).slice(0, 200)));
+      const out = await m.move('sh-ss1', null); assert.equal(out.status, 409, JSON.stringify(out)); console.log('      leave text: ' + out.error);
+    });
+    m.done();
+  }
   const bad = results.filter(r => r[1]);
   console.log(`\npairs-adv-life: ${results.length - bad.length} passed, ${bad.length} failed`);
   process.exit(bad.length ? 1 : 0);
