@@ -35,7 +35,7 @@ async function save(bucket, path, buf, contentType) {
   return { path, url: tokenUrl(bucket, path, token) };
 }
 /** A charm's members as an SVG (y flipped), rendered to PNG by resvg when it is available. */
-function thumbnailPng(Geom, charm, size) {
+function thumbnailPng(Geom, charm, size, PDF) {
   let Resvg = null; try { ({ Resvg } = require("@resvg/resvg-js")); } catch (_) { return null; }
   const b = charm.bbox, pad = 2, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h);
   const css = c => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
@@ -44,6 +44,8 @@ function thumbnailPng(Geom, charm, size) {
     if (m.kind !== "path") continue;
     const d = Geom.svgPathOf(m); if (!d) continue;
     const physical = m === charm.outline || Geom.isCutLine(m);
+    // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving
+    if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
     const st = m.stroke ? (physical ? "#000" : (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB))) : "none";
     parts.push(`<path d="${d}" fill="${m.fill ? (physical ? "#000" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`);
   }
@@ -90,7 +92,7 @@ exports.handler = async (event) => {
       const key = l.size ? `${l.sku}__${l.size}` : l.sku;
       const ai = await CharmNestPDF.buildSingleCharm(c, parsed);
       const aiUp = await save(bucket, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
-      let thumb = null; const png = thumbnailPng(Geom, c, 168); if (png) thumb = await save(bucket, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
+      let thumb = null; const png = thumbnailPng(Geom, c, 168, CharmNestPDF); if (png) thumb = await save(bucket, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
       const reasons = [];
       if (open) reasons.push("open outline");
       if (!flipOk) reasons.push(flipWhy);

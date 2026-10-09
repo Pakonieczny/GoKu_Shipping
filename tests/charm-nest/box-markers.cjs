@@ -4,7 +4,7 @@
 // placeholder box and also stretched the charm's size, silhouette and per-SKU file. groupCharms now leaves them out.
 //   node tests/charm-nest/box-markers.cjs
 // The fixture (fixtures/box-markers-masters.json) holds five real charms cut out of the three MASTER SKU_*_MV_2026-0914.ai
-// files, every object the master's grouping held for each, and its SKU lines: the three order cards Paul sent (saxophone
+// files, every object the master's grouping held for each: the three order cards Paul sent (saxophone
 // huggie, curb, rubber duck huggie) and two library cards (the Oklahoma seal with its callout, the Taekwondo belt whose
 // sample text sits ON the piece and must stay).
 const path = require('path'), assert = require('assert');
@@ -12,20 +12,19 @@ const { CharmNestPDF: P, Geom: G } = require('../../netlify/functions/_charmNest
 const fx = require('./fixtures/box-markers-masters.json');
 const MM = 25.4 / 72;
 
+// keepSampleText isolates this rule from the on-piece sample-text rule (takeSampleText), which has its own test
 const run = (ex, opts) => {
   const segs = JSON.parse(JSON.stringify(ex.segments));
   const p = { pageW: fx.pageW, pageH: fx.pageH, mediaBox: [0, 0, fx.pageW, fx.pageH], segments: segs.map((s, i) => Object.assign(s, { index: i })), nested: [] };
-  const g = P.groupCharms(p, Object.assign({ minPt: 6 }, opts));
-  const lab = P.labelCharms(p, g.charms, { pattern: P.SKU_PATTERN_DEFAULT, gapPt: 6.4 / MM, widen: 0.25 });
-  let c = null, l = null; for (const [idx, x] of lab.labels) if (x.sku === ex.sku.toUpperCase()) { c = g.charms.find(y => y.index === idx); l = x; }
-  assert(c, ex.key + ': the charm is found by its SKU');
+  const g = P.groupCharms(p, Object.assign({ minPt: 6, keepSampleText: true }, opts));
+  const area = c => (c.outline.bbox[2] - c.outline.bbox[0]) * (c.outline.bbox[3] - c.outline.bbox[1]);
+  const c = g.charms.slice().sort((a, b) => area(b) - area(a))[0];
+  assert(c, ex.key + ': the charm is found');
   const sil = G.silhouetteBits(c, 6, {});
-  const labelBoxes = [l.bbox].concat((l.extra || []).map(x => x.bbox));
-  const isLabel = m => m.seg.kind === 'text' && labelBoxes.some(b => b && b[0] >= m.seg.bbox[0] - 0.5 && b[2] <= m.seg.bbox[2] + 0.5 && b[1] >= m.seg.bbox[1] - 0.5 && b[3] <= m.seg.bbox[3] + 0.5);
   return {
     g, c, w: (sil.bboxOuter[2] - sil.bboxOuter[0]) * MM, h: (sil.bboxOuter[3] - sil.bboxOuter[1]) * MM, area: sil.areaPt2 * MM * MM,
     holes: P.cutLinesOf(c).length, kinds: c.members.map(m => m.kind),
-    markers: (g.markers || []).filter(m => m.charm === c.index && !isLabel(m)),
+    markers: (g.markers || []).filter(m => m.charm === c.index),
   };
 };
 const near = (a, b, tol, what) => assert(Math.abs(a - b) <= (tol || 0.06), `${what}: ${a.toFixed(2)} should be ${b}`);
