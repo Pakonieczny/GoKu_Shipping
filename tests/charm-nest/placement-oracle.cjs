@@ -19,12 +19,25 @@
 //           never saw the change happen; it must learn it from the cloud, with no reload, within 3 s of the cloud's last write (Paul's timeline
 //           rule: "within two or three seconds").
 // The owner's own surfaces are read after the change too (they must be right at once: the person who pressed the button sees them first).
+// PAIRS (pairs-1009, area 15). A line may be a PAIR, a MISMATCHED pair, HOOPS, DISCS or LETTERS: `{ kind: 'pair'|'hoop'|'mismatched'|'earring-single'|'single'|'discs'|'letters', discs: n, letters: n, qty, design, on }`.
+// Its pieces (a Left and a Right per unit of an earring pair, matching or mismatched; n per disc or letters necklace; `on`: a sheet id for all, or one entry per piece) carry side,
+// bodyIndex, groupKey, groupSize and mirror in their pool rows and sheet charms, and a sheet charm also its laid outline (`shapeJson`, a JSON string) (tests/charm-nest/pairs-fixtures.cjs).
+// Amendment 2: the Right is the Left mirrored, and the nester may turn a piece but never reflect it. Two more judgements, made on EVERY surface and on the cloud itself:
+//   pairProblems(st, orders, { tracked })   the pair checker over the cloud's documents (F.problems): a group whose pieces disagree about their sheet, side, group or MIRROR (a Right that
+//                                           is not the Left mirrored, a piece reflected by the nester, a flag that does not follow its side), a half-held group, a split over sets, an
+//                                           untracked split, a missing piece: the `pairs` surface (page: null), read in every pair scenario
+//   a surface that says "Left" or "Right" of a piece must say the side the cloud's pool rows hold for that line (claim kind 'pieceSide')
+// NEGATIVE CONTROLS (scenarios with `fault` and `expect`): the cloud is broken on purpose (breakCloud: a Right that is not mirrored, a nester that reflected a piece, a disc marked mirrored ...)
+// and the `pairs` surface must report exactly the codes the scenario expects (none, for a harmless change such as turning every piece): they prove the oracle itself can fail.
+// (A sheet rewritten by the page keeps side and mirror but not the laid outline `shapeJson`: the shape checks then have nothing to read, the flag checks still do.)
+// Pair scenarios (placement-oracle-run.cjs, flagged pairs: true) run with the others; `--pairs` runs only them, `--no-pairs` leaves them out.
 // Offline only: no live endpoint, no Etsy, no paid model call (counted: the test fails if one is made), nothing written outside the in-memory fake.
 const fs = require('fs'), path = require('path');
 process.env.CHARM_NEST_DELETE_CODE = 'oracle-' + Math.random().toString(36).slice(2, 10);   // (the fake's sheet delete asks for a code: a made-up one, never the shop's)
 const root = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
 const { start } = require('./bridge-server.cjs');
+const F = require('./pairs-fixtures.cjs');
 
 const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), opt = n => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : ''; };
 const ONLY = opt('only') ? new Set(opt('only').split(',')) : null, SURF = opt('surfaces') ? new Set(opt('surfaces').split(',')) : null, DUMP = flag('dump'), LIST = flag('list');
@@ -46,6 +59,7 @@ const SHEET_DEF = [
   { id: 'sh-gf1', metal: 'gold', n: 1, set: 'set-1' },
   { id: 'sh-ss1', metal: 'silver', n: 1, set: 'set-1' },
   { id: 'sh-gf2', metal: 'gold', n: 2, set: 'set-2' },
+  { id: 'sh-gf3', metal: 'gold', n: 3, set: 'set-1' },   // (the pair scenarios: a second gold sheet in Set 1, where a group may be split over two sheets of one set; empty sheets are never seeded)
 ];
 const SET_DEF = [{ id: 'set-1', seq: 1 }, { id: 'set-2', seq: 2 }];
 const sheetLabel = s => `${CODE[s.metal]} Sheet ${s.n}`;
@@ -58,9 +72,19 @@ const FILLER = [   // orders that stay put on their sheets, in every scenario (t
   { rid: '4181000005', lines: [{ n: 5, metal: 'gold', on: 'sh-gf2' }] },
   { rid: '4181000006', lines: [{ n: 6, metal: 'gold', on: 'sh-gf2' }] },
 ];
-const copiesOf = l => l.custom ? [] : Array.isArray(l.on) ? l.on : [l.on || null];
+const PAIR_FILLER = [{ rid: '4181000007', lines: [{ n: 7, metal: 'gold', on: 'sh-gf3' }] }];   // (the pair scenarios' third sheet: a sheet is never left empty, so an order alone on it cannot be held)
+const copiesOf = l => l.custom ? [] : l.pf ? l.pf.map((_, i) => Array.isArray(l.on) ? (l.on[i] || null) : (l.on || null)) : Array.isArray(l.on) ? l.on : [l.on || null];   // (a pair line: one entry per piece)
 /** The order a scenario is about: two pieces (lines). */
-const subject = (rid, lines) => ({ rid, lines: lines.map((l, i) => Object.assign({ n: 10 + i, metal: 'gold' }, l)) });
+const subject = (rid, lines) => ({ rid, lines: lines.map((l, i) => pairLine(rid, Object.assign({ n: 10 + i, metal: 'gold' }, l))) });
+/** A line with a `kind` gets its pieces' pair fields (pf: one { side, bodyIndex, groupKey, groupSize } per piece) and its design. */
+function pairLine(rid, l) {
+  if (!l.kind) return l;
+  const d = F.lineOf(rid, { n: l.n, kind: l.kind, qty: l.qty, discs: l.discs, letters: l.letters, metal: l.metal, sku: l.design });
+  return Object.assign(l, { design: d.sku, pairKind: F.KINDS[l.kind].pair, pf: d.pieces.map(p => ({ side: p.side, bodyIndex: p.bodyIndex, groupKey: p.groupKey, groupSize: p.groupSize, mirror: p.mirror, shapeJson: F.shapeJsonOf(d.sku, p, { angle: 0, cx: 0, cy: 0 }) })) });
+}
+/** The pair fields of piece i of a line (a pool row or a page row); withShape: a sheet charm also holds its laid outline. */
+const pfRow = (l, i, withShape) => (l && l.pf && l.pf[i] ? Object.assign({ side: l.pf[i].side, bodyIndex: l.pf[i].bodyIndex, groupKey: l.pf[i].groupKey, groupSize: l.pf[i].groupSize, mirror: l.pf[i].mirror }, withShape ? { shapeJson: l.pf[i].shapeJson } : {}) : {});
+const lineOfItem = (spec, rid, n) => ((spec.orders.find(o => o.rid === rid) || { lines: [] }).lines.find(l => l.n === n)) || null;
 
 /* ═══════════════════════════ spec -> cloud documents and page rows ═══════════════════════════ */
 const specOf = orders => {
@@ -75,20 +99,20 @@ function cloudDocs(spec) {
   const NOW = Date.now(), docs = { sheets: [], pool: [], run: null, sets: [] }, lines = {};
   for (const o of spec.orders) for (const l of o.lines) {
     const key = lineKey(o.rid, l.n), cs = copiesOf(l);
-    lines[key] = { orderId: o.rid, transactionId: String(tx(l.n)), sku: l.custom ? '' : 'TEST-' + l.n, state: cs.length && cs.every(Boolean) ? 'written' : l.custom ? 'noDesign' : 'pooled', quantity: Math.max(1, cs.length), material: l.metal, poolIds: cs.map((_, i) => pid(o.rid, l.n, i + 1)), noDesign: !!l.custom };
+    lines[key] = { orderId: o.rid, transactionId: String(tx(l.n)), sku: l.custom ? '' : 'TEST-' + l.n, state: cs.length && cs.every(Boolean) ? 'written' : l.custom ? 'noDesign' : 'pooled', quantity: Math.max(1, cs.length), material: l.metal, poolIds: cs.map((_, i) => pid(o.rid, l.n, i + 1)), noDesign: !!l.custom, ...(l.pf ? { kind: l.pairKind, pieceCount: cs.length } : {}) };
   }
   docs.run = { runId: RUN, status: 'running', step: 'nest', day: DAY, lines, orders: spec.orders.map(o => o.rid), sheets: {}, holds: {}, errors: [], resumable: true };
   for (const sh of spec.sheets) {
     const s = SHEET[sh.id], charms = [], placements = [], poolIds = [], orders = [];
     sh.items.forEach(([rid, n, copy], i) => {
       const poolId = pid(rid, n, copy), id = `${sh.id}-c${i}`;
-      charms.push({ id, poolId, order: rid, name: `${rid} · TEST-${n}` }); poolIds.push(poolId); if (!orders.includes(rid)) orders.push(rid);
+      charms.push({ id, poolId, order: rid, name: `${rid} · TEST-${n}`, ...pfRow(lineOfItem(spec, rid, n), copy - 1, true) }); poolIds.push(poolId); if (!orders.includes(rid)) orders.push(rid);
       placements.push({ id, cxPt: 30 + (i % 6) * 40, cyPt: 30 + Math.floor(i / 6) * 40, angle: 0, wPt: 28, hPt: 28 });
     });
     docs.sheets.push({ id: sh.id, setId: s.set, setSeq: SET_DEF.find(x => x.id === s.set).seq, sheetIndex: s.n, runId: RUN, metal: s.metal, day: DAY, fileBase: fileBase(s), folder: fileBase(s), status: 'complete', placedCount: placements.length, charmCount: placements.length,
       density: .5, stock: { wPt: 300, hPt: 150, wIn: 6, hIn: 4.5 }, placements, charms, poolIds, orders, verification: { ok: true }, outputs: {}, label: { files: [], orders }, createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 });
   }
-  for (const o of spec.orders) for (const l of o.lines) copiesOf(l).forEach((on, i) => docs.pool.push({ poolId: pid(o.rid, l.n, i + 1), orderId: o.rid, transactionId: String(tx(l.n)), lineKey: lineKey(o.rid, l.n), sku: 'TEST-' + l.n, material: l.metal, copy: i + 1, quantity: copiesOf(l).length, runId: RUN,
+  for (const o of spec.orders) for (const l of o.lines) copiesOf(l).forEach((on, i) => docs.pool.push({ ...pfRow(l, i), poolId: pid(o.rid, l.n, i + 1), orderId: o.rid, transactionId: String(tx(l.n)), lineKey: lineKey(o.rid, l.n), sku: 'TEST-' + l.n, material: l.metal, copy: i + 1, quantity: copiesOf(l).length, runId: RUN,
     state: on ? 'written' : 'ready', sheetId: on || null, setId: on ? SHEET[on].set : null, sheetName: on ? fileBase(SHEET[on]) : null, createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 }));
   for (const set of SET_DEF) { const sh = spec.sheets.filter(x => SHEET[x.id].set === set.id); if (sh.length) docs.sets.push({ setId: set.id, seq: set.seq, day: DAY, runId: RUN, sheetIds: sh.map(x => x.id), materials: [...new Set(sh.map(x => x.metal))], orders: {}, labelFiles: [], status: 'labelled' }); }
   return docs;
@@ -121,10 +145,31 @@ function truthOf(st, orders) {
       else if (rows.length && rows.every(r => r.state === 'abandoned' && r.heldAt && !r.removedAt && !r.repooledAt && !r.sheetId)) state = 'held';
       else if (on.length) { state = 'sheet'; at = [...new Set(on.map(s => sheetLabel(SHEET[s._id])))].sort(); }
       else state = 'waiting';
-      out[lineKey(o.rid, l.n)] = { rid: o.rid, n: l.n, state, sheets: at, how: rec && rec.how || null, partial: state === 'sheet' && copiesOn < ids.length };
+      out[lineKey(o.rid, l.n)] = { rid: o.rid, n: l.n, state, sheets: at, how: rec && rec.how || null, partial: state === 'sheet' && copiesOn < ids.length, pair: !!l.pf, sides: l.pf ? [...new Set(l.pf.map(p => p.side).filter(Boolean))] : [], pieces: ids.map(id => ({ poolId: id, sheet: (sheets.find(s => (s.poolIds || []).includes(id)) || {})._id || null })) };
     }
   }
   return out;
+}
+/** The pair checker (pairs-fixtures F.problems) over the cloud's own documents, for the groups of the pair lines of `orders` (and any set-level disagreement).
+ *  opts.tracked: the groupKeys whose split over sheets is tracked on purpose. Returns [{ code, groupKey, poolId, text }]. */
+function pairProblems(st, orders, opts) {
+  const lines = orders.flatMap(o => o.lines.filter(l => l.pf).map(l => ({ o, l }))); if (!lines.length) return [];
+  const keys = new Set(lines.map(({ o, l }) => `${o.rid}:${tx(l.n)}`)), D = F.designs(), designs = {}, kinds = {};
+  for (const { o, l } of lines) { designs['TEST-' + l.n] = D[l.design]; kinds[`${o.rid}:${tx(l.n)}`] = l.pairKind; }
+  const docs = { pool: st.list(POOL), sheets: st.list(SHEETS).filter(s => !s.archived).map(s => Object.assign({}, s, { id: s._id })), sets: st.list(SETS), designs, kinds };
+  return F.problems(docs, { tracked: (opts && opts.tracked) || [] }).filter(p => !p.groupKey || keys.has(p.groupKey));
+}
+/** Break the cloud on purpose (a negative control). fn({ sheet(id), row(poolId), charm(poolId), all }) edits copies of the documents; what it touched is written back. Returns the ids it touched. */
+function breakCloud(srv, fn) {
+  const sheets = new Map(), rows = new Map(), copy = d => JSON.parse(JSON.stringify(d)), strip = ({ _id, ...d }) => d;
+  const sheet = id => { if (!sheets.has(id)) { const d = srv.st.doc(SHEETS, id); if (!d) throw new Error('no sheet ' + id); sheets.set(id, copy(strip(d))); } return sheets.get(id); };
+  const row = id => { if (!rows.has(id)) { const d = srv.st.doc(POOL, id); if (!d) throw new Error('no pool row ' + id); rows.set(id, copy(strip(d))); } return rows.get(id); };
+  const charm = poolId => { for (const s of srv.st.list(SHEETS)) if ((s.poolIds || []).includes(poolId)) return (sheet(s._id).charms || []).find(c => c.poolId === poolId); throw new Error('no sheet holds ' + poolId); };
+  const placement = poolId => { for (const s of srv.st.list(SHEETS)) if ((s.poolIds || []).includes(poolId)) { const sh = sheet(s._id), c = (sh.charms || []).find(c => c.poolId === poolId); return (sh.placements || []).find(q => q.id === c.id); } throw new Error('no sheet holds ' + poolId); };
+  fn({ sheet, row, charm, placement });
+  for (const [id, d] of sheets) srv.raw.set(SHEETS + '/' + id, d);
+  for (const [id, d] of rows) srv.raw.set(POOL + '/' + id, d);
+  return { sheets: [...sheets.keys()], rows: [...rows.keys()] };
 }
 /** The sheet records as the cloud holds them now: id -> { label, set, orders:[rid], charms } */
 const sheetTruth = st => Object.fromEntries(st.list(SHEETS).filter(s => !s.archived).map(s => [s._id, { label: sheetLabel(SHEET[s._id]), set: SHEET[s._id].set, orders: [...new Set((s.poolIds || []).map(p => String(p).split('_')[0]))].sort(), charms: (s.poolIds || []).length }]));
@@ -151,6 +196,16 @@ function say(text) {
 function judge(c, T, S) {
   const bad = [], quote = t => JSON.stringify(String(t)).slice(0, 90), orderT = Object.values(T).filter(t => t.rid === c.rid), tl = c.n != null ? T[lineKey(c.rid, c.n)] : null;
   switch (c.kind) {
+    case 'pairCoherence': {
+      if (!c.expect) return (c.problems || []).map(p => `${p.code}: ${p.text}`);
+      // a negative control: the cloud was broken on purpose and the pair rules must say so, by these codes (an empty list: nothing at all)
+      const got = [...new Set((c.problems || []).map(p => p.code))].sort(), want = [...c.expect].sort();
+      return want.every(x => got.includes(x)) && (want.length || !got.length) ? [] : [`the oracle should report ${want.length ? want.join(', ') : 'nothing'} but reports ${got.length ? got.join(', ') : 'nothing'}`];
+    }   // (the cloud's own records of a pair or a disc necklace disagree about their sheet, side or group)
+    case 'pieceSide': {            // a surface that says Left or Right of a piece: the cloud's pool rows of that line must hold that side
+      if (!tl || !tl.pair) return [];
+      return c.words.filter(w => !tl.sides.includes(w === 'Left' ? 'L' : 'R')).map(w => `says ${w} (${quote(c.text)}), the cloud's pieces of this line are ${tl.sides.length ? tl.sides.join(' and ') : 'without a side'}`);
+    }
     case 'count': {                // a sheet's counts (Library card, sheet window)
       const s = S[c.sheetId];
       if (c.deleted) return s ? [`says the sheet is no longer there, the cloud has ${s.label}`] : [];   // (a window that says so of a sheet the cloud no longer has agrees)
@@ -274,6 +329,7 @@ async function seedPage(page, spec, { owner }) {
   await page.evaluate(({ spec, owner, RUN, BASE_TS }) => {
     localStorage.removeItem('cn.orderhold.run'); localStorage.removeItem('cn.sheetwin.freed');
     const MM = 72 / 25.4, R = 5, D = Math.ceil(2 * R * MM) + 2, tid = n => 5000000000 + n;
+    const pfOf = (rid, n, copy) => { const o = spec.orders.find(o => o.rid === rid), l = o && o.lines.find(l => l.n === n), f = l && l.pf && l.pf[copy - 1]; return f ? { side: f.side, bodyIndex: f.bodyIndex, groupKey: f.groupKey, groupSize: f.groupSize, mirror: f.mirror } : {}; };   // (a pair line's pieces carry their side and group, as the cloud's rows do)
     const mkBits = () => { const b = new Uint8Array(D * D); for (let y = 0; y < D; y++) for (let x = 0; x < D; x++) if (Math.hypot(x + .5 - D / 2, y + .5 - D / 2) <= D / 2 - 1) b[y * D + x] = 1; return b; };
     for (const m of Object.keys(CN.S.sheets)) { const pr = CN.S.sheets[m]; pr.pages.length = 1; const p0 = pr.pages[0]; p0.charms = []; p0.placements = []; p0.sheetId = null; p0.fileBase = null; for (const k of ['laserDoneAt', 'roseCutAt', 'recalled', 'setId', 'rosePlan', 'roseProtected']) delete p0[k]; p0.status = 'idle'; p0.page = 1; pr.active = 0; }
     window.B.pool.rows.clear();
@@ -283,9 +339,9 @@ async function seedPage(page, spec, { owner }) {
       pg.charms = []; pg.placements = [];
       sh.items.forEach(([rid, n, copy], i) => {
         const poolId = `${rid}_${tid(n)}_${copy}`, id = `${sh.id}-c${i}`;
-        pg.charms.push({ id, name: `${rid} · TEST-${n}`, poolId, order: rid, lineKey: `${rid}_${tid(n)}`, sku: 'TEST-' + n, sourceId: 's', ringGeometryVersion: 3, centerPt: [D / 2, D / 2], bbox: [0, 0, D, D], outline: { circle: 1, cx: 0, cy: 0, r: R * MM }, members: [], rMm: R, w: D, h: D, scale: 1, bits: mkBits(), widthPt: 2 * R * MM, heightPt: 2 * R * MM, areaPt: Math.PI * (R * MM) ** 2 });
+        pg.charms.push({ id, name: `${rid} · TEST-${n}`, poolId, order: rid, lineKey: `${rid}_${tid(n)}`, sku: 'TEST-' + n, sourceId: 's', ringGeometryVersion: 3, centerPt: [D / 2, D / 2], bbox: [0, 0, D, D], outline: { circle: 1, cx: 0, cy: 0, r: R * MM }, members: [], rMm: R, w: D, h: D, scale: 1, bits: mkBits(), widthPt: 2 * R * MM, heightPt: 2 * R * MM, areaPt: Math.PI * (R * MM) ** 2, ...pfOf(rid, n, copy) });
         pg.placements.push({ id, cxPt: 30 + (i % 6) * 40, cyPt: 30 + Math.floor(i / 6) * 40, angle: 0, wPt: 2 * R * MM, hPt: 2 * R * MM });
-        window.B.pool.rows.set(poolId, { poolId, orderId: rid, sheetId: sh.id, state: 'placed', material: sh.metal });
+        window.B.pool.rows.set(poolId, { poolId, orderId: rid, sheetId: sh.id, state: 'placed', material: sh.metal, ...pfOf(rid, n, copy) });
       });
       Object.assign(pg, { status: 'complete', sheetId: sh.id, fileBase: sh.fileBase, sheetIndex: sh.page, page: sh.page, setId: sh.set, runId: RUN, dirty: false, persistedDone: true, persisted: Promise.resolve(), problem: null, density: .3, verification: { ok: true }, intakeAppend: false, appendOnly: false });
       for (const k of ['laserDoneAt', 'roseCutAt', 'recalled']) delete pg[k];
@@ -293,13 +349,13 @@ async function seedPage(page, spec, { owner }) {
     }
     const rows = [];
     for (const o of spec.orders) for (const l of o.lines) {
-      const cs = l.custom ? [] : Array.isArray(l.on) ? l.on : [l.on || null];
+      const cs = l.custom ? [] : l.pf ? l.pf.map((_, i) => (Array.isArray(l.on) ? (l.on[i] || null) : (l.on || null))) : Array.isArray(l.on) ? l.on : [l.on || null];   // (a pair line: one entry per piece)
       const order = { receiptId: o.rid, orderNumber: o.rid, createTs: BASE_TS - 9000, updateTs: BASE_TS, shipBy: BASE_TS + 500000, buyer: { name: 'Buyer ' + o.rid.slice(-3) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [] };
       const ln = { transactionId: String(tid(l.n)), listingId: '1800' + l.n, sku: l.custom ? '' : 'TEST-' + l.n, title: l.custom ? 'Custom piece ' + l.n : 'Test charm ' + l.n, quantity: Math.max(1, cs.length), variations: [{ name: 'Metal', value: l.metal === 'silver' ? 'Sterling Silver' : '14k Gold Filled' }], metalKey: l.metal, metalLabel: l.metal === 'silver' ? 'Sterling Silver' : '14k Gold Filled', personalization: [] };
       order.lines = [ln];
       const key = `${o.rid}_${ln.transactionId}`;   // (the app's own line key: receipt_transaction)
-      if (!l.custom) window.B.master.entries.set('TEST-' + l.n, { sku: 'TEST-' + l.n, updatedAt: 1 });   // (a design in a master file: no "Unknown SKU" question on the line)
-      rows.push({ key, order, line: ln, spec: { designSku: ln.sku, quantity: Math.max(1, cs.length), material: l.metal, problems: [], ...(l.custom ? { noDesign: true, special: { label: 'Custom', notCut: true } } : {}) }, problems: [], state: l.custom ? 'noDesign' : (owner && cs.length && cs.every(Boolean) ? 'written' : 'pooled'), reason: null,
+      if (!l.custom) window.B.master.entries.set('TEST-' + l.n, { sku: 'TEST-' + l.n, updatedAt: 1, ...(l.kind === 'mismatched' ? { pair: { v: 1, bodies: 2, mismatched: true } } : {}) });   // (a design in a master file: no "Unknown SKU" question on the line)
+      rows.push({ key, order, line: ln, spec: { designSku: ln.sku, quantity: Math.max(1, cs.length), material: l.metal, problems: [], ...(l.pf ? { pieceCount: cs.length, kind: l.kind, pair: { kind: l.pairKind } } : {}), ...(l.custom ? { noDesign: true, special: { label: 'Custom', notCut: true } } : {}) }, problems: [], state: l.custom ? 'noDesign' : (owner && cs.length && cs.every(Boolean) ? 'written' : 'pooled'), reason: null,
         poolIds: cs.map((_, i) => `${o.rid}_${tid(l.n)}_${i + 1}`), engrave: null, material: l.metal, arrivedAt: Date.now() - 7200000 });
     }
     window.B.orders.rows = rows; window.B.orders.byKey = new Map(rows.map(r => [r.key, r]));
@@ -313,5 +369,5 @@ async function seedPage(page, spec, { owner }) {
   await page.waitForTimeout(200);
 }
 
-module.exports = { SHEETS, POOL, TL, CANC, CUSTOM, SETS, RUNS, RUN, BASE_TS, DAY, CODE, SHEET_DEF, SET_DEF, SHEET, FILLER, subject, specOf, cloudDocs, seedCloud, truthOf, sheetTruth, say, judge, pid, lineKey, tx, fileBase, sheetLabel, sleep, until, backend, openPage, seedPage };
+module.exports = { pairProblems, breakCloud, pairLine, pfRow, F, PAIR_FILLER, SHEETS, POOL, TL, CANC, CUSTOM, SETS, RUNS, RUN, BASE_TS, DAY, CODE, SHEET_DEF, SET_DEF, SHEET, FILLER, subject, specOf, cloudDocs, seedCloud, truthOf, sheetTruth, say, judge, pid, lineKey, tx, fileBase, sheetLabel, sleep, until, backend, openPage, seedPage };
 if (require.main === module) require('./placement-oracle-run.cjs').main(module.exports).catch(e => { console.error(e); process.exit(2); });

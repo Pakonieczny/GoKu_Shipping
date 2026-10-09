@@ -33,7 +33,7 @@ const T = { areaMm2: 61, minMm: 6.7, maxMm: 10.4 }, SHEET = { sheetWMm: 100, she
   assert(strip.pieces >= 3 && strip.pieces < wide.pieces, `a 12 mm strip holds a few (${strip.pieces}), a 25 mm one more (${wide.pieces})`);
   assert(strip.packedPct <= block.packedPct && wide.packedPct >= strip.packedPct, 'strips are never packed better than a clean block');
   for (const e of [block, whole, half, el, thin, strip, wide]) assert(e.low <= e.pieces && e.pieces <= e.high && e.packedPct >= 0 && e.packedPct <= 100, 'low <= pieces <= high');
-  assert.deepEqual(P.estimateFit([], T, SHEET), { pieces: 0, low: 0, high: 0, packedPct: 0, usableMm2: 0, packMm2: 0 }, 'nothing left, nothing fits');
+  assert.deepEqual(P.estimateFit([], T, SHEET), { pieces: 0, low: 0, high: 0, pairs: 0, pairsLow: 0, pairsHigh: 0, packedPct: 0, usableMm2: 0, packMm2: 0 }, 'nothing left, nothing fits');
   assert(P.estimateFit([rect(0, 0, 50, 40)], { areaMm2: 220, minMm: 12, maxMm: 20 }, SHEET).pieces < block.pieces, 'bigger regular pieces, fewer fit');
   const t0 = Date.now(); for (let i = 0; i < 100; i++) P.estimateFit(L, T, SHEET); assert(Date.now() - t0 < 2500, '100 estimates are quick (' + (Date.now() - t0) + ' ms)');
   // the typical piece from the running sums: the default with no history, the metal's own average blended under a small prior

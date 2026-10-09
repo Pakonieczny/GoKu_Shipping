@@ -34,6 +34,9 @@
  *                        would be sent to masterPutIndex) under DIR and touch no server (no --origin needed). Review the
  *                        count, the sizes and a few files, then run again without --out-dir to write the same thing.
  *    --work-dir DIR      keep the progress and report files in DIR instead of next to the master file
+ *    --no-pairs          do not look for designs that draw two bodies under one label (mismatched pairs: see pairLayer). With it the run is exactly what it was before the pair layer.
+ *    --pair-also LIST    also fold these doubtful rows into one design (a JSON list or SKUs separated by commas, as --only): a row the layer found but was not sure of
+ *                        (see "pairs" in the report). A row with a label of its own on a second body cannot be folded.
  *    (the passcode is read from the EDIT_PASSCODE environment variable when --passcode is not given: it is never printed)
  *  The master library (index and per-SKU files) is one library, read by production and the sandbox alike; it holds
  *  designs, not orders, so there is no sandbox copy of it.
@@ -65,6 +68,8 @@ function args(argv) {
     else if (a === "--pin") { o.pin = String(v || ""); i++; }
     else if (a === "--out-dir") { o.outDir = String(v || ""); i++; }
     else if (a === "--work-dir") { o.workDir = String(v || ""); i++; }
+    else if (a === "--no-pairs") o.noPairs = true;
+    else if (a === "--pair-also") { o.pairAlso = String(v || ""); i++; }
     else if (a === "--engrave-margin-mm") { o.engraveMarginMm = +v || 0.8; i++; }
     else if (!a.startsWith("--") && !o.file) o.file = a;
   }
@@ -202,6 +207,57 @@ function fileKeys(items) {
   return out;
 }
 
+/** The pair layer (pairs, 9 Oct). A master draws some designs as a ROW of bodies with ONE label centred under the whole row ("Mismatched_7134":
+ *  MITTENS 1 beside MITTENS 2). groupCharms reads each body as a charm of its own and only the labelled one was ever indexed, so the library
+ *  held half of the design. This reads the rows back from the grouping (charm-nest-pair.js masterPairs; it changes nothing in the grouping) and,
+ *  for a row it is sure is a mismatched pair, builds ONE design from it: each body is welded with its own hoop, then the bodies' members are
+ *  folded into the labelled charm (the same fold the app does when it reads a per-SKU file that splits in two). Every other design is not
+ *  touched: it reaches `one()` as the same charm object it always did. Returns { rows (for the report), fold: Map(charm index → what one()
+ *  needs instead of measuring the lone charm) }. A row is folded only when its owner is among the `items` this run builds. */
+function pairLayer(P, G, Pair, g, lab, items, o, log) {
+  const out = { rows: [], fold: new Map() };
+  if (!Pair || o.noPairs) return out;
+  const byIndex = new Map(g.charms.map(c => [c.index, c])), building = new Set(items.map(it => it.index));
+  const linesOf = c => { const l = lab.labels.get(c.index); return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, bbox: x.bbox })) : []; };
+  const also = o.pairAlso ? onlySet(o.pairAlso) : null;
+  const union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+  const openOf = c => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); };
+  // the same readings one() takes of a lone charm (up direction, back view, room for an engraving), taken of one body
+  const engraveOf = c => {
+    let engravable = true, upAngle = null, upSource = "drawn", flipOk = true, flipWhy = null;
+    try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: o.engraveMarginMm }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
+    catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
+    return { engravable, upAngle, upSource, flipOk, flipWhy };
+  };
+  for (const r of Pair.masterPairs(g.charms, linesOf)) {
+    const forced = !!also && r.skus.some(s => also.has(String(s).toUpperCase())) && r.labelled.length === 1 && r.kind !== "neighbours";
+    const row = { kind: r.kind, sure: !!r.sure, folded: false, bodies: r.bodies, owner: r.owner, skus: r.skus, charms: r.charms, labelled: r.labelled, offset: r.offset, why: r.why };
+    if (r.linearRatio != null) row.linearRatio = r.linearRatio; if (r.weak) row.weak = r.weak; if (r.partnerSku) row.partnerSku = r.partnerSku;
+    out.rows.push(row);
+    if (!(r.sure || forced)) continue;
+    if (!building.has(r.owner)) { row.note = "not built in this run"; continue; }
+    const bodyCharms = r.charms.map(i => byIndex.get(i)), owner = byIndex.get(r.owner);
+    if (bodyCharms.some(c => !c) || !owner) { row.note = "a body of the row is missing from the grouping"; continue; }
+    try {
+      for (const c of bodyCharms) { const x = P.integrateRings(c); if (x.left.length) log(`  ! ${r.skus[0]}: a hoop could not join its charm: ${x.left[0]}`); }   // each body with its own hoop, before the bodies are folded
+      const charm = Pair.foldRow(owner, bodyCharms.filter(c => c !== owner));
+      const outlines = bodyCharms.map(c => c.outline);
+      const merged = Object.assign({}, owner.outline, { subpaths: [].concat(...outlines.map(x => x.subpaths || [])), bbox: outlines.map(x => x.bbox).reduce(union), closed: outlines.every(x => x.closed) });
+      const eng = bodyCharms.map(engraveOf), first = eng[bodyCharms.indexOf(owner)];   // (the labelled body's up direction is the one the library always held for this SKU)
+      row.folded = true; row.forced = forced && !r.sure; row.partners = bodyCharms.filter(c => c !== owner).map(c => c.index);
+      out.fold.set(r.owner, {
+        rec: r, charm, view: Object.assign({}, charm, { outline: merged }),                      // (the merged outline is only what the area and the hash are read from; the charm keeps a real body's outline, so its bodies can be told apart again)
+        open: bodyCharms.some(openOf), holes: bodyCharms.reduce((n, c) => n + P.cutLinesOf(c).length, 0),
+        engrave: { engravable: eng.every(e => e.engravable), upAngle: first.upAngle, upSource: first.upSource, flipOk: eng.every(e => e.flipOk), flipWhy: (eng.find(e => !e.flipOk) || {}).flipWhy || null },
+        field: { v: 1, bodies: r.bodies, mismatched: r.kind === "mismatched" || (forced && r.bodies === 2 && !["twins", "sizes", "sample"].includes(r.kind)) }
+      });
+    } catch (e) { row.folded = false; row.note = "not folded: " + e.message; log(`  ! ${r.skus[0]}: the pair could not be folded: ${e.message}`); }
+  }
+  const folded = out.rows.filter(x => x.folded), unbuilt = out.rows.filter(x => x.sure && x.note === "not built in this run"), doubtful = out.rows.filter(x => !x.folded && !x.sure && !/^(neighbours|sizes|sample)$/.test(x.kind));
+  if (out.rows.length) log(`  pairs: ${out.rows.length} row(s) of touching bodies under one label · ${folded.length} folded into one design (${folded.map(x => x.skus[0]).slice(0, 40).join(", ")}${folded.length > 40 ? " …" : ""})${unbuilt.length ? ` · ${unbuilt.length} sure pair(s) not built in this run` : ""}${doubtful.length ? ` · ${doubtful.length} left as they were because a person has to look (${doubtful.map(x => `${x.skus[0] || "#" + x.owner}: ${x.kind}`).slice(0, 30).join(", ")})` : ""}`);
+  return out;
+}
+
 async function main(argv, log = console.log) {
   const o = args(argv);
   if (!o.file) throw new Error('usage: node scripts/index-master.cjs "<master.ai>" --origin <sorter site> [--dry] [--passcode …]');
@@ -209,6 +265,7 @@ async function main(argv, log = console.log) {
   if (net && !o.origin) throw new Error("--origin is required (or use --dry to only parse and report, or --out-dir to stage the files)");
   const only = onlySet(o.only);
   const { CharmNestPDF: P, Geom: G } = require(path.join(root, "netlify/functions/_charmNestPdf.js"));
+  let Pair = null; try { Pair = require(path.join(root, "charm-nest-pair.js")); } catch (_) {}   // (the pair layer; without the module the run is what it was before it)
   const buf = fs.readFileSync(o.file); const name = path.basename(o.file);
   const masterHash = crypto.createHash("sha256").update(buf).digest("hex");
   log(`${name}: ${(buf.length / 1048576).toFixed(1)} MB · sha256 ${masterHash.slice(0, 12)} · ${o.dry ? "DRY RUN (nothing written)" : stage ? "STAGING into " + o.outDir + " (no server is touched)" : "→ " + o.origin}${only ? " · only " + only.size + " SKU(s)" : ""}`);
@@ -279,17 +336,21 @@ async function main(argv, log = console.log) {
   }
   const entries = [], blocked = [], skus = [];
   const keyOf = fileKeys(items);                                          // one file name per charm, whatever the server does to the characters
+  // a row of bodies under one label that is surely a mismatched pair is built as ONE design (both bodies in its file); every other charm is the object it was
+  const pairs = pairLayer(P, G, Pair, g, lab, items, o, log);
+  if (pairs.fold.size) items = items.map(it => pairs.fold.has(it.index) ? Object.assign({}, it, { c: pairs.fold.get(it.index).charm }) : it);
   const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
-    const key = keyOf.get(index);
-    if (progress.done[key]) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
+    const key = keyOf.get(index), pm = pairs.fold.get(index);          // pm: set only for a design folded from a pair; every other design takes the lines it always took
+    if (progress.done[key] && !!progress.done[key].entry.pair === !!pm) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
-    { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }
-    const sil = G.silhouetteBits(c, 6, {});
+    if (!pm) { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }   // (a pair's bodies were welded before they were folded)
+    const sil = G.silhouetteBits(pm ? pm.view : c, 6, {});
     const charmHash = P.fnv(P.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
-    const open = (() => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
+    const open = pm ? pm.open : (() => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
     let engravable = true, upAngle = null, upSource = "drawn", flipOk = true, flipWhy = null;
+    if (pm) ({ engravable, upAngle, upSource, flipOk, flipWhy } = pm.engrave); else
     try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: o.engraveMarginMm }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
     catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
     let aiUp = { path: `charmnest/master/${key}.ai`, url: "" }, thumb = null;
@@ -308,7 +369,8 @@ async function main(argv, log = console.log) {
     }
     const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push(flipWhy);
     let hashKept = false;
-    const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
+    const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
+    if (pm) entry.pair = pm.field;                                       // { v: 1, bodies, mismatched }: only a folded pair carries it (a record without it leaves a stored one alone)
     if (net && only && !o.newHash) {                                   // the held record's hash stands while the drawing's geometry is the same
       const h = held.get(String(l.sku).toUpperCase()), t = h && (l.size ? (h.sizes || {})[String(l.size).toUpperCase()] : h), near = (a, b) => Math.abs(a - b) <= Math.max(0.01, 0.001 * Math.max(Math.abs(a), Math.abs(b)));
       if (t && t.charmHash && near(t.widthPt, entry.widthPt) && near(t.heightPt, entry.heightPt) && near(t.areaPt2, entry.areaPt2) && (t.holes || 0) === (entry.holes || 0)) { if (t.charmHash !== entry.charmHash) hashKept = true; entry.charmHash = t.charmHash; }
@@ -366,9 +428,9 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, twins, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, twins, pairs: pairs.rows, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
-module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng };
+module.exports = { main, api, upload, onlySet, settleTwins, pinMap, fileKeys, thumbnailPng, pairLayer };
 if (require.main === module) main(process.argv).catch(e => { console.error("index-master:", e.message); process.exit(1); });

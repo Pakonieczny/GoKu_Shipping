@@ -41,7 +41,7 @@ const CODES = { rose: 'RG', gold10k: '10K', gold14k: '14K', gold: 'GF', silver: 
 const FIELDS = ['v', 'metal', 'code', 'sheetId', 'sheetName', 'setId', 'setName', 'fileBase', 'stockId', 'revision', 'via', 'cutAt', 'by', 'sheetWMm', 'sheetHMm', 'ringsJson', 'areaMm2', 'bboxMm',
   'status', 'statusAt', 'statusBy', 'marked', 'auto', 'reason', 'usedBySheetId', 'usedBySheetName', 'usedAt', 'usedBy', 'createdAt',
   'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy', 'kind', 'madeAt', 'madeBy', 'deletedAt', 'deletedBy', 'deletedReason',
-  'supersededAt', 'supersededBy', 'supersededSheetId', 'supersededSheetName'];
+  'supersededAt', 'supersededBy', 'supersededSheetId', 'supersededSheetName', 'cutPieces', 'cutPairs', 'cutSplit'];
 const STATUSES = ['available', 'used', 'discarded'];   // what a person can mark; 'inUse' is only ever set by a claim (roseClaim / partialClaim) and cleared by a release or the next cut; 'deleted' only by sheetDelete
 const PARTIAL_METALS = ['rose', 'gold10k', 'gold14k'];
 const STOCKS = 'Charm_Nest_Rose_Stock', POLICY_DEFAULT = { mode: 'auto', wMm: 100, hMm: 50 }, SIZE_MM = [5, 500];
@@ -123,7 +123,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
      reads and BEFORE its first write (it reads the stock's previous leftover, then writes). stock = the stock as the cut writes it
      (id, wPt, hPt, revision after the cut, available), cut = the cut record (at, by, sheetId), sheet = the sheet document,
      plan = the parsed plan (plan.profile = the frontier after this cut), metal = sheet.metal, via = 'nest' | 'library'. */
-  async function recordRemnant(tx, { stock, cut, sheet, plan, metal, via } = {}) {
+  async function recordRemnant(tx, { stock, cut, sheet, plan, metal, via, summary } = {}) {
     if (!stock || !cut || !sheet || !plan || !plan.profile || !okId(stock.id)) throw new Error('A cut needs its leftover sheet: the cut was not recorded');
     const revision = +stock.revision, at = +cut.at, by = person(cut.by), sheetId = String(cut.sheetId || sheet.id || sheet.sheetId || '');
     const id = `${stock.id}-${revision}`;
@@ -139,6 +139,9 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       lastUsedAt: at, lastUsedBy: by, lastUsedSheet: sheetName, lastUsedSheetId: sheetId, ...NOT_HELD   // (the last use of a new leftover is the cut that made it)
     };
     if (!usable) Object.assign(rec, { auto: true, reason: g.areaMm2 > 0 ? 'Too small to reuse' : 'No metal left' });
+    // what the cut was made of (PAIRPARTIAL): how many pieces, how many pairs among them, how many orders of which only some pieces were cut. Numbers only; the groups themselves
+    // (which pieces of which order line) are on the cut's own record. A leftover cut before this was kept has none: readers treat that as not recorded.
+    if (summary && Number.isFinite(+summary.pieces)) Object.assign(rec, { cutPieces: +summary.pieces, cutPairs: +summary.pairs || 0, cutSplit: +summary.split || 0 });
     const was = prev && prev.exists ? prev.data() || {} : null;
     // the leftover this cut was made on: available or held by this very sheet -> used; used by this sheet (partialUse) keeps that and only dates the use
     if (was && (was.status === 'available' || was.status === 'inUse')) {
@@ -329,11 +332,12 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     if (d.status === 'inUse') Object.assign(out, { inUseBySheetId: d.inUseBySheetId || '', inUseBySheetName: d.inUseBySheetName || '', inUseAt: d.inUseAt != null ? +d.inUseAt : null });
     if (d.status === 'used') Object.assign(out, { usedBySheetId: d.usedBySheetId || '', usedBySheetName: d.usedBySheetName || '', usedAt: d.usedAt != null ? +d.usedAt : null });
     if (d.reason) out.reason = d.reason;
+    if (Number.isFinite(+d.cutPieces)) out.cut = { pieces: +d.cutPieces, pairs: +d.cutPairs || 0, split: +d.cutSplit || 0 };   // (what the cut that left this sheet was made of; absent on an older one)
     if (d.status === 'discarded') Object.assign(out, { statusBy: d.statusBy || '', statusAt: d.statusAt != null ? +d.statusAt : null });   // (who discarded it and when: the history shows it)
     // a sheet a person made (kind 'new'; a cut leftover has no kind): who and when; a deleted one: who, when and why. cutAt / cutBy of a made sheet are its madeAt / madeBy (the list's sort key), never a cut.
     if (d.kind === 'new') Object.assign(out, { kind: 'new', madeAt: +d.madeAt || null, madeBy: d.madeBy || '' });
     if (d.status === 'deleted' || d.deletedAt != null) Object.assign(out, { deletedAt: +d.deletedAt || null, deletedBy: d.deletedBy || '', deletedReason: d.deletedReason || '' });
-    if (typical && (out.status === 'available' || out.status === 'inUse') && out.outline.length) { const e = Partial.estimateFit(out.outline, typical, { sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm }); out.estimate = { pieces: e.pieces, low: e.low, high: e.high, packedPct: e.packedPct }; }
+    if (typical && (out.status === 'available' || out.status === 'inUse') && out.outline.length) { const e = Partial.estimateFit(out.outline, typical, { sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm }); out.estimate = { pieces: e.pieces, low: e.low, high: e.high, pairs: e.pairs, pairsLow: e.pairsLow, pairsHigh: e.pairsHigh, packedPct: e.packedPct }; }
     return out;
   }
   async function readCards(metal, { inUse = false, used = false, limit = 60 } = {}, typical) {
@@ -366,7 +370,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     }
     const [{ items, more }, pol, stats] = await Promise.all([readCards(metal, b, null), readPolicies(), readStats()]);
     const typical = typicalOfMetal(stats, metal);
-    for (const c of items) if (c.status === 'available' || c.status === 'inUse') { const e = c.outline.length ? Partial.estimateFit(c.outline, typical, { sheetWMm: c.sheetWMm, sheetHMm: c.sheetHMm }) : null; if (e) c.estimate = { pieces: e.pieces, low: e.low, high: e.high, packedPct: e.packedPct }; }
+    for (const c of items) if (c.status === 'available' || c.status === 'inUse') { const e = c.outline.length ? Partial.estimateFit(c.outline, typical, { sheetWMm: c.sheetWMm, sheetHMm: c.sheetHMm }) : null; if (e) c.estimate = { pieces: e.pieces, low: e.low, high: e.high, pairs: e.pairs, pairsLow: e.pairsLow, pairsHigh: e.pairsHigh, packedPct: e.packedPct }; }
     return { items, rev, policies: pol.policies, typical, more, ...(backfilled !== null ? { backfilled } : {}), ...(reconciled ? { reconciled } : {}), ...(backfillError ? { backfillError } : {}) };
   }
 

@@ -7258,7 +7258,9 @@ const Sets = window.Sets = (() => {
         if (!row.engrave?.needed || row.state === "gone") continue;
         for (const poolId of row.poolIds.filter(id => placed.has(id))) {
           const back = (sh.backPool || []).find(b => b.poolId === poolId);
-          if (!row.engrave.approved || row.engrave.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: back engraving is not approved and saved`);
+          const eng = row.engrave.pieces && typeof row.engrave.pieces[poolId] === "object" && row.engrave.pieces[poolId] || row.engrave;   // (a line that splits its engraving per ear: this piece's own decision)
+          if (eng.needed === false) continue;
+          if (!eng.approved || eng.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: back engraving is not approved and saved`);
         }
       }
     }
