@@ -14,7 +14,8 @@ const R = {   // browser-side readers (they run in the page)
     out.push({ s: 'ow.header', kind: 'order', text: T(q('#owNow')), required: false });   // (the header names the last step reached ("Restored", "Hold released"); where the pieces are is said by the chips, the rows and the rail, which are asserted, and a header that says the wrong place is still wrong)
     const seal = q('#owNowCard .tlNowSeal'); if (seal) out.push({ s: 'ow.holdcard', kind: 'order', text: (seal.getAttribute('aria-label') || '').split(' · ')[0] });
     for (const c of qa('#owNowCard .owShChip, #owNowCard .owChip')) out.push({ s: 'ow.chip', kind: 'order', text: T(c) });
-    for (const r of qa('#owPcSum .owPcRow[data-piece]')) { const n = +String(r.dataset.piece).split(/[:_]/)[1] - 5000000000; out.push({ s: 'ow.row', n, text: T(r.querySelector('.st')), required: 'sheet,held,cancelled,done,waiting' }); out.push({ s: 'ow.dots', n, dots: r.querySelectorAll('.steps i.on').length }); }
+    for (const r of qa('#owPcSum .owPcRow[data-piece]')) { const n = +String(r.dataset.piece).split(/[:_]/)[1] - 5000000000; out.push({ s: 'ow.row', n, text: T(r.querySelector('.st')), required: 'sheet,held,cancelled,done,waiting' }); out.push({ s: 'ow.dots', n, dots: r.querySelectorAll('.steps i.on').length });
+      const side = [...new Set((T(r).match(/\b(Left|Right)\b/g) || []))]; if (side.length) out.push({ s: 'ow.side', n, kind: 'pieceSide', words: side, text: T(r) }); }   // (PAIRS: a row that says Left or Right must say the side the pool rows hold)
     const rail = T(q('#owRail .tlNowT'));
     if (!rail || /^(Finding|Reading|Loading)/i.test(rail)) out.push({ s: 'ow.rail', gone: true }); else out.push({ s: 'ow.rail', kind: 'order', text: rail, required: 'sheet,held,cancelled,done,waiting' });
     return out;
@@ -104,6 +105,9 @@ const VIEWS = [
   { id: 'rv', label: 'Review · cards (words, Open sheet button)', page: 'v', when: sc => sc.lines.some(l => l.custom),
     open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="review"]').click()); await p.waitForSelector('#rvList .reviewListRow', { timeout: 8000 }).catch(() => {}); },
     close: async () => {}, read: (p, c) => p.evaluate(R.rv, c.rid) },
+  { id: 'pairs', label: 'Pairs · the cloud\'s records of every group agree about sheet, side and group', page: null, when: sc => sc.lines.some(l => l.kind),
+    open: async () => {}, close: async () => {},
+    read: async (p, c, srv) => [{ s: 'pairs.cloud', kind: 'pairCoherence', expect: c.sc && c.sc.expect, problems: srv.O.pairProblems(srv.st, c.orders, { tracked: c.sc && c.sc.tracked ? c.subj.lines.filter(l => l.pf).map(l => l.pf[0].groupKey) : [] }) }] },
   { id: 'srv', label: 'Server · order timeline `where`, cancel check (what the stations read)', page: null,
     open: async () => {}, close: async () => {},
     read: async (p, c, srv) => {
@@ -124,7 +128,7 @@ const reopen = (x, n) => x.srv.call({ op: 'customReopen', key: x.O.lineKey(x.rid
 /** a piece put on a sheet, as another computer's nest saves it: the sheet record first, the pool row after */
 async function addToSheet(x, sheetId, n, copy = 1) {
   const O = x.O, cur = x.srv.st.doc(O.SHEETS, sheetId), poolId = O.pid(x.rid, n, copy), SD = O.SHEET[sheetId], i = (cur.charms || []).length;
-  const charms = (cur.charms || []).concat({ id: `${sheetId}-n${n}${copy}`, poolId, order: x.rid, name: `${x.rid} · TEST-${n}` }), placements = (cur.placements || []).concat({ id: `${sheetId}-n${n}${copy}`, cxPt: 30 + (i % 6) * 40, cyPt: 130, angle: 0, wPt: 28, hPt: 28 });
+  const ln = (x.orders.find(o => o.rid === x.rid) || { lines: [] }).lines.find(l => l.n === n), charms = (cur.charms || []).concat({ id: `${sheetId}-n${n}${copy}`, poolId, order: x.rid, name: `${x.rid} · TEST-${n}`, ...O.pfRow(ln, copy - 1, true) }), placements = (cur.placements || []).concat({ id: `${sheetId}-n${n}${copy}`, cxPt: 30 + (i % 6) * 40, cyPt: 130, angle: 0, wPt: 28, hPt: 28 });
   let r = await x.srv.call({ op: 'putSheet', sheet: { id: sheetId, metal: SD.metal, charms, placements, poolIds: charms.map(c => c.poolId), orders: [...new Set(charms.map(c => c.order))], placedCount: placements.length, charmCount: charms.length } }); if (r.error) throw new Error(r.error);
   r = await x.srv.call({ op: 'poolUpdate', poolIds: [poolId], patch: { sheetId, setId: SD.set, state: 'written', sheetName: O.fileBase(SD) } }); if (r.error) throw new Error(r.error);
 }
@@ -196,6 +200,66 @@ const SCENARIOS = [
   { id: 'cloud-only-deleted', about: 'the same order, its sheet deleted elsewhere', lines: ON2, by: 'cloud', cloudOnly: true, views: ['se', 'srv'], act: x => deleteSheet(x, 'sh-gf1') },
 ];
 
+/* PAIRS (pairs-1009): the same transitions on orders whose lines are a pair, a mismatched pair or a disc necklace. The `pairs` surface (the cloud's own records) and every other surface are
+   read as before; `tracked: true` says the split the scenario sets up (or makes) is on purpose, so only a disagreement of sheet, side or group is a finding.
+   Gold sheets sh-gf1 and sh-gf3 are in Set 1, sh-gf2 in Set 2; ON2's second line is silver. */
+const PAIR = { kind: 'pair' }, MIS = { kind: 'mismatched' }, DISC3 = { kind: 'discs', discs: 3 };
+const PAIR_SCENARIOS = [
+  { id: 'pair-onsheet', about: 'a matching pair on one sheet', lines: [{ ...PAIR, on: 'sh-gf1' }] },
+  { id: 'pair-waiting', about: 'a matching pair waiting for a sheet (both pieces)', lines: [{ ...PAIR }] },
+  { id: 'pair-hold', about: 'Hold pressed on an order with a matching pair on one sheet: both pieces come off', lines: [{ ...PAIR, on: 'sh-gf1' }], act: hold },
+  { id: 'pair-split-hold', about: 'a pair split over two sheets of one set (tracked), Hold pressed: both pieces come off both sheets', lines: [{ ...PAIR, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, act: hold },
+  { id: 'pair-split-hold-cloud', about: 'the same Hold pressed on ANOTHER computer', lines: [{ ...PAIR, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', act: holdCloud },
+  { id: 'pair-split-release', about: 'held and released again (a pair that was split over two sheets)', lines: [{ ...PAIR, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', pre: holdCloud, act: x => releaseCloud(x) },
+  { id: 'pair-split-cancel', about: 'cancelled: a pair split over two sheets leaves both', lines: [{ ...PAIR, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, act: x => takeOff(x, { mode: 'cancel', scope: 'order' }) },
+  { id: 'pair-split-take-sheet', about: 'one sheet of a split pair is taken off (Hold, this sheet only): the other piece must not be left behind alone', lines: [{ ...PAIR, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, act: x => takeOff(x, { mode: 'hold', scope: 'sheet', sheetId: 'sh-gf1' }) },
+  { id: 'pair-sheet-deleted', about: 'the sheet that holds one piece of a split pair is deleted elsewhere (the other piece stays: a tracked split)', lines: [{ ...PAIR, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', act: x => deleteSheet(x, 'sh-gf3') },
+  { id: 'pair-half-added', about: 'only one piece of a waiting pair is put on a sheet by another computer (a half-placed group is a finding)', lines: [{ ...PAIR }], by: 'cloud', act: x => addToSheet(x, 'sh-gf1', 10, 1) },
+  { id: 'pair-both-added', about: 'both pieces of a waiting pair are put on a sheet by another computer', lines: [{ ...PAIR }], by: 'cloud', act: async x => { await addToSheet(x, 'sh-gf1', 10, 1); await addToSheet(x, 'sh-gf1', 10, 2); } },
+  { id: 'mis-onsheet', about: 'a mismatched pair on one sheet: a left and a right piece', lines: [{ ...MIS, on: 'sh-gf1' }] },
+  { id: 'mis-hold', about: 'Hold pressed on a mismatched pair on one sheet', lines: [{ ...MIS, on: 'sh-gf1' }], act: hold },
+  { id: 'mis-split-hold-cloud', about: 'a mismatched pair (left on one sheet, right on another of the set, tracked), Hold pressed on ANOTHER computer', lines: [{ ...MIS, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', act: holdCloud },
+  { id: 'mis-split-release', about: 'the same pair released: its left and its right piece wait again, sides kept', lines: [{ ...MIS, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', pre: holdCloud, act: x => releaseCloud(x) },
+  { id: 'mis-release-placed', about: 'the same pair released and put back, left and right on their sheets again', lines: [{ ...MIS, on: ['sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', pre: holdCloud, act: x => releaseCloud(x, [[10, 'sh-gf1']]).then(() => addToSheet(x, 'sh-gf3', 10, 2)) },
+  { id: 'discs-onsheet', about: 'a 3-disc necklace: 3 pieces on one sheet', lines: [{ ...DISC3, on: 'sh-gf1' }] },
+  { id: 'discs-split-hold', about: 'a 3-disc necklace over two sheets of one set (tracked), Hold pressed: all three come off', lines: [{ ...DISC3, on: ['sh-gf1', 'sh-gf1', 'sh-gf3'] }], tracked: true, act: hold },
+  { id: 'discs-take-sheet', about: 'one sheet of a split disc necklace is taken off: the disc on the other sheet must not be left alone', lines: [{ ...DISC3, on: ['sh-gf1', 'sh-gf1', 'sh-gf3'] }], tracked: true, act: x => takeOff(x, { mode: 'hold', scope: 'sheet', sheetId: 'sh-gf3' }) },
+  { id: 'discs-cancel-cloud', about: 'a 3-disc necklace (two on one sheet, one on another) loses its sheet record elsewhere', lines: [{ ...DISC3, on: ['sh-gf1', 'sh-gf1', 'sh-gf3'] }], tracked: true, by: 'cloud', act: x => deleteSheet(x, 'sh-gf1') },
+  { id: 'pair-setundo', about: 'a committed set undone, a pair on one sheet', lines: [{ ...PAIR, on: 'sh-gf1' }], by: 'cloud', pre: commitSet, act: undoSet },
+  { id: 'pair-qty2-onsheet', about: 'a pair with quantity 2 on one sheet: two Left, two Right', lines: [{ ...PAIR, qty: 2, on: 'sh-gf1' }] },
+  { id: 'pair-qty2-hold', about: 'Hold pressed on a pair with quantity 2: all four pieces come off', lines: [{ ...PAIR, qty: 2, on: 'sh-gf1' }], act: hold },
+  { id: 'single-qty2-hold', about: 'Hold pressed on a "Single" earring line, quantity 2 (two pieces, no side)', lines: [{ kind: 'earring-single', qty: 2, on: 'sh-gf1' }], act: hold },
+  { id: 'letters-hold', about: 'Hold pressed on a letters necklace of 4 letters on one sheet', lines: [{ kind: 'letters', letters: 4, on: 'sh-gf1' }], act: hold },
+].map(s => Object.assign(s, { pairs: true }));
+SCENARIOS.push(...PAIR_SCENARIOS);
+
+/* NEGATIVE CONTROLS (Amendment 2): the cloud is broken on purpose after it is seeded (fault) and the `pairs` surface must report exactly these codes (expect; [] = nothing at all).
+   Their point is that the oracle can FAIL: a Right that is not the mirror of its Left, a piece the nester reflected, a flag that does not follow its side, and a harmless turn that must not.
+   A piece's laid outline is `shapeJson` on its sheet charm (a polygon list as a JSON string, as Firestore needs). */
+const poolOf = (ctx, n, copy) => `${ctx.rid}_${5000000000 + n}_${copy}`;
+const polys = c => JSON.parse(c.shapeJson), setPolys = (c, ps) => { c.shapeJson = JSON.stringify(ps); };
+const reflect = c => setPolys(c, polys(c).map(p => p.map(q => [-q[0], q[1]])));                                             // x -> -x: a reflection
+const turn = (c, deg) => { const a = deg * Math.PI / 180, co = Math.cos(a), si = Math.sin(a); setPolys(c, polys(c).map(p => p.map(q => [+(q[0] * co - q[1] * si).toFixed(3), +(q[0] * si + q[1] * co).toFixed(3)]))); };   // a rotation
+const CONTROLS = [
+  { id: 'ctl-turned', about: 'CONTROL: the Left turned by 90 degrees and the Right by 180: a turn is always allowed, nothing to report', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { turn(h.charm(poolOf(x, 10, 1)), 90); turn(h.charm(poolOf(x, 10, 2)), 180); }, expect: [] },
+  { id: 'ctl-right-not-mirrored', about: 'CONTROL: the Right lies as the Left does (never mirrored): not a mirror image', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.charm(poolOf(x, 10, 2)).shapeJson = h.charm(poolOf(x, 10, 1)).shapeJson; }, expect: ['not-mirror', 'reflected'] },
+  { id: 'ctl-nester-reflected', about: 'CONTROL: the nester reflected the Left', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { reflect(h.charm(poolOf(x, 10, 1))); }, expect: ['reflected', 'not-mirror'] },
+  { id: 'ctl-reflected-and-turned', about: 'CONTROL: the nester reflected the Right AND turned it by 30 degrees', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { const c = h.charm(poolOf(x, 10, 2)); reflect(c); turn(c, 30); }, expect: ['reflected', 'not-mirror'] },
+  { id: 'ctl-flipx', about: 'CONTROL: a placement says flipX', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.placement(poolOf(x, 10, 1)).flipX = true; }, expect: ['reflected'] },
+  { id: 'ctl-mirror-flag', about: 'CONTROL: the Right is not flagged mirrored (pool row and sheet)', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.row(poolOf(x, 10, 2)).mirror = false; h.charm(poolOf(x, 10, 2)).mirror = false; }, expect: ['mirror-mismatch', 'mirror-pairing'] },
+  { id: 'ctl-sheet-mirror-flag', about: 'CONTROL: the sheet says the Right is as drawn, the pool row says mirrored', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.charm(poolOf(x, 10, 2)).mirror = false; }, expect: ['mirror-mismatch'] },
+  { id: 'ctl-side-lost', about: 'CONTROL: the Right of a matching pair has no side (the old model)', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.row(poolOf(x, 10, 2)).side = null; h.charm(poolOf(x, 10, 2)).side = null; }, expect: ['side-missing', 'side-pairing'] },
+  { id: 'ctl-two-lefts', about: 'CONTROL: both pieces of a pair say Left', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.row(poolOf(x, 10, 2)).side = 'L'; h.charm(poolOf(x, 10, 2)).side = 'L'; }, expect: ['side-mismatch', 'side-pairing'] },
+  { id: 'ctl-mismatched-reflected', about: 'CONTROL: the nester reflected the Right body of a mismatched pair', lines: [{ ...MIS, on: 'sh-gf1' }], fault: (h, x) => { reflect(h.charm(poolOf(x, 10, 2))); }, expect: ['reflected'] },
+  { id: 'ctl-mismatched-ok', about: 'CONTROL: a mismatched pair turned on the sheet: nothing to report', lines: [{ ...MIS, on: 'sh-gf1' }], fault: (h, x) => { turn(h.charm(poolOf(x, 10, 1)), 270); turn(h.charm(poolOf(x, 10, 2)), 45); }, expect: [] },
+  { id: 'ctl-qty2-reflected', about: 'CONTROL: the second Right of a pair with quantity 2 was reflected', lines: [{ ...PAIR, qty: 2, on: 'sh-gf1' }], fault: (h, x) => { reflect(h.charm(poolOf(x, 10, 4))); }, expect: ['reflected'] },
+  { id: 'ctl-disc-mirrored', about: 'CONTROL: a disc of a necklace is marked mirrored', lines: [{ ...DISC3, on: 'sh-gf1' }], fault: (h, x) => { h.row(poolOf(x, 10, 2)).mirror = true; }, expect: ['mirror-unexpected'] },
+  { id: 'ctl-letter-side', about: 'CONTROL: a letter of a letters necklace says Left', lines: [{ kind: 'letters', letters: 4, on: 'sh-gf1' }], fault: (h, x) => { h.row(poolOf(x, 10, 1)).side = 'L'; h.charm(poolOf(x, 10, 1)).side = 'L'; }, expect: ['side-unexpected'] },
+  { id: 'ctl-single-pair', about: 'CONTROL: a "Single" earring line gets a Left and a Right', lines: [{ kind: 'earring-single', qty: 2, on: 'sh-gf1' }], fault: (h, x) => { for (const [c, sd] of [[1, 'L'], [2, 'R']]) { h.row(poolOf(x, 10, c)).side = sd; h.charm(poolOf(x, 10, c)).side = sd; } }, expect: ['side-unexpected'] },
+  { id: 'ctl-wrong-body', about: 'CONTROL: the sheet holds another design\'s outline for a piece', lines: [{ ...PAIR, on: 'sh-gf1' }], fault: (h, x) => { h.charm(poolOf(x, 10, 1)).shapeJson = JSON.stringify([[[0, 0], [30, 0], [30, 5], [0, 5]]]); }, expect: ['shape-mismatch'] },
+].map(s => Object.assign(s, { pairs: true, views: ['pairs'] }));
+SCENARIOS.push(...CONTROLS);
+
 /* ═══════════════════════════ the runner ═══════════════════════════ */
 async function main(O) {
   const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), opt = n => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : ''; };
@@ -203,8 +267,8 @@ async function main(O) {
   const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  - no playwright-core: the oracle was not run'); return; }
   const exe = process.env.CHROMIUM || (fs.existsSync('/opt/pw-browsers/chromium-1194/chrome-linux/chrome') ? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' : undefined);
-  const { sleep } = O, allViews = VIEWS.filter(v => !SURF || SURF.has(v.id)), scenarios = SCENARIOS.filter(s => !ONLY || ONLY.has(s.id));
-  const srv = await O.backend(), browser = await chromium.launch(Object.assign({ args: ['--no-sandbox'] }, exe ? { executablePath: exe } : {}));
+  const { sleep } = O, allViews = VIEWS.filter(v => !SURF || SURF.has(v.id)), scenarios = SCENARIOS.filter(s => (!ONLY || ONLY.has(s.id)) && (!flag('pairs') || s.pairs) && (!flag('no-pairs') || !s.pairs));   // (--pairs: only the pair scenarios; --no-pairs: none of them)
+  const srv = await O.backend(); srv.O = O; const browser = await chromium.launch(Object.assign({ args: ['--no-sandbox'] }, exe ? { executablePath: exe } : {}));
   const results = [];   // { scenario, phase, view, who, ok, ms, issues, claims }
   const t00 = Date.now(), log = (...a) => console.log(((Date.now() - t00) / 1000).toFixed(1).padStart(6) + 's', ...a);
   try {
@@ -217,7 +281,7 @@ async function main(O) {
     let serial = 0;
     for (const sc of scenarios) {
      try {
-      const rid = String(4182000000 + ++serial), subj = O.subject(rid, sc.lines), orders = [...O.FILLER, subj], spec = O.specOf(orders), ctx = { rid, subj, orders };
+      const rid = String(4182000000 + ++serial), subj = O.subject(rid, sc.lines), orders = [...O.FILLER, ...(sc.pairs ? O.PAIR_FILLER : []), subj], spec = O.specOf(orders), ctx = { rid, subj, orders, sc };
       const views = allViews.filter(v => (!v.when || v.when(sc)) && (!sc.views || sc.views.includes(v.id)));   // (a surface that has nothing to say about this order is not asked: Review has cards only for pieces made by hand)
       const X = { O, srv, rid, owner, spec, orders }, mine = sc.by !== 'cloud';   // (by 'cloud': the change is made by another computer, so the owner page here is one more reader)
       log(`── ${sc.id}: ${sc.about}`);
@@ -225,6 +289,7 @@ async function main(O) {
       for (const p of allPages) await Promise.all(views.filter(v => v.page === 'v' && viewerOf[v.id] === p).map(v => v.close(p.page, ctx)));
       await owner.page.evaluate(() => { try { OrderWin.close(); SheetWin.close(); OrderSearch.close(); SharedOrdersModal.close(); } catch (_) {} });
       O.seedCloud(srv, spec);
+      if (sc.fault) O.breakCloud(srv, h => sc.fault(h, ctx));   // (a negative control: the cloud is broken on purpose and the `pairs` surface must say so)
       // (cloudOnly: the order is in the cloud and in no pull this page holds, so the search finds it only by looking its number up in the cloud)
       const pulled = sc.cloudOnly ? O.specOf(orders.filter(o => o !== subj)) : spec;
       await Promise.all(allPages.map(p => O.seedPage(p.page, pulled, { owner: p.owner && mine })));
