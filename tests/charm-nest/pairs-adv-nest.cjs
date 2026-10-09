@@ -148,4 +148,22 @@ const baseJob = { sheet, angles: Array.from({ length: 36 }, (_, i) => i * 10), f
     assert.equal(pd.group, undefined, 'a plain charm carries no group');
     pass('7 the partial sheet\'s trial pack carries group, side, mirror and near into the solver job (PAIRPARTIAL\'s request is already met through buildJob)');
   }
+
+  /* ── 8 · a quantity-2 line (L, R, L, R) when the sheet takes three of the four: the whole line is turned away, not three pieces ── */
+  {
+    const sq = (id, extra) => { const scale = 2, side = Math.ceil(31 / MM * scale), bits = new Uint8Array(side * side).fill(1);
+      for (let y = 0; y < Math.floor(side / 3); y++) for (let x = 0; x < Math.floor(side / 6); x++) bits[y * side + x] = 0;
+      const piece = { id, w: side, h: side, scale, bits, areaPt2: bits.reduce((a, b) => a + b, 0) / (scale * scale), orderDate: 1, pinned: null, hold: false, ...extra }; return Object.assign(piece, S.pairFields(piece)); };
+    const job = pieces => ({ ...baseJob, pieces, maxTrials: 60, timeBudgetMs: 30000 });
+    const three = await S.solve(job([sq('a', { order: 'a' }), sq('b', { order: 'b' }), sq('c', { order: 'c' })]), {});
+    assert.equal(three.placements.length, 3, 'control: three 31 mm squares fit the sheet');
+    const four = ['L', 'R', 'L', 'R'].map((side, i) => sq('q' + i, { order: 'q', side, mirror: side === 'R', groupKey: 'q:1', groupSize: 4 }));
+    const one = await S.solve(job([...four, sq('x', { order: 'x' })]), {});
+    const placed = new Set(one.placements.map(p => p.id));
+    assert(four.every(p => placed.has(p.id)) || four.every(p => !placed.has(p.id)), 'a line of four is whole or turned away whole, never three: ' + [...placed].join(','));
+    const only = await S.solve(job(four), {});
+    assert.equal(only.placements.length, 0, 'the line of four does not fit (three do): none of its pieces is placed');
+    assert(only.pairing && only.pairing.turnedAway === 1 && only.pairing.split.length === 0, 'pairing: ' + JSON.stringify(only.pairing));
+    pass('8 a quantity-2 line (L R L R) that does not fit whole is turned away whole (three of four fit, none is placed)');
+  }
 })().catch(e => { console.error(e); process.exit(1); });
