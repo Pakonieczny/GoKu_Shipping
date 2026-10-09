@@ -1557,8 +1557,11 @@
     return await out.save({ useObjectStreams: false });
   }
 
-  /** One charm alone on its own artboard (for the permanent per-charm copy). */
-  async function buildSingleCharm(charm, parsed) {
+  /** One charm alone on its own artboard (for the permanent per-charm copy).
+   *  opts.bodies (pairs, 9 Oct): the separate bodies of a mismatched pair that `charm` was folded from (each a charm of its own with its own members and
+   *  topIndices, left to right). Each body is then written as a form of its own on the artboard, in its place, so that when the file is read again the
+   *  bodies sit in different top-level groups and each can be written alone (a form of one body = one piece of the pair). Without opts nothing changes. */
+  async function buildSingleCharm(charm, parsed, opts) {
     // the page around a lone charm is padded by an eighth of its larger side (at least the stroke plus 2 pt): a charm that
     // filled 80 % of its own page would read as an artboard frame when the per-SKU file is parsed again
     const bw = charm.bbox[2] - charm.bbox[0], bh = charm.bbox[3] - charm.bbox[1];
@@ -1566,9 +1569,13 @@
     const w = charm.bbox[2] - charm.bbox[0] + pad * 2, h = charm.bbox[3] - charm.bbox[1] + pad * 2;
     // the rotation centre normally comes from buildSilhouettes (canvas); without one (server indexing, tests) the bbox centre is the same point
     const c = Object.assign({}, charm, { sourceId: "one", centerPt: charm.centerPt || [(charm.bbox[0] + charm.bbox[2]) / 2, (charm.bbox[1] + charm.bbox[3]) / 2], strokePt: charm.strokePt || Math.max(0.5, charm.outline.lwPt || 0.5) });
+    const bodies = opts && Array.isArray(opts.bodies) && opts.bodies.length > 1 ? opts.bodies : null;
+    const base = String(charm.name || charm.slug || "charm");
     return buildSheet({
       sheet: { wPt: w, hPt: h, strokeRGB: [1, 1, 1], strokePt: 0.01 },
-      placements: [{ charm: c, angle: 0, cxPt: w / 2, cyPt: h / 2 }],
+      placements: bodies
+        ? bodies.map((b, i) => ({ charm: Object.assign({}, b, { sourceId: "one", centerPt: c.centerPt, strokePt: b.strokePt || c.strokePt, name: base, side: bodies.length === 2 ? (i === 0 ? "L" : "R") : null }), angle: 0, cxPt: w / 2, cyPt: h / 2 }))
+        : [{ charm: c, angle: 0, cxPt: w / 2, cyPt: h / 2 }],
       sources: new Map([["one", parsed]]),
       title: charm.name || charm.slug || "charm"
     });
