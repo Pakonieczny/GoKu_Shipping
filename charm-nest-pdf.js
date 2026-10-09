@@ -198,7 +198,7 @@
             kind: pendingClip && op === "n" ? "clip" : (op === "n" ? "noop" : "path"),
             start: pathStart, end: ins[i].end, paintOp: op,
             stroke: doStroke, fill: doFill, strokeRGB: stroke.slice(), fillRGB: fill.slice(), lwPt: lw * scaleOf(ctm),
-            closed: allClosed, subpaths: path.sub.map(s => s.segs), bbox, depth
+            closed: allClosed, subpaths: path.sub.map(s => s.segs), bbox, depth, ctm: ctm.slice()   // (ctm: where a replacement written in this segment's place must undo the page's matrix)
           };
           if (held.length) seg.held = held;
           held = [];
@@ -1415,30 +1415,33 @@
       the layer markers (BDC/EMC) that carry the layer each piece belongs to.
       A removed range leaves one space behind, so tokens never run together; that is the same page to a reader as filling
       it with spaces was, only without carrying the whole sheet's coordinates in every per-SKU file. */
-  function isolate(content, segments, keep) {
+  function isolate(content, segments, keep, replace) {
     const keepSet = new Set(keep);
     // `held`: the graphics-state operators a removed segment wrote inside its own range (a layer's colour is set by the
     // text run that opens it). They stay, in order, so every kept object paints with the state it had in the master.
     const drop = segments
       .filter(s => !keepSet.has(s.index) && s.kind !== "clip" && s.kind !== "noop" && s.start >= 0 && s.end > s.start)
-      .map(s => [s.start, s.end, s.held || null]).sort((a, b) => a[0] - b[0]);
+      .map(s => [s.start, s.end, s.held || null, replace && replace.get(s.index) || null]).sort((a, b) => a[0] - b[0]);
+    // `replace` (index → text, ASCII): operators written where that dropped segment stood, after the state operators it held (the hatch copy of a black fill)
     const runs = [];
     for (const r of drop) {
       const last = runs[runs.length - 1];
-      if (last && r[0] <= last[1]) { last[1] = Math.max(last[1], r[1]); if (r[2]) last[2] = last[2] ? last[2].concat(r[2]) : r[2]; }
-      else runs.push([r[0], r[1], r[2]]);
+      if (last && r[0] <= last[1]) { last[1] = Math.max(last[1], r[1]); if (r[2]) last[2] = last[2] ? last[2].concat(r[2]) : r[2]; if (r[3]) last[3] = (last[3] || "") + r[3]; }
+      else runs.push([r[0], r[1], r[2], r[3]]);
     }
     let size = 0, pos = 0;
-    for (const [a, b, held] of runs) {
+    for (const [a, b, held, text] of runs) {
       if (a > pos) size += a - pos; size += 1; pos = b;
       if (held) for (let k = 0; k < held.length; k += 2) size += held[k + 1] - held[k] + 1;
+      if (text) size += text.length + 1;
     }
     size += Math.max(0, content.length - pos);
     const out = new Uint8Array(size); let o = 0; pos = 0;
-    for (const [a, b, held] of runs) {
+    for (const [a, b, held, text] of runs) {
       if (a > pos) { out.set(content.subarray(pos, a), o); o += a - pos; }
       out[o++] = 0x20; pos = b;
       if (held) for (let k = 0; k < held.length; k += 2) { out.set(content.subarray(held[k], held[k + 1]), o); o += held[k + 1] - held[k]; out[o++] = 0x20; }
+      if (text) { for (let k = 0; k < text.length; k++) out[o++] = text.charCodeAt(k) & 0x7f; out[o++] = 0x20; }
     }
     if (pos < content.length) out.set(content.subarray(pos), o);
     return out;
@@ -1563,8 +1566,10 @@
       if (usedNames.has(name)) { let k = 2; while (usedNames.has(name + "-" + k)) k++; name = name + "-" + k; }
       usedNames.add(name);
       addOCG(name, tag);
-      const keep = c.dropIndices ? c.topIndices.filter(i => !c.dropIndices.has(i)) : c.topIndices;
-      let bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, keep));
+      const keep0 = c.dropIndices ? c.topIndices.filter(i => !c.dropIndices.has(i)) : c.topIndices;
+      // a black fill inside the charm is hatching (the black-fill rule): its operators are written again in blue, in the same place, layer and order
+      const hatch = hatchCopies(c, src.parsed, keep0), keep = hatch ? keep0.filter(i => !hatch.has(i)) : keep0;
+      let bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, keep, hatch));
       // members the source never held (a welded outline, a ring's hole) are written after the copied bytes, in the same space
       { const extra = syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
       const pad = c.strokePt / 2 + 1;
@@ -2033,6 +2038,26 @@
       c.bbox=c.members.reduce((a,m)=>bbUnion(a,m.bbox),null);res.welded++;
     }
     c.ringGeometryVersion=3;return res;
+  }
+  /** The blue copy of each black fill the rule stamped as hatching (`hatchBlue`), as content-stream text keyed by the top-level segment it replaces: that segment's
+   *  own path, painted `0 0 1 rg … f` under the matrix it was painted under, so it keeps its place in the stack and in its layer. Only a plain top-level path of
+   *  this page is replaced (not one inside a Form, not a merged one, not one whose matrix is unknown): the rest stays as the master drew it. null: nothing to replace. */
+  function hatchCopies(c, parsed, keep) {
+    if (!c || !Array.isArray(c.members) || !parsed || !Array.isArray(parsed.segments)) return null;
+    let byIndex = null, out = null; const keepSet = new Set(keep), f = v => (Math.round(v * 1000) / 1000).toString();
+    for (const m of c.members) {
+      if (!m || !m.hatchBlue || m.kind !== "path" || !m.fill || m.stroke || m.synthetic || m.parent != null || m.index == null || m.parts || !keepSet.has(m.index)) continue;
+      if (!byIndex) { byIndex = new Map(); for (const s of parsed.segments) if (s && s.index != null) byIndex.set(s.index, s); }
+      const seg = byIndex.get(m.index), k = seg && seg.ctm;
+      if (!seg || seg.kind !== "path" || !seg.fill || seg.stroke || seg.start !== m.start || !Array.isArray(k) || k.length < 6 || !Array.isArray(seg.subpaths)) continue;
+      const det = k[0] * k[3] - k[1] * k[2]; if (!isFinite(det) || Math.abs(det) < 1e-12) continue;
+      const inv = [k[3] / det, -k[1] / det, -k[2] / det, k[0] / det, (k[2] * k[5] - k[3] * k[4]) / det, (k[1] * k[4] - k[0] * k[5]) / det];   // the paths are stored in page space: undo the matrix they were written under
+      let t = `q ${inv.map(v => (Math.round(v * 1e9) / 1e9).toString()).join(" ")} cm 0 0 1 rg `;
+      for (const sp of seg.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") t += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") t += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") t += "h "; }
+      t += (String(seg.paintOp || "f").endsWith("*") ? "f*" : "f") + " Q";
+      (out || (out = new Map())).set(m.index, t);
+    }
+    return out;
   }
   /** Content-stream operators for members that have no bytes in the source, in the source's own coordinates. */
   function syntheticOps(members, keyOf) {

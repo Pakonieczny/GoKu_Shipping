@@ -173,4 +173,19 @@ known('F7', 'mismatched in the words, one SKU: held for a person', () => {
   eq(J(c.livePairOf(rowOf(S('Initial Disc Necklace', [V('Necklace Options', '2 Disc')], { quantity: 2 })), '4170000001')).map(p => [p.of, p.n]), [[4, 1], [4, 2], [4, 3], [4, 4]], 'two 2-disc necklaces are 4 pieces of one group');
 }
 
+/* ── 10 · the sticker module and the efficiency record count with the pool's count ──────────────────────────────────────────── */
+{
+  const PL = require(path.join(root, 'charm-nest-pair-labels.js'));
+  global.CharmNestPair = Pair;   // (the module reads the globals the page has)
+  const rowOf = (over, c) => { const line = mk(over); return { order, line, spec: O.interpretLine(order, line, c || ctx()) }; };
+  const pairRow = rowOf(S('Star Stud Earrings')), disc3 = rowOf(S('Initial Disc Necklace', [V('Number of Discs', '3')])), many = rowOf(S('Star Charm', [], { quantity: 25 }));
+  eq(PL.pieceCount([pairRow, disc3], () => null), 5, 'a card with a pair and a 3-disc necklace is 2 + 3 pieces, as the pool counts it (it said 3)');
+  eq(PL.pieceCount([pairRow, many], () => null), 27, 'a quantity of 25 charms is 25 pieces, not the 20 the sticker module capped it at');
+  eq(PL.pieceCount([disc3], () => null), null, 'no pair on the card: null, the page counts as it always did');
+  eq(PL.stickerPieces([pairRow, disc3], () => null).map(s => s.side), ['L', 'R'], 'the necklace beside a pair prints no sticker of its own');
+  const sticky = (over, c) => { const r = rowOf(over, c); return { stickers: (PL.stickerPieces([r], () => null) || []).length, pool: O.pieceCountOf(r.spec) }; };
+  eq(sticky(S('Star Stud Earrings', [], { quantity: 3 })), { stickers: 6, pool: 6 }, 'sticker count = pool count: 3 pairs');
+  eq(sticky(S('Star Stud Earrings', [V('Qty', '2 studs')]), ctx(answer('Qty', '2 studs', 4))), { stickers: 4, pool: 4 }, 'sticker count = pool count: an answered 4');
+}
+
 console.log(`\npairs-adv-count: ${n} checks passed${open.length ? `, ${open.length} OPEN findings (${open.join(' ')}) for other owners` : ''}`);
