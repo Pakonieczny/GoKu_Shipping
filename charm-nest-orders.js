@@ -153,7 +153,56 @@
   const huggieSku = (raw, masterEntry) => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
     const base = variationBase(s), real = !!base && !!masterEntry && !!(masterEntry(s) || masterEntry(s + " (HUGGIE)")); return (base && !real ? base : s) + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
-  function resolveSku(line, aliases, masterEntry, noDesign) {
+  /* The SKU Etsy keeps for the variation bought comes before anything else (Paul, 9 Oct: a listing whose drop-down options
+     carry SKUs, "the choice the user made … will directly correlate to the charm that has to be located from the repository").
+     Etsy puts that SKU on the receipt transaction; the listing's inventory (one table per listing, cached by the cloud:
+     charmNestLibrary listingSkus) gives the same for a transaction that came without it or with only the listing's own. Then:
+     · the master is asked for the transaction's SKU as Etsy wrote it, then as the master spells it (spacing and punctuation
+       only: "SPORTS 12- BULLSEYE" is the master's "SPORTS 12 - BULLSEYE", when exactly one master SKU reads that way);
+     · a SKU that is a design's own never raises the question "what does this option decide?" for the option it is tied to,
+       and it outranks a charm a person picked for that option: tied means the inventory never gives that SKU to another
+       value of the option (a SKU shared by every sign says nothing about which sign was bought, so the option is still asked);
+     · a SKU no master file holds waits for a person, as before, and never becomes a sibling's design. */
+  const upSku = s => String(s == null ? "" : s).trim().toUpperCase();
+  /** A SKU without its spacing and punctuation: the key under which two spellings of one SKU meet. */
+  const looseKey = s => upSku(s).replace(/[^A-Z0-9]+/g, "");
+  /** The master's SKU a SKU stands for ("" when the master holds none): itself, or the one master SKU that is the same SKU
+   *  spelled with other spacing or punctuation (masterLoose: the loaded master's index by looseKey, "" when two read alike). */
+  function masterSku(sku, masterEntry, masterLoose) {
+    const s = upSku(sku); if (!s || !masterEntry) return "";
+    if (masterEntry(s)) return s;
+    const w = masterLoose ? upSku(masterLoose(s)) : "";
+    return w && w !== s && masterEntry(w) ? w : "";
+  }
+  const idOf = x => (x == null || x === "" ? "" : String(x));
+  const pairKey = p => idOf(p[0]) + ":" + idOf(p[1]);
+  // the (property, value) ids Etsy puts on each variation of a transaction; a question with no value id (Personalization) has none
+  const varIds = line => (line.variations || []).map(v => [idOf(v.propertyId != null ? v.propertyId : v.property_id), idOf(v.valueId != null ? v.valueId : v.value_id)]).filter(p => p[0] && p[1] && p[1] !== "0");
+  /** The SKU a listing's inventory table gives the product bought: { sku, by } or null. table = { uni } (every product of the
+   *  listing has the one SKU) or { products: [{ id, sku, d, pv: [[propertyId, valueId]…] }] }. by: "product" (the transaction's
+   *  product id), "options" (the one product with those option values), "listing" (the listing's only SKU). */
+  function inventorySku(line, table) {
+    if (!line || !table || typeof table !== "object") return null;
+    if (!Array.isArray(table.products)) return table.uni ? { sku: upSku(table.uni), by: "listing" } : null;
+    const ps = table.products.filter(p => p && typeof p === "object"), pid = idOf(line.productId != null ? line.productId : line.product_id);
+    if (pid) { const p = ps.find(x => idOf(x.id) === pid); if (p) return upSku(p.sku) ? { sku: upSku(p.sku), by: "product" } : null; }
+    const want = varIds(line).map(pairKey).sort().join("|"); if (!want) return null;
+    const hits = ps.filter(p => !p.d && (p.pv || []).map(pairKey).sort().join("|") === want), skus = [...new Set(hits.map(p => upSku(p.sku)))];
+    return hits.length && skus.length === 1 && skus[0] ? { sku: skus[0], by: "options" } : null;
+  }
+  /** Is this SKU the listing's own: held by several products that differ in their options? */
+  const listingWide = (table, sku) => !!table && Array.isArray(table.products) && table.products.filter(p => p && !p.d && upSku(p.sku) === sku).length > 1;
+  /** Does the inventory tie this SKU to this value of its option: is it never given to a product with another value of the
+   *  option? (v: the transaction's variation, with the ids Etsy gave it.) */
+  function tiesToOption(table, v, sku) {
+    if (!table || !Array.isArray(table.products) || !v || !sku) return false;
+    const p = idOf(v.propertyId != null ? v.propertyId : v.property_id), val = idOf(v.valueId != null ? v.valueId : v.value_id);
+    if (!p || !val || val === "0") return false;
+    const has = x => (x.pv || []).some(a => idOf(a[0]) === p && idOf(a[1]) === val);
+    const live = table.products.filter(x => x && !x.d), mine = live.filter(x => upSku(x.sku) === sku);
+    return mine.length > 0 && mine.every(has) && live.some(x => !has(x));
+  }
+  function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
     const raw = String(line.sku || "").trim().toUpperCase();
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
     // (the listing's answer is its necklace charm's: never a huggie set's, which has its own for a line with no SKU)
@@ -162,18 +211,21 @@
     const held = raw && masterEntry ? masterEntry(raw) : null;
     if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
-    const base = raw && variationBase(raw);
-    if (base && masterEntry(base)) return { sku: base, source: "variation" };
+    // the master's own spelling of the SKU (a person's answer for the SKU as written came first), then the charm-only mark
+    const spelt = raw && masterSku(raw, masterEntry, masterLoose);
+    if (spelt) return { sku: spelt, source: "spelling" };
+    const base = raw && variationBase(raw), under = base && masterSku(base, masterEntry, masterLoose);
+    if (under) return { sku: under, source: "variation" };
     if (whole) return { sku: whole, source: "alias" };
     return raw ? { sku: raw, source: "transaction" } : { sku: "", source: null };
   }
-  /** The charm an option picks on this listing ({ sku, name, value }), when a person said so under Options, or null. */
+  /** The charm an option picks on this listing ({ sku, name, value, variation }), when a person said so under Options, or null. */
   function optionDesign(line, maps) {
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
       if (!name || !value) continue;
       const hit = optionLookup(maps, line.listingId, name, value);
-      if (hit && hit.field === "design" && hit.value) return { sku: String(hit.value).trim().toUpperCase(), name, value };
+      if (hit && hit.field === "design" && hit.value) return { sku: String(hit.value).trim().toUpperCase(), name, value, variation: v };
     }
     return null;
   }
@@ -326,12 +378,30 @@
   function interpretLine(order, line, ctx) {
     ctx = ctx || {};
     const problems = [];
+    const me = ctx.masterEntry, loose = ctx.masterLoose;
+    // 0 · the SKU Etsy keeps for the product bought, in the listing's inventory table (when the page holds one): it stands in
+    // for a transaction SKU that is missing or names no design, and for one that is the listing's own (held by products that
+    // differ in their options) while the product has a SKU of its own. Never for a SKU that names a design and is no one
+    // else's, and a product SKU no master file holds is taken only over a listing's own SKU that names no design (the person
+    // is then asked about the product's SKU, not the listing's, which every other option of the listing shares).
+    const table = ctx.listingSkus && ctx.listingSkus[String(line.listingId)], listing = inventorySku(line, table);
+    let viaInventory = null;
+    if (listing && listing.sku) {
+      const tx = upSku(line.sku), names = s => !!s && (isNoDesign(s, ctx.noDesign) || !!masterSku(s, me, loose) || !!masterSku(variationBase(s), me, loose));
+      // wide: the transaction came with the listing's own SKU (several products that differ in their options hold it), not the product's
+      const wide = listing.by !== "listing" && !!tx && listingWide(table, tx);
+      if (listing.sku !== tx && (names(listing.sku) ? (!tx || !names(tx) || wide) : (wide && !names(tx)))) { viaInventory = { tx, sku: listing.sku, by: listing.by }; line = Object.assign({}, line, { sku: listing.sku }); }
+    }
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
-    const set = huggieSet(line), bought = set ? huggieSku(line.sku, ctx.masterEntry) : String(line.sku || "").trim().toUpperCase();
-    let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
+    const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : String(line.sku || "").trim().toUpperCase();
+    let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
+    if (viaInventory && skuSource !== "alias") skuSource = "inventory";
+    // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
+    // option's answer: the option is not asked, and no charm a person once picked for it stands over the SKU
+    const sold = upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
-    const picked = optionDesign(line, ctx.optionMaps);
-    if (picked) { sku = picked.sku; skuSource = "option"; }
+    const picked = optionDesign(line, ctx.optionMaps), viaPick = !!picked && !tied(picked.variation);
+    if (viaPick) { sku = picked.sku; skuSource = "option"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
@@ -346,6 +416,7 @@
     if (special) spec.special = special;
     if (done) spec.customDone = done;
     spec.boughtSku = bought; if (set) spec.huggieSet = true;
+    if (viaInventory) spec.viaInventory = viaInventory;   // the transaction's SKU and the listing inventory's SKU for the product bought, when that one was used
     // a line with no design of its own (not on the no-design list, not finished by hand) is one Claude reads to tell a
     // custom order from a regular listing whose SKU is not indexed yet (Custom Orders)
     const byOption = special && special.signals[0] === "option";
@@ -365,6 +436,8 @@
         else if (isFormOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
         else if (isFormOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
         else if (isPriceOption(name) && looksLikePrice(value)) mapped = { field: "ignore", value: null, source: "rule:price" };
+        // the SKU is this value's own (the inventory never gives it to another value of the option) and a design: it answers the option
+        else if (!viaPick && tied(v)) mapped = { field: "design", value: sku, source: "sku" };
       }
       spec.options.push({ name, value, mapped });
       if (!mapped) { if (!noDesign) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }); continue; }
@@ -741,7 +814,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, interpretLine, lineKey, poolId,
+  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

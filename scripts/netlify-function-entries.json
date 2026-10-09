@@ -180,6 +180,7 @@
     "_charmNestAsset.js",
     "_charmNestAuth.js",
     "_charmNestCustomRead.js",
+    "_charmNestListingSkus.js",
     "_charmNestMaster.js",
     "_charmNestPdf.js",
     "_charmNestPlacement.js",
