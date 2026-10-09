@@ -140,7 +140,7 @@ const same = (a, b) => a.id === b.id && a.angle === b.angle && a.cxPt === b.cxPt
     const mk = (id, side, date) => ({ id, kind: 'x', pieces: [L.square(id, side, id, date)] }), stock = { wPt: 80, hPt: 50 };
     const layout = run => run.pages.map(p => `${p.page}:${p.placements.map(q => q.id).sort().join('+')}`).join(' ');
     const orders = () => [mk('o0', 34, 1001), mk('o1', 46, 1002), mk('o2', 8, 1003)];
-    const off = await L.runStream({ metal: 'gold14k', sheet: stock, orders: orders(), batch: 3, seed: 1, job: { pocketFill: false } });
+    const off = await L.runStream({ metal: 'gold14k', sheet: stock, orders: orders(), batch: 3, seed: 1, job: { pocketFill: false, unjam: false } });
     assert.equal(layout(off), '1:o0 2:o1+o2', 'the old flow: the small charm leaves with the big order that missed');
     const mOff = L.measure(off, stock, { cut: false });
     assert.deepEqual(mOff.leftOut.map(x => x.id), ['o2'], 'and the exhaustive scan finds it fitting the closed sheet');

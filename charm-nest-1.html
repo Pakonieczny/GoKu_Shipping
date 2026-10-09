@@ -4457,7 +4457,7 @@ function buildJob(sh) {
     careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
     // an order turned away from a sheet with room left lifts the few newest charms near the bottleneck and seats them again beside it ("making room"; Rose Gold never, see the solver's unjam)
     // (a sheet whose attempts found no arrangement tries less each time, and not at all after three)
-    unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 8000 } : {}),
+    unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 15000 } : {}),
     // Rose Gold, 10K and 14K (the metals with a green line) go on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS)
     block: careful && (sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
