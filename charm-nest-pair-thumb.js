@@ -14,11 +14,13 @@
  *  Which bodies a charm has, which side each is and whether the design is a mismatched pair come from CharmNestPair
  *  (charm-nest-pair.js, PAIRMASTER): bodiesOf, isMismatched, sideOf, sideLabel. This file never re-detects them.
  *
- *    plan(charm)                         null, or { bodies:[{ index, side, label, short, bbox, outline }] } left to right
+ *    plan(charm)                         null, or { bodies:[{ index, side, label, short, bbox, outline, members }] } left to right
  *    layout(plan, bbox, {size,padPt})    the picture's pixel layout: { s, W, H, H0, band, fontPx, chipH, chips:[...] }
- *    canvasFor(P, charm, opts)           the finished canvas (null when not a pair): opts { size, padPt, bg, makeCanvas, highlight }
+ *    canvasFor(P, charm, opts)           the finished canvas (null when not a pair): opts { size, padPt, bg, makeCanvas, highlight, body }
+ *                                        highlight "L" | "R": both bodies, the other washed out. body 0 | 1: that ear alone, at its scale in the pair
  *    paintTags(ctx, plan, tx, k, opts)   only the chips, on a canvas the caller already owns (a placed charm's drawing)
  *    svgPicture(plan, opts)              the same picture as an SVG string for the stored PNG (Resvg), opts { bbox, padPt, size, bg, inner }
+ *    chipHtml(side, {short, px})         the same chip as markup, for pages that show the two ears as two pictures or rows
  *    chipsText(plan, size)               ["Left","Right"] or ["L","R"]: what the chips say at this picture size
  *    use(pairApi)                        tests only: stand in for CharmNestPair
  */
@@ -64,7 +66,7 @@
           out = { bodies: sorted.map((b, i) => {
             const side = typeof P.sideOf === "function" ? P.sideOf(i, 2) : (i === 0 ? "L" : "R");
             const label = (typeof P.sideLabel === "function" ? P.sideLabel(side) : "") || (i === 0 ? "Left" : "Right");
-            return { index: b.index != null ? b.index : i, side, label, short: label.charAt(0).toUpperCase(), bbox: b.bbox.slice(), outline: b.outline || null };
+            return { index: b.index != null ? b.index : i, side, label, short: label.charAt(0).toUpperCase(), bbox: b.bbox.slice(), outline: b.outline || null, members: b.members || null };
           }) };
         }
       }
@@ -121,6 +123,7 @@
       reaches into the other would hide part of the one being pointed at. */
   function washRect(pl, bbox, L, highlight) {
     if (highlight !== "L" && highlight !== "R") return null;
+    if (pl.bodies.length !== 2) return null;
     const [a, b] = pl.bodies; if (a.bbox[2] > b.bbox[0]) return null;
     const other = highlight === "L" ? b : a, k = L.s;
     return { x: (other.bbox[0] - bbox[0] + L.pad) * k - 1, w: (other.bbox[2] - other.bbox[0]) * k + 2, side: other.side };
@@ -130,12 +133,30 @@
   function canvasFor(P, charm, o) {
     o = o || {}; const pl = plan(charm); if (!pl) return null;
     if (!P || typeof P.drawCharm !== "function" || typeof o.makeCanvas !== "function") return null;
+    if (o.body === 0 || o.body === 1) return bodyCanvas(P, charm, pl, o);
     const b = charm.bbox, L = layout(pl, b, o), cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
     ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(0, 0, L.W, L.H);
     P.drawCharm(ctx, charm, (x, y) => [(x - b[0] + L.pad) * L.s, (b[3] + L.pad - y) * L.s], L.s);
     const wash = washRect(pl, b, L, o.highlight);
     if (wash) { ctx.save(); ctx.globalAlpha = WASH_ALPHA; ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(wash.x, 0, wash.w, L.H0); ctx.restore(); }
     paintChips(ctx, L, wash ? wash.side : null);
+    return cv;
+  }
+
+  /** ONE ear alone (opts.body 0 = Left, 1 = Right): that body at the scale it has in the pair's own picture of this size (so a left and a right picture
+      shown beside each other keep the true relative size of the two bodies), with its one chip under it. */
+  function bodyCanvas(P, charm, pl, o) {
+    const one = pl.bodies[o.body]; if (!one || !okBox(one.bbox)) return null;
+    const lp = layout(pl, charm.bbox, o), pad = lp.pad, k = lp.s, bb = one.bbox;
+    const words = chipsText({ bodies: [one] }, lp.size), chipW = textEm(words[0]) * lp.fontPx + 2 * lp.fontPx * .55;
+    const bw = (bb[2] - bb[0] + 2 * pad) * k, W = Math.max(8, Math.round(Math.max(bw, chipW + 2))), H0 = Math.max(8, Math.round((bb[3] - bb[1] + 2 * pad) * k)), offX = (W - bw) / 2;
+    const L = { s: k, W, H: H0 + lp.band, H0, band: lp.band, fontPx: lp.fontPx, chipH: lp.chipH, gap: lp.gap, pad, size: lp.size, y: H0 + lp.gap, baseline: H0 + lp.gap + lp.chipH / 2 + lp.fontPx * .35,
+      chips: [{ text: words[0], side: one.side, w: chipW, x: (W - chipW) / 2 }] };
+    const one1 = Object.assign({}, charm, { outline: one.outline || charm.outline, members: one.members && one.members.length ? one.members : charm.members, bbox: bb.slice() });
+    const cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
+    ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(0, 0, L.W, L.H);
+    P.drawCharm(ctx, one1, (x, y) => [(x - bb[0] + pad) * k + offX, (bb[3] + pad - y) * k], k);
+    paintChips(ctx, L, null);
     return cv;
   }
 
@@ -153,6 +174,14 @@
     return true;
   }
 
+  /** The same chip as a piece of page markup, for places that show the two ears as TWO pictures or rows (a Left row and a Right row, a station tile):
+      side "L" | "R" (or a body index 0 | 1), opts.short for L / R. Inline style only, so it needs no page CSS and looks the same on every page. */
+  function chipHtml(side, o) {
+    o = o || {}; const sd = side === 0 ? "L" : side === 1 ? "R" : side; if (sd !== "L" && sd !== "R") return "";
+    const label = sd === "L" ? "Left" : "Right", text = o.short ? sd : label, px = +o.px || 11;
+    return `<span class="pairChip" data-side="${sd}" title="${label} ear" style="display:inline-block;vertical-align:middle;padding:0 ${f2(px * .55)}px;border-radius:999px;background:${INK};color:${INK_TEXT};font:600 ${f2(px)}px/${f2(px * 1.55)}px ${FONT.replace(/"/g, "'")};white-space:nowrap">${text}</span>`;
+  }
+
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const f2 = v => (Math.round(v * 100) / 100).toString();
   /** The stored PNG's picture as SVG: o.inner is the caller's already-built body markup in POINT units with y UP (the caller's own
@@ -165,6 +194,6 @@
       `<g transform="translate(${f2(tx)} ${f2(ty)}) scale(${f2(L.s)} ${f2(-L.s)})">${o.inner || ""}</g>${chips}</svg>` };
   }
 
-  return { plan, layout, canvasFor, paintTags, svgPicture, chipsText: (pl, size) => chipsText(pl, size), use: p => { injected = p; memoClear(); }, _const: { SHORT_BELOW_PX, FONT_FRAC, INK } };
+  return { plan, layout, canvasFor, paintTags, svgPicture, chipHtml, chipsText: (pl, size) => chipsText(pl, size), use: p => { injected = p; memoClear(); }, _const: { SHORT_BELOW_PX, FONT_FRAC, INK } };
   function memoClear() { /* the WeakMap cannot be cleared; a stand-in change is rare (tests) and plan() re-checks the signature per charm object */ }
 });

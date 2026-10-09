@@ -74,6 +74,22 @@ if (lp) { PT.canvasFor(fakeP, lap, { size: 168, padPt: 2, bg: '#fff', highlight:
 ok(PT.canvasFor(fakeP, oneCharm(), { size: 168, padPt: 2, bg: '#fff', makeCanvas: r.make }) === null, 'a normal charm: canvasFor is null, so the maker runs its old code');
 ok(PT.canvasFor(fakeP, pairCharm(), { size: 168, padPt: 2, bg: '#fff' }) === null && PT.canvasFor(null, pairCharm(), { size: 168, makeCanvas: r.make }) === null, 'no canvas maker or no drawer: null, never a throw');
 
+// one ear alone: that body only, at the scale it has in the pair's own picture of this size, with its own single chip
+r = recorder(); drew = [];
+const cvB = PT.canvasFor(fakeP, pairCharm(), { size: 168, padPt: 2, bg: '#fff', body: 1, makeCanvas: r.make });
+ok(cvB && drew.length === 1 && Math.abs(drew[0].k - L168.s) < 1e-9, 'one ear alone is drawn at the scale it has in the pair picture');
+ok(drew[0].c.members.length === 2 && drew[0].c.members.includes(oR) && drew[0].c.members.includes(eR) && !drew[0].c.members.includes(oL), 'only the right body\'s own ink is drawn');
+ok(cvB.width >= Math.round((24 + 4) * L168.s) && cvB.width < L168.W, 'its picture is as wide as that body (narrower than the pair), chip included');
+ok(r.log.filter(l => l[0] === 'fill').length === 1, 'one chip');
+const cvA = PT.canvasFor(fakeP, pairCharm(), { size: 168, padPt: 2, bg: '#fff', body: 0, makeCanvas: recorder().make });
+ok(cvA.width < cvB.width, 'the smaller left body gives the narrower picture: true relative size is kept between the two ears');
+ok(PT.canvasFor(fakeP, oneCharm(), { size: 168, padPt: 2, bg: '#fff', body: 0, makeCanvas: r.make }) === null, 'a normal charm ignores the body option too');
+ok(PT.canvasFor(fakeP, pairCharm(), { size: 168, padPt: 2, bg: '#fff', body: 1, highlight: 'L', makeCanvas: recorder().make }) !== null, 'body with a highlight does not throw');
+// the markup chip: the same look as the drawn one
+const ch = PT.chipHtml('L'), cr = PT.chipHtml('R', { short: true }), c0 = PT.chipHtml(0), c1 = PT.chipHtml(1);
+ok(ch.includes('>Left</span>') && ch.includes('data-side="L"') && ch.includes('#2a2724') && cr.includes('>R</span>') && c0 === ch && c1.includes('>Right</span>'), 'chipHtml: Left, Right, L, R, by side or body index');
+ok(PT.chipHtml(null) === '' && PT.chipHtml('X') === '' && PT.chipHtml(2) === '', 'chipHtml says nothing for anything that is not an ear');
+
 /* ── 4 · the stored PNG's picture (SVG): the same layout, the chips as vector rects and text ── */
 const pic = PT.svgPicture(pl, { bbox: pairCharm().bbox, padPt: 2, size: 168, bg: '#ece7dc', inner: '<path d="M0 0L1 1"/>' });
 ok(pic.layout.W === L168.W && pic.layout.H === L168.H, 'the SVG has the canvas layout');
@@ -184,6 +200,21 @@ ok(br.includes('e.pair && e.pair.mismatched ?') && br.includes('Left + Right pai
     const hl = await inkOf(workerPics.hiL, .5, 1), hr = await inkOf(workerPics.hiR, 0, .33);
     ok(wl > 40 && wr > 40, 'the worker front picture has ink on both sides');
     ok(hl < wr * .55 && hr < wl * .55, `highlight Left washes the right body out (${hl} of ${wr}), highlight Right washes the left (${hr} of ${wl})`);
+    const bodyPics = await page.evaluate(async fx => {
+      const w = new Worker('charm-nest-compute-worker.js'); let id = 0;
+      const run = (type, input) => new Promise((res, rej) => { const my = ++id; w.onmessage = ({ data }) => { if (data.id !== my || data.progress) return; data.error ? rej(new Error(data.error)) : res(data.result); }; w.postMessage({ id: my, type, input }); });
+      const strip = c => Object.fromEntries(['id', 'name', 'bbox', 'outline', 'members', 'strokePt', 'centerPt'].filter(k => c[k] !== undefined).map(k => [k, c[k]]));
+      const o = { both: await run('front', { charm: strip(fx.pair), size: 220 }), b0: await run('front', { charm: strip(fx.pair), size: 220, opts: { body: 0 } }), b1: await run('front', { charm: strip(fx.pair), size: 220, opts: { body: 1 } }) };
+      w.terminate(); return o;
+    }, fixtures);
+    const sizeOf = async u => page.evaluate(async u => { const p = await window.__px(u); return { w: p.w, h: p.h }; }, u);
+    const colsOf = async (u, band) => page.evaluate(async ([u, band]) => { const p = await window.__px(u); return window.__clusters(p, 0, p.h - band, (r, g, b) => r < 140 && g < 140 && b < 140 || (r > 200 && g < 90) || (b > 200 && r < 90)); }, [u, band]);
+    const bandOf = PT.layout(pl, pairCharm().bbox, { size: 220, padPt: 3 * 72 / 25.4 }).band;
+    const cBoth = await colsOf(bodyPics.both, bandOf), c0 = await colsOf(bodyPics.b0, bandOf), c1b = await colsOf(bodyPics.b1, bandOf);
+    ok(cBoth.length === 2 && c0.length === 1 && c1b.length === 1, 'each ear alone shows one body');
+    const wid = c => c[0][1] - c[0][0] + 1;
+    ok(Math.abs(wid(c0) - (cBoth[0][1] - cBoth[0][0] + 1)) <= 2 && Math.abs(wid(c1b) - (cBoth[1][1] - cBoth[1][0] + 1)) <= 2, 'an ear alone is drawn at its scale in the pair picture (' + wid(c0) + '/' + wid(c1b) + ' vs ' + (cBoth[0][1] - cBoth[0][0] + 1) + '/' + (cBoth[1][1] - cBoth[1][0] + 1) + ')');
+    ok((await sizeOf(bodyPics.b0)).w < (await sizeOf(bodyPics.b1)).w, 'the left ear\'s picture is narrower than the right ear\'s');
     ok(workerPics.one === workerPics.oneHi, 'a normal charm ignores a highlight: the very same picture');
     ok(workerPics.thumb === thumb.pair, 'the worker thumbnail of the pair equals the page thumbnail');
     ok(!errors.length, 'no page errors: ' + errors.join(' | '));
