@@ -892,13 +892,20 @@
       if (!optionName) optionName = name;
       for (const sg of ss) add(sg, { from: "option", name, value, variation: v });
     }
-    if (!list.length) return null;
+    // no option names a sign, but a drop-down value says "2 symbols" (the Zodiac REVAMP listing's 13th Zodiac Sign value is "2 symbols-leave note": the buyer writes BOTH signs in the note):
+    // the signs are the note's, the first named the Left; that value is the option the signs are looked up under
+    let byNote = null;
+    if (!list.length) {
+      const v = ((line && line.variations) || []).find(x => { const nm = lvName(x), val = lvValue(x).trim(); return !!nm && !!val && !isPersonalisation(nm) && !isMetalOption(nm) && TWO_DESIGNS.test(val); });
+      if (!v) return null;
+      byNote = v; optionName = lvName(v);
+    }
     const notes = [].concat(((line && line.variations) || []).filter(v => isPersonalisation(lvName(v))).map(lvValue), (line && line.personalization) || [], (line && (line.buyerMessage || line.message_from_buyer)) || []);
     const said = [];   // (every sign any note names, each note's own words: a sign the drop-down already has is the same sign again, not a second one)
     for (const t of notes) for (const sg of signsOfText(t)) { said.push(sg); add(sg, { from: "note", name: optionName, value: sg, text: visible(t).trim() }); }
-    const own = list.find(x => x.from === "option" && x.variation), pid = own ? idOf(own.variation.propertyId != null ? own.variation.propertyId : own.variation.property_id) : "";
+    const own = byNote || (list.find(x => x.from === "option" && x.variation) || {}).variation, pid = own ? idOf(own.propertyId != null ? own.propertyId : own.property_id) : "";
     const text = [...new Set(notes.map(t => visible(t).trim()).filter(Boolean))].join(" · ");
-    return { signs: list, optionName, propertyId: pid, said, noteText: text };
+    return Object.assign({ signs: list, optionName, propertyId: pid, said, noteText: text }, byNote ? { byNote: true, optionValue: lvValue(byNote).trim() } : {});
   }
   /** What the buyer's note says, as one short quoted piece for a row: “balance et lion”, or "there is no buyer's note". */
   const noteSays = text => text ? `the buyer's note says “${clip(text, 80)}”` : "there is no buyer's note";
@@ -987,16 +994,17 @@
       const sl = signsOfLine(line);
       if (sl) {
         rep.signs = sl.signs.map(x => x.sign);
-        const first = sl.signs[0], note = noteSays(sl.noteText);
-        if (sl.signs.length === 1) {
+        const first = sl.signs[0] || {}, note = noteSays(sl.noteText);
+        if (!sl.signs.length) rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but no sign is named: ${note}. Write the two symbols in the order's note, name the two designs, or say it is the same on both ears`;
+        else if (sl.signs.length === 1) {
           // the note names the SAME sign as the drop-down (or only repeats it): both ears are that sign, nothing to ask (a Left and a Right, the Right the mirror of the Left)
-          if (sl.said.length && sl.said.every(x => x === first.sign)) rep.same = { sign: first.sign, text: sl.noteText, why: `the buyer's note repeats ${first.sign}: the same sign on both ears` };
+          if (first.from === "option" && sl.said.length && sl.said.every(x => x === first.sign)) rep.same = { sign: first.sign, text: sl.noteText, why: `the buyer's note repeats ${first.sign}: the same sign on both ears` };
           else rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but names one (${first.sign}): ${note}. Write the second symbol in the order's note, name the second design, or say it is the same on both ears`;
         } else if (sl.signs.length > 2) rep.why = `the line says two different designs but names ${sl.signs.length} signs (${sl.signs.map(x => x.sign).join(", ")}): ${note}. Name the right two, or say it is the same on both ears`;
         else {
           rep.lack = rep.lack || {};
           const designs = sl.signs.map(x => { const virt = x.from === "option" ? x.variation : { name: sl.optionName, value: x.sign, propertyId: sl.propertyId }; return { x, sku: has(o.designOf(virt, x.from === "option") || "") }; });
-          if (designs.every(d => d.sku) && designs[0].sku !== designs[1].sku) return { members: [{ side: "L", sku: designs[0].sku }, { side: "R", sku: designs[1].sku }], source: "signs", signs: rep.signs, note: sl.noteText };
+          if (designs.every(d => d.sku) && designs[0].sku !== designs[1].sku) return Object.assign({ members: [{ side: "L", sku: designs[0].sku }, { side: "R", sku: designs[1].sku }], source: "signs", signs: rep.signs, note: sl.noteText }, sl.byNote ? { byNote: true, optionName: sl.optionName, optionValue: sl.optionValue } : {});
           rep.asks = designs.filter(d => !d.sku && d.x.from === "note").map(d => ({ name: sl.optionName, value: d.x.sign, lack: (rep.lack[d.x.sign] || {}).why || "", needNames: !!(rep.lack[d.x.sign] || {}).needNames, why: `second symbol of a 2-symbols line: ${d.x.sign}, from the buyer's words “${clip(d.x.text, 40)}”; the line's own symbol is ${first.sign}` }));
           if (designs.every(d => d.sku) && designs[0].sku === designs[1].sku) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}) but both signs are the same charm (${designs[0].sku}): ${note}. Name the second design, or say it is the same on both ears`;
           else if (!rep.asks.length) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}): “${designs.filter(d => !d.sku).map(d => d.x.sign).join(", ")}” has no charm chosen on this listing yet (${note})`;
@@ -1254,6 +1262,8 @@
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
       const fr = fontRead(name, value);
       if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
+      // the drop-down value that says "2 symbols" and leaves the signs to the note ("2 symbols-leave note"): once the note's two signs are two charms, the option is answered by them
+      if (!mapped && members && members.source === "signs" && members.byNote && name === members.optionName && value === members.optionValue) mapped = { field: "design", value: members.members[0].sku, source: "rule:signs-in-note" };
       // a Left-ear / Right-ear option whose value is a master design is that side's design (the pair's members): nothing to ask about it
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
