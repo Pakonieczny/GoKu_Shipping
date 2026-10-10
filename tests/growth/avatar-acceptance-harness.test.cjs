@@ -163,6 +163,25 @@ test('compiled source audit requires actual casting light and ground receiver de
   }
 });
 
+test('authored source audit requires the supported renderer shadow type assignment beyond snapshot labels',()=>{
+  const root=path.join(__dirname,'../..'),controllerSource=fs.readFileSync(path.join(root,'brites-concierge-avatar.js'),'utf8'),sceneSource=fs.readFileSync(path.join(root,'brites-concierge-avatar-scene.mjs'),'utf8');
+  const assignment=/renderer\.shadowMap\.type\s*=\s*THREE\.PCFShadowMap\s*;/;assert.match(sceneSource,assignment);assert.match(sceneSource,/type: 'PCF'/);
+  for(const replacement of ['', 'renderer.shadowMap.type = undefined;', 'renderer.shadowMap.type = THREE.PCFSoftShadowMap;']){
+    const report=qa.auditSceneSource({sceneSource:sceneSource.replace(assignment,replacement),controllerSource});
+    assert.equal(report.status,'source_contract_incomplete');assert.equal(report.checks.softShadowDeclaration,false);
+    assert.equal(report.checks.shadowMapEnabled,true);assert.equal(report.checks.castingLight,true);assert.equal(report.checks.shadowMapBounded,true);assert.equal(report.checks.receivingGeometry,true);
+    assert.equal(report.claims.gpuAppearance,'unverified');assert.equal(report.claims.shadowAppearance,'unverified');
+  }
+});
+
+test('compiled shadow labels cannot mask a missing assignment or absent unsupported numeric type',()=>{
+  const root=path.join(__dirname,'../..'),controllerSource=fs.readFileSync(path.join(root,'brites-concierge-avatar.js'),'utf8'),sceneSource=fs.readFileSync(path.join(root,'assets/brites-concierge-avatar-scene.mjs'),'utf8');
+  const assignment=/([\w$]+)\.shadowMap\.enabled=!0,\1\.shadowMap\.type=([\w$]+)(?=[,;])/;const match=sceneSource.match(assignment);assert.ok(match);const [,renderer,type]=match;
+  const numericDeclaration=new RegExp('(?:\\b(?:var|let|const)\\s+|,)\\s*'+type.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'=1(?=[,;])');assert.match(sceneSource,numericDeclaration);assert.match(sceneSource,/type:"PCF"/);
+  const broken=[sceneSource.replace(assignment,renderer+'.shadowMap.enabled=!0'),sceneSource.replace(assignment,renderer+'.shadowMap.enabled=!0,'+renderer+'.shadowMap.type=undefined'),sceneSource.replace(numericDeclaration,value=>value.replace(/=1$/, '=undefined')),sceneSource.replace(numericDeclaration,value=>value.replace(/=1$/, '=2'))];
+  for(const source of broken){const report=qa.auditSceneSource({sceneSource:source,controllerSource});assert.equal(report.status,'source_contract_incomplete');assert.equal(report.checks.softShadowDeclaration,false);assert.equal(report.claims.gpuAppearance,'unverified');assert.equal(report.claims.shadowAppearance,'unverified');}
+});
+
 test('DOM control audit exercises every expression plus pause and live fallback semantics, then restores state',async t=>{
   const dom=new JSDOM('<!doctype html><main id="avatar"></main>',{url:'https://growth-sandbox.example/concierge-avatar-qa.html',pretendToBeVisual:true});
   const {window}=dom;window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});window.IntersectionObserver=class{observe(){}disconnect(){}};

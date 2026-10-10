@@ -7,14 +7,15 @@
   var clamp=function(v,a,b){return Math.max(a,Math.min(b,Number.isFinite(v)?v:a));};
   var clean=function(t){return typeof t==='string'?t.replace(/[\u0000-\u001f]/g,' ').slice(0,8000):'';};
   function withoutNegatedLoss(text){return text.replace(/\b(?:not|isn't|isn’t|wasn't|wasn’t|no longer)\s+(?:for\s+)?(?:a\s+)?(?:sad|memorial|remembrance|bereavement)\b/g,'').replace(/\b(?:no one|nobody)\s+(?:died|passed away)\b/g,'').replace(/\b(?:didn't|didn’t|hasn't|hasn’t|not)\s+(?:died|die|passed away|grieving)\b/g,'');}
-  function withoutNegatedRepair(text){return text.replace(/\b(?:not|isn't|isn’t|wasn't|wasn’t|never|no longer)\s+(?:feeling\s+)?(?:confused|frustrated|annoyed|overwhelmed|broken|wrong)\b/g,'');}
+  function withoutNegatedRepair(text){return text.replace(/\b(?:not|isn't|isn’t|wasn't|wasn’t|never|no longer)\s+(?:feeling\s+)?(?:confused|frustrated|annoyed|overwhelmed|broken|wrong|angry|irritated|pissed off)\b/g,'');}
   function contextFor(text,prior){
     var t=clean(text).toLowerCase();
     var deniedQuiet=/\b(?:not|isn't|isn’t|wasn't|wasn’t|no longer)\s+(?:for\s+)?(?:a\s+)?(?:sad|memorial|remembrance|bereavement)\b/.test(t)||/\b(?:no one|nobody)\s+(?:died|passed away)\b/.test(t);
     var affirmed=withoutNegatedLoss(t);
     if(/\b(?:died|passed away|grieving|grief|bereavement|memorial|remembrance|loss of (?:my |her |his |a )?(?:mother|father|sister|brother|friend|partner|child|loved one)|lost (?:my |her |his )?(?:mother|father|mom|dad|sister|brother|friend|partner|child)|in memory of)\b/.test(affirmed))return 'support';
-    var repaired=/\b(?:fixed it|working now|not broken anymore|no longer broken|all resolved)\b/.test(t);
-    if(!repaired&&/\b(?:frustrat\w*|not working|doesn't work|doesn’t work|does not work|confus\w*|overwhelmed|wrong|broken|annoy\w*)\b/.test(withoutNegatedRepair(t)))return 'repair';
+    var repaired=/\b(?:fixed it|working now|not broken anymore|no longer broken|all resolved|no longer (?:angry|irritated|frustrated)|not (?:angry|irritated|frustrated) anymore)\b/.test(t);
+    var feedback=withoutNegatedRepair(t);
+    if(!repaired&&(/\b(?:frustrat\w*|not working|doesn't work|doesn’t work|does not work|confus\w*|overwhelmed|wrong|broken|annoy\w*|(?:thanks|thank you) for nothing|(?:do not|don't|don’t) appreciate)\b/.test(feedback)||/\b(?:i(?: am|'m|’m)|i feel|this makes me|you make me)\s+(?:(?:so|really|very|quite|pretty)\s+)?(?:angry|irritated|pissed off)\b/.test(feedback)))return 'repair';
     if(deniedQuiet||repaired||/\b(?:switch topics|different topic|moving on|another gift)\b/.test(t))return 'ordinary';
     return prior==='support'||prior==='repair'?prior:'ordinary';
   }
@@ -23,7 +24,7 @@
     var celebration=/\b(?:congratulations|congrats|happy birthday|celebrat\w*|wonderful news|excited|graduat\w*|anniversary)\b/.test(t);
     var negated=/\b(?:not|isn't|isn’t|wasn't|wasn’t|don't|don’t|do not|never|hate|terrible|awful|unhappy)\b/.test(t);
     if(/\b(?:died|passed away|grieving|grief|bereavement|memorial|remembrance|loss of (?:my |her |his |a )?(?:mother|father|sister|brother|friend|partner|child|loved one)|lost (?:my |her |his )?(?:mother|father|mom|dad|sister|brother|friend|partner|child)|in memory of)\b/.test(t)){kind='support';intensity=.38;}
-    else if(/\b(?:thank you for nothing|yeah right|as if|are you kidding|seriously wrong)\b/.test(t)){kind='support';intensity=.35;}
+    else if(/\b(?:(?:thanks|thank you) for nothing|yeah right|as if|are you kidding|seriously wrong)\b/.test(t)){kind='support';intensity=.35;}
     else if(/\?$/.test(t)||/^(?:what|which|how|would you|do you|could you|can you|shall we|tell me)\b/.test(t)){kind='inquiry';intensity=.78;}
     else if(/\b(?:not sure|uncertain|might|may suggest|may feel|may be|could mean|perhaps|cannot confirm|can't confirm|can’t confirm|cannot say|can't say|can’t say|don't know|do not know|depends|interpretation|personally|too expensive|too high|over budget|for you|not available|unavailable|no matches|no matching|didn't find|didn’t find|couldn't find|couldn’t find|cannot find|can't find|can’t find|not what|don't like|don’t like|do not like|not right|doesn't work|doesn’t work|does not work|not a match)\b/.test(t)||role==='user'&&/^(?:no[,;.!]|not (?:this|that|these|those)\b)/.test(t)||negated&&celebration){kind='reflect';intensity=.62;}
     else if(/\b(?:thanks|thank you|appreciate|grateful|love (?:this|these|that|those|it)|looks? (?:lovely|beautiful)|(?:this|that|these|those) (?:is|are) perfect)\b/.test(t)&&!negated){kind='appreciate';intensity=.76;}

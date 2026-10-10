@@ -104,19 +104,25 @@ test('missing native voice script has a bounded failure and removes its obsolete
   // not be mistaken for the native voice loader created by the Talk request.
   const openingTimers=new Set(h.timers);h.button('Talk to me').click();await settle();const loader=h.root.querySelector('script[src$="brites-concierge-voice.js"]'),timer=h.timers.find(value=>!openingTimers.has(value));assert.ok(loader);assert.ok(timer);timer.fn();await settle();assert.match(h.root.querySelector('.status').textContent,/Voice is unavailable/);assert.equal(loader.isConnected,false);assert.equal(h.root.querySelector('script[src$="brites-concierge-voice.js"]'),null);assert.equal(h.button('Talk to me').disabled,false);assert.equal(h.calls.start,0);
 });
-test('exact isolated voice preview uses the explicit existing operator sign-in without caching or displaying it',async t=>{
-  const h=fixture(t,{url:'https://brites-growth-sandbox.netlify.app/concierge-sandbox.html'});h.w.sessionStorage.setItem('brites-growth-key','synthetic-operator-a');h.open();await h.activate();
-  assert.deepEqual({...h.config.headers()},{'X-Growth-Key':'synthetic-operator-a'});assert.doesNotMatch(h.root.textContent,/synthetic-operator/);
+for(const pathname of ['/concierge-sandbox','/concierge-sandbox.html'])test('exact isolated voice preview reads availability and reuses private operator sign-in at '+pathname,async t=>{
+  const h=fixture(t,{url:'https://brites-growth-sandbox.netlify.app'+pathname,fetch:capabilitiesOnly(()=>availabilityResponse({enabled:true,message:'PRIVATE_AVAILABILITY_DETAIL'}))});h.w.sessionStorage.setItem('brites-growth-key','synthetic-operator-a');h.open();await settle();
+  const checks=h.calls.requests.filter(r=>r.url.endsWith('/api/concierge-voice'));assert.equal(checks.length,1);assert.deepEqual(JSON.parse(checks[0].init.body),{action:'capabilities'});assert.equal(checks[0].init.headers['X-Growth-Key'],'synthetic-operator-a');assert.equal(checks[0].init.credentials,'same-origin');assert.equal(checks[0].init.redirect,'error');assert.equal(checks[0].init.cache,'no-store');assert.equal(h.calls.start,0);assert.equal(h.root.querySelector('script[src$="brites-concierge-voice.js"]'),null);
+  await h.activate();assert.equal(h.calls.start,1);assert.deepEqual({...h.config.headers()},{'X-Growth-Key':'synthetic-operator-a'});assert.doesNotMatch(h.root.innerHTML,/synthetic-operator|PRIVATE_AVAILABILITY_DETAIL/);assert.doesNotMatch(JSON.stringify({context:h.config.getContext(),memory:h.config.getMemory()}),/synthetic-operator|PRIVATE_AVAILABILITY_DETAIL|X-Growth-Key/);assert.ok(h.calls.requests.every(r=>!String(r.init?.body||'').includes('synthetic-operator')));
   h.w.sessionStorage.setItem('brites-growth-key','synthetic-operator-b');assert.equal(h.config.headers()['X-Growth-Key'],'synthetic-operator-b');
   h.w.sessionStorage.removeItem('brites-growth-key');assert.deepEqual({...h.config.headers()},{});
 });
 test('operator voice header never leaves the exact preview origin, path and API boundary',async t=>{
-  for(const opts of [{url:'https://britesjewelry.com/'},{url:'https://preview.example/concierge-sandbox.html'},{url:'https://brites-growth-sandbox.netlify.app/concierge-actions-qa.html'},{url:'https://brites-growth-sandbox.netlify.app/concierge-sandbox.html',api:'https://foreign.example/'},{url:'https://brites-growth-sandbox.netlify.app/concierge-sandbox.html',sandbox:false}]){
-    const h=fixture(t,opts);h.w.sessionStorage.setItem('brites-growth-key','synthetic-operator');h.open();await h.activate();assert.deepEqual({...h.config.headers()},{});
+  const origin='https://brites-growth-sandbox.netlify.app',excluded=[
+    {url:'https://britesjewelry.com/'},
+    ...['/concierge-sandbox/','/concierge-sandbox.html/','/concierge-sandbox-extra','/concierge-sandbox.html.backup','/concierge-sandbox/other','/concierge-actions-qa.html'].map(path=>({url:origin+path})),
+    ...['/concierge-sandbox','/concierge-sandbox.html'].flatMap(path=>[{url:'https://preview.example'+path},{url:'https://brites-growth-sandbox.netlify.app.foreign.test'+path},{url:'http://brites-growth-sandbox.netlify.app'+path},{url:origin+path,api:'https://foreign.example/'},{url:origin+path,sandbox:false}])
+  ];
+  for(const opts of excluded){
+    const h=fixture(t,opts);h.w.sessionStorage.setItem('brites-growth-key','synthetic-operator');h.open();await settle();assert.equal(h.calls.requests.filter(r=>r.url.endsWith('/api/concierge-voice')).length,0,JSON.stringify(opts));await h.activate();assert.deepEqual({...h.config.headers()},{},JSON.stringify(opts));assert.doesNotMatch(JSON.stringify({context:h.config.getContext(),memory:h.config.getMemory()}),/synthetic-operator|X-Growth-Key/);assert.doesNotMatch(h.root.innerHTML,/synthetic-operator/);
   }
 });
-test('missing, malformed or unavailable preview sign-in storage stays safely unauthenticated',async t=>{
-  const h=fixture(t,{url:'https://brites-growth-sandbox.netlify.app/concierge-sandbox.html'});h.open();await h.activate();
+for(const pathname of ['/concierge-sandbox','/concierge-sandbox.html'])test('missing, malformed or unavailable preview sign-in storage stays safely unauthenticated at '+pathname,async t=>{
+  const h=fixture(t,{url:'https://brites-growth-sandbox.netlify.app'+pathname});h.open();await h.activate();
   for(const value of ['', '  ', 'bad\nheader', 'x'.repeat(1025)]){h.w.sessionStorage.setItem('brites-growth-key',value);assert.deepEqual({...h.config.headers()},{});}
   Object.defineProperty(h.w,'sessionStorage',{get(){throw Error('storage unavailable');}});assert.deepEqual({...h.config.headers()},{});
 });

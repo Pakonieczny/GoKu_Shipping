@@ -90,7 +90,7 @@ test('native change engraving wording reaches the actual cart text field and kee
 });
 
 test('native restored cart gains its exact controls after delayed product knowledge without reopening the listing',async t=>{
-  const f=await fixture(t,{query:'?cart=1',holdInventory:true,savedCart(products){const p=products[0],v=p.variants.find(v=>v.title==='14k Gold Filled / 18 inch / Engraved');return [{productId:p.id,title:p.title,variantId:v.id.split('/').pop(),variant:v.title,price:v.price,currency:p.currency,quantity:3,variantOptions:v.options,customizationPreview:true,engravingPreview:'SAVED_PRIVATE46'}];}});
+  const f=await fixture(t,{query:'?cart=1',holdInventory:true,holdProduct:true,savedCart(products){const p=products[0],v=p.variants.find(v=>v.title==='14k Gold Filled / 18 inch / Engraved');return [{productId:p.id,title:p.title,variantId:v.id.split('/').pop(),variant:v.title,price:v.price,currency:p.currency,quantity:3,variantOptions:v.options,customizationPreview:true,engravingPreview:'SAVED_PRIVATE46'}];}});
   const before=clone(f.cart()),row=f.d.querySelector('[data-bag-line]'),quantity=row.querySelector('.bag-quantity input');quantity.focus();
   assert.equal(f.d.querySelectorAll('[data-bag-option]').length,0);await f.releaseInventory();
   assert.equal(f.store.snapshot().pageKind,'bag');assert.equal(f.w.location.search,'?cart=1');assert.equal(f.d.querySelector('[data-bag-line]'),row);assert.equal(f.d.activeElement,quantity);assert.deepEqual(f.cart(),before);
