@@ -1374,6 +1374,7 @@ const Orders = window.Orders = (() => {
      again when its order (a new copy, update time or note), its line, a person's override, the option maps (a new object,
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
+  const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
@@ -1383,7 +1384,9 @@ const Orders = window.Orders = (() => {
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
-      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) : ""];
+      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
+      // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
+      libFacts(typoOf(l.sku))];
   }
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
