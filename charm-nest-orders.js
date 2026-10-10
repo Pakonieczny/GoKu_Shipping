@@ -241,6 +241,22 @@
     for (const t of toks) { const w = masterSku(s.slice(0, at) + t + s.slice(at + was.length), masterEntry, masterLoose); if (w && !out.includes(w)) out.push(w); }
     return out;
   }
+  /** Etsy's SKUs for a whole listing all name another family than the line, and the master holds, for each of them, exactly one SKU that is
+   *  the same name and number in the line's family (the Greek Goddess EARRINGS listing: GreekGoddess_Necklace_0..4, and the master's
+   *  GREEKGODDESS_EARRING_0..4): the listing's SKUs were copied from its sibling listing, and each one's twin is its own SKU in the line's
+   *  family. → the master SKU for `etsySku`, or "" when any one of the listing's SKUs has no single twin (nothing is then inferred). */
+  function listingTwin(line, table, etsySku, masterEntry, masterLoose) {
+    const fam = lineFamily(line); if (!fam || !table || !Array.isArray(table.products) || !masterEntry) return "";
+    const skus = [...new Set(table.products.filter(p => p && !p.d && upSku(p.sku)).map(p => upSku(p.sku)))];
+    if (skus.length < 2 || !skus.includes(upSku(etsySku))) return "";
+    let mine = "";
+    for (const k of skus) {
+      const f = skuFamily(k); if (!f || f === fam) return "";
+      const t = familyTwins(k, fam, masterEntry, masterLoose); if (t.length !== 1) return "";
+      if (k === upSku(etsySku)) mine = t[0];
+    }
+    return mine;
+  }
   /** What the listing inventory offers for the product bought, as master SKUs a person can pick, best first: Etsy's own SKU for the
    *  option when it is the right family; else its twin in the line's family, then Etsy's own (flagged). → [{ sku, why, conflict? }] */
   function inventoryPicks(line, table, masterEntry, masterLoose) {
@@ -977,9 +993,13 @@
         (line.variations || []).some(v => { const nm = v.name || v.formatted_name, val = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
           return !!nm && !!val && !isMetalOption(nm) && !isPersonalisation(nm) && !optionLookup(ctx.optionMaps, line.listingId, nm, val) && tiesToOption(table, v, listing.sku); });
       if (listing.sku !== tx && (names(listing.sku) ? (!tx || !names(tx) || wide || old) : (wide && !names(tx)))) {
-        // Etsy's SKU for the option must also be the right kind of design for the line (a necklace SKU on an earrings listing waits for a person)
-        if (skuFamilyConflict(masterSku(listing.sku, me, loose) || listing.sku, line)) heldFamily = { tx, sku: listing.sku, by: listing.by };
-        else { viaInventory = { tx, sku: listing.sku, by: listing.by }; line = Object.assign({}, line, { sku: listing.sku }); }
+        // Etsy's SKU for the option must also be the right kind of design for the line. A necklace SKU on an earrings listing is read as its
+        // earring twin only when the whole listing's SKUs have one (listingTwin) and nobody has picked a charm for the option; else the line waits
+        if (skuFamilyConflict(masterSku(listing.sku, me, loose) || listing.sku, line)) {
+          const twin = optionDesign(line, ctx.optionMaps) ? "" : listingTwin(line, table, listing.sku, me, loose);
+          if (twin) { viaInventory = { tx, sku: twin, by: listing.by, etsy: upSku(listing.sku), twin: true }; line = Object.assign({}, line, { sku: twin }); }
+          else heldFamily = { tx, sku: listing.sku, by: listing.by };
+        } else { viaInventory = { tx, sku: listing.sku, by: listing.by }; line = Object.assign({}, line, { sku: listing.sku }); }
       }
     }
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
@@ -988,7 +1008,7 @@
     if (viaInventory && skuSource !== "alias") skuSource = "inventory";
     // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
     // option's answer: the option is not asked, and no charm a person once picked for it stands over the SKU
-    const sold = upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
+    const sold = viaInventory && viaInventory.etsy || upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
     const picked = optionDesign(line, ctx.optionMaps), viaPick = !!picked && !tied(picked.variation);
     if (viaPick) { sku = picked.sku; skuSource = "option"; }
@@ -1445,6 +1465,6 @@
   }
   return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
-    skuFamily, lineFamily, skuFamilyConflict, familyTwins, inventoryPicks, inventoryWhy, suggestCharms,
+    skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
