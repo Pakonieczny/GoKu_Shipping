@@ -85,10 +85,27 @@ PT.use(Pair);
   ok(/pair:a\.opts&&a\.opts\.pair,facing:a\.opts&&a\.opts\.facing,sku:a\.opts&&a\.opts\.sku/.test(wk), 'the worker hands them to the component');
   ok(/pair: opts && opts\.pair, facing: opts && opts\.facing, sku: opts && opts\.sku/.test(br), 'renderFront (no worker) hands them to the component');
   ok(br.includes('const earPair = row =>') && br.includes('${earPair(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}'), 'the Vector design caption says Left + Right for every earring pair line (a line of two separate designs keeps its own wording)');
-  ok(/const both=!\(opts && \(opts\.side==='L' \|\| opts\.side==='R' \|\| opts\.highlight\)\) && matchPair\(row\)/.test(br) && /const matchPair = row => .*!pairRow\(row\).*earPairRow\(row\)/.test(br), 'the line picture is the pair only when no single ear is asked for');
-  ok(/!opts\?\.highlight && !opts\?\.side && matchPair\(row\)\?'\|pair'/.test(br), 'a pair line is its own picture key');
+  ok(/const both=!\(opts && \(opts\.side==='L' \|\| opts\.side==='R' \|\| opts\.highlight \|\| opts\.piece===true\)\) && matchPair\(row\)/.test(br) && /const matchPair = row => .*!pairRow\(row\).*earPairRow\(row\)/.test(br), 'the line picture is the pair only when no single ear is asked for');
+  ok(/!opts\?\.highlight && !opts\?\.side && !opts\?\.piece && matchPair\(row\)\?'\|pair'/.test(br), 'a pair line is its own picture key');
   ok(html.includes('.comparePair figure:first-child figcaption{white-space:normal'), 'the longer caption wraps under its picture instead of running into the Etsy listing caption');
   ok(/"charm-nest-pair-thumb\.js"/.test(read('scripts/build-public.cjs')), 'the public build ships the component (it already did)');
+}
+
+/* ── 2b · the Efficiency person page's order tiles: a pair order is ONE row with a Left tile and a Right tile ── */
+{
+  const vm = require('vm'), win = { document: { getElementById: () => null, addEventListener() {}, createElement: () => ({}) }, console }; win.window = win; vm.createContext(win);
+  vm.runInContext(read('charm-nest-efficiency-orders.js'), win);
+  const E = win.EfficiencyOrders, o = JSON.parse(JSON.stringify(E.normOrder({ rid: '4175272689', piecesCount: 2, pieces: [{ id: 'a_1', label: 'NEW SUGAR SKULL · Left', sku: 'NEW SUGAR SKULL', side: 'L', thumbUrl: '' }, { id: 'a_2', label: 'NEW SUGAR SKULL · Right', sku: 'NEW SUGAR SKULL', side: 'R', thumbUrl: '' }, { id: 'b_1', label: 'Heart', sku: 'HEART', side: 'X' }] })));
+  ok(o.pieces[0].side === 'L' && o.pieces[1].side === 'R' && o.pieces[2].side === '', 'the order list keeps a piece\'s side (Left or Right) and nothing else: ' + o.pieces.map(p => p.side || '-').join());
+  const eo = read('charm-nest-efficiency-orders.js');
+  ok(eo.includes('data-n="${p && p.side ? p.side : i + 1}"') && eo.includes('data-side="${p.side}"'), 'a Left or Right tile wears L or R where it wore the piece number, and carries its side to its picture');
+  ok(eo.includes('vecThumb(t.dataset.sku, t.dataset.side)') && eo.includes('vecThumb(i.dataset.sku, i.dataset.side)'), 'the vector fallback of a tile and of the hover card asks for that ear');
+}
+
+{
+  const es = read('charm-nest-efficiency-stations.js'), pd = read('charm-nest-piece-dots.js');
+  ok(es.includes('vectorOf(ctx.rid, ctx.pool, ctx.side)') && es.includes('side: p.both ? "" : p.side') && es.includes('PM.earMirror(row, "R")'), 'the stations board: a Right piece tile that falls back to its vector draws that ear turned over, a Left, a mismatched pair\'s one tile and any other piece as before');
+  ok(/vectorThumb\(row, opts\) : LM\.vectorThumb\(row\)/.test(pd), 'the piece dots still ask for one ear or the piece as drawn, never the pair (unchanged file)');
 }
 
 /* ── 3 · the real app: the Orders tab, the Review card and the order window, in headless Chromium over the fake site ── */
@@ -178,10 +195,12 @@ PT.use(Pair);
     }
     ok(/Qty 4/.test(got[F][0].facts) && !/pairs/.test(got[F][0].facts), 'a plain quantity-4 line says Qty 4 as before');
     // the cache keys: the pair line is its own picture, never one body as drawn nor one ear
-    const keys = await page.evaluate(({ A, E }) => { const a = B.orders.rows.find(r => r.order.receiptId === A), e = B.orders.rows.find(r => r.order.receiptId === E); return { plain: PieceMedia.vectorKey(e), pair: PieceMedia.vectorKey(a), left: PieceMedia.vectorKey(a, { side: 'L' }), right: PieceMedia.vectorKey(a, { side: 'R', mirror: true }) }; }, { A, E });
+    const keys = await page.evaluate(({ A, E }) => { const a = B.orders.rows.find(r => r.order.receiptId === A), e = B.orders.rows.find(r => r.order.receiptId === E); return { plain: PieceMedia.vectorKey(e), pair: PieceMedia.vectorKey(a, { pair: true }), piece: PieceMedia.vectorKey(a), left: PieceMedia.vectorKey(a, { side: 'L' }), right: PieceMedia.vectorKey(a, { side: 'R', mirror: true }) }; }, { A, E });
+    ok(!/\|pair/.test(keys.piece), 'vectorKey of a piece (the hover cards, the station tiles, the piece dots) is what it always was: ' + keys.piece);
     ok(/\|pair$/.test(keys.pair) && !/\|pair/.test(keys.plain) && !/\|pair/.test(keys.left) && new Set([keys.pair, keys.left, keys.right]).size === 3, 'vectorKey: the pair line, the Left ear and the Right ear are three pictures ' + JSON.stringify(keys));
     // one ear asked for by side is still ONE ear (the piece dots and the order window's piece rows)
-    const ear = await page.evaluate(async A => { const a = B.orders.rows.find(r => r.order.receiptId === A); const pairSrc = await PieceMedia.vectorThumb(a), left = await PieceMedia.vectorThumb(a, { side: 'L', mirror: false, highlight: 'L', px: 120 }), right = await PieceMedia.vectorThumb(a, { side: 'R', mirror: true, highlight: 'R', px: 120 }); return { pair: await window.__ink(pairSrc), left: await window.__ink(left), right: await window.__ink(right) }; }, A);
+    const ear = await page.evaluate(async A => { const a = B.orders.rows.find(r => r.order.receiptId === A); const pairSrc = await PieceMedia.vectorThumb(a, { pair: true }), pieceSrc = await PieceMedia.vectorThumb(a), left = await PieceMedia.vectorThumb(a, { side: 'L', mirror: false, highlight: 'L', px: 120 }), right = await PieceMedia.vectorThumb(a, { side: 'R', mirror: true, highlight: 'R', px: 120 }); return { pair: await window.__ink(pairSrc), piece: await window.__ink(pieceSrc), left: await window.__ink(left), right: await window.__ink(right) }; }, A);
+    ok(ear.piece.bodies.length === 1 && ear.piece.chips.length === 0, 'a hover card or a station tile that asks for a piece of the line (no ear named) is ONE body as drawn, never the pair: ' + JSON.stringify(ear.piece.bodies));
     ok(ear.pair.bodies.length === 2 && ear.left.bodies.length === 1 && ear.right.bodies.length === 1, 'the line is the pair; an ear asked for by side is one body: ' + JSON.stringify([ear.pair.bodies.length, ear.left.bodies.length, ear.right.bodies.length]));
     // the order window's header: the same picture, from the same component
     await page.evaluate(A => { OrderWin.open(B.orders.rows.find(r => r.order.receiptId === A).key, { view: 'info' }); }, A);
@@ -190,6 +209,30 @@ PT.use(Pair);
     ok(head.pic.bodies.length === 2 && head.pic.chips.length === 2, 'the order window header shows the pair side by side ' + JSON.stringify(head.pic.bodies));
     ok(head.pieces.filter(Boolean).join() === 'L,R', 'its pieces list still has the Left and the Right piece rows: ' + head.pieces);
     await page.evaluate(() => OrderWin.close()); await page.waitForTimeout(300);
+    // counts that say orders and pieces truthfully (the Review card of several lines says "N pieces · M orders"): a pair is 1 order and 2 pieces; every other line counts as the one it always did
+    const counts = await page.evaluate(({ A, B2, C, E, F, G, H }) => {
+      const R = rid => B.orders.rows.find(r => r.order.receiptId === rid);
+      const pill = (...ids) => { const rows = ids.map(R), n = Review.card({ kind: 'unmatchedSku', key: 'ord:rl-' + ids.join('-'), row: rows[0], rows, problem: {}, why: 'test' }); return ((n.querySelector('.pill') || {}).textContent || ''); };
+      return { pairPlain: pill(A, E), twoPairsPlain: pill(B2, E), misPlain: pill(C, E), plainPlain4: pill(E, F), singlePlain: pill(G, E), discsPlain: pill(H, E), mixed: pill(A, B2, E, F), pairs: pill(A, B2) };
+    }, { A, B2, C, E, F, G, H });
+    ok(/3 pieces · 2 orders/.test(counts.pairPlain), 'a pair + a plain line: 3 pieces, 2 orders: ' + counts.pairPlain);
+    ok(/5 pieces · 2 orders/.test(counts.twoPairsPlain), 'two pairs + a plain line: 5 pieces, 2 orders: ' + counts.twoPairsPlain);
+    ok(/3 pieces · 2 orders/.test(counts.misPlain), 'a mismatched pair + a plain line: 3 pieces, 2 orders: ' + counts.misPlain);
+    ok(/2 pieces · 2 orders/.test(counts.plainPlain4) && /2 pieces · 2 orders/.test(counts.singlePlain) && /2 pieces · 2 orders/.test(counts.discsPlain), 'a plain line, a quantity-4 line, a single named ear and a disc necklace count as the one line they always did: ' + [counts.plainPlain4, counts.singlePlain, counts.discsPlain].join(' | '));
+    ok(/8 pieces · 4 orders/.test(counts.mixed), 'a mixed group adds them up: ' + counts.mixed);
+    ok(/6 pieces · 2 orders/.test(counts.pairs), 'two pair orders are 2 orders and 6 pieces, never "2 pieces": ' + counts.pairs);
+    // the Efficiency tile's vector fallback: the Right piece's picture is the Left turned over (the same rule), the Left and a plain tile are as drawn
+    const tile = await page.evaluate(async () => {
+      const L = await EfficiencyOrders.vecThumb('PR_BOOT', 'L'), R = await EfficiencyOrders.vecThumb('PR_BOOT', 'R'), P0 = await EfficiencyOrders.vecThumb('PR_BOOT'), mir = PieceMedia.earMirror({ spec: { designSku: 'PR_BOOT' }, line: { sku: 'PR_BOOT' } }, 'R'), none = PieceMedia.earMirror({ spec: { designSku: 'NO SUCH' }, line: { sku: 'NO SUCH' } }, 'R');
+      const px = async src => { const im = new Image(); im.src = src; await im.decode(); const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; const g = c.getContext('2d'); g.drawImage(im, 0, 0); return { w: im.width, h: im.height, d: g.getImageData(0, 0, im.width, im.height).data }; };
+      const a = await px(L), b = await px(R), p = await px(P0), ink = (o, x, y) => { const i = (y * o.w + x) * 4; return !(o.d[i] > 200 && o.d[i + 1] > 200 && o.d[i + 2] > 200); };
+      let flip = 0, copy = 0, tot = 0; for (let y = 0; y < a.h; y++) for (let x = 0; x < a.w; x++) { const l = ink(a, x, y), r = ink(b, x, y), m = ink(a, a.w - 1 - x, y); if (l || r) { tot++; if (r === m) flip++; if (r === l) copy++; } }
+      let same = a.w === p.w && a.h === p.h; if (same) for (let i = 0; i < a.d.length; i += 4) if (Math.abs(a.d[i] - p.d[i]) > 2) { same = false; break; }
+      return { mir, none, flip: flip / tot, copy: copy / tot, plainIsLeft: same, hasR: !!R };
+    });
+    ok(tile.mir === true && tile.none === false, 'earMirror: a design known here turns its Right ear, one that is not known does not');
+    ok(tile.hasR && tile.flip > .9 && tile.flip > tile.copy + .1, `the Right tile's vector is the mirror of the Left tile's (mirror ${tile.flip.toFixed(3)}, plain copy ${tile.copy.toFixed(3)})`);
+    ok(tile.plainIsLeft, 'the Left tile, and a tile with no side, are the design as drawn, exactly as before');
     ok(!errors.length, 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
   console.log(`pair-rows-lists: ${n} checks passed`);
