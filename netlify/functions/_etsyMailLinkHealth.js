@@ -154,7 +154,8 @@ function evaluate(ev, now) {
   if (mr && mr.enabled !== false && ok("mirror")) {
     const mdone = tsMs(mr.lastSyncCompletedAt);
     const merr = mr.lastSyncErrorMsg ? plainError(mr.lastSyncErrorMsg) : "";
-    if (merr && mdone && now - mdone > T.mirrorWarn) add("orders", "Etsy order data", "warn", `Order data from Etsy is not updating (${merr}); the last update was ${ago(now - mdone)} ago. A new order's buyer may not be found.`, "Order data old", 8);
+    if (/sign-in needs renewing/.test(merr)) add("orders", "Etsy order data", "warn", `Etsy's sign-in needs renewing, so order data is not updating${mdone ? " (last update " + ago(now - mdone) + " ago)" : ""}. A new order's buyer may not be found until the Etsy connection is renewed in the inbox settings.`, "Etsy sign-in", 8);
+    else if (merr && mdone && now - mdone > T.mirrorWarn) add("orders", "Etsy order data", "warn", `Order data from Etsy is not updating (${merr}); the last update was ${ago(now - mdone)} ago. A new order's buyer may not be found.`, "Order data old", 8);
     else if (mdone && now - mdone > T.mirrorDown) add("orders", "Etsy order data", "warn", `Order data from Etsy has not updated for ${ago(now - mdone)}. A new order's buyer may not be found.`, "Order data old", 8);
     else if (mdone && now - mdone > T.mirrorWarn) add("orders", "Etsy order data", "warn", `Order data from Etsy last updated ${ago(now - mdone)} ago.`, "Order data old", 8);
     else add("orders", "Etsy order data", "ok", mdone ? `Updated ${ago(now - mdone)} ago` : "No update recorded yet");

@@ -64,6 +64,9 @@ check(/failed/.test((judge({ bell: { reconcileAtMs: T0 - 8 * MIN, reconcileError
 check(judge({ monitor: null }).level === "warn" && judge({ monitor: { atMs: T0 - 13 * MIN } }).level === "warn" && judge({ monitor: { atMs: T0 - HOUR } }).level === "down", "the link monitor not reporting or stopped is shown");
 check(!LH.evaluate(Object.assign(healthy(), { monitor: null, self: true }), T0).checks.some(c => c.id === "monitor"), "the monitor does not judge its own stamp");
 check(judge({ mirror: { enabled: true, lastSyncCompletedAt: at(T0 - 8 * HOUR), lastSyncErrorMsg: "daily_rate_limit" } }).level === "warn", "Etsy order data stale: amber, never red");
+r = judge({ mirror: { enabled: true, lastSyncCompletedAt: at(T0 - 2 * MIN), lastSyncErrorMsg: "auth: Etsy token refresh failed: 401" } });
+check(r.level === "warn" && r.short === "Etsy sign-in" && /sign-in needs renewing/.test(r.problem), "the Etsy token failing to refresh is amber at once and named (" + r.short + ")");
+check(judge({ mirror: { enabled: true, lastSyncCompletedAt: at(T0 - 2 * MIN), lastSyncErrorMsg: null } }).level === "ok", "no error recorded by the last order-data run: green");
 check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 3 } }).level === "warn", "the nightly check finding missing messages: amber");
 check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 0 } }).level === "ok", "the nightly check finding nothing: still green");
 for (const name of ["watcher", "gmail", "helper", "jobs", "drafts", "bell", "monitor"]) {

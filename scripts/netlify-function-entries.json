@@ -219,6 +219,7 @@
     "_etsyMailGmail.js",
     "_etsyMailKnowledge.js",
     "_etsyMailLearning.js",
+    "_etsyMailLinkConsistency.js",
     "_etsyMailLinkHealth.js",
     "_etsyMailMessageCopies.js",
     "_etsyMailOrderLink.js",
