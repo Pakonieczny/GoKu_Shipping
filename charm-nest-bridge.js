@@ -203,7 +203,7 @@ const ListMedia = (() => {
   // (a line of TWO separate designs, the Left's and the Right's (OPTTWO: Tennis Ball Left, Tennis Racket Right): its picture is the two designs side by side, each from its own master file; the SKU of the Right's design, else '')
   const twoOf = row => { try { return !!row && !row.spec?.noDesign && earPairRow(row) && earDesign(row, "L") ? earDesign(row, "R") : ""; } catch (_) { return ""; } };
   // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
-  /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that reads one way, or faces the other way, is not): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
+  /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that faces the other way is not; letters and numbers are mirrored like any other): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
   const earMirror = (row, side) => { try { const e = Master.entryFor(row?.spec?.designSku || row?.line?.sku || ''); return !!(e && (side === 'L' || side === 'R') && earTurn(row, side, e)); } catch (_) { return false; } };
   const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
   function pair(row) {
@@ -1408,6 +1408,7 @@ const Orders = window.Orders = (() => {
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
+    const link = a && a.pairBySku && a.pairBySku[String(l.sku || "").trim().toUpperCase()];   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
     return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
@@ -1415,7 +1416,10 @@ const Orders = window.Orders = (() => {
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
       libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
-      libFacts(typoOf(l.sku))];
+      libFacts(typoOf(l.sku)),
+      // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
+      link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
+      row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0];
   }
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
@@ -1437,6 +1441,8 @@ const Orders = window.Orders = (() => {
       if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
       window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
+      // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
+      if (O.questionGone && O.questionGone(row, prev)) { row.state = "pulled"; row.reason = null; delete row.poolTry; }
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
       else if (row.state === "noDesign" && prev && prev.noDesign && prev.noDesignWhy && prev.noDesignWhy !== "on the no-design list" && !(row.poolIds || []).length && !row.hold) { row.state = "pulled"; row.reason = null; }
@@ -2312,6 +2318,8 @@ const Master = window.Master = (() => {
   async function fetchEntry(sku) {
     sku = String(sku || "").toUpperCase(); if (!sku) return null;
     const have = B.master.entries.get(sku); if (have) return have;
+    // (a SKU no master file can hold, one that names two designs "Huggie Hoops-Tennis Ball/Racket3": the library refuses it with a 400, which the pictures read as a failed load and said "Unavailable · Retry"; it is no design, not a failed read)
+    if (!/^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/.test(sku)) return null;
     const m = missing.get(sku);
     if (m && m.map === B.master.entries && m.sig === libSig() && Date.now() - m.at < MISS_MS) return m.entry;
     if (asking.has(sku)) return asking.get(sku);
@@ -2757,7 +2765,7 @@ const Master = window.Master = (() => {
       const v2 = sel.value, two = sel.dataset.body != null;   // (a mismatched pair has one box per body: both words are saved together, body 0 is also `facing`)
       const words = two ? [...sel.parentNode.querySelectorAll("select[data-faces][data-body]")].sort((x, y) => x.dataset.body - y.dataset.body).map(x => x.value || null) : null;
       const patch = two ? { facing: words[0], facings: words.some(Boolean) ? words : null } : { facing: v2 === "" ? null : v2 };
-      const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (cut as drawn on both sides)" : "facing not set (the drawing is the Left)";
+      const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (no longer used: earrings are always mirrored)" : "facing not set (the drawing is the Left)";
       sel.disabled = true;
       patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
@@ -2794,7 +2802,7 @@ const Pool = window.Pool = (() => {
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
     // a design that draws two DIFFERENT bodies under one label (a mismatched pair, charm-nest-pair.js) also gets one charm per body
     // which way the drawing faces, when a person set it on the master record (charm-nest-pair.js facingOf reads these two): decides which piece of a pair is the mirror image
-    { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the design reads one way, letters and numbers: never turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
+    { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the old "reads one way" word; it no longer stops a Right being turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
     await splitBodies(src);
     S.poolSources[srcId] = src; B.pool.sources.set(key, src);
     return src;
@@ -3062,7 +3070,7 @@ const Pool = window.Pool = (() => {
     const l = m && m.find(x => x && x.side === "L"), r = m && m.find(x => x && x.side === "R");
     return l && r && l.sku && r.sku && String(l.sku) !== String(r.sku) ? { L: String(l.sku), R: String(r.sku) } : null;
   }
-  /** Is this ear (its own design) cut turned over? The same word charm-nest-pair.js gives a matching pair of that design: the Left as drawn and the Right turned over, unless the drawing faces the other way (a person's facing) or reads one way. */
+  /** Is this ear (its own design) cut turned over? The same word charm-nest-pair.js gives a matching pair of that design: the Left as drawn and the Right turned over, unless the drawing faces the other way (a person's facing; letters and numbers are turned over like any other design). */
   function earMirror(piece, ear, row) {
     const Pair = window.CharmNestPair, c = ear.src.charms[0];
     const line = Object.assign({}, row.line, { receiptId: row.order.receiptId, transactionId: row.line.transactionId, quantity: 1, form: row.spec.form, spec: { quantity: 1, form: row.spec.form, pieceCount: 2, pair: { earring: true, mismatched: false, glued: false, perUnit: 2, sides: ["L", "R"] } } });
@@ -5100,6 +5108,11 @@ const Engrave = window.Engrave = (() => {
       TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
     } catch (_) {}
   }
+  /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
+  function discWordsOf(row, jobs) {
+    const S = SIDES(); if (!S || !S.wordsForDiscs) return null;
+    return S.wordsForDiscs(row.spec || {}, jobs.map(j => j.slot), { engravingNote: typeof O !== "undefined" && O ? O.engravingNote : null });
+  }
   async function classifyOnce(row) {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
@@ -5109,6 +5122,19 @@ const Engrave = window.Engrave = (() => {
     // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
     if (jobs.length > 1 && jobs.every(j => j.seededFrom && j.text)) {
       for (const j of jobs) { const earOf = SIDES().earOf(j.slot); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
+      return job;
+    }
+    // the discs of one counted line whose note says plainly which words go on which disc ("Tag 1: J, Tag 2: Q", DISCREAD): each disc takes its own words here, no paid reading;
+    // anything the note leaves open (or another voice on the order: a buyer message, a staff note) goes to the reader below as before
+    const discSplit = discWordsOf(row, jobs);
+    if (discSplit) {
+      for (const j of jobs) {
+        const w = discSplit.words[+String(j.slot).slice(1) - 1];
+        j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
+        Object.assign(j, { text: w, lines: [w], source: "personalization", quote: (sp.personalization || []).join(" / "), confidence: 1, questions: [], claudeReasoning: null, requests: { side: "back", font: null, handwriting: false, image: false }, wordsSource: "personalization:" + discSplit.how });
+        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${SIDES().earOf(j.slot)}: "${w}" read from the note (${discSplit.how}), no paid reading`);
+        await setReady(j);
+      }
       return job;
     }
     for (const j of jobs) {
@@ -14729,7 +14755,10 @@ const OrderWin = window.OrderWin = (() => {
     try { row.spec = O.interpretLine(row.order, row.line, Orders.ctx()); } catch (_) { row.spec = { quantity: row.line.quantity || 1, designSku: row.line.sku, personalization: row.line.personalization || [] }; }
     if (row.metal && !row.spec.material) row.spec.material = row.metal;
     row.material = row.materialOverride || row.spec.material || row.metal || null;
-    row.problems = []; return row;
+    row.problems = [];
+    // the run's stored line says "held" for a question the line no longer raises (read again just now): it is not held for that
+    if (O.staleQuestionHold && O.staleQuestionHold(row)) { row.state = "pulled"; row.reason = null; }
+    return row;
   }
   async function lookUp(rid, say) {
     let pools = [], failed = null;

@@ -341,7 +341,7 @@
       const side = said && i < said.length ? said[i] : pair ? (i % 2 === 0 ? "L" : "R") : null;
       const bodyIndex = mis ? (side === "R" ? 1 : side === "L" ? 0 : i % 2) : 0;
       let mirror = false;
-      if (side && (opts && opts.facing || !readsOneWay(charm))) { const f = (opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : mis ? facingSetFor({ index: bodyIndex }, charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (an index entry with no geometry: the words it holds for each body)   // (a design that reads one way, letters and numbers, is cut as drawn on both sides)
+      if (side) { const f = facingValue(opts && opts.facing) || (byBody ? facingOfBody(bodies[Math.min(bodyIndex, bodies.length - 1)], charm) : mis ? facingSetFor({ index: bodyIndex }, charm) : facingOf(charm)); mirror = side !== (f || "L"); }   // (an index entry with no geometry: the words it holds for each body)   // (every ear of an earring is a Left or a Right, letters, initials and numbers too: Paul, 10 Oct 2026, 15:42; a piece with no side, a necklace or a single that names no ear, is never mirrored)
       out.push({ side, bodyIndex, groupKey: key, n: i + 1, of: total, mirror });
     }
     return out;
@@ -519,14 +519,17 @@
     if (symCache) symCache.set(body, out);
     return out;
   }
-  /** The side a stored value says ("L" | "R") or null. A person's "X" (words, letters, numbers: it reads one way) is not a side: see readsOneWay. */
+  /** The side a stored value says ("L" | "R") or null. A stored "X" (the old "reads one way" word) is not a side, and no longer means anything: see readsOneWay. */
   const facingValue = v => (v === "L" || v === "R" ? v : null);
-  /* DESIGNS THAT READ ONE WAY (letters, numbers, scripture, words): a Right piece turned over would read backwards ("Engraved TEXT stays readable", Paul 18:47),
-     so both pieces are cut as drawn (side still Left and Right, mirror false). A person says so with facing "X" on the record; by default a design whose SKU names it
-     a letter, an initial, a number, an alphabet or scripture does (a narrow rule: "HEART LOVE LETTER" and "SWORD" do not). Lettering drawn INTO a picture (a SHERIFF
-     badge, the N E S W of a compass) cannot be told from the drawing: a person sets "X" on those designs too. */
+  /* LETTERING DESIGNS ARE MIRRORED TOO (Paul, 10 Oct 2026, 15:42). Until then a design that "reads one way" (a letter, initial, number, alphabet or scripture by its SKU name, or a record
+     with facing "X") was exempt: both pieces were cut as drawn, so engraving text could never read backwards (PAIRMIRROR decision 4). Paul's word replaced it: every earring pair,
+     letters, initials, numbers and scripts included, is a Left and an exact-mirror Right; only a necklace, disc, pendant or single (a piece with no side) is never mirrored. piecesFor no
+     longer asks this question, so the answer changes nothing in any piece. What the app ENGRAVES (the buyer's words) still reads forwards: the text is fitted to the piece's own geometry
+     and never reversed (charm-nest-engrave-sides.js pieceCharm); only the vector design is mirrored. readsOneWay is kept as a name test only (the facing report lists lettering apart). */
   const LETTERING = /(?:^|[\s_-])(?:LETTERS?|INITIALS?|ALPHABET|NUMBERS?|SCRIPTURE|SCRIPT)(?:$|[\s_\d(-])/i, NOT_LETTERING = /LOVE\s+LETTER|SWORD/i;
   const nameOf = x => String((x && (x.sku || (x.entry && x.entry.sku) || x.name)) || "");
+  /** Does this design's SKU name say lettering (a letter, initial, number, alphabet, scripture) or does its record hold the old facing "X"? INFORMATION ONLY: it no longer stops a Right piece
+   *  being mirrored (see the note above); the facing report uses it to list lettering designs apart, because which way a letter "faces" is of no interest. */
   function readsOneWay(charmOrEntry) {
     if (!charmOrEntry || typeof charmOrEntry !== "object") return false;
     const rec = charmOrEntry.entry || charmOrEntry;
@@ -588,11 +591,12 @@
   /** What the Master tab card shows for "which way this design faces" (Paul, 9 Oct: left and right earrings are mirror images, so the app must know which way the drawing faces):
    *  { show, mismatched, value, options, bodies, hint }. Shown only for a design that is not the same in a mirror (the index field `sym` written at indexing, or `level` when the page
    *  measured it) or one a person already set; a symmetric design has nothing to decide, and a design whose geometry is not known shows nothing. value "" = not set (as drawn is the
-   *  Left), "L" | "R" = the way the master draws it, "X" = it reads one way (letters, numbers: never turned over). A MISMATCHED pair (a left body and a right body under one SKU) is
+   *  Left), "L" | "R" = the way the master draws it, "X" = the old "reads one way" word, which no longer does anything (every earring pair is mirrored, letters and numbers too:
+   *  Paul, 10 Oct 2026), so it is offered only on a record that already holds it, to be cleared. A MISMATCHED pair (a left body and a right body under one SKU) is
    *  always shown, with one box per body (`bodies`: [{ index, label, value, options }]): each body is judged on its own, because the two are not alike. */
   function facingControl(entry, level) {
     const e = entry || {}, word = v => (v === "L" || v === "R" ? v : ""), set = e.facing === "L" || e.facing === "R" || e.facing === "X" ? e.facing : "", lv = e.sym || level || "";
-    const hint = "Which way the master file draws this design. A pair is a Left and a Right earring that are mirror images, so the Right is cut turned over; say which way the drawing faces so the Left earring faces left. \"Reads one way\" is for letters, numbers and words: both earrings are cut as drawn. Not set: the drawing is taken as the Left. Applies to orders made up from now on.";
+    const hint = "Which way the master file draws this design. A pair is a Left and a Right earring that are mirror images, so the Right is cut turned over (letters and numbers too); say which way the drawing faces so the Left earring faces left. Not set: the drawing is taken as the Left. Applies to orders made up from now on.";
     if (e.pair && e.pair.mismatched === true) {
       const per = Array.isArray(e.facings) ? e.facings : [], one = i => word(per[i]) || (i === 0 ? word(e.facing) : "");
       const opts = who => [["", who + ": not set"], ["L", who + " faces left"], ["R", who + " faces right"]];
@@ -601,7 +605,7 @@
     }
     return {
       show: !!set || lv === "directional", mismatched: false, value: set, bodies: null,
-      options: [["", !set && readsOneWay(e) ? "reads one way (name)" : "faces: not set"], ["L", "faces left"], ["R", "faces right"], ["X", "reads one way"]], hint   // (a letter, number or script by its name is cut as drawn without a word: the box says so)
+      options: [["", "faces: not set"], ["L", "faces left"], ["R", "faces right"]].concat(set === "X" ? [["X", "reads one way (no longer used: earrings are always mirrored)"]] : []), hint   // ("reads one way" is not offered any more: it would stop nothing; a record that still holds it shows it, so a person can clear it)
     };
   }
 
