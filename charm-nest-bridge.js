@@ -1392,6 +1392,7 @@ const Orders = window.Orders = (() => {
      again when its order (a new copy, update time or note), its line, a person's override, the option maps (a new object,
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
+  const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
@@ -1401,7 +1402,9 @@ const Orders = window.Orders = (() => {
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
-      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) : ""];
+      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
+      // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
+      libFacts(typoOf(l.sku))];
   }
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
@@ -7018,7 +7021,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
-      const ordered=[...list.children].sort((a,b)=>CNListActivity.compare(value(a),value(b),CNListActivity.state('library').direction));
+      const ordered=[...list.children].sort((a,b)=>CNListActivity.compareBlocks(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first, then the groups of loose sheets: charm-nest-activity.js)
       ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
     }
     if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
@@ -7828,7 +7831,7 @@ const Sets = window.Sets = (() => {
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
       if (focus) sets = sets.filter(st => st.sheets.some(r => focus.test(r)));
       else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
-      sets=CNListActivity.select("library",sets);
+      sets=CNListActivity.selectBlocks("library",sets);   // (actual sets before every group of loose sheets, each in last-activity order)
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
       LaserReview.batch(() => { for (const st of sets) {

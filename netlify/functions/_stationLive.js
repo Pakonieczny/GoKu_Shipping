@@ -223,6 +223,13 @@ async function getMany(ctx, refs) {
 const urlOf = x => { const u = x && typeof x === "object" ? (x.url_570xN || x.url || x.url_fullxfull || x.url_340x270 || "") : ""; return /^https:\/\/[^\s"<>]{8,1900}$/.test(String(u)) ? String(u) : ""; };
 const httpsOnly = u => (/^https:\/\/[^\s"<>]{8,1900}$/.test(String(u || "")) ? String(u) : "");
 
+/** The SKU a station piece is looked up under in the master index: Etsy's own, upper-cased, except the one SKU Etsy carries misspelled that Paul named
+ *  (charm-nest-orders.js KNOWN_SKU_TYPOS, the table the sorter reads). The piece keeps the SKU it came with. */
+let ordersLib;
+function designKey(sku) {
+  const s = String(sku || "").toUpperCase();
+  try { ordersLib = ordersLib || require("../../charm-nest-orders.js"); return (ordersLib.knownTypo && ordersLib.knownTypo(s)) || s; } catch (_) { return s; }
+}
 /** the vector-design thumbnail of each SKU (Charm_Master_Index/{SKU}: thumbUrl, per size when it has sizes) → Map sku → { thumbUrl, sizes:{S:url} } */
 async function masters(ctx, skus) {
   const need = skus.filter(s => remembered(ctx, "master", s) === undefined);
@@ -291,7 +298,7 @@ function expandPairs(c, M) {
     return rid.length >= 3 ? rid + ":" + (m ? m[1] : "") : "";
   };
   list.forEach((p, i) => {
-    const mm = p.sku && M ? M.get(String(p.sku).toUpperCase()) : null;
+    const mm = p.sku && M ? M.get(designKey(p.sku)) : null;
     const room = out.length + 2 + (list.length - i - 1) <= MAX_PIECES;     // (what follows is kept whole too)
     if (p.side || !mm || !mm.pair || !mm.pair.mismatched || mm.pair.bodies !== 2 || !room || notEarringLabel(p.label)) { out.push(p); return; }
     const grp = groupOfPiece(p);
@@ -321,7 +328,7 @@ async function dress(ctx, list) {
   }
   // 2 · the vector design of each SKU and the listing photo of each listing (one read of each kind, kept 15 minutes)
   const skus = new Set(), lids = new Set();
-  for (const c of list) for (const p of c.pieces) { if (p.sku) skus.add(p.sku.toUpperCase()); if (p.listingId) lids.add(p.listingId); }
+  for (const c of list) for (const p of c.pieces) { if (p.sku) skus.add(designKey(p.sku)); if (p.listingId) lids.add(p.listingId); }
   const [m, l] = await Promise.all([masters(ctx, [...skus]), listings(ctx, [...lids])].map((p, i) => safe(p, ["designs", "photos"][i])));
   for (const r of [m, l]) if (!r.ok) errors.push(r.label + ": " + r.error);
   const M = m.ok ? m.value : new Map(), L = l.ok ? l.value : new Map();
@@ -329,7 +336,7 @@ async function dress(ctx, list) {
     const arc = c.arc; delete c.arc;
     expandPairs(c, M);
     for (const p of c.pieces) {
-      const mm = p.sku ? M.get(p.sku.toUpperCase()) : null;
+      const mm = p.sku ? M.get(designKey(p.sku)) : null;
       p.vectorUrl = mm ? (p.size && mm.sizes[p.size.toUpperCase()]) || mm.thumbUrl || Object.values(mm.sizes)[0] || "" : "";
       p.photoUrl = (p.listingId && L.get(p.listingId)) || p._url || "";
       p.thumbUrl = p.vectorUrl || p.photoUrl || "";
@@ -557,4 +564,4 @@ async function op(ctx, body, H) {
   return H.json(200, out);
 }
 
-module.exports = { LIVE, KEEPALIVE_MS, STALE_MS, COALESCE_MS, MAX_BODY_CHARS, MAX_PIECES, CATALOG, LABELS, cleanOrder, cleanPiece, pairFields, expandPairs, skewOf, write, op, _t: { seen } };
+module.exports = { LIVE, KEEPALIVE_MS, STALE_MS, COALESCE_MS, MAX_BODY_CHARS, MAX_PIECES, CATALOG, LABELS, cleanOrder, cleanPiece, pairFields, expandPairs, skewOf, write, op, _t: { seen, dress, designKey } };

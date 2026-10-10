@@ -213,14 +213,32 @@
   const upSku = s => String(s == null ? "" : s).trim().toUpperCase();
   /** A SKU without its spacing and punctuation: the key under which two spellings of one SKU meet. */
   const looseKey = s => upSku(s).replace(/[^A-Z0-9]+/g, "");
-  /** The master's SKU a SKU stands for ("" when the master holds none): itself, or the one master SKU that is the same SKU
+  /* KNOWN_SKU_TYPOS: the ONE definition of a SKU Etsy carries misspelled that Paul named as an exception to "never a look-alike" (10 Oct 2026:
+     "On Etsy, fix the SKU nitial_Disc_4571 (the I is missing on all 180 products of that listing) … adapt the system to understand all 180 as they
+     currently are"). Etsy listing 1008014571 (the initial disc necklace) keeps "nitial_Disc_4571" on every one of its products; the master design is
+     INITIAL_DISC_4571. An entry is an exact SKU as Etsy writes it → the master SKU it stands for, compared as every SKU is (looseKey: case, spacing and
+     punctuation set aside, nothing fuzzier): never a rule that guesses a missing letter, so any other misspelling (nitial_Disc_9999, NITIAL_8391) still
+     waits for a person. It stands only when the master really holds the target, only for a SKU that is exactly the typo (not "NITIAL_DISC_4571-CO"),
+     and after a person's saved answer: a SKU alias, an option map or a listing's alias for it still wins. Nothing stored is rewritten: the lines read it
+     again, and the Etsy listing keeps its spelling until Paul fixes it there. Every place that turns a SKU into a master design reads THIS table:
+     masterSku (resolveSku, the listing inventory's SKU, a pair's members), the bridge's re-read signature, the order search, the Design Station's
+     live thumbnails (netlify/functions/_stationLive.js requires this module). */
+  const KNOWN_SKU_TYPOS = Object.freeze({ "NITIAL_DISC_4571": "INITIAL_DISC_4571" });
+  const TYPO_IX = new Map(Object.keys(KNOWN_SKU_TYPOS).map(bad => [looseKey(bad), upSku(KNOWN_SKU_TYPOS[bad])]));
+  /** The correctly spelled SKU a SKU stands for when it is exactly a known typo, else "" (the master is not asked). */
+  const knownTypo = sku => TYPO_IX.get(looseKey(sku)) || "";
+  /** The master's SKU a SKU is, by its own spelling ("" when the master holds none): itself, or the one master SKU that is the same SKU
    *  spelled with other spacing or punctuation (masterLoose: the loaded master's index by looseKey, "" when two read alike). */
-  function masterSku(sku, masterEntry, masterLoose) {
+  function spelling(sku, masterEntry, masterLoose) {
     const s = upSku(sku); if (!s || !masterEntry) return "";
     if (masterEntry(s)) return s;
     const w = masterLoose ? upSku(masterLoose(s)) : "";
     return w && w !== s && masterEntry(w) ? w : "";
   }
+  /** The master's SKU for a SKU that is exactly a known typo ("" when it is not, or the master does not hold the right one). */
+  const typoSku = (sku, masterEntry, masterLoose) => { const t = knownTypo(sku); return t ? spelling(t, masterEntry, masterLoose) : ""; };
+  /** The master's SKU a SKU stands for ("" when the master holds none): its own spelling, else the right spelling of a known typo. */
+  const masterSku = (sku, masterEntry, masterLoose) => spelling(sku, masterEntry, masterLoose) || typoSku(sku, masterEntry, masterLoose);
   const idOf = x => (x == null || x === "" ? "" : String(x));
   const pairKey = p => idOf(p[0]) + ":" + idOf(p[1]);
   // the (property, value) ids Etsy puts on each variation of a transaction; a question with no value id (Personalization) has none
@@ -366,11 +384,14 @@
     if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
     // the master's own spelling of the SKU (a person's answer for the SKU as written came first), then the charm-only mark
-    const spelt = raw && masterSku(raw, masterEntry, masterLoose);
+    const spelt = raw && spelling(raw, masterEntry, masterLoose);
     if (spelt) return { sku: spelt, source: "spelling" };
-    const base = raw && variationBase(raw), under = base && masterSku(base, masterEntry, masterLoose);
+    const base = raw && variationBase(raw), under = base && spelling(base, masterEntry, masterLoose);
     if (under) return { sku: under, source: "variation" };
     if (whole) return { sku: whole, source: "alias" };
+    // a SKU that is exactly a known typo (KNOWN_SKU_TYPOS) is its master design: after every answer a person saved for it, before "unknown SKU"
+    const typo = raw && typoSku(raw, masterEntry, masterLoose);
+    if (typo) return { sku: typo, source: "typo" };
     return raw ? { sku: raw, source: "transaction" } : { sku: "", source: null };
   }
   /** The charm an option picks on this listing ({ sku, name, value, variation }), when a person said so under Options, or null. */
@@ -1042,7 +1063,7 @@
     const table = ctx.listingSkus && ctx.listingSkus[String(line.listingId)], listing = inventorySku(line, table);
     let viaInventory = null, heldFamily = null;
     if (listing && listing.sku) {
-      const tx = upSku(line.sku), names = s => !!s && (isNoDesign(s, ctx.noDesign) || !!masterSku(s, me, loose) || !!masterSku(variationBase(s), me, loose));
+      const tx = upSku(line.sku), names = s => !!s && (isNoDesign(s, ctx.noDesign) || !!masterSku(s, me, loose) || !!spelling(variationBase(s), me, loose));
       // wide: the transaction came with the listing's own SKU (several products that differ in their options hold it), not the product's
       const wide = listing.by !== "listing" && !!tx && listingWide(table, tx);
       // old: the transaction's SKU names a design (often the listing's umbrella design: "GREEK GODDESS" holds one symbol's file) but no
@@ -1536,7 +1557,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
+  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_RULES, fontById, fontRead, fontParts, isFontOption,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
