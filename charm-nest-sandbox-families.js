@@ -16,7 +16,7 @@
                          "storage"    a Storage prefix (every file under it goes, but `keep`)
                          "browser"    a browser-side store (WIPEBROWSER's entries; the server never touches them)
    protected()  → the keep list: [{ key, label, store, why }]: what a sandbox wipe never deletes.
-   server() / browser()   the two halves of families(); firestoreCollections() the Sandbox_ names the wipe clears.
+   server() / browser()   the two halves of families(); browserKept() what a browser reset keeps (documentation); firestoreCollections() the Sandbox_ names the wipe clears.
    isProtected(store, path) → true when a Firestore path "Collection/doc" or a Storage name is on the keep list.
    Nothing here is a secret; there is no passcode in this file. */
 (function (root, factory) {
@@ -73,8 +73,39 @@
     { key: "Storage:design-archive/sandbox/", label: "design-archive files", store: "storage", prefix: "design-archive/sandbox/", keep: [] }
   ];
 
-  /* ── the browser: WIPEBROWSER adds its entries here (store "browser"; key = the store's own name) ── */
-  const BROWSER = [];
+  /* ── the browser: what a sandbox run keeps in the browser (store "browser"; key = the store's own name). Plain data: the
+     engine that clears, counts and guards each KIND is charm-nest-sandbox-browser.js, the guard test is
+     tests/charm-nest/sandbox-wipe-browser.cjs. SB marks a store as the sandbox's: a name that carries the word "sandbox" as a
+     whole part (cn.arrivals.sandbox, cn.team.outbox:sandbox, cn.roseRehearsal.sandbox.v1), never a name that only contains it
+     (cn.sandboxHold, the reset's own mark). ── */
+  const SB = "(^|[:.])sandbox($|[:.])";
+  const bs = (key, label, kind, extra) => Object.assign({ key, label, store: "browser", kind }, extra || {});
+  const BROWSER = [
+    bs("indexedDB:charm-nest-workspace", "saved workspace parts", "idb", { db: "charm-nest-workspace", objectStore: "workspaces", keys: ["sandbox"], prefixes: ["sandbox:best:"] }),
+    bs("indexedDB:sandbox-databases", "other sandbox databases", "idbDatabases", { match: SB }),
+    bs("localStorage:sandbox", "stored sandbox keys", "localStorage", { match: SB, keep: ["cn.resetEpoch.sandbox"] }),
+    bs("localStorage:queued-items", "queued sandbox items", "sharedList", { lists: [{ key: "orderTimeline.outbox.v1", flag: "sandbox" }, { key: "cn.mail.outbox", flag: "body.sandbox" }, { prefix: "station_activity_q.", flag: "sandbox" }] }),
+    bs("localStorage:mail-notices", "customer-mail notices", "sharedMap", { maps: [{ key: "cn.mail.told", idPrefix: "olsb_" }] }),
+    bs("localStorage:qr-label", "QR labels handed to the printer", "flagged", { keys: ["qrPrintAll"], flag: "sandbox" }),
+    bs("settings:sandboxSeed", "saved stream seeds", "setting", { settingsKey: "cn.settings", fields: { sandboxSeed: 0 } }),
+    bs("sessionStorage:sandbox", "session keys", "sessionStorage", { match: SB, keep: [] }),
+    bs("cache:sandbox", "cached sandbox files", "cache", { match: SB }),
+    bs("memory:page", "orders, sets, designs and answers in page memory", "memory"),
+    bs("station:browser", "Design Station copies (its own storage)", "station", { via: "sandbox.reset", origin: "station" })
+  ];
+  /* what a browser reset keeps (documentation and the guard test; none of it is sandbox data): the epoch and the reset's own
+     marks, and every key without the sandbox's mark: the real side, the shared Etsy listing cache, the Charm repo's
+     thumbnails and master list, names, roles and sign-in marks. */
+  const BROWSER_KEPT = [
+    { key: "localStorage:cn.resetEpoch.sandbox", label: "the reset epoch (tells every tab a reset happened)", store: "browser", why: "the reset's own mark" },
+    { key: "localStorage:cn.sandboxHold", label: "the sandbox's wait-for-Start mark", store: "browser", why: "the reset's own mark" },
+    { key: "localStorage:cn.sandboxLastReset", label: "the last-reset note", store: "browser", why: "the reset's own mark" },
+    { key: "sessionStorage:cn.sandboxResetNote|cn.sandboxAutoPull|cn.sandboxPullNext", label: "what the page after the reload says or does", store: "browser", why: "carried across the reload; no records" },
+    { key: "localStorage:cn.settings", label: "page settings and the sandbox switch (only the saved seed goes)", store: "browser", why: "settings" },
+    { key: "localStorage:cn.listingSkus.v1|cn.listingPhotos.v1|cn.listingPhotoPause.v2", label: "shared Etsy listing caches", store: "browser", why: "shared Etsy listing cache" },
+    { key: "indexedDB:cn-thumbs|cn-master-list", label: "Charm repo thumbnails and master list", store: "browser", why: "the Charm repo" },
+    { key: "localStorage:production keys", label: "every key without the sandbox's mark (names, roles, sign-in, production drafts and queues)", store: "browser", why: "the real side" }
+  ];
 
   /* ── what a wipe NEVER deletes (production, the Charm repo, employee efficiency, shared caches, settings) ── */
   const PROTECTED = [
@@ -110,6 +141,7 @@
     server: () => clone(SERVER),
     browser: () => clone(BROWSER),
     protected: () => clone(PROTECTED),
+    browserKept: () => clone(BROWSER_KEPT),
     firestoreCollections: names,
     isProtected
   };
