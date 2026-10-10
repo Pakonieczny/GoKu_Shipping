@@ -61,7 +61,7 @@ function server() {
             case "sync": {
               st.syncs.push({ n: b.n, since: b.since, qn: b.qn, qo: b.qo, sandbox: b.sandbox });
               let queue = null;
-              if (st.queue && !b.sandbox) queue = b.qn === st.queue.n ? { n: st.queue.n, unchanged: true, now: Date.now() } : Object.assign({ now: Date.now(), gapMs: 12000, recent: [] }, st.queue);
+              if (st.queue && (!b.sandbox || st.leak)) queue = b.qn === st.queue.n ? { n: st.queue.n, unchanged: true, now: Date.now() } : Object.assign({ now: Date.now(), gapMs: 12000, recent: [] }, st.queue);
               const changes = b.since >= st.v && !b.full ? [] : [summary()];
               return send(200, { n: st.v, v: st.v, full: !!b.full, changes, link: okLink(), now: Date.now(), queue });
             }
@@ -241,9 +241,13 @@ function server() {
     {
       setMsg({ status: "queued" });
       st.queue = { n: 9, items: [qitem({ st: "queued", pos: 2 })] };
+      st.leak = true;      // even a server that wrongly sent the real queue's view to a sandbox page...
       const { page, context } = await open(true);
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 2500));
       check(st.syncs.length > 0 && st.syncs.every(s => s.qo !== true), "a sandbox page never asks for the queue view (qo is never set)");
+      const m = await mine(page);
+      check(m && !/Queued/.test(m.word) && m.word === "With the Etsy helper…", "...and shows nothing of it if it were sent: the word stays the plain one (" + (m && m.word) + ")");
+      st.leak = false;
       await context.close();
     }
   } finally { await browser.close(); srv.close(); }

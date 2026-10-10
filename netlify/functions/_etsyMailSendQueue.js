@@ -258,6 +258,10 @@ function deriveKey(threadId, text, attachments) {
   return "d:" + threadId + ":" + sha1(normText(text) + "|" + att).slice(0, 24);
 }
 const sendIdFor = key => "q_" + sha1(key).slice(0, 24);
+/** The words (and attachments) of a message, as one short fingerprint: two presses with the same words are the same message. */
+function fingerprint(text, attachments) {
+  return deriveKey("", text, attachments).slice(3);
+}
 
 // ─── views ─────────────────────────────────────────────────────────────────
 
@@ -293,12 +297,22 @@ function viewItems(items, lease, now, cfg, { withText = true } = {}) {
 
 // ─── submit: a message enters the queue ────────────────────────────────────
 
+/** A sandbox message never enters the real queue, whoever asks: the page says so, or the sorter engagement it belongs to is the
+ *  sandbox's (ids olsb_...). The refusal is the first thing every entry point does, before any read or write. */
+function isSandboxInput(input) {
+  if (!input || typeof input !== "object") return false;
+  const ol = input.orderLink && typeof input.orderLink === "object" ? input.orderLink : null;
+  return input.sandbox === true || !!(ol && (ol.sandbox === true || /^olsb_/.test(String(ol.e || ""))))
+    || /^sorter:olsb_/.test(String(input.idempotencyKey || ""));
+}
+
 /**
  * input: { threadId, conversationUrl, text, attachments, origin: "manual"|"auto", source, employeeName, aiMeta, orderLink,
  *          polished, idempotencyKey, parentThreadFinalizePatch, admitOnly }
  * Resolves { item, created, deduped, learnPrev, threadFinalizeApplied } or { duplicateAutoSend, ... }.
  */
 async function submit(input) {
+  if (isSandboxInput(input)) return { sandboxRefused: true };
   const cfg = await getConfig();
   const now = nowMs();
   const threadId = input.threadId;
@@ -319,6 +333,11 @@ async function submit(input) {
     const fSnap = finRef && fin.threadId !== threadId ? await tx.get(finRef) : (finRef ? tSnap : null);
     const existing = cur.exists ? cur.data() : null;
     const slot = slotSnap.exists ? slotSnap.data() : null;
+    // The same words pressed again a moment later under another key (two tabs with the same draft, two people) are the same
+    // message. A Charm Sorter question is exempt: its key is authoritative (two lines may ask the same thing).
+    const fp = fingerprint(input.text, input.attachments);
+    const recentSnap = !existing && !input.orderLink && slot && slot.queueRecentFp === fp && slot.queueRecentSendId && slot.queueRecentSendId !== sendId
+      && now - (Number(slot.queueRecentAtMs) || 0) < cfg.dupWindowMs ? await tx.get(qRef(slot.queueRecentSendId)) : null;
 
     if (existing) {
       const live = OPEN_STATES.has(existing.state) || (existing.state === "sent" && now - (existing.sentAtMs || 0) < 10 * MIN) || (DEAD_STATES.has(existing.state) && existing.open);
@@ -326,6 +345,11 @@ async function submit(input) {
         out = { item: existing, created: false, deduped: true };
         return;
       }
+    }
+
+    if (recentSnap && recentSnap.exists) {
+      const ri = recentSnap.data();
+      if (OPEN_STATES.has(ri.state) || ri.state === "sent" || ri.state === "confirmed") { out = { item: ri, created: false, deduped: true, sameWords: true }; return; }
     }
 
     // An automated sender never goes in behind a reply a person has on its way in this conversation (audit F1).
@@ -364,7 +388,7 @@ async function submit(input) {
     tx.set(ref, item, { merge: false });
     tx.set(metaRef("rev"), { n: FV.increment(1), atMs: now }, { merge: true });
     // the slot says "something is on its way in this conversation" for the AI senders that look there
-    tx.set(sRef, { queueWaiting: true, queueWaitingOrigin: origin, queueWaitingSendId: sendId, updatedAt: FV.serverTimestamp() }, { merge: true });
+    tx.set(sRef, { queueWaiting: true, queueWaitingOrigin: origin, queueWaitingSendId: sendId, queueRecentFp: fp, queueRecentSendId: sendId, queueRecentAtMs: now, updatedAt: FV.serverTimestamp() }, { merge: true });
     let threadFinalizeApplied = false;
     if (fin) {
       const p = fin;
@@ -1141,7 +1165,7 @@ module.exports = {
   // pure rules
   orderQueue, pickNext, backoffMs, gapFor, classifyFail, plainReason, deriveKey, sendIdFor, viewItems, normText, sameText, ordinal, cfgFrom,
   // io
-  getConfig, setConfig, isPaused, submit, pump, resolveHolder, settleSlot, claimGate, heartbeatGate, clickGate, peekGate, isManaged,
+  getConfig, setConfig, isPaused, isSandboxInput, submit, pump, resolveHolder, settleSlot, claimGate, heartbeatGate, clickGate, peekGate, isManaged,
   cancel, humanRetry, markSent, dismiss, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
   // tests
   _setRandom, _resetCaches, lazyPump, applied

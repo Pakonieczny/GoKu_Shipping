@@ -397,7 +397,7 @@
   }
   /** The inbox's queue view of our messages (sent with a sync while one is on its way): kept by message id, repainted when it moved. */
   function applyQueue(q, changed) {
-    if (!q || typeof q !== "object") return;
+    if (!q || typeof q !== "object" || SANDBOX) return;        // a sandbox page has no place in the real queue
     const moved = typeof q.n === "number" && q.n !== M.q.n;
     if (typeof q.n === "number") M.q.n = q.n;
     if (typeof q.now === "number") M.q.off = Date.now() - q.now;

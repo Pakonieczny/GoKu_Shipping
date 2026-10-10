@@ -2578,6 +2578,17 @@
     }
     .em-send-status .em-send-recover:hover { background: #1a7f37; }
     .em-send-status .em-send-recover:disabled { opacity: 0.6; cursor: not-allowed; }
+    /* The send queue (MAILQUEUE): the small spinner beside a wait, and the bar for a message that needs a person. */
+    .em-sq-spin { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border: 2px solid rgba(0,0,0,0.2); border-top-color: currentColor; border-radius: 50%; vertical-align: -1px; animation: em-spin 0.8s linear infinite; }
+    @media (prefers-reduced-motion: reduce) { .em-sq-spin { animation-duration: 2.4s; } }
+    .em-send-status .em-sq-msg { flex: 1 1 auto; min-width: 0; }
+    .em-send-status .em-sq-text { opacity: 0.8; font-size: 11px; overflow-wrap: anywhere; }
+    .em-send-status .em-sq-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+    .em-send-status .em-sq-btn { background: #fff; border: 1px solid rgba(0,0,0,0.15); border-radius: 3px; padding: 2px 8px; cursor: pointer; font-size: 11px; color: inherit; }
+    .em-send-status .em-sq-btn:hover { background: #f6f8fa; }
+    .em-send-status .em-sq-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .em-badge.sq { background: #ddf4ff; color: #0969da; }
+    .em-badge.sq.bad { background: #ffebe9; color: #a40e26; }
     .em-compose-hint {
       font-size: 10px; color: #6a737d; margin-top: 6px;
     }
@@ -9579,6 +9590,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     const SEND_READ_FRESH_MS = 3500;
     const _sendWatch = new Map();                  // threadId -> the running status loop
     const _sendWatchQuiet = new Map();             // threadId -> no new loop before this time
+    // The send queue (MAILQUEUE, below): where each of the open conversation's unfinished messages stands.
+    const SQ_POLL_MS = 4000;
+    const SQ_RECENT_MS = 5 * 60 * 1000;
+    const SQ = { forThread: null, n: null, items: [], recent: [], offMs: 0, at: 0, timer: 0, busy: false, again: false, running: null, fails: 0, quietUntil: 0, told: new Set(), flagSig: new Map() };
 
     /** Keep what the draft slot says about a thread's latest send. */
     function noteDraftStatus(threadId, d) {
@@ -9607,6 +9622,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (m._state === "sending") return { text: "sending…" };
       if (m._state === "waiting") return { text: "waiting…", title: "Goes out right after your previous message" };
       if (m._state === "file")    return { text: "adding the tracking image…" };
+      // The send queue knows better than the draft slot: it says where this message stands (MAILQUEUE).
+      const qv = sqItemFor(threadId, m);
+      if (qv) { const qt = sqTag(qv); if (qt) return qt; }
       const e = state.sendDelivery.get(threadId);
       const anchor = _standInAnchorMs(m);
       const young = Date.now() - anchor < SEND_INFLIGHT_MAX_MS;
@@ -9633,6 +9651,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (!m) return false;
       // The send flow moves these on by itself and redraws.
       if (m._state === "sending" || m._state === "waiting" || m._state === "file") return false;
+      // The send queue is being followed (one small read per change): the draft slot need not be read as well.
+      if (sqLive(threadId)) return false;
       const e = state.sendDelivery.get(threadId);
       if (!e) return true;
       const tag = sendTagOf(threadId, m);
@@ -9716,6 +9736,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         : list.slice();
       out.sort((a, b) => _optimDedupMsFor(a) - _optimDedupMsFor(b));
       ensureSendWatch(threadId, out);
+      try { ensureQueueWatch(threadId); } catch (_) {}
       return out;
     }
 
@@ -13065,11 +13086,17 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
     const CHIP_DEFS = [
       { id: "send_problem", src: "S", tone: "red", menu: "Send problem",
-        test : t => hasSendProblem(t),
+        test : t => hasSendProblem(t) || (t.sendQueueProblem === true && t.sandbox !== true && t.isSandbox !== true),
         label: () => "Send problem",
-        why  : t => "Our last reply " + (SEND_PROBLEM_WORDS[String(t.lastAutoDecision || "").replace(SEND_PROBLEM_RE, "")] || "may not have gone out")
-                  + ". Check the conversation on Etsy before sending again.",
+        why  : t => hasSendProblem(t)
+                  ? "Our last reply " + (SEND_PROBLEM_WORDS[String(t.lastAutoDecision || "").replace(SEND_PROBLEM_RE, "")] || "may not have gone out")
+                    + ". Check the conversation on Etsy before sending again."
+                  : "A message to this customer is waiting for a person in the send queue: it did not go, or Etsy did not confirm it. Open the conversation to retry it, copy it or check Etsy.",
         about: t => "the reply tried at " + tabsWhen(tsToMs(t.lastAutoDecisionAt)) },
+      { id: "send_queue", src: "S", tone: "green", menu: "Sending",
+        test : t => t.sendQueueState === "queued" && t.sendQueueProblem !== true && t.status !== "queued_for_auto_send" && t.sandbox !== true && t.isSandbox !== true,
+        label: () => "Sending…",
+        why  : () => "A message to this customer is in the send queue. Messages go to Etsy one at a time, in the order they were written, with a short pause between them." },
       { id: "needs_you", src: "AI", tone: "amber", fix: true, menu: "AI: needs you",
         test : (t, now) => NEEDS_YOU_RE.test(t.lastAutoDecision || "") && aiFresh(t) && isAwaiting(t, now),
         label: () => "AI: needs you",
@@ -14042,6 +14069,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     function smartRenderList() {
       const host = $("emListItems");
       if (!host) return;
+      try { ensureQueueWatch(state.selectedId); } catch (_) {}   // the open conversation's send-queue flags may have moved (MAILQUEUE)
       const view = smartBuildList(state.activeFilterId, state.searchText);
       if (view.fid !== state.activeFilterId) state.activeFilterId = view.fid;
       smartRenderRail();
@@ -15229,6 +15257,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
 
     function renderThreadList() {
+      try { ensureQueueWatch(state.selectedId); } catch (_) {}   // the open conversation's send-queue flags may have moved (MAILQUEUE)
       if (isSmartLayout()) return smartRenderList();
       const host = $("emListItems");
       const q = state.searchText.trim().toLowerCase();
@@ -15465,6 +15494,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (rush && rush.acceptedAt && !rush.removedAt) {
           badges.push(`<span class="em-badge rush" title="$15 rush production accepted — production target 2-3 business days">🔥RUSH🔥</span>`);
         }
+        { const sqc = sqChipHtml(t); if (sqc) badges.push(sqc); }   // the send queue's mark (MAILQUEUE)
         if (t.linkedOrderId)  badges.push(`<span class="em-badge order">#${esc(String(t.linkedOrderId).slice(-6))}</span>`);
         if (t.category)       badges.push(`<span class="em-badge category">${esc(t.category)}</span>`);
 
@@ -17031,6 +17061,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
               <div id="emSuggestedListings" class="em-suggested-listings" style="display:none;"></div>
               <div id="emTrackingImages" class="em-tracking-images" style="display:none;"></div>
               <div id="emSendStatus" class="em-send-status" style="display:none;"></div>
+              <div id="emQueueStatus" class="em-send-status" style="display:none;"></div>
               <!-- The reply buttons, one line: the AI pair (AI Draft, Polish),
                    the files group (Attach, Sheets, Listing), then the Send to
                    Design switch and Send. fitComposeBar() drops the files
@@ -20891,6 +20922,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         el.style.display = "none";
         return;
       }
+      // A message the send queue holds for a person has its own bar (it says the same thing once, with the buttons).
+      if ((status === "failed" || status === "sent_unverified") && state.selectedId && sqDead(state.selectedId).length) {
+        el.style.display = "none";
+        return;
+      }
       el.className = "em-send-status " + status;
       let html = "";
       if (status === "queued" || status === "sending") {
@@ -21097,6 +21133,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
      *  send went through. */
     async function sendLandedAnyway(threadId, text, atMs) {
       try {
+        // In the send queue: an open message with these very words, written after the press, is this send.
+        const q = await api("etsyMailDraftSend", { query: { op: "queue_state", threadId, open: "1", text: "0" } });
+        const want = sqNorm(text);
+        const off = typeof (q && q.queue && q.queue.now) === "number" ? Date.now() - q.queue.now : 0;
+        const hit = ((q && q.queue && q.queue.items) || []).find(v => sqNorm(v.tp) === want && (v.at + off) >= atMs - 120000);
+        if (hit) return { draftId: "draft_" + threadId, sendId: hit.id, attachments: null, recovered: true };
+      } catch (_) {}
+      try {
         const r = await api("etsyMailDraftSend", { query: { op: "status", draftId: "draft_" + threadId } });
         const d = r && r.draft;
         if (d && String(d.text || "").trim() === text && tsToMs(d.queuedAt) >= atMs - 120000) {
@@ -21175,6 +21219,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const want = String(text || "").trim();
       let warnedSlow = false;
       const tick = async () => {
+        // The send queue is being followed for this conversation (one small read per change): the slot need not be read as well.
+        if (sqLive(threadId)) { if (Date.now() - started < 3 * 60 * 1000) setTimeout(tick, 5000); return; }
         let d = null;
         try {
           const r = await api("etsyMailDraftSend", { query: { op: "status", draftId } });
@@ -21194,13 +21240,238 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           toast("Check Etsy: the reply was probably sent, but Etsy did not confirm it.", 9000);
           return;
         }
-        if (d && !warnedSlow && d.status === "queued" && Date.now() - started > 90 * 1000) {
+        if (d && !warnedSlow && d.status === "queued" && Date.now() - started > 90 * 1000 && !sqWaitIsNormal(threadId)) {
           warnedSlow = true;
           toast("Still waiting to send. Is the Etsy helper tab open?", 7000);
         }
         if (Date.now() - started < 3 * 60 * 1000) setTimeout(tick, 5000);
       };
       setTimeout(tick, 5000);
+    }
+
+
+    // ─── Where a message stands in the send queue (MAILQUEUE, 10 Oct 2026) ───────────────────────
+    // Every message to a buyer (this page's replies, Charm Sorter questions, automated replies) waits its turn in one
+    // server queue: one at a time, in the order it was written, with a short pause between sends. This block shows it:
+    // "queued (3rd)", "sending…", "waiting for the Etsy helper", "trying again in 2 min", and, for a message that needs a
+    // person, a bar with the plain reason and its buttons. The open conversation asks the queue (queue_state: ONE small
+    // read when nothing changed) every 4 s ONLY while one of its messages is unfinished; a message waiting for a person
+    // is fetched once when the conversation opens or its flags change. Etsy API cost: none.
+    function sqPressKey(threadId) {
+      let r = "";
+      try { if (window.crypto && crypto.randomUUID) r = crypto.randomUUID(); } catch (_) {}
+      if (!r) r = Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+      return "i:" + threadId + ":" + r;
+    }
+    function sqNorm(s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 80); }
+    function sqOrdinal(n) { const t = ["th", "st", "nd", "rd"], v = n % 100; return n + (t[(v - 20) % 10] || t[v] || t[0]); }
+    function sqIn(ms) { return ms < 45000 ? "under a minute" : ms < 90 * 60000 ? Math.max(1, Math.round(ms / 60000)) + " min" : Math.round(ms / 3600000) + " h"; }
+    const sqNow = () => Date.now() - SQ.offMs;                          // the server's clock, as far as this page knows it
+    /** A sandbox conversation is simulated: it has no place in the real queue, its chips or its counters. */
+    function sqIsSandbox(threadId) {
+      const t = (state.threads || []).find(x => x && x.id === threadId);
+      return !!(t && (t.sandbox === true || t.isSandbox === true));
+    }
+    const sqOpenState = st => st === "queued" || st === "claimed" || st === "sending";
+    const sqItems = threadId => (SQ.forThread === threadId ? SQ.items : []);
+    const sqActive = threadId => sqItems(threadId).filter(v => sqOpenState(v.st));
+    const sqDead = threadId => sqItems(threadId).filter(v => v.st === "failed" || v.st === "needs_attention")
+      .sort((a, b) => (b.st === "needs_attention") - (a.st === "needs_attention") || a.at - b.at);
+    /** Is the queue being followed right now for this conversation (so the draft slot need not be read too)? */
+    function sqLive(threadId) { return SQ.running === threadId && SQ.forThread === threadId && Date.now() - SQ.at < 20000 && sqActive(threadId).length > 0; }
+    /** A message waiting with a place in line (or in its pause) is normal: the "is the Etsy helper tab open?" nag is for silence. */
+    function sqWaitIsNormal(threadId) { return sqActive(threadId).some(v => v.wait !== "helper" && !v.nb); }
+    /** The queue entry for a stand-in bubble: by its id when this page sent it, else by its words close to when it was written. */
+    function sqItemFor(threadId, m) {
+      if (SQ.forThread !== threadId || !m) return null;
+      if (m.queueSendId) {
+        const v = SQ.items.find(x => x.id === m.queueSendId);
+        if (v) return v;
+        const r = SQ.recent.find(x => x.id === m.queueSendId);
+        return r ? Object.assign({ recent: true }, r) : null;
+      }
+      if (m._local) return null;
+      const key = sqNorm(m.optimisticTextKey || m.text);
+      if (!key) return null;
+      const anchor = _standInAnchorMs(m);
+      return SQ.items.filter(x => x.st !== "sent" && sqNorm(x.tp) === key && (!anchor || Math.abs(x.at + SQ.offMs - anchor) < 3 * 60000))
+        .sort((a, b) => a.at - b.at)[0] || null;
+    }
+    /** { text, title, warn, spin } for a queue entry, or null to let the older rules speak. */
+    function sqTag(v) {
+      if (v.recent) {
+        return v.st === "confirmed" && !v.unverified && !v.partial && sqNow() - v.at < SQ_RECENT_MS
+          ? { text: "delivered", title: "The Etsy helper sent it and Etsy accepted it" } : null;
+      }
+      const FIRM = "Messages go to Etsy one at a time, in the order they were written, with a short pause between them.";
+      switch (v.st) {
+        case "sending":
+          return { text: "sending…", spin: true, title: "The Etsy helper is sending this message now." };
+        case "claimed":
+          return v.wait === "helper"
+            ? { text: "waiting for the Etsy helper", spin: true, title: "It is this message's turn, but the Etsy helper has not picked it up yet. It stays queued and nothing is lost." }
+            : { text: "sending next…", spin: true, title: "It is this message's turn. " + FIRM };
+        case "queued": {
+          const place = v.pos ? "queued (" + sqOrdinal(v.pos) + ")" : "queued";
+          if (v.wait === "retry" && v.nb) return { text: "trying again in " + sqIn(Math.max(0, v.nb - sqNow())), spin: true, title: "The last try did not work. It tries again by itself" + (v.n ? " (" + v.n + " so far)" : "") + "." };
+          if (v.wait === "helper") return { text: "waiting for the Etsy helper", spin: true, title: "No Etsy helper is picking up messages yet. It stays queued and nothing is lost: keep an Etsy conversation tab open with the helper on." };
+          if (v.wait === "pace") return { text: place, spin: true, title: FIRM };
+          return { text: place, title: FIRM };
+        }
+        case "needs_attention": return { text: "check Etsy: it may have gone", warn: true, title: v.why || "The Etsy helper clicked Send but Etsy did not confirm it." };
+        case "failed": return { text: "not sent", warn: true, title: v.why || "It did not go." };
+      }
+      return null;
+    }
+
+    function sqApply(threadId, q) {
+      if (!q) return;
+      if (typeof q.now === "number") SQ.offMs = Date.now() - q.now;
+      SQ.at = Date.now();
+      if (q.unchanged) return;
+      const before = SQ.forThread === threadId ? SQ.items : [];
+      SQ.forThread = threadId; SQ.n = typeof q.n === "number" ? q.n : null;
+      SQ.items = Array.isArray(q.items) ? q.items : []; SQ.recent = Array.isArray(q.recent) ? q.recent : [];
+      let finished = false;
+      for (const o of before) {
+        if (!sqOpenState(o.st)) continue;
+        const v = SQ.items.find(x => x.id === o.id);
+        if (v && sqOpenState(v.st)) continue;
+        finished = true;                                                // it left the line: sent, taken back, or given up on
+        if (v && (v.st === "failed" || v.st === "needs_attention") && !SQ.told.has(v.id + ":" + v.st)) {
+          SQ.told.add(v.id + ":" + v.st);
+          // (the first minutes after a press are covered by watchSendOutcome's own note)
+          if (sqNow() - v.at > 200000) toast(v.st === "failed" ? "Not sent: " + (v.why || "it did not go") + ". The bar under the thread has the buttons." : "Check Etsy: a reply may or may not have gone. The bar under the thread has the buttons.", 9000);
+        }
+      }
+      try { drawThreadNow(); } catch (_) {}
+      sqPaintBanner();
+      if (finished) { try { fetchMessagesNow(threadId); fetchThreadListNow(); } catch (_) {} }   // the conversation and the list show it the moment it is over
+    }
+
+    /** One look at the queue for the open conversation, then again every 4 s while a message of its own is unfinished. */
+    async function sqStep(threadId) {
+      if (SQ.busy) { SQ.again = true; return; }
+      SQ.busy = true; SQ.timer = 0;
+      try {
+        if (state.selectedId !== threadId || sqIsSandbox(threadId)) return;
+        if (!document.hidden) {
+          const r = await api("etsyMailDraftSend", { query: { op: "queue_state", threadId, n: SQ.forThread === threadId ? SQ.n : null, open: "1" } });
+          SQ.fails = 0;
+          sqApply(threadId, r && r.queue);
+        }
+      } catch (e) { SQ.fails++; }
+      finally {
+        SQ.busy = false;
+        const again = SQ.again; SQ.again = false;
+        if (state.selectedId === threadId && SQ.fails < 4 && (again || sqNeedsPolling(threadId))) SQ.timer = setTimeout(() => sqStep(threadId), SQ_POLL_MS);
+        else { SQ.running = null; if (SQ.fails >= 4) SQ.quietUntil = Date.now() + 60000; }
+      }
+    }
+    function sqKick(threadId) {
+      if (!threadId) return;
+      clearTimeout(SQ.timer); SQ.timer = 0; SQ.fails = 0; SQ.quietUntil = 0;
+      SQ.running = threadId;
+      sqStep(threadId);
+    }
+    /** Is a message of this conversation still on its way (or just sent from this page and not yet seen in the queue)? */
+    function sqNeedsPolling(threadId) {
+      if (sqActive(threadId).length) return true;
+      return localSendsFor(threadId).some(l => l.queueSendId && Date.now() - (l._atMs || 0) < 120000
+        && !SQ.items.some(v => v.id === l.queueSendId) && !SQ.recent.some(v => v.id === l.queueSendId));
+    }
+    /** Called whenever the open conversation is drawn: start looking when it has something in the queue, else stay quiet. */
+    function ensureQueueWatch(threadId) {
+      if (!threadId) return;
+      sqPaintBanner();
+      if (SQ.running || Date.now() < SQ.quietUntil || sqIsSandbox(threadId)) return;
+      const t = (state.threads || []).find(x => x && x.id === threadId);
+      const sig = t ? (t.sendQueueState ? "q" : "") + (t.sendQueueProblem ? "p" : "") + (t.sendQueueUnconfirmed ? "u" : "") : "";
+      const changed = SQ.flagSig.get(threadId) !== sig;                // the first look at this conversation, or its flags moved
+      SQ.flagSig.set(threadId, sig);
+      if (sqNeedsPolling(threadId) || (changed && sig) || (changed && SQ.forThread === threadId && sqDead(threadId).length)) {
+        SQ.running = threadId;
+        sqStep(threadId);
+      }
+    }
+
+    // The bar for a message that needs a person: the plain reason, and one click for each thing a person can do.
+    function sqBannerHtml(dead) {
+      const v = dead[0], att = v.st === "needs_attention", more = dead.length - 1;
+      const btn = (a, label) => '<button type="button" class="em-sq-btn" data-sq="' + a + '" data-id="' + esc(v.id) + '">' + label + '</button>';
+      const words = String(v.text || v.tp || "");
+      return '<i class="material-icons">' + (att ? "help_outline" : "error_outline") + '</i>' +
+        '<span class="em-sq-msg"><b>' + (att ? "Check Etsy: it may have gone." : "Not sent.") + '</b> ' +
+        esc(v.why || (att ? "The Etsy helper clicked Send but Etsy did not confirm it." : "It did not go.")) +
+        (att ? " Only send it again if the customer did not get it." : "") + (more > 0 ? " (+" + more + " more)" : "") +
+        '<br><span class="em-sq-text">“' + esc(words.slice(0, 140)) + (words.length > 140 ? "…" : "") + '”</span></span>' +
+        '<span class="em-sq-btns">' + (att ? btn("sent", "It was sent") + btn("retry", "Send again") : btn("retry", "Try again")) +
+        btn("copy", "Copy message") + btn("dismiss", "Discard") + '</span>';
+    }
+    function sqPaintBanner() {
+      const threadId = state.selectedId;
+      const dead = threadId ? sqDead(threadId) : [];
+      for (const id of ["emQueueStatus", "mQueueStatus"]) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (!dead.length) { if (el.style.display !== "none") { el.style.display = "none"; el.innerHTML = ""; el.dataset.sq = ""; } continue; }
+        const sig = dead.map(v => v.id + v.st).join(",");
+        if (el.dataset.sq !== sig) {
+          el.className = "em-send-status " + (dead[0].st === "needs_attention" ? "sent_text_only" : "failed");
+          el.innerHTML = sqBannerHtml(dead); el.dataset.sq = sig;
+        }
+        el.style.display = "flex";
+        el.onclick = sqBannerClick;
+      }
+    }
+    function sqBannerClick(e) {
+      const b = e.target.closest && e.target.closest("[data-sq]");
+      if (!b) return;
+      const v = sqDead(state.selectedId).find(x => x.id === b.dataset.id);
+      if (v) sqAction(b.dataset.sq, v, b);
+    }
+    async function sqAction(a, v, btn) {
+      const threadId = state.selectedId;
+      const by = getEmployeeName() || "operator";
+      const post = (op, extra) => api("etsyMailDraftSend", { method: "POST", body: Object.assign({ op, sendId: v.id, by }, extra || {}) });
+      if (a === "copy") {
+        try { await navigator.clipboard.writeText(String(v.text || "")); toast("Copied: paste it into the Etsy conversation by hand", 4500); }
+        catch (_) { toast("Could not copy: select the words and copy them yourself", 5000); }
+        return;
+      }
+      if (btn) btn.disabled = true;
+      let did = "";
+      try {
+        if (a === "sent") {
+          if (!confirm("Mark this message as sent?\n\nOnly do this if you can see it in the Etsy conversation.")) return;
+          await post("queue_mark_sent"); did = "Marked as sent";
+        } else if (a === "dismiss") {
+          await post("queue_dismiss");
+          const back = restoreFailedSend(threadId, { typed: String(v.text || ""), attachments: [], translation: null, englishPreview: null });
+          did = back ? "Put away: the words are back in the reply box" : "Put away: the words were kept for that thread's reply box";
+        } else if (a === "retry") {
+          const att = v.st === "needs_attention";
+          if (att && !confirm("Send it again only if the customer did NOT get it.\n\nCheck the conversation on Etsy first. Send it again?")) return;
+          try { await post("queue_retry", att ? { confirmMaybeSent: true } : {}); }
+          catch (e) {
+            if (e && e.data && e.data.errorCode === "QUEUE_MAYBE_SENT" && confirm((e.message || "This message may already have gone out.") + "\n\nSend it again?")) await post("queue_retry", { confirmMaybeSent: true });
+            else throw e;
+          }
+          did = "Back in the queue";
+        }
+      } catch (e) { toast("That did not work: " + ((e && e.message) || "unknown error"), 6000); return; }
+      finally { if (btn) btn.disabled = false; }
+      if (did) toast(did, 3500);
+      sqKick(threadId);
+      try { fetchMessagesNow(threadId); fetchThreadListNow(); } catch (_) {}
+    }
+
+    /** The mark on a conversation's row in the classic list: the queue's flags on the conversation itself. */
+    function sqChipHtml(t) {
+      if (!t || t.sandbox === true || t.isSandbox === true) return "";
+      if (t.sendQueueProblem === true) return '<span class="em-badge sq bad" title="A message to this customer did not go, or may not have gone. Open the conversation to retry it, copy it or check Etsy.">send problem</span>';
+      if (t.sendQueueState === "queued") return '<span class="em-badge sq" title="A message to this customer is in the send queue. Messages go to Etsy one at a time, in order.">sending…</span>';
+      return "";
     }
 
     // Efficiency log (station-mail-signals.js): a reply still on its way after a reload, or one nobody is watching any more,
@@ -21684,7 +21955,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         claimText           : englishText,
         // Polish reworded this reply: its wording is the model's, so the
         // learner does not read it as a staff correction.
-        polished            : polishedSend
+        polished            : polishedSend,
+        // One key per press: a retry of this very press (a lost answer, a reload of the request) is the same message in the
+        // send queue, never a second one.
+        idempotencyKey      : sqPressKey(threadId)
       };
 
       let resp;
@@ -21748,7 +22022,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // replaces it.
       if (polishedSend && state.polish && state.polish.threadId === threadId) state.polish = null;
       const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
-      const patch = { _state: "queued", _queuedAtMs: Date.now(), optimisticDraftId: resp && resp.draftId };
+      const patch = { _state: "queued", _queuedAtMs: Date.now(), optimisticDraftId: resp && resp.draftId, queueSendId: (resp && resp.sendId) || null };
       const media = localSendMedia(sentAtts);
       // The reply had two different tracking numbers: the server kept the
       // real one, so the bubble shows the words and pictures that went.
@@ -21760,6 +22034,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       updateLocalSend(threadId, local.id, patch);
       if (trackingFix) noteTrackingResolution(threadId, trackingFix, false);
       if (state.selectedId === threadId) drawThreadNow();
+      if (state.selectedId === threadId && resp && resp.sendId) sqKick(threadId);
       // Audit fix S11: the phone keeps its own check after 8 s.
       if (surface !== "mobile") watchSendOutcome(threadId, resp && resp.draftId, sentText);
       // The enqueue wrote the optimistic doc server-side; showSendStatus
@@ -22588,7 +22863,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // other message (see sendTagOf).
         const sendTag = sendTagOf(state.selectedId, m);
         const syncTag = sendTag
-          ? ' <span class="em-msg-sync' + (sendTag.warn ? ' warn' : '') + '"' + (sendTag.title ? ' title="' + esc(sendTag.title) + '"' : '') + '>· ' + esc(sendTag.text) + '</span>'
+          ? ' <span class="em-msg-sync' + (sendTag.warn ? ' warn' : '') + '"' + (sendTag.title ? ' title="' + esc(sendTag.title) + '"' : '') + '>· ' + (sendTag.spin ? '<i class="em-sq-spin" aria-hidden="true"></i>' : '') + esc(sendTag.text) + '</span>'
           : '';
 
         // Render any message that has imageUrls as inline thumbnails —
@@ -26079,6 +26354,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
         <!-- Messages list — rewritten on every poll by mRenderMessages.
              Everything ABOVE this stays stable to avoid flicker. -->
+        <div class="em-send-status" id="mQueueStatus" style="display:none;"></div>
         <div class="m-messages-list" id="mMessagesList"></div>
       `;
 

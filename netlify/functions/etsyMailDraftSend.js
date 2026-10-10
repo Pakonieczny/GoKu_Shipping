@@ -859,6 +859,9 @@ exports.handler = async (event) => {
       // shows the earlier message (sent, say). An older inbox tab reading this must not take that for its own message.
       if (draft.queueWaiting === true && draft.status !== "queued" && draft.status !== "sending") {
         draft = Object.assign({}, draft, { status: "queued", sendError: null, sendErrorCode: null, sentAt: null, queueVirtual: true });
+      } else if (draft.queueRetrying === true && draft.status === "failed") {
+        // A try that did not work and will be made again by itself is not a failure to a reader of the slot.
+        draft = Object.assign({}, draft, { status: "queued", sendError: null, sendErrorCode: null, queueVirtual: true });
       }
       return ok({ draft });
     }
@@ -867,6 +870,8 @@ exports.handler = async (event) => {
      *  The dispatcher's open messages (position, state, plain reason) for a watching page. { n } is the revision the
      *  page has: nothing changed -> { unchanged:true } for ONE document read. */
     if (op === "queue_state") {
+      // a sandbox page never sees the real queue
+      if (qs.sandbox === "true" || qs.sandbox === "1") return ok({ queue: { n: 0, now: Date.now(), items: [], recent: [], sandbox: true } });
       const view = await Q.stateView({
         n: qs.n != null && qs.n !== "" ? Number(qs.n) : null, hasOpen: qs.open === "1" || qs.open === "true",
         threadId: qs.threadId || null, withText: qs.text !== "0"
@@ -912,6 +917,8 @@ exports.handler = async (event) => {
      *                        //          queued by a different operator
      *  Output: { draftId, status:"queued" } */
     if (op === "enqueue") {
+      // The sandbox never sends to a customer and never touches the real queue, the draft slot or the lease.
+      if (Q.isSandboxInput(body)) return json(403, { error: "The sandbox never sends to a customer", errorCode: "SANDBOX_NEVER_SENDS" });
       const enqueueStartedAt = Date.now();
       // v0.9.1 #8: kill-switch — global send disable
       const ks = await getKillSwitch();
@@ -1164,6 +1171,7 @@ exports.handler = async (event) => {
         parentThreadFinalizePatch
       });
 
+      if (result.sandboxRefused) return json(403, { error: "The sandbox never sends to a customer", errorCode: "SANDBOX_NEVER_SENDS" });
       if (result.conflict) {
         return json(409, {
           error      : `Draft is currently ${result.prevStatus}; wait for it to finish or fail`,
@@ -2091,6 +2099,7 @@ exports.handler = async (event) => {
      *    queue_dismiss    { sendId, by }                      put a dead letter away without sending
      *    queue_config     { gapMs, maxAttempts, ... }         change the pause, tries, backoff (numbers, clamped) */
     if (op === "queue_cancel" || op === "queue_retry" || op === "queue_mark_sent" || op === "queue_dismiss") {
+      if (body.sandbox === true) return json(403, { error: "The sandbox never acts on the real queue", errorCode: "SANDBOX_NEVER_SENDS" });
       const sendId = String(body.sendId || "");
       if (!sendId) return bad("Missing sendId");
       const by = body.by ? String(body.by).slice(0, 80) : null;

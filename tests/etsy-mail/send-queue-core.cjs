@@ -41,8 +41,8 @@ const R = reporter(); const check = R.check;
   const again = await h.send(t, "Your order ships Monday.", { key: "press-1" });
   check(again.status === 200 && again.body.deduped && again.body.queueState === "confirmed", "pressing again after it went out shows the same finished message");
   check(h.sentToEtsy.length === 1, "one click on Etsy in total");
-  const w1 = await h.send(t, "Your order ships Monday.");                 // no key (an older tab): derived key
-  const w2 = await h.send(t, "Your order ships Monday.");
+  const w1 = await h.send(t, "Your order ships Tuesday.");                 // no key (an older tab): derived key
+  const w2 = await h.send(t, "Your order ships Tuesday.");
   check(w2.body.deduped === true && w1.body.sendId === w2.body.sendId, "no key at all: the same words twice within seconds are one message");
   const early = await ext.poll();
   check(early[0] && early[0].claim === 429 && early[0].code === "PACING", "a helper that claims inside the 12 s pause after the last send is told to wait (429 PACING)");
@@ -50,7 +50,7 @@ const R = reporter(); const check = R.check;
   check(h.item(w1.body.sendId).state === "confirmed", "(the repeated words went out once)");
   const clicksSoFar = h.sentToEtsy.length;
   h.clock.advance(60000);
-  const w3 = await h.send(t, "Your order ships Monday.");
+  const w3 = await h.send(t, "Your order ships Tuesday.");
   check(!w3.body.deduped && h.item(w3.body.sendId).epoch === 1 && ["claimed", "queued"].includes(h.item(w3.body.sendId).state), "the same words a minute after they went out are a new message (a person may mean to say it again)");
   h.clock.advance(15000); await ext.poll();
   check(h.sentToEtsy.length === clicksSoFar + 1, "...and it is sent, once");
@@ -153,6 +153,31 @@ const R = reporter(); const check = R.check;
   check(need.status === 409 && need.body.errorCode === "QUEUE_MAYBE_SENT" && /Your package left today/.test(need.body.text), "Send again asks the person to check first and hands back the words to copy");
   const yes = await h.call("queue_retry", { sendId: r.body.sendId, by: "Anna", confirmMaybeSent: true });
   check(yes.status === 200 && h.item(r.body.sendId).state === "claimed", "after the person confirms, it goes back in the queue");
+  h.done();
+
+  // ═══ the same words from two places are one message ═══
+  process.stdout.write("\nThe same words pressed in two tabs are one message\n");
+  h = boot({ seed: 7 });
+  t = h.thread(701);
+  const sw_w1 = await h.send(t, "Your charm ships tomorrow.", { key: "tab1-press" });
+  const sw_w2 = await h.send(t, "Your charm ships tomorrow.", { key: "tab2-press" });
+  check(sw_w2.status === 200 && sw_w2.body.deduped === true && sw_w2.body.sendId === sw_w1.body.sendId && h.items().length === 1, "two tabs, two keys, the same words within seconds: one message in the queue");
+  const sw_w3 = await h.send(t, "Your charm ships on Friday instead.", { key: "tab3-press" });
+  check(h.items().length === 2 && sw_w3.body.sendId !== sw_w1.body.sendId, "different words are a different message");
+  h.clock.advance(25000);
+  const sw_w4 = await h.send(t, "Your charm ships tomorrow.", { key: "tab4-press" });
+  check(sw_w4.body.deduped !== true && h.items().length === 3, "the same words a while later (25 s) are a new message on purpose");
+  // taken back, then sent again at once: allowed
+  const sw_t2 = h.thread(702);
+  const sw_c1 = await h.send(sw_t2, "Sorry, wrong text.", { key: "sw_c1" });
+  await h.call("queue_cancel", { sendId: sw_c1.body.sendId, by: "Anna" });
+  const sw_c2 = await h.send(sw_t2, "Sorry, wrong text.", { key: "sw_c2" });
+  check(sw_c2.body.deduped !== true && sw_c2.body.sendId !== sw_c1.body.sendId, "a message that was taken back can be written again at once");
+  // a Charm Sorter question is never merged by its words
+  const sw_t3 = h.thread(703);
+  const sw_s1 = await h.sorter(sw_t3, "What font would you like?", "ol_1", "i1");
+  const sw_s2 = await h.sorter(sw_t3, "What font would you like?", "ol_1", "i2");
+  check(sw_s1.body.sendId !== sw_s2.body.sendId && h.items().filter(i => i.threadId === sw_t3).length === 2, "two sorter lines asking the same thing stay two messages (the sorter's own key is the truth)");
   h.done();
 
   // ═══ a long pause is not shown to the helper early ═══
