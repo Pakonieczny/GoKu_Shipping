@@ -1209,6 +1209,8 @@
         const cx = cr.opts.find(c => c.name === name && c.value === value);
         if (!mapped && cx && cx.ask) { spec.options.push({ name, value, mapped: null }); continue; }
         if (!mapped && cx && cx.certain && cx.n > 1 && cx.cls !== "design") mapped = { field: "count", value: String(cx.n), source: "rule:" + cx.rule };
+        // "GOLD - 1 Disc" (one of the 15 choices of the 180-product disc listing) answers itself as ONE piece too: it used to fall to the generic "not mapped" hold (DISCREAD)
+        else if (!mapped && cx && cx.certain && cx.n === 1 && cx.cls === "piece") mapped = { field: "count", value: "1", source: "rule:" + cx.rule };
       }
       spec.options.push({ name, value, mapped });
       // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
@@ -1250,6 +1252,19 @@
     if (!noDesign && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     return spec;
+  }
+  /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
+   *  held for); the row must have no person's hold, no pieces made, and a clean reading now. DISCREAD: a stored or restored "held ... not mapped" kept its state after the option was read. */
+  function questionGone(row, prev) {
+    if (!row || !row.spec || !["held", "unmatched"].includes(row.state) || row.hold || (row.poolIds && row.poolIds.length) || row.fromRecord) return false;
+    if (!prev || !Array.isArray(prev.problems) || !prev.problems.length) return false;
+    return !(row.spec.problems && row.spec.problems.length) && !row.spec.noDesign && !row.spec.special && !(row.problems && row.problems.length);
+  }
+  /** The same for a line built from the run's stored record (the order window of an order outside the pull): its stored reason names a question, its fresh spec has none. */
+  const QUESTION_REASON = /^(?:option "|SKU |needs material|no design for size|oversize for|not in any master file|font \u201c|the SKU \u201c|the buyer's note|Options:)/i;
+  function staleQuestionHold(row) {
+    if (!row || !row.spec || !["held", "unmatched"].includes(row.state) || row.hold || (row.poolIds && row.poolIds.length) || !QUESTION_REASON.test(String(row.reason || ""))) return false;
+    return !(row.spec.problems && row.spec.problems.length) && !row.spec.noDesign && !row.spec.special;
   }
   const lineKey = (order, line) => `${order.receiptId}_${line.transactionId}`;
   const poolId = (order, line, copy) => `${order.receiptId}_${line.transactionId}_${copy}`;
@@ -1605,7 +1620,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_RULES, fontById, fontRead, fontParts, isFontOption,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
