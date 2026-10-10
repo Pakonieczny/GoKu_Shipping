@@ -124,7 +124,7 @@ async function page() {
   const glides = [], pulses = [], reloads = []; let hidden = false;
   Object.defineProperty(document, 'hidden', { get: () => hidden, configurable: true });
   const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const ctx = vm.createContext({ window: win, document, console: { ...console, warn() {} }, esc, cors: x => x, S: { mode: 'library', cloud: { ok: true }, library: { loadedAt: 0 } }, allSheets: () => [], Orders: { rows: () => [] }, Engrave: { items: () => new Map() }, O: { setLabel: n => 'Set ' + n }, CNListActivity: { compare: () => 0, state: () => ({ direction: 1 }) }, innerHeight: 800, requestAnimationFrame: fn => (frames.push(fn), frames.length), setTimeout: setT, clearTimeout: clearT, setInterval() {}, api, Date: FakeDate });
+  const ctx = vm.createContext({ window: win, document, console: { ...console, warn() {} }, esc, cors: x => x, S: { mode: 'library', cloud: { ok: true }, library: { loadedAt: 0 } }, allSheets: () => [], Orders: { rows: () => [] }, Engrave: { items: () => new Map() }, O: { setLabel: n => 'Set ' + n }, CNListActivity: { compare: () => 0, compareBlocks: () => 0, state: () => ({ direction: 1 }) }, innerHeight: 800, requestAnimationFrame: fn => (frames.push(fn), frames.length), setTimeout: setT, clearTimeout: clearT, setInterval() {}, api, Date: FakeDate });
   vm.runInContext(src.slice(src.indexOf('const LaserReview ='), src.indexOf('const Sets =')), ctx);
   const L = win.LaserReview, body = document.querySelector('#libBody');
   // (the Library's own glide helpers, as charm-nest-library.js exports them; refresh() calls its bare name, so it is in both places)
