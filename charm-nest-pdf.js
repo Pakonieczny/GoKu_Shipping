@@ -1442,7 +1442,8 @@
           not: the charm's own outline drawn in pieces, a hoop drawn as an open ring, and a cut that DIVIDES the charm (a line, or pieces
           joined end to end, whose two ends both stop on the outline: BEST FRIENDS_2505's heart is cut in two along its zigzag).
        2. a black CLOSED shape on the CUT layer that touches that line art is part of the same drawing (the leaves the veins end on).
-          A closed shape that touches no line art stays a cut-out: a hoop hole, a window, a letter, the openwork of a cut-out design.
+          A closed shape that touches no line art stays a cut-out: a hoop hole, a window, a letter, the openwork of a cut-out design; and a hoop's
+          hole (a hoop-sized circle at the body's edge) stays a cut-out even where a flower's tip touches it.
      (Black ink on an ENGRAVE or HATCH layer is not decided here: the three such shapes in the masters are the jump-ring holes of charms
      the artist drew wholly on an engraving layer.) Stamped like the black-fill rule (`hatchBlue`, role "hatch") plus `hatchLine` (a
      stroke: drawn blue as the same line, written as the blue area the line covers). */
@@ -1463,6 +1464,14 @@
     const one = (p, q) => { let best = Infinity; for (let i = 0; i + 1 < q.length; i++) { const ax = q[i][0], ay = q[i][1], dx = q[i + 1][0] - ax, dy = q[i + 1][1] - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L)) : 0, ex = ax + t * dx - p[0], ey = ay + t * dy - p[1], d = ex * ex + ey * ey; if (d < best) best = d; } return Math.sqrt(best); };
     let best = Infinity; for (const p of a) best = Math.min(best, one(p, b)); for (const p of b) best = Math.min(best, one(p, a)); return best;
   };
+  /** A hoop's hole: a hoop-sized circle (ringLike + circleOf, like findHoops) whose rim is at the body's edge (within HOOP_LONE_REACH_PT of the outline, or across it).
+   *  A bar's end hole can lie within 1.5 pt of a flower's tip (FLOWER_1317, BRIDESMAID_2408): touching the drawing does not make it a part of it, it stays a cut-out. */
+  function isHoopCircle(m, polys) {
+    if (!ringLike(m)) return false;
+    const V = vec(); if (!V) return false;
+    let big = null; for (const sp of m.subpaths) { let k = null; try { k = circleOf(sp, V); } catch (_) { k = null; } if (!k) return false; if (!big || k.r > big.r) big = k; }
+    return !!big && distToPolys(big.cx, big.cy, polys) - big.r <= HOOP_LONE_REACH_PT;
+  }
   /** Stamp the black line art of every charm: hatching (blue, role "hatch", hatchLine). Returns the stamped members. */
   function classifyBlackArt(charms) {
     const stamped = [], pcache = new Map();
@@ -1488,7 +1497,7 @@
       }
       // 2 · closed shapes on the CUT layer that touch the line art are part of the drawing (and shapes that touch those)
       if (art.length) {
-        const rest = pool.filter(m => m.closed && !art.includes(m) && bbArea(m.bbox) < ART_MAX_SHARE * boxArea);
+        const rest = pool.filter(m => m.closed && !art.includes(m) && bbArea(m.bbox) < ART_MAX_SHARE * boxArea && !isHoopCircle(m, polys));
         const near = (a, b) => bbInter([a.bbox[0] - ART_TOUCH_PT, a.bbox[1] - ART_TOUCH_PT, a.bbox[2] + ART_TOUCH_PT, a.bbox[3] + ART_TOUCH_PT], b.bbox) && polyDist(line(a), line(b)) <= ART_TOUCH_PT;
         for (let grew = rest.length > 0; grew;) { grew = false; for (const m of rest) if (!art.includes(m) && art.some(a => near(a, m))) { art.push(m); grew = true; } }
       }

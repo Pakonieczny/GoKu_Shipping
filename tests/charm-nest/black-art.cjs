@@ -52,6 +52,17 @@ const bar = () => {
     assert(![b.leaf].includes(G.holeUpAngle ? (G.holeUpAngle(c).hole) : null), 'the leaf is not the hanging hole');
   }
 
+  // 1b · a hoop hole stays a cut-out where a flower's tip touches it (FLOWER_1317 and BRIDESMAID_2408: the tip of a sprig is 1 pt from the end hole); a round shape inside the drawing is art
+  {
+    const body = path_('CUT', [rect(10, 10, 110, 30)]), hoopL = path_('CUT', [blob(14, 20, 4, 4)]), hoopR = path_('CUT', [blob(106, 20, 4, 4)]);
+    const sprig = open_('CUT', [80, 18], [90, 22], [103.4, 20]), berry = path_('CUT', [blob(88, 24, 4, 4)]);           // the sprig ends 0.6 pt from the right hoop, whose rim is 2 pt from the edge; the berry (a round shape at 12 pt from the edge) sits on the sprig
+    const { g } = group([body, hoopL, hoopR, sprig, berry]); const c = g.charms[0];
+    assert(sprig.hatchLine, 'the sprig is line art'); assert(berry.hatchLine && berry.hatchBlue, 'a round shape inside the drawing, touching the sprig, is part of it');
+    assert(!hoopR.hatchBlue && !hoopR.manufacturingRole && !hoopL.hatchBlue, 'the hoop hole the sprig touches stays a cut-out');
+    assert.equal(holesOf(c), 2, 'both end holes are still holes: ' + holesOf(c));
+    const rec = draw(c); assert.equal(rec.strokes.filter(s => s === BLUE).length, 2, 'the sprig and the berry are drawn blue');
+  }
+
   // 2 · what stays as it was: a cut that divides the charm, a hoop drawn as an open ring, a lone closed window, a window touching the art, a line outside, opts.blackArt === false
   {
     const body = path_('CUT', [rect(10, 10, 110, 50)]), crack = [open_('CUT', [60, 10], [55, 20]), open_('CUT', [55, 20], [65, 30]), open_('CUT', [65, 30], [60, 50])];
