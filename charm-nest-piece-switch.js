@@ -20,7 +20,7 @@
  *   step(pieces, key, dir, wrap)  the piece after (dir 1) or before (dir -1) `key`; null at either end unless wrap
  *   chipHtml(piece)             the little tag ("DISC 2 of 3"), as the lists and the switch draw it
  *   html(pieces, key, o)        the switch itself, the markup of the Left | Right switch for any number of pieces (class egEarSwitch / egEarTab, data-a="ear",
- *                               data-ear=<job key>); o.fonts: add each piece's font by name to its button (the discs do; the ears keep the markup they always had)
+ *                               data-ear=<job key>; egMany besides on a switch of discs or other pieces, which may wrap on a narrow window); o.fonts: add each piece's font by name to its button (the discs do; the ears keep the markup they always had)
  *   bind(host, onPick)          press handler for every button of a switch inside `host`: onPick(key, button); returns a function that takes it off again
  *   kindOf(pieces)              "ears" | "discs" | "pieces"
  *   fontText(font)              "Typewriter" (the font the piece is engraved in), or "" when none is known
@@ -84,7 +84,7 @@
   function html(pieces, key, o) {
     o = o || {}; const ps = pieces || [], kind = kindOf(ps);
     const aria = kind === 'ears' ? 'The left and the right ear of this line' : kind === 'discs' ? 'The discs of this order, one by one' : 'The pieces of this line, one by one';
-    return `<span class="egEarSwitch" role="group" aria-label="${aria}">${ps.map(p => {
+    return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany'}" role="group" aria-label="${aria}">${ps.map(p => {
       const on = p.key === key, ft = o.fonts ? fontText(p.font) : '';
       const what = kind === 'ears' ? 'the ' + p.name.toLowerCase() : p.name.toLowerCase();
       return `<button type="button" class="egEarTab" data-a="ear" data-ear="${esc(p.key)}" aria-pressed="${on}" title="${on ? 'Shown now' : 'Show'}: ${esc(what)} · ${esc(p.words || 'words not settled')}${ft ? ' · ' + esc(ft) : ''} · ${esc(p.stage)}">${chipHtml(p)}<span class="egEarWords">${esc(p.words || '…')}</span>${ft ? `<span class="egEarFont">${esc(ft)}</span>` : ''}<span class="egEarStage">${esc(p.stage)}</span></button>`;
