@@ -104,7 +104,7 @@ withRule(true, () => {
     eq(opt(sp, l.name).mapped, null, 'the option is unmapped');
   }
   const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-  ok(/p\.pairSecond \? `\$\{p\.pairSecond\.why\}` : p\.font \? p\.font\.why : p\.count \?/.test(bridge), 'the Review row says that one line (problemText reads p.font.why)');
+  ok(/p\.pairSecond \? `\$\{p\.pairSecond\.why\}` : p\.font \? p\.font\.why :/.test(bridge), 'the Review row says that one line (problemText reads p.font.why)');
   // a saved answer for the whole value, or for the font alone, settles it (the person's, read first)
   const x = FIX.find(l => l.rid === '4175370240'), key = 'fonts';
   const whole = { '1008014571': { [key]: { '16"/ typewriter': { field: 'font', value: 'source-sans-3', by: 'Paul', at: 1 } } } };

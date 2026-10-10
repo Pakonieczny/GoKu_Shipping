@@ -7,9 +7,10 @@
 //   · every one of these transactions carries the LISTING's shared SKU ("Viking Rune", "Greek Goddess", "Zodiac REVAMP", "Birth_6106"…),
 //     never the option's: only the listing's inventory knows the SKU Etsy keeps for the option bought (step 2 of Paul's order);
 //   · the sandbox never asks Etsy and production had stored nothing for these listings, so the page had no table and every row waited;
-//   · with the table, the code already named the charm for 14 lines; one waits on purpose (Greek Goddess EARRINGS: Etsy's SKU for Vesta is
-//     the NECKLACE pendant GREEKGODDESS_NECKLACE_4, the earring is GREEKGODDESS_EARRING_4) and one more code gap is fixed here (the listing's
-//     umbrella design "GREEK GODDESS" is in the master, so the inventory was never asked about the option);
+//   · with the table, the code already named the charm for 13 lines; one more is fixed here: Greek Goddess EARRINGS (Etsy's SKU for Vesta is
+//     the NECKLACE pendant GREEKGODDESS_NECKLACE_4, the earring is GREEKGODDESS_EARRING_4: the listing's five SKUs all have an earring twin,
+//     so each is read as its twin) and the listing's umbrella design "GREEK GODDESS" is in the master, so the inventory was never asked
+//     about the option. Nobody can answer an unmapped option by a click any more (the decision box is gone from Review), so a rule must do it;
 //   · the stored table kept its pairs as an array in an array, which Firestore refuses: it is stored packed now and read back as pairs.
 // No network, no Etsy, no AI.   node tests/charm-nest/options-link.cjs
 const path = require('path'), fs = require('fs'), assert = require('assert/strict');
@@ -34,7 +35,7 @@ const find = (receipt, value) => { const l = DATA.lines.find(x => x.receipt === 
 const read = (l, extra) => O.interpretLine(orderOf(l), lineOf(l), ctx(extra));
 const open = sp => sp.problems.filter(p => p.kind === 'needsMapping' && !p.pair && !p.count);
 
-// Paul's rows: [receipt, option value, the charm Etsy's own SKU names | null (waits), why it waits]
+// Paul's rows: [receipt, option value, the charm Etsy's own SKU names (its earring twin for Vesta) | null (waits), why it waits]
 const ROWS = [
   ['4174818039', 'Algiz - Divine Plan', 'RUNE_NECKLACE_CHARM-14'], ['4174818039', 'Kenaz - Health', 'RUNE_NECKLACE_CHARM-5'],
   ['4171987098', 'Ansuz - Inspiration', 'RUNE_NECKLACE_CHARM-3'], ['4171987098', 'Raidho - Nobility', 'RUNE_NECKLACE_CHARM-4'], ['4171987098', 'Sowilo - Guidance', 'RUNE_NECKLACE_CHARM-15'],
@@ -42,7 +43,7 @@ const ROWS = [
   ['4173182895', 'Ingwaz - Fertility', 'RUNE_EARRING_CHARM-21'],
   ['4176706298', 'Pisces', 'ZODIAC_EARRINGS-11'], ['4175402612', 'Libra', 'ZODIAC_EARRINGS-6'],
   ['4171709020', 'Virgo', 'ZODIAC_CONSTE_GEM-5'], ['4171709020', 'Morning Glory', 'BIRTHFLOWER_EARRINGS-8'],
-  ['4174408832', 'Vesta', null, /necklace design and this line is earrings/]
+  ['4174408832', 'Vesta', 'GREEKGODDESS_EARRING_4']
 ];
 
 /* ── 1 · the sandbox page had no table: every row waited, and says why ── */
@@ -113,12 +114,13 @@ function withTable(tables) {
       assert(!open(sp).length, `${rid} ${value}: no question about the option: ` + JSON.stringify(sp.problems));
       assert(lib.has(want), `${want} is a master SKU, spelt exactly`);
       assert.equal(sp.viaInventory.tx, l.sku.toUpperCase(), 'the transaction carried the listing\'s SKU');
+      assert.equal(!!sp.viaInventory.twin, value === 'Vesta', 'only Vesta is read through a family twin');
     } else {
       const q = open(sp).find(p => p.optionValue === value); assert(q, `${rid} ${value} waits: ` + JSON.stringify(sp.problems)); assert.match(q.why, why);
       assert(!sp.viaInventory, 'never cut as the necklace pendant');
     }
   }
-  ok('with the table: 13 of the 14 lines name their charm from Etsy\'s own SKU for the option (inventory), no question; Vesta waits');
+  ok('with the table: all 14 lines name their charm from Etsy\'s own SKU for the option (Vesta through its earring twin), no question about the option');
 
   // the same rune number in the necklace and the earring family is the same rune; every rune SKU Etsy holds for these listings is a master SKU
   for (const id of ['1734126693', '1734124689', '1711906692', '1712164498', '1706155793', '1538136106', '1844264213']) {
@@ -129,15 +131,30 @@ function withTable(tables) {
   }
   ok('every SKU Etsy keeps for these 7 listings\' options is a master SKU, spelt exactly (case only differs)');
 
-  // Vesta: why, and the master SKUs to offer in order
-  const v = find('4174408832', 'Vesta'), sp = read(v, { listingSkus: tables }), q = open(sp)[0];
-  assert.equal(sp.inventoryHeld.sku, 'GreekGoddess_Necklace_4'.toUpperCase()); assert.equal(sp.designSku, 'GREEK GODDESS', 'unchanged: the listing\'s own SKU, still waiting on its option');
-  assert.deepEqual(q.picks.map(p => p.sku), ['GREEKGODDESS_EARRING_4', 'GREEKGODDESS_NECKLACE_4']); assert(q.picks[1].conflict && !q.picks[0].conflict);
-  assert.deepEqual(O.suggestCharms({ value: 'Vesta', line: lineOf(v), picks: q.picks, skus: lib.keys() }).map(x => x.sku), ['GREEKGODDESS_EARRING_4', 'GREEKGODDESS_NECKLACE_4']);
-  // …and once a person answers it for the listing, that answer reads (saved per listing and value, as the Review card does)
-  const maps = { '1712164498': { 'goddess symbol': { vesta: { field: 'design', value: 'GREEKGODDESS_EARRING_4' } } } };
-  const sp2 = read(v, { listingSkus: tables, optionMaps: maps }); assert.equal(sp2.designSku, 'GREEKGODDESS_EARRING_4'); assert.equal(sp2.skuSource, 'option'); assert(!open(sp2).length);
-  ok('Vesta: waits for a person with the earring twin offered first; the person\'s answer for the listing resolves it');
+  // Vesta: Etsy's SKU is the necklace pendant; the line is earrings and every one of the listing's five SKUs has an earring twin: read as the twin
+  const v = find('4174408832', 'Vesta'), sp = read(v, { listingSkus: tables });
+  assert.equal(sp.viaInventory.etsy, 'GREEKGODDESS_NECKLACE_4'); assert.equal(sp.designSku, 'GREEKGODDESS_EARRING_4'); assert(!sp.inventoryHeld);
+  for (const [value, id, want] of [['Ceres', 0], ['Juno', 1], ['Pallas Athena', 2], ['Proserpina', 3]].map(([n, i]) => [n, i, 'GREEKGODDESS_EARRING_' + i])) {   // (the other four products of the listing, bought as Vesta's was)
+    const p = tables['1712164498'].products.find(x => x.sku.toUpperCase() === 'GREEKGODDESS_NECKLACE_' + id), l = lineOf(v);
+    l.productId = p.id; l.variations = l.variations.map(x => x.name === 'Goddess Symbol' ? Object.assign({}, x, { value, valueId: p.pv.find(a => a[0] === x.propertyId)[1] }) : x);
+    const r = O.interpretLine(orderOf(v), l, ctx({ listingSkus: tables })); assert.equal(r.designSku, want, value); assert(!open(r).length, value);
+  }
+  ok('Vesta (and the listing\'s other four goddesses): Etsy\'s necklace SKU is read as the same number in the earring family, because all five of the listing\'s SKUs have one');
+  // …but never when ONE of the listing's SKUs has no single twin: the line waits, says why, and the twin is offered first
+  const lib0 = new Map(lib); lib.delete('GREEKGODDESS_EARRING_2');
+  try {
+    const w = read(v, { listingSkus: tables }), q = open(w)[0];
+    assert(q, 'waits: ' + JSON.stringify(w.problems)); assert.match(q.why, /necklace design and this line is earrings/); assert.equal(w.inventoryHeld.sku, 'GREEKGODDESS_NECKLACE_4'); assert(!w.viaInventory);
+    assert.deepEqual(q.picks.map(p => p.sku), ['GREEKGODDESS_EARRING_4', 'GREEKGODDESS_NECKLACE_4']); assert(q.picks[1].conflict && !q.picks[0].conflict);
+    assert.deepEqual(O.suggestCharms({ value: 'Vesta', line: lineOf(v), picks: q.picks, skus: lib.keys() }).map(x => x.sku), ['GREEKGODDESS_EARRING_4', 'GREEKGODDESS_NECKLACE_4']);
+    const maps = { '1712164498': { 'goddess symbol': { vesta: { field: 'design', value: 'GREEKGODDESS_EARRING_4' } } } };
+    const w2 = read(v, { listingSkus: tables, optionMaps: maps }); assert.equal(w2.designSku, 'GREEKGODDESS_EARRING_4'); assert.equal(w2.skuSource, 'option'); assert(!open(w2).length);
+  } finally { for (const [k, x] of lib0) lib.set(k, x); }
+  ok('a listing whose SKUs do not all have a twin waits (necklace SKU on an earrings line), says why, offers the twin first; a saved answer for the listing resolves it');
+  // a person's saved pick for the option stands (the line was read through it before, and is read through it still)
+  const picked = read(v, { listingSkus: tables, optionMaps: { '1712164498': { 'goddess symbol': { vesta: { field: 'design', value: 'GREEKGODDESS_EARRING_3' } } } } });
+  assert.equal(picked.designSku, 'GREEKGODDESS_EARRING_3'); assert(!picked.viaInventory);
+  ok('a saved pick for the option is not read differently by the twin rule');
 }
 
 /* ── 4 · the rules behind it ── */
