@@ -199,7 +199,7 @@ const ListMedia = (() => {
   const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
-  const earPair = row => { try { return !!row && !row.spec?.noDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
+  const earPair = row => { try { return !!row && !row.spec?.noDesign && !row.spec?.ownDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
   // (a line of TWO separate designs, the Left's and the Right's (OPTTWO: Tennis Ball Left, Tennis Racket Right): its picture is the two designs side by side, each from its own master file; the SKU of the Right's design, else '')
   const twoOf = row => { try { return !!row && !row.spec?.noDesign && earPairRow(row) && earDesign(row, "L") ? earDesign(row, "R") : ""; } catch (_) { return ""; } };
   // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
@@ -275,7 +275,7 @@ const ListMedia = (() => {
   // (is that ear's own drawing cut turned over: the word charm-nest-pair.js gives a matching pair of this design, the Right turned over unless the drawing faces the other way)
   const earTurn=(row,side,entry)=>{try{const CP=window.CharmNestPair;if(!CP || !CP.piecesFor)return false;const sp=row.spec||{},line=Object.assign({},row.line,{receiptId:row.order?.receiptId,quantity:1,form:sp.form,spec:{quantity:1,form:sp.form,pieceCount:2,pair:{earring:true,mismatched:false,glued:false,perUnit:2,sides:['L','R']}}}),mine=CP.piecesFor(line,entry).find(x=>x.side===side);return !!(mine && mine.mirror);}catch(_){return false;}};
   async function vector(row,px,opts) {
-    if(!row || row.spec?.noDesign)return null;
+    if(!row || row.spec?.noDesign || row.spec?.ownDesign)return null;   // (an add-on listing's line has no master design: the Etsy listing photo beside it is all there is to show)
     // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
     const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
     // (a MATCHING earring pair line, asked for as the line and not for one ear: the Left and the Right side by side, the Right turned over; drawn from the master design, never from one pool piece, which may already be the turned one;
@@ -319,7 +319,7 @@ const ListMedia = (() => {
   }
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
   function vectorKey(row,opts) {
-    if(!row || row.spec?.noDesign)return '';
+    if(!row || row.spec?.noDesign || row.spec?.ownDesign)return '';
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
@@ -1445,6 +1445,8 @@ const Orders = window.Orders = (() => {
       // a special line finished by hand (Custom Orders), or a chain-only line, that the run had held for a decision is
       // not cut either: it never went to the pool, so nothing is on a sheet for it
       if ((row.spec.customDone || (row.spec.special && row.spec.special.notCut)) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "noDesign"; row.reason = null; }
+      // an add-on listing's line that waited on an old question (an option "not mapped", an unknown SKU) waits for its own designs now; one with pieces of its own on a sheet keeps them, whatever sheet they are on
+      else if (row.spec.ownDesign && !row.spec.customDone && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "held"; row.reason = O.specialOf.addOn.wait; }
       // a custom order's own designs sent to the sheets from its card (CustomSheet): what it is cut from is settled, and
       // its designs carry no back to engrave; a line with pieces of its own goes on like any other
       if (window.CustomSheet && CustomSheet.sentOf(row) && !row.spec.customDone) {
@@ -1824,6 +1826,7 @@ const Orders = window.Orders = (() => {
     // a special line that is not cut says which: finished by hand under Custom Orders, or chain only
     if (state === "noDesign" && r.spec && r.spec.customDone) return ["ok", "custom · done"];
     if (state === "noDesign" && r.spec && r.spec.special && r.spec.special.notCut) return ["info", r.spec.special.label.toLowerCase()];
+    if ((state === "held" || state === "pulled") && r.spec && r.spec.ownDesign && !r.hold) return ["info", "custom · own design"];
     const [k, t] = STATE_PILL[state] || ["neutral", state];
     const i = PROGRESS.indexOf(state);
     return [k, i < 0 ? t : `${i + 1}/${PROGRESS.length} ${t}`];
@@ -2992,6 +2995,9 @@ const Pool = window.Pool = (() => {
     // a custom order sent from its card is cut from its own designs, each on the metal picked for it (CustomSheet)
     if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row)) return CustomSheet.prepare(row, run);
     if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
+    // an add-on listing's line (specialOf: own) has no master design: the one its SKU happens to match is not its design. It waits, asked nothing, for the order's own designs
+    // (Send to Sheet) or a person's Complete Order, and its order waits with it
+    if (sp.ownDesign) { row.state = "held"; row.reason = O.specialOf.addOn.wait; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
@@ -3248,7 +3254,7 @@ const Pool = window.Pool = (() => {
     const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
     // six at a time: a big batch after a reload started every design download at once, and they timed out against each
     // other while the page parsed them all together (audit, 25 Sep)
-    const loads = work.filter(row => row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
+    const loads = work.filter(row => row.spec && !row.spec.noDesign && !row.spec.ownDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
     { let next = 0; await Promise.all(Array.from({ length: Math.min(6, loads.length) }, async () => { while (next < loads.length) await loads[next++]().catch(() => {}); })); }
     const made = [];
     for (const row of work) {
@@ -8904,7 +8910,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /* An earring pair line (matching or mismatched: a Left earring and a Right one) prints a LEFT sticker and a RIGHT sticker of the same order,
      one page each (pairs, 9 Oct: "Print QR Label per piece"); QR Printer.html prints one page for each entry of `pieces`. A card with no such line
      (a single earring, a necklace, a charm) prints the one order sticker exactly as before: the label object is returned untouched. */
-  const designEntryOf = r => (r && r.spec && r.spec.designSku ? (Master.entryFor(r.spec.designSku) || null) : null);
+  const designEntryOf = r => (r && r.spec && r.spec.designSku && !r.spec.ownDesign ? (Master.entryFor(r.spec.designSku) || null) : null);
   function withPieces(label, rows) {
     try {
       const L = window.CharmNestPairLabels; if (!L || !label) return label;
@@ -11107,6 +11113,7 @@ const Review = window.Review = (() => {
     const sp = row.spec, spc = sp.special || { label: "Custom designs" }, mine = CustomSheet.decisionOf(row);
     if (mine) return `Sent to Sheet · ${Orders.statePill(row)[1]}`;
     if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser (${Orders.statePill(row)[1]})`;
+    if (sp.ownDesign) return `${spc.label} · add-on listing, no master design · drop its .ai / .dxf designs and Send to Sheet, or print its QR label when it is ready`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
