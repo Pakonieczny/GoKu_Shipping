@@ -867,7 +867,7 @@
           const res = f.res, sets = st.kind === 'sets' ? (res.setRows || []) : [];
           const inSets = new Set(sets.map(r => r.setId));
           // Sets: the completed sets that hold it, and a completed sheet whose set is not complete (or that has none)
-          st.pending = CNListActivity.select('library',[...sets, ...(res.rows || []).filter(r => st.kind !== 'sets' || !inSets.has(r.setId))].filter(r => metalOk(r, st.metal)));
+          st.pending = CNListActivity.selectBlocks('library',[...sets, ...(res.rows || []).filter(r => st.kind !== 'sets' || !inSets.has(r.setId))].filter(r => metalOk(r, st.metal)));   // (the completed sets first, the loose completed sheets after them)
         }
         if (st.dropped) return;
         append(st, st.pending.splice(0, CHUNK));
