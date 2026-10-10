@@ -22,9 +22,9 @@ const MESSAGES = [0, 1, 2].map(i => ({
   id: "m" + i, direction: i % 2 ? "outbound" : "inbound", senderName: i % 2 ? "CustomBrites" : "Sue", text: "Hello number " + i,
   timestamp: { _ts: true, ms: NOW - (4 - i) * 3600e3 }, createdAt: { _ts: true, ms: NOW - (4 - i) * 3600e3 }
 }));
-const mode = { link: null, linkFail: false, doneFail: false, msgFail: false };
+const mode = { link: null, linkFail: false, doneFail: false, msgFail: false, partial: false };
 const okDoc = (over = {}) => Object.assign({ id: "linkHealth", atMs: Date.now(), level: "ok", short: "", problem: "", checks: [], downSinceMs: 0, incidentId: "", worstSinceMs: 0 }, over);
-const reset = () => Object.assign(mode, { link: okDoc(), linkFail: false, doneFail: false, msgFail: false });
+const reset = () => Object.assign(mode, { link: okDoc(), linkFail: false, doneFail: false, msgFail: false, partial: false });
 
 function fake(method, url) {
   const u = new URL(url, "http://x"), name = u.pathname.split("/").pop(), q = Object.fromEntries(u.searchParams);
@@ -35,6 +35,7 @@ function fake(method, url) {
     }
     if (q.op === "list" && q.coll === "EtsyMail_Threads") {
       if (/^archivedAt/.test(q.orderBy || "")) return mode.doneFail ? { status: 500, body: { error: "Firestore index is building" } } : { body: { docs: [] } };
+      if (mode.partial && q.where === "starred,==,true") return { status: 500, body: { error: "Firestore could not run the starred query" } };
       return { body: { docs: [THREAD] } };
     }
     if (q.op === "listSub") return mode.msgFail ? { status: 500, body: { error: "Firestore could not be read" } } : { body: { docs: MESSAGES } };
@@ -172,6 +173,22 @@ const server = http.createServer((req, res) => {
       mode.msgFail = false;
       await until(page, () => document.querySelectorAll("#emThreadBox [data-mid]").length >= 3);
       check(true, "the poll asked again and the messages are there");
+      check(errors.length === 0, "no page errors (" + errors.join("; ") + ")");
+      await ctx.close();
+    }
+
+    // ── one of the four queries behind "Needs attention" fails: the list is partial, and says so ──
+    {
+      const { page, ctx, errors } = await open("");
+      mode.partial = true;
+      await page.reload();
+      await page.waitForSelector(`[data-id="${TID}"]`);
+      await until(page, () => /part of this list could not be read/.test(document.getElementById("emListItems").textContent));
+      check(true, "a partial load of Needs attention says so: " + (await page.evaluate(() => document.getElementById("emListItems").textContent)).trim().slice(0, 140));
+      mode.partial = false;
+      await page.click("[data-smart-retry]");
+      await until(page, () => !/part of this list/.test(document.getElementById("emListItems").textContent));
+      check(true, "Retry reads it all and the line goes");
       check(errors.length === 0, "no page errors (" + errors.join("; ") + ")");
       await ctx.close();
     }

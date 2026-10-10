@@ -13408,6 +13408,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
       if (failed && failed === res.length) throw firstErr;
       if (failed) console.warn("[smart inbox] a query failed:", firstErr && firstErr.message);
+      // (what was read is kept; the caller says that part of the list is missing, so a short list is never taken for a full one)
+      if (failed) docs.partialError = (firstErr && firstErr.message) || "no answer";
       return docs;
     }
     const SMART_LOADERS = {
@@ -13431,6 +13433,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (gen !== smartS.gen) return;
         smartMergeDocs(docs);
         smartS.attentionAt = Date.now();
+        if (docs.partialError) throw new Error("part of this list could not be read (" + docs.partialError + ")");
       },
       // Every conversation we replied to in the last month, so Waiting on
       // customer is complete: Done conversations share these orderings, so
@@ -13457,6 +13460,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (!ok.length) throw res[0].reason;
         if (ok.length < res.length) console.warn("[smart inbox] a replies query failed:", res.find(r => r.status === "rejected").reason);
         smartMergeDocs(ok.flatMap(r => r.value));
+        if (ok.length < res.length) throw new Error("part of this list could not be read (" + ((res.find(r => r.status === "rejected").reason || {}).message || "no answer") + ")");
       },
       done: async gen => {
         const docs = await smartList({ orderBy: "archivedAt,desc", limit: 100 });
@@ -13951,6 +13955,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (smartRetryT.t) return;
       if (!smartS.bootError && !Object.keys(smartS.loadErrors).length) { smartRetryT.n = 0; return; }
       if (Date.now() - smartRetryT.last > 5 * 60000) smartRetryT.n = 0;   // a new run of trouble starts again at 15 s
+      if (smartRetryT.n >= 6) return;                                     // (a failure that never clears is not asked about for ever: Retry asks at once)
       smartRetryT.last = Date.now();
       const wait = [15000, 30000, 60000][Math.min(smartRetryT.n, 2)];
       smartRetryT.t = setTimeout(() => {
