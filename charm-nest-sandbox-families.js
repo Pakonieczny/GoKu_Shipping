@@ -18,6 +18,8 @@
    protected()  → the keep list: [{ key, label, store, why }]: what a sandbox wipe never deletes.
    server() / browser()   the two halves of families(); firestoreCollections() the Sandbox_ names the wipe clears.
    isProtected(store, path) → true when a Firestore path "Collection/doc" or a Storage name is on the keep list.
+   ownerOf(store, path)    → { kind: "family" | "protected", key } for a Firestore path or Storage name, or null when nothing here names it
+                              (the guard test fails a sandbox write that lands on null).
    Nothing here is a secret; there is no passcode in this file. */
 (function (root, factory) {
   const api = factory();
@@ -68,6 +70,8 @@
     // places production uses too, cut by the sandbox's own marks
     { key: "EtsyMail_OrderLinks", label: "customer-mail links", store: "shared", collection: "EtsyMail_OrderLinks", idPrefix: "olsb_", flag: { sandbox: true } },
     { key: "Charm_Nest_CustomRead.decidedSandbox", label: "sandbox line decisions", store: "shared", collection: "Charm_Nest_CustomRead", field: "decidedSandbox" },
+    { key: "Charm_Nest_Jobs", label: "nesting jobs", store: "shared", collection: "Charm_Nest_Jobs", flag: { sandbox: true } },
+    { key: "config/charmNestPartialsSandbox", label: "sandbox partial-sheets setting", store: "doc", collection: "config", docs: ["charmNestPartialsSandbox"] },
     // Storage
     { key: "Storage:charmnest/sandbox/", label: "sandbox files", store: "storage", prefix: "charmnest/sandbox/", keep: ["charmnest/sandbox/master/"] },
     { key: "Storage:design-archive/sandbox/", label: "design-archive files", store: "storage", prefix: "design-archive/sandbox/", keep: [] }
@@ -90,7 +94,9 @@
     { key: "Station_Rev", label: "employee efficiency: data revision", store: "firestore", why: "employee efficiency stays whole" },
     { key: "config", label: "config documents and passcodes", store: "firestore", why: "settings and passcodes" },
     { key: "Charm_Sandbox/pulls", label: "the daily Etsy pull budget", store: "firestore", why: "an Etsy call budget, not sandbox data" },
-    { key: "Charm_Nest_Rev", label: "production revision counters", store: "firestore", why: "production" }
+    { key: "Charm_Nest_Rev", label: "production revision counters", store: "firestore", why: "production" },
+    { key: "EtsyMail_Config", label: "Etsy call counters", store: "firestore", why: "the Etsy call budget: a counter every Etsy caller bumps, no sandbox content" },
+    { key: "EtsyMail_OrderLinkMeta", label: "customer-mail change counter", store: "firestore", why: "a change counter every engagement bumps, real or sandbox: no sandbox content" }
   ];
 
   const clone = list => list.map(f => Object.assign({}, f));
@@ -104,8 +110,31 @@
       return f.key.indexOf("/") < 0 ? (coll === f.key || coll === f.also) : p === f.key || p.startsWith(f.key + "/");
     });
   }
+  /** Which registry entry a Firestore path ("Sandbox_Charm_Pool/x", "EtsyMail_OrderLinks/olsb_1", "config/charmNestPartialsSandbox") or a
+      Storage name belongs to: a family (the wipe clears it) or the keep list; null when the registry does not name it. */
+  function ownerOf(store, path) {
+    const p = String(path || "");
+    if (store === "storage") {
+      const k = PROTECTED.find(f => f.store === "storage" && p.startsWith(f.prefix));
+      if (k) return { kind: "protected", key: k.key };
+      const f = SERVER.find(x => x.store === "storage" && p.startsWith(x.prefix));
+      return f ? { kind: "family", key: f.key } : null;
+    }
+    const coll = p.split("/")[0], id = p.split("/")[1] || "";
+    const named = SERVER.find(x => x.store === "doc" && x.docs && x.collection === coll && x.docs.includes(id));   // (a document the sandbox alone writes in a shared collection: config/charmNestPartialsSandbox)
+    if (named) return { kind: "family", key: named.key };
+    const k = PROTECTED.find(x => x.store === "firestore" && (x.key === coll || x.also === coll || p === x.key || p.startsWith(x.key + "/")));
+    if (k) return { kind: "protected", key: k.key };
+    if (coll.startsWith(PREFIX)) { const f = SERVER.find(x => x.store === "firestore" && PREFIX + x.key === coll); return f ? { kind: "family", key: f.key } : null; }
+    for (const f of SERVER) {
+      if (f.store === "shared" && f.collection === coll && (!f.idPrefix || id.startsWith(f.idPrefix))) return { kind: "family", key: f.key };
+      if (f.store === "doc" && f.collection === coll && (f.docs ? f.docs.includes(id) : !f.keepDocs.includes(id))) return { kind: "family", key: f.key };
+    }
+    return null;
+  }
   return {
     PREFIX,
+    ownerOf,
     families: () => clone(SERVER).concat(clone(BROWSER)),
     server: () => clone(SERVER),
     browser: () => clone(BROWSER),

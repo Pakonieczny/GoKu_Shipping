@@ -180,7 +180,7 @@ function bulkMaps(sb, n) {
 /* ── what is where ── */
 const sandboxKeys = () => [...store.keys()].filter(k => k.startsWith('Sandbox_'));
 const families = keys => [...new Set(keys.map(k => k.split('/').filter((_, i) => i % 2 === 0).join('/')))].sort();
-const isOwn = k => k.startsWith('Sandbox_') || k === 'Charm_Sandbox/stream';
+const isOwn = k => k.startsWith('Sandbox_') || k === 'Charm_Sandbox/stream' || k === 'Charm_Sandbox/current';
 const shared = k => k.startsWith('Charm_Nest_CustomRead/');   // carries the sandbox's decision beside production's
 const productionMap = () => new Map([...store.entries()].filter(([k]) => !isOwn(k)).map(([k, v]) => { const c = clone(v); if (shared(k)) { delete c.decidedSandbox; delete c.updatedAt; } return [k, canon(c)]; }));
 const blobMap = () => new Map([...blobs.entries()].filter(([k]) => !k.startsWith('charmnest/sandbox/')).map(([k, b]) => [k, b.buf.toString('hex') + '|' + (b.contentType || '')]));
@@ -248,7 +248,7 @@ async function serverSection() {
   assert(run.last.more === false && !run.last.filesError, 'the calls finish the reset: ' + names(run.last));
   console.log(`reset: ${run.calls} calls removed ${run.deleted} records and ${run.last.files} files`);
   assert.deepStrictEqual(families(sandboxKeys()), [], 'the sandbox holds nothing: left ' + families(sandboxKeys()).join(', '));
-  assert(!blobs.has(LION_FILE) && blobs.has('charmnest/sandbox/orders-cur.json') && blobs.has('charmnest/sandbox/master/BRITES-master.ai'), "the lion's file went with the sandbox's files; the snapshot and the master stay");
+  assert(!blobs.has(LION_FILE) && !blobs.has('charmnest/sandbox/orders-cur.json') && blobs.has('charmnest/sandbox/master/BRITES-master.ai'), "the lion's file and the order set went with the sandbox's files; the master files stay");
   assert.deepStrictEqual([...productionMap().keys()].sort(), [...prodWrote.keys()].sort(), 'production lost or gained no document');
   for (const [k, v] of prodWrote) assert.strictEqual(productionMap().get(k), v, 'production is byte-identical after the reset: ' + k);
   assert.deepStrictEqual([...blobMap()].sort(), [...prodBlobs].sort(), "production's custom file and the file at the shared path are byte-identical (every file outside charmnest/sandbox/)");
