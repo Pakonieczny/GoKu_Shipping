@@ -787,6 +787,14 @@ exports.handler = async (event) => {
           orderLink.onThreadMessages(threadId, threadNow, fresh),
           new Promise(resolve => setTimeout(resolve, 4000))
         ]);
+        // The send dispatcher: our own message seen in the conversation confirms it ("Delivered"). Only when the
+        // conversation has a message sent but not yet confirmed (a flag on the thread), so most scrapes cost nothing.
+        if (threadNow.sendQueueUnconfirmed) {
+          await Promise.race([
+            require("./_etsyMailSendQueue").onThreadMessages(threadId, threadNow, fresh),
+            new Promise(resolve => setTimeout(resolve, 4000))
+          ]);
+        }
       } catch (e) {
         console.warn("orderLink hook failed (non-fatal):", e.message);
       }

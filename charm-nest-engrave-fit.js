@@ -51,6 +51,8 @@
     const flow=G.reflowAt(job.lineInput,fontFor(fit.weight),job.mask,opts,{centre:fit.centre,angle:fit.angle,size:fit.size},job.lineMode || "auto");
     if(flow.ok){fit=job.fit=Object.assign({},fit,flow,{weight:fit.weight});job.lines=flow.lines.slice();job.text=job.lines.join("\n");}
     job.wantSize=fit.size;
+    // a font with ONE weight (a script) has no Semibold cut: the Regular is what is cut at every size, and the record says so
+    if(fit.weight === "Semibold" && !F_.Semibold)fit=job.fit=Object.assign({},fit,{weight:"Regular",weightNote:"this font has one weight"});
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
     if (!check.ok) { throw new Error(`ink outside the eroded mask after fitting (${check.outside} px) — a bug, not a review item`); }
     return {view,mask:job.mask,fit,lines:job.lines,check};
@@ -58,8 +60,8 @@
 
   // One worker, one active calculation. Queued inputs stay on the caller's
   // side; they are not cloned into dozens of workers or an unbounded inbox.
-  function createClient({WorkerClass, url, fonts, timeoutMs=120000}) {
-    let worker=null, active=null, seq=0;
+  function createClient({WorkerClass, url, fonts, fontsFor, timeoutMs=120000}) {
+    let worker=null, active=null, seq=0, sent=new Set();   // sent: the other fonts (a piece in Stylish, Typewriter...) this worker already has
     const queue=[];
     function finish(error,result) {
       if(!active)return;
@@ -76,7 +78,7 @@
       active=queue.shift();
       try {
         if(!worker) {
-          worker=new WorkerClass(url);
+          worker=new WorkerClass(url); sent=new Set();
           const current=worker;
           worker.onerror=error=>{if(worker===current)failed(error);};
           worker.onmessageerror=()=>{if(worker===current)failed(new Error("The engraving worker returned an unreadable result."));};
@@ -86,6 +88,12 @@
             else finish(null,data.result);
           };
           worker.postMessage({type:"fonts",fonts});
+        }
+        // a piece engraved in another font than the default sends that font's files once to this worker, before its first fit
+        const key=active.input && active.input.fontKey;
+        if(key && fontsFor && !sent.has(key)) {
+          const set=fontsFor(key);
+          if(set){worker.postMessage({type:"fonts",key,fonts:set});sent.add(key);}
         }
         active.timer=setTimeout(()=>failed(new Error("This engraving preview took too long. Retry this placement.")),timeoutMs);
         worker.postMessage({type:"fit",id:active.id,input:active.input});

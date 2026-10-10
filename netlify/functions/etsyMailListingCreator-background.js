@@ -1284,6 +1284,7 @@ async function markManualSuccess({ threadId, listingId, listingUrl, generated, i
       const cur = await tx.get(draftRef);
       const curStatus = cur.exists ? (cur.data() || {}).status : null;
       if (curStatus === "queued" || curStatus === "sending") return false;
+      if (cur.exists && (cur.data() || {}).queueWaiting === true) return false;       // MAILQUEUE: a reply waiting its turn in the send queue
       tx.set(draftRef, {
       draftId,
       threadId,

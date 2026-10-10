@@ -1901,8 +1901,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W.backs = backsOf(W.rec || { id: W.id }, W.live || (W.rec ? null : liveOf(W.id)), W.backsList);
     if (W.backsAsked) return; W.backsAsked = true;
     const id = W.id, tok = W.token, F = window.Engrave && Engrave.fonts, jobs = [], what = [];
-    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) { W.backsList = list; W.backs = backsOf(W.rec || { id }, W.live || (W.rec ? null : liveOf(id)), list); } }, () => {})); what.push("this sheet's back engraving"); }
+    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) { W.backsList = list; W.backs = backsOf(W.rec || { id }, W.live || (W.rec ? null : liveOf(id)), list); return Promise.all(otherFonts(W.backs, W.pieces)); } }, () => {})); what.push("this sheet's back engraving"); }
     if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {})); what.push("the engraving font"); }
+    const known = otherFonts(W.backs, W.pieces); if (known.length) { jobs.push(Promise.all(known)); if (!what.includes("the engraving font")) what.push("the engraving font"); }   // (backs the page already holds, saved in another font)
     if (!jobs.length) return;
     W.backsWait = "Reading " + what.join(" and ") + "…"; renderStrip();
     Promise.all(jobs).then(() => {
@@ -4540,12 +4541,27 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (window.Engrave && Engrave.items) tryDo(() => { for (const j of Engrave.items().values()) for (const b of j.backs || []) add(b); });
     return m;
   }
-  const backFont = weight => { const F = window.Engrave && Engrave.fonts; return F && ((weight === "Semibold" && F.Semibold) || F.Regular) || null; };
+  /* The font a saved back was engraved in is its own (Paul, 10 Oct: a record that says "Playwrite US Trad" is drawn in it on every re-open): the record's fontKey, else its font NAME
+     (CharmNestOrders.fontOfRecord; every back saved before the other fonts says "Source Sans 3"). A font not loaded yet draws no words until it lands (otherFonts, then a redraw). */
+  const backFontId = rec => { const O = window.CharmNestOrders; return (rec && O && O.fontOfRecord && tryDo(() => O.fontOfRecord(rec))) || "source-sans-3"; };
+  const backFont = (weight, rec) => {
+    const E = window.Engrave, id = backFontId(rec), F = id === "source-sans-3" ? E && E.fonts : E && E.fontSetFor && tryDo(() => E.fontSetFor(id));
+    return F && ((weight === "Semibold" && F.Semibold) || F.Regular) || null;
+  };
+  /** The engraving fonts other than Source Sans 3 that these backs (a Map or a list of records) and pieces were saved in, each asked for once (a promise per font not loaded yet). */
+  function otherFonts(backs, pieces) {
+    const E = window.Engrave; if (!E || !E.loadFontSet || !E.fontSetFor) return [];
+    const ids = new Set(), see = b => { const id = backFontId(b); if (b && id !== "source-sans-3") ids.add(id); };
+    if (backs) for (const b of (backs.values ? backs.values() : backs)) see(b);
+    for (const x of pieces || []) { if (x && x.eng && x.eng.back) see(x.eng.back); const j = x && x.eng && x.eng.job; if (j && j.fontKey && j.fontKey !== "source-sans-3") ids.add(j.fontKey); }
+    return [...ids].filter(id => !tryDo(() => E.fontSetFor(id))).map(id => Promise.resolve(tryDo(() => E.loadFontSet(id))).catch(() => {}));
+  }
   /** An engraving approved in Engrave but not written yet, as a back record: its fitted words, in the same back frame. */
   function backOfJob(x) {
     const j = x.eng && x.eng.job; if (!j || !j.fit || !j.view || !j.fit.centre) return null;
     return { poolId: x.poolId, text: j.text, lines: j.lines, sizePt: j.fit.size, capMm: j.fit.capMm, weight: j.fit.weight,
-      centre: j.fit.centre, angle: j.fit.angle || 0, lineGap: j.fit.layout && j.fit.layout.lineGap, upAngle: j.view.upAngle, approvedAt: +j.approvedAt || 0 };
+      centre: j.fit.centre, angle: j.fit.angle || 0, lineGap: j.fit.layout && j.fit.layout.lineGap, upAngle: j.view.upAngle, approvedAt: +j.approvedAt || 0,
+      font: j.fontName || "Source Sans 3", fontKey: j.fontKey || "source-sans-3" };
   }
   /** The back side asked for: the sheet's backs read once for the whole sheet and the engraving font loaded, the plate
       drawn again as they land. Nothing waits on them — the plate is already there, and a small note says what it waits
@@ -4557,8 +4573,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (a Library card draws from the backs its record carries, which getSheet read in full: the sheet's list of backs is
     //  read only when the record wants words and carries none, so a Library card is one read)
     const listed = !G.bare || (!((G.rec && G.rec.backPool) || []).length && Object.values((G.rec && G.rec.engraving) || {}).some(e => e && e.needed));
-    if (id && listed) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); }, () => { G.backsAsked = false; })); what.push("this sheet's back engraving"); }
+    if (id && listed) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); return Promise.all(otherFonts(G.backs, G.pieces)); }, () => { G.backsAsked = false; })); what.push("this sheet's back engraving"); }
     if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(Engrave.loadFonts()).catch(() => {})); what.push("the engraving font"); }
+    const known = otherFonts(backsOf(G.rec, G.live), G.pieces); if (known.length) { jobs.push(Promise.all(known)); if (!what.includes("the engraving font")) what.push("the engraving font"); }   // (backs the record already carries, saved in another font)
     if (!jobs.length) return;
     wait("Reading " + what.join(" and ") + "…");
     Promise.all(jobs).then(() => {
@@ -4572,9 +4589,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!x.c || !window.CharmNestBacks || !CharmNestBacks.engraveOn) return null;
     const rec = (x.poolId && backs && backs.get(x.poolId)) || (x.eng && x.eng.back) || backOfJob(x);
     if (!rec) return null;
-    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, !!backFont(rec.weight)].join("|");
+    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, backFontId(rec), !!backFont(rec.weight, rec)].join("|");
     if (x._engGeo && x._engGeoKey === key) return x._engGeo;
-    x._engGeoKey = key; x._engGeo = tryDo(() => CharmNestBacks.engraveOn(rec, x.c, { font: backFont(rec.weight) })) || null;
+    x._engGeoKey = key; x._engGeo = tryDo(() => CharmNestBacks.engraveOn(rec, x.c, { font: backFont(rec.weight, rec) })) || null;
     return x._engGeo;
   }
   function orderPiece(ctx, G, x, fn) { const p = x.p, k = G.k; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
@@ -4848,7 +4865,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const font = backFontReady(), rec = await recFor(id), pieces = piecesOf(rec);
         for (const x of pieces) x.eng = engOf(x, rec);
         B.rec = rec; B.backs = backsOf(rec, null); B.pieces = pieces; step();
-        const list = backsFor(id).then(l => { B.backs = backsOf(rec, null, l); step(); }, () => {});
+        const early = Promise.all(otherFonts(B.backs, pieces)).then(step);   // (backs the record carries, saved in another font)
+        const list = backsFor(id).then(l => { B.backs = backsOf(rec, null, l); step(); return Promise.all(otherFonts(B.backs, pieces)).then(step); }, () => {});
         const srcs = new Map((rec.sources || []).map(s => [s.id, s])), queue = [...new Set(pieces.map(x => x.sourceId).filter(s => srcs.has(s)))];
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
           while (queue.length) {
@@ -4857,7 +4875,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
             step();
           }
         }));
-        await list; if (font) await font;
+        await list; await early; if (font) await font;
         B.done = true; step();
       })().catch(e => { B.done = true; B.error = e.message || String(e); savedBacks.delete(id); step(); });
     }

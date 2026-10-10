@@ -464,6 +464,10 @@ async function reapStaleDraft(draftRef, kind) {
     if (!snap.exists) return { reaped: false, reason: "draft_gone" };
     const d = snap.data();
 
+    // A message the send dispatcher owns is timed by the dispatcher (_etsyMailSendQueue.js): its turn, the helper's
+    // answer, its tries. This older sweep must not expire or fail it.
+    if (d.queueSendId) return { reaped: false, reason: "managed_by_send_queue" };
+
     // Re-check staleness inside the txn
     if (d.status === "queued") {
       if (!isStaleQueued(d.queuedAt)) {

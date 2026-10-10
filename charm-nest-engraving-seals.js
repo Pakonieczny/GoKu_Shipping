@@ -69,11 +69,18 @@
     const r=job.requests || {};
     if(r.side && !['back','unspecified'].includes(r.side))add(`Asked for the ${r.side} side`);
     if(r.font)add(`Asked for the font ${r.font}`);
-    const of=job.row?.spec?.font;   // a font chosen in a drop-down that the app does not have (Font: Typewriter): said like one asked for in a note
-    if(of?.asked && !of.id && String(of.asked).toLowerCase()!==String(r.font || '').toLowerCase())add(`Asked for the font ${of.asked} (a drop-down option)`);
+    const of=job.row?.spec?.font;   // a font chosen in a drop-down that the app does not have (Font: Script): said like one asked for in a note; one the app has is engraved in its lookalike (spec.font.id) and is no question
+    if(of?.asked && !of.id && String(of.asked).toLowerCase()!==String(r.font || '').toLowerCase())add(`Requested font: ${of.asked} (a drop-down option, engraved in Source Sans 3)`);
     if(r.handwriting)add('Asked for handwriting');
     if(r.image)add('Asked for an image');
     return out.slice(0,4);
+  }
+  /** The font the order's drop-down chose and the installed font it is engraved in, in one plain line ("Font: Stylish → Playwrite US Trad"); '' when the line has no font or the shop does not offer the word (that one is said under unclear). */
+  const orders=()=>root?.CharmNestOrders || (typeof module==='object' && typeof require==='function'?(()=>{try{return require('./charm-nest-orders.js');}catch(_){return null;}})():null);
+  function fontMeta(e){
+    const O=orders(),sp=e.job?.row?.spec;if(!O || !O.fontLine || !O.pieceFont || !sp?.font)return '';
+    const m=/^D(\d+)$/.exec(String(e.job?.slot || '')),ix=m?+m[1]-1:null;
+    try{return O.pieceFont(sp,ix).mapped?O.fontLine(sp,ix):'';}catch(_){return '';}
   }
   /** Can this card approve the back, and when not, the one plain reason why. */
   function canApprove(e){
@@ -120,7 +127,7 @@
     if(kind==='none')return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top">${cycle}<b>No back engraving</b></div></div>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
     const lbl=kind==='approve' || kind==='approved'?'Words on the back':'Words as read',from=kind==='approved'?'':readFrom(e);
-    const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}</div>`
+    const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}${fontMeta(e)?`<span class="egMeta egFont">${esc(fontMeta(e))}</span>`:''}</div>`
       :kind==='words' || kind==='preparing'?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words egNone">Nothing read yet</div></div>`:'';
     const un=unclear(e),unclearHtml=un.length?`<div class="egUnclear"><span class="egLbl">${kind==='words'?'What is unclear':'Worth a look'}</span><ul>${un.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
     const saving=kind==='approved' && !e.note?savingNote(e.job):null,note=e.note || saving?.note || '',working=e.note?e.working:saving?.working;

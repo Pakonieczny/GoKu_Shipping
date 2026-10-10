@@ -37,6 +37,11 @@ const SCAN_LIMIT         = 50;          // one pass; if more, next tick catches 
 
 exports.handler = async () => {
   const started = Date.now();
+  // The send dispatcher's own upkeep (a silent helper, a message whose turn has come, finished messages old enough
+  // to remove). It never throws; the older rescue below only looks at slots the dispatcher does not own.
+  let queue = null;
+  try { queue = await require("./_etsyMailSendQueue").maintain(); }
+  catch (e) { console.warn("send queue upkeep failed:", e.message); queue = { error: String(e.message).slice(0, 120) }; }
   const cutoffMs = started - STALE_HEARTBEAT_MS;
   const cutoffTs = admin.firestore.Timestamp.fromMillis(cutoffMs);
 
@@ -50,7 +55,7 @@ exports.handler = async () => {
     // scanning all "sending" drafts is tiny — there are rarely >50).
     const snap = await db.collection(DRAFTS_COLL)
       .where("status", "==", "sending")
-      .select("sendHeartbeatAt")   // drafts are fat; the transaction below re-reads the whole draft
+      .select("sendHeartbeatAt", "queueSendId")   // drafts are fat; the transaction below re-reads the whole draft
       .limit(SCAN_LIMIT)
       .get();
 
@@ -58,12 +63,13 @@ exports.handler = async () => {
     if (!scanned) {
       return {
         statusCode: 200,
-        body: JSON.stringify({ ok: true, scanned: 0, elapsedMs: Date.now() - started })
+        body: JSON.stringify({ ok: true, scanned: 0, queue, elapsedMs: Date.now() - started })
       };
     }
 
     for (const doc of snap.docs) {
       const data = doc.data();
+      if (data.queueSendId) { skipped++; continue; }   // the dispatcher times its own messages
       const hbTs = data.sendHeartbeatAt;
       const hbMs = hbTs && hbTs.toMillis ? hbTs.toMillis() : 0;
       if (hbMs >= cutoffMs) {
@@ -81,6 +87,7 @@ exports.handler = async () => {
           if (!fresh.exists) return;
           const d = fresh.data();
           if (d.status !== "sending") return;
+          if (d.queueSendId) return;
           const hb = d.sendHeartbeatAt;
           const hbms = hb && hb.toMillis ? hb.toMillis() : 0;
           if (hbms >= cutoffMs) return;  // heartbeat landed between queries
@@ -211,7 +218,7 @@ exports.handler = async () => {
     return {
       statusCode: 200,
       body: JSON.stringify({
-        ok: true, scanned, requeued, failed, sentUnverified, skipped,
+        ok: true, scanned, requeued, failed, sentUnverified, skipped, queue,
         elapsedMs: Date.now() - started
       })
     };

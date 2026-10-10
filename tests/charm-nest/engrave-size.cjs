@@ -122,7 +122,7 @@ let fittedCapMm;
 
 // 6 · what is saved is left alone: opening a saved back keeps its size and only raises the ceiling it may be enlarged to
 {
-  const open = grab('      const font=fontFor(saved.weight),layout=', '        job.verify={geometry:check');
+  const open = grab('      const font=fontFor(saved.weight,job),layout=', '        job.verify={geometry:check');
   assert(open.includes('fitOpts(job,true)') && open.includes('size:saved.sizePt'), 'the saved size is kept; only the ceiling uses the hand limit');
   assert(!/maxHeightFrac/.test(grab('  async function prepareApproval(job, by, at) {', '  /* Paul, 3 Oct 04:03')), 'approval has no size cap of its own: it re-verifies the ink');
 }

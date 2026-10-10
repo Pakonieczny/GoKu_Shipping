@@ -152,6 +152,9 @@ async function session(sb) {
   const design = sb ? 'LION_SANDBOX_9' : 'TRICERATOPS_PROD_1';
   await L({ op: 'aliasPut', listingId: '1718000', sku: design, fromSku: 'CUTE_TRICERATOPS_4170', title: 'CUTE TRICERATOPS W/ HEARTS', by: 'paul' });
   await L({ op: 'aliasPut', listingId: '1718000', sku: design, title: 'CUTE TRICERATOPS W/ HEARTS', by: 'paul' });
+  // a person's word for a whole listing (ADDONCUSTOM: custom / rework / regular …) lives on the SAME alias document as the SKU answer: production writes the shared one, the sandbox only its own copy (Sandbox_Charm_Sku_Aliases), which the wipe deletes
+  await L({ op: 'listingKindPut', listingId: '1718000', kind: 'custom', title: sb ? 'Add a Lion Charm' : 'Add a Triceratops Charm', note: 'an add-on listing', by: 'paul' });
+  await L({ op: 'listingKindPut', listingId: '1718001', kind: 'rework', by: 'paul' }); await L({ op: 'listingKindPut', listingId: '1718001', kind: 'regular', by: 'paul' }); await L({ op: 'listingKindPut', listingId: '1718001', kind: '' });
   await L({ op: 'optionMapPut', listingId: '1718000', optionName: 'Size', optionValue: 'Small', map: { field: 'design', value: design }, by: 'paul' });
   const row = await L({ op: 'noDesignPut', sku: sb ? 'LION_NODESIGN' : 'PROD_NODESIGN_1', note: 'a SKU with no design', by: 'paul' });
   await L({ op: 'noDesignPut', pattern: sb ? '^LION_ONLY' : '^PROD_ONLY', note: 'a pattern', by: 'paul' });
@@ -305,6 +308,11 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const seeded = serverKeys.filter(k => before.body.records[k] > 0 || (k === 'Charm_Sandbox' && before.body.records[k] > 0));
   assert(seeded.length === serverKeys.length, 'every family holds something before the wipe: ' + serverKeys.filter(k => !(before.body.records[k] > 0)).join(', '));
   assert(before.body.kept && before.body.kept.charmRepo === 2 && before.body.kept.efficiencyDays >= 1 && typeof before.body.kept.efficiencySandboxDays === 'number', 'the status says what is kept: ' + JSON.stringify(before.body.kept));
+  // the listing words (op listingKindPut, ADDONCUSTOM): the sandbox wrote its OWN copy of the alias document, production's is the shared one; a cleared word leaves no field behind
+  { const mine = store.get('Sandbox_Charm_Sku_Aliases/1718000'), shared = store.get('Charm_Sku_Aliases/1718000'), gone = store.get('Sandbox_Charm_Sku_Aliases/1718001');
+    assert(mine && mine.listingKind && mine.listingKind.kind === 'custom' && mine.listingKind.title === 'Add a Lion Charm', 'the sandbox keeps its own listing word: ' + JSON.stringify(mine));
+    assert(shared && shared.listingKind && shared.listingKind.kind === 'custom' && shared.listingKind.title === 'Add a Triceratops Charm', 'production keeps the shared listing word, not the sandbox\'s: ' + JSON.stringify(shared));
+    assert(gone && !('listingKind' in gone), 'a cleared listing word leaves no field: ' + JSON.stringify(gone)); }
   const fullDbBefore = dbState(), fullFilesBefore = fileState();
   const sandboxDocsBefore = [...store].filter(([k, v]) => isFamily('firestore', k) && sandboxDoc(k, v)).length, sandboxFilesBefore = [...blobs.keys()].filter(k => isFamily('storage', k)).length;
   assert(sandboxDocsBefore > 60 && sandboxFilesBefore >= 4, `the sandbox holds a real session: ${sandboxDocsBefore} documents, ${sandboxFilesBefore} files`);
@@ -341,6 +349,8 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   assert.deepStrictEqual(problems.slice(0, 12), [], 'after the wipe: ' + problems.length + ' difference(s) from the state before the sandbox session');
   // the protected stores: the efficiency the sandbox wrote is whole (never trimmed), production's own is byte-identical, and what the wipe leaves of the shared counters is only counters
   for (const [k, v] of fullDbBefore) { const o = own('firestore', k); if (o && o.kind === 'protected') assert.strictEqual(after.get(k), v, 'the wipe left protected ' + k + ' as it was'); }
+  for (const k of ['Charm_Sku_Aliases/1718000', 'Charm_Sku_Aliases/1718001']) assert.strictEqual(after.get(k), fullDbBefore.get(k), 'the wipe left production\'s alias document ' + k + ' (with its listing word) byte-identical');
+  assert(after.has('Charm_Sku_Aliases/1718000') && ![...after.keys()].some(k => k.startsWith('Sandbox_Charm_Sku_Aliases/')), 'production\'s listing word is still there, the sandbox\'s own copies are gone');
   for (const k of ['Sandbox_Station_Activity/activity-guard-0001', 'Sandbox_Efficiency_Daily', 'Sandbox_Station_Sessions/session-guard-0001', 'Charm_Sandbox/pulls', 'Charm_Master_Index/BR-TST-01']) assert([...after.keys()].some(x => x.startsWith(k)), 'kept: ' + k);
   const after2 = fileState(), fileProblems = [];
   for (const [k, v] of prodFiles) if (after2.get(k) !== v) fileProblems.push('a file of production/the repo changed or went: ' + k);

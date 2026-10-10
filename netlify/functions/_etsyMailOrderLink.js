@@ -29,6 +29,7 @@
 const crypto = require("crypto");
 const admin = require("./firebaseAdmin");
 const LinkHealth = require("./_etsyMailLinkHealth");
+const Q = require("./_etsyMailSendQueue");      // the dispatcher: every outgoing message goes through its one queue
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -223,6 +224,7 @@ function summary(e) {
     lastOutboundAtMs: e.lastOutboundAtMs || 0, lastShopReplyAtMs: e.lastShopReplyAtMs || 0,
     pending: out.filter(x => UNSENT.has(x.status) || IN_FLIGHT.has(x.status)).length,
     failed: out.filter(x => x.status === "failed").length,
+    attention: out.filter(x => x.status === "attention").length,
     manual: out.filter(x => x.status === "manual").length,
     lastOut: last ? { id: last.id, status: last.status, atMs: last.atMs || 0, sentAtMs: last.sentAtMs || 0 } : null
   };
@@ -440,32 +442,30 @@ async function sendPending(e) {
   return s.exists ? s.data() : e;
 }
 
-/** The oldest unsent sorter message in this conversation goes next, one at a time: the
- *  conversation has a single send slot, shared with the inbox. */
+/** Every unsent sorter message of this conversation joins the dispatcher's queue, oldest first. The queue sends one
+ *  message at a time for the whole shop (the inbox's and the sorters' together) and keeps each conversation in order,
+ *  so there is nothing to wait for here: a message is "queued" the moment it is accepted. */
 async function dispatchNext(threadId) {
   if (!isThreadId(threadId)) return false;
   const q = await db.collection(COLL.eng).where("threadId", "==", threadId).limit(60).get();
-  let pick = null, busy = false;
+  const picks = [];
   for (const d of q.docs) {
     const e = d.data();
     if (e.status !== "open" || e.sandbox) continue;
-    for (const x of e.outbox || []) {
-      if (IN_FLIGHT.has(x.status)) busy = true;
-      else if (UNSENT.has(x.status) && (!pick || (x.atMs || 0) < (pick.x.atMs || 0))) pick = { e, x };
-    }
+    for (const x of e.outbox || []) if (UNSENT.has(x.status)) picks.push({ e, x });
   }
-  if (!pick) { note({ waiting: { [threadId]: FV.delete() } }); return false; }
-  if (busy) return false;
-  const ds = await db.collection(COLL.drafts).doc("draft_" + threadId).get();
-  const slot = ds.exists ? ds.data().status : null;
-  if (slot === "queued" || slot === "sending") {
-    // the inbox is sending in this conversation right now; this message goes the moment it is done
-    await patchItem(pick.e.id, pick.x.id, { status: "waiting", waitReason: "inbox" }, new Set(["new"]));
-    markWaiting(threadId);
-    return false;
+  if (!picks.length) { note({ waiting: { [threadId]: FV.delete() } }); return false; }
+  picks.sort((a, b) => (a.x.atMs || 0) - (b.x.atMs || 0));
+  let any = false;
+  for (const p of picks) {
+    // in order: one that cannot be taken now holds back the ones after it
+    if (await enqueueItem(p.e, p.x)) any = true; else break;
   }
-  return enqueueItem(pick.e, pick.x);
+  return any;
 }
+
+/** The queue's key for one sorter message: the same message is the same queue entry however often it is submitted. */
+const queueKey = (engId, itemId) => "sorter:" + engId + ":" + itemId;
 
 async function enqueueItem(e, x) {
   // Claim the message first, so two dispatchers never queue it twice.
@@ -485,13 +485,21 @@ async function enqueueItem(e, x) {
       body: JSON.stringify({
         op: "enqueue", threadId: e.threadId, etsyConversationUrl: url, text: mine.text, attachments: [],
         employeeName: senderLabel(mine.by), sendOrigin: "manual", allowSendWithoutPendingTracking: true,
-        orderLink: { e: e.id, i: x.id }
+        orderLink: { e: e.id, i: x.id }, idempotencyKey: queueKey(e.id, x.id)
       })
     });
     status = res.statusCode;
     try { data = JSON.parse(res.body || "{}"); } catch (_) { data = {}; }
   } catch (err) { status = 500; data = { error: err.message }; }
-  if (status === 200) { addInflight(e.id, x.id, e.threadId, data.draftId || ("draft_" + e.threadId)); return true; }
+  if (status === 200) {
+    addInflight(e.id, x.id, e.threadId, data.draftId || ("draft_" + e.threadId));
+    if (data.sendId) {
+      await patchItem(e.id, x.id, { qid: data.sendId, claim: null }, QUEUED);
+      // the same message submitted again after it already finished: show where it ended up
+      if (data.deduped) { const qi = await Q.getItem(data.sendId).catch(() => null); if (qi) await mirrorQueueItem(e.id, x.id, qi); }
+    }
+    return true;
+  }
   if (status === 409 || status === 503) {
     await patchItem(e.id, x.id, { status: "waiting", waitReason: data.errorCode === "SEND_DISABLED" ? "paused" : "inbox", queuedAtMs: null, claim: null }, QUEUED);
     markWaiting(e.threadId);
@@ -505,6 +513,50 @@ async function enqueueItem(e, x) {
   }
   await patchItem(e.id, x.id, { status: "failed", error: friendlyFailure(data.errorCode, data.error), errorCode: data.errorCode || String(status || "ERROR"), faults, claim: null }, QUEUED);
   return false;
+}
+
+/** The dispatcher moved one of our messages: the sorter's outbox follows (its next sync shows it). Called by the
+ *  dispatcher after every change of a message that has an orderLink; never throws. */
+async function mirrorQueueItem(engId, itemId, qi) {
+  const LIVE = new Set(["new", "waiting", "queued", "sending"]);
+  const st = qi.state;
+  let patch = null, from = null, finished = false, notSent = false;
+  if (st === "queued" || st === "claimed" || st === "sending") {
+    patch = { status: "queued", qid: qi.sendId, waitReason: null, error: null, errorCode: null };
+    from = new Set(["new", "waiting", "failed", "attention"]);
+  } else if (st === "sent" || st === "confirmed") {
+    patch = { status: "sent", qid: qi.sendId, sentAtMs: qi.sentAtMs || Date.now(), error: null, errorCode: null, waitReason: null, claim: null };
+    if (qi.unverified) { patch.unverified = true; patch.note = "Etsy did not confirm it; it most likely went through."; }
+    else if (qi.partial) patch.note = qi.plain || "The text went, but a picture could not be attached.";
+    else patch.note = null;
+    if (st === "confirmed") patch.confirmedAtMs = qi.confirmedAtMs || Date.now();
+    from = new Set([...LIVE, "failed", "attention", "sent"]);
+    finished = true;
+  } else if (st === "failed") {
+    patch = { status: "failed", qid: qi.sendId, error: qi.plain || friendlyFailure(qi.lastErrorCode, qi.lastError), errorCode: qi.lastErrorCode || "FAILED", claim: null, waitReason: null };
+    from = LIVE; finished = true; notSent = true;
+  } else if (st === "needs_attention") {
+    patch = { status: "attention", qid: qi.sendId, error: qi.plain || friendlyFailure("STRANDED_POST_CLICK"), errorCode: qi.lastErrorCode || "STRANDED_POST_CLICK", claim: null, waitReason: null };
+    from = LIVE; finished = true;
+  } else if (st === "cancelled") {
+    patch = { status: "cancelled", cancelledAtMs: Date.now(), claim: null, waitReason: null };
+    from = LIVE; finished = true; notSent = true;
+  }
+  if (!patch) return false;
+  const r = await patchItem(engId, itemId, patch, from);
+  if (finished) {
+    dropInflight(engId, itemId);
+    if (r.changed || r.e) { try { await restoreInboxDraft(qi.draftId || ("draft_" + qi.threadId), engId, itemId, qi.text, notSent); } catch (_) {} }
+  }
+  return r.changed;
+}
+/** Hook for the dispatcher (_etsyMailSendQueue.js): a message changed state. */
+async function onQueueChange(item) {
+  try {
+    const ol = item && item.orderLink;
+    if (!ol || !ol.e || !ol.i) return;
+    await mirrorQueueItem(ol.e, ol.i, item);
+  } catch (e) { console.warn("orderLink onQueueChange:", e.message); }
 }
 
 /** What a sorter send is about to overwrite on a conversation's draft slot, to be put back
@@ -616,6 +668,17 @@ async function checkInflight(inflight) {
   const entries = Object.values(inflight || {}).filter(x => x && x.e && x.i).slice(0, 25);
   let n = 0;
   if (entries.length) {
+    // A message the dispatcher holds is followed from its own record (the dispatcher tells us at every change; this
+    // is the safety net for a report that was missed). Anything it does not know is a send from an older build.
+    const qdocs = await db.getAll(...entries.map(x => db.collection(Q.Q_COLL).doc(Q.sendIdFor(queueKey(x.e, x.i)))));
+    const legacy = [];
+    for (let k = 0; k < entries.length; k++) {
+      if (qdocs[k].exists) { if (await mirrorQueueItem(entries[k].e, entries[k].i, qdocs[k].data()).catch(e => { console.warn("orderLink mirror:", e.message); return false; })) n++; }
+      else legacy.push(entries[k]);
+    }
+    entries.length = 0; entries.push(...legacy);
+  }
+  if (entries.length) {
     const drafts = await db.getAll(...entries.map(x => db.collection(COLL.drafts).doc(x.d || ("draft_" + x.t))));
     for (let k = 0; k < entries.length; k++) {
       const x = entries[k], snap = drafts[k];
@@ -640,7 +703,7 @@ async function checkWaiting(waiting) {
 
 // ─── receiving ────────────────────────────────────────────────────────────
 
-const MATCHABLE = new Set(["new", "waiting", "queued", "sending", "sent", "manual", "failed"]);
+const MATCHABLE = new Set(["new", "waiting", "queued", "sending", "sent", "manual", "failed", "attention"]);
 /** The sorter message a scraped shop message is the Etsy copy of, if any. */
 const findMine = (outbox, m) => outbox.find(x => !x.msgId && MATCHABLE.has(x.status) && m.tsMs >= (x.atMs || 0) - WINDOW_SLACK_MS && sameText(x.text, m.text));
 
@@ -670,9 +733,9 @@ function foldMessages(cur, msgs) {
       mine.msgId = m.id; mine.deliveredAtMs = m.tsMs;
       // a message someone sent by hand, or one Etsy took although the helper reported a failure
       const was = mine.status;
-      if (["new", "waiting", "manual", "failed"].includes(was)) {
+      if (["new", "waiting", "manual", "failed", "attention"].includes(was)) {
         mine.status = "sent"; mine.sentAtMs = m.tsMs; delete mine.error; delete mine.errorCode; delete mine.waitReason;
-        if (was !== "failed") mine.manualSent = true;
+        if (was !== "failed" && was !== "attention") mine.manualSent = true;
       }
     } else patch.lastShopReplyAtMs = Math.max(cur.lastShopReplyAtMs || 0, patch.lastShopReplyAtMs || 0, m.tsMs);
   }
@@ -811,7 +874,7 @@ async function conversation(e, { earlier = false } = {}) {
       id: "out_" + x.id, itemId: x.id, side: "us", who: x.by || "Sorter", atMs: x.atMs || 0, text: x.text, images: [], cards: [],
       status: x.status, error: x.error || null, note: x.note || null, unverified: !!x.unverified, delivered: !!(x.deliveredAtMs || x.msgId),
       sentAtMs: x.sentAtMs || 0, waitReason: x.waitReason || null, copied: !!x.copiedAtMs, manualSent: !!x.manualSent,
-      msgId: x.msgId || null
+      msgId: x.msgId || null, qid: x.qid || null, errorCode: x.errorCode || null
     });
   }
   rows.sort((a, b) => a.atMs - b.atMs);
@@ -1058,7 +1121,21 @@ async function sync(body) {
   const n = Number(bell.n) || 0;
   let full = !since || body.full === true;
   const link = bell.link || null;   // the link monitor's judgement (etsyMailLinkWatchdog): every sorter shows it, at no extra read
-  if (!full && !moved && seenN === n) return { n, v: since, changes: [], full: false, now, link };
+  // The dispatcher's live view of the sorter's messages (position in the queue, "sending", the wait and its reason).
+  // Asked for only while a message is on its way; one document read when nothing moved since qn.
+  let queue = null;
+  const flights = bell.inflight ? Object.keys(bell.inflight).length : 0;
+  if (!sandbox && (flights || body.qo === true || body.qo === 1)) {   // a sandbox page never sees the real queue
+    try {
+      const qv = await Q.stateView({ n: Number.isFinite(Number(body.qn)) ? Number(body.qn) : null, hasOpen: flights > 0, withText: false });
+      queue = qv.unchanged ? { n: qv.n, unchanged: true, now: qv.now } : {
+        n: qv.n, now: qv.now, gapMs: qv.gapMs, helperSeenAtMs: qv.helperSeenAtMs, lease: qv.lease,
+        items: (qv.items || []).filter(v => v.ol).map(v => { const o = Object.assign({}, v); delete o.t; delete o.by; return o; }),
+        recent: (qv.recent || []).filter(v => v.ol)
+      };
+    } catch (e) { console.warn("orderLink queue view:", e.message); queue = null; }
+  }
+  if (!full && !moved && seenN === n) return { n, v: since, changes: [], full: false, now, link, queue };
   let docs = null;
   if (!full) {
     const q = await db.collection(COLL.eng).where("v", ">", since - DELTA_OVERLAP_MS).orderBy("v").limit(300).get();
@@ -1077,7 +1154,7 @@ async function sync(body) {
   let v = since;
   for (const e of docs) if ((e.v || 0) > v) v = e.v;
   // a test to our own account is real in any sorter, the sandbox's included
-  return { n, v, changes: docs.filter(e => !!e.sandbox === sandbox || (sandbox && e.receiptId === TEST_RID)).map(summary), full, now, link };
+  return { n, v, changes: docs.filter(e => !!e.sandbox === sandbox || (sandbox && e.receiptId === TEST_RID)).map(summary), full, now, link, queue };
 }
 
 /** Everything the Customer panel of one order needs, in one round trip. */
@@ -1173,8 +1250,21 @@ async function ask(station, body) {
   return Object.assign(summary(e), await conversation(e));
 }
 
-async function retry(body) {
+async function retry(body, station) {
   const id = cleanId(body.engagementId), itemId = cleanId(body.itemId);
+  // A message the dispatcher already holds as a dead letter goes back in ITS queue entry (a message that may have
+  // gone out is checked against the stored conversation first, and a person confirms it).
+  const es = await engRef(id).get();
+  const cur = es.exists ? (es.data().outbox || []).find(x => x.id === itemId) : null;
+  if (cur && cur.qid && (cur.status === "failed" || cur.status === "attention")) {
+    const rr = await Q.humanRetry(cur.qid, { confirmMaybeSent: body.confirmMaybeSent === true, by: station && station.name || null });
+    if (rr && rr.needsConfirm) throw httpError(409, "This message may already have gone out. Check the conversation on Etsy, then press Send again to confirm.", "MAYBE_SENT");
+    if (rr && !rr.notFound) {
+      const qi = await Q.getItem(cur.qid).catch(() => null);
+      if (qi) await mirrorQueueItem(id, itemId, qi);
+      return fresh(id);
+    }
+  }
   const r = await patchItem(id, itemId, { status: "new", error: null, errorCode: null, waitReason: null, faults: null, copiedAtMs: null, retriedAtMs: Date.now() }, new Set(["failed", "waiting", "manual"]));
   if (!r.e) throw httpError(404, "That message is gone");
   const after = await sendPending(r.e);
@@ -1189,25 +1279,33 @@ async function cancel(body) {
   const item = (e.outbox || []).find(x => x.id === itemId);
   if (!item) throw httpError(404, "That message is gone");
   if (item.status === "queued" && e.threadId) {
-    // still waiting for the Etsy helper: take it back out, and give the inbox its reply box back
-    const draftId = "draft_" + e.threadId;
-    const ref = db.collection(COLL.drafts).doc(draftId);
-    let took = false;
-    await db.runTransaction(async tx => {
-      took = false;
-      const ds = await tx.get(ref);
-      const d = ds.exists ? ds.data() : null;
-      if (!d || d.status !== "queued" || !d.orderLink || d.orderLink.i !== itemId) return;
-      took = true;
-      tx.set(ref, { status: "draft", updatedAt: FV.serverTimestamp() }, { merge: true });
-    });
-    if (!took) throw httpError(409, "Too late: the inbox's Etsy helper has already picked it up");
+    // still waiting for its turn or for the Etsy helper: take it back out of the queue (the inbox gets its reply box back)
+    if (item.qid) {
+      const c = await Q.cancel(item.qid, "the sorter");
+      if (c && c.tooLate) throw httpError(409, "Too late: the inbox's Etsy helper has already picked it up");
+      if (c && c.item) await mirrorQueueItem(id, itemId, c.item);
+    } else {
+      // an older build's message: the slot itself
+      const draftId = "draft_" + e.threadId;
+      const ref = db.collection(COLL.drafts).doc(draftId);
+      let took = false;
+      await db.runTransaction(async tx => {
+        took = false;
+        const ds = await tx.get(ref);
+        const d = ds.exists ? ds.data() : null;
+        if (!d || d.status !== "queued" || !d.orderLink || d.orderLink.i !== itemId) return;
+        took = true;
+        tx.set(ref, { status: "draft", updatedAt: FV.serverTimestamp() }, { merge: true });
+      });
+      if (!took) throw httpError(409, "Too late: the inbox's Etsy helper has already picked it up");
+    }
     await patchItem(id, itemId, { status: "cancelled", cancelledAtMs: Date.now(), claim: null }, new Set(["queued"]));
-    await restoreInboxDraft(draftId, id, itemId, item.text, true);
+    await restoreInboxDraft("draft_" + e.threadId, id, itemId, item.text, true);
     dropInflight(id, itemId);
   } else {
-    const r = await patchItem(id, itemId, { status: "cancelled", cancelledAtMs: Date.now() }, new Set(["new", "waiting", "manual", "failed"]));
+    const r = await patchItem(id, itemId, { status: "cancelled", cancelledAtMs: Date.now() }, new Set(["new", "waiting", "manual", "failed", "attention"]));
     if (!r.changed) throw httpError(409, "Too late: it has already gone");
+    if (item.qid && (item.status === "failed" || item.status === "attention")) await Q.dismiss(item.qid, "the sorter").catch(() => null);
   }
   if (e.threadId) await dispatchNext(e.threadId);
   return fresh(id);
@@ -1216,13 +1314,17 @@ async function cancel(body) {
 /** The person copied a message to send it on Etsy by hand: never send it for them afterwards. */
 async function markCopied(body) {
   const id = cleanId(body.engagementId), itemId = cleanId(body.itemId);
-  await patchItem(id, itemId, { copiedAtMs: Date.now() }, new Set(["manual", "failed"]));
+  await patchItem(id, itemId, { copiedAtMs: Date.now() }, new Set(["manual", "failed", "attention"]));
   return fresh(id);
 }
 /** The person sent a message on Etsy by hand. */
-async function markSent(body) {
+async function markSent(body, station) {
   const id = cleanId(body.engagementId), itemId = cleanId(body.itemId);
-  const r = await patchItem(id, itemId, { status: "sent", manualSent: true, sentAtMs: Date.now(), error: null, errorCode: null, waitReason: null }, new Set(["manual", "failed", "waiting"]));
+  const es0 = await engRef(id).get();
+  const cur0 = es0.exists ? (es0.data().outbox || []).find(x => x.id === itemId) : null;
+  // the dispatcher is told too: its entry for this message is closed as sent
+  if (cur0 && cur0.qid && (cur0.status === "failed" || cur0.status === "attention")) await Q.markSent(cur0.qid, { by: station && station.name || "a person" }).catch(() => null);
+  const r = await patchItem(id, itemId, { status: "sent", manualSent: true, sentAtMs: Date.now(), error: null, errorCode: null, waitReason: null }, new Set(["manual", "failed", "waiting", "attention"]));
   if (!r.e) throw httpError(404, "That message is gone");
   return fresh(id);
 }
@@ -1573,7 +1675,7 @@ async function reconcile({ budgetMs = 20000 } = {}) {
       for (const e of engs) {
         if (activity > (e.checkedToMs || 0) && activity >= (e.startedAtMs || 0) - WINDOW_SLACK_MS) out.pulled += await pullMissed(e, activity).catch(() => 0);
         const quiet = Math.max(e.lastInboundAtMs || 0, e.lastOutboundAtMs || 0, e.createdAtMs || 0, e.reopenedAtMs || 0);
-        const pending = (e.outbox || []).some(x => UNSENT.has(x.status) || IN_FLIGHT.has(x.status));
+        const pending = (e.outbox || []).some(x => UNSENT.has(x.status) || IN_FLIGHT.has(x.status) || x.status === "attention");
         if (!pending && Date.now() - quiet > AUTO_RESOLVE_IDLE_MS) {
           const r = await change(e.id, cur => cur.status === "open" ? { status: "resolved", resolvedAtMs: Date.now(), resolvedBy: "Quiet for three weeks", unread: 0 } : null);
           if (r.changed) { out.autoResolved++; resolved = true; }
@@ -1662,6 +1764,7 @@ module.exports = {
   requireStation, pairStart, pairInfo, pairAnswer, pairClaim, disconnect: withFlush(disconnect),
   sync: withFlush(sync), order: withFlush(order), thread, ask: withFlush(ask), retry: withFlush(retry),
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
+  onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
   simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
