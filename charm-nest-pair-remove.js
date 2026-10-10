@@ -117,10 +117,12 @@
     if (!p || typeof p !== "object") return null;
     if (p.side === "L" || p.side === "R") return p.side;
     if (!mismatched && !(PAIR_FORMS.has(str(p.form).toLowerCase()) && +p.groupSize >= 2)) return null;
+    if (mismatched && NOT_EAR_FORMS.has(str(p.form).toLowerCase())) return null;   // (a necklace, charm, pendant, bracelet or key ring of a two-body design is no ear: Paul, 10 Oct 2026)
     const copy = +p.copy || (() => { const m = POOL_ID.exec(str(p.poolId || p.id)); return m ? +m[3] : 0; })();
     return copy > 0 ? (copy % 2 === 1 ? "L" : "R") : null;
   }
   const PAIR_FORMS = new Set(["earrings", "earring", "stud", "studs", "hoop", "hoops", "huggie", "huggies", "pair"]);
+  const NOT_EAR_FORMS = new Set(["necklace", "charm", "pendant", "bracelet", "anklet", "keychain"]);
   /** single | pair | mismatched | multi, from the group's pieces ([{ side, form? }]). "pair" is a pair of EARRINGS (the pieces say their form is earrings,
    *  studs, hoops or huggies); two copies of a pendant are "multi", and so are n discs: the words then say "pieces", never "pair". */
   function kindOfPieces(list) {

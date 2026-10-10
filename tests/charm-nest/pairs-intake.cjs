@@ -191,7 +191,7 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   eq(counts(byName), { q: 1, pieces: 2, sides: 'LR', kind: 'mismatched' }, 'a mismatched pair is a Left and a Right piece');
   ok(byName.spec.pair.earring && !byName.spec.pair.glued && byName.spec.pair.split === true, 'cut from its two bodies');
   eq(O.piecesOf(byName).map(p => p.bodyIndex), [0, 1], 'body 0 is the left, body 1 the right');
-  const byField = row({ sku: 'DUAL_PAIR', quantity: 2 });
+  const byField = row({ sku: 'DUAL_PAIR', title: 'Moon Stud Earrings', quantity: 2 });   // (an EARRING line: a necklace of a two-body design is no pair, tests/charm-nest/pairs-neck.cjs)
   ok(byField.spec.pair.mismatched && byField.spec.pair.source === 'design', 'entry.pair.mismatched makes it a mismatched pair');
   eq(counts(byField), { q: 2, pieces: 4, sides: 'LRLR', kind: 'multi' }, 'two units are 4 pieces, L R L R');
   eq(O.piecesOf(byField).map(p => p.bodyIndex), [0, 1, 0, 1], 'bodies 0 1 0 1');
@@ -211,8 +211,8 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   const g = row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 2 });
   O.glue(g.spec);
   eq(counts(g), { q: 2, pieces: 2, sides: '', kind: 'multi' }, 'glue(): one copy per unit, no side'); ok(g.spec.pair.glued && g.spec.pair.notes.some(x => /glued piece/.test(x)), 'and it says so');
-  eq(counts(O.glue(row({ sku: 'MISMATCHED_7134', quantity: 1 }).spec) && row({ sku: 'MISMATCHED_7134', quantity: 1 })).pieces, 2, 'glue() changes only the spec it is given');
-  const g1 = row({ sku: 'MISMATCHED_7134', quantity: 1 }); O.glue(g1.spec); eq(counts(g1), { q: 1, pieces: 1, sides: '', kind: 'mismatched' }, 'one glued copy is still the mismatched kind');
+  eq(counts(O.glue(row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 1 }).spec) && row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 1 })).pieces, 2, 'glue() changes only the spec it is given');
+  const g1 = row({ sku: 'MISMATCHED_7134', title: 'Mittens Mismatched Stud Earrings', quantity: 1 }); O.glue(g1.spec); eq(counts(g1), { q: 1, pieces: 1, sides: '', kind: 'mismatched' }, 'one glued copy is still the mismatched kind');
   ok(O.glue(row({ sku: 'A' }).spec).pair.glued === false, 'glue() leaves a line that is not mismatched alone');
   // the switch off brings the glued copy back for every mismatched design at once
   withRules({ mismatchedMakesTwo: false }, () => {

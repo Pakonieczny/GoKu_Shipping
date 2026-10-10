@@ -117,6 +117,53 @@
   const isPriceOption = name => /^\s*(price|amount|total|cost|payment|deposit|balance)\s*$/i.test(String(name || ""));
   const looksLikePrice = v => /^\s*(?:[$€£]|usd|cad|eur|gbp)?\s*\d{1,6}(?:[.,]\d{1,2})?\s*(?:[$€£]|usd|cad|eur|gbp)?\s*$/i.test(String(v || ""));
 
+  /* ═══ 2b · font options ═══════════════════════════════════════════════
+     (Paul, 10 Oct 2026, on 4175370240 "Fonts: 16"/ Typewriter" and 4172791262 "Font: Stylish", both "not mapped": "I thought you were supposed
+     to check all of the drop down menu SKU links".) A font option has no SKU and never picks a charm or changes a cut: it says how the BACK is engraved.
+     Nothing read it, so every font option fell through to the generic "not mapped" hold, and no question card exists any more to answer it (Paul removed
+     them, 29 Sep): the line could only be finished by hand. What the app has to engrave with is ENGRAVING_FONTS below: ONE family, Source Sans 3 (the
+     back files and every back record say so; the Regular or Semibold weight is picked by size, never by the buyer). A font option is read like this (fontRead):
+       · the value is split into its parts: a necklace length (16"), an alignment (Center) and the font ("16"/ Typewriter" is 16" and Typewriter);
+       · a font that names an app font EXACTLY, once case, spacing and punctuation are set aside, maps by itself ({ field: "font", value: id }, source rule:font);
+       · any other font is never mapped to a look-alike. It does not hold the line either (FONT_RULES.unknownHolds = false): the line is mapped as the font the
+         buyer ASKED for ({ field: "font", value: null }, spec.font.asked), the cut and the sheet go on, and the engraving review says "Requested font: Typewriter"
+         beside the words, where the shop decides (the same place a font asked for in a note is shown). unknownHolds = true holds such a line instead, with ONE
+         plain line naming the font and the app's fonts (a needsMapping problem with `font`);
+       · a person's saved answer (for the whole value, or for the font alone: "typewriter") is always read first and never replaced.
+     Only an option NAMED for a font is read: a length option that carries a font in its value ("Necklace Length /Font /Alignment": 18"·STYLISH·Center) is
+     still a chain length, exactly as before (no order that already resolves reads differently). */
+  const ENGRAVING_FONTS = [{ id: "source-sans-3", name: "Source Sans 3", names: ["Source Sans 3"] }];
+  const FONT_RULES = { unknownHolds: false };
+  const fontKey = s => String(s == null ? "" : s).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const fontById = id => ENGRAVING_FONTS.find(f => f.id === String(id || "").trim().toLowerCase()) || null;
+  const FONT_NAME = /\b(?:fonts?|typefaces?|lettering)\b/i, NOT_FONT_NAME = /\b(?:size|colou?r|metal|finish|plating|weight|length)\b/i;
+  const isFontOption = name => FONT_NAME.test(String(name || "")) && !NOT_FONT_NAME.test(String(name || ""));
+  const ALIGN_WORD = /^(?:(?:left|right|cent(?:er|re)(?:ed)?|middle)(?:\s+(?:align(?:ed|ment)?|justified))?|align(?:ed)?\s+(?:left|right|cent(?:er|re)))$/i;
+  /** A font option's value in parts: { chain (a necklace length), align, words[] (what is left: the font) }. Parts are split at / \ · • | , ; and " - ". */
+  function fontParts(value) {
+    const out = { chain: "", align: "", words: [] };
+    for (const t of String(value == null ? "" : value).replace(/&quot;/g, "\"").split(/\s*[\/\\·•|,;]\s*|\s+[-–—]\s+/).map(s => s.trim()).filter(Boolean)) {
+      if (!out.chain && looksLikeLength(t)) out.chain = t;
+      else if (!out.align && ALIGN_WORD.test(t)) out.align = t;
+      else out.words.push(t);
+    }
+    return out;
+  }
+  const bigrams = k => { const s = new Map(); for (let i = 0; i < k.length - 1; i++) { const g = k.slice(i, i + 2); s.set(g, (s.get(g) || 0) + 1); } return s; };
+  const likeness = (a, b) => { if (!a || !b) return 0; if (a === b) return 1; const x = bigrams(a), y = bigrams(b); let hit = 0, n = 0; for (const [g, c] of x) { hit += Math.min(c, y.get(g) || 0); n += c; } for (const c of y.values()) n += c; return n ? 2 * hit / n : 0; };
+  /** The app's fonts, the most alike first (for the one plain line and the buttons of the question): [{ id, name }]. */
+  const fontChoices = asked => { const k = fontKey(asked); return ENGRAVING_FONTS.map((f, i) => ({ f, i, s: Math.max(...f.names.map(n => likeness(k, fontKey(n)))) })).sort((a, b) => b.s - a.s || a.i - b.i).map(x => ({ id: x.f.id, name: x.f.name })); };
+  /** What ONE option says about a font: null when its NAME is not a font's or its value holds no font word; else
+   *  { asked (the font as the buyer's option writes it), chain, align, id, name (the app's font when `asked` names exactly one), pick: [{ id, name }] }. */
+  function fontRead(name, value) {
+    if (!isFontOption(name)) return null;
+    const p = fontParts(value); if (!p.words.length) return null;
+    const asked = p.words.join(" / "), key = fontKey(asked);
+    const hits = key ? ENGRAVING_FONTS.filter(f => f.names.some(n => fontKey(n) === key)) : [], font = hits.length === 1 ? hits[0] : null;
+    return { asked, chain: p.chain, align: p.align, id: font ? font.id : "", name: font ? font.name : "", pick: fontChoices(asked) };
+  }
+  const fontWhy = fr => `font “${clip(fr.asked, 40)}” is not one of the engraving fonts (${fr.pick.length === 1 ? "the app engraves in " : "the app has "}${fr.pick.map(f => f.name).join(", ")}): a person picks`;
+
   /** { field, value, source } for one option, or null when nothing deterministic applies. */
   function optionLookup(maps, listingId, name, value) {
     const n = norm(name), v = norm(value);
@@ -495,7 +542,9 @@
        an option that may name a count but does not say what is counted (letters, initials, "Set of 3", a range) or that disagrees
          with the buyer's note: NOT guessed. The line waits for a person with a one-line question (a needsMapping problem with
          `count`), whose answer is kept for that listing and value like every other option answer ({ field: "count", value: "3" });
-       a mismatched DESIGN (two bodies under one label) is 2 per unit, L and R, each cut from its own body (the pool's per-body pieces, PAIRPOOL);
+       a mismatched DESIGN (two bodies under one label) sold as EARRINGS is 2 per unit, L and R, each cut from its own body (the pool's per-body pieces, PAIRPOOL);
+         sold as anything else (a necklace, pendant, bracelet, key ring, charm only: Paul, 10 Oct, "only earring pairs are Left and Right") it is no pair at all: 1 per unit,
+         the whole file as the app always read it, no side, never mirrored (spec.pair.twoBodies says so);
          when the pool cannot tell its two bodies apart it is made as the one glued copy per unit the app always made (glue(), spec.pair.glued),
          and PIECE_RULES.mismatchedMakesTwo = false brings that back for every mismatched design at once.
      Old records: a line already pooled keeps the pieces it has (Orders pins spec.pieceCount to its pool ids and notes the shortfall in
@@ -708,7 +757,7 @@
       else if (key && HUGG.test(t0) && otherInTitle && !earAll) ask = { by: "title", value: key, why: `the title says “huggie” and also “${other.toLowerCase()}”: is this a pair of earrings (a Left and a Right)?` };
       else if (key && pairPhrase && !earAll && !otherInTitle) ask = { by: "pair", value: key, why: `“${clip(pairPhrase, 40)}” says a pair but names no earring: is this a pair of earrings (a Left and a Right)?` };
     }
-    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), ask };
+    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), ask, other: OTHER_PRODUCT.test(title) };
   }
   /** Which ear a SINGLE earring is for, when the line names it: an option value ("Single - Left", "Right ear") or the buyer's note ("left ear
    *  only", "for my right ear"). Both ears named, or neither: null (unspecified: flagged, never guessed). */
@@ -901,7 +950,16 @@
     if (dp && +dp.bodies > 1 && dp.mismatched) { info.mismatched = true; info.source = "design"; }
     else if (!dp && e && MISMATCH_NAME.test(upSku(o.sku))) { info.mismatched = true; info.source = "name"; }   // until the catalogue carries `pair`: MISMATCHED, MISMATCHED_6849, MISMATCHED_7134
     else if (o.members) { info.mismatched = true; info.source = o.members.source; info.members = o.members.members; }
-    info.earring = soldAs === "pair" || (info.mismatched && soldAs !== "single");
+    /* A design (or two named designs) that draws two bodies is a Left and a Right ONLY on a line sold as earrings (Paul, 10 Oct 2026: only earring pairs are Left and Right,
+       the Right the exact mirror of the Left; necklaces, pendants, bracelets, key rings, charm-only lines and singles are never split into ears or mirrored). The line's own
+       words or form say earrings (soldAs "pair": earrings, studs, huggies, hoops, a Pair option, form earrings or huggie); a SKU the shop itself names MISMATCHED says it too,
+       unless the line chose another form or names another product. Anything else is NOT a pair: one piece per unit cut from the design's file exactly as the app always read it
+       (the whole drawing, both bodies together, no side, no mirror) and a plain note says so. A line sold as Single is unchanged (one ear, its side only when it names one). */
+    info.earring = soldAs === "pair" || (info.mismatched && info.source === "name" && soldAs == null && !form && !sig.other);
+    if (info.mismatched && !info.earring && soldAs !== "single") {
+      const named = info.source !== "design" && info.source !== "name";   // (two designs the line names, not one design file that draws two bodies)
+      info.mismatched = false; info.source = null; info.members = null; if (named) info.twoNamed = true; else info.twoBodies = true;
+    }
     if (earForm) info.earForm = earForm;
     if (askWords && !earForm && !(ansWords && ansWords.field === "ignore")) info.asks.push({ name: EARS_OPT, value: askWords.value, guess: 0, why: askWords.why, rule: "ear:words" });
     // a line that says two different designs but names ONE waits for a person (never guessed): the second design, or "the same on both ears" (the answer under SECOND_OPT)
@@ -932,6 +990,8 @@
     else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
     if (info.second) info.notes.push(info.second.answered === "same" ? "the line says two different designs: a person said the same design on both ears" : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
+    if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
+    else if (info.twoNamed) info.notes.push("the line names two designs but is not an earring pair: made as one piece of the first design, no Left or Right");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
     return info;
   }
@@ -1102,6 +1162,9 @@
       if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       let mapped = hit ? { field: hit.field, value: hit.value, source: hit.source } : null;
+      // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
+      const fr = fontRead(name, value);
+      if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
       // a Left-ear / Right-ear option whose value is a master design is that side's design (the pair's members): nothing to ask about it
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
@@ -1117,6 +1180,9 @@
         else if (isPriceOption(name) && looksLikePrice(value)) mapped = { field: "ignore", value: null, source: "rule:price" };
         // the SKU is this value's own (the inventory never gives it to another value of the option) and a design: it answers the option
         else if (!viaPick && tied(v)) mapped = { field: "design", value: sku, source: "sku" };
+        // a font option names an app font exactly: it answers itself (never a look-alike); any other font waits below with its one plain line, unless FONT_RULES lets it through
+        else if (fr && fr.id) mapped = { field: "font", value: fr.id, source: "rule:font" };
+        else if (fr && !FONT_RULES.unknownHolds) mapped = { field: "font", value: null, source: "rule:font-asked" };
         // an option that names a number of separate pieces answers itself ("ROSEGOLD - 2 Disc"); one that may, but does not say of what
         // (letters, a range, "Set of 3"), is asked about below, once, in its own plain words, not as a generic unmapped option
         const cx = cr.opts.find(c => c.name === name && c.value === value);
@@ -1124,7 +1190,14 @@
         if (!mapped && cx && cx.certain && cx.n > 1 && cx.cls !== "design") mapped = { field: "count", value: String(cx.n), source: "rule:" + cx.rule };
       }
       spec.options.push({ name, value, mapped });
-      if (!mapped) { if (!noDesign) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp())); continue; }
+      // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
+      if (!mapped) { if (!noDesign) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp())); continue; }
+      if (mapped.field === "font") {   // the font the buyer asked for and the app font it is (none: asked only); the length it came with is the line's chain
+        const af = fontById(mapped.value);
+        if (!spec.font) spec.font = { asked: fr ? fr.asked : value, id: af ? af.id : "", name: af ? af.name : "", source: mapped.source };
+        if (fr && fr.chain && !spec.chain) spec.chain = fr.chain;
+        continue;
+      }
       if (mapped.field === "ignore" || mapped.field === "design" || mapped.field === "count") continue;
       if (mapped.field === "form" && !spec.form) spec.form = mapped.value;
       else if (mapped.field === "size" && !spec.size) spec.size = mapped.value;
@@ -1512,6 +1585,7 @@
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
   return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
+    ENGRAVING_FONTS, FONT_RULES, fontById, fontRead, fontParts, isFontOption,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };

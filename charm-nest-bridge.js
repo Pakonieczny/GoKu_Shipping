@@ -194,7 +194,7 @@ const ListMedia = (() => {
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
-  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)); } catch (_) { return false; } };
+  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   function pair(row) {
     return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${pairRow(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
@@ -627,7 +627,7 @@ const livePairOf = (r, rid) => {
     const e = M && typeof M.entryFor === "function" ? M.entryFor(String((r.spec && r.spec.designSku) || r.line.sku || "")) : null;
     const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
     if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
-    if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+    if (e && P.isMismatched(e) && !(P.plainLine && P.plainLine(r))) return list.map(() => ({ both: true, grp }));   // (a necklace, pendant or charm of a two-body design is no Left + Right: Paul, 10 Oct)
     // a line the count rules make into several separate pieces (a 3-disc necklace) is one group of n pieces with no side, as the stations tell it (ADVCOUNT); a plain quantity-2 line is told as before
     const q = Math.max(1, Math.round(+(r.spec && r.spec.quantity) || +r.line.quantity || 1));
     if (list.length >= 2 && list.length > q) return list.map((p, i) => ({ grp, of: list.length, n: i + 1 }));
@@ -4795,7 +4795,16 @@ const Engrave = window.Engrave = (() => {
     return F_.loading;
   }
   const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
-  const fitOpts = job => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
+  /* Settings "Max height (fraction)" is the taste of the AUTOMATIC first placement. It was also the ceiling of every size
+     the person set by hand (the corner handles), measured on the back view's HEIGHT: a flat bar, whose height is its short
+     side, could not be enlarged past about a quarter of that height (cap 1.57 mm, "SMALL", on a bar that takes 3.8 mm;
+     Paul, 10 Oct). By hand (fitOpts(job, true)) the lettering goes as large as it verifies on the eroded mask: no ink
+     outside the metal it may use, none on a cut-out, a keep-out or inside the margin of a cut line (G.verifyInk, the
+     check every placement and every approval passes). The searches then start from four times the back's longer side, a
+     size no text reaches (maxHeightFrac x height = that size). */
+  const fitOpts = (job, byHand) => { const o = { minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" };
+    if (byHand && job?.mask) { const h = job.mask.hPt || job.mask.h / job.mask.res, w = job.mask.wPt || job.mask.w / job.mask.res; o.maxHeightFrac = 4 * Math.max(w, h) / h; }
+    return o; };
   const items = () => B.engrave.items;
   /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
   const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
@@ -4838,7 +4847,7 @@ const Engrave = window.Engrave = (() => {
       const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
-        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(job),{centre:layout.centre,angle:layout.angle});
+        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(job,true),{centre:layout.centre,angle:layout.angle});
         job.fit={ok:true,size:saved.sizePt,fittedMax:Math.max(saved.sizePt,ceiling.ok?ceiling.size:0),weight:saved.weight || "Regular",centre:layout.centre,angle:layout.angle,layout,glyphs:layout.glyphs,cmds:layout.cmds,capMm:saved.capMm || saved.sizePt*G.capPerEm(font)*MM,metrics:saved.metrics,small:!!saved.small,thin:!!saved.thin};
         job.verify={geometry:check,at:Date.now()};
       }
@@ -5290,10 +5299,13 @@ const Engrave = window.Engrave = (() => {
   /* One fitting policy for dragging, rotation and manual size: change the
      wrapping before reducing the requested size, and restore it when room
      returns. The original words remain separate from generated line breaks. */
+  /** The cap-height readout beside the controls: the number, and when the room (not the request) set it, the reason it stops. */
+  const capText = f => f.capMm.toFixed(2) + " mm" + (f.atLimit ? " · largest that fits" : "");
   function refit(job, place) {
     const font=fontFor(job.fit.weight),want=place.size ?? job.wantSize ?? job.fit.size;
-    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
+    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job,true),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
     if(!f.ok)return false;
+    f.atLimit=f.size<want-.005;      // the metal, not the request, set this size
     f.fittedMax=Math.max(f.size,job.fit.fittedMax || 0);f.weight=job.fit.weight;f.rect=job.fit.rect;
     job.wantSize=want;job.lines=f.lines.slice();job.text=job.lines.join("\n");
     job.fit=f;job.verify={geometry:G.verifyInk(f.cmds,job.mask),at:Date.now()};job.nudged=true;job.claude=null;
@@ -5332,8 +5344,10 @@ const Engrave = window.Engrave = (() => {
   }
   function resize(job, size) {
     if(!job.fit || !Number.isFinite(size))return;
-    size=Math.min(fitOpts(job).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
+    size=Math.min(fitOpts(job,true).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
     if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,size})){toast("No room at that size","bad");return;}
+    // asked for more than the metal allows: the words stand at the largest that verifies, and the person is told so
+    if(job.fit.atLimit){job.wantSize=job.fit.size;toast(`That is as large as these words fit on this charm · cap ${job.fit.capMm.toFixed(2)} mm`,"",5000);}
     reRead(job);refresh(job);
   }
   function setLineSpacing(job, percent, measure = true) {
@@ -6100,7 +6114,7 @@ const Engrave = window.Engrave = (() => {
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
-    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm";
+    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = capText(f);
     const an = c.querySelector('input[data-a="angle"]'); if (an && document.activeElement !== an) an.value = String(Math.round(f.angle || 0));
     const sl = c.querySelector('input[data-a="resize"]');
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
@@ -6357,13 +6371,15 @@ const Engrave = window.Engrave = (() => {
     const wants = [];
     if (requests.side && !["back", "unspecified"].includes(requests.side)) wants.push(`Requested side: ${requests.side}`);
     if (requests.font) wants.push(`Requested font: ${requests.font}`);
+    // a font the buyer chose in a drop-down (Font: Typewriter) that the app does not have (spec.font, charm-nest-orders.js fontRead): the shop decides, so it is said here, beside the words
+    if (sp.font && sp.font.asked && !sp.font.id && String(sp.font.asked).toLowerCase() !== String(requests.font || "").toLowerCase()) wants.push(`Requested font: ${sp.font.asked} (the app engraves in ${O.ENGRAVING_FONTS.map(f => f.name).join(", ")})`);
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
     const fromOrder = `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, jobsOf(job.row).length))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the back file">Approved</button></span>` : ""}</div><div class="backHost"></div></div>
-        <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
+        <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
           <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
         <div class="pvSide">
           <section class="pvSec pvRef"><h4 class="pvH">Front · reference</h4><div class="frontHost"></div></section>
@@ -6446,8 +6462,8 @@ const Engrave = window.Engrave = (() => {
       const paintFlow = () => {
         flowFrame=0;if(!drag)return;
         const centre=drag.pending || drag.c,angle=drag.pendingAngle ?? drag.angle,size=drag.pendingSize ?? drag.want;
-        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(job),measure:false},{centre,angle,size},job.lineMode || "auto");
-        if(f.ok){bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=f.capMm.toFixed(2)+" mm";}
+        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(job,true),measure:false},{centre,angle,size},job.lineMode || "auto");
+        if(f.ok){f.atLimit=f.size<size-.005;bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=capText(f);}
         else bc._paint();
       };
       const queueFlow = () => {if(!flowFrame)flowFrame=requestAnimationFrame(paintFlow);};
@@ -6472,7 +6488,7 @@ const Engrave = window.Engrave = (() => {
         if (drag.mode === "resize") {
           // a corner pulled away from the centre grows the text, pulled in shrinks it: the size follows the distance
           const r = Math.hypot(p[0] - drag.cpx[0], p[1] - drag.cpx[1]);
-          drag.pendingSize = Math.min(fitOpts(job).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
+          drag.pendingSize = Math.min(fitOpts(job,true).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
           queueFlow();
         } else if (drag.mode === "rotate") {
           const a = Math.atan2(p[1] - drag.cpx[1], p[0] - drag.cpx[0]);
@@ -10343,7 +10359,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
