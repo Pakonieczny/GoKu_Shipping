@@ -8818,7 +8818,8 @@ const CustomPrint = window.CustomPrint = (() => {
   function runPrinter(label, onStarted, gate) {
     return new Promise(resolve => {
       const nonce = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-      try { localStorage.removeItem("qrPrintBatch"); localStorage.setItem("qrPrintAll", JSON.stringify(label)); }
+      // (a sandbox label says so: QR Printer.html ignores the mark, and a sandbox reset removes the label it left behind)
+      try { localStorage.removeItem("qrPrintBatch"); localStorage.setItem("qrPrintAll", JSON.stringify(WORKSPACE_SANDBOX ? Object.assign({}, label, { sandbox: true }) : label)); }
       catch (e) { resolve({ ok: false, error: "the label could not be handed to the printer (" + e.message + ")" }); return; }
       // the frame of the label before goes now: it is kept until then because its print dialog may still be open
       if (lastFrame) { try { lastFrame.remove(); } catch (_) {} }
