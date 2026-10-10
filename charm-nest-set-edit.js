@@ -292,7 +292,7 @@
     const spans = spanLines(set.orders, id => names.get(id));
     if (spans.length) { y -= 6; line('Orders on more than one sheet (they stay in one set)', { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line('Engraving', { font: bold, size: 11 });
-    const backs = sheets.flatMap(s => (s.backs || []).filter(b => b && !b.invalidated).map(b => `${names.get(s.id)}: ${b.order || ''} ${b.sku || ''} #${b.copy || 1}${root.CharmNestPairLabels ? root.CharmNestPairLabels.backWord(b) : ''} "${str(b.text).replace(/\n/g, ' / ')}" ${b.capMm ? b.capMm + ' mm' : ''} · ${b.approvedBy || '?'}`));
+    const backs = sheets.flatMap(s => (s.backs || []).filter(b => b && !b.invalidated).map(b => `${names.get(s.id)}: ${b.order || ''} ${b.sku || ''} #${b.copy || 1}${root.CharmNestPairLabels ? root.CharmNestPairLabels.backWord(b) + (root.CharmNestPairLabels.discWord ? root.CharmNestPairLabels.discWord(b) : '') : ''} "${str(b.text).replace(/\n/g, ' / ')}" ${b.capMm ? b.capMm + ' mm' : ''} · ${b.approvedBy || '?'}`));
     if (backs.length) backs.forEach(b => line(b)); else line('no engraving in this set');
     y -= 6; line('Labels', { font: bold, size: 11 }); files.forEach(f => line(`${f.label || f.sheet}  ${f.path || '(not uploaded)'}`));
     const edits = (Array.isArray(set.flowHistory) ? set.flowHistory : []).filter(h => h && h.type === 'setEdit');

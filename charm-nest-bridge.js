@@ -199,7 +199,7 @@ const ListMedia = (() => {
   const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
-  const earPair = row => { try { return !!row && !row.spec?.noDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
+  const earPair = row => { try { return !!row && !row.spec?.noDesign && !row.spec?.ownDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
   // (a line of TWO separate designs, the Left's and the Right's (OPTTWO: Tennis Ball Left, Tennis Racket Right): its picture is the two designs side by side, each from its own master file; the SKU of the Right's design, else '')
   const twoOf = row => { try { return !!row && !row.spec?.noDesign && earPairRow(row) && earDesign(row, "L") ? earDesign(row, "R") : ""; } catch (_) { return ""; } };
   // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
@@ -275,7 +275,7 @@ const ListMedia = (() => {
   // (is that ear's own drawing cut turned over: the word charm-nest-pair.js gives a matching pair of this design, the Right turned over unless the drawing faces the other way)
   const earTurn=(row,side,entry)=>{try{const CP=window.CharmNestPair;if(!CP || !CP.piecesFor)return false;const sp=row.spec||{},line=Object.assign({},row.line,{receiptId:row.order?.receiptId,quantity:1,form:sp.form,spec:{quantity:1,form:sp.form,pieceCount:2,pair:{earring:true,mismatched:false,glued:false,perUnit:2,sides:['L','R']}}}),mine=CP.piecesFor(line,entry).find(x=>x.side===side);return !!(mine && mine.mirror);}catch(_){return false;}};
   async function vector(row,px,opts) {
-    if(!row || row.spec?.noDesign)return null;
+    if(!row || row.spec?.noDesign || row.spec?.ownDesign)return null;   // (an add-on listing's line has no master design: the Etsy listing photo beside it is all there is to show)
     // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
     const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
     // (a MATCHING earring pair line, asked for as the line and not for one ear: the Left and the Right side by side, the Right turned over; drawn from the master design, never from one pool piece, which may already be the turned one;
@@ -319,7 +319,7 @@ const ListMedia = (() => {
   }
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
   function vectorKey(row,opts) {
-    if(!row || row.spec?.noDesign)return '';
+    if(!row || row.spec?.noDesign || row.spec?.ownDesign)return '';
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
@@ -1449,6 +1449,8 @@ const Orders = window.Orders = (() => {
       // a special line finished by hand (Custom Orders), or a chain-only line, that the run had held for a decision is
       // not cut either: it never went to the pool, so nothing is on a sheet for it
       if ((row.spec.customDone || (row.spec.special && row.spec.special.notCut)) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "noDesign"; row.reason = null; }
+      // an add-on listing's line that waited on an old question (an option "not mapped", an unknown SKU) waits for its own designs now; one with pieces of its own on a sheet keeps them, whatever sheet they are on
+      else if (row.spec.ownDesign && !row.spec.customDone && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "held"; row.reason = O.specialOf.addOn.wait; }
       // a custom order's own designs sent to the sheets from its card (CustomSheet): what it is cut from is settled, and
       // its designs carry no back to engrave; a line with pieces of its own goes on like any other
       if (window.CustomSheet && CustomSheet.sentOf(row) && !row.spec.customDone) {
@@ -1831,6 +1833,7 @@ const Orders = window.Orders = (() => {
     // a special line that is not cut says which: finished by hand under Custom Orders, or chain only
     if (state === "noDesign" && r.spec && r.spec.customDone) return ["ok", "custom · done"];
     if (state === "noDesign" && r.spec && r.spec.special && r.spec.special.notCut) return ["info", r.spec.special.label.toLowerCase()];
+    if ((state === "held" || state === "pulled") && r.spec && r.spec.ownDesign && !r.hold) return ["info", "custom · own design"];
     const [k, t] = STATE_PILL[state] || ["neutral", state];
     const i = PROGRESS.indexOf(state);
     return [k, i < 0 ? t : `${i + 1}/${PROGRESS.length} ${t}`];
@@ -3001,6 +3004,9 @@ const Pool = window.Pool = (() => {
     // a custom order sent from its card is cut from its own designs, each on the metal picked for it (CustomSheet)
     if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row)) return CustomSheet.prepare(row, run);
     if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
+    // an add-on listing's line (specialOf: own) has no master design: the one its SKU happens to match is not its design. It waits, asked nothing, for the order's own designs
+    // (Send to Sheet) or a person's Complete Order, and its order waits with it
+    if (sp.ownDesign) { row.state = "held"; row.reason = O.specialOf.addOn.wait; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
@@ -3257,7 +3263,7 @@ const Pool = window.Pool = (() => {
     const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
     // six at a time: a big batch after a reload started every design download at once, and they timed out against each
     // other while the page parsed them all together (audit, 25 Sep)
-    const loads = work.filter(row => row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
+    const loads = work.filter(row => row.spec && !row.spec.noDesign && !row.spec.ownDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
     { let next = 0; await Promise.all(Array.from({ length: Math.min(6, loads.length) }, async () => { while (next < loads.length) await loads[next++]().catch(() => {}); })); }
     const made = [];
     for (const row of work) {
@@ -5097,17 +5103,25 @@ const Engrave = window.Engrave = (() => {
   }
   // the order timeline: a line read as needing a back engraving (once per line and words), and a person's decision on
   // the words (confirmed, edited, none, skipped: cut plain)
+  // which disc of a counted line a job is, for the log lines that name the engraving ("Disc 2 of 3"); "" for a single, an ear or a plain quantity-N line (their lines read as they always did)
+  function discSay(job) {
+    try {
+      if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return "";
+      const S = SIDES(), r = S && S.pieceRecord ? S.pieceRecord(job) : null;
+      return r && r.of > 1 ? `Disc ${r.index} of ${r.of}` : `Disc ${String(job.slot).slice(1)}`;
+    } catch (_) { return ""; }
+  }
   function needEvent(job) {
     try {
       if (!job || !job.row || !job.row.engrave || !job.row.engrave.needed) return;
       const t = String(job.text || "").trim();
-      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: (t ? `Back engraving: “${t.replace(/\n/g, " / ")}”` : "Back engraving: the words are to be confirmed").slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state } });
+      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: ((d => (t ? `Back engraving${d ? " · " + d : ""}: “${t.replace(/\n/g, " / ")}”` : `Back engraving${d ? " · " + d : ""}: the words are to be confirmed`))(discSay(job))).slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state } });
     } catch (_) {}
   }
   function wordsEvent(job, by, was, how) {
     try {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
-      const text = how === "none" ? `No engraving — decided by ${by}` : how === "skipped" ? `Engraving skipped by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"} by ${by}: “${t.replace(/\n/g, " / ")}”`;
+      const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", text = how === "none" ? `No engraving${of} — decided by ${by}` : how === "skipped" ? `Engraving skipped${of} by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
       TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
     } catch (_) {}
   }
@@ -7884,7 +7898,7 @@ const Sets = window.Sets = (() => {
     const spans = window.SetEdit && SetEdit.spanLines ? SetEdit.spanLines(set.orders) : [];
     if (spans.length) { y -= 6; line("Orders on more than one sheet (they stay in one set)", { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line("Engraving", { font: bold, size: 11 });
-    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
+    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) + (CharmNestPairLabels.discWord ? CharmNestPairLabels.discWord(b) : "") : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");
     y -= 6; line("Labels", { font: bold, size: 11 }); files.forEach(f => line(`${f.label}  ${f.path || "(not uploaded)"}`));
     // released for labels: a sheet without its .pdf yet gets it now, copied from its .ai inside the bucket (op_sheetPdf)
@@ -8936,7 +8950,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /* An earring pair line (matching or mismatched: a Left earring and a Right one) prints a LEFT sticker and a RIGHT sticker of the same order,
      one page each (pairs, 9 Oct: "Print QR Label per piece"); QR Printer.html prints one page for each entry of `pieces`. A card with no such line
      (a single earring, a necklace, a charm) prints the one order sticker exactly as before: the label object is returned untouched. */
-  const designEntryOf = r => (r && r.spec && r.spec.designSku ? (Master.entryFor(r.spec.designSku) || null) : null);
+  const designEntryOf = r => (r && r.spec && r.spec.designSku && !r.spec.ownDesign ? (Master.entryFor(r.spec.designSku) || null) : null);
   function withPieces(label, rows) {
     try {
       const L = window.CharmNestPairLabels; if (!L || !label) return label;
@@ -11139,6 +11153,7 @@ const Review = window.Review = (() => {
     const sp = row.spec, spc = sp.special || { label: "Custom designs" }, mine = CustomSheet.decisionOf(row);
     if (mine) return `Sent to Sheet · ${Orders.statePill(row)[1]}`;
     if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser (${Orders.statePill(row)[1]})`;
+    if (sp.ownDesign) return `${spc.label} · add-on listing, no master design · drop its .ai / .dxf designs and Send to Sheet, or print its QR label when it is ready`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
@@ -12761,6 +12776,13 @@ const OrderWin = window.OrderWin = (() => {
     const pv = byId("owPrev"), nx = byId("owNext");
     pv.hidden = nx.hidden = !on; pv.disabled = i >= 0 ? i <= 0 : W.at <= 0; nx.disabled = i >= 0 ? i >= list.length - 1 : W.at >= list.length;
   }
+  /** The "Engraving" cell of the facts grid: the line's state and words, and the seals. A counted-disc line says it disc by disc ("Disc 1 · J · Approved" / "Disc 2 · Q · Placement to check")
+   *  with the seals of every disc, not of the one disc Engrave.jobOf gives; every other line exactly as it always read. `wait`: the word when the line has no state yet. */
+  function engCellHtml(r, wait, job) {
+    const ds = window.OrderEngraving && OrderEngraving.discLines ? tryDo(() => OrderEngraving.discLines(r)) : null;
+    if (ds) return `<span>${ds.map(esc).join("<br>")}</span>${CNEngravingSeals.html(r.engrave)}`;
+    return `<span>${esc((r.engrave.approved ? "approved" : r.engrave.state || wait) + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(job || Engrave.jobOf(r) || r.engrave)}`;
+  }
   /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
    *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
    *  the one of the line shown and swaps with the piece (nothing of the piece before stays); an order of several names the piece on its
@@ -12843,7 +12865,7 @@ const OrderWin = window.OrderWin = (() => {
       (sheetCell ? mcell("Sheet", sheetCell) : "") +
       mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
-      (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i><span>${esc((r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(Engrave.jobOf(r) || r.engrave)}</div>` : "") +
+      (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i>${engCellHtml(r, "waiting")}</div>` : "") +
       (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
@@ -13531,7 +13553,7 @@ const OrderWin = window.OrderWin = (() => {
       const meta=byId('owMeta');
       let cell=meta && [...meta.querySelectorAll('.m')].find(m=>m.querySelector('i')?.textContent==='Engraving');
       if(meta && !cell){cell=el('div','m');meta.appendChild(cell);}
-      if(cell){const markup=`<i>Engraving</i><span>${esc((r.engrave.approved?'approved':r.engrave.state || 'Approval history')+(r.engrave.text?' · '+r.engrave.text:''))}</span>${CNEngravingSeals.html(job || r.engrave)}`;if(cell._history!==markup){cell.innerHTML=markup;cell._history=markup;}}
+      if(cell){const markup=`<i>Engraving</i>${engCellHtml(r,'Approval history',job)}`;if(cell._history!==markup){cell.innerHTML=markup;cell._history=markup;}}
     }
     const n = nowOf(r), pill = byId("owNow");
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
@@ -13726,7 +13748,7 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and ringed, every other charm on the sheet
      drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
-  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, shown: null, pools: null, focus: null, finding: null, drawing: null, fade: null };
+  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, shown: null, pools: null, focus: null, disc: null, finding: null, drawing: null, fade: null };
   // the piece scope of this view (Paul, 5 Oct, point 5: the Sheet view answers for ONE piece, else for all of them, and
   // never shows another piece's sheet for a piece that is on none): fit picks the sheet to open, ok says whether sheet
   // i of the list belongs to the scope, pick finds a sheet by its id or a piece of it, count words the tab's count, pin
@@ -14302,11 +14324,16 @@ const OrderWin = window.OrderWin = (() => {
     if (!OP) for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
     if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1, loading: !SV.list });
     const pieces = [...items.values()];
-    const job=x0?.eng?.job || Engrave.jobOf(lr),re=lr.engrave;
-    const eng=job ? {job,back:x0?.eng?.back,saved:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:x0?.eng?.note}
-      : x0?.eng?.kind && x0.eng.kind!=="none" ? {...x0.eng,saved:re || x0.eng.saved}
+    let job=x0?.eng?.job || Engrave.jobOf(lr),xeng=x0?.eng;const re=lr.engrave;
+    // (the discs of a counted order, one at a time: this card is the disc of the charm in focus; a disc that sits on no sheet here has no charm to focus, so the switch shows its card alone, SV.disc, until another charm is focused)
+    const OEc=window.OrderEngraving,cyc0=OEc&&OEc.cycleOf?tryDo(()=>OEc.cycleOf(lr,job&&job.key)):null,pick0=cyc0&&SV.disc&&SV.disc.focus===SV.focus?cyc0.pieces.find(p=>p.key===SV.disc.key):null;
+    if(pick0 && !mine.some(x=>x.poolId && (pick0.job.copies||[]).includes(x.poolId))){job=pick0.job;xeng=null;}
+    const cyc=cyc0&&job?tryDo(()=>OEc.cycleOf(lr,job.key)):cyc0;
+    const eng=job ? {job,back:xeng?.back,saved:cyc?undefined:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:xeng?.note}
+      : xeng?.kind && xeng.kind!=="none" ? {...xeng,saved:re || xeng.saved}
       : re ? {kind:re.needed?(re.approved?"approved":"words"):re.state==="skipped"?"skipped":"none",text:re.text,by:re.approvedBy,at:re.approvedAt,saved:re}
       : {kind:"none"};
+    if(cyc)eng.cycle=cyc;
     const engHtml=CNEngravingSeals.panel(eng);
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
     const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
@@ -14338,9 +14365,19 @@ const OrderWin = window.OrderWin = (() => {
         const i = it.sheetId ? list.findIndex(s => s.id === it.sheetId) : -1; if (i >= 0) { SV.at = i; SV.focus = it.poolId; sheetDraw(); }
       };
     });
+    // a press on a disc of the switch (or Back / Next): that disc's charm is focused, on this sheet or on the sheet it is on, exactly as a press on its row of "This order" does
+    const pickDisc=k=>{
+      const p=cyc&&cyc.pieces.find(q=>q.key===k);if(!p)return;
+      const pid=(p.job.copies||[])[0]||"",it=pieces.find(q=>q.poolId===pid);
+      SV.disc=null;
+      if(it&&it.here){SV.focus=pid;if(SV.info){SV.info.focus(pid);paintPanel(SV.info);}return;}
+      const i=it&&it.sheetId?list.findIndex(s=>s.id===it.sheetId):-1;
+      if(i>=0){SV.at=i;SV.focus=pid;sheetDraw();return;}
+      SV.disc={key:k,focus:SV.focus};paintPanel(SV.info);
+    };
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
-      imageUrl:url=>/^https?:/.test(url)?cors(url):url,
-      zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')},
+      imageUrl:url=>/^https?:/.test(url)?cors(url):url,pick:pickDisc,
+      zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')+(cyc?'|'+cyc.key:'')},
       stale:()=>{if(SV.info)paintPanel(SV.info);},
       approve:async ap=>{
         // (the name kept on this computer, else the small name bar in this window: never a browser pop-up on the order window)
@@ -14352,7 +14389,7 @@ const OrderWin = window.OrderWin = (() => {
           // (the card turns Approved as soon as the stamp is down, the saving of the back file said under it; not when that saving is over)
           await CNEngravingSeals.stamped(eng.job,run);
           if(!["approved","written"].includes(eng.job.state)){await run;ap.disabled=false;return;}
-          if(x0)x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
+          if(x0 && (!cyc || x0.eng?.job===eng.job))x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
           if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
           await run;
         }catch(e){if(!["approved","written"].includes(eng.job.state)){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}}

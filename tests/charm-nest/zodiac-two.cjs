@@ -28,11 +28,13 @@ const SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', '
 const LID = '1706155793', REAL_TABLE = DATA.tables[LID];
 const lib = new Map(DATA.master.map(s => [s.toUpperCase(), {}])), loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; }
 const ctx = extra => Object.assign({ optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [] }, masterEntry: s => lib.get(String(s || '').toUpperCase()) || null, masterLoose: s => loose[O.looseKey(s)] || '' }, extra);
-// Etsy's getListingInventory shape (v3): products[{ product_id, sku, is_deleted, property_values[{ property_id, property_name, scale_id, scale_name, value_ids[], values[] }] }]. Names: the sign for each Zodiac Sign value (by its SKU number), a plain
-// "Metal Choice n" for the other option; the 13th value (no SKU on Etsy) is called "Custom" (a stand-in: its real name is not known).
+// Etsy's getListingInventory shape (v3): products[{ product_id, sku, is_deleted, property_values[{ property_id, property_name, scale_id, scale_name, value_ids[], values[] }] }].
+// REAL_NAMES: Etsy's own text for every value of this listing's two options, read ONCE from Etsy on 10 Oct 2026 (the one GET this change spends; no buyer data). Aries … Pisces are
+// the Zodiac Sign values with SKUs Zodiac_Earrings-0 … -11 (the twelve master drawings agree), and the 13th value, with no SKU, is called "2 symbols-leave note".
+const REAL_NAMES = {"props":{"513":"Metal Choice :","514":"Zodiac Sign"},"names":{"513:108315083144":"Silver - Pair","513:110477679703":"Gold - Pair","513:116562319191":"Silver - Single","513:116562328355":"Gold - Single","513:1403828246974":"Gold \u2022 2 symbols","513:1403828247690":"RoseGold \u2022 1 symbol","513:1403828248908":"Silver \u2022 1 symbol","513:1403828249254":"Silver \u2022 2 symbols","513:1404106460519":"Gold \u2022 1 symbol","513:1404106461785":"RoseGold \u2022 2 symbols","513:931064598856":"RoseGold - Single","513:952730170907":"RoseGold - Pair","514:104130158864":"Capricorn","514:104130158888":"Taurus","514:104130158892":"Gemini","514:104130158906":"Virgo","514:104130158924":"Sagittarius","514:107267507837":"Aquarius","514:107267507841":"Pisces","514:107267507851":"Aries","514:107267507863":"Leo","514:107267507881":"Libra","514:107267507889":"Scorpio","514:1403828245856":"2 symbols-leave note","514:71051789161":"Cancer"}};
 function etsyInventory(table, o) {
-  o = o || {}; const nameOf = {}; for (const p of table.products) { const m = /Zodiac_Earrings-(\d+)$/i.exec(p.sku), z = p.pv.find(a => a[0] === '514'); if (z) nameOf[z[1]] = m ? SIGNS[+m[1]] : 'Custom'; }
-  return { count: table.products.length, products: table.products.map(p => ({ product_id: +p.id, sku: p.sku, is_deleted: !!p.d, offerings: [], property_values: p.pv.map(([pid, vid]) => Object.assign({ property_id: +pid, property_name: pid === '514' ? 'Zodiac Sign' : 'Metal Choice :', scale_id: null, scale_name: null, value_ids: [+vid] }, o.noNames ? {} : { values: [pid === '514' ? nameOf[vid] : 'Metal Choice ' + vid.slice(-3)] })) })) };
+  o = o || {};
+  return { count: table.products.length, products: table.products.map(p => ({ product_id: +p.id, sku: p.sku, is_deleted: !!p.d, offerings: [], property_values: p.pv.map(([pid, vid]) => Object.assign({ property_id: +pid, property_name: REAL_NAMES.props[pid], scale_id: null, scale_name: null, value_ids: [+vid] }, o.noNames ? {} : { values: [REAL_NAMES.names[pid + ':' + vid]] })) })) };
 }
 const NOW = 1791598245784;
 const TABLE = T.compact(etsyInventory(REAL_TABLE), NOW);   // the table the page holds after the cloud's one GET with the names
@@ -98,6 +100,21 @@ pass('order 4175402612 reads as a Left Libra (ZODIAC_EARRINGS-6) and a Right Leo
   }
   const sp = read(noteLine('balance', 'Libra')); ok(/repeats Libra/.test(sp.pair.notes.join(' ')), 'and the line says why: ' + sp.pair.notes.join(' | ')); }
 pass('one other sign makes the pair; the same sign again means both ears; none, or more than the option\'s count, waits and shows the note');
+
+/* ── 3b · the listing's 13th Zodiac Sign value, "2 symbols-leave note" (its real name, read from Etsy on 10 Oct): the buyer writes BOTH signs in the note ─────────────────────────────────── */
+{ const leave = (note, extra) => read(Object.assign({ productId: '26814959766', personalization: note ? [note] : [], variations: [V('Metal Choice :', 'Silver • 2 symbols', ['513', '1403828249254']), V('Zodiac Sign', '2 symbols-leave note', ['514', '1403828245856'])].concat(note ? [V('Personalization', note)] : []) }, extra || {}));
+  const m = sp => members(sp).join(' ');
+  for (const [note, want] of [['Leo and Aries', 'L:ZODIAC_EARRINGS-4 R:ZODIAC_EARRINGS-0'], ['balance et lion', 'L:ZODIAC_EARRINGS-6 R:ZODIAC_EARRINGS-4'], ['Pisces / Gemini', 'L:ZODIAC_EARRINGS-11 R:ZODIAC_EARRINGS-2'], ['1) Scorpio 2) Taurus please', 'L:ZODIAC_EARRINGS-7 R:ZODIAC_EARRINGS-1']]) {
+    const sp = leave(note); eq([m(sp), sp.problems.length, sp.pair.source, sp.pieceCount, sp.pair.sides.join('')], [want, 0, 'signs', 4, 'LRLR'], `"2 symbols-leave note" + note "${note}": the two signs in the order named, a Left and a Right, nothing asked`);
+    ok(sp.options.some(o => o.value === '2 symbols-leave note' && o.mapped && o.mapped.source === 'rule:signs-in-note'), 'the drop-down value itself is answered by them'); }
+  const one = leave('Leo'), q1 = one.problems.find(p => p.pairSecond); ok(!one.pair.mismatched && q1 && /names one \(Leo\)/.test(q1.pairSecond.why) && /the buyer's note says “Leo”/.test(q1.pairSecond.why), 'one sign in the note: the line says 2 symbols, so it waits and shows the note: ' + (q1 && q1.pairSecond.why));
+  ok(!leave('leo leo').pair.mismatched && !leave('leo leo').pair.second.answered, 'the same sign twice is not guessed to mean both ears when the drop-down names none');
+  const none = leave(''), q0 = none.problems.find(p => p.pairSecond); ok(!none.pair.mismatched && /no sign is named/.test(q0.pairSecond.why) && /there is no buyer's note/.test(q0.pairSecond.why), 'no note: waits and says there is none: ' + q0.pairSecond.why);
+  const three = leave('Leo Libra Aries'), q3 = three.problems.find(p => p.pairSecond); ok(!three.pair.mismatched && /names 3 signs/.test(q3.pairSecond.why) && /“Leo Libra Aries”/.test(q3.pairSecond.why), 'three signs for 2 symbols: waits, note shown');
+  const old = read(Object.assign({ productId: '26814959766', personalization: ['Leo and Aries'], variations: [V('Metal Choice :', 'Silver • 2 symbols', ['513', '1403828249254']), V('Zodiac Sign', '2 symbols-leave note', ['514', '1403828245856']), V('Personalization', 'Leo and Aries')] }), ctx({ listingSkus: { [LID]: NAMELESS } }));
+  ok(!old.pair.mismatched && old.pair.second.needNames === true && /not loaded yet/.test(old.problems.map(text).join(' ')), 'without the names it waits, says why, and asks for them');
+  const metal = read({ title: 'Zodiac Stud Earrings', personalization: ['Leo and Aries'], variations: [V('Metal Choice :', 'Silver • 2 symbols', ['513', '1403828249254']), V('Personalization', 'Leo and Aries')] }); ok(!metal.pair.mismatched, 'a note with two signs and no Zodiac Sign option at all is not read (only a drop-down value that says 2 symbols leaves the signs to the note)'); }
+pass('"2 symbols-leave note": the note\'s two signs, in the order named, make the pair; anything else waits and shows the note');
 
 /* ── 4 · exact words only: the twelve names, whole words, never fuzzy, never the title ────────────────────────────────────────────────────────────────────── */
 { const names = t => O.signsOfText(t).join(',');
@@ -241,8 +258,8 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
   } else console.log('  · (the Sep 17 snapshot, the master index or the golden file is not on this machine: the golden part was not run)');
   /* ── 9 · the page asks for the new files with a new cache token (other workers add suffixes after it) ───────────────────────────────────────────────────── */
   { const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-zt1(?:-[a-z0-9]+)*"').test(html), f + ' carries the -zt1 cache token');
+    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-zt\\d(?:-[a-z0-9]+)*"').test(html), f + ' carries the -zt cache token');
     ok(/names?:\s*true|nameIds/.test(fs.readFileSync(path.join(fnDir, 'charmNestLibrary.js'), 'utf8')), 'the library op passes nameIds on'); }
-  pass('cache tokens (-zt1) and the library op\'s nameIds');
+  pass('cache tokens (-zt) and the library op\'s nameIds');
   console.log(`zodiac-two: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });
