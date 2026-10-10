@@ -323,10 +323,13 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     m = await menuOf(page, gripOf('sheet', 'dC01'));
     const n = names(m);
     assert(n.includes('Laser cutting') && n.includes('Completed'), 'real flow, a sheet: ' + JSON.stringify(m.items));
-    assert(!n.includes('In progress') && !n.includes('Set 3'), 'not its own column or set: ' + n);
+    // (Paul, 10 Oct: a sheet of a set can be taken out of it by In progress; dC01 is Set 3's only sheet, so the entry is there, greyed, with that plain reason; its own set is not listed)
+    const inProgress = m.items.find(x => x.name === 'In progress');
+    assert(inProgress && inProgress.off === true && /only sheet of Set 3/.test(inProgress.note), 'In progress is greyed with the plain reason: ' + JSON.stringify(m.items));
+    assert(!n.includes('Set 3'), 'not its own set: ' + n);
     noAlready(m);
     await closeMenu(page);
-    ok.push('B · the real LibraryFlow: a set lists only the other columns, a sheet lists no "Already in" entry and not its own column or set');
+    ok.push('B · the real LibraryFlow: a set lists only the other columns, a sheet lists no "Already in" entry and not its own set; In progress says why it cannot take the last sheet of its set out');
     assert.deepEqual(errors, [], 'no errors: ' + errors.join(' | '));
     await ctx.close();
   }
