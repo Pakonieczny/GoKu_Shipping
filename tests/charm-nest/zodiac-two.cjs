@@ -216,25 +216,33 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
   pass('the page asks the cloud once more for the names, re-reads the held line when they arrive, makes it up with no pieces lost, and never loops');
 
   /* ── 8 · golden: every line of the Sep 17 snapshot reads as before except the one this change is for ────────────────────────────────────────────────────── */
+  // The golden file holds, for each of the 411 lines in three worlds, a hash of the line's READING (SKU, material, size, form, chain, piece count, the questions it asks and the pair it makes) as the code
+  // before this change read it. It is a summary, not the whole spec, so an unrelated field another change adds to every line does not break it.
   const GOLD = path.join(__dirname, 'zodiac-two-golden.json'), SNAPS = ['/tmp/EARWORDS-data/snapshot-min.json', '/tmp/advcount-data/snapshot-min.json', '/tmp/OPTAUDIT/data/snapshot.json'].filter(p => fs.existsSync(p)), IDX = '/tmp/reindex-stage/idx-final.json';
   if (SNAPS.length && fs.existsSync(IDX) && fs.existsSync(GOLD)) {
-    const gold = JSON.parse(fs.readFileSync(GOLD, 'utf8')), orders = JSON.parse(fs.readFileSync(SNAPS[0], 'utf8')), idx = JSON.parse(fs.readFileSync(IDX, 'utf8')).entries;
+    const gold = JSON.parse(fs.readFileSync(GOLD, 'utf8')).digests, orders = JSON.parse(fs.readFileSync(SNAPS[0], 'utf8')), idx = JSON.parse(fs.readFileSync(IDX, 'utf8')).entries;
     const ent = new Map(idx.map(e => [String(e.sku).toUpperCase(), e])), lo = new Map(); for (const k of ent.keys()) { const key = O.looseKey(k); lo.set(key, lo.has(key) ? '' : k); }
     const base = { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [] }, masterEntry: s => ent.get(String(s || '').toUpperCase()) || null, masterLoose: s => lo.get(O.looseKey(s)) || '' };
     const withNames = clone(DATA.tables); withNames[LID] = TABLE;
-    const scen = { A_noTables: {}, B_realTables: DATA.tables, C_zodiacNames: withNames };
-    const changed = {};
-    for (const [name, lt] of Object.entries(scen)) {
-      const want = gold.digests[name]; let lines = 0; changed[name] = [];
+    const summary = sp => ({ designSku: sp.designSku, skuSource: sp.skuSource, noDesign: !!sp.noDesign, material: sp.material, size: sp.size, form: sp.form, chain: sp.chain, pieceCount: sp.pieceCount,
+      problems: sp.problems.map(p => [p.kind, p.optionName || '', p.optionValue || '', p.sku || '', p.pairSecond ? p.pairSecond.why : '']), pair: { mismatched: sp.pair.mismatched, source: sp.pair.source, members: (sp.pair.members || []).map(m => m.side + m.sku), sides: sp.pair.sides, second: sp.pair.second ? [sp.pair.second.answered, sp.pair.second.by || '', sp.pair.second.why || ''] : null } });
+    const scen = { A_noTables: [{}, []], B_realTables: [DATA.tables, []], C_zodiacNames: [withNames, ['4175402612/5218016559']] };   // (no table, or the table without names: the zodiac line still waits, only its words say more; with the names: it resolves)
+    for (const [name, [lt, expectChanged]] of Object.entries(scen)) {
+      const want = gold[name]; let lines = 0; const changed = [];
       for (const r of orders) for (const t of r.transactions) {
         const line = { transactionId: String(t.transaction_id), listingId: String(t.listing_id), productId: String(t.product_id), sku: t.sku, title: t.title, quantity: t.quantity, metalKey: /silver/i.test(JSON.stringify(t.variations)) ? 'silver' : 'gold', metalLabel: '', personalization: t.personalization || [], buyerMessage: t.message_from_buyer || r.message_from_buyer || '',
           variations: (t.variations || []).map(v => ({ name: v.formatted_name, value: v.formatted_value, propertyId: v.property_id != null ? String(v.property_id) : '', valueId: v.value_id ? String(v.value_id) : '' })) };
         const sp = O.interpretLine({ receiptId: String(r.receipt_id), updateTs: 1 }, line, Object.assign({}, base, { listingSkus: lt })), key = r.receipt_id + '/' + t.transaction_id; lines++;
-        if (crypto.createHash('sha1').update(JSON.stringify(sp)).digest('hex').slice(0, 12) !== want[key]) changed[name].push(key);
+        if (crypto.createHash('sha1').update(JSON.stringify(summary(sp))).digest('hex').slice(0, 12) !== want[key]) changed.push(key);
       }
-      eq([lines, changed[name]], [Object.keys(want).length, ['4175402612/5218016559']], `${name}: all ${lines} lines of the snapshot read as before the change, except order 4175402612`);
+      eq([lines, changed], [Object.keys(want).length, expectChanged], `${name}: all ${lines} lines of the snapshot read as before the change` + (expectChanged.length ? ', except order 4175402612' : ''));
     }
-    pass(`golden: 411 lines x 3 worlds (no tables, the 10 real tables, the zodiac table with names): only order 4175402612 changed`);
+    pass('golden: 411 lines x 3 worlds (no tables, the 10 real tables, the zodiac table with names): only order 4175402612 changes, and only when the names are there');
   } else console.log('  · (the Sep 17 snapshot, the master index or the golden file is not on this machine: the golden part was not run)');
+  /* ── 9 · the page asks for the new files with a new cache token (other workers add suffixes after it) ───────────────────────────────────────────────────── */
+  { const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
+    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-zt1(?:-[a-z0-9]+)*"').test(html), f + ' carries the -zt1 cache token');
+    ok(/names?:\s*true|nameIds/.test(fs.readFileSync(path.join(fnDir, 'charmNestLibrary.js'), 'utf8')), 'the library op passes nameIds on'); }
+  pass('cache tokens (-zt1) and the library op\'s nameIds');
   console.log(`zodiac-two: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });
