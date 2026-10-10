@@ -77,6 +77,33 @@
     for (const j of E.items().values()) if (!j.editingBack && (j.copies || []).includes(poolId)) return j;
     return null;
   }
+  /** The counted discs of one line, one at a time (Paul, 10 Oct 2026: "cycle through all the chosen discs one by one ... everywhere the engraving option is presented"): the line's jobs
+   *  as the Engrave tab's own switch component tells them (charm-nest-piece-switch.js: each disc's words, font by name and state), and the disc shown. null for every other line (a single, a pair,
+   *  a plain quantity-N line: one job, or the Left and the Right), so those cards are drawn exactly as they always were. The disc shown: `key` when it is one of them, else the first disc still
+   *  to settle, else Disc 1. */
+  const DISC = /^D\d{1,2}$/, OPEN_STATES = ['reclassify', 'classify', 'words', 'blocked', 'ready', 'fitting', 'review'];
+  const fontOfJob = job => {
+    const S = root.CharmNestEngraveSides, rec = S && S.pieceRecord ? tryDo(() => S.pieceRecord(job), null) : null;   // DISCREAD's record of the disc: its font, else the line's
+    const f = (rec && rec.font) || (job && (job.font || (job.piece && job.piece.font) || (job.row && job.row.spec && job.row.spec.font))), asked = String((f && typeof f === 'object' && f.asked) || (job && job.requests && job.requests.font) || '');
+    const name = typeof f === 'string' ? f : f && typeof f === 'object' ? String(f.name || f.installed || '') : '';
+    return { name: name || asked, asked };
+  };
+  function cycleOf(row, key) {
+    const E = root.Engrave, PS = root.CharmNestPieceSwitch; if (!E || !E.jobsOf || !PS || !row) return null;
+    const jobs = (tryDo(() => E.jobsOf(row), []) || []).filter(j => j && !j.editingBack);
+    if (jobs.length < 2 || !jobs.every(j => DISC.test(String(j.slot || '')))) return null;
+    const pieces = PS.list(jobs, { of: jobs.length, fontOf: fontOfJob, isWorking: j => !!(E.isWorking && tryDo(() => E.isWorking(j), false)) });
+    // (DISCREAD's one record of each disc rides along: its index, tag, words and font are what the switch and the cell say)
+    const S = root.CharmNestEngraveSides, recs = S && S.pieceRecords ? tryDo(() => S.pieceRecords(jobs, { of: jobs.length }), []) || [] : [];
+    for (const p of pieces) p.rec = recs.find(r => r.key === p.key) || null;
+    const at = pieces.find(p => p.key === key) || pieces.find(p => OPEN_STATES.includes(p.state)) || pieces[0];
+    return { pieces, key: at.key };
+  }
+  /** The line's engraving said disc by disc ("Disc 1 · J · Approved"), for the one cell that sums it up; null for a line that is not counted discs. */
+  function discLines(row) {
+    const c = cycleOf(row, null); if (!c) return null;
+    return c.pieces.map(p => { const r = p.rec || p, words = r.words; return `${r.label || p.label}${words ? ' · ' + words : ''}${p.stage ? ' · ' + p.stage : ''}`; });
+  }
   /** The back records Engrave holds for a job (the written ones carry the saved picture): this piece's, the newest. */
   function backOf(job, poolId) {
     const all = (job.backs || []).filter(Boolean), mine = poolId ? all.filter(b => b.poolId === poolId) : [];
@@ -137,7 +164,8 @@
     const e = r.eng, j = r.job, S = root.CNEngravingSeals;
     const seals = j && S ? tryDo(() => S.list(j).map(s => s.id).join(','), '') : e.saved && S ? tryDo(() => S.list({ seals: e.saved.seals || [], approvedAt: e.saved.approvedAt, approvedBy: e.saved.approvedBy, state: e.saved.state }).map(s => s.id).join(','), '') : '';
     return JSON.stringify([e.kind, e.text, e.note, !!e.working, e.by, +e.at || 0, !!e.foreign, j && j.state, j && +j.approvedAt || 0, j && j.backPending || '', seals, j && idOf(j.fit), j && idOf(j.view),
-      e.back && (e.back.approvedAt || '') + (e.back.png || (e.back.outputs && e.back.outputs.png && e.back.outputs.png.url) || e.back.preview || '')]);
+      e.back && (e.back.approvedAt || '') + (e.back.png || (e.back.outputs && e.back.outputs.png && e.back.outputs.png.url) || e.back.preview || ''),
+      r.cycle && [r.cycle.key, r.cycle.pieces.map(p => [p.key, p.state, p.words, p.font.name, p.stage])]]);
   }
 
   /* ── the card on a page ── */
@@ -154,12 +182,21 @@
     if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
     const id = 'order-engraving:' + (++nextId);
     let ctx = Object.assign({}, ctx0), gone = false, sig = null, shown = null, busy = 0, seenAt = Date.now(), last = null, ro = null, attached = false;
+    // (a counted-disc line: the disc shown, picked on the switch or asked for by key; the card is the same card for each disc)
+    const keyDisc = c => (/#D\d{1,2}$/.test(String(c.key || '')) ? String(c.key) : null);
+    let picked = keyDisc(ctx);
+    /** What the card shows now, as data: for a counted-disc line the disc shown (its job, its first pool piece), else the line's piece, exactly as before. */
+    function read() {
+      const row = rowFor(ctx), c = ctx.cycle === false ? null : cycleOf(row, picked), p = c && c.pieces.find(x => x.key === c.key);
+      const r = engOf(c ? Object.assign({}, ctx, { key: c.key, poolId: (p.job.copies || [])[0] || ctx.poolId }) : ctx, seenAt);
+      r.cycle = c; return r;
+    }
     host.classList.add('owEng');
     // (the piece picked on the switcher is only told to EngraveLink: the same line on "All pieces" or on its own is the same card)
     const ident = c => [c.rid, c.key, c.poolId || ''].join('|');
     // (a card we hid ourselves has no box: it is seen through its parent, so a back that becomes real later is still drawn)
     const visible = () => { const n = host.hidden ? host.parentElement : host; return !!(n && host.isConnected && n.getClientRects().length); };
-    const target = r => ({ rid: String(ctx.rid || (r.row && r.row.order && r.row.order.receiptId) || ''), key: ctx.key || (r.row && r.row.key) || '', poolId: r.poolId || '', piece: ctx.piece || ctx.key || (r.row && r.row.key) || '' });
+    const target = r => ({ rid: String(ctx.rid || (r.row && r.row.order && r.row.order.receiptId) || ''), key: (r.cycle && r.cycle.key) || ctx.key || (r.row && r.row.key) || '', poolId: r.poolId || '', piece: (r.cycle && r.cycle.key) || ctx.piece || ctx.key || (r.row && r.row.key) || '' });
     const poke = () => { tryDo(() => root.RunCtl && root.RunCtl.poke && root.RunCtl.poke()); tryDo(() => root.OrderWin && root.OrderWin.nudge && root.OrderWin.nudge()); };
     const told = r => { if (typeof ctx.changed === 'function') tryDo(() => ctx.changed(r)); };
 
@@ -167,13 +204,17 @@
       const S = root.CNEngravingSeals;
       if (r.loading) { host.hidden = false; host.replaceChildren(waitNode('Reading the back engraving…')); return; }
       const eng = r.eng;
-      if (!eng || eng.kind === 'none') { host.hidden = true; host.replaceChildren(); return; }
+      // (a counted-disc line whose disc shown needs no engraving still draws its card, "No back engraving", when another disc has one: the switch is the way to it)
+      if (!eng || (eng.kind === 'none' && !(r.cycle && r.cycle.pieces.some(p => p.state !== 'none')))) { host.hidden = true; host.replaceChildren(); return; }
       host.hidden = false;
-      const card = doc().createElement('div'); card.className = 'owEngCard'; card.dataset.orderEngraving = eng.kind; card.setAttribute('role', 'group'); card.setAttribute('aria-label', 'Back engraving of this piece');
-      card.innerHTML = S.panel(Object.assign({}, eng, { pieceLabel: ctx.label || '', pieceMeta: ctx.meta || '', compact: !!ctx.compact }));
+      const card = doc().createElement('div'); card.className = 'owEngCard'; card.dataset.orderEngraving = eng.kind; card.setAttribute('role', 'group');
+      const at = r.cycle && r.cycle.pieces.find(p => p.key === r.cycle.key);
+      card.setAttribute('aria-label', at ? `Back engraving of ${at.name} of ${r.cycle.pieces.length}` : 'Back engraving of this piece');
+      const shownEng = Object.assign({}, eng, { pieceLabel: ctx.label || '', pieceMeta: ctx.meta || '', compact: !!ctx.compact, cycle: r.cycle || undefined });
+      card.innerHTML = S.panel(shownEng);
       host.replaceChildren(card);
-      // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again)
-      S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b), stale: () => refresh(true, true), zoom: { id: 'ow:eng', key: ident(ctx) } });
+      // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again; each disc its own)
+      S.wirePanel(card, shownEng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b), stale: () => refresh(true, true), pick: k => pickDisc(k), zoom: { id: 'ow:eng', key: ident(ctx) + (r.cycle ? '|' + r.cycle.key : '') } });
       // every wait is said: the picture still coming, the words still being read
       const pv = card.querySelector('.pv'), im = pv && pv.querySelector('img');
       if (im && !im.complete) {
@@ -187,7 +228,7 @@
     function refresh(force, quiet) {
       if (gone || !host.isConnected) return;
       attached = true;
-      const r = engOf(ctx, seenAt), s = sigOf(r) + '|' + (ctx.label || '') + '|' + (ctx.meta || '') + '|' + (ctx.compact ? 1 : 0), has = !!(r.loading || r.eng && r.eng.kind !== 'none');
+      const r = read(), s = sigOf(r) + '|' + (ctx.label || '') + '|' + (ctx.meta || '') + '|' + (ctx.compact ? 1 : 0), has = !!(r.loading || r.eng && r.eng.kind !== 'none' || r.cycle && r.cycle.pieces.some(p => p.state !== 'none'));
       // (this card's own approval is on its way: the card is left as it is until the approval stands, i.e. the stamp has landed; the saving of the back
       //  file that follows can take seconds, and the card says Approved, with that saving said under it, as soon as the stamp is down)
       if (busy && !(r.job && DONE.includes(r.job.state))) return;
@@ -204,7 +245,7 @@
     }
     let asking = false;
     async function approve(btn) {
-      const r = last || engOf(ctx, seenAt), job = r.job, S = root.CNEngravingSeals; if (!job || !btn || !S) return;
+      const r = last || read(), job = r.job, S = root.CNEngravingSeals; if (!job || !btn || !S) return;
       // (a card that is out of date approves nothing: only a placement waiting for approval, which is what the button offered, is approved)
       if (job.state !== 'review') { refresh(false, true); return; }
       // the name kept on this computer, else the small name bar inside this window (never a browser pop-up on the order window); a press goes on at
@@ -240,14 +281,19 @@
     }
     async function openEngrave(btn) {
       // (the button's own wait, a small labelled spinner, is the card's: CNEngravingSeals.wirePanel)
-      const r = last || engOf(ctx, seenAt), t = target(r), link = root.EngraveLink;
+      const r = last || read(), t = target(r), link = root.EngraveLink;
       try {
         if (link && typeof link.open === 'function') await link.open(t);
         else await fallbackOpen(r, t);
       } catch (e) { say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); }
     }
+    /** A press on a disc's button, or Back / Next: that disc is drawn (not while a seal is being pressed on one of them: it is drawn once the stamp has landed). */
+    function pickDisc(k) {
+      if (gone || !k || (last && last.cycle && last.cycle.pieces.some(p => p.job && p.job.stamping))) return;
+      picked = String(k); refresh(true, true);
+    }
     function reset() {
-      busy = 0; sig = null; shown = null; last = null; seenAt = Date.now();
+      busy = 0; sig = null; shown = null; last = null; seenAt = Date.now(); picked = keyDisc(ctx);
       host.replaceChildren(); host.hidden = true;
     }
     const handle = {
@@ -328,7 +374,8 @@
     if (!ctx0 || Array.isArray(ctx0.pieces) || ctx0.poolId) return ctx0;
     const E = root.Engrave; if (!E || !E.piecesOf) return ctx0;
     const row = rowFor(ctx0), ps = row ? tryDo(() => E.piecesOf(row), null) : null;
-    return ps && ps.length > 1 ? Object.assign({}, ctx0, { pieces: ps }) : ctx0;
+    // (a counted-disc line is ONE card that cycles through its discs: mountOne; a pair keeps a card for each ear)
+    return ps && ps.length > 1 && !tryDo(() => cycleOf(row, null), null) ? Object.assign({}, ctx0, { pieces: ps }) : ctx0;
   }
   const mount = (host, ctx0) => { const ctx = withSlots(ctx0); return ctx && Array.isArray(ctx.pieces) && ctx.pieces.length > 1 ? mountList(host, ctx) : mountOne(host, ctx); };
   /** The way to Engrave while EngraveLink is not here: the Sheet tab's own (close the window, open that order's engraving). */
@@ -345,6 +392,7 @@
     mount,
     unmount: host => { if (host && host._orderEngraving) host._orderEngraving.destroy(); },
     engOf: ctx => engOf(ctx || {}, 0),
-    version: 1
+    cycleOf, discLines,
+    version: 2
   };
 })(typeof window !== 'undefined' ? window : globalThis);

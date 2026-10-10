@@ -95,9 +95,16 @@
     const pct=Math.round((+job.confidence || 0)*100);
     return `Read from ${SOURCE[job.source] || job.source}${pct>0?` · ${pct}% sure`:''}`;
   }
+  /** The counted discs of one order, one at a time (Paul, 10 Oct 2026): the very switch of the Engrave editor (charm-nest-piece-switch.js: one button for each disc with its words, its font by name
+   *  and where it stands) and Back / Next round the discs. `c` = { pieces (CharmNestPieceSwitch.list of the line's discs), key (the disc shown) }. Nothing here for any other line: no `cycle`, no markup. */
+  function cycleHtml(c){
+    const PS=root?.CharmNestPieceSwitch;if(!c || !PS || !Array.isArray(c.pieces) || c.pieces.length<2)return '';
+    const cur=PS.cursor(c.pieces,c.key);if(!cur.current)return '';
+    return `<div class="egCycle" data-cycle>${PS.html(c.pieces,c.key,{fonts:true})}<span class="nav" role="group" aria-label="Back and next disc"><button type="button" class="btn ghost xs" data-a="discPrev" title="the previous disc: ${esc(cur.prev.name)}">‹ Back</button><button type="button" class="btn ghost xs" data-a="discNext" title="the next disc: ${esc(cur.next.name)}">Next ›</button></span></div>`;
+  }
   /** Both sheet inspectors and the order window use exactly the same back preview, words, approval and historical seals. */
   function panel(e={kind:'none'}){
-    const kind=e.kind || 'none',status=STATUS[kind] || '',compact=!!e.compact;
+    const kind=e.kind || 'none',status=STATUS[kind] || '',compact=!!e.compact,cycle=cycleHtml(e.cycle);
     const all=list(record(e)),ap=canApprove(e),done=kind==='approved' || kind==='skipped';
     const sealsHtml=all.length && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="${all.length}" role="group" aria-label="Engraving approval history">${all.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';
     // (the seals rest on the button once it is approved; before that an earlier approval's seals sit below, so no seal covers the words "Approve engraving": the new one is pressed on the button)
@@ -110,7 +117,7 @@
     else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(ap.why)}</span>`;
     const open=kind==='none'?'':`<button type="button" class="btn ${kind==='words'?'gold':'ghost'} sm egOpen" data-e="engrave">${done?'View in Engraving':'Fix in Engraving'} <span aria-hidden="true">→</span></button>`;
     const acts=kind==='words'?open+approve:approve+open;
-    if(kind==='none')return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top"><b>No back engraving</b></div></div>`;
+    if(kind==='none')return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top">${cycle}<b>No back engraving</b></div></div>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
     const lbl=kind==='approve' || kind==='approved'?'Words on the back':'Words as read',from=kind==='approved'?'':readFrom(e);
     const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}</div>`
@@ -121,7 +128,7 @@
     const failKey=e.job?.key,failed=kind==='approve' && failKey?fails.get(failKey):'';if(kind!=='approve' && failKey)fails.delete(failKey);
     const forPiece=e.pieceLabel?`<span class="egFor"><b>${esc(e.pieceLabel)}</b>${e.pieceMeta?` <small>${esc(e.pieceMeta)}</small>`:''}</span>`:'';
     const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
-    return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"><div class="top egTop">${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
+    return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for
@@ -131,7 +138,7 @@
     try{Z.attach(slot,{id:(zoom&&zoom.id)||'eng',key:((zoom&&zoom.key)||job?.key||'')+(fitted?'|fit':'|png'),label:'Back engraving preview',maxPx:1800,
       hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=root.Engrave.renderBack(job,size,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');return{el:cv,px:size};}:undefined});}catch(_){}
   }
-  function wirePanel(host,e,{approve,open,imageUrl,zoom,stale}={}){
+  function wirePanel(host,e,{approve,open,imageUrl,zoom,stale,pick}={}){
     // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
     // before the stamp is said on the button, with a small spinner; a refusal gives the button back as it was.
     // A refusal says why where the button is: the line a toast would have said is shown in the card (a toast sits under a modal order window).
@@ -167,6 +174,14 @@
       const back=()=>{if(btn.isConnected){btn.disabled=false;btn.removeAttribute('aria-busy');btn.innerHTML=was;}};
       run.then(back,err=>{console.warn('engraving card: open',err);back();});
     });
+    // The discs of a counted order, one at a time: a press on a disc's button, or Back / Next, asks the host to show that disc (pick(jobKey)); the host draws the card again for it.
+    const cyc=host.querySelector('[data-cycle]'),PS=root?.CharmNestPieceSwitch;
+    if(cyc && PS && pick && e.cycle){
+      const cur=PS.cursor(e.cycle.pieces,e.cycle.key);
+      PS.bind(cyc,k=>{if(k!==e.cycle.key)pick(k);});
+      cyc.querySelector('[data-a=discPrev]')?.addEventListener('click',()=>{if(cur.prev && cur.prev.key!==e.cycle.key)pick(cur.prev.key);});
+      cyc.querySelector('[data-a=discNext]')?.addEventListener('click',()=>{if(cur.next && cur.next.key!==e.cycle.key)pick(cur.next.key);});
+    }
     const slot=host.querySelector('[data-engraving-preview]');if(!slot)return;
     const job=e.job,img=e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.

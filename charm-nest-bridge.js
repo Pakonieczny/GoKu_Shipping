@@ -5103,17 +5103,25 @@ const Engrave = window.Engrave = (() => {
   }
   // the order timeline: a line read as needing a back engraving (once per line and words), and a person's decision on
   // the words (confirmed, edited, none, skipped: cut plain)
+  // which disc of a counted line a job is, for the log lines that name the engraving ("Disc 2 of 3"); "" for a single, an ear or a plain quantity-N line (their lines read as they always did)
+  function discSay(job) {
+    try {
+      if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return "";
+      const S = SIDES(), r = S && S.pieceRecord ? S.pieceRecord(job) : null;
+      return r && r.of > 1 ? `Disc ${r.index} of ${r.of}` : `Disc ${String(job.slot).slice(1)}`;
+    } catch (_) { return ""; }
+  }
   function needEvent(job) {
     try {
       if (!job || !job.row || !job.row.engrave || !job.row.engrave.needed) return;
       const t = String(job.text || "").trim();
-      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: (t ? `Back engraving: “${t.replace(/\n/g, " / ")}”` : "Back engraving: the words are to be confirmed").slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state } });
+      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: ((d => (t ? `Back engraving${d ? " · " + d : ""}: “${t.replace(/\n/g, " / ")}”` : `Back engraving${d ? " · " + d : ""}: the words are to be confirmed`))(discSay(job))).slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state } });
     } catch (_) {}
   }
   function wordsEvent(job, by, was, how) {
     try {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
-      const text = how === "none" ? `No engraving — decided by ${by}` : how === "skipped" ? `Engraving skipped by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"} by ${by}: “${t.replace(/\n/g, " / ")}”`;
+      const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", text = how === "none" ? `No engraving${of} — decided by ${by}` : how === "skipped" ? `Engraving skipped${of} by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
       TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
     } catch (_) {}
   }
@@ -7890,7 +7898,7 @@ const Sets = window.Sets = (() => {
     const spans = window.SetEdit && SetEdit.spanLines ? SetEdit.spanLines(set.orders) : [];
     if (spans.length) { y -= 6; line("Orders on more than one sheet (they stay in one set)", { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line("Engraving", { font: bold, size: 11 });
-    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
+    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) + (CharmNestPairLabels.discWord ? CharmNestPairLabels.discWord(b) : "") : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");
     y -= 6; line("Labels", { font: bold, size: 11 }); files.forEach(f => line(`${f.label}  ${f.path || "(not uploaded)"}`));
     // released for labels: a sheet without its .pdf yet gets it now, copied from its .ai inside the bucket (op_sheetPdf)
@@ -12768,6 +12776,13 @@ const OrderWin = window.OrderWin = (() => {
     const pv = byId("owPrev"), nx = byId("owNext");
     pv.hidden = nx.hidden = !on; pv.disabled = i >= 0 ? i <= 0 : W.at <= 0; nx.disabled = i >= 0 ? i >= list.length - 1 : W.at >= list.length;
   }
+  /** The "Engraving" cell of the facts grid: the line's state and words, and the seals. A counted-disc line says it disc by disc ("Disc 1 · J · Approved" / "Disc 2 · Q · Placement to check")
+   *  with the seals of every disc, not of the one disc Engrave.jobOf gives; every other line exactly as it always read. `wait`: the word when the line has no state yet. */
+  function engCellHtml(r, wait, job) {
+    const ds = window.OrderEngraving && OrderEngraving.discLines ? tryDo(() => OrderEngraving.discLines(r)) : null;
+    if (ds) return `<span>${ds.map(esc).join("<br>")}</span>${CNEngravingSeals.html(r.engrave)}`;
+    return `<span>${esc((r.engrave.approved ? "approved" : r.engrave.state || wait) + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(job || Engrave.jobOf(r) || r.engrave)}`;
+  }
   /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
    *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
    *  the one of the line shown and swaps with the piece (nothing of the piece before stays); an order of several names the piece on its
@@ -12850,7 +12865,7 @@ const OrderWin = window.OrderWin = (() => {
       (sheetCell ? mcell("Sheet", sheetCell) : "") +
       mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
-      (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i><span>${esc((r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(Engrave.jobOf(r) || r.engrave)}</div>` : "") +
+      (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i>${engCellHtml(r, "waiting")}</div>` : "") +
       (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
@@ -13538,7 +13553,7 @@ const OrderWin = window.OrderWin = (() => {
       const meta=byId('owMeta');
       let cell=meta && [...meta.querySelectorAll('.m')].find(m=>m.querySelector('i')?.textContent==='Engraving');
       if(meta && !cell){cell=el('div','m');meta.appendChild(cell);}
-      if(cell){const markup=`<i>Engraving</i><span>${esc((r.engrave.approved?'approved':r.engrave.state || 'Approval history')+(r.engrave.text?' · '+r.engrave.text:''))}</span>${CNEngravingSeals.html(job || r.engrave)}`;if(cell._history!==markup){cell.innerHTML=markup;cell._history=markup;}}
+      if(cell){const markup=`<i>Engraving</i>${engCellHtml(r,'Approval history',job)}`;if(cell._history!==markup){cell.innerHTML=markup;cell._history=markup;}}
     }
     const n = nowOf(r), pill = byId("owNow");
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
@@ -13733,7 +13748,7 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and ringed, every other charm on the sheet
      drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
-  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, shown: null, pools: null, focus: null, finding: null, drawing: null, fade: null };
+  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, shown: null, pools: null, focus: null, disc: null, finding: null, drawing: null, fade: null };
   // the piece scope of this view (Paul, 5 Oct, point 5: the Sheet view answers for ONE piece, else for all of them, and
   // never shows another piece's sheet for a piece that is on none): fit picks the sheet to open, ok says whether sheet
   // i of the list belongs to the scope, pick finds a sheet by its id or a piece of it, count words the tab's count, pin
@@ -14309,11 +14324,16 @@ const OrderWin = window.OrderWin = (() => {
     if (!OP) for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
     if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1, loading: !SV.list });
     const pieces = [...items.values()];
-    const job=x0?.eng?.job || Engrave.jobOf(lr),re=lr.engrave;
-    const eng=job ? {job,back:x0?.eng?.back,saved:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:x0?.eng?.note}
-      : x0?.eng?.kind && x0.eng.kind!=="none" ? {...x0.eng,saved:re || x0.eng.saved}
+    let job=x0?.eng?.job || Engrave.jobOf(lr),xeng=x0?.eng;const re=lr.engrave;
+    // (the discs of a counted order, one at a time: this card is the disc of the charm in focus; a disc that sits on no sheet here has no charm to focus, so the switch shows its card alone, SV.disc, until another charm is focused)
+    const OEc=window.OrderEngraving,cyc0=OEc&&OEc.cycleOf?tryDo(()=>OEc.cycleOf(lr,job&&job.key)):null,pick0=cyc0&&SV.disc&&SV.disc.focus===SV.focus?cyc0.pieces.find(p=>p.key===SV.disc.key):null;
+    if(pick0 && !mine.some(x=>x.poolId && (pick0.job.copies||[]).includes(x.poolId))){job=pick0.job;xeng=null;}
+    const cyc=cyc0&&job?tryDo(()=>OEc.cycleOf(lr,job.key)):cyc0;
+    const eng=job ? {job,back:xeng?.back,saved:cyc?undefined:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:xeng?.note}
+      : xeng?.kind && xeng.kind!=="none" ? {...xeng,saved:re || xeng.saved}
       : re ? {kind:re.needed?(re.approved?"approved":"words"):re.state==="skipped"?"skipped":"none",text:re.text,by:re.approvedBy,at:re.approvedAt,saved:re}
       : {kind:"none"};
+    if(cyc)eng.cycle=cyc;
     const engHtml=CNEngravingSeals.panel(eng);
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
     const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
@@ -14345,9 +14365,19 @@ const OrderWin = window.OrderWin = (() => {
         const i = it.sheetId ? list.findIndex(s => s.id === it.sheetId) : -1; if (i >= 0) { SV.at = i; SV.focus = it.poolId; sheetDraw(); }
       };
     });
+    // a press on a disc of the switch (or Back / Next): that disc's charm is focused, on this sheet or on the sheet it is on, exactly as a press on its row of "This order" does
+    const pickDisc=k=>{
+      const p=cyc&&cyc.pieces.find(q=>q.key===k);if(!p)return;
+      const pid=(p.job.copies||[])[0]||"",it=pieces.find(q=>q.poolId===pid);
+      SV.disc=null;
+      if(it&&it.here){SV.focus=pid;if(SV.info){SV.info.focus(pid);paintPanel(SV.info);}return;}
+      const i=it&&it.sheetId?list.findIndex(s=>s.id===it.sheetId):-1;
+      if(i>=0){SV.at=i;SV.focus=pid;sheetDraw();return;}
+      SV.disc={key:k,focus:SV.focus};paintPanel(SV.info);
+    };
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
-      imageUrl:url=>/^https?:/.test(url)?cors(url):url,
-      zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')},
+      imageUrl:url=>/^https?:/.test(url)?cors(url):url,pick:pickDisc,
+      zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')+(cyc?'|'+cyc.key:'')},
       stale:()=>{if(SV.info)paintPanel(SV.info);},
       approve:async ap=>{
         // (the name kept on this computer, else the small name bar in this window: never a browser pop-up on the order window)
@@ -14359,7 +14389,7 @@ const OrderWin = window.OrderWin = (() => {
           // (the card turns Approved as soon as the stamp is down, the saving of the back file said under it; not when that saving is over)
           await CNEngravingSeals.stamped(eng.job,run);
           if(!["approved","written"].includes(eng.job.state)){await run;ap.disabled=false;return;}
-          if(x0)x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
+          if(x0 && (!cyc || x0.eng?.job===eng.job))x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
           if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
           await run;
         }catch(e){if(!["approved","written"].includes(eng.job.state)){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}}
