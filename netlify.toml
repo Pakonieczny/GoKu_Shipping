@@ -70,6 +70,16 @@
 [functions."etsyMailReapers"]
   schedule = "*/5 * * * *"
 
+# ─── Customer-mail link monitor (MAILROBUST, 10 Oct 2026) ──────────────────
+# etsyMailLinkWatchdog judges the whole customer-mail line every 5 minutes (helper
+# check-in, Gmail watcher and sign-in, page reads, scrape and send queues, the
+# reaper's catch-up pass) and writes EtsyMail_Config/linkHealth for the inbox's
+# banner and a summary into the sorter's bell. It also runs the catch-up pass
+# itself when the reaper has not. Separate from the reaper on purpose: it is the
+# one that notices the reaper stopped. About 12 reads and 2 writes a run.
+[functions."etsyMailLinkWatchdog"]
+  schedule = "*/5 * * * *"
+
 # ─── v2.0 Sales Mode: Step 1 — Catalog sync ─────────────────────────────────
 # etsyMailListingsCatalog pulls active listings via Etsy API and writes to
 # EtsyMail_Listings. The cron now runs ONCE DAILY at 04:00 UTC (midnight EDT
