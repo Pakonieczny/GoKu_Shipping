@@ -199,13 +199,15 @@ const ListMedia = (() => {
   const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
-  const earPair = row => { try { return !!row && !row.spec?.noDesign && !earDesign(row, "L") && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };   // (a line of TWO separate designs is not this picture: it is drawn per ear, see earDesign)
+  const earPair = row => { try { return !!row && !row.spec?.noDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
+  // (a line of TWO separate designs, the Left's and the Right's (OPTTWO: Tennis Ball Left, Tennis Racket Right): its picture is the two designs side by side, each from its own master file; the SKU of the Right's design, else '')
+  const twoOf = row => { try { return !!row && !row.spec?.noDesign && earPairRow(row) && earDesign(row, "L") ? earDesign(row, "R") : ""; } catch (_) { return ""; } };
   // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
   /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that reads one way, or faces the other way, is not): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
   const earMirror = (row, side) => { try { const e = Master.entryFor(row?.spec?.designSku || row?.line?.sku || ''); return !!(e && (side === 'L' || side === 'R') && earTurn(row, side, e)); } catch (_) { return false; } };
   const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false,zoomKey=key) {
@@ -279,6 +281,15 @@ const ListMedia = (() => {
     // (a MATCHING earring pair line, asked for as the line and not for one ear: the Left and the Right side by side, the Right turned over; drawn from the master design, never from one pool piece, which may already be the turned one;
     //  not a line of TWO separate designs, which has no one design to draw twice)
     const both=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true)) && matchPair(row);
+    // (a line of TWO separate designs, asked for as the line: the Left's design and the Right's side by side, each from its own master file, the Right turned by its own drawing's direction; if either cannot be had the line falls back to the one picture it had)
+    const sr=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true))?twoOf(row):'';
+    if(sr){
+      try{
+        const sl=earDesign(row,'L'),entryOf=async k=>{let e=Master.entryFor(k);if(!e){if(!catalog.has(k))catalog.set(k,Master.fetchEntry(k).finally(()=>catalog.delete(k)));e=await catalog.get(k);}return e;};
+        const [el,er]=await Promise.all([entryOf(sl),entryOf(sr)]);
+        if(el && er)return await Pool.masterTwo(el,er,row.spec?.size,px,earTurn(row,'R',er));
+      }catch(_){/* the one picture the line always had */}
+    }
     const own=opts?earDesign(row,opts.side):'';
     const charm=(pairRow(row) || sideOne || both || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
@@ -312,15 +323,15 @@ const ListMedia = (() => {
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece && matchPair(row)?'|pair':'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
-    const both=matchPair(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[])));
+    const both=matchPair(row),two=twoOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -2861,6 +2872,18 @@ const Pool = window.Pool = (() => {
     const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
     return P.frontPreview ? P.frontPreview(charm,px,opts) : Engrave.renderFront(charm,px,opts);
   }
+  /** The picture of an earring line of TWO separate designs (the Left's design and the Right's), side by side in one picture (charm-nest-pair-thumb.js, opts.pair with opts.other): kept in memory under both files. */
+  async function masterTwo(entryL,entryR,size,px,turnRight) {
+    const pathL=sizeEntry(entryL,size)?.aiPath,pathR=sizeEntry(entryR,size)?.aiPath;
+    if(!pathL || !pathR)throw new Error("No design file");
+    const key="two:"+(turnRight?"m":"")+":"+(px || 220)+":"+pathL+"|"+pathR;
+    if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
+    const charmOf=async (entry,path)=>{const cached=B.pool.sources.get(path);return cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;};
+    const task=Promise.all([charmOf(entryL,pathL),charmOf(entryR,pathR)]).then(([cl,cr])=>{const ro={pair:true,other:cr,turnRight:!!turnRight};return P.frontPreview?P.frontPreview(cl,px || 220,ro):Engrave.renderFront(cl,px || 220,ro);});
+    masterPreviewCache.set(key,task);
+    while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
+    try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
+  }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
     const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
@@ -3323,7 +3346,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size)) n = 2 * q;   // (the master entry says two bodies; the charm is not traced yet)
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -5663,7 +5686,7 @@ const Engrave = window.Engrave = (() => {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
     // a mismatched pair design: both bodies side by side with Left / Right chips (charm-nest-pair-thumb.js); any other charm is drawn below, unchanged
-    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
+    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, other: opts && opts.other, turnRight: opts && opts.turnRight, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
     if (pairCv) return pairCv;
     const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }

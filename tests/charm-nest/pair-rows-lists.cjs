@@ -16,6 +16,8 @@ const rect = (x0, y0, x1, y1, extra) => Object.assign({ kind: 'path', closed: tr
 const eng = (x0, y0, x1, y1, rgb) => Object.assign(rect(x0, y0, x1, y1), { layer: 'ENGRAVE', strokeRGB: rgb || [1, 0, 0] });
 const boot = x0 => { const o = rect(x0, 0, x0 + 24, 26, { subpaths: [[['m', [x0, 0]], ['l', [x0 + 24, 0]], ['l', [x0 + 24, 10]], ['l', [x0 + 8, 10]], ['l', [x0 + 8, 26]], ['l', [x0, 26]], ['h']]] }); return { o, members: [o, eng(x0 + 2, 2, x0 + 6, 20, [0, 0, 1])] }; };
 const bootCharm = (name, extra) => { const b = boot(0); return Object.assign({ id: 'c-' + name, name, sku: name, outline: b.o, members: b.members, bbox: [0, 0, 24, 26], strokePt: .25, centerPt: [12, 13] }, extra || {}); };
+const flag = x0 => { const o = rect(x0, 0, x0 + 14, 30, { subpaths: [[['m', [x0, 0]], ['l', [x0 + 14, 0]], ['l', [x0 + 14, 30]], ['l', [x0 + 6, 30]], ['l', [x0 + 6, 12]], ['l', [x0, 12]], ['h']]] }); return { o, members: [o, eng(x0 + 8, 2, x0 + 12, 24, [0, 0, 1])] }; };
+const flagCharm = (name, extra) => { const b = flag(0); return Object.assign({ id: 'c-' + name, name, sku: name, outline: b.o, members: b.members, bbox: [0, 0, 14, 30], strokePt: .25, centerPt: [7, 15] }, extra || {}); };
 const mitten = (x0, rgb, h) => { const o = rect(x0, 0, x0 + 16, 26, { subpaths: [[['m', [x0 + 4, 0]], ['l', [x0 + 16, 0]], ['l', [x0 + 16, 26]], ['l', [x0 + 4, 26]], ['l', [x0 + 4, 14]], ['l', [x0, 12]], ['l', [x0, 8]], ['l', [x0 + 4, 6]], ['h']]] }); return { o, members: [o, eng(x0 + 7, 3, x0 + 14, 3 + h, rgb)] }; };
 const mA = mitten(0, [1, 0, 0], 5), mB = mitten(22, [0, 0, 1], 9);
 const mittens = () => ({ id: 'm', name: 'MISMATCHED_7134', outline: mB.o, members: [mB.o, ...mB.members.slice(1), mA.o, ...mA.members.slice(1)], bbox: [0, 0, 38, 26], strokePt: .25, centerPt: [19, 13] });
@@ -78,15 +80,41 @@ PT.use(Pair);
   ok(PT.canvasFor(fakeP, bootCharm('PR_BOOT'), { size: 220, padPt: 3, bg: '#fff', pair: true }) === null && PT.canvasFor(null, bootCharm('PR_BOOT'), { size: 220, pair: true, makeCanvas: r.make }) === null, 'no canvas maker or no drawer: null, never a throw');
 }
 
+/* ── 1b · a line of TWO separate designs: the Left's design and the Right's side by side ── */
+{
+  const tp = PT.twoPlan(bootCharm('A'), flagCharm('B'), { turnRight: true });
+  ok(tp && tp.bodies.length === 2 && tp.bodies[0].side === 'L' && tp.bodies[1].side === 'R', 'two one-body designs have a Left and a Right plan');
+  ok(tp.bodies[0].bbox[2] - tp.bodies[0].bbox[0] === 24 && tp.bodies[1].bbox[2] - tp.bodies[1].bbox[0] === 14, 'each keeps its own width (the Left 24, the Right 14: two different designs)');
+  ok(tp.bodies[1].bbox[0] > tp.bodies[0].bbox[2], 'the Right sits to the right of the Left, with a gap');
+  ok(tp.bodies.map(b => b.mirror).join() === 'false,true' && PT.twoPlan(bootCharm('A'), flagCharm('B'), {}).bodies.map(b => b.mirror).join() === 'false,false', 'the Right is turned only when the caller says its own drawing needs it');
+  ok(tp.frame[3] === 30 && tp.bodies[0].bbox[1] === 2 && tp.bodies[1].bbox[1] === 0, 'the shorter design is centred on the taller (frame 30 high, the Left 26 starts at 2)');
+  ok(PT.twoPlan(bootCharm('A'), threeCharm(), {}) === null && PT.twoPlan(bootCharm('A'), mittens(), {}) === null && PT.twoPlan(bootCharm('A'), null, {}) === null && PT.twoPlan(null, flagCharm('B'), {}) === null, 'a design of several bodies, or none, cannot be one ear of two designs');
+  let r = recorder(); drew = [];
+  const cv = PT.canvasFor(fakeP, bootCharm('A'), { size: 220, padPt: 3, bg: '#fff', pair: true, other: flagCharm('B'), turnRight: true, makeCanvas: r.make });
+  ok(cv && cv.width <= 220 && cv.height <= 220, 'the picture stays inside the size asked for');
+  ok(drew.length === 2 && drew[0].c.name === 'A' && drew[1].c.name === 'B' && drew[0].k === drew[1].k, 'the Left design and the Right design, each drawn once at one scale: ' + drew.map(d => d.c.name));
+  ok(drew[1].p[0] > drew[0].q[0], 'the Right design starts to the right of where the Left ends');
+  ok(turns(r.log) === 1 && chipsOf(r.log).join() === 'Left,Right', 'the Right is turned over and a Left and a Right chip are drawn: ' + turns(r.log) + ' ' + chipsOf(r.log));
+  r = recorder(); drew = [];
+  PT.canvasFor(fakeP, bootCharm('A'), { size: 220, padPt: 3, bg: '#fff', pair: true, other: flagCharm('B'), makeCanvas: r.make });
+  ok(drew.length === 2 && turns(r.log) === 0, 'a Right design that already faces right is not turned');
+  r = recorder(); drew = [];
+  ok(PT.canvasFor(fakeP, bootCharm('A'), { size: 220, padPt: 3, bg: '#fff', pair: true, other: threeCharm(), makeCanvas: r.make }) === null && drew.length === 0, 'a Right design that cannot be an ear: the maker draws the Left as it always did');
+  r = recorder(); drew = [];
+  PT.canvasFor(fakeP, bootCharm('A'), { size: 220, padPt: 3, bg: '#fff', pair: true, other: flagCharm('B'), side: 'R', mirror: true, makeCanvas: r.make });
+  ok(drew.length === 1 && drew[0].c.name === 'A', 'one ear asked for by side is still that one piece, never the pair');
+}
+
 /* ── 2 · the wiring, read from the sources ── */
 {
   const bg = read('charm-nest-background.js'), wk = read('charm-nest-compute-worker.js'), br = read('charm-nest-bridge.js'), html = read('charm-nest-1.html');
   ok(/opts\.pair===true/.test(bg) && /pair:opts\.pair===true\?true:undefined/.test(bg) && /facing:opts\.pair===true\?opts\.facing:undefined/.test(bg), 'the page proxy hands pair, facing and sku to the worker');
   ok(/pair:a\.opts&&a\.opts\.pair,facing:a\.opts&&a\.opts\.facing,sku:a\.opts&&a\.opts\.sku/.test(wk), 'the worker hands them to the component');
   ok(/pair: opts && opts\.pair, facing: opts && opts\.facing, sku: opts && opts\.sku/.test(br), 'renderFront (no worker) hands them to the component');
-  ok(br.includes('const earPair = row =>') && br.includes('${earPair(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}'), 'the Vector design caption says Left + Right for every earring pair line (a line of two separate designs keeps its own wording)');
+  ok(br.includes('const earPair = row =>') && br.includes('${earPair(row) ? " · Left + Right" : ""}') && !br.includes('" · Left ear"'), 'the Vector design caption says Left + Right for every earring pair line, a line of two separate designs too');
+  ok(/other:opts\.pair===true&&opts\.other\?charm\(opts\.other\):undefined,turnRight:/.test(bg) && /other:a\.opts&&a\.opts\.other,turnRight:a\.opts&&a\.opts\.turnRight/.test(wk) && /other: opts && opts\.other, turnRight: opts && opts\.turnRight/.test(br), 'the second design (and which way the Right is turned) goes through the page proxy, the worker and the no-worker fallback');
   ok(/const both=!\(opts && \(opts\.side==='L' \|\| opts\.side==='R' \|\| opts\.highlight \|\| opts\.piece===true\)\) && matchPair\(row\)/.test(br) && /const matchPair = row => .*!pairRow\(row\).*earPairRow\(row\)/.test(br), 'the line picture is the pair only when no single ear is asked for');
-  ok(/!opts\?\.highlight && !opts\?\.side && !opts\?\.piece && matchPair\(row\)\?'\|pair'/.test(br), 'a pair line is its own picture key');
+  ok(/!opts\?\.highlight && !opts\?\.side && !opts\?\.piece\?\(matchPair\(row\)\?'\|pair':twoOf\(row\)\?'\|two:'/.test(br), 'a pair line (one design, or two) is its own picture key');
   ok(html.includes('.comparePair figure:first-child figcaption{white-space:normal'), 'the longer caption wraps under its picture instead of running into the Etsy listing caption');
   ok(/"charm-nest-pair-thumb\.js"/.test(read('scripts/build-public.cjs')), 'the public build ships the component (it already did)');
 }
@@ -119,7 +147,7 @@ PT.use(Pair);
   const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 12, 17) / 1000);
   const line = (tid, sku, title, q, vars) => ({ transactionId: tid, listingId: '19100' + tid.slice(-5), sku, title, quantity: q, expectedShipDate: SHIP, variations: (vars || [['Metal', 'Gold Filled']]).map(([name, value]) => ({ name, value })) });
   const order = (rid, buyer, lines) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
-  const A = '4300000001', B2 = '4300000002', C = '4300000003', D = '4300000004', E = '4300000005', F = '4300000006', G = '4300000007', H = '4300000008';
+  const I = '4300000009', A = '4300000001', B2 = '4300000002', C = '4300000003', D = '4300000004', E = '4300000005', F = '4300000006', G = '4300000007', H = '4300000008';
   const orders = [
     order(A, 'Stud Pair', [line('9001', 'PR_BOOT', 'Boot stud earrings', 1)]),
     order(B2, 'Two Pairs', [line('9002', 'PR_BOOT', 'Boot stud earrings (2 pairs)', 2)]),
@@ -128,7 +156,8 @@ PT.use(Pair);
     order(E, 'Plain Charm', [line('9005', 'PR_CHARM', 'Boot charm necklace', 1, [['Metal', 'Gold Filled']])]),
     order(F, 'Plain Four', [line('9006', 'PR_CHARM', 'Boot charm necklace', 4, [['Metal', 'Gold Filled']])]),
     order(G, 'Single Ear', [line('9007', 'PR_BOOT', 'Custom Single Replacement Boot Earring Left Ear', 1)]),
-    order(H, 'Discs', [line('9008', 'PR_CHARM', 'Initial Disc Necklace with Satellite Chain', 1, [['Number of Discs / Metal', '3 discs - gold']])])
+    order(H, 'Discs', [line('9008', 'PR_CHARM', 'Initial Disc Necklace with Satellite Chain', 1, [['Number of Discs / Metal', '3 discs - gold']])]),
+    order(I, 'Two Designs', [line('9009', 'Huggie Hoops-Tennis Ball/Racket3', 'Mismatched Tennis Ball and Raquet Huggie Hoops Charm, Handcrafted in Gold Vermeil, Silver, Solid 14k Gold | Handcrafted Sports Jewelry', 1, [['METAL CHOICE', 'Silver'], ['HOOP SIZE', '8.5mm']])])
   ];
   const browser = await chromium.launch({ executablePath: chromePath, args: ['--no-sandbox'] });
   const errors = [];
@@ -140,7 +169,7 @@ PT.use(Pair);
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.OrderPieces && window.CharmNestPair && window.PieceMedia && CN.S.cloud.ok === true && B.master.loadedAt > 0 && !B.master.loading, null, { timeout: 60000 });
-    const fixtures = { PR_BOOT: bootCharm('PR_BOOT'), PR_HUGGIE: bootCharm('PR_HUGGIE'), PR_CHARM: bootCharm('PR_CHARM'), MISMATCHED_7134: mittens() };
+    const fixtures = { PR_BOOT: bootCharm('PR_BOOT'), PR_HUGGIE: bootCharm('PR_HUGGIE'), PR_CHARM: bootCharm('PR_CHARM'), MISMATCHED_7134: mittens(), 'TENNIS BALL (HUGGIE)': bootCharm('TENNIS BALL (HUGGIE)'), 'TENNIS RACKET (HUGGIE)': flagCharm('TENNIS RACKET (HUGGIE)') };
     await page.evaluate(async ({ orders, fixtures }) => {
       for (const sku of Object.keys(fixtures)) {
         const aiPath = 'charmnest/test/' + sku + '.ai', e = { sku, aiPath, charmHash: 'h-' + sku, indexedAt: 1, upAngle: 90, engravable: true, sizes: null };
@@ -221,6 +250,23 @@ PT.use(Pair);
     ok(/2 pieces · 2 orders/.test(counts.plainPlain4) && /2 pieces · 2 orders/.test(counts.singlePlain) && /2 pieces · 2 orders/.test(counts.discsPlain), 'a plain line, a quantity-4 line, a single named ear and a disc necklace count as the one line they always did: ' + [counts.plainPlain4, counts.singlePlain, counts.discsPlain].join(' | '));
     ok(/8 pieces · 4 orders/.test(counts.mixed), 'a mixed group adds them up: ' + counts.mixed);
     ok(/6 pieces · 2 orders/.test(counts.pairs), 'two pair orders are 2 orders and 6 pieces, never "2 pieces": ' + counts.pairs);
+    // a line of TWO separate designs (order 4171010675's shape: Left Tennis Ball, Right Tennis Racket): ONE row, the two designs side by side, each its own size, a Left and a Right chip
+    const two = await page.evaluate(async I => {
+      const r = B.orders.rows.find(x => x.order.receiptId === I);
+      await new Promise(res => setTimeout(res, 50));
+      const members = r.spec && r.spec.pair && (r.spec.pair.members || []).map(m => m.side + ':' + m.sku);
+      const nodes = [...document.querySelectorAll('#ordItems > [data-rid]')].filter(x => x.dataset.rid === I);
+      const nd = nodes[0], v = nd && nd.querySelector('[data-vector]');
+      for (let i = 0; i < 300 && !(v && v.querySelector('img') && v.getAttribute('aria-busy') === 'false'); i++) await new Promise(res => setTimeout(res, 100));
+      const im = v && v.querySelector('img');
+      return { rows: nodes.length, members, caption: nd && (nd.querySelector('.comparePair figure:first-child figcaption') || {}).textContent, facts: nd && ((nd.querySelector('.rowFacts') || {}).textContent || '').replace(/\s+/g, ' '), pic: im && await window.__ink(im.src), key: PieceMedia.vectorKey(r, { pair: true }), pieceKey: PieceMedia.vectorKey(r) };
+    }, I);
+    ok(two.rows === 1, 'two designs: ONE row in the Orders list');
+    ok(JSON.stringify(two.members) === JSON.stringify(['L:TENNIS BALL (HUGGIE)', 'R:TENNIS RACKET (HUGGIE)']), 'the intake reads the Left and the Right design: ' + JSON.stringify(two.members));
+    ok(/Left \+ Right/.test(two.caption || '') && /Qty 1 · Left \+ Right/.test(two.facts || ''), 'two designs: caption and fact say Left + Right (not "Left ear"): ' + two.caption + ' | ' + two.facts);
+    ok(two.pic && two.pic.bodies.length === 2 && two.pic.chips.length === 2, 'two designs: BOTH designs are drawn, a Left and a Right chip ' + JSON.stringify(two.pic && two.pic.bodies));
+    { const wd = b => b[1] - b[0], b = two.pic.bodies; ok(wd(b[0]) > wd(b[1]) * 1.4, `the Left design (24 wide) is wider than the Right (14 wide), at one scale: ${wd(b[0])} vs ${wd(b[1])}`); }
+    ok(/\|two:TENNIS RACKET \(HUGGIE\)$/.test(two.key) && !/\|two/.test(two.pieceKey), 'the line picture is keyed by both designs, a piece-level key is not: ' + two.key + ' / ' + two.pieceKey);
     // the Efficiency tile's vector fallback: the Right piece's picture is the Left turned over (the same rule), the Left and a plain tile are as drawn
     const tile = await page.evaluate(async () => {
       const L = await EfficiencyOrders.vecThumb('PR_BOOT', 'L'), R = await EfficiencyOrders.vecThumb('PR_BOOT', 'R'), P0 = await EfficiencyOrders.vecThumb('PR_BOOT'), mir = PieceMedia.earMirror({ spec: { designSku: 'PR_BOOT' }, line: { sku: 'PR_BOOT' } }, 'R'), none = PieceMedia.earMirror({ spec: { designSku: 'NO SUCH' }, line: { sku: 'NO SUCH' } }, 'R');
