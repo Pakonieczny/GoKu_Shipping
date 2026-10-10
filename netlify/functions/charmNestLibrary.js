@@ -1828,7 +1828,7 @@ async function op_sandboxStream(b) {
     // step asked of a playing stream of the old kind starts the new kind in its place, at step 0
     if (action === "tick" && !(s && was.on) && !(was && was.on && !mine)) return { ok: true, stream: null, advanced: false };
     // a new stream starts at this ten minutes of the real clock; a seed given in Settings replays a recorded one
-    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: await streamTotal(path, Math.max(0, Math.floor(num(set.open != null ? set.open : set.count)))), startedAt: now, tickAt: now }; }
+    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: set.open != null ? Math.max(0, Math.floor(num(set.open))) : await streamTotal(path, Math.max(0, Math.floor(num(set.count)))), startedAt: now, tickAt: now }; }
     let advanced = false;
     // every order of the snapshot has come by this step: the clock stays here
     const done = !!s.total && streamBrought(s, s.tick) >= s.total;

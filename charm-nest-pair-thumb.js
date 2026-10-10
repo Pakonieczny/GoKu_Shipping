@@ -23,6 +23,7 @@
  *                                        pair true (Paul, 10 Oct: an earring ORDER LINE is one row with both ears side by side): a MATCHING pair, one body, is drawn twice side by side, the Left earring and the
  *                                        Right earring (turned over left to right, its mirror image), each with its chip, by the same layout and chips as a mismatched pair;
  *                                        opts.facing ("L" | "R" | "X", a person's word on the master record) and opts.sku decide which of the two is as drawn, exactly as CharmNestPair.piecesFor does
+ *                                        pair true with opts.other (a charm) and opts.turnRight: a line of TWO SEPARATE DESIGNS, `charm` the Left's and `other` the Right's, each drawn once at one scale (twoCanvas)
  *    matchPlan(charm, opts)              null, or the two-ear plan of a matching pair { bodies:[{ index, side, label, short, bbox, mirror }], one, dx } (what canvasFor draws for opts.pair)
  *    paintTags(ctx, plan, tx, k, opts)   only the chips, on a canvas the caller already owns (a placed charm's drawing)
  *    svgPicture(plan, opts)              the same picture as an SVG string for the stored PNG (Resvg), opts { bbox, padPt, size, bg, inner }
@@ -143,6 +144,36 @@
     return cv;
   }
 
+  /** An earring LINE of TWO SEPARATE DESIGNS (a Tennis Ball for the Left ear, a Tennis Racket for the Right: charm-nest-orders.js spec.pair.members): `charm` is the Left's design and `o.other` the Right's,
+      each ONE body. The two plans sit side by side in one frame at one scale, centred on each other vertically; the Right is turned over when `o.turnRight` is true (the caller reads that from
+      CharmNestPair, as for one piece). null when either is not a drawable one-body charm. */
+  function twoPlan(left, right, o) {
+    o = o || {};
+    const drawable = c => !!c && okBox(c.bbox) && !!c.outline && Array.isArray(c.members);
+    if (!drawable(left) || !drawable(right)) return null;
+    const P = pairApi();
+    try { if (P && typeof P.bodiesOf === "function") for (const c of [left, right]) { const bs = P.bodiesOf(c); if (Array.isArray(bs) && bs.length > 1) return null; } } catch (_) { return null; }   // (a design of two bodies cannot be one ear)
+    const lb = left.bbox, rb = right.bbox, wl = lb[2] - lb[0], wr = rb[2] - rb[0], hl = lb[3] - lb[1], hr = rb[3] - rb[1], H = Math.max(hl, hr), gap = Math.max(Math.max(wl, wr) * 0.18, 8);
+    const vl = [0, (H - hl) / 2, wl, (H - hl) / 2 + hl], vr = [wl + gap, (H - hr) / 2, wl + gap + wr, (H - hr) / 2 + hr];
+    const ear = (side, bbox, src, mirror) => ({ index: 0, side, label: side === "L" ? "Left" : "Right", short: side, bbox, outline: null, members: null, facing: null, mirror, src });
+    return { bodies: [ear("L", vl, left, false), ear("R", vr, right, o.turnRight === true)], two: true, frame: [0, 0, wl + gap + wr, H] };
+  }
+
+  /** The finished picture of an earring line of TWO designs (opts.pair true with opts.other): each design drawn once at one scale, the Left's on the left and the Right's turned as its own rule says, a Left and a Right chip. */
+  function twoCanvas(P, left, o) {
+    const pl = twoPlan(left, o.other, o); if (!pl) return null;
+    const b = pl.frame, L = layout(pl, b, o), cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
+    ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(0, 0, L.W, L.H);
+    for (const bd of pl.bodies) {
+      const sb = bd.src.bbox, vb = bd.bbox, tx = (x, y) => [(x - sb[0] + vb[0] - b[0] + L.pad) * L.s, (b[3] + L.pad - (y - sb[1] + vb[1])) * L.s];
+      drawMirrored(ctx, bd.mirror, ((vb[0] + vb[2]) / 2 - b[0] + L.pad) * L.s, () => P.drawCharm(ctx, bd.src, tx, L.s));
+    }
+    const wash = washRect(pl, b, L, o.highlight);
+    if (wash) { ctx.save(); ctx.globalAlpha = WASH_ALPHA; ctx.fillStyle = o.bg || "#fff"; ctx.fillRect(wash.x, 0, wash.w, L.H0); ctx.restore(); }
+    paintChips(ctx, L, wash ? wash.side : null);
+    return cv;
+  }
+
   /** The chips' words at this picture size: the long form unless the picture is small or the two chips would touch. */
   function chipsText(pl, size, chipBoxes) {
     const long = pl.bodies.map(b => b.label), short = pl.bodies.map(b => b.short);
@@ -214,6 +245,7 @@
       `P` is CharmNestPDF (its drawCharm draws the charm exactly as every other picture does). */
   function canvasFor(P, charm, o) {
     o = o || {}; if (!P || typeof P.drawCharm !== "function" || typeof o.makeCanvas !== "function" || !charm || !okBox(charm.bbox)) return null;
+    if (o.pair === true && o.other && !o.side && o.body == null) return twoCanvas(P, charm, o) || singleCanvas(P, charm, o);   // (a line of two separate designs)
     const pl = plan(charm); if (!pl) return o.pair === true && !o.side && o.body == null ? (matchCanvas(P, charm, o) || singleCanvas(P, charm, o)) : singleCanvas(P, charm, o);
     if (o.body === 0 || o.body === 1) return bodyCanvas(P, charm, pl, o);
     const b = charm.bbox, L = layout(pl, b, o), cv = o.makeCanvas(L.W, L.H), ctx = cv.getContext("2d");
@@ -295,5 +327,5 @@
       `<g transform="translate(${f2(tx)} ${f2(ty)}) scale(${f2(L.s)} ${f2(-L.s)})">${o.inner || ""}</g>${chips}</svg>` };
   }
 
-  return { plan, matchPlan, layout, canvasFor, paintTags, svgPicture, mirrorSvg, chipHtml, chipsText: (pl, size) => chipsText(pl, size), use: p => { injected = p; memo = typeof WeakMap === "function" ? new WeakMap() : null; }, _const: { SHORT_BELOW_PX, FONT_FRAC, INK } };
+  return { plan, matchPlan, twoPlan, layout, canvasFor, paintTags, svgPicture, mirrorSvg, chipHtml, chipsText: (pl, size) => chipsText(pl, size), use: p => { injected = p; memo = typeof WeakMap === "function" ? new WeakMap() : null; }, _const: { SHORT_BELOW_PX, FONT_FRAC, INK } };
 });
