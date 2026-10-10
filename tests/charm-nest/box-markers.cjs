@@ -16,7 +16,7 @@ const MM = 25.4 / 72;
 const run = (ex, opts) => {
   const segs = JSON.parse(JSON.stringify(ex.segments));
   const p = { pageW: fx.pageW, pageH: fx.pageH, mediaBox: [0, 0, fx.pageW, fx.pageH], segments: segs.map((s, i) => Object.assign(s, { index: i })), nested: [] };
-  const g = P.groupCharms(p, Object.assign({ minPt: 6, keepSampleText: true }, opts));
+  const g = P.groupCharms(p, Object.assign({ minPt: 6, keepSampleText: true, keepStray: true }, opts));
   const area = c => (c.outline.bbox[2] - c.outline.bbox[0]) * (c.outline.bbox[3] - c.outline.bbox[1]);
   const c = g.charms.slice().sort((a, b) => area(b) - area(a))[0];
   assert(c, ex.key + ': the charm is found');

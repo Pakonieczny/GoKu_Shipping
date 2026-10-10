@@ -921,6 +921,12 @@
     // Sample text on a piece (live text and its outlined letters) is not the design: not a member, not in the charm's box.
     const sampleText = [];
     if (!opts.keepSampleText) for (const c of charms) for (const t of takeSampleText(c)) sampleText.push(t);
+    // Loose ink OUTSIDE the piece (outlined letters of a sample name, specks, text beside it) is not the design: not a member, not in the charm's box.
+    const stray = [];
+    if (!opts.keepStray) {
+      const ctx = { attached: new Set(merged.keys()), cache: polysCache, drawable, charms, runs: null, touchPt: opts.touchPt };
+      for (const c of charms) for (const t of takeStrayInk(c, ctx)) stray.push(t);
+    }
     // Top-level membership: a nested segment brings its whole Do; a Do goes to the charm holding most of its children
     for (const c of charms) {
       const tops = new Map();
@@ -933,7 +939,7 @@
     if (opts.blackFill !== false) classifyBlackFills(charms);   // a black FILL inside a charm is blue hatching, never a hole or a black body (section "a black FILL is blue hatching")
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
-    return { charms, frame, frames, orphans, markers, sampleText, rule, outlineCount: outlines.length, mergedCount: merged.size };
+    return { charms, frame, frames, orphans, markers, sampleText, stray, rule, outlineCount: outlines.length, mergedCount: merged.size };
   }
 
   /* ═══ 5a′ · sample text ON a piece ════════════════════════════════════
@@ -984,6 +990,103 @@
     if (!why.size) return taken;
     const keep = [];
     for (const m of c.members) { const w = why.get(m); if (w) { m.sample = w; taken.push({ seg: m, charm: c.index, why: w }); } else keep.push(m); }
+    c.members = keep; c.extras = (c.extras || []).filter(x => keep.includes(x));
+    c.bbox = keep.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
+    return taken;
+  }
+
+  /* ═══ 5a″ · loose ink OUTSIDE the piece ═══════════════════════════════════
+     Paul, 10 Oct 2026, on the BAR_3290 card: "There should be no text here beside the bar necklace". A blue "So" stood right of
+     the bar and the card said "3 holes" (a bar has two). The master's artists type a customer's sample name beside a charm, outline
+     it, and leave the outlined letters on the CUT layer as closed black-filled shapes with no live text behind them (13 letters,
+     the first 2.9 mm from the bar's end). The grouping gives every piece of ink to a charm: inside it, touching it, or, as a last
+     resort, the nearest one within 24 pt of its centre. The first two letters were that near, the other eleven were not (orphans),
+     so the bar carried "So": the S as blue hatching (a black fill inside a charm), the o as a hoop-sized closed shape on CUT, which
+     is a cut-out, which is the third "hole". None of the marker, sample-text or label rules dropped them: those take live text,
+     gradients and images, or text with a live twin ON the piece.
+     Rule: ink that lies wholly OUTSIDE the piece's cut outline and does not touch it is on no metal and is not part of the charm.
+     It is not a member, not in the charm's box (so not in its size), not a hole, not in the per-SKU file and not on a sheet. What
+     stays, so that nothing real is lost: anything with a point on the piece (engraving inside the cut outline, even words;
+     cut-outs; an engraving that runs over the edge), anything within a touch of the outline (a bail, a loop, a ring against the
+     body), a jump ring the grouping welded on, and a real hoop that the weld (integrateRings) will join. A ring-sized shape that
+     is one letter of a row of outlined letters (an "o", a "0") is a letter, not a hoop. */
+  const STRAY_GLYPH_MAX_PT = 20, STRAY_TINY_PT = 3, STRAY_TOUCH_PT = 0.75;
+  /** Runs of outlined lettering: closed letter-sized paths that stand side by side and are on no charm's outline (the letters
+      of a word, the digits of a date). Returns a Map(segment → number of letters in its run) for runs of 2 or more. */
+  function letterRunsOf(drawable, charms, cache) {
+    const sized = s => { if (s.kind !== "path" || !s.closed || !s.bbox) return false; const big = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]); return big <= STRAY_GLYPH_MAX_PT && big >= 0.8; };
+    const onBody = s => {
+      const cx = (s.bbox[0] + s.bbox[2]) / 2, cy = (s.bbox[1] + s.bbox[3]) / 2;
+      for (const c of charms) {
+        const b = c.outline.bbox; if (cx < b[0] || cx > b[2] || cy < b[1] || cy > b[3]) continue;
+        let p = cache.get(c.outline); if (!p) { p = flatten(c.outline, 8); cache.set(c.outline, p); }
+        if (p.some(poly => pointInPolys(cx, cy, [poly]))) return true;
+      }
+      return false;
+    };
+    // the letters of one word are drawn alike: on one layer, all filled or all stroked (a writer's blue copy of a black fill is still a fill)
+    const sameInk = (a, b) => (a.layer || null) === (b.layer || null) && !!a.fill === !!b.fill && !!a.stroke === !!b.stroke;
+    const gl = drawable.filter(s => sized(s) && !onBody(s)).sort((a, b) => a.bbox[0] - b.bbox[0]);
+    const parent = gl.map((_, i) => i), find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    for (let i = 0; i < gl.length; i++) {
+      const a = gl[i].bbox, ha = a[3] - a[1];
+      for (let j = i + 1; j < gl.length; j++) {
+        const b = gl[j].bbox, hb = b[3] - b[1], gap = Math.max(1.5, 0.4 * Math.max(ha, hb));
+        if (b[0] > a[2] + gap) { if (b[0] > a[2] + 4 * gap) break; continue; }
+        if (b[1] > a[3] + gap || b[3] < a[1] - gap) continue;
+        if (Math.max(ha, hb) / Math.max(0.01, Math.min(ha, hb)) > 4 || !sameInk(gl[i], gl[j])) continue;     // a letter next to a letter of the same ink, not next to a drawing
+        parent[find(j)] = find(i);
+      }
+    }
+    const size = new Map(); for (let i = 0; i < gl.length; i++) { const r = find(i); size.set(r, (size.get(r) || 0) + 1); }
+    const out = new Map(); for (let i = 0; i < gl.length; i++) { const n = size.get(find(i)); if (n >= 2) out.set(gl[i], n); }
+    return out;
+  }
+  /** Why a member of a charm is loose ink outside its piece (a short reason), or null when it belongs to the piece. `body` is the
+      outline's flattened subpaths (a point is on the piece when it is inside any one of them), `hoopSet()` the rings the weld will join. */
+  function strayReason(c, m, ctx, body, hoopSet) {
+    if (m === c.outline || !m.bbox || ctx.attached.has(m)) return null;
+    const pts = samples(m, ctx.cache);
+    if (!pts.length || pts.some(p => body.some(poly => pointInPolys(p[0], p[1], [poly])))) return null;       // a point on the piece: engraving on the metal, a cut-out, an overlap
+    const touch = (m.stroke ? (m.lwPt || 0) / 2 : 0) + (c.outline.stroke ? (c.outline.lwPt || 0) / 2 : 0) + STRAY_TOUCH_PT;
+    if (minDist(pts, body) <= touch) return null;                                                           // against the body: a bail, a loop, a ring on it
+    if (m.kind === "text") return "text outside the piece";
+    if (m.kind !== "path") return null;                                                                      // gradients, images and forms beside a piece are the marker rule's
+    const big = Math.max(m.bbox[2] - m.bbox[0], m.bbox[3] - m.bbox[1]);
+    if (!ctx.runs) ctx.runs = letterRunsOf(ctx.drawable, ctx.charms, ctx.cache);
+    const run = ctx.runs.get(m) || 0;
+    if (run < 3 && hoopSet().has(m)) return null;                                                                // a ring the weld joins stays, unless it is a letter of a row ("o", "0")
+    if (big <= STRAY_TINY_PT) return "mark outside the piece";
+    if (run >= 2) return "outlined letter outside the piece";
+    return null;
+  }
+  /** The members of a charm that are loose ink outside its piece: Map(member → reason). */
+  function strayInkOf(c, ctx) {
+    const why = new Map(); if (!c || !c.outline || !c.outline.bbox) return why;
+    const body = flatten(c.outline, 8); if (!body.length) return why;
+    // the rings the weld will join (a real ring beside the body, within reach), not the "o" of a word: found only when something stands outside
+    let hoops = null;
+    const hoopSet = () => {
+      if (hoops) return hoops;
+      hoops = new Set(); const V = vec();
+      if (!V) { for (const m of c.members) if (m !== c.outline && ringLike(m)) hoops.add(m); return hoops; }     // no vector library: every ring-sized shape counts as a hoop
+      try {
+        for (const hp of findHoops(c, V)) {
+          const near = nearestOnPolys(hp.cx, hp.cy, body); if (!near.p) continue;
+          if (near.d - hp.outer.r <= (hp.aperture ? HOOP_REACH_PT : HOOP_LONE_REACH_PT)) for (const m of hp.members) hoops.add(m);
+        }
+      } catch (_) { for (const m of c.members) if (m !== c.outline && ringLike(m)) hoops.add(m); }
+      return hoops;
+    };
+    for (const m of c.members) { const r = strayReason(c, m, ctx, body, hoopSet); if (r) why.set(m, r); }
+    return why;
+  }
+  /** Take every loose ink member out of a charm's members and out of its box; returns what was taken. */
+  function takeStrayInk(c, ctx) {
+    const why = strayInkOf(c, ctx), taken = [];
+    if (!why.size) return taken;
+    const keep = [];
+    for (const m of c.members) { const w = why.get(m); if (w) { m.stray = w; taken.push({ seg: m, charm: c.index, why: w }); } else keep.push(m); }
     c.members = keep; c.extras = (c.extras || []).filter(x => keep.includes(x));
     c.bbox = keep.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
     return taken;
@@ -1139,7 +1242,7 @@
    *  segments, so these exist only on the copy; adoptGrouping carries them back to the page's own segment. Without that the page read a design differently from the server,
    *  the audit and the catalogue index: the BASKETBALL's seams (a red outline on the CUT layer, engraving by the role rule) were a cut line in the app, drawn as black double lines
    *  on the Back engraving card and as cut-out strips on the sheet. */
-  const GROUPING_STAMPS = ["manufacturingRole", "hatchBlue", "hatchStrip", "marker", "sample"];
+  const GROUPING_STAMPS = ["manufacturingRole", "hatchBlue", "hatchStrip", "marker", "sample", "stray"];
   function adoptGrouping(g, parsed) {
     const own = v => { const r = v.pageRef; if (typeof r !== "string") return null; const m = (r[0] === "s" ? parsed.segments : parsed.nested || [])[+r.slice(1)]; return m && m.kind === v.kind ? m : null; };
     const seen = new Map();
@@ -2151,6 +2254,8 @@
     takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
+  // the loose-ink-outside-the-piece rule (section 5a″; kept off the long list for the same reason)
+  root.CharmNestPDF.takeStrayInk = takeStrayInk; root.CharmNestPDF.strayInkOf = strayInkOf;
   // the black-fill rule (kept off the long list for the same reason)
   // the thin-strip hatching rule and the stamp list the worker hand-back carries (kept off the long list for the same reason)
   root.CharmNestPDF.hatchStripOf = hatchStripOf; root.CharmNestPDF.GROUPING_STAMPS = GROUPING_STAMPS;
