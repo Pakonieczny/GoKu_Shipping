@@ -937,6 +937,7 @@
     for (const c of charms) for (const t of c.topIndices) { const seg = parsed.segments[t]; if (seg && seg.kind === "xobj") { const n = c.members.filter(m => m.parent === t).length; const cur = claim.get(t); if (!cur || n > cur.n) claim.set(t, { c, n }); } }
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
     if (opts.blackFill !== false) classifyBlackFills(charms);   // a black FILL inside a charm is blue hatching, never a hole or a black body (section "a black FILL is blue hatching")
+    if (opts.blackFill !== false && opts.blackArt !== false) classifyBlackArt(charms);   // black LINE ART inside a charm (open lines, the closed shapes on them, black ink on an engraving layer) is blue hatching too (section "black LINE ART is blue hatching")
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
     return { charms, frame, frames, orphans, markers, sampleText, stray, rule, outlineCount: outlines.length, mergedCount: merged.size };
@@ -1247,7 +1248,7 @@
    *  segments, so these exist only on the copy; adoptGrouping carries them back to the page's own segment. Without that the page read a design differently from the server,
    *  the audit and the catalogue index: the BASKETBALL's seams (a red outline on the CUT layer, engraving by the role rule) were a cut line in the app, drawn as black double lines
    *  on the Back engraving card and as cut-out strips on the sheet. */
-  const GROUPING_STAMPS = ["manufacturingRole", "hatchBlue", "hatchStrip", "marker", "sample", "stray"];
+  const GROUPING_STAMPS = ["manufacturingRole", "hatchBlue", "hatchStrip", "hatchLine", "marker", "sample", "stray"];
   function adoptGrouping(g, parsed) {
     const own = v => { const r = v.pageRef; if (typeof r !== "string") return null; const m = (r[0] === "s" ? parsed.segments : parsed.nested || [])[+r.slice(1)]; return m && m.kind === v.kind ? m : null; };
     const seen = new Map();
@@ -1414,6 +1415,7 @@
     drawSegments(ctx, c.members.map(m => isCutSilhouetteFill(c, m) ? cutLineOf(m)
       : m.hatchBlue && m.fill && !m.stroke ? {...m, fillRGB: HATCH_BLUE}      // a black fill inside the charm is blue hatching (see "a black FILL is blue hatching")
       : m.hatchStrip && m.hatchBlue && m.stroke && !m.fill ? {...m, fill: true, stroke: false, fillRGB: HATCH_BLUE, paintOp: "f*"}      // the red edge of thin strips is the hatched strip itself (see "thin strips outlined in red are hatching")
+      : m.hatchLine && m.hatchBlue && m.stroke && !m.fill ? {...m, strokeRGB: HATCH_BLUE}      // black line art is blue hatching: the same line in blue (see "black LINE ART is blue hatching")
       : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:m !== c.outline && m.fill && m.fillRGB && lum(m.fillRGB) > 0.35 ? m.fillRGB : [0,0,0]} : m), tx, scale);
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
     ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
@@ -1537,6 +1539,98 @@
       }
     }
     return stamped;
+  }
+  /* ═══ black LINE ART is blue hatching ═══════════════════════════════════════════════════════════════════════════
+     Paul, 10 Oct 2026, the oblong bar BIRTH_3611 (a poppy and a morning glory drawn as hairlines): "All of these engravings should be
+     Blue hatching". The black-fill rule only looks at black FILLS; these flowers are black STROKES on the CUT layer, so they were left
+     as the master drew them: black in every picture, black line art in the stored file, and the closed ones (a leaf, a petal) counted as
+     cut-outs ("5 holes" on a bar with 2 hoop holes, and candidates for the hanging hole that decides the up angle). Black means a cut line
+     and nothing else, so black ink that is a drawing is blue hatching, drawn blue and written as a blue filled area (the line's own width):
+       1. a black OPEN line inside the charm is line art: nothing is cut out by a line that does not close. Three kinds of open line are
+          not: the charm's own outline drawn in pieces, a hoop drawn as an open ring, and a cut that DIVIDES the charm (a line, or pieces
+          joined end to end, whose two ends both stop on the outline: BEST FRIENDS_2505's heart is cut in two along its zigzag).
+       2. a black CLOSED shape on the CUT layer that touches that line art is part of the same drawing (the leaves the veins end on).
+          A closed shape that touches no line art stays a cut-out: a hoop hole, a window, a letter, the openwork of a cut-out design.
+     (Black ink on an ENGRAVE or HATCH layer is not decided here: the three such shapes in the masters are the jump-ring holes of charms
+     the artist drew wholly on an engraving layer.) Stamped like the black-fill rule (`hatchBlue`, role "hatch") plus `hatchLine` (a
+     stroke: drawn blue as the same line, written as the blue area the line covers). */
+  const ART_TOUCH_PT = 1.5;                    // a closed shape whose line comes this close to the line art is part of the drawing; a line's end this close to the outline stops on it
+  const ART_JOIN_PT = 0.6;                     // two lines whose ends are this close are joined end to end
+  const ART_MAX_SHARE = 0.3;                   // a closed shape covering this share of the charm's box is a window beside the art, not a part of it
+  const isBlackStroke = m => !!m && m.kind === "path" && !!m.stroke && !m.fill && !!m.strokeRGB &&
+    (Math.max(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) - Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2])) <= 0.15 && lum(m.strokeRGB) <= 0.35;
+  /** An open path that is a nearly complete circle (a hoop drawn as an arc, not a drawing): { cx, cy, r } or null. */
+  function openRingOf(m) {
+    if (!m || m.closed || (m.subpaths || []).length !== 1) return null;
+    const V = vec(); if (!V) return null; let c = null; try { c = circleOf(m.subpaths[0], V); } catch (_) { c = null; }
+    if (!c) return null;
+    const pts = flatten(m, 8)[0] || []; if (pts.length < 3) return null;
+    return Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) <= 0.35 * 2 * c.r ? c : null;
+  }
+  const polyDist = (a, b) => {                 // closest approach of two polylines (open: no closing edge), their own points to the other's segments
+    const one = (p, q) => { let best = Infinity; for (let i = 0; i + 1 < q.length; i++) { const ax = q[i][0], ay = q[i][1], dx = q[i + 1][0] - ax, dy = q[i + 1][1] - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L)) : 0, ex = ax + t * dx - p[0], ey = ay + t * dy - p[1], d = ex * ex + ey * ey; if (d < best) best = d; } return Math.sqrt(best); };
+    let best = Infinity; for (const p of a) best = Math.min(best, one(p, b)); for (const p of b) best = Math.min(best, one(p, a)); return best;
+  };
+  /** Stamp the black line art of every charm: hatching (blue, role "hatch", hatchLine). Returns the stamped members. */
+  function classifyBlackArt(charms) {
+    const stamped = [], pcache = new Map();
+    for (const c of charms || []) {
+      if (!c || !c.outline || !Array.isArray(c.members) || !c.outline.bbox) continue;
+      const o = c.outline, parts = new Set(o.parts || []), ob = o.bbox, boxArea = bbArea(ob);
+      const pool = c.members.filter(m => m !== o && !parts.has(m) && !m.synthetic && !m.manufacturingRole && isBlackStroke(m) && m.bbox && !/^labels?$/i.test(String(m.layer || "").trim()) && pathRole(m) !== "artwork");
+      const opens = pool.filter(m => !m.closed && (m.subpaths || []).length === 1 && !openRingOf(m));
+      if (!opens.length) continue;
+      const polys = flatten(o, 8), lines = new Map(), line = m => { let p = lines.get(m); if (!p) { const ps = flatten(m, 4); p = ps.length === 1 && m.closed ? ps[0].concat([ps[0][0]]) : ps.flat(); lines.set(m, p); } return p; };
+      // 1 · open lines inside the charm, joined end to end into chains; a chain that is a plain line with both ends on the outline is a cut that divides the charm
+      const inside = opens.filter(m => insideFrac(samples(m, pcache), polys) >= 0.5 || (m.bbox[0] >= ob[0] - 1 && m.bbox[1] >= ob[1] - 1 && m.bbox[2] <= ob[2] + 1 && m.bbox[3] <= ob[3] + 1));
+      const ends = inside.map(m => { const p = line(m); return [p[0], p[p.length - 1]]; }), up = inside.map((_, i) => i), find = i => { while (up[i] !== i) i = up[i] = up[up[i]]; return i; };
+      const join = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= ART_JOIN_PT;
+      for (let i = 0; i < inside.length; i++) for (let j = i + 1; j < inside.length; j++) if (ends[i].some(p => ends[j].some(q => join(p, q)))) up[find(i)] = find(j);
+      const groups = new Map(); inside.forEach((m, i) => { const r = find(i); (groups.get(r) || groups.set(r, []).get(r)).push(i); });
+      const art = [];
+      for (const idx of groups.values()) {
+        const all = idx.flatMap(i => ends[i]); let free = [], simple = true;
+        for (const i of idx) for (const p of ends[i]) { const deg = all.filter(q => join(p, q)).length; if (deg === 1) free.push(p); else if (deg > 2) simple = false; }
+        const divides = simple && free.length === 2 && free.every(p => distToPolys(p[0], p[1], polys) <= ART_TOUCH_PT);
+        if (!divides) for (const i of idx) art.push(inside[i]);
+      }
+      // 2 · closed shapes on the CUT layer that touch the line art are part of the drawing (and shapes that touch those)
+      if (art.length) {
+        const rest = pool.filter(m => m.closed && !art.includes(m) && bbArea(m.bbox) < ART_MAX_SHARE * boxArea);
+        const near = (a, b) => bbInter([a.bbox[0] - ART_TOUCH_PT, a.bbox[1] - ART_TOUCH_PT, a.bbox[2] + ART_TOUCH_PT, a.bbox[3] + ART_TOUCH_PT], b.bbox) && polyDist(line(a), line(b)) <= ART_TOUCH_PT;
+        for (let grew = rest.length > 0; grew;) { grew = false; for (const m of rest) if (!art.includes(m) && art.some(a => near(a, m))) { art.push(m); grew = true; } }
+      }
+      for (const m of art) { m.hatchBlue = true; m.hatchLine = true; m.manufacturingRole = "hatch"; stamped.push(m); }
+    }
+    return stamped;
+  }
+  /** The area a stroked line covers, as filled subpaths (the same page space as the line): every subpath's polyline widened to the line's own width, at least LINE_ART_MIN_PT
+   *  (0.1 mm, the master's hairline). An open line is one closed polygon (one side out, the other back); a closed line is two rings (outer and inner, so it fills even-odd). This is
+   *  what a blue hatching copy of black line art is written as (hatchCopies) and exported as (the DXF hatch): the laser hatches an area, never a hairline. */
+  const LINE_ART_MIN_PT = 0.283;
+  function lineAreaOf(m) {
+    const w = Math.max(+m.lwPt || 0, LINE_ART_MIN_PT) / 2, out = [], f = v => Math.round(v * 1000) / 1000;
+    const ring = pts => { const sp = pts.map((p, i) => [i ? "l" : "m", [f(p[0]), f(p[1])]]); sp.push(["h"]); return sp; };
+    for (const sub of m.subpaths || []) {
+      const poly = flatten({ subpaths: [sub] }, 6)[0] || [], pts = [];
+      for (const p of poly) { const q = pts[pts.length - 1]; if (!q || Math.hypot(p[0] - q[0], p[1] - q[1]) > 1e-6) pts.push([p[0], p[1]]); }
+      const closed = sub.some(o => o[0] === "h") || (pts.length > 2 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) <= 1e-6);
+      if (closed && pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) <= 1e-6) pts.pop();
+      if (pts.length < 2) { if (pts.length === 1) out.push(ring([[pts[0][0] - w, pts[0][1] - w], [pts[0][0] + w, pts[0][1] - w], [pts[0][0] + w, pts[0][1] + w], [pts[0][0] - w, pts[0][1] + w]])); continue; }
+      const n = pts.length, left = [], right = [];
+      for (let i = 0; i < n; i++) {
+        const a = pts[closed ? (i + n - 1) % n : Math.max(i - 1, 0)], b = pts[i], c = pts[closed ? (i + 1) % n : Math.min(i + 1, n - 1)];
+        let dx0 = b[0] - a[0], dy0 = b[1] - a[1], dx1 = c[0] - b[0], dy1 = c[1] - b[1]; const l0 = Math.hypot(dx0, dy0), l1 = Math.hypot(dx1, dy1);
+        if (l0 > 0) { dx0 /= l0; dy0 /= l0; } if (l1 > 0) { dx1 /= l1; dy1 /= l1; }
+        if (!(l0 > 0)) { dx0 = dx1; dy0 = dy1; } if (!(l1 > 0)) { dx1 = dx0; dy1 = dy0; }
+        let nx = -(dy0 + dy1), ny = dx0 + dx1; const nl = Math.hypot(nx, ny);                     // the corner's normal: the sum of the two segments' normals
+        if (nl < 1e-9) { nx = -dy0; ny = dx0; } else { nx /= nl; ny /= nl; }
+        const k = w / Math.max(0.35, nx * -dy0 + ny * dx0);                                       // mitre length, limited so a hairpin does not spike
+        left.push([b[0] + nx * k, b[1] + ny * k]); right.push([b[0] - nx * k, b[1] - ny * k]);
+      }
+      if (closed) { out.push(ring(left)); out.push(ring(right)); } else out.push(ring(left.concat(right.reverse())));
+    }
+    return out;
   }
   /** Draw segments; `solid` paints everything opaque black (for silhouettes) instead of in colour. */
   function drawSegments(ctx, segs, tx, s, solid) {
@@ -2228,7 +2322,7 @@
     if (!c || !Array.isArray(c.members) || !parsed || !Array.isArray(parsed.segments)) return null;
     let byIndex = null, out = null; const keepSet = new Set(keep), f = v => (Math.round(v * 1000) / 1000).toString();
     for (const m of c.members) {
-      const strip = !!m && !!m.hatchStrip, plain = x => strip ? (x.stroke && !x.fill && x.closed) : (x.fill && !x.stroke);   // (a thin-strip outline is painted `S`; its blue copy is the area it edges)
+      const strip = !!m && !!m.hatchStrip, line = !!m && !!m.hatchLine, plain = x => line ? (x.stroke && !x.fill) : strip ? (x.stroke && !x.fill && x.closed) : (x.fill && !x.stroke);   // (a thin-strip outline is painted `S`; its blue copy is the area it edges. Black line art is painted `S` too: its blue copy is the area the line covers, lineAreaOf)
       if (!m || !m.hatchBlue || m.kind !== "path" || !plain(m) || m.synthetic || m.parent != null || m.index == null || m.parts || !keepSet.has(m.index)) continue;
       if (!byIndex) { byIndex = new Map(); for (const s of parsed.segments) if (s && s.index != null) byIndex.set(s.index, s); }
       const seg = byIndex.get(m.index), k = seg && seg.ctm;
@@ -2236,8 +2330,8 @@
       const det = k[0] * k[3] - k[1] * k[2]; if (!isFinite(det) || Math.abs(det) < 1e-12) continue;
       const inv = [k[3] / det, -k[1] / det, -k[2] / det, k[0] / det, (k[2] * k[5] - k[3] * k[4]) / det, (k[1] * k[4] - k[0] * k[5]) / det];   // the paths are stored in page space: undo the matrix they were written under
       let t = `q ${inv.map(v => (Math.round(v * 1e9) / 1e9).toString()).join(" ")} cm 0 0 1 rg `;
-      for (const sp of seg.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") t += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") t += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") t += "h "; }
-      t += (strip || String(seg.paintOp || "f").endsWith("*") ? "f*" : "f") + " Q";
+      for (const sp of line ? lineAreaOf(seg) : seg.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") t += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") t += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") t += "h "; }
+      t += (strip || line || String(seg.paintOp || "f").endsWith("*") ? "f*" : "f") + " Q";
       (out || (out = new Map())).set(m.index, t);
     }
     return out;
@@ -2264,5 +2358,5 @@
   // the black-fill rule (kept off the long list for the same reason)
   // the thin-strip hatching rule and the stamp list the worker hand-back carries (kept off the long list for the same reason)
   root.CharmNestPDF.hatchStripOf = hatchStripOf; root.CharmNestPDF.GROUPING_STAMPS = GROUPING_STAMPS;
-  root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE; root.CharmNestPDF.hatchCopies = hatchCopies;
+  root.CharmNestPDF.classifyBlackArt = classifyBlackArt; root.CharmNestPDF.lineAreaOf = lineAreaOf; root.CharmNestPDF.openRingOf = openRingOf; root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE; root.CharmNestPDF.hatchCopies = hatchCopies;
 })(typeof window !== "undefined" ? window : self);
