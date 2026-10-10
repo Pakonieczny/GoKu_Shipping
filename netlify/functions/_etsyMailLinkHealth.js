@@ -171,10 +171,12 @@ function evaluate(ev, now) {
     else add("monitor", "Link monitor", "ok", `Ran ${ago(mo)} ago`);
   }
   const cs = ev.consistency || null;
-  if (cs && cs.atMs && now - cs.atMs < T.consistencyStale && (cs.mismatched || 0) > 0) {
-    const n = cs.mismatched;
-    add("consistency", "Nightly check", "warn", `${n} ${n === 1 ? "conversation shows" : "conversations show"} fewer messages in the inbox than Etsy sent; the inbox is re-reading ${n === 1 ? "it" : "them"}.`, "Messages missing", 9);
-  } else if (cs && cs.atMs && now - cs.atMs < T.consistencyStale) add("consistency", "Nightly check", "ok", `Every conversation checked matched (${cs.checked || 0}), ${ago(now - cs.atMs)} ago`);
+  // (only mismatches not yet re-read count: one that a re-read could not fix is a count that will never match, not a lost message)
+  const open = cs ? (typeof cs.unresolved === "number" ? cs.unresolved : cs.mismatched || 0) : 0;
+  if (cs && cs.atMs && now - cs.atMs < T.consistencyStale && open > 0) {
+    const n = open;
+    add("consistency", "Nightly check", "warn", `${n} ${n === 1 ? "conversation shows" : "conversations show"} fewer messages in the inbox than expected; the inbox is re-reading ${n === 1 ? "it" : "them"}.`, "Messages missing", 9);
+  } else if (cs && cs.atMs && now - cs.atMs < T.consistencyStale) add("consistency", "Nightly check", "ok", `${cs.mismatched ? cs.mismatched + " count" + (cs.mismatched === 1 ? "" : "s") + " do not match but were re-read already; " : ""}${cs.checked || 0} conversations checked, ${ago(now - cs.atMs)} ago`);
 
   const worst = checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)[0];
   const level = worst && RANK[worst.level] ? worst.level : "ok";

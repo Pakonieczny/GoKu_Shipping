@@ -11,7 +11,8 @@
  *  A conversation still being read (created from a Gmail notice, or changed in the last 30 minutes) is left for the next night.
  *
  *  Self-healing: for up to 5 mismatched conversations it queues ONE re-read (a scrape job on a deterministic id, one per
- *  conversation per day, so a second run never queues a second one). Nothing is deleted or rewritten here, no Etsy API call is
+ *  conversation per day, so a second run never queues a second one; a conversation re-read within the last 7 days is not
+ *  queued again, so a count that can never match, such as one left over from a purge, does not cost a re-read every night). Nothing is deleted or rewritten here, no Etsy API call is
  *  made, and nothing is sent to a customer. The result is EtsyMail_Config/linkConsistency, which the link monitor shows as
  *  amber ("N conversations show fewer messages ...") until a later night finds none.
  *
@@ -23,7 +24,7 @@ const admin = require("./firebaseAdmin");
 const FV = admin.firestore.FieldValue;
 
 const MIN = 60 * 1000, HOUR = 60 * MIN;
-const WINDOW = 150, REPAIR_MAX = 5, SLACK_MS = 3 * MIN, FRESH_MS = 30 * MIN, BUDGET_MS = 14000, SAMPLES = 10;
+const WINDOW = 150, REPAIR_MAX = 5, REQUEUE_AFTER_MS = 7 * 24 * HOUR, KEEP_REQUEUED = 60, SLACK_MS = 3 * MIN, FRESH_MS = 30 * MIN, BUDGET_MS = 14000, SAMPLES = 10;
 const THREADS = "EtsyMail_Threads", JOBS = "EtsyMail_Jobs", CFG = "EtsyMail_Config", DOC = "linkConsistency";
 
 const ms = v => (v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : typeof v === "object" && typeof v.ms === "number" ? v.ms : typeof v === "number" ? v : 0);
@@ -64,7 +65,7 @@ async function queueReread(db, id, t, kind, now) {
   }
 }
 
-async function run(db, now) {
+async function run(db, now, prev) {
   const t0 = Date.now();
   const snap = await db.collection(THREADS).orderBy("updatedAt", "desc").limit(WINDOW)
     .select("messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "gmailThreadId").get();
@@ -83,9 +84,20 @@ async function run(db, now) {
       if (v) { out.mismatched++; out.kinds[v.kind] = (out.kinds[v.kind] || 0) + 1; bad.push({ r, v }); if (out.samples.length < SAMPLES) out.samples.push({ threadId: r.id, kind: v.kind, claimed: v.claimed == null ? -1 : v.claimed, stored: v.stored }); }
     }
   }));
-  for (const { r, v } of bad.slice(0, REPAIR_MAX)) {
-    try { if (await queueReread(db, r.id, r.t, v.kind, now)) out.repairQueued++; } catch (e) { console.warn("linkConsistency re-read", r.id, e && e.message); }
+  // who was re-read lately (a map of conversation → time), carried from night to night and kept short
+  const requeued = {};
+  for (const [id, at] of Object.entries((prev && prev.requeued) || {})) if (now - at < REQUEUE_AFTER_MS) requeued[id] = at;
+  const fresh = bad.filter(b => !requeued[b.r.id]);
+  out.alreadyReread = bad.length - fresh.length;
+  out.noAddress = fresh.filter(b => !b.r.t.etsyConversationUrl).length;
+  out.unresolved = fresh.length - out.noAddress;   // what the light counts: not yet re-read, and able to be
+  let queuedNow = 0;
+  for (const { r, v } of fresh) {
+    if (queuedNow >= REPAIR_MAX) break;
+    try { if (await queueReread(db, r.id, r.t, v.kind, now)) { queuedNow++; requeued[r.id] = now; } } catch (e) { console.warn("linkConsistency re-read", r.id, e && e.message); }
   }
+  out.repairQueued = queuedNow;
+  out.requeued = Object.fromEntries(Object.entries(requeued).sort((a, b) => b[1] - a[1]).slice(0, KEEP_REQUEUED));
   return out;
 }
 
@@ -95,12 +107,13 @@ async function maybeRun(db, { now = Date.now(), force = false } = {}) {
   const s = await ref.get();
   const prev = s.exists ? s.data() : null;
   const age = prev && prev.atMs ? now - prev.atMs : Infinity;
-  const due = force || (age > 23 * HOUR && nightUtc(now)) || age > 40 * HOUR;
+  // (the first run ever waits for a night: it may queue re-reads, which should not start in the middle of the working day)
+  const due = force || (age > 23 * HOUR && nightUtc(now)) || (!!prev && age > 40 * HOUR);
   if (!due) return { ran: false };
   if (!force && prev && prev.startedAtMs && now - prev.startedAtMs < 10 * MIN) return { ran: false, busy: true };
   await ref.set({ startedAtMs: now }, { merge: true });
   let doc;
-  try { doc = await run(db, now); }
+  try { doc = await run(db, now, prev); }
   catch (e) { await ref.set(Object.assign({}, prev || {}, { startedAtMs: 0, lastError: String(e && e.message).slice(0, 160), lastErrorAtMs: now })); throw e; }
   await ref.set(doc);
   return { ran: true, doc };
