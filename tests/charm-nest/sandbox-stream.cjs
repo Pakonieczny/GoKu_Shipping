@@ -97,8 +97,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
 
   // ── the sandbox, streaming at 50x (the defaults), Manual mode: the orders come by themselves, a few per check ──
   await settle({ sandbox: 'on', sandboxStream: 'on', sandboxSpeed: 50, sandboxSeed: 0 });
-  await page.evaluate(() => sessionStorage.setItem('cn.sandboxAutoPull', '1'));
-  const t0 = Date.now(); await page.reload(); await booted();
+  const t0 = Date.now(); await page.reload(); await booted(); await page.evaluate(() => CN.setMode('orders'));   // (switching on opens Orders: the page no longer needs a flag for it)
   await page.waitForFunction(() => Sandbox.stream() && SimClock.on() && CN.S.mode === 'orders', null, { timeout: 20000 });
   const s0 = stream(); console.log('stream started', s0);
   assert(s0 && s0.on && s0.tick === 0 && s0.min === 2 && s0.max === 5 && s0.stepMs === STEP && s0.seed > 0 && s0.snapshotPath === snapPath && s0.total === openIds.length && s0.brought === 0, 'a fresh stream starts at step 0 with a random seed, its open orders all still to come');
@@ -153,7 +152,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert.match(seen.counter, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2} · Orders received · 24h \d+ · 1h \d+ · /, 'the counter shows the speed and simulated time');
   assert.match(seen.pill, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2}$/, 'the pill shows the speed and simulated time');
   const form = await page.evaluate(() => { openSettings(); const v = { stream: $('#stSbStream').value, speed: $('#stSbSpeed').value, seed: $('#stSbSeed').placeholder, status: $('#stSbStatus').textContent }; closeDlg($('#dlgSettings')); return v; });
-  assert(form.stream === 'on' && +form.speed === 50 && form.seed.includes(String(s1.seed)) && new RegExp(`^Order stream: seed \\d+ · step \\d+ · \\d+ of ${openIds.length} orders in · simulated .+ · 50x$`).test(form.status), 'Settings show the stream, its speed and its seed: ' + JSON.stringify(form));
+  assert(form.stream === 'on' && +form.speed === 50 && form.seed.includes(String(s1.seed)) && new RegExp(`^Order stream: \\d+ newest Etsy orders, pulled .+ · seed \\d+ · step \\d+ · \\d+ of ${openIds.length} orders in · simulated .+ · 50x$`).test(form.status), 'Settings show the stream, its speed and its seed: ' + JSON.stringify(form));
   const clock = await page.evaluate(() => ({ sim: SimClock.now(), real: Date.now(), today: today(), simDay: CharmNestOrders.localDay(new Date(SimClock.now())) }));
   assert(clock.sim > clock.real + 20 * 60000 && clock.sim <= stream().simNow + STEP, 'the simulated clock runs ahead of the real one, never past the next step: ' + JSON.stringify(clock));
   assert.strictEqual(clock.today, clock.simDay, "the sorter's day is the simulated day");

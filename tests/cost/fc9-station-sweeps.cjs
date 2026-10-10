@@ -47,8 +47,7 @@ const snapshot = Array.from({ length: N }, (_, i) => receipt(3521000101 + i, 400
   st.blobs.set(snapPath, { buf: Buffer.from(JSON.stringify({ at: snapAt, count: snapshot.length, receipts: snapshot })), generation: 1, meta: { contentType: 'application/json', metadata: {} } });
   st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: snapAt, takenBy: 'test', source: 'etsy-pull' });
   await settle({ sandbox: 'on', sandboxStream: 'on', sandboxSpeed: 1000, sandboxSeed: 3 });
-  await page.evaluate(() => sessionStorage.setItem('cn.sandboxAutoPull', '1'));
-  const c0 = st.calls.length, t0 = Date.now(); await page.reload(); await booted();
+  const c0 = st.calls.length, t0 = Date.now(); await page.reload(); await booted(); await page.evaluate(() => CN.setMode('orders'));   // (switching on opens Orders: no flag needed any more)
   await page.waitForFunction(() => Sandbox.stream() && SimClock.on() && CN.S.mode === 'orders', null, { timeout: 30000 });
   // the replay: until every order has come
   for (; Date.now() - t0 < 240000;) { const s = stream(); if (s && s.done) break; await page.waitForTimeout(500); }

@@ -124,7 +124,6 @@ const OLD = 'OLDREC';
   /* ── boot: the sandbox, streaming (fast), Manual; the orders of the day arrive over the dirty records ── */
   const page = await open(); await booted(page);
   await settle(page, { sandbox: 'on', sandboxStream: 'on', sandboxSpeed: SPEED, sandboxSeed: SEED });
-  await page.evaluate(() => sessionStorage.setItem('cn.sandboxAutoPull', '1'));
   await page.reload(); await booted(page);
   await page.waitForFunction(() => Sandbox.stream(), null, { timeout: 20000 });
   await page.evaluate(() => CN.setMode('orders'));

@@ -249,6 +249,18 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   assert(pulls().length === n6.pulls && wipes().length === n6.wipes && lib('sandboxStream').length === n6.ensures && etsy.calls.length === n6.etsy, 'a reload that finds the old snapshot pulls, clears and plays nothing');
   console.log('6 ok · old snapshot is not played');
 
+  // ══ 7 · "the pulled orders all at once" (no stream): the same one pull, asked with stream:false, and no stream is started ══
+  await page.evaluate(() => { const s = CN.S.settings; s.sandboxStream = 'off'; CN.saveSettings(); });
+  const n7 = { pulls: pulls().length, etsy: etsy.calls.length };
+  await page.evaluate(() => { CN.setMode('orders'); Orders.render(); }); await page.click('[data-sb-start]');
+  await until(() => window.__never || (window.Sandbox && !Sandbox.held() && !Sandbox.pulling() && Sandbox.pulled()), 120000, 'the pull without a stream');
+  assert.strictEqual(pulls().length, n7.pulls + 1, 'one pull for the one Start'); assert.strictEqual(etsy.calls.length, n7.etsy + 3, '3 Etsy calls');
+  assert.strictEqual(pulls()[pulls().length - 1].body.stream, false, 'asked without a stream');
+  assert(current() && current().source === 'etsy-pull' && !stream(), 'the set is stored and no stream was started');
+  const line7 = await page.evaluate(() => Sandbox.streamText());
+  assert.match(line7, /^Orders: 250 newest Etsy orders, pulled .+ \(\d+ open\) with 3 Etsy calls, all at once$/, 'the line names the set: ' + line7);
+  console.log('7 ok · no stream:', line7);
+
   assert.deepStrictEqual(etsy.calls.filter(c => !/\/receipts$/.test(c.path)), [], 'the only Etsy endpoint used was the receipts list');
   assert.deepStrictEqual(errors.filter(e => !/firebase stub|HTTP 4\d\d|HTTP 50\d|status of (409|429|50\d)|Failed to load resource/.test(e)), [], 'no page errors');
   console.log(`sandbox etsy pull page OK: ${pulls().length} pull requests, ${etsy.calls.length} Etsy calls in all (3 per pull)`);
