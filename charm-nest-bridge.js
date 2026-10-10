@@ -11643,7 +11643,11 @@ const Sandbox = window.Sandbox = (() => {
   /** The whole clean-up, once a person has agreed: the cloud's sandbox records (until the server says none is left and a
       count agrees), then this browser's copy of them, then a reload that restores nothing. ui: { button, note } — the button
       shows a spinner and what it is doing, the note is the calm line under it. Never says done while any record remains. */
+  let wiping = false;
   async function wipe(ui = {}, how = {}) {
+    // three buttons, one wipe: a second press while it runs would start a second loop over the same records
+    if (wiping) { toast("The sandbox is already being wiped: wait until it finishes", "bad", 5000); return { ok: false, text: "already wiping" }; }
+    wiping = true;
     const btn = ui.button, note = ui.note, was = ui.was || (btn ? Array.from(btn.childNodes) : []);
     const line = (text, bad) => { if (note) { note.textContent = text; note.style.color = bad ? "var(--clay)" : ""; } };
     const spin = text => { if (btn) { btn.disabled = true; btn.setAttribute("aria-busy", "true"); const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode(text)); } line(text); };
@@ -11705,7 +11709,7 @@ const Sandbox = window.Sandbox = (() => {
       return { ok: true, records, files, text };
     } catch (e) {
       return stop(`The sandbox was not reset: ${e.message}`);
-    } finally { if (!reloading) { if (own) { W.active = false; Arrivals.resume(); } rest(); if (!finished) refresh().then(() => paintLines()).catch(() => {}); } }   // (a clean-up that stopped says what the sandbox still holds, from a fresh read)
+    } finally { if (!reloading) { wiping = false; if (own) { W.active = false; Arrivals.resume(); } rest(); if (!finished) refresh().then(() => paintLines()).catch(() => {}); } }   // (a clean-up that stopped says what the sandbox still holds, from a fresh read)
   }
   /** Settings → Reset the sandbox: one question, then the clean-up. Answers null when it was not agreed to. */
   async function reset(ui = {}) {
@@ -11757,7 +11761,7 @@ const Sandbox = window.Sandbox = (() => {
     const unknown = fam.filter(f => rec[f.key] == null).map(f => f.label);
     const list = rows.filter(r => r.n > 0).concat(rows.filter(r => !r.n)).map(r => r.text).join(", ");
     const tail = unknown.length ? ` Not counted by this server yet: ${unknown.join(", ")}.` : "";
-    return rows.length ? `In the sandbox now: ${rows.some(r => r.n > 0) ? "" : "nothing — "}${list}.${tail}` : "In the sandbox now: nothing.";
+    return rows.length ? `In the sandbox now: ${rows.some(r => r.n > 0) ? "" : "nothing — "}${list}.${tail}` : unknown.length ? "In the sandbox now: the server gave no counts." : "In the sandbox now: nothing.";
   }
   /** What the wipe never touches, with its own counts (read-only, from the same status answer). */
   function keptText() {

@@ -65,7 +65,7 @@ async function main() {
   const fbStub = "const nope = () => { throw new Error('firebase stub'); }; export const initializeApp = nope, getApp = nope, getStorage = nope, ref = nope, uploadBytesResumable = nope, getDownloadURL = nope, getAuth = nope, signInAnonymously = nope;";
   const errors = [];
 
-  async function scenario(name, { sandbox, button, passcode, expect }) {
+  async function scenario(name, { sandbox, button, passcode, expect, purge503 }) {
     const srv = await start({ receipts: [] });
     const { st, sorterOrigin, stationOrigin } = srv;
     seed(st);
@@ -75,7 +75,10 @@ async function main() {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
     await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
     await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) }));
-    await ctx.addInitScript(({ sorter, code }) => { if (location.origin === sorter) localStorage.setItem('cn.employee', 'Tester'); window.confirm = () => true; window.prompt = () => code; window.alert = () => {}; }, { sorter: sorterOrigin, code: passcode == null ? CODE : passcode });
+    await ctx.addInitScript(({ sorter, code }) => { if (location.origin === sorter) localStorage.setItem('cn.employee', 'Tester'); const said = m => { try { const a = JSON.parse(sessionStorage.getItem('__dialogs') || '[]'); a.push(String(m)); sessionStorage.setItem('__dialogs', JSON.stringify(a)); } catch (_) {} };
+      window.confirm = m => { said(m); return true; }; window.prompt = m => { said(m); return code; }; window.alert = () => {}; }, { sorter: sorterOrigin, code: passcode == null ? CODE : passcode });
+    // (purge503: the purge's own time runs out part way, 503 + more:true; the page carries on with the sandbox wipe, never "press again")
+    if (purge503) await ctx.route(/charmNestLibrary/, r => { const b = r.request().method() === 'POST' ? r.request().postDataJSON() : null; if (b && b.op === 'purgeHistory') return r.fulfill({ status: 503, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: 'The purge removed 3 sandbox record(s) and is not finished: press Purge again', more: true, docs: { Charm_Nest_Runs: 4, Sandbox_all: 3 } }) }); return r.continue(); });
     const page = await ctx.newPage();
     page.on('pageerror', e => errors.push(`${name}: ${e.message}`));
     const booted = p => p.waitForFunction(() => window.CN && window.Sandbox && window.Session && Session.ready() && CN.S.cloud.ok !== null, null, { timeout: 60000 });
@@ -131,6 +134,17 @@ async function main() {
     }
     const calls = st.calls.slice(mark), ops = calls.map(c => c.op).filter(Boolean);
 
+    // ── the one question each button asked (a single native question, no pop-up on a pop-up) says what goes and what stays ──
+    const asked = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__dialogs') || '[]'));
+    assert.strictEqual(asked.length, 1, `${name}: exactly one question was asked: ${asked.length}`);
+    if (button === '#stPurge') assert(/Purge the real run history .*wipe the sandbox completely.*Stays: the Charm repo, employee efficiency, .*real seals, custom orders and cancelled orders\.\n\nEnter the passcode to confirm\./s.test(asked[0]) && !asked[0].includes(CODE), `${name}: the purge question names the wipe and what stays, and asks for the passcode: ${asked[0]}`);
+    else assert(/^Wipe everything the sandbox made: .*seals, cancelled orders.*files, and everything this browser saved of it .*The Charm repo and employee efficiency stay, and no real record is touched\./.test(asked[0]), `${name}: the reset question names what goes and what stays: ${asked[0]}`);
+
+    if (purge503) {
+      const said = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent).join(' | '));
+      assert(/Purged 4 real run record\(s\)\. Sandbox cleaned — /.test(said) && !/press Purge again/i.test(said), `${name}: a purge that ran out of time part way carries on with the wipe and says done only when counted: ${said}`);
+    }
+
     // ── the cloud: nothing of the sandbox is left; production and what is kept are byte-identical ──
     assert.deepStrictEqual(sandboxLeft(st), [], `${name}: no sandbox document is left`);
     assert.deepStrictEqual(sandboxFilesLeft(st), [], `${name}: no sandbox file is left`);
@@ -170,10 +184,41 @@ async function main() {
     assert(/Last (reset|purge) .+ — \d+ cloud record\(s\) and \d+ file\(s\) removed .*nothing left in the cloud \(all \d+ kinds counted at 0\)/.test(last), `${name}: the last-reset line says nothing is left and how many kinds read 0: ${last}`);
     const inside = await page.evaluate(() => { const n = document.getElementById('stBuildNote'), d = document.getElementById('dlgSettings'); return { inside: d.contains(n), open: document.querySelectorAll('dialog[open]').length }; });
     assert(inside.inside && inside.open === 1, `${name}: the lines are inside the one open Settings dialog (no pop-up on a pop-up)`);
+    if (process.env.SHOT && /^1 /.test(name)) { await page.evaluate(() => { const n = document.getElementById('stBuildNote'); n.scrollIntoView({ block: 'end' }); }); await page.waitForTimeout(500); await page.screenshot({ path: process.env.SHOT }); }
     console.log(`ok: ${name} — ${shape}; ${fams.length} families at 0; kept: ${kept}`);
     await ctx.close(); srv.close();
     return shape;
   }
+
+  /** How the line reads for answers the real server may give: a capped file count, a family it does not count yet, rows from the browser's registry, no kept counts. */
+  async function formatting() {
+    const srv = await start({ receipts: [] }), { sorterOrigin, stationOrigin } = srv;
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
+    await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
+    await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) }));
+    let answer = null;
+    await ctx.route(/charmNestLibrary/, r => { const b = r.request().postDataJSON && r.request().method() === 'POST' ? r.request().postDataJSON() : null; if (answer && b && b.op === 'sandboxStatus' && !b.light) return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(answer) }); return r.continue(); });
+    await ctx.addInitScript(({ sorter }) => { if (location.origin === sorter) localStorage.setItem('cn.employee', 'Tester'); window.confirm = () => true; window.alert = () => {}; }, { sorter: sorterOrigin });
+    const page = await ctx.newPage(); page.on('pageerror', e => errors.push('formatting: ' + e.message));
+    await page.goto(`${sorterOrigin}/charm-nest-1.html`); await page.waitForFunction(() => window.CN && window.Sandbox, null, { timeout: 60000 });
+    await page.evaluate(station => { const s = JSON.parse(localStorage.getItem('cn.settings') || '{}'); Object.assign(s, { sandbox: 'on', dsOrigin: station, pollOrders: 'off' }); localStorage.setItem('cn.settings', JSON.stringify(s)); localStorage.setItem('cn.sandboxHold', '{"at":1}'); }, stationOrigin);
+    await page.reload(); await page.waitForFunction(() => window.CN && window.Sandbox && Session.ready() && CN.S.cloud.ok !== null, null, { timeout: 60000 });
+    const ask = async () => { await page.evaluate(() => { openSettings(); return Sandbox.refresh(); }); await page.waitForTimeout(400); return page.evaluate(() => ({ now: Sandbox.nowText(), kept: Sandbox.keptText(), dom: [...document.querySelectorAll('#stBuildNote [data-i]')].map(n => n.dataset.i + ': ' + n.textContent) })); };
+    const cap = 'Storage:charmnest/sandbox/';
+    answer = { ok: true, snapshot: null, records: { Charm_Nest_Sheets: 12, Charm_Pool: 1500, [cap]: 1000, Charm_Nest_Sets: 0 }, recordsCapped: { [cap]: true }, kept: { charmRepo: 1234, efficiencyDays: 1000 } };
+    await page.evaluate(() => { Sandbox.browserLeft = () => [{ key: 'idb', label: 'saved workspace parts', n: 2 }, { key: 'ls', label: 'stored keys', n: 0 }]; });
+    let r = await ask();
+    assert(/^In the sandbox now: 12 sheets, 1,500 pool rows, 1,000\+ sandbox files, 2 saved workspace parts \(this browser\), 0 sets, 0 stored keys \(this browser\)\. Not counted by this server yet: .*set counters/.test(r.now), 'formatting: what holds something comes first, a capped count says so, the browser rows are listed, a family the server did not count is named: ' + r.now);
+    assert.strictEqual(r.kept, 'Kept, never wiped: Charm repo 1,234 designs; employee efficiency 1,000 daily records.', 'formatting: the kept line without a sandbox share');
+    assert(r.dom.length >= 4 && /^kept: Kept, never wiped/.test(r.dom[r.dom.length - 1]) && /^now: In the sandbox now/.test(r.dom[r.dom.length - 2]), 'formatting: the now line, then the kept line: ' + r.dom.map(x => x.slice(0, 40)).join(' | '));
+    answer = { ok: true, snapshot: null, records: {}, kept: {} };
+    await page.evaluate(() => { delete Sandbox.browserLeft; });
+    r = await ask(); assert(/^In the sandbox now: the server gave no counts\.$/.test(r.now) && /^Kept, never wiped: the Charm repo and employee efficiency\.$/.test(r.kept), 'formatting: an answer with no counts says so (it does not claim 0), and the kept line still names what stays: ' + r.now + ' / ' + r.kept);
+    answer = { error: 'boom' }; r = await ask();
+    assert(/could not be read/.test(r.now) && r.kept === '', 'formatting: an unreadable status says so and claims no kept counts: ' + r.now);
+    await ctx.close(); srv.close(); console.log('ok: formatting of the line');
+  }
+  await formatting();
 
   const a = await scenario('1 Reset sandbox records', { sandbox: true, button: '#stSbReset', expect: 'reset' });
   const b = await scenario('2 Reset the sandbox…', { sandbox: true, button: '#stSandboxReset', expect: 'reset' });
@@ -181,6 +226,7 @@ async function main() {
   const c = await scenario('3 Purge all run history…', { sandbox: true, button: '#stPurge', expect: 'purge' });
   assert(/sandboxReset/.test(c) && /purgeHistory/.test(c), 'the purge ends in the same wipe: ' + c);
   await scenario('4 Reset sandbox records from a production page', { sandbox: false, button: '#stSbReset', expect: 'reset' });
+  await scenario('4b Purge whose own time ran out part way (503 + more)', { sandbox: true, button: '#stPurge', expect: 'reset', purge503: true });
   await scenario('5 Purge with a wrong passcode', { sandbox: true, button: '#stPurge', passcode: 'wrong', expect: 'refused' });
   assert.deepStrictEqual(errors.filter(e => !/firebase stub/.test(e)), [], 'no page errors');
   console.log('sandbox wipe button OK: three buttons, one complete wipe; every family at 0 and the kept line after it; production and protected records byte-identical');
