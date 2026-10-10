@@ -84,7 +84,7 @@ const set1 = () => ({ setId: 'set-1', seq: 1, name: 'Set-1', group: 'dispatch', 
   for (const k of ['g2', 'g3', 'g4', 'sp']) cstate.sheets[S[k].id] = clone({ ...S[k], poolIds: [S[k].id + '_x_1'], orders: [] });   // (no shared order: only the principle is looked at here)
   cstate.sheets[S.sp.id].releaseFull = true; cstate.sheets[S.sp.id].metal = 'silver';                                              // a committed set that holds one completed SS sheet
   p = LF.core.planMove(cstate, { kind: 'sheet', id: S.sp.id, to: { area: 'progress' } }, { ...env, sharedItems: [] });
-  assert(keys(p).includes('setPrinciple'), 'the only completed SS of a valid set stays: ' + JSON.stringify(keys(p))); assert.match(p.needs.find(n => n.key === 'setPrinciple').label, /would have no completed SS sheet/);
+  assert(keys(p).includes('setPrinciple'), 'the only completed SS of a valid set stays: ' + JSON.stringify(keys(p))); assert.match(p.needs.find(n => n.key === 'setPrinciple').label, /needs a completed SS sheet, and SS Sheet 1 is the only one it has/);
   p = LF.core.planMove(cstate, { kind: 'sheet', id: S.g3.id, to: { area: 'progress' } }, { ...env, sharedItems: [] });
   assert(!keys(p).includes('setPrinciple'), 'one of three completed GF sheets may leave: ' + JSON.stringify(keys(p)));
 
@@ -93,7 +93,7 @@ const set1 = () => ({ setId: 'set-1', seq: 1, name: 'Set-1', group: 'dispatch', 
   const recs = { a: mem({ id: 'a', metal: 'gold', releaseFull: true, setId: 'sx', draft: false, poolIds: ['9000000001_1_1'], orders: [] }), b: mem({ id: 'b', metal: 'silver', releaseFull: true, setId: 'sx', draft: false, poolIds: ['9000000002_1_1'], orders: [] }), c: mem({ id: 'c', metal: 'gold', releaseFull: true, setId: 'sx', draft: false, poolIds: ['9000000003_1_1'], orders: [] }) };
   const sx = { doc: { setId: 'sx', seq: 5, committedAt: 5, status: 'complete', sheetIds: ['a', 'b', 'c'] }, members: [recs.a, recs.b, recs.c] };
   let v = SE.verifyMoves({ moves: [{ id: 'b', to: null }], recs, sets: { sx }, others: [] });
-  assert.equal(v.ok, false); assert.equal(v.reasons[0].key, 'setPrinciple'); assert.match(SE.sayWhy(v), /Set 5 would have no completed SS sheet/);
+  assert.equal(v.ok, false); assert.equal(v.reasons[0].key, 'setPrinciple'); assert.match(SE.sayWhy(v), /Set 5 needs a completed SS sheet, and SS Sheet 1 is the only one it has/);
   v = SE.verifyMoves({ moves: [{ id: 'a', to: null }], recs, sets: { sx }, others: [] }); assert.equal(v.ok, true, JSON.stringify(v.reasons));
   const legacy = { doc: sx.doc, members: [recs.a, { ...recs.b, releaseFull: false }, recs.c] };
   v = SE.verifyMoves({ moves: [{ id: 'a', to: null }], recs, sets: { sx: legacy }, others: [] }); assert.equal(v.ok, true, 'a set that was already short is flagged elsewhere, a move out of it is not blocked here');

@@ -437,8 +437,8 @@
     // (Paul, 10 Oct) taking out the last completed GF or SS sheet a set has would leave it without the sheets a set needs: refused, with the reason
     const RLs = RL(), members = v.members || [];
     if (RLs && members.some(m => Object.prototype.hasOwnProperty.call(m, 'releaseFull'))) {
-      const before = RLs.validSet(members), after = RLs.wouldStayValid(members, [v.id], []);
-      if (before.ok && !after.ok) { need('setPrinciple', `${tn} would have no completed ${after.missing.join(' or ')} sheet`, after.reason); return finish(plan); }
+      const before = RLs.validSet(members), after = RLs.wouldStayValid(members, [v.id], []), lost = after.missing.filter(c => !before.missing.includes(c));   // (the same reading as SetEdit.verifyMoves: a set is never made worse, and never stopped from being mended)
+      if (lost.length) { need('setPrinciple', `${tn} needs a completed ${lost.join(' and a completed ')} sheet, and ${name} is the only one it has`, 'A set needs at least 1 completed GF sheet and 1 completed SS sheet. Put another completed ' + lost.join(' / ') + ' sheet in first.'); return finish(plan); }
     }
     if (items.length) {
       plan.shared = items; plan.group = [name].concat(items.flatMap(i => i.there || []));

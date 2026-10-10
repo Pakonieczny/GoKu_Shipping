@@ -44,7 +44,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   mkSet('set-5', ['only5']); mk('only5', 'gold', ['5100000050_1_1'], { setId: 'set-5', setSeq: 5, ...seal });
   mkSet('set-6', ['m6-a', 'm6-b']); mk('m6-a', 'gold', ['5100000060_1_1'], { setId: 'set-6', setSeq: 6, ...seal }); mk('m6-b', 'gold', ['5100000061_1_1'], { setId: 'set-6', setSeq: 6, sheetIndex: 2, ...seal });
   mkSet('set-7', ['m7-a']); mk('m7-a', 'gold', ['5100000070_1_1'], { setId: 'set-7', setSeq: 7, ...seal });
-  mkSet('set-8', ['o8-s'], { status: 'open', committedAt: null, committed: undefined, labelFiles: [] }); mk('o8-s', 'gold', ['5100000080_1_1'], { setId: 'set-8', setSeq: 8, runId: 'run-live' });
+  mkSet('set-8', ['o8-s'], { status: 'open', runId: 'run-live', committedAt: null, committed: undefined, labelFiles: [] }); mk('o8-s', 'gold', ['5100000080_1_1'], { setId: 'set-8', setSeq: 8, runId: 'run-live' });
   // draft sheets (In progress)
   mk('d-solo', 'gold', ['5100000030_1_1']); mk('d-free', 'gold', ['5100000035_1_1']); mk('d-plan', 'gold', ['5100000036_1_1']);
   mk('d-m1', 'gold', ['5100000031_1_1']); mk('d-m2', 'silver', ['5100000031_2_1']);                      // share order 5100000031
@@ -92,7 +92,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert(rev('library') > revBefore[0] && rev('placement') > revBefore[1], 'the writer raises Charm_Nest_Rev/library and /placement: every screen follows');
     assert.equal(r.status, 200, JSON.stringify(r)); assert.deepEqual(r.applied.map(a => [a.id, a.type, a.to]), [['gf-2', 'setMember', null]]); assert.deepEqual(r.membership.sheets.map(x => x.id), ['gf-2']); assert.equal(r.membership.sets[0].setId, 'set-1');
     let g = sheet('gf-2');
-    assert.equal(g.draft, true); assert.equal(g.setId, null); assert.equal(g.releaseFull, false); assert(held('gf-2') && /^Taken out of Set 1/.test(g.laserHold.note) && g.laserHold.by === 'Paul', 'back to In progress as a hold: the open run does not pull it into a set by itself');
+    assert.equal(g.draft, true); assert.equal(g.setId, null); assert.equal(g.releaseFull, true, 'a full sheet taken out is still a Completed sheet (Paul, 10 Oct: the set rules read releaseFull)'); assert(held('gf-2') && /^Taken out of Set 1/.test(g.laserHold.note) && g.laserHold.by === 'Paul', 'back to In progress as a hold: the open run does not pull it into a set by itself');
     assert.equal(g.flowHistory.at(-1).type, 'setLeave'); assert.equal(g.flowHistory.at(-1).by, 'Paul');
     let s1 = set('set-1');
     assert.deepEqual(s1.sheetIds, ['gf-1', 'ss-1', 'gf-3', 'rg-1']); assert(!s1.labelFiles.some(f => f.sheetId === 'gf-2') && s1.labelFiles.length === 4, 'the set\'s QR label list is made without it');
