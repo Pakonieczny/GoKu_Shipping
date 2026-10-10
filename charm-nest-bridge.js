@@ -4934,8 +4934,11 @@ const Engrave = window.Engrave = (() => {
   async function ensureJobFont(job) {
     if (!job) return null;
     if (!job.fontKey || !(job.fit || job.fontLocked || job.writtenFit)) {
-      const p = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job));
-      job.fontKey = p.id; job.fontAsked = p.asked; job.fontMapped = p.mapped; job.fontListing = p.listing;
+      let p = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job));
+      // a font the buyer wrote in the note ("font: Pristina", "Angelina font") is read like a drop-down word when no drop-down or listing rule settled the font (spelling and case aside)
+      const noted = !p.mapped && job.requests && job.requests.font ? O.fontOfPhrase(job.requests.font) : "";
+      if (noted) p = { id: noted, asked: String(job.requests.font), mapped: true, listing: false, source: "note" };
+      job.fontKey = p.id; job.fontAsked = p.asked; job.fontMapped = p.mapped; job.fontListing = p.listing; job.fontFromNote = p.source === "note";
     }
     if (job.fontKey !== O.DEFAULT_FONT) {
       const set = await loadFontSet(job.fontKey);
@@ -4943,6 +4946,7 @@ const Engrave = window.Engrave = (() => {
       else delete job.fontFallback;
     }
     job.fontName = (O.fontById(job.fontKey) || O.fontById(O.DEFAULT_FONT)).name;
+    job.font = { asked: job.fontAsked || "", id: job.fontKey, name: job.fontName, source: "font-map" };   // (what the piece is engraved in: the piece switch and the per-piece records read it)
     return setOf(job);
   }
   /* Settings "Max height (fraction)" is the taste of the AUTOMATIC first placement. It was also the ceiling of every size
@@ -5128,6 +5132,7 @@ const Engrave = window.Engrave = (() => {
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
         Object.assign(j, { fontKey: O.fontOfRecord(bk), fontAsked: bk.fontAsked || "", fontName: bk.font || undefined, fontLocked: true, state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: bk.approvedAt || null, engravingSeals:bk.engravingSeals || [], backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
         j.row.engrave = { ...j.row.engrave, needed:true,state:"written",approved:true,text:j.text,approvedBy:j.approvedBy,approvedAt:j.approvedAt };CNEngravingSeals.keep(j);
+        j.font = { asked: j.fontAsked || "", id: j.fontKey, name: j.fontName || (O.fontById(j.fontKey) || O.fontById(O.DEFAULT_FONT)).name, source: "font-map" };
         if (j.fontKey !== O.DEFAULT_FONT) loadFontSet(j.fontKey).catch(() => {});   // (a recalled back in another font: its font is read now, for the picture and a reopen)
       }
     }
@@ -6638,7 +6643,7 @@ const Engrave = window.Engrave = (() => {
     const asks = [...new Set((job.questions || []).filter(q => q && !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q)))];
     const wants = [];
     if (requests.side && !["back", "unspecified"].includes(requests.side)) wants.push(`Requested side: ${requests.side}`);
-    if (requests.font) wants.push(`Requested font: ${requests.font}`);
+    if (requests.font && !(job.fontFromNote && job.fontMapped)) wants.push(`Requested font: ${requests.font}`);
     // the font a drop-down chose (spec.font, charm-nest-orders.js fontRead): one the app has is shown as "Font: Stylish → Playwrite US Trad" under From the order; a font the app does not have
     // falls back to Source Sans 3, is never a hold, and is said here, beside the words, for the shop to decide ("Requested font: Script (engraved in Source Sans 3)")
     const pIx = pieceIndexOf(job), fontText = O.fontLine(sp, pIx), fontMapped = O.pieceFont(sp, pIx).mapped;
@@ -6646,7 +6651,8 @@ const Engrave = window.Engrave = (() => {
     if (job.fontFallback) wants.push(`${job.fontFallback}: engraved in Source Sans 3`);
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
-    const fromOrder = `${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
+    const noteFont = job.fontFromNote && job.fontMapped ? `${requests.font} → ${job.fontName} (asked in the note)` : "";
+    const fromOrder = `${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? " (an earring line's Left and Right are one placement)" : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, jobsOf(job.row).length))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the back file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears) : ""}</div><div class="backHost"></div></div>

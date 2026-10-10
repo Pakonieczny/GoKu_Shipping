@@ -51,6 +51,8 @@
     const flow=G.reflowAt(job.lineInput,fontFor(fit.weight),job.mask,opts,{centre:fit.centre,angle:fit.angle,size:fit.size},job.lineMode || "auto");
     if(flow.ok){fit=job.fit=Object.assign({},fit,flow,{weight:fit.weight});job.lines=flow.lines.slice();job.text=job.lines.join("\n");}
     job.wantSize=fit.size;
+    // a font with ONE weight (a script) has no Semibold cut: the Regular is what is cut at every size, and the record says so
+    if(fit.weight === "Semibold" && !F_.Semibold)fit=job.fit=Object.assign({},fit,{weight:"Regular",weightNote:"this font has one weight"});
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
     if (!check.ok) { throw new Error(`ink outside the eroded mask after fitting (${check.outside} px) — a bug, not a review item`); }
     return {view,mask:job.mask,fit,lines:job.lines,check};

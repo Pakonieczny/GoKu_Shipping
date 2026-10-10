@@ -31,8 +31,8 @@ self.onmessage=({data})=>{
   try {
     if(fontError)throw fontError;
     if(!fonts)throw new Error("Engraving fonts are not ready.");
-    const key=data.input && data.input.fontKey, set=key ? sets[key] : null;
-    if(key && (!set || set.error))throw new Error("The engraving font "+key+" is unavailable.");
+    const key=data.input && data.input.fontKey, own=!!key && key !== "source-sans-3", set=own ? sets[key] : null;   // (Source Sans 3 is the default set, always here)
+    if(own && (!set || set.error))throw new Error("The engraving font "+key+" is unavailable.");
     self.postMessage({id:data.id,result:CharmNestEngraveFit.calculate(data.input,set || fonts,CharmNestGeom)});
   } catch(error) {
     self.postMessage({id:data.id,error:{message:error.message,stage:error.stage,checks:error.checks,images:error.images}});

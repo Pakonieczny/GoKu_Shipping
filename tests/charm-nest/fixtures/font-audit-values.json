@@ -1,0 +1,1356 @@
+{
+ "about": "Every font-bearing option value of the 49 listings with a font drop-down, read from the shop's real orders (FONTAUDIT, 10 Oct 2026: option names, values and counts only, no buyer data). word = the shop's font word the value carries, null for a value with no font (No Font).",
+ "rows": [
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 4
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 4
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 4
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "14\" ·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 4
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 4
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\"·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 3
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·TYPEWRITER·Right",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "14\" ·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·ANGELINA·Left",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "14\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "14\" ·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·ANGELINA·Right",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\" ·NO FONT·",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\"·PRISTINA·Right",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·PRISTINA·Right",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "14\" ·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "18\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "14\" ·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1017622821",
+   "name": "Necklace Length",
+   "value": "16\"·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 6
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 3
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 3
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·TYPEWRITE·Left",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·PRISTINA·Left",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\" ·NO FONT·",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "20\" ·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1445686334",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·ANGELINA·Right",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 7
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·TYPEWRITER·Right",
+   "word": "Typewriter",
+   "orders": 3
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 2
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·ANGELINA·Right",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·ANGELINA·Right",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·ANGELINA·Left",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "14\" ·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·TYPEWRITE·Left",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "18\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1830130714",
+   "name": "LENGTH / FONT / ALIGNMENT",
+   "value": "16\"·PRISTINA·Right",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "17\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 4
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "18\"/Stylish",
+   "word": "Stylish",
+   "orders": 3
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "17\"/Stylish",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "16\"/Stylish",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "16\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "18\"/Angelina",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "18\"/Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "19\"/Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "17\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "19\"/Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "18\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "16\"/Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "16\"/Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "544790191",
+   "name": "Necklace Length & Font Choice:",
+   "value": "19\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "4458930445",
+   "name": "Font Choice",
+   "value": "Britannic Bold",
+   "word": "Britannic Bold",
+   "orders": 9
+  },
+  {
+   "listing": "4458930445",
+   "name": "Font Choice",
+   "value": "Vibur",
+   "word": "Vibur",
+   "orders": 5
+  },
+  {
+   "listing": "4458930445",
+   "name": "Font Choice",
+   "value": "Ace",
+   "word": "Ace",
+   "orders": 3
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·STYLISH·Center",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "14\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "14\" ·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·ANGELINA·Left",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "20\" ·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·COMIC·Right",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·TYPEWRITER·Right",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "14\" ·PRISTINA·Right",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1008920168",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·PRISTINA·Right",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Comic",
+   "word": "Comic",
+   "orders": 5
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Typewriter",
+   "word": "Typewriter",
+   "orders": 4
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Gold - Pristina",
+   "word": "Pristina",
+   "orders": 2
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Silver • Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Silver • Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "718177133",
+   "name": "Metal? Font Choice?",
+   "value": "Silver • Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "16\"/ Typewriter",
+   "word": "Typewriter",
+   "orders": 4
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "18\"/ Typewriter",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "20\"/ Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "18\"/ Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "18\"/ Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "18\"/ Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1008014571",
+   "name": "Fonts",
+   "value": "16\"/ Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "234758391",
+   "name": "Font",
+   "value": "Angelina",
+   "word": "Angelina",
+   "orders": 3
+  },
+  {
+   "listing": "234758391",
+   "name": "Font",
+   "value": "Stylish",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "234758391",
+   "name": "Font",
+   "value": "Typewriter",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "234758391",
+   "name": "Font",
+   "value": "Comic",
+   "word": "Comic",
+   "orders": 2
+  },
+  {
+   "listing": "234758391",
+   "name": "Font",
+   "value": "Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "196995367",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "196995367",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·TYPEWRITER·Right",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "196995367",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 2
+  },
+  {
+   "listing": "196995367",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·ANGELINA·Center",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "196995367",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "196995367",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "880672858",
+   "name": "Font Selection",
+   "value": "18\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 3
+  },
+  {
+   "listing": "880672858",
+   "name": "Font Selection",
+   "value": "20\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 2
+  },
+  {
+   "listing": "880672858",
+   "name": "Font Selection",
+   "value": "17\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "880672858",
+   "name": "Font Selection",
+   "value": "18\"/Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1015115571",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1015115571",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "19\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1015115571",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1015115571",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "17\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1015115571",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1015115571",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\" ·NO FONT·",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "1025856932",
+   "name": "Chain Length",
+   "value": "6 inch • Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1025856932",
+   "name": "Chain Length",
+   "value": "7 inch • Typewritr",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1025856932",
+   "name": "Chain Length",
+   "value": "7 inch • Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1025856932",
+   "name": "Chain Length",
+   "value": "8 inch • Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1025856932",
+   "name": "Chain Length",
+   "value": "7.5 inch • Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "595264213",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Angelina",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "595264213",
+   "name": "Metal? Font Choice?",
+   "value": "Silver • Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "595264213",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "595264213",
+   "name": "Metal? Font Choice?",
+   "value": "Silver • Custom",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "595264213",
+   "name": "Metal? Font Choice?",
+   "value": "Gold • Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1714112618",
+   "name": "Font Choice (see listing photo for choices)",
+   "value": "Vibur",
+   "word": "Vibur",
+   "orders": 3
+  },
+  {
+   "listing": "1714112618",
+   "name": "Font Choice (see listing photo for choices)",
+   "value": "Ace",
+   "word": "Ace",
+   "orders": 2
+  },
+  {
+   "listing": "1095123288",
+   "name": "Font Selection",
+   "value": "18\"/Stylish",
+   "word": "Stylish",
+   "orders": 2
+  },
+  {
+   "listing": "1095123288",
+   "name": "Font Selection",
+   "value": "18\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1095123288",
+   "name": "Font Selection",
+   "value": "17\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1095123288",
+   "name": "Font Selection",
+   "value": "19\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "996012322",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·COMIC·Right",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "996012322",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "18\"·ANGELINA·Right",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "996012322",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "14\" ·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "990826654",
+   "name": "Necklace Length & Font Choice:",
+   "value": "16\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "990826654",
+   "name": "Necklace Length & Font Choice:",
+   "value": "17\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "990826654",
+   "name": "Necklace Length & Font Choice:",
+   "value": "18\"/Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "1714117116",
+   "name": "Font Choice (see listing photo for choices)",
+   "value": "Vibur",
+   "word": "Vibur",
+   "orders": 1
+  },
+  {
+   "listing": "1714117116",
+   "name": "Font Choice (see listing photo for choices)",
+   "value": "Ace",
+   "word": "Ace",
+   "orders": 1
+  },
+  {
+   "listing": "479938139",
+   "name": "Font Selection",
+   "value": "16\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "479938139",
+   "name": "Font Selection",
+   "value": "16\"/Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "1002723802",
+   "name": "Necklace Length and Font",
+   "value": "18\"·TYPEWRITER·",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1002723802",
+   "name": "Necklace Length and Font",
+   "value": "16\"·ANGELINA·",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1652254222",
+   "name": "Necklace Length and Font",
+   "value": "18\"·ANGELINA·",
+   "word": "Angelina",
+   "orders": 2
+  },
+  {
+   "listing": "1652254222",
+   "name": "Necklace Length and Font",
+   "value": "14\" ·NO FONT·",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "1714117068",
+   "name": "Font Choice (see listing photo for choices)",
+   "value": "Vibur",
+   "word": "Vibur",
+   "orders": 1
+  },
+  {
+   "listing": "1714117068",
+   "name": "Font Choice (see listing photo for choices)",
+   "value": "Ace",
+   "word": "Ace",
+   "orders": 1
+  },
+  {
+   "listing": "508573906",
+   "name": "Length/Font/Align",
+   "value": "7\"/Stylish/Center",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "508573906",
+   "name": "Length/Font/Align",
+   "value": "7.5\"/TypeWrit/Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "182232792",
+   "name": "Chain Length/Font",
+   "value": "19\"·Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "182232792",
+   "name": "Chain Length/Font",
+   "value": "17\"·Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "872449597",
+   "name": "Necklace Length /Font",
+   "value": "16\" · Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "872449597",
+   "name": "Necklace Length /Font",
+   "value": "18\" • Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "982791277",
+   "name": "Font/ Chain Length",
+   "value": "stylish • 20 inches",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "982791277",
+   "name": "Font/ Chain Length",
+   "value": "angelina • 18 inches",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "531491710",
+   "name": "Bracelet Length/Font Choice/Font Alignment",
+   "value": "7\"/Angelina/Center",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "531491710",
+   "name": "Bracelet Length/Font Choice/Font Alignment",
+   "value": "7.5\"/TypeWrit/Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1009947427",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·COMIC·Center",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "247369852",
+   "name": "Bracelet Length/Font Choice/Font Alignment",
+   "value": "7\"/Stylish/Center",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "269118448",
+   "name": "Lengths of Necklaces · Font Choice?",
+   "value": "set·15\"16.5\"·TypeWrt",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "469423772",
+   "name": "Bracelet Length/Font",
+   "value": "7\"/Typewriter",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1021352003",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·TYPEWRITER",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "546472047",
+   "name": "Necklace Length·FONT",
+   "value": "17\"·TYPEWRITER·Right",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "1006830771",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "19\"·PRISTINA·Center",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "532401548",
+   "name": "Necklace Length·FONT",
+   "value": "16\"&18\"·Set·ANGELINA",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "635319128",
+   "name": "Length/Font",
+   "value": "6.5\"/Pristina",
+   "word": "Pristina",
+   "orders": 1
+  },
+  {
+   "listing": "537961176",
+   "name": "Length/Font",
+   "value": "17\"/Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "269117878",
+   "name": "Length/Font/Align",
+   "value": "16\"/Comic/Right",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "897316607",
+   "name": "Font/ Chain Length",
+   "value": "stylish • 18 inches",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1004774360",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\" ·NO FONT·",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "1004774360",
+   "name": "Necklace Length /Font /Alignment",
+   "value": "16\"·TYPEWRITE·Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "471634442",
+   "name": "Font/ Chain Length",
+   "value": "Angelina - 19 inches",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "1107436524",
+   "name": "Length/Font",
+   "value": "19\"/Comic",
+   "word": "Comic",
+   "orders": 1
+  },
+  {
+   "listing": "206062168",
+   "name": "Length/Font/Align",
+   "value": "18\"/Typewrite/Center",
+   "word": "Typewriter",
+   "orders": 1
+  },
+  {
+   "listing": "956604669",
+   "name": "Font Choice",
+   "value": "Stylish",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "1009980257",
+   "name": "Necklace Length",
+   "value": "18\"·STYLISH·Right",
+   "word": "Stylish",
+   "orders": 1
+  },
+  {
+   "listing": "216290182",
+   "name": "Font",
+   "value": "Angelina",
+   "word": "Angelina",
+   "orders": 1
+  },
+  {
+   "listing": "780747003",
+   "name": "Chain Length",
+   "value": "18\"·No Font",
+   "word": null,
+   "orders": 1
+  },
+  {
+   "listing": "522385369",
+   "name": "Bracelet Length/Font Choice",
+   "value": "9\"/No Font",
+   "word": null,
+   "orders": 1
+  }
+ ],
+ "nonFont": [
+  {
+   "value": "No Font / NO FONT",
+   "where": "18\"·No Font, 14\" ·NO FONT·, 9\"/No Font, 14\" ·NO FONT·",
+   "orders": 7,
+   "meaning": "the buyer wants no font choice (use the default font)"
+  },
+  {
+   "value": "Custom",
+   "where": "listing 595264213 \"Metal? Font Choice?\": Silver • Custom",
+   "orders": 1,
+   "meaning": "a custom font: nothing to map, the buyer writes it in a note"
+  }
+ ]
+}

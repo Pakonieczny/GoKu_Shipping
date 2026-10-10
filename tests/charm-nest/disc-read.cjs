@@ -45,7 +45,7 @@ const realLine = (rid, metalKey, personalization) => {
 { const w = world('4175370240', realLine('4175370240', 'rose', ['Tag 1: J, Tag 2: Q']));
   eq([w.spec.designSku, w.spec.skuSource, w.spec.problems.length], ['INITIAL_DISC_4571', 'typo', 0], '4175370240: the typo SKU reads as the master design, nothing is asked (not held)');
   eq([w.spec.pieceCount, w.spec.pair.kind, w.spec.pair.discs, w.spec.pair.earring, w.spec.pair.sides], [2, 'multi', 2, false, [null, null]], '"ROSEGOLD - 2 Disc" is 2 pieces of one necklace, no side');
-  eq([w.spec.font.asked, w.spec.font.source, w.spec.chain], ['Typewriter', 'rule:font-asked', '16"'], 'the Fonts option is the font the buyer ASKED for plus a length: it never holds the line');
+  eq([w.spec.font.asked, w.spec.font.source, w.spec.chain], ['Typewriter', 'rule:font', '16"'], 'the Fonts option is the font the buyer ASKED for (an installed font since FONTMAP) plus a length: it never holds the line');
   ok(w.spec.engraveCandidate, 'it has words to engrave');
   eq(w.pieces.map(p => [p.n, p.of, p.side, p.mirror, p.groupKey]), [[1, 2, null, false, '4175370240:5217980219'], [2, 2, null, false, '4175370240:5217980219']], 'two pieces, n of 2, one group, never mirrored');
   eq([w.plan.split, w.plan.slots], [true, ['D1', 'D2']], 'two engraving slots: disc 1 and disc 2');
@@ -53,7 +53,7 @@ const realLine = (rid, metalKey, personalization) => {
   eq(S.splitWords(w.spec.personalization, 2).words, ['J', 'Q'], 'disc 1 = J, disc 2 = Q'); }
 { const w = world('4172791262', realLine('4172791262', 'gold', ['1: A, 2: B, 3: C']));
   eq([w.spec.designSku, w.spec.problems.length, w.spec.pieceCount, w.spec.pair.discs], ['INITIAL_8391', 0, 3, 3], '4172791262: "3 discs . gold" is 3 pieces, nothing is asked');
-  eq([w.spec.font.asked, w.spec.font.source], ['Stylish', 'rule:font-asked'], 'Font: Stylish is read, not held');
+  eq([w.spec.font.asked, w.spec.font.source], ['Stylish', 'rule:font'], 'Font: Stylish is read, not held');
   eq(w.plan.slots, ['D1', 'D2', 'D3'], 'three slots');
   eq(S.splitWords(w.spec.personalization, 3).words, ['A', 'B', 'C'], 'one word per disc'); }
 // the old reading kept in a stored line: the question is gone with the current reader
@@ -141,7 +141,7 @@ const realLine = (rid, metalKey, personalization) => {
   const r1 = S.pieceRecord(d1, { of: 2 }), r2 = S.pieceRecord(Object.assign(d2, { state: 'review', wordsSource: 'personalization:numbered' }), { of: 2 });
   eq([r1.index, r1.of, r1.slot, r1.tag, r1.label, r1.words, r1.lines, r1.poolIds, r1.state, r1.approved, r1.approvedBy, r1.sealed, r1.groupKey], [1, 2, 'D1', 'DISC 1 of 2', 'Disc 1', 'J', ['J'], [parent.poolIds[0]], 'approved', true, 'Paul', true, '4175370240:5217980219'], 'disc 1 as a record (state is the job\'s own)');
   eq([r2.index, r2.of, r2.tag, r2.words, r2.wordsSource, r2.approved, r2.sealed], [2, 2, 'DISC 2 of 2', 'Q', 'personalization:numbered', false, false], 'disc 2 as a record');
-  eq([r1.font, r1.fontAsked], [{ asked: 'Typewriter', id: '', name: '', source: 'rule:font-asked' }, 'Typewriter'], 'the font the buyer asked for is on every disc (the line\'s, until a font is set on the job)');
+  eq([r1.font, r1.fontAsked], [{ asked: 'Typewriter', id: 'crimson-text', name: 'Crimson Text', source: 'rule:font' }, 'Typewriter'], 'the font the buyer asked for is on every disc (the line\'s, until a font is set on the job)');
   d2.font = { asked: 'Typewriter', id: 'special-elite', name: 'Special Elite', source: 'font-map' };
   eq([S.pieceRecord(d2, { of: 2 }).font.name, S.pieceRecord(d2, { of: 2 }).fontAsked], ['Special Elite', 'Typewriter'], 'a font set on the job wins (FONTMAP)');
   const recs = S.pieceRecords([d2, d1], {}); eq(recs.map(r => [r.index, r.of]), [[1, 2], [2, 2]], 'pieceRecords: D1..Dn, the same `of`'); noNested(recs, 'records'); ok(!Array.isArray(recs[0].lines[0]), 'strings only'); }
