@@ -169,6 +169,7 @@ const assets = [
   "vendor/fonts/Unicode-LICENSE.txt",
   "charm-nest-orders.js",
   "charm-nest-shared-orders.js",
+  "charm-nest-set-rules.js",
   "charm-nest-set-edit.js",
   "charm-nest-laser-act.js",
   "charm-nest-bridge.js",
