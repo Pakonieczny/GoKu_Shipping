@@ -184,7 +184,7 @@ check(JSON.stringify(judge({})).length < 2500, "the judgement stays small");
   const stubOk = require.cache[require.resolve(path.join(fnDir, "_etsyMailEtsy.js"))].exports; const was = stubOk.getShopReceiptFull;
   stubOk.getShopReceiptFull = async () => ({ buyer_user_id: null });
   info = await OL.historyInfo({ receiptId: R3 });
-  check(info.why === "none" && info.threads.length === 0, "Etsy answered with no buyer: a real 'none'");
+  check(info.why === "no_buyer" && info.threads.length === 0, "Etsy answered with no buyer: 'no_buyer' (the inbox does not know who bought it), not 'no messages'");
   stubOk.getShopReceiptFull = was;
   // a 404 from Etsy is final for hours and says so
   const R4 = "4170000004"; etsy.fail = "Etsy API 404 not found"; etsy.calls = 0;
@@ -198,9 +198,12 @@ check(JSON.stringify(judge({})).length < 2500, "the judgement stays small");
   sandbox.throws = null; sandbox.status = 502;
   clock += MIN; info = await OL.historyInfo({ receiptId: "4170000005", sandbox: true });
   check(info.why === "lookup_failed" && /502/.test(info.reason), "the sandbox's lookup answering an error: the same");
-  sandbox.status = 200; clock += MIN;
+  sandbox.status = 404; clock += MIN;
   info = await OL.historyInfo({ receiptId: "4170000005", sandbox: true });
-  check(info.why === "none", "the sandbox's lookup answering, buyer with no conversation: a real 'none'");
+  check(info.why === "no_buyer", "the sandbox has no copy of the order and nothing stored names the buyer: 'no_buyer', not a failure and not 'no messages'");
+  sandbox.status = 200; clock += 3 * MIN;
+  info = await OL.historyInfo({ receiptId: "4170000005", sandbox: true });
+  check(info.why === "none" && info.reason === "", "the sandbox names a buyer who has no conversation: a real 'none'");
 
   check(!writes.some(w => /EtsyMail_Threads\/[^/]+\/messages/.test(w.path) && w.kind !== "set"), "none of this deleted or rewrote a stored message");
   console.warn = realWarn;

@@ -829,7 +829,7 @@ const _histThreads = new Map();
 async function historyThreads(receiptId, engagementId, sandbox) {
   const key = (sandbox ? "sb:" : "") + receiptId + "|" + (engagementId || "");
   const hit = receiptId === TEST_RID ? null : _histThreads.get(key);   // the test account can change at any moment
-  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : 2 * MIN)) return { list: hit.list, failed: hit.failed };
+  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : 2 * MIN)) return { list: hit.list, failed: hit.failed, buyerKnown: hit.buyerKnown };
   const found = new Map();
   const take = docs => { for (const d of docs) if (d.exists !== false && isThreadId(d.id)) found.set(d.id, Object.assign({ id: d.id }, d.data())); };
   let buyer = null, failed = null;
@@ -847,10 +847,20 @@ async function historyThreads(receiptId, engagementId, sandbox) {
     const t = await testDoc();
     if (t && isThreadId(t.threadId)) take([await db.collection(COLL.threads).doc(t.threadId).get()]);
   } else if (sandbox) {
-    // a sandbox order is a copy of a real one under a new number, with the real buyer: their real history, read only
-    const b = await sandboxBuyer(receiptId);
-    failed = b.failed;
-    if (b.buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", b.buyer).limit(25).get()).docs);
+    // a sandbox order is a real shop order (the sandbox pulls the newest ones under their own Etsy numbers) with the real
+    // buyer: their real history, read only. The sandbox's own copy of the order names the buyer when it has one; when it has
+    // none (a wipe, a run whose set is gone, a pull that has not run yet: the sorter keeps showing the order meanwhile) the
+    // inbox's own records of the same number do: the conversation that names the order, the receipts mirror, the buyer cache.
+    // Never an Etsy call, and nothing is written. If the sandbox's lookup itself failed (not "no such order") and nothing
+    // stored names the buyer either, that failure is reported, never "no messages".
+    const sb = await sandboxBuyer(receiptId);
+    buyer = sb.buyer; failed = sb.failed;
+    if (!buyer) {
+      take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
+      for (const t of found.values()) buyer = buyer || (t.buyerUserId ? String(t.buyerUserId) : null);
+      if (!buyer) buyer = await storedBuyerOf(receiptId);
+    }
+    if (buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get()).docs);
   } else {
     take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
     for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
@@ -859,9 +869,10 @@ async function historyThreads(receiptId, engagementId, sandbox) {
   }
   const list = [...found.values()];
   if (list.length) failed = null;   // a conversation was found: whatever else could not be looked up does not matter to what is shown
-  _histThreads.set(key, { at: Date.now(), list, failed });
+  const buyerKnown = receiptId === TEST_RID || !!buyer || list.length > 0;
+  _histThreads.set(key, { at: Date.now(), list, failed, buyerKnown });
   if (_histThreads.size > 200) _histThreads.delete(_histThreads.keys().next().value);
-  return { list, failed };
+  return { list, failed, buyerKnown };
 }
 const _sbBuyers = new Map();
 /** The buyer of a sandbox order, from the sandbox's own copy of it (never from Etsy). Resolves to { buyer, failed }. */
@@ -871,22 +882,32 @@ async function sandboxBuyer(receiptId) {
   let buyer = null, failed = null;
   try {
     const r = await require("./etsySandbox").serve({ httpMethod: "GET", queryStringParameters: { fn: "etsyOrderProxy", orderId: receiptId } });
-    if (!r || r.statusCode !== 200) failed = "the sandbox's order lookup answered " + (r ? r.statusCode : "nothing");
+    if (r && (r.statusCode === 404 || r.statusCode === 410)) buyer = null;   // the sandbox has no copy of this order: not a failure (the inbox's own records are asked next)
+    else if (!r || r.statusCode !== 200) failed = "the sandbox's order lookup answered " + (r ? r.statusCode : "nothing");
     else { const d = JSON.parse(r.body); const b = d && d.receipt && d.receipt.buyer_user_id; buyer = b ? String(b) : null; }
   } catch (e) { console.warn("orderLink sandbox buyer:", receiptId, e.message); failed = "the sandbox's order lookup failed (" + LinkHealth.plainError(e.message) + ")"; }
   _sbBuyers.set(receiptId, { at: Date.now(), buyer, failed });
   if (_sbBuyers.size > 300) _sbBuyers.delete(_sbBuyers.keys().next().value);
   return { buyer, failed };
 }
+/** The buyer of a receipt from what the inbox already stores (the receipts mirror, the buyer cache): buyerOf() without its Etsy call. */
+async function storedBuyerOf(receiptId) {
+  try {
+    const [r, c] = await db.getAll(db.collection(COLL.receipts).doc(receiptId), db.collection(COLL.buyers).doc(receiptId));
+    const rd = r.exists ? r.data() : null, cd = c.exists ? c.data() : null;
+    const b = (rd && (rd.buyer_user_id || rd.buyerUserId || (rd.raw && rd.raw.buyer_user_id))) || (cd && cd.buyerUserId) || null;
+    return b ? String(b) : null;
+  } catch (e) { console.warn("orderLink stored buyer:", receiptId, e.message); return null; }
+}
 const threadAt = t => Math.max(tsMs(t.lastInboundAt), tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt), tsMs(t.updatedAt));
 /** How many messages the buyer's history holds, per conversation, before anything is pulled.
- *  why: "ok" (counted), "none" (every lookup worked and the inbox holds no conversation of this buyer), "lookup_failed"
- *  (the buyer could not be looked up) or "count_failed" (a conversation's messages could not all be counted): the sorter
- *  says "no messages" only for "none". */
+ *  why: "ok" (counted), "none" (the buyer is known and the inbox holds no conversation of theirs), "no_buyer" (nothing the
+ *  inbox stores names this order's buyer), "lookup_failed" (the buyer could not be looked up: an error) or "count_failed" (a
+ *  conversation's messages could not all be counted): the sorter says "no messages" only for "none". */
 async function historyInfo(body) {
   const receiptId = cleanId(body.receiptId);
   if (!receiptId) throw httpError(400, "Which order?");
-  const { list, failed } = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
+  const { list, failed, buyerKnown } = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
   const msgs = t => db.collection(COLL.threads).doc(t.id).collection("messages");
   const countErrors = [];
   const [counts, ghosts] = await Promise.all([
@@ -900,7 +921,7 @@ async function historyInfo(body) {
   })).sort((a, b) => b.lastAtMs - a.lastAtMs);
   const exact = threads.every(t => t.count != null);
   let why = "ok", reason = "";
-  if (!threads.length) { why = failed ? "lookup_failed" : "none"; reason = failed || ""; }
+  if (!threads.length) { why = failed ? "lookup_failed" : buyerKnown ? "none" : "no_buyer"; reason = failed || ""; }
   else if (!exact) { why = "count_failed"; reason = countErrors[0] || "the count did not finish"; }
   return { receiptId, threads, total: threads.reduce((n, t) => n + (t.count || 0), 0), exact, why, reason };
 }
