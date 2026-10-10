@@ -68,8 +68,8 @@ for (const [name, d] of Object.entries(designs)) {
   const job = prepare(d);
   for (const [vp, [W, H]] of Object.entries(AREAS)) for (const [bn, below] of Object.entries(BELOW)) {
     const why = `${name} at ${vp}, block: ${bn}`;
-    const bc = env.renderBack(job, [side(W - STRIP), side(H)], { grid: true, editable: true });                  // beside the strip: as it always was
-    const to = [side(W), side(H)], yes = env.takesStrip(bc._sizePt, [bc.width, bc.height], to, H, below);
+    const beside = [side(W - STRIP), side(H)], bc = env.renderBack(job, beside, { grid: true, editable: true });      // beside the strip: as it always was
+    const to = [side(W), side(H)], yes = env.takesStrip(bc._sizePt, beside, to, H, below);
     // the bar always clears the block; the long pendant (about 1.7 : 1 with its text box) is taller, so at the smallest window with the block's seals under the button there is no room
     const want = d.wide && !(name === 'long pendant laid flat' && vp === '1180x720' && bn === 'button and seals');
     assert.equal(yes, want, `${why}: ${want ? 'a wide piece takes the strip' : d.wide ? 'no room below the block, the strip stays' : 'a round or upright piece keeps it'} (canvas beside the strip ${bc.width}x${bc.height})`);
@@ -80,12 +80,12 @@ for (const [name, d] of Object.entries(designs)) {
       assert(w2.width >= .95 * (W - 4), `${why}: it fills the column (${w2.width} of ${W})`);
     }
     // a block that comes down over where the piece sits gives no strip back
-    assert.equal(env.takesStrip(bc._sizePt, [bc.width, bc.height], to, H, H / 2 + 20), false, `${why}: a block reaching past the middle keeps the strip`);
+    assert.equal(env.takesStrip(bc._sizePt, beside, to, H, H / 2 + 20), false, `${why}: a block reaching past the middle keeps the strip`);
     rules++;
   }
   // a short work area (the clear gap is gone) and a window that would give nothing back
   const bc = env.renderBack(job, [side(300 - STRIP), side(150)], { grid: true, editable: true });
-  assert.equal(env.takesStrip(bc._sizePt, [bc.width, bc.height], [side(300), side(150)], 150, 45), false, `${name}: no room below the block, no change`);
+  assert.equal(env.takesStrip(bc._sizePt, [side(300 - STRIP), side(150)], [side(300), side(150)], 150, 45), false, `${name}: no room below the block, no change`);
   assert.equal(env.takesStrip(null, [100, 50], [200, 200], 500, 40), false, 'no drawing size, no change');
 }
 console.log(`Engrave wide rule OK: ${rules} cases on real geometry (wide pieces take the strip when clear, round and upright ones never)`);
