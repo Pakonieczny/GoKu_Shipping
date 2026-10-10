@@ -2953,7 +2953,8 @@ async function op_aliasGet(b = {}) {
   const { docs, own = [], truncated } = await mapDocs(ALIASES), out = {};
   docs.forEach(d => { out[d.id] = d.data(); });
   // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
-  own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}) : mine; });
+  // (a listing's saved pairs of two designs, pairBySku, join the same way)
+  own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, was.pairBySku, mine.pairBySku) } : {}) : mine; });
   return Object.assign({ aliases: out, truncated }, sig ? { sig } : {});
 }
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
@@ -2961,8 +2962,20 @@ async function op_aliasGet(b = {}) {
    v: 2 marks the listing's sku as answered this way (charm-nest-orders.js resolveSku). An answer for one SKU leaves v as it
    was: an alias saved before 27 Sep (sku, no v) goes on standing in for its SKU (v: 2 there silently dropped it).
    A charm-only listing's Huggie CHARM SET with no SKU answers for the listing's huggie (huggie), never its necklace (sku). */
+/* A pair of TWO designs for the listing and the SKU its lines carry (Paul, 10 Oct 2026: the Tennis Ball / Tennis Racket huggie hoops, one Etsy SKU for the whole listing, "link those charms
+   to this listing specifically, one for the left and one for the right"): pair {L, R}, two different master SKUs, kept under pairBySku[fromSku] = { L, R, by, at } (a map, never an array).
+   Only this listing and this SKU read it (charm-nest-orders.js pairMembers); both designs must be in the master index now, so a link never names a design that is not there. */
+async function putPairAlias(b, lid, from) {
+  const p = b.pair && typeof b.pair === "object" ? b.pair : {}, L = String(p.L || "").trim().toUpperCase(), R = String(p.R || "").trim().toUpperCase();
+  if (!lid || !from) return { error: "a pair of designs is kept for one listing and the SKU its lines carry: listingId and fromSku required" };
+  if (!Master.isSku(L) || !Master.isSku(R) || L === R) return { error: "pair.L and pair.R are two different master SKUs" };
+  for (const k of [L, R]) { const s = await db.collection(Master.INDEX).doc(k).get(); if (!s.exists || !(s.data() || {}).sku) return { error: `${k} is not in the master index` }; }
+  const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp(), pairBySku: { [from]: { L, R, by: str(b.by || "operator", 80), at: Date.now() } } };
+  await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
+}
 async function op_aliasPut(b) {
   const lid = str(b.listingId, 30).replace(/\D/g, ""), sku = String(b.sku || "").trim().toUpperCase(), from = String(b.fromSku || "").trim().toUpperCase().slice(0, 120);
+  if (b.pair) return putPairAlias(b, lid, from);
   if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" };
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }

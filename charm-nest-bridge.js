@@ -1408,6 +1408,7 @@ const Orders = window.Orders = (() => {
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
+    const link = a && a.pairBySku && a.pairBySku[String(l.sku || "").trim().toUpperCase()];   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
     return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
@@ -1415,7 +1416,10 @@ const Orders = window.Orders = (() => {
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
       libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
-      libFacts(typoOf(l.sku))];
+      libFacts(typoOf(l.sku)),
+      // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
+      link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
+      row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0];
   }
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
@@ -2312,6 +2316,8 @@ const Master = window.Master = (() => {
   async function fetchEntry(sku) {
     sku = String(sku || "").toUpperCase(); if (!sku) return null;
     const have = B.master.entries.get(sku); if (have) return have;
+    // (a SKU no master file can hold, one that names two designs "Huggie Hoops-Tennis Ball/Racket3": the library refuses it with a 400, which the pictures read as a failed load and said "Unavailable · Retry"; it is no design, not a failed read)
+    if (!/^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/.test(sku)) return null;
     const m = missing.get(sku);
     if (m && m.map === B.master.entries && m.sig === libSig() && Date.now() - m.at < MISS_MS) return m.entry;
     if (asking.has(sku)) return asking.get(sku);
