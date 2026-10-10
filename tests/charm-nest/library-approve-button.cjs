@@ -13,7 +13,7 @@ win.eval(fs.readFileSync('charm-nest-motion.js','utf8'));
 win.eval(fs.readFileSync('charm-nest-readiness.js','utf8'));
 let world={};   // what the cloud answers to a laserStatus read: every record, as it is now
 const esc=x=>String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-const c=vm.createContext({window:win,document,console,esc,cors:x=>x,S:{mode:'library',cloud:{ok:true}},allSheets:()=>[],Orders:{rows:()=>[]},Engrave:{items:()=>new Map()},O:{setLabel:n=>'Set '+n},CNListActivity:{compare:()=>0,state:()=>({direction:1})},innerHeight:win.innerHeight,requestAnimationFrame:fn=>(frames.push(fn),frames.length),setTimeout:win.setTimeout.bind(win),clearTimeout:win.clearTimeout.bind(win),setInterval(){},api:async(name,payload)=>{requests.push({name,payload});return {sheets:Object.values(world),sets:[]};}});
+const c=vm.createContext({window:win,document,console,esc,cors:x=>x,S:{mode:'library',cloud:{ok:true}},allSheets:()=>[],Orders:{rows:()=>[]},Engrave:{items:()=>new Map()},O:{setLabel:n=>'Set '+n},CNListActivity:{compare:()=>0,compareBlocks:()=>0,state:()=>({direction:1})},innerHeight:win.innerHeight,requestAnimationFrame:fn=>(frames.push(fn),frames.length),setTimeout:win.setTimeout.bind(win),clearTimeout:win.clearTimeout.bind(win),setInterval(){},api:async(name,payload)=>{requests.push({name,payload});return {sheets:Object.values(world),sets:[]};}});
 vm.runInContext(src.slice(src.indexOf('const LaserReview ='),src.indexOf('const Sets =')),c);
 const L=win.LaserReview,body=document.querySelector('#libBody');
 const flush=()=>{for(let i=0;i<8 && frames.length;i++)frames.splice(0).forEach(f=>f());};

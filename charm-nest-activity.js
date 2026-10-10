@@ -36,6 +36,13 @@
     const x=at(a),y=at(b);if(!x||!y)return (x?0:1)-(y?0:1) || identity(a).localeCompare(identity(b));
     return (direction==='asc'?x-y:y-x) || identity(a).localeCompare(identity(b));
   }
+  /* The Library's blocks (Paul, 10 Oct 2026: "Actual Sets of Sheets should always be prioritized above all in-progress sheets when showing the
+     order of sheets and Sets in the Library tab"). An actual set (a set record the Library already treats as one: it has its setId and is
+     not the group of loose sheets that wait for a set, nor the 14K / 10K solids; a Completed row of kind "set") comes before every group of
+     loose sheets, in Laser cutting, In progress and the Completed list, search and filter views included. Inside each of the two groups the
+     order is the last-activity order as before, and nothing is left between them when one group is empty. Display order only. */
+  const isSet=x=>!!x && x.kind!=='sheet' && (x.kind==='set' || (!!x.setId && !x.standalone && !x.working));
+  const compareBlocks=(a,b,direction)=>(isSet(a)?0:1)-(isSet(b)?0:1) || compare(a,b,direction);
   function state(scope){
     if(!loaded){loaded=true;try{Object.assign(states,JSON.parse(root?.localStorage?.getItem(KEY)||'{}'));}catch(_){} }
     const old=states[scope] || {};return states[scope]={range:scope==='library'?'all':presets.some(p=>p[0]===old.range)?old.range:'all',direction:old.direction==='asc'?'asc':'desc'};
@@ -43,6 +50,7 @@
   function set(scope,patch){const current=state(scope);states[scope]={...current,...patch};state(scope);try{root?.localStorage?.setItem(KEY,JSON.stringify(states));}catch(_){}return states[scope];}
   const key=scope=>{const s=state(scope);return s.range+':'+s.direction;};
   function select(scope,items,now=Date.now()){const s=state(scope);return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compare(a,b,s.direction));}
+  function selectBlocks(scope,items,now=Date.now()){const s=state(scope);return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compareBlocks(a,b,s.direction));}
   function touch(value,t=Date.now()){if(value && typeof value==='object')value.activityAt=Math.max(ms(value.activityAt),ms(t));return value;}
   function mount(host,scope,change){
     if(!root?.document || !host)return;
@@ -57,5 +65,5 @@
     const sort=bar.querySelector('select');sort.value=s.direction;sort.onchange=()=>{set(scope,{direction:sort.value});change?.();};
     return bar;
   }
-  return {ZONE,presets,ms,at,day,shift,dayStart,bounds,matches,compare,state,set,key,select,touch,mount};
+  return {ZONE,presets,ms,at,day,shift,dayStart,bounds,matches,compare,isSet,compareBlocks,state,set,key,select,selectBlocks,touch,mount};
 });

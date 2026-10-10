@@ -7016,7 +7016,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
-      const ordered=[...list.children].sort((a,b)=>CNListActivity.compare(value(a),value(b),CNListActivity.state('library').direction));
+      const ordered=[...list.children].sort((a,b)=>CNListActivity.compareBlocks(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first, then the groups of loose sheets: charm-nest-activity.js)
       ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
     }
     if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
@@ -7826,7 +7826,7 @@ const Sets = window.Sets = (() => {
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
       if (focus) sets = sets.filter(st => st.sheets.some(r => focus.test(r)));
       else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
-      sets=CNListActivity.select("library",sets);
+      sets=CNListActivity.selectBlocks("library",sets);   // (actual sets before every group of loose sheets, each in last-activity order)
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
       LaserReview.batch(() => { for (const st of sets) {
