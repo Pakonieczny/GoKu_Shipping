@@ -129,6 +129,9 @@ const server = http.createServer((req, res) => {
     return s;
   };
   const noSyncingWord = page => page.evaluate(() => !/syncing/i.test(document.body.innerText));
+  // The bubble reads "sending…" the moment Send is pressed, a few ms before the request reaches the server: wait for it before
+  // the fake extension "delivers" it (otherwise the delivery can be overwritten by the queueing that arrives a moment later).
+  const landed = async id => { for (let i = 0; i < 100 && !(world[id].draft && world[id].draft.text); i++) await new Promise(r => setTimeout(r, 20)); };
 
   try {
     // ── 1. Desktop: send a reply, the extension delivers it, no scrape ever comes ──
@@ -143,6 +146,7 @@ const server = http.createServer((req, res) => {
       let s = await until(page, false, x => x && /^local_/.test(x.mid) && x.tag === "sending…", 6000);
       check(s && s.tag === "sending…", "queued and not yet delivered: the bubble reads \"sending…\" (got " + JSON.stringify(s && s.tag) + ")");
       check(await noSyncingWord(page), "the page never says \"syncing\" while the reply is queued");
+      await landed(IDS.A);
       world[IDS.A].draft = Object.assign({}, world[IDS.A].draft, { status: "sending" });
       await page.waitForTimeout(4500);
       s = await standIn(page, false);
@@ -241,6 +245,7 @@ const server = http.createServer((req, res) => {
       await page.evaluate(() => document.getElementById("mComposerSend").click());
       let s = await until(page, true, x => x && /^local_/.test(x.mid) && x.tag === "sending…", 6000);
       check(s && s.tag === "sending…", "phone: queued reply reads \"sending…\" (got " + JSON.stringify(s && s.meta) + ")");
+      await landed(IDS.F);
       world[IDS.F].draft = Object.assign({}, world[IDS.F].draft, { status: "sent", sentAt: ts(Date.now()) });
       s = await until(page, true, x => x && x.tag === "", 10000);
       check(s && s.tag === "", "phone: delivered, the tag goes away by itself (got " + JSON.stringify(s && s.meta) + ")");

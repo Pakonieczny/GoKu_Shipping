@@ -105,5 +105,44 @@ const say = s => process.stdout.write(s + "\n");
   check(item("old").status === "sent", "an in-flight question from the older build is settled by the old path (" + item("old").status + ")");
   h.done();
 
+  // ═══ the sandbox can never enqueue, claim or lease in the real queue ═══
+  say("\nThe sandbox never touches the real queue");
+  setup({ seed: 35 });
+  const realMsg = await h.send(t, "A real message already in the queue.", { key: "real-1" });
+  const realQueueBefore = () => JSON.stringify({ items: h.fake.list("EtsyMail_SendQueue").length, meta: h.fake.list("EtsyMail_SendQueueMeta").map(x => x.id + ":" + JSON.stringify(x.data)).sort(), slots: h.fake.list("EtsyMail_Drafts").length });
+  const before = realQueueBefore();
+  // (1) a sandbox question through the sorter's own door: simulated in the sandbox (Queued, then Sent on the sandbox's own short clock), never in the real queue
+  const sbv = await h.OL.ask(station, { receiptId: "900", text: "Sandbox: which font?", clientId: "sb1", sandbox: true });
+  const sbItem = (h.fake.list("EtsyMail_OrderLinks").map(x => x.data).find(e => e.sandbox) || { outbox: [] }).outbox.find(x => x.id === "sb1");
+  check(sbItem && sbItem.status === "queued" && sbItem.sandbox === true && sbItem.sbEndMs > sbItem.queuedAtMs && !sbItem.qid, "a sandbox question is simulated in the sorter (Queued, then Sent on the sandbox's own clock) and has no queue id");
+  check(realQueueBefore() === before, "...and nothing was written to the real queue, its lease or revision, or any draft slot");
+  // (2) the dispatcher's door refuses a sandbox request outright, whoever calls it: by flag, by sandbox engagement id, by key
+  for (const [what, extra] of [["flag", { sandbox: true }], ["engagement id", { orderLink: { e: "olsb_900_order_x", i: "q1" } }], ["sorter key", { idempotencyKey: "sorter:olsb_900_order_x:q1" }]]) {
+    const r = await h.call("enqueue", Object.assign({ threadId: t, etsyConversationUrl: "https://www.etsy.com/your/conversations/901", text: "Must never go (" + what + ")", employeeName: "Bo", sendOrigin: "manual", allowSendWithoutPendingTracking: true }, extra));
+    check(r.status === 403 && r.body.errorCode === "SANDBOX_NEVER_SENDS", "enqueue by " + what + " is refused (403 SANDBOX_NEVER_SENDS)");
+  }
+  const direct = await h.Q.submit({ threadId: t, conversationUrl: "u", text: "direct", orderLink: { e: "olsb_1_x", i: "i" } });
+  check(direct && direct.sandboxRefused === true, "the queue's own submit() refuses a sandbox request too");
+  check(realQueueBefore() === before, "...and the real queue, lease, revision and draft slots are exactly as they were");
+  // (3) the worst case: a sandbox engagement that wrongly carries a conversation. dispatch / retry / cancel / sent never reach the queue
+  h.fake.poke("EtsyMail_OrderLinks/olsb_900_order_zz", { id: "olsb_900_order_zz", receiptId: "900", sandbox: true, status: "open", threadId: t, scope: "order", createdAtMs: h.clock.now(), v: 1,
+    outbox: [{ id: "w1", text: "stuck sandbox message", by: "Bo", atMs: h.clock.now(), status: "waiting" }, { id: "w2", text: "failed sandbox message", by: "Bo", atMs: h.clock.now(), status: "failed", qid: "q_fake" }] });
+  await h.OL.sync({ n: -1, since: 0 });
+  await h.OL.retry({ engagementId: "olsb_900_order_zz", itemId: "w2", sandbox: true }, station).catch(() => null);
+  await h.OL.cancel({ engagementId: "olsb_900_order_zz", itemId: "w2", sandbox: true }).catch(() => null);
+  await h.OL.markSent({ engagementId: "olsb_900_order_zz", itemId: "w1", sandbox: true }, station).catch(() => null);
+  check(realQueueBefore() === before, "even a sandbox engagement that carries a conversation never reaches the real queue through sync, retry, cancel or sent");
+  const realId = realMsg.body.sendId;
+  const sbOps = [];
+  for (const op of ["queue_cancel", "queue_retry", "queue_mark_sent", "queue_dismiss"]) sbOps.push((await h.call(op, { sendId: realId || "q_none", sandbox: true })).status);
+  const sbState = await h.get("queue_state", { sandbox: "true", threadId: t });
+  check(sbOps.every(c => c === 403) && sbState.status === 200 && sbState.body.queue.items.length === 0 && sbState.body.queue.sandbox === true, "a sandbox page can neither act on the real queue (queue_cancel/retry/mark_sent/dismiss: 403) nor read it (queue_state: empty)");
+  check(realQueueBefore() === before, "...with nothing changed in the real queue");
+  // (4) the sync a sandbox page gets has no queue part
+  h.fake.poke("EtsyMail_OrderLinkMeta/bell", { n: 9, inflight: { "a~b": { e: "ol_x", i: "b", t: t, d: "draft_" + t, at: h.clock.now() } } });
+  const sbSync = await h.OL.sync({ n: -1, since: 0, sandbox: true, qo: true });
+  check(sbSync.queue === null, "a sandbox page's sync carries no queue part, even when it asks (qo) and a real message is in flight");
+  h.done();
+
   R.finish("send-queue-sorter");
 })().catch(e => { process.stdout.write("CRASH " + (e.stack || e) + "\n"); process.exit(1); });

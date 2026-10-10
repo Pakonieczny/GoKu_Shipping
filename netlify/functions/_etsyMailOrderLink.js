@@ -503,7 +503,7 @@ function sbQueueView(entries, now) {
   });
   let h = 2166136261;
   for (const ch of JSON.stringify(items.map(v => [v.oe, v.ol, v.st, v.pos || 0]))) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
-  return { n: h, now, gapMs: SB.gapMs, items, recent: [] };
+  return { n: h, now, gapMs: SB.gapMs, items, recent: [], sandbox: true };   // (sandbox: true is how a sorter knows this is the rehearsal's own queue, never the real one)
 }
 /** The sandbox's "send": every unsent message of the engagement joins the sandbox's own queue, oldest first. out.flights gets
  *  the whole list of what is on its way (for the answer's queue view). */
@@ -580,6 +580,8 @@ async function dispatchNext(threadId) {
 const queueKey = (engId, itemId) => "sorter:" + engId + ":" + itemId;
 
 async function enqueueItem(e, x) {
+  // A sandbox message is simulated in the sorter and never joins the real queue.
+  if (!e || e.sandbox || /^olsb_/.test(String(e.id || ""))) return false;
   // Claim the message first, so two dispatchers never queue it twice.
   const token = crypto.randomBytes(6).toString("hex");
   const claim = await patchItem(e.id, x.id, { status: "queued", claim: token, queuedAtMs: Date.now(), waitReason: null, error: null }, UNSENT);
@@ -1379,7 +1381,7 @@ async function retry(body, station) {
   // gone out is checked against the stored conversation first, and a person confirms it).
   const es = await engRef(id).get();
   const cur = es.exists ? (es.data().outbox || []).find(x => x.id === itemId) : null;
-  if (cur && cur.qid && (cur.status === "failed" || cur.status === "attention")) {
+  if (cur && cur.qid && !(es.data() || {}).sandbox && (cur.status === "failed" || cur.status === "attention")) {
     const rr = await Q.humanRetry(cur.qid, { confirmMaybeSent: body.confirmMaybeSent === true, by: station && station.name || null });
     if (rr && rr.needsConfirm) throw httpError(409, "This message may already have gone out. Check the conversation on Etsy, then press Send again to confirm.", "MAYBE_SENT");
     if (rr && !rr.notFound) {
@@ -1414,7 +1416,7 @@ async function cancel(body) {
     note({ sbFlight: { [flightKey(id, itemId)]: FV.delete() } });
     return fresh(id);
   }
-  if (item.status === "queued" && e.threadId) {
+  if (item.status === "queued" && e.threadId && !e.sandbox) {
     // still waiting for its turn or for the Etsy helper: take it back out of the queue (the inbox gets its reply box back)
     if (item.qid) {
       const c = await Q.cancel(item.qid, "the sorter");
@@ -1441,7 +1443,7 @@ async function cancel(body) {
   } else {
     const r = await patchItem(id, itemId, { status: "cancelled", cancelledAtMs: Date.now() }, new Set(["new", "waiting", "manual", "failed", "attention"]));
     if (!r.changed) throw httpError(409, "Too late: it has already gone");
-    if (item.qid && (item.status === "failed" || item.status === "attention")) await Q.dismiss(item.qid, "the sorter").catch(() => null);
+    if (item.qid && !e.sandbox && (item.status === "failed" || item.status === "attention")) await Q.dismiss(item.qid, "the sorter").catch(() => null);
   }
   if (e.threadId) await dispatchNext(e.threadId);
   return fresh(id);
@@ -1459,7 +1461,7 @@ async function markSent(body, station) {
   const es0 = await engRef(id).get();
   const cur0 = es0.exists ? (es0.data().outbox || []).find(x => x.id === itemId) : null;
   // the dispatcher is told too: its entry for this message is closed as sent
-  if (cur0 && cur0.qid && (cur0.status === "failed" || cur0.status === "attention")) await Q.markSent(cur0.qid, { by: station && station.name || "a person" }).catch(() => null);
+  if (cur0 && cur0.qid && !(es0.data() || {}).sandbox && (cur0.status === "failed" || cur0.status === "attention")) await Q.markSent(cur0.qid, { by: station && station.name || "a person" }).catch(() => null);
   const r = await patchItem(id, itemId, { status: "sent", manualSent: true, sentAtMs: Date.now(), error: null, errorCode: null, waitReason: null }, new Set(["manual", "failed", "waiting", "attention"]));
   if (!r.e) throw httpError(404, "That message is gone");
   return fresh(id);

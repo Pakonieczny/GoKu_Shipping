@@ -58,6 +58,7 @@ const qr = r => (r.body.queue ? r.body.queue.items.map(v => `${v.st}${v.pos ? ":
   let s = await R.via("sync", Object.assign({ n: -1, since: 0, full: true }, sb));
   let since = s.body.v, n = s.body.n;
   T.check(JSON.stringify(qr(s)) === '["queued:1"]' && s.body.changes.some(c => c.id === eid && c.pending === 1), "a sandbox sync says the same, and the badge counts it as on its way");
+  T.check(s.body.queue.sandbox === true && a.body.queue.sandbox === true && s.body.queue.items.every(v => v.src === "sandbox" && !/^q_/.test(v.id)), "that view is marked as the sandbox's own (a sorter never mistakes it for the real queue)");
   const b = await ask("And the size?", "c2", { engagementId: eid });
   T.check(JSON.stringify(qr(b)) === '["queued:1","queued:2"]', "a second message waits behind the first: Queued (1st), Queued (2nd) (one at a time)");
   skew += 2600;

@@ -29,6 +29,8 @@ const say = s => process.stdout.write(s + "\n");
       delays.push(it.notBeforeMs - h.clock.now());
       check(res.fail === 200 && it.state === "queued" && it.attempts === k, "try " + k + " failed: back in the queue, " + Math.round((it.notBeforeMs - h.clock.now()) / 1000) + " s before the next try");
       check(h.slot(t).status !== "queued", "...and the slot is not left 'queued' (no instant retry at the slot)");
+      const rd = await h.get("status", { draftId: "draft_" + t });
+      check(rd.body.draft.status === "queued" && !rd.body.draft.sendError, "...an older page reading the slot sees 'queued', not a failure that is about to be retried");
       h.clock.advance(it.notBeforeMs - h.clock.now() + 1000);
       await h.Q.pump();
     }
@@ -37,6 +39,8 @@ const say = s => process.stdout.write(s + "\n");
   it = h.item(id);
   check(it.state === "failed" && it.open === true && it.lastErrorCode === "MAX_ATTEMPTS", "after the fourth try it is a dead letter that stays open (" + it.state + ")");
   check(/did not take it after several tries/i.test(it.plain), "with a reason in plain words: " + it.plain);
+  const rdDead = await h.get("status", { draftId: "draft_" + t });
+  check(rdDead.body.draft.status === "failed", "an older page reading the slot now sees the failure");
   check(h.fake.peek("EtsyMail_Threads/" + t).status === "pending_human_review" && h.fake.peek("EtsyMail_Threads/" + t).sendQueueProblem === true, "the thread left Auto-Reply for review and carries the problem flag for the inbox list");
   check((h.sentToEtsy || []).length === 0, "nothing was sent in all that");
   const clicksBefore = (h.sentToEtsy || []).length;
