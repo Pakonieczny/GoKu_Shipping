@@ -110,10 +110,10 @@ const RID = '4173162973', OLD = 'OLDREC';
   const snapshot = p => p.evaluate(() => ({ ls: Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])), ss: Object.fromEntries(Object.keys(sessionStorage).map(k => [k, sessionStorage.getItem(k)])) }));
 
   // ── the count: positive for every store the page can count, read only ──
-  const before0 = await snapshot(page);
+  // (a spy on every storage write that comes from the engine's own file: counting writes nothing; the page's own timers may write meanwhile)
+  await page.evaluate(() => { window.__engineWrites = []; for (const m of ['setItem', 'removeItem', 'clear']) { const real = Storage.prototype[m]; Storage.prototype[m] = function (...a) { if (/charm-nest-sandbox-browser/.test(new Error().stack || '')) window.__engineWrites.push([m, a[0]]); return real.apply(this, a); }; } });
   const rows = await page.evaluate(() => Sandbox.browserLeft());
-  const after0 = await snapshot(page);
-  assert.deepStrictEqual(after0, before0, 'browserLeft() wrote nothing (localStorage and sessionStorage are as they were)');
+  assert.deepStrictEqual(await page.evaluate(() => window.__engineWrites), [], 'browserLeft() wrote nothing to localStorage or sessionStorage');
   assert.deepStrictEqual(rows.map(r => r.key), reg.browser().map(e => e.key), 'one row per store of the registry, in its order');
   for (const r of rows) { if (r.key === 'station:browser') assert.strictEqual(r.n, null, 'the Design Station\'s own storage cannot be counted from here'); else assert(r.n > 0, `before the reset the page holds entries of "${r.label}": ${JSON.stringify(r)}`); }
   assert.strictEqual(rows.find(r => r.key === 'localStorage:queued-items').n, 4, 'only the sandbox\'s rows of the shared lists are counted (timeline, mail, two activity)');
@@ -155,7 +155,7 @@ const RID = '4173162973', OLD = 'OLDREC';
   // ── after: every store at zero, the real side as it was ──
   const after = await snapshot(page);
   const left = await page.evaluate(() => Sandbox.browserLeft());
-  for (const r of left) if (r.key !== 'station:browser') assert.strictEqual(r.n, 0, `after the reset nothing is left of "${r.label}": ${JSON.stringify(r)} · ${JSON.stringify(after).slice(0, 400)}`);
+  for (const r of left) if (r.key !== 'station:browser') assert.strictEqual(r.n, 0, `after the reset nothing is left of "${r.label}": ${JSON.stringify(r)} · sandbox keys: ${JSON.stringify(Object.entries(after.ls).filter(([k]) => SB.test(k)).map(([k, v]) => [k, String(v).slice(0, 80)]))}`);
   for (const k of Object.keys(after.ls)) assert(!(SB.test(k) && k !== 'cn.resetEpoch.sandbox'), `a sandbox-marked key survived the reset: ${k}`);
   assert(!/OLDREC|olsb_|q-old|m-sb|a-sb/.test(JSON.stringify(Object.entries(after.ls).filter(([k]) => k !== 'cn.settings'))), 'no record of the old run is left in localStorage');
   assert(after.ls['cn.resetEpoch.sandbox'], 'the epoch (the mark every tab reads) is there');
