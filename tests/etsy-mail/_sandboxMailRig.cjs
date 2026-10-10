@@ -133,6 +133,7 @@ function boot(opts = {}) {
       const srv = http.createServer((req, res) => {
         const u = new URL(req.url, "http://x");
         if (u.pathname === "/h.html") { res.writeHead(200, { "Content-Type": "text/html" }); return res.end(htmlFor(u.searchParams)); }
+        if (u.pathname === "/send-flight.js") { res.writeHead(200, { "Content-Type": "text/javascript", "Cache-Control": "no-store" }); return res.end(fs.readFileSync(path.join(root, "send-flight.js"))); }
         if (u.pathname === "/charm-nest-mail.js") { res.writeHead(200, { "Content-Type": "text/javascript", "Cache-Control": "no-store" }); return res.end(fs.readFileSync(path.join(root, "charm-nest-mail.js"))); }
         if (u.pathname.endsWith("/etsyMailOrderLink")) {
           let raw = ""; req.on("data", c => raw += c); req.on("end", async () => {

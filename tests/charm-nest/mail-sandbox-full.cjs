@@ -39,7 +39,7 @@ window.ding = () => { window.__dings++; }; window.notifyPerson = () => {};
 window.esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // what the status word of our newest message says, every 40 ms: the order it changes in is what the person sees
 setInterval(() => { const all = document.querySelectorAll(".cmMsg.us .cmSt"); const s = all[all.length - 1]; const w = s ? s.textContent.trim() + (s.querySelector(".cmSpin") ? " (spinner)" : "") : null; if (w && window.__words[window.__words.length - 1] !== w) window.__words.push(w); }, 40);
-</script><script src="/charm-nest-mail.js"></script></body></html>`;
+</script><script src="/send-flight.js"></script><script src="/charm-nest-mail.js"></script></body></html>`;   // (the sorter page loads the very same SendFlight the inbox runs, before the mail script)
 
 (async () => {
   const srv = await R.serve(p => harness(p.get("sandbox") === "on"));
@@ -134,6 +134,7 @@ setInterval(() => { const all = document.querySelectorAll(".cmMsg.us .cmSt"); co
     await page.evaluate(() => { window.__words.length = 0; });
     await page.press(input, "Enter");
     await until(page, () => window.__words.some(w => /^Queued \(1st\)/.test(w)));
+    T.check(await page.evaluate(() => typeof window.SendFlight === "object" && !!document.getElementById("sendFlightCss")), "the sandbox's send uses the same SendFlight animation as the real side");
     let m = await mine(page);
     T.check(m.word === "Queued (1st)" && m.tip === SB_TIP, "the first state is 'Queued (1st)' with the sandbox reminder as its tooltip: " + m.word + " / " + m.tip);
     await sleep(600);
