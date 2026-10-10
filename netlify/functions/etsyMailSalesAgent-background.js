@@ -4438,6 +4438,7 @@ ${validationResult.message}
       const cur = await tx.get(draftRefForWrite);
       const curStatus = cur.exists ? (cur.data() || {}).status : null;
       if (curStatus === "queued" || curStatus === "sending") return curStatus;
+      if (cur.exists && (cur.data() || {}).queueWaiting === true) return "queued";     // MAILQUEUE: a reply waiting its turn in the send queue
       tx.set(draftRefForWrite, {
       draftId,
       threadId,

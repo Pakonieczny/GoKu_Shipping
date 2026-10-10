@@ -603,6 +603,8 @@ async function isDraftInFlight(threadId) {
   if (!snap.exists) return null;
   const d = snap.data() || {};
   if (d.status === "queued" || d.status === "sending") return d.status;
+  // MAILQUEUE: a message waiting its turn in the send queue is not at the slot yet, but it is on its way
+  if (d.queueWaiting === true) return "queued";
   return null;
 }
 
@@ -1801,8 +1803,9 @@ exports.handler = async (event) => {
               }
               // Audit fix F1 — a person queued a reply while the agent was
               // working. The agent now leaves that reply alone, so stop waiting.
-              if ((d.status === "queued" || d.status === "sending") && d.sendOrigin === "manual" && u > PRIOR_UPDATED_MS) {
-                draftBusyDuringRun = d.status;
+              if ((((d.status === "queued" || d.status === "sending") && d.sendOrigin === "manual") ||
+                   (d.queueWaiting === true && d.queueWaitingOrigin === "manual")) && u > PRIOR_UPDATED_MS) {
+                draftBusyDuringRun = (d.status === "queued" || d.status === "sending") ? d.status : "queued";
                 break;
               }
             }

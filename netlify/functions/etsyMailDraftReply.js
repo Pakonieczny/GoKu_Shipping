@@ -6293,6 +6293,8 @@ answering. Do not guess about the order's contents.`;
       if (prev && (prev.status === "queued" || prev.status === "sending")) {
         return { busy: true, status: prev.status };
       }
+      // MAILQUEUE: a reply waiting its turn in the send queue is on its way too
+      if (prev && prev.queueWaiting === true) return { busy: true, status: "queued" };
       if (prev && _SENT_STATUSES.has(prev.status) && prev.text) {
         draftDoc.lastSentText   = String(prev.text);
         draftDoc.lastSentStatus = prev.status;

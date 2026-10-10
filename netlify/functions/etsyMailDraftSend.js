@@ -81,6 +81,7 @@ const crypto = require("crypto");   // audit fix F16 (text fingerprint in audit 
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const { buildOptimisticDoc } = require("./etsyMailOptimisticMessage");
 const _trk = require("./_etsyMailTrackingResolve");
+const Q = require("./_etsyMailSendQueue");        // the dispatcher: one queue, one lease, one message in flight
 let attachClaimedCollateral = null;
 let missingAttachmentClaims = null;
 let describeClaims = null;
@@ -95,10 +96,15 @@ const FV = admin.firestore.FieldValue;
 const DRAFTS_COLL = "EtsyMail_Drafts";
 const AUDIT_COLL  = "EtsyMail_Audit";
 
-// Charm Sorter questions to customers (_etsyMailOrderLink.js) travel through this same slot.
-// A draft finishing tells that module, which records the outcome for the sorter and hands the
-// slot back; it never fails the send it is told about.
-async function tellOrderLink(draftId, threadId) {
+// A slot changed (sent, failed, taken back): the dispatcher follows it, records the outcome (also for the
+// Charm Sorter's questions, which travel through the same queue), starts the next message and hands over.
+// A slot the dispatcher did not write (an older build) is still handled the way it always was.
+// Never fails the send it is told about: the 3-minute pass and every later call repair a missed report.
+async function tellOrderLink(draftId, threadId, info) {
+  try {
+    const s = await Q.settleSlot(draftId, info || {});
+    if (s && s.managed) return;
+  } catch (e) { console.warn("send queue hand-off failed (non-fatal, repaired by the next call):", e.message); return; }
   try { await require("./_etsyMailOrderLink").onDraftSettled(draftId, threadId); }
   catch (e) { console.warn("orderLink hand-off failed (non-fatal):", e.message); }
 }
@@ -848,7 +854,29 @@ exports.handler = async (event) => {
       if (!draftId) return bad("Missing draftId");
       const snap = await db.collection(DRAFTS_COLL).doc(String(draftId)).get();
       if (!snap.exists) return json(404, { error: "Draft not found", draftId });
-      return ok({ draft: serializeDoc(snap) });
+      let draft = serializeDoc(snap);
+      // A message waiting its turn behind another one in this conversation is not at the slot yet; the slot still
+      // shows the earlier message (sent, say). An older inbox tab reading this must not take that for its own message.
+      if (draft.queueWaiting === true && draft.status !== "queued" && draft.status !== "sending") {
+        draft = Object.assign({}, draft, { status: "queued", sendError: null, sendErrorCode: null, sentAt: null, queueVirtual: true });
+      }
+      return ok({ draft });
+    }
+
+    /* ── queue_state ──
+     *  The dispatcher's open messages (position, state, plain reason) for a watching page. { n } is the revision the
+     *  page has: nothing changed -> { unchanged:true } for ONE document read. */
+    if (op === "queue_state") {
+      const view = await Q.stateView({
+        n: qs.n != null && qs.n !== "" ? Number(qs.n) : null, hasOpen: qs.open === "1" || qs.open === "true",
+        threadId: qs.threadId || null, withText: qs.text !== "0"
+      });
+      return ok({ queue: view });
+    }
+
+    /* ── queue_summary ── counts and the oldest wait, for the health light. Cheap, read-only. */
+    if (op === "queue_summary") {
+      return ok({ summary: await Q.summary() });
     }
 
     /* ── killswitch_status ──
@@ -1123,251 +1151,17 @@ exports.handler = async (event) => {
         return bad("Draft must have text or at least one attachment");
       }
 
-      // Deterministic draftId per thread: prevents stacked queued drafts
-      // for the same thread, and makes peek a single doc-get not a query.
+      // The draft slot ("draft_<threadId>") is the transport the extension reads. WHICH message may use it, and when,
+      // is decided by the dispatcher (_etsyMailSendQueue.js): one durable queue, one lease, one message in flight,
+      // FIFO inside "typed by a person" then "automated", a pause between sends, retries, a dead letter.
+      // Here the message only joins the queue; the dispatcher starts it when it is its turn.
       const draftId = "draft_" + threadId;
-      const ref     = db.collection(DRAFTS_COLL).doc(draftId);
-
-      // Transaction: enqueuing overwrites any prior queued/sending state
-      // with clear audit trail. If currently sending, operator must wait
-      // — return 409 so the UI can show a graceful message.
-      const result = await db.runTransaction(async (tx) => {
-        // v1.5: if the auto-pipeline asked for an atomic thread finalize,
-        // we need to read the thread doc INSIDE this transaction to
-        // satisfy Firestore's read-before-write rule for new doc paths.
-        // Reading a non-existent doc is fine — the set() below merges.
-        let parentThreadSnap = null;
-        if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
-          const tRef = db.collection(THREADS_COLL_NAME).doc(parentThreadFinalizePatch.threadId);
-          parentThreadSnap = await tx.get(tRef);    // ensures the txn knows about this read path
-        }
-
-        const snap = await tx.get(ref);
-        const prev = snap.exists ? snap.data() : null;
-        if (prev && (prev.status === "sending")) {
-          return { conflict: true, prevStatus: prev.status };
-        }
-        // A sorter question waits its turn behind anything already queued here.
-        if (orderLink && prev && prev.status === "queued") {
-          return { conflict: true, prevStatus: prev.status };
-        }
-
-        // Audit fix F1 — an automated sender (auto-pipeline, sales agent,
-        // listing creator) never replaces a reply an operator queued by
-        // hand, even with force:true. The one-per-thread slot would lose
-        // the operator's text before the Etsy helper sends it. (Manual
-        // over manual is handled by PREVIOUS_SEND_PENDING further down.)
-        if (prev && prev.status === "queued" && prev.sendOrigin === "manual" &&
-            inferredSendOriginForRecon === "auto") {
-          return { conflict: true, prevStatus: "queued (an operator reply is waiting to go)" };
-        }
-
-        // v0.9.1 #6: block second-operator queue overwrites
-        // If another operator already queued this draft, refuse silently
-        // unless the current operator passed force:true. The inbox catches
-        // the 409 and shows a confirm dialog.
-        if (prev && prev.status === "queued" && !force) {
-          const prevOperator = prev.createdBy || null;
-          const thisOperator = employeeName    || null;
-          if (prevOperator && thisOperator && prevOperator !== thisOperator) {
-            return {
-              ownerConflict : true,
-              prevOperator,
-              thisOperator,
-              prevQueuedAt  : prev.queuedAt ? prev.queuedAt.toMillis() : null
-            };
-          }
-        }
-
-        // v3.2 — Resolve sendOrigin if the caller didn't explicitly pass
-        // one. The convention is:
-        //   - Explicit value wins.
-        //   - Otherwise, presence of an AI-generated aiMeta marks this
-        //     as auto-pipeline; absence marks it as a manual operator
-        //     send (the inbox UI is the only other caller and it doesn't
-        //     send aiMeta).
-        // The resolved value persists on the draft AND propagates onto
-        // the thread when the send confirms — see the auto_replied
-        // branch below for the thread-side write.
-        const resolvedSendOrigin = inferredSendOriginForRecon;
-
-        // A manual send never silently replaces an earlier manual message
-        // that is still waiting for the Etsy tab. The draft slot is one per
-        // thread, so overwriting it here meant the first message was never
-        // delivered. The inbox waits for the slot and then sends this one.
-        // The same text again is a harmless re-send and still overwrites;
-        // force (an operator-confirmed overwrite) keeps its meaning.
-        if (!force && !orderLink && resolvedSendOrigin === "manual" && prev &&
-            prev.status === "queued" && prev.sendOrigin === "manual" &&
-            !isStaleQueued(prev.queuedAt) &&
-            String(prev.text || "").trim() !== cleanText) {
-          return {
-            pendingPrev : true,
-            prevQueuedAt: prev.queuedAt && prev.queuedAt.toMillis ? prev.queuedAt.toMillis() : null
-          };
-        }
-
-        // ━━━ v1.6 — Duplicate-auto-send guard ━━━━━━━━━━━━━━━━━━━━━━━━━━
-        //
-        // BUG PATTERN: an operator observed a "syncing…" duplicate of a
-        // message that was correctly sent 10 hours earlier. The
-        // duplicate appeared right after the customer replied. Root
-        // cause: the auto-pipeline ran with stale conversation context
-        // (the scraper had intermittently missed the customer's reply
-        // — see the separate scraper-miss issue), so the AI re-generated
-        // the EXACT SAME response as before and enqueued it. The optim
-        // doc id is deterministic (optim_<draftId>) and writes use
-        // set(merge:false), so the new enqueue overwrites the existing
-        // optim with a fresh nowMs timestamp — producing a "syncing"
-        // bubble at the new time that visually duplicates the older
-        // real outbound. The customer may or may not have received the
-        // duplicate via Etsy depending on whether the extension also
-        // delivered it — either way, the operator's inbox shows a
-        // visually-incorrect duplicate.
-        //
-        // GUARD: when an AUTO send arrives whose text is identical to
-        // the previous successfully-sent draft, refuse the enqueue.
-        // Manual sends are always allowed — an operator may legitimately
-        // want to re-send the same text (e.g., a customer says "you
-        // never replied" to a misdelivered message). This guard targets
-        // ONLY the automated path that has no business sending the same
-        // response twice without the AI noticing.
-        //
-        // Why check just prev.text (not the messages subcollection): the
-        // draft doc is what enqueue overwrites on every send, so prev.text
-        // is always the most-recently-enqueued text — exactly what we'd
-        // compare against. Reading the messages subcollection would be
-        // more thorough but adds Firestore reads inside the txn and
-        // catches no additional cases (the draft IS the source of truth
-        // for what was just sent).
-        const TERMINAL_SENT_STATUSES = new Set([
-          "sent", "sent_unverified", "sent_text_only"
-        ]);
-        // Audit 2026-09: etsyMailDraftReply writes a fresh status:"draft" doc
-        // over the sent one BEFORE the pipeline enqueues, so on the real auto
-        // path prev.status was "draft" and this guard never matched. The
-        // drafter now carries the last sent reply in lastSentText/lastSentAt.
-        const prevIsSent   = !!(prev && TERMINAL_SENT_STATUSES.has(prev.status));
-        const prevSentText = prev ? String((prevIsSent ? prev.text : prev.lastSentText) || "").trim() : "";
-        const isDuplicateAutoSend =
-          resolvedSendOrigin === "auto" &&
-          prev &&
-          prevSentText.length > 0 &&
-          cleanText.length > 0 &&
-          prevSentText === cleanText;
-
-        if (isDuplicateAutoSend) {
-          const prevSentAt = prevIsSent ? prev.sentAt : prev.lastSentAt;
-          return {
-            duplicateAutoSend: true,
-            prevStatus       : prevIsSent ? prev.status : (prev.lastSentStatus || prev.status),
-            prevSentAtMs     : prevSentAt && prevSentAt.toMillis
-                               ? prevSentAt.toMillis()
-                               : null,
-            prevTextLen      : prevSentText.length
-          };
-        }
-        // ━━━ end v1.6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-        const payload = {
-          draftId,
-          threadId,
-          etsyConversationUrl,
-          text               : cleanText,
-          attachments        : normalized,
-          status             : "queued",
-          createdBy          : employeeName || (prev && prev.createdBy) || null,
-          // v3.2 — origin tag (manual vs auto). Stored on the draft so
-          // the send-completion handler can copy it onto the thread.
-          sendOrigin         : resolvedSendOrigin,
-          // Preserve AI metadata if this was originally an AI draft
-          generatedByAI      : (aiMeta && aiMeta.generatedByAI) != null
-            ? !!aiMeta.generatedByAI
-            : (prev && prev.generatedByAI) || false,
-          aiModel            : (aiMeta && aiMeta.model)            || (prev && prev.aiModel) || null,
-          aiReasoning        : (aiMeta && aiMeta.reasoning)        || (prev && prev.aiReasoning) || null,
-          aiActiveQuestion   : (aiMeta && aiMeta.activeQuestion)   || (prev && prev.aiActiveQuestion) || null,
-          // Lifecycle
-          queuedAt           : FV.serverTimestamp(),
-          updatedAt          : FV.serverTimestamp(),
-          // Reset send-coordination state
-          sendSessionId      : null,
-          sendClaimedAt      : null,
-          sendHeartbeatAt    : null,
-          sendAttempts       : 0,
-          sendError          : null,
-          sendErrorCode      : null,
-          sendPartialSuccess : false,
-          sendStage          : "pre_click",  // v0.9.1 #2/#3: send-boundary state
-          sentAt             : null
-        };
-        if (!snap.exists) payload.createdAt = FV.serverTimestamp();
-        if (orderLink) {
-          // Park what the inbox had in this slot; it is put back once the question is done.
-          payload.orderLink          = orderLink;
-          payload.orderLinkParked    = require("./_etsyMailOrderLink").parkedCopy(prev);
-          payload.generatedByAI      = false;
-          payload.aiModel            = null;
-          payload.aiReasoning        = null;
-          payload.aiActiveQuestion   = null;
-        } else {
-          payload.orderLink          = FV.delete();
-          payload.orderLinkParked    = FV.delete();
-        }
-        tx.set(ref, payload, { merge: true });
-
-        // v1.5: atomic thread finalize. Same shape the auto-pipeline's
-        // local finalizeThread used to write, but in the same txn as
-        // the draft. Caller passes primitive fields (JSON-safe);
-        // we reconstruct the Timestamp + serverTimestamp here.
-        let threadFinalizeApplied = false;
-        if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
-          const p = parentThreadFinalizePatch;
-          const threadPatch = {
-            status                       : p.newStatus,
-            lastAutoDecision             : p.decision,
-            lastAutoDecisionAt           : FV.serverTimestamp(),
-            aiConfidence                 : p.aiConfidence != null ? p.aiConfidence : null,
-            aiDifficulty                 : p.aiDifficulty != null ? p.aiDifficulty : null,
-            aiDraftStatus                : "ready",
-            latestDraftId                : draftId,
-            updatedAt                    : FV.serverTimestamp()
-          };
-          if (typeof p.inboundMs === "number" && p.inboundMs > 0) {
-            threadPatch.lastAutoProcessedInboundAt =
-              admin.firestore.Timestamp.fromMillis(p.inboundMs);
-          }
-          // Audit fix P4: the same sticky guards as the pipeline's
-          // finalizeThread. A completed sale keeps its status and AI
-          // scores; an active rush keeps its status (so it stays in
-          // Production Rush) but shows the latest AI scores.
-          try {
-            const td = parentThreadSnap && parentThreadSnap.exists ? (parentThreadSnap.data() || {}) : {};
-            const rush = td.productionRush;
-            if (td.salesCompletedAt) {
-              delete threadPatch.status; delete threadPatch.aiConfidence; delete threadPatch.aiDifficulty;
-            } else if (rush && rush.acceptedAt && !rush.removedAt) {
-              delete threadPatch.status;
-            }
-          } catch (e) { console.warn("[draftSend] sticky-status check skipped:", e.message); }
-          tx.set(
-            db.collection(THREADS_COLL_NAME).doc(p.threadId),
-            threadPatch,
-            { merge: true }
-          );
-          threadFinalizeApplied = true;
-        }
-
-        // What the AI had drafted before this send, for learning (see
-        // _etsyMailLearning.js). Read here because the set above replaces it.
-        const learnPrev = prev ? {
-          text: prev.text || "", status: prev.status || null, generatedByAI: !!prev.generatedByAI,
-          generatedBySalesAgent: !!prev.generatedBySalesAgent, aiConfidence: prev.aiConfidence,
-          aiModel: prev.aiModel || null, aiActiveQuestion: prev.aiActiveQuestion || prev.activeQuestion || null,
-          aiMissingFacts: Array.isArray(prev.aiMissingFacts) ? prev.aiMissingFacts : []
-        } : null;
-        return { conflict: false, payload, threadFinalizeApplied, learnPrev };
+      const origin = inferredSendOriginForRecon === "auto" ? "auto" : "manual";
+      const result = await Q.submit({
+        threadId, conversationUrl: etsyConversationUrl, text: cleanText, attachments: normalized, origin,
+        employeeName, aiMeta, orderLink, polished: body.polished === true,
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : null,
+        parentThreadFinalizePatch
       });
 
       if (result.conflict) {
@@ -1376,24 +1170,6 @@ exports.handler = async (event) => {
           errorCode  : "DRAFT_BUSY",
           draftId,
           prevStatus : result.prevStatus
-        });
-      }
-      if (result.ownerConflict) {
-        return json(409, {
-          error         : `Draft is queued by ${result.prevOperator}. Send 'force:true' to overwrite.`,
-          errorCode     : "QUEUE_OWNER_CONFLICT",
-          draftId,
-          prevOperator  : result.prevOperator,
-          thisOperator  : result.thisOperator,
-          prevQueuedAt  : result.prevQueuedAt
-        });
-      }
-      if (result.pendingPrev) {
-        return json(409, {
-          error       : "The previous message on this thread is still waiting to be sent",
-          errorCode   : "PREVIOUS_SEND_PENDING",
-          draftId,
-          prevQueuedAt: result.prevQueuedAt
         });
       }
 
@@ -1426,6 +1202,19 @@ exports.handler = async (event) => {
       }
       // ━━━ end v1.6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+      // The same message again (a double click, a retry after a network error, a reload): it is the one already in the
+      // queue. Nothing is written twice; the caller gets that message's state.
+      if (result.deduped) {
+        let kicked = null;
+        try { kicked = await Q.pump(); } catch (e) { console.warn("enqueue: pump after duplicate failed (non-fatal):", e.message); }
+        const cur = await Q.getItem(result.item.sendId).catch(() => null) || result.item;
+        return ok({
+          draftId, status: "queued", threadId, deduped: true, sendId: cur.sendId, queueState: cur.state,
+          attachmentCount: (cur.attachments || []).length, attachments: cur.attachments || [], addedForClaim: [], skippedPendingTracking: [],
+          pollUrl: `/.netlify/functions/etsyMailDraftSend?op=status&draftId=${encodeURIComponent(draftId)}`
+        });
+      }
+
       await audit(threadId, draftId, "draft_enqueued", employeeName || "operator", {
         textLength   : cleanText.length,
         // Audit fix F16 — enough to tell WHICH message was queued (and to
@@ -1433,6 +1222,7 @@ exports.handler = async (event) => {
         textSha256   : crypto.createHash("sha256").update(cleanText).digest("hex").slice(0, 16),
         textPreview  : cleanText.slice(0, 160),
         sendOrigin   : inferredSendOriginForRecon,
+        sendId       : result.item.sendId,
         attachmentCount: normalized.length,
         attachmentTypes: normalized.map(a => a.type),
         addedForClaim,
@@ -1466,12 +1256,14 @@ exports.handler = async (event) => {
       // backstop in showSendStatus will retry the insert when the operator
       // opens the thread. Don't let an optimistic-insert failure poison
       // the enqueue response.
-      try {
+      // (One stand-in per conversation: a second message waiting behind the first writes its own when its turn comes,
+      // so it never replaces the stand-in of the one being sent.)
+      if (!result.slotBusy) try {
         const optimDocId = "optim_" + draftId;
         const optimDoc = buildOptimisticDoc({
           draftId,
           text        : cleanText,
-          employeeName: employeeName || (result.payload && result.payload.createdBy) || "AI",
+          employeeName: employeeName || result.item.createdBy || "AI",
           attachments : normalized
         });
         await db.collection(THREADS_COLL_NAME).doc(threadId)
@@ -1481,10 +1273,17 @@ exports.handler = async (event) => {
         console.warn("optimistic insert at enqueue failed (non-fatal):", e.message);
       }
 
+      // Its turn may be now: start it (a no-op when another message is being sent).
+      let started = null;
+      try { started = await Q.pump(); } catch (e) { console.warn("enqueue: dispatch failed (non-fatal, the next call or the 3-minute pass does it):", e.message); }
+      const now = await Q.getItem(result.item.sendId).catch(() => null) || result.item;
+
       return ok({
         draftId,
         status      : "queued",
         threadId,
+        sendId      : now.sendId,
+        queueState  : now.state,
         attachmentCount: normalized.length,
         // Return the authoritative server-side attachment list. The frontend
         // uses this for its optimistic message so the UI reflects backend
@@ -1510,6 +1309,24 @@ exports.handler = async (event) => {
       const { draftId } = body;
       if (!draftId) return bad("Missing draftId");
       const ref = db.collection(DRAFTS_COLL).doc(String(draftId));
+      // A message in the dispatcher's queue is taken back there (by its id, or the one at the slot).
+      if (body.sendId || (draftId && String(draftId).startsWith("draft_"))) {
+        let sendId = body.sendId ? String(body.sendId) : null;
+        if (!sendId) {
+          const ss = await ref.get();
+          if (ss.exists && ss.data().queueSendId && ss.data().status === "queued") sendId = ss.data().queueSendId;
+        }
+        if (sendId) {
+          const c = await Q.cancel(sendId, body.by || body.employeeName || null);
+          if (c && c.notFound) return json(404, { error: "Message not found" });
+          if (c && c.tooLate) return json(409, { error: `Cannot cancel — message is ${c.state}` });
+          const tid = c && c.item ? c.item.threadId : null;
+          let threadStatusUpdate = null;
+          if (tid) threadStatusUpdate = await demoteThreadStandalone(tid, "human_review_after_send_cancelled").catch(() => null);
+          await audit(tid, draftId, "draft_cancelled", "operator", { threadStatusUpdate, sendId });
+          return ok({ draftId, status: "draft", sendId, threadStatus: threadStatusUpdate });
+        }
+      }
       const result = await db.runTransaction(async (tx) => {
         // v3.15: hoist all reads before any writes (Firestore rule).
         const snap = await tx.get(ref);
@@ -1575,8 +1392,19 @@ exports.handler = async (event) => {
       // Deterministic draft id keeps this a doc-get, not a query.
       const draftId = "draft_" + threadId;
       const snap = await db.collection(DRAFTS_COLL).doc(draftId).get();
-      if (!snap.exists) return ok({ queued: false });
+      if (!snap.exists) { await Q.lazyPump(15000); return ok({ queued: false }); }
       const d = snap.data();
+
+      if (d.queueSendId && (d.status === "queued" || d.status === "sending")) {
+        // A message the dispatcher put here. It is offered only while it holds the turn and nobody has claimed it (one
+        // lease read). A holder that went silent is dealt with right here, so a peek also keeps the queue moving; a
+        // slot that is being sent is never offered again (the dispatcher times it, not the staleness rule below).
+        const g = await Q.peekGate(d);
+        if (d.status === "queued" && g.live) return ok({ queued: true, draft: serializeDoc(snap) });
+        return ok({ queued: false, currentStatus: d.status === "sending" && g.live ? "sending" : "waiting" });
+      }
+
+      if (d.status !== "queued") await Q.lazyPump(15000);
 
       if (d.status === "queued") {
         // Stale queued draft — operator clicked Send hours ago and
@@ -1650,6 +1478,27 @@ exports.handler = async (event) => {
         // of the failure branches below. Doing the read up front keeps
         // every branch's writes legal.
         const threadPrefetch = await prefetchThreadForDemoteInTxn(tx, prev.threadId);
+
+        // ─── The dispatcher decides whether this message may go now ──
+        // (its turn, the pause between sends, its tries). A queued slot an older build wrote is taken into the queue.
+        if (prev.queueSendId || prev.status === "queued") {
+          if (prev.status !== "queued" && prev.status !== "sending") return { taken: true, currentStatus: prev.status };
+          const g = await Q.claimGate(tx, { slot: prev, draftId: String(draftId), sessionId: String(sessionId), workerId });
+          if (g.reject) return { reject: g.reject };
+          tx.set(ref, Object.assign({
+            status         : "sending",
+            sendSessionId  : String(sessionId),
+            sendWorkerId   : workerId || null,
+            sendClaimedAt  : FV.serverTimestamp(),
+            sendHeartbeatAt: FV.serverTimestamp(),
+            sendAttempts   : g.attempts,
+            sendError      : null,
+            sendErrorCode  : null,
+            sendStage      : "pre_click",
+            updatedAt      : FV.serverTimestamp()
+          }, g.patch || {}), { merge: true });
+          return { ok: true, data: prev, attempts: g.attempts };
+        }
 
         // ─── PHASE: Decide + Write ──
         // Reject stale queued — paired with peek's expiration logic
@@ -1730,6 +1579,10 @@ exports.handler = async (event) => {
         return { ok: true, data: prev, attempts: nextAttempts };
       });
 
+      if (result.reject) {
+        const r = result.reject;
+        return json(r.status, Object.assign({ error: r.error, errorCode: r.errorCode }, r.retryAfterMs ? { retryAfterMs: r.retryAfterMs } : {}));
+      }
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.expired)  return json(410, { error: `Draft expired — was queued > ${MAX_CLAIM_LOOKBACK_MIN} min`, errorCode: "QUEUED_EXPIRED" });
       if (result.strandedPostClick) {
@@ -1764,6 +1617,10 @@ exports.handler = async (event) => {
         const prev = snap.data();
         if (prev.status !== "sending") return { badState: prev.status };
         if (prev.sendSessionId !== sessionId) return { notYours: true, owner: prev.sendSessionId };
+        if (prev.queueSendId) {       // keeps the turn (the lease) alive; a session that lost it is told
+          const g = await Q.heartbeatGate(tx, { slot: prev, sessionId });
+          if (g.reject) return { reject: g.reject };
+        }
 
         const patch = {
           sendHeartbeatAt: FV.serverTimestamp(),
@@ -1781,6 +1638,7 @@ exports.handler = async (event) => {
         tx.set(ref, patch, { merge: true });
         return { ok: true };
       });
+      if (result.reject) return json(result.reject.status, { error: result.reject.error, errorCode: result.reject.errorCode });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.badState) return json(409, { error: `Draft is ${result.badState}` });
       if (result.notYours) return json(403, { error: "Heartbeat from wrong session", owner: result.owner });
@@ -1810,6 +1668,10 @@ exports.handler = async (event) => {
         const prev = snap.data();
         if (prev.status !== "sending") return { badState: prev.status };
         if (prev.sendSessionId !== sessionId) return { notYours: true };
+        if (prev.queueSendId) {       // THE fence: only the session that holds the turn, and only once
+          const g = await Q.clickGate(tx, { slot: prev, sessionId });
+          if (g.reject) return { reject: g.reject };
+        }
         tx.set(ref, {
           sendStage      : "post_click",
           sendHeartbeatAt: FV.serverTimestamp(),
@@ -1817,6 +1679,7 @@ exports.handler = async (event) => {
         }, { merge: true });
         return { ok: true, threadId: prev.threadId };
       });
+      if (result.reject) return json(result.reject.status, { error: result.reject.error, errorCode: result.reject.errorCode });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.badState) return json(409, { error: `Draft is ${result.badState}` });
       if (result.notYours) return json(403, { error: "mark_clicked from wrong session" });
@@ -1936,6 +1799,7 @@ exports.handler = async (event) => {
           sendTextSent       : !!sentText,
           sendNote           : note || null,
           etsyMessageId      : etsyMessageId || null,
+          sendReportedAtMs   : Date.now(),          // the helper's own report (the dispatcher tells it from its own bookkeeping)
           sendHeartbeatAt    : FV.serverTimestamp(),
           updatedAt          : FV.serverTimestamp()
         }, { merge: true });
@@ -2085,11 +1949,15 @@ exports.handler = async (event) => {
         // Audit fix F2 — after Etsy's Send button was clicked the message
         // may already be delivered: never re-queue (a retry clicks Send again).
         const clicked   = prev.sendStage === "post_click";
-        const willRetry = retry && attempts < MAX_SEND_ATTEMPTS && !clicked;
+        // A message the dispatcher owns is never put back "queued" here (that would be an instant retry at the
+        // slot): the dispatcher re-queues it with a delay, or makes it a dead letter, from this report.
+        const managed   = !!prev.queueSendId;
+        const willRetry = !managed && retry && attempts < MAX_SEND_ATTEMPTS && !clicked;
 
         const patch = {
           sendError      : String(error).slice(0, 1000),
           sendErrorCode  : errorCode || null,
+          sendReportedAtMs: Date.now(),
           sendHeartbeatAt: FV.serverTimestamp(),
           updatedAt      : FV.serverTimestamp()
         };
@@ -2118,12 +1986,12 @@ exports.handler = async (event) => {
         // the thread state alone — the next claim attempts the send
         // again.
         let threadStatusUpdate = null;
-        if (!willRetry) {
+        if (!willRetry && !managed) {
           threadStatusUpdate = demoteThreadWriteOnlyInTxn(
             tx, threadPrefetch, "human_review_after_send_failure"
           );
         }
-        return { ok: true, threadId: prev.threadId, requeued: willRetry, attempts, threadStatusUpdate };
+        return { ok: true, threadId: prev.threadId, requeued: willRetry, attempts, threadStatusUpdate, managed };
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.notYours) return json(403, { error: "Fail from wrong session" });
@@ -2132,7 +2000,7 @@ exports.handler = async (event) => {
         error, errorCode, attempts: result.attempts,
         threadStatusUpdate: result.threadStatusUpdate
       });
-      if (!result.requeued) await tellOrderLink(draftId, result.threadId);
+      if (!result.requeued) await tellOrderLink(draftId, result.threadId, { retry: retry === true });
       return ok({
         draftId,
         status      : result.requeued ? "queued" : "failed",
@@ -2178,6 +2046,9 @@ exports.handler = async (event) => {
         if (prev.status !== "queued") {
           return { skipped: true, currentStatus: prev.status };
         }
+        // A message the dispatcher put here is timed by the dispatcher (its turn, the helper's answer, its tries):
+        // an old extension's breaker must not kill it.
+        if (prev.queueSendId) return { skipped: true, currentStatus: prev.status, managed: true };
         // Hoist thread read before writes (Firestore txn rule).
         const threadPrefetch = await prefetchThreadForDemoteInTxn(tx, prev.threadId);
         tx.set(ref, {
@@ -2212,6 +2083,49 @@ exports.handler = async (event) => {
       });
     }
 
+    /* ── queue_* (people → dispatcher) ────────────────────────────
+     *  One-click actions on a message in the queue. All of them are safe to repeat.
+     *    queue_cancel     { sendId, by }                      take back a message that has not been sent
+     *    queue_retry      { sendId, by, confirmMaybeSent }    send a failed / needs-attention message again
+     *    queue_mark_sent  { sendId, by }                      "I checked: it went"
+     *    queue_dismiss    { sendId, by }                      put a dead letter away without sending
+     *    queue_config     { gapMs, maxAttempts, ... }         change the pause, tries, backoff (numbers, clamped) */
+    if (op === "queue_cancel" || op === "queue_retry" || op === "queue_mark_sent" || op === "queue_dismiss") {
+      const sendId = String(body.sendId || "");
+      if (!sendId) return bad("Missing sendId");
+      const by = body.by ? String(body.by).slice(0, 80) : null;
+      let r;
+      if (op === "queue_cancel") {
+        r = await Q.cancel(sendId, by);
+        if (r && r.item) {
+          const th = await demoteThreadStandalone(r.item.threadId, "human_review_after_send_cancelled").catch(() => null);
+          await audit(r.item.threadId, r.item.draftId, "draft_cancelled", by || "operator", { sendId, threadStatusUpdate: th });
+        }
+      } else if (op === "queue_retry") {
+        r = await Q.humanRetry(sendId, { confirmMaybeSent: body.confirmMaybeSent === true, by });
+        if (r && r.item) await audit(r.item.threadId, r.item.draftId, "draft_resend_requested", by || "operator", { sendId });
+      } else if (op === "queue_mark_sent") {
+        r = await Q.markSent(sendId, { by: by || "a person" });
+      } else {
+        r = await Q.dismiss(sendId, by);
+      }
+      if (r && r.notFound) return json(404, { error: "Message not found", errorCode: "QUEUE_NOT_FOUND" });
+      if (r && r.tooLate) return json(409, { error: `Too late: the message is ${r.state}`, errorCode: "QUEUE_TOO_LATE", state: r.state });
+      if (r && r.notDead) return json(409, { error: `Not waiting for a person: the message is ${r.state}`, errorCode: "QUEUE_NOT_DEAD", state: r.state });
+      if (r && r.needsConfirm) {
+        return json(409, {
+          error: "This message may already have gone out. Check the conversation on Etsy, then confirm to send it again.",
+          errorCode: "QUEUE_MAYBE_SENT", text: String(r.item.text || "").slice(0, 4000), conversationUrl: r.item.conversationUrl || null
+        });
+      }
+      const cur = await Q.getItem(sendId).catch(() => null);
+      return ok({ sendId, state: cur ? cur.state : null, alreadyDelivered: !!(r && r.alreadyDelivered) });
+    }
+    if (op === "queue_config") {
+      const cfg = await Q.setConfig(body.config || body);
+      return ok({ config: cfg });
+    }
+
     /* ── kill_switch_set (ops → server) ──────────────────────────
      *  Toggle the global send-disabled flag. Authenticated like every
      *  other op. v0.9.1 #8.
@@ -2231,13 +2145,21 @@ exports.handler = async (event) => {
       }, { merge: true });
       // Invalidate cache immediately
       _killSwitchCache = { value: null, fetchedAt: 0 };
+      Q._resetCaches();
       await audit(null, null, disabled ? "kill_switch_enabled" : "kill_switch_disabled", by || "operator", { reason });
+      if (!disabled) { try { await Q.pump(); } catch (e) { console.warn("kill switch off: dispatch failed (non-fatal):", e.message); } }
       return ok({ killSwitch: { disabled, reason, by, at: Date.now() } });
     }
 
     return bad(`Unknown op '${op}'`);
 
   } catch (err) {
+    // Two requests wrote the same hot document (the lease) at the same moment and Firestore gave up on ours after its own
+    // tries. Nothing was written; the same request is safe to run again, and an extension should not see a 500 for it.
+    if (/ABORTED|too much contention|UNAVAILABLE|DEADLINE_EXCEEDED/i.test(String(err && err.message)) && (event.__again || 0) < 2) {
+      await new Promise(r => setTimeout(r, 60 + Math.floor(Math.random() * 140)));
+      return exports.handler(Object.assign({}, event, { __again: (event.__again || 0) + 1 }));
+    }
     console.error("etsyMailDraftSend error:", err);
     return json(500, { error: err.message || String(err) });
   }

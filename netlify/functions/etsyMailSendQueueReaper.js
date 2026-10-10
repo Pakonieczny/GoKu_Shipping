@@ -99,6 +99,7 @@ async function reapDraft(draftRef, kind) {
     const snap = await tx.get(draftRef);
     if (!snap.exists) return { reaped: false, reason: "draft_gone" };
     const d = snap.data();
+    if (d.queueSendId) return { reaped: false, reason: "managed_by_send_queue" };   // the dispatcher times its own messages
 
     // Re-check staleness inside the txn — extension might have
     // peek'd and processed the draft between our query and the txn.

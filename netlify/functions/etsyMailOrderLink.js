@@ -75,10 +75,10 @@ exports.handler = async (event) => {
       case "order":      return json(200, await link.order(body));
       case "thread":     return json(200, await link.thread(body));
       case "ask":        return json(200, await link.ask(station, body));
-      case "retry":      return json(200, await link.retry(body));
+      case "retry":      return json(200, await link.retry(body, station));
       case "cancel":     return json(200, await link.cancel(body));
       case "copied":     return json(200, await link.markCopied(body));
-      case "sent":       return json(200, await link.markSent(body));
+      case "sent":       return json(200, await link.markSent(body, station));
       case "read":       return json(200, await link.read(body));
       case "resolve":    return json(200, await link.setStatus(station, body, "resolved"));
       case "reopen":     return json(200, await link.setStatus(station, body, "open"));
