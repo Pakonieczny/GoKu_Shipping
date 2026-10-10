@@ -17,6 +17,7 @@
 .egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - var(--seal-base,50px) / 2 + 8px);top:calc(var(--seal-base,50px) / -2);width:var(--seal-base,50px);height:var(--seal-base,50px);margin:0;padding:0;z-index:4}
 .pvMain{position:relative}
 .pvMain:has(.pvApproval:not(:empty)){padding-right:calc(156px + var(--seal-base,50px) / 2);box-sizing:border-box}
+.pvMain.egWide:has(.pvApproval:not(:empty)){padding-right:0}   /* a wide piece that sits clear below the Approved block takes the block's column too (charm-nest-bridge.js takesStrip); the block itself does not move */
 .pvApproval{position:absolute;top:calc(var(--seal-base,50px) / 2);right:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:calc(156px + var(--seal-base,50px) / 2)}
 .pvApproval>.sealRow.engravingSeals{padding:0;max-width:100%;min-height:0;justify-content:flex-end}
 .egButtonSeal>.seal{background:transparent;border-radius:0;mix-blend-mode:normal}

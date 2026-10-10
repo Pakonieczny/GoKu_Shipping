@@ -6487,6 +6487,18 @@ const Engrave = window.Engrave = (() => {
     });
     show(msgTab, false);
   }
+  /* The Approved block sits at the top right of the work area and holds back a strip of it (.pvMain pads 181 px) for the work area's whole height, so a
+     wide bar was drawn in the 381 px left of the strip with 300 px of empty frame above and below it (Paul, 10 Oct: "squished"). A piece clearly wider than tall
+     takes the strip as well when, drawn at the width that gives and centred in the work area (the canvas is centred, charm-nest-1.html), it sits clear below the
+     block: the card then wears .egWide and the strip is given back. pt = the drawing's size (renderBack's _sizePt), beside = the box beside the strip, to = the box
+     with the strip, host = the work area's height, below = how far down the block reaches from the work area's top. Every other piece (round, upright, squarish,
+     or one that would touch the block) is drawn exactly as before. */
+  const WIDE_PIECE = 1.5, BLOCK_AIR = 8;
+  function takesStrip(pt, beside, to, host, below) {
+    if (!pt || !(pt.w >= WIDE_PIECE * pt.h)) return false;
+    const dims = box => { const k = Math.min(box[0] / pt.w, box[1] / pt.h); return [Math.round(pt.w * k), Math.round(pt.h * k)]; }, was = dims(beside), now = dims(to);
+    return now[0] >= was[0] + 12 && (host - (now[1] + 2)) / 2 >= below + BLOCK_AIR;      // (+2: the canvas's border)
+  }
   /** The Left | Right switch of a row's editor: one button for each ear (its tag, its words, where it stands), the one shown pressed. Presentation only: each ear is its own card, with its own words, fit and approval. */
   function earSwitchHtml(job, ears) {
     return `<span class="egEarSwitch" role="group" aria-label="The left and the right ear of this line">${ears.map(j => {
@@ -6619,7 +6631,7 @@ const Engrave = window.Engrave = (() => {
     // every rebuild of the card. Without the picker or its data the button is not offered.
     { const eb = card.querySelector("[data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: card.querySelector('[data-f="words"]'), button: eb, key: "words:" + job.key }))) eb.remove(); }
     const backHost = card.querySelector(".backHost");
-    let mounted = [0, 0], raf = 0, framed = null;
+    let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => { const b2 = card.querySelector('[data-a="approveBoth"]'); if (!b2 || !ears) return; const gate = bothGate(ears); b2.disabled = !gate.ok; b2.title = bothTitle(gate); };
     card._syncBoth = syncBoth;
     if (wordsJob) { /* no back to draw */ }
@@ -6695,9 +6707,17 @@ const Engrave = window.Engrave = (() => {
       // box, so a tall charm takes the whole height and a wide one the whole width (it used to be the square that fits)
       const stacked = getComputedStyle(backHost).flexGrow === "0";
       const side = v => Math.round(Math.min(1400, Math.max(200, v - 4)));
-      const px = [side(r.width || 320), side(stacked ? (window.innerHeight || 700) * 0.55 : r.height || 320)];
-      if (Math.abs(px[0] - mounted[0]) < 12 && Math.abs(px[1] - mounted[1]) < 12) return;
-      mounted = px; backHost.textContent = "";
+      // the Approved block (top right) holds back its column of the work area, which .pvMain pads for the block's whole height; a wide piece may take that
+      // column back when it sits clear below the block (takesStrip). The box is measured from the whole work area, so what the card wears does not change it.
+      const pm = backHost.parentElement, blk = stacked ? null : card.querySelector(".pvApproval"), br = blk && blk.getBoundingClientRect();
+      const strip = br && br.width > 0 && br.height > 0 ? br.width : 0, below = strip ? br.bottom - r.top : 0, bw = strip ? pm.getBoundingClientRect().width - strip : r.width;
+      const px0 = [side(bw || 320), side(stacked ? (window.innerHeight || 700) * 0.55 : r.height || 320)];
+      if (Math.abs(px0[0] - mounted[0]) < 12 && Math.abs(px0[1] - mounted[1]) < 12 && Math.abs(below - mountedBelow) < 4) return;
+      mounted = px0; mountedBelow = below; backHost.textContent = "";
+      // the drawing's shape does not depend on its size: a small drawing of it says whether a wide piece clears the block (a piece beside no block is not asked)
+      const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(job, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
+      const px = wide ? full : px0;
+      pm.classList.toggle("egWide", wide);
       const bc = renderBack(job, px, { grid: true, editable: true, include: framed }); framed = bc._map.bb; bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth();
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
       } catch (error) {
@@ -6710,7 +6730,7 @@ const Engrave = window.Engrave = (() => {
     };
     raf = requestAnimationFrame(() => { raf = 0; mountBack(); });
     card._dispose = () => { disposed = true; cancelAnimationFrame(raf); card._ro?.disconnect(); };
-    if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
+    if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); const ap = card.querySelector(".pvApproval"); if (ap) ro.observe(ap); card._ro = ro; }
     const spacing = card.querySelector('[data-a="spacing"]');
     if(spacing) {
       const group=spacing.closest('.spacingControl');let pending=+spacing.value,frame=0,settle=0,dirty=false;
