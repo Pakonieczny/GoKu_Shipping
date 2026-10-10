@@ -93,11 +93,23 @@ const letterLike = m => m.kind === 'path' && m.bbox[0] > BAR[2];       // anythi
     const { g, c } = mine([b, bail, over]);
     assert(c.members.includes(bail) && c.members.includes(over) && g.stray.length === 0, 'an attachment that touches or overlaps the body stays');
   }
+  {   // a sample name typed at the very edge of a bar (the digits beside the VERTICAL_6607 bars stand 0.5 to 0.8 pt off it) is beside the bar, not on it
+    const b = body(), row = word(60.7, 7, 3);
+    const { g, c } = mine([b, ...row]);
+    assert(row.every(m => !c.members.includes(m)) && g.stray.length === 3, 'a name typed 0.7 pt off the bar is not part of it');
+  }
   {   // hoops: a ring against the body, and a real ring standing 6 pt clear (a HUGGIE ring): both are welded by the reader, so both stay
     const b = body(), touching = path([blob(-3.2, 10, 3.3), blob(-3.2, 10, 1.8, true)]), clear = path([blob(69, 10, 3.3), blob(69, 10, 1.8, true)]);
     const { g, c } = mine([b, touching, clear]);
     assert(c.members.includes(touching) && c.members.includes(clear) && g.stray.length === 0, 'a hoop the weld joins stays');
     const r = P.integrateRings(c); assert.equal(r.left.length, 0); assert(r.welded >= 1, 'and it is welded');
+  }
+  {   // a jump ring drawn as two circles, beside a body whose own box is letter-sized and whose centre lies outside its outline (a bow): the body is no letter, the two circles are no word
+    const bow = path([[['m', [0, 0]], ['l', [18, 0]], ['l', [18, 5]], ['l', [6, 5]], ['l', [6, 12]], ['l', [18, 12]], ['l', [18, 17]], ['l', [0, 17]], ['h']]]);
+    const outer = path([blob(9, -5.2, 4.7)]), inner = path([blob(9, -5.2, 2.9)]);
+    const { g, c } = mine([bow, outer, inner]);
+    assert(c.members.includes(outer) && c.members.includes(inner) && g.stray.length === 0, 'the two circles of a jump ring beside a bow stay');
+    assert.equal(P.integrateRings(c).left.length, 0, 'and the weld joins them');
   }
   {   // a ring-sized shape that is a letter of a row ("o", "0") is a letter; one ring on its own at that distance is a hoop
     const b = body(), o = fill([blob(77.2, 10, 2.2), blob(77.2, 10, 1.2, true)], { paintOp: 'f*' }), row = [fill([rect(70, 8, 73.6, 13)]), o, fill([rect(79, 8, 82.6, 13)]), fill([rect(83.7, 8, 87.3, 13)])];

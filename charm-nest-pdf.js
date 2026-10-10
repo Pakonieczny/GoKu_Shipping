@@ -1010,7 +1010,9 @@
      cut-outs; an engraving that runs over the edge), anything within a touch of the outline (a bail, a loop, a ring against the
      body), a jump ring the grouping welded on, and a real hoop that the weld (integrateRings) will join. A ring-sized shape that
      is one letter of a row of outlined letters (an "o", a "0") is a letter, not a hoop. */
-  const STRAY_GLYPH_MAX_PT = 20, STRAY_TINY_PT = 3, STRAY_TOUCH_PT = 0.75;
+  // (touch: the pen's half width plus 0.3 pt. A sample name typed at the edge of a bar sits 0.5 to 0.8 pt off it (the digits beside the
+  //  VERTICAL_6607 bars), a bail or a ring against the body has no gap at all.)
+  const STRAY_GLYPH_MAX_PT = 20, STRAY_TINY_PT = 3, STRAY_TOUCH_PT = 0.3;
   /** Runs of outlined lettering: closed letter-sized paths that stand side by side and are on no charm's outline (the letters
       of a word, the digits of a date). Returns a Map(segment → number of letters in its run) for runs of 2 or more. */
   function letterRunsOf(drawable, charms, cache) {
@@ -1026,7 +1028,10 @@
     };
     // the letters of one word are drawn alike: on one layer, all filled or all stroked (a writer's blue copy of a black fill is still a fill)
     const sameInk = (a, b) => (a.layer || null) === (b.layer || null) && !!a.fill === !!b.fill && !!a.stroke === !!b.stroke;
-    const gl = drawable.filter(s => sized(s) && !onBody(s)).sort((a, b) => a.bbox[0] - b.bbox[0]);
+    const outlines = new Set(charms.map(c => c.outline));                                    // a body is no letter (a bow's centre can lie outside its own outline)
+    const gl = drawable.filter(s => sized(s) && !outlines.has(s) && !onBody(s)).sort((a, b) => a.bbox[0] - b.bbox[0]);
+    // letters stand side by side: a shape inside another's box (the two circles of a jump ring) or one that covers a good part of it is a drawing, not a word
+    const lapped = (a, b) => { const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]); if (w <= 0 || h <= 0) return false; const small = Math.max(0.01, Math.min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))); return w * h / small > 0.25; };
     const parent = gl.map((_, i) => i), find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
     for (let i = 0; i < gl.length; i++) {
       const a = gl[i].bbox, ha = a[3] - a[1];
@@ -1034,7 +1039,7 @@
         const b = gl[j].bbox, hb = b[3] - b[1], gap = Math.max(1.5, 0.4 * Math.max(ha, hb));
         if (b[0] > a[2] + gap) { if (b[0] > a[2] + 4 * gap) break; continue; }
         if (b[1] > a[3] + gap || b[3] < a[1] - gap) continue;
-        if (Math.max(ha, hb) / Math.max(0.01, Math.min(ha, hb)) > 4 || !sameInk(gl[i], gl[j])) continue;     // a letter next to a letter of the same ink, not next to a drawing
+        if (Math.max(ha, hb) / Math.max(0.01, Math.min(ha, hb)) > 4 || !sameInk(gl[i], gl[j]) || lapped(a, b)) continue;     // a letter next to a letter of the same ink, not next to a drawing
         parent[find(j)] = find(i);
       }
     }
