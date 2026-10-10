@@ -67,7 +67,10 @@
   try { M.pair = JSON.parse(sessionStorage.getItem(PAIR) || "null"); } catch (_) { M.pair = null; }
 
   // ─── the one door to the server ──────────────────────────────────────────
+  // an engagement belongs to one world (sandbox or production): the ops that name one by id say which world this page believes it is in
+  const BY_ID = new Set(["retry", "cancel", "copied", "sent", "read", "resolve", "reopen", "lang", "link_url", "simulate"]);
   async function call(op, body = {}, { timeout = 25000, key = M.key } = {}) {
+    if (BY_ID.has(op) && body.sandbox === undefined && body.engagementId) { const known = M.store.get(body.engagementId); if (known) body = Object.assign({ sandbox: !!known.sandbox }, body); }
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), timeout);
     try {
       const headers = { "Content-Type": "application/json" };
