@@ -31,6 +31,17 @@
  *   wouldStayValid(setSheets, movedOutIds, movedInSheets) -> same shape, for the set as it would be after the move
  *   whyNotCompleted(sheet)                      -> "" for a completed sheet, else one plain line saying what it still waits for
  *   describe(sheet)                             -> "GF Sheet 2" style label
+ *
+ * Added by SETFORM for set formation (page, server and Library all call these, so they cannot disagree):
+ *   settle(members, wanting)                    -> { formed, join:[sheet], wait:[{sheet, why}], valid }  which of the sheets that want into a set
+ *                                                  may join NOW: all of them when the set would then be valid, none otherwise (a set that does not
+ *                                                  exist is not made; a set that exists and is short of a class takes only a batch that completes it)
+ *   gate(set, sheets)                           -> { applies, ok, missing, reason, short, line, have } the principle read for an EXISTING set record
+ *                                                  and its member sheets. `applies` is false (and ok true) for a set already committed to the Design
+ *                                                  Station, completed or replaced (they were made under older rules and are never blocked
+ *                                                  retroactively) and when the records carry no completion mark at all (releaseFull) to read.
+ *   exempt(set)                                 -> true for those committed / completed / replaced sets
+ *   enforce(false)                              -> for an offline suite about something else whose fixture sets predate the principle: gate() then reads applies:false
  */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestSetRules = api; })(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
@@ -89,5 +100,36 @@
     return Object.assign(validSet(after), { after });
   }
 
-  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, CODE };
+  /** What a sheet waiting outside a set is told ("" when nothing is missing). */
+  const waitWords = missing => `Waits for a completed ${missing.join(' sheet and a completed ')} sheet: a set needs at least 1 completed GF sheet and 1 completed SS sheet`;
+
+  /** Which sheets that want into a set (members: those already in it) may join now. The set after the join must be valid, or nobody joins. */
+  function settle(members, wanting) {
+    const have = list(members).filter(Boolean), want = list(wanting).filter(Boolean);
+    const valid = validSet(have.concat(want.filter(w => !have.some(h => idOf(h) && idOf(h) === idOf(w)))));
+    if (valid.ok || !want.length) return { formed: valid.ok || have.length > 0, join: want, wait: [], valid };
+    return { formed: have.length > 0, join: [], wait: want.map(sheet => ({ sheet, why: waitWords(valid.missing) })), valid };
+  }
+
+  /** A set committed to the Design Station, completed or replaced was made under the older rules: the principle never blocks it afterwards. */
+  const exempt = set => !!set && (+set.committedAt > 0 || +set.laserDoneAt > 0 || /^complete|superseded/.test(str(set.status)));
+
+  // The readiness read of the principle (gate) can be switched off by an OFFLINE SUITE whose subject is something else (approval mechanics, completion messages) and whose
+  // fixture sets predate the principle. Nothing in the app calls this; a page, the server and every release run with it on.
+  let enforcing = true;
+  const enforce = on => { enforcing = on !== false; return enforcing; };
+
+  /** The principle read for an existing set and its sheets (see the head of this file). */
+  function gate(set, sheets) {
+    const members = list(sheets).filter(s => s && !s.archived);
+    const none = { applies: false, ok: true, missing: [], reason: '', short: '', line: '', have: { GF: 0, SS: 0 } };
+    if (!enforcing || !members.length || exempt(set) || !members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return none;
+    const v = validSet(members);
+    if (v.ok) return Object.assign({}, none, { applies: true, have: v.have });
+    const need = `a completed ${v.missing.join(' sheet and a completed ')} sheet`;
+    return { applies: true, ok: false, missing: v.missing, reason: v.reason, short: `needs ${need}`,
+      line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have };
+  }
+
+  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, CODE };
 });

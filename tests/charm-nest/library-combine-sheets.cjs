@@ -47,6 +47,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
   const opened = id => { st.put(S, id, { draft: false, setId: 'set-8', setSeq: 8 }); L[id] = { ...L[id], draft: false }; const d8 = st.doc(SET, 'set-8'); if (d8) st.put(SET, 'set-8', { sheetIds: [...new Set([...(d8.sheetIds || []), id])] }); else mkSet('set-8', [id]); for (const k of Object.keys(L)) if (k !== 'in-set') L[k].dispatchSetId = 'set-8'; };
   LF.configure({
     api: async body => { const r = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, ...await r.json() }; },
+    setPrinciple: false,   // (this suite is about combining drafts; the set principle, a completed GF and a completed SS sheet, has its own suite: sets-form.cjs)
     employee: () => 'Paul', rows: () => [], remakeLabel: async () => {}, rose: () => null, roseJoin: async () => ({ ok: true, sheets: [], warnings: [] }),
     live: id => L[id] || null,
     areaOf: () => 'progress', setOf: () => null,

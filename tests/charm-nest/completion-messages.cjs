@@ -1,5 +1,6 @@
 // Real message handler + completion functions, isolated from production services.
 const assert = require('node:assert/strict');
+require('../../charm-nest-set-rules.js').enforce(false);   // (this suite is about completion messages and its fixture sets predate the set principle, a completed GF and a completed SS sheet: that has its own suite, sets-form.cjs)
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const root = path.join(__dirname, '../..');
 const html = fs.readFileSync(path.join(root, 'design-1.html'), 'utf8');

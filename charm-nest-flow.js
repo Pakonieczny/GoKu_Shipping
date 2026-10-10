@@ -54,6 +54,7 @@
   'use strict';
   const RD = () => root.CharmNestReadiness || (typeof require === 'function' ? require('./charm-nest-readiness.js') : null);
   const SE = () => root.SetEdit || (typeof require === 'function' ? require('./charm-nest-set-edit.js') : null);
+  const RL = () => root.CharmNestSetRules || (typeof require === 'function' ? require('./charm-nest-set-rules.js') : null);   // a Set exists only with a completed GF and a completed SS sheet (Paul, 10 Oct)
   const AREAS = ['progress', 'laser', 'completed'], AREA = { progress: 'In progress', laser: 'Laser cutting', completed: 'Completed' };
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
   const LISTED = 30;
@@ -98,7 +99,9 @@
     return { kind, id, sheet, set, members: got.filter(s => s && !s.archived), missing: ids.filter((i, n) => !got[n] || got[n].archived), label: sheetName(sheet) };
   }
   const memberReady = m => laserOf(m).ready;
-  const groupReady = v => !v.setMissing && v.missing.length === 0 && v.members.length > 0 && v.members.every(memberReady);
+  // (Paul, 10 Oct: an uncommitted set without a completed GF and a completed SS sheet is not ready, whatever its sheets have done: the Library's own read, CharmNestReadiness.laserGroup, says the same)
+  const rulesOk = v => { const R = RD(); if (!v.set || !R || typeof R.setRules !== 'function') return true; const g = R.setRules(v.set, v.members); return !g.applies || g.ok; };
+  const groupReady = v => !v.setMissing && v.missing.length === 0 && v.members.length > 0 && v.members.every(memberReady) && rulesOk(v);
   const readyNow = v => v.kind === 'set' || v.set ? groupReady(v) : memberReady(v.sheet);
   function areaOf(v) {
     if (v.kind === 'set') return +v.set.laserDoneAt > 0 ? 'completed' : groupReady(v) ? 'laser' : 'progress';
@@ -351,7 +354,20 @@
   /* A sheet into a set, or into a new one. A set is made by its run (a sheet joins the open one by the release rules, a full
      sheet always does), so a drop is the sheet window's own Include / Make QR label for a sheet the open run holds here, and
      is refused, with the reason, for every set that is fixed. */
-  function planMembership(state, v, to, plan, env) { return withCardinal(state, v, to, planMembershipBase(state, v, to, plan, env), env); }
+  function planMembership(state, v, to, plan, env) { return setPrinciple(state, v, to, withCardinal(state, v, to, planMembershipBase(state, v, to, plan, env), env), env); }
+  /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet." Only a drop that MAKES a
+     set can make an invalid one (a sheet that joins a set only adds to it), so a New set drop is refused, with the one plain reason, unless the sheets that would be in it
+     (the one dropped, the ones dropped on, the partners that come with it) hold a completed GF and a completed SS sheet. charm-nest-set-rules.js is the one definition. */
+  function setPrinciple(state, v, to, plan, env) {
+    const R = RL();
+    if (!R || hooks.setPrinciple === false || !to.newSet || v.kind !== 'sheet' || plan.noop || plan.needs.length) return plan;   // (hooks.setPrinciple false: only the suites of moves that predate the principle say it)
+    const ids = [v.id].concat((env.also || []).map(String), ...plan.steps.filter(x => x.type === 'include' || x.type === 'roseJoin').map(x => [x.sheetId].concat(x.with || [])));
+    const sheets = [...new Set(ids)].map(i => state.sheets[i]).filter(Boolean);
+    if (!sheets.some(x => Object.prototype.hasOwnProperty.call(x, 'releaseFull'))) return plan;
+    const val = R.validSet(sheets);
+    if (!val.ok) plan.needs.push({ key: 'setPrinciple', label: `A new set needs a completed ${['GF', 'SS'].join(' and a completed ')} sheet`, detail: `${val.reason} Drop the completed sheets together, or let them join the open set.`, items: [] });
+    return finish(plan);
+  }
   function planMembershipBase(state, v, to, plan, env) {
     const need = (key, label, detail, items) => plan.needs.push({ key, label, detail, items: items || [] });
     plan.to = { area: null, setId: to.set || null, label: to.newSet ? 'A new set' : 'The set' };
@@ -419,6 +435,12 @@
     if (cut) { need(cut.key, cut.label, cut.detail); return finish(plan); }
     const rest = v.members.filter(m => sid(m) !== v.id);
     if (!rest.length) { need('lastSheet', `${name} is all that is in ${tn}`, `A set keeps at least one sheet: press Undo set on ${tn}'s card to take it apart.`); return finish(plan); }
+    // (Paul, 10 Oct) taking out the last completed GF or SS sheet a set has would leave it without the sheets a set needs: refused, with the reason
+    const RLs = RL(), members = v.members || [];
+    if (RLs && members.some(m => Object.prototype.hasOwnProperty.call(m, 'releaseFull'))) {
+      const before = RLs.validSet(members), after = RLs.wouldStayValid(members, [v.id], []), lost = after.missing.filter(c => !before.missing.includes(c));   // (the same reading as SetEdit.verifyMoves: a set is never made worse, and never stopped from being mended)
+      if (lost.length) { need('setPrinciple', `${tn} needs a completed ${lost.join(' and a completed ')} sheet, and ${name} is the only one it has`, 'A set needs at least 1 completed GF sheet and 1 completed SS sheet. Put another completed ' + lost.join(' / ') + ' sheet in first.'); return finish(plan); }
+    }
     if (items.length) {
       plan.shared = items; plan.group = [name].concat(items.flatMap(i => i.there || []));
       need('sharedOrders', 'Orders shared with another sheet', SEd ? SEd.sharedWords(items, 'they stay in one set') : 'Sheets that share an order stay in one set.', items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })));
