@@ -96,7 +96,7 @@ async function cloud() {
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
     assert.equal(asked.length, 10, 'the sandbox never asks Etsy'); assert.deepEqual(r.pending, []);
     tables = r.tables;
-    const norm = t => { const x = clone(t); delete x.at; if (x.products) for (const p of x.products) p.pv.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])); return x; };   // (the order of a product's pairs says nothing)
+    const norm = t => { const x = clone(t); delete x.at; delete x.names; delete x.props; if (x.products) for (const p of x.products) p.pv.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])); return x; };   // (the order of a product's pairs says nothing)
     for (const id of ids) assert.deepEqual(norm(tables[id]), norm(DATA.tables[id]), 'the sandbox reads the table exactly as Etsy gave it: ' + id);
     assert(tables['1712164498'].products.every(p => p.pv.every(a => Array.isArray(a) && a.length === 2 && /^\d+$/.test(a[0]) && /^\d+$/.test(a[1]))), 'pairs on the way out');
     assert(Object.values(DATA.tables).filter(t => t.uni).length === 3 && ['1008014571', '234758391', '1744372161'].every(id => tables[id].uni), 'a listing with one SKU for everything is stored as one word');

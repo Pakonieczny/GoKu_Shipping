@@ -13,8 +13,14 @@
  *    · Firestore: one read per listing asked about (plus one for the day's budget), one write per listing fetched (plus one
  *      for the budget). The page asks only for listings with a line that waits on its SKU and keeps the answers for 7 days.
  *  A table is { at, n, uni } when every product of the listing has the one SKU (or none), else { at, n, products: [{ id,
- *  sku, d, pv: [[propertyId, valueId]…] }] }; { gone: true } for a listing Etsy no longer has. (Stored with each pair as one
- *  "propertyId:valueId" string, read back as pairs: Firestore refuses an array in an array.) */
+ *  sku, d, pv: [[propertyId, valueId]…] }], names: { "propertyId:valueId": "Etsy's text for that value" }, props: { propertyId:
+ *  "Etsy's name of the option" } }; { gone: true } for a listing Etsy no longer has. (Stored with each pair as one
+ *  "propertyId:valueId" string, read back as pairs: Firestore refuses an array in an array. The names are stored as a list of
+ *  "propertyId:valueId:text" strings and read back as the map.)
+ *  The value names (ZODIACTWO, 10 Oct 2026) are what lets a SIGN the buyer wrote in a note ("balance et lion") be turned into the
+ *  charm that value of the drop-down decides on this listing: only the values the orders bought were ever named before. They come
+ *  with the same one GET that gives the SKUs, so a table stored before has none (`names` absent) and is asked again, once, only when
+ *  the page says a line needs the names (nameIds); a table Etsy gave no names for is stored with names: {} and not asked again. */
 "use strict";
 
 const COLL = "Charm_Listing_Skus", BUDGET_ID = "_budget";
@@ -29,8 +35,26 @@ const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
    same. Property and value ids are digits, so the colon never occurs inside one. */
 const packPv = pv => (Array.isArray(pv) ? pv : []).map(a => (Array.isArray(a) ? String(a[0]) + ":" + String(a[1]) : String(a)));
 const unpackPv = pv => (Array.isArray(pv) ? pv : []).map(a => { if (Array.isArray(a)) return [String(a[0]), String(a[1])]; const i = String(a).indexOf(":"); return [String(a).slice(0, i), String(a).slice(i + 1)]; });
-const toStored = t => (t && Array.isArray(t.products) ? Object.assign({}, t, { products: t.products.map(p => Object.assign({}, p, { pv: packPv(p.pv) })) }) : t);
-const fromStored = t => (t && Array.isArray(t.products) ? Object.assign({}, t, { products: t.products.map(p => Object.assign({}, p, { pv: unpackPv(p.pv) })) }) : t);
+const MAX_NAMES = 400, NAME_LEN = 60;
+const nameText = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, NAME_LEN);
+const packNames = m => Object.keys(m || {}).map(k => k + ":" + nameText(m[k]));
+const unpackNames = a => { const out = {}; for (const x of Array.isArray(a) ? a : []) { const s = String(x), i = s.indexOf(":"), j = i < 0 ? -1 : s.indexOf(":", i + 1); if (j > 0) out[s.slice(0, j)] = s.slice(j + 1); } return out; };
+const packProps = m => Object.keys(m || {}).map(k => k + ":" + nameText(m[k]));
+const unpackProps = a => { const out = {}; for (const x of Array.isArray(a) ? a : []) { const s = String(x), i = s.indexOf(":"); if (i > 0) out[s.slice(0, i)] = s.slice(i + 1); } return out; };
+const toStored = t => {
+  if (!(t && Array.isArray(t.products))) return t;
+  const o = Object.assign({}, t, { products: t.products.map(p => Object.assign({}, p, { pv: packPv(p.pv) })) });
+  delete o.names; delete o.props;
+  if (t.names && typeof t.names === "object") { o.nm = packNames(t.names); o.pn = packProps(t.props); }
+  return o;
+};
+const fromStored = t => {
+  if (!(t && Array.isArray(t.products))) return t;
+  const o = Object.assign({}, t, { products: t.products.map(p => Object.assign({}, p, { pv: unpackPv(p.pv) })) });
+  if (Array.isArray(t.nm)) { o.names = unpackNames(t.nm); o.props = unpackProps(t.pn); }
+  delete o.nm; delete o.pn;
+  return o;
+};
 
 /** Etsy's inventory of one listing → the compact table above. */
 function compact(inv, now) {
@@ -45,7 +69,15 @@ function compact(inv, now) {
   const base = { at: now, n: products.length };
   // one SKU for every live product, or none at all: nothing in the table tells one option's value from another's
   if (skus.size <= 1) return Object.assign(base, { uni: live.length ? live[0].sku : "" });
-  return Object.assign(base, { products });
+  // Etsy's own text for each value of each option (values[i] goes with value_ids[i]) and its name of the option: what a sign named in words is looked up by
+  const names = {}, props = {};
+  for (const p of list.slice(0, MAX_PRODUCTS)) for (const x of (Array.isArray(p && p.property_values) ? p.property_values : [])) {
+    const pid = String(x && x.property_id != null ? x.property_id : ""), ids = Array.isArray(x && x.value_ids) ? x.value_ids : [], texts = Array.isArray(x && x.values) ? x.values : [];
+    if (!pid) continue;
+    if (x.property_name && !props[pid]) props[pid] = nameText(x.property_name);
+    ids.forEach((v, i) => { const k = pid + ":" + String(v), t = nameText(texts[i]); if (t && !names[k] && Object.keys(names).length < MAX_NAMES) names[k] = t; });
+  }
+  return Object.assign(base, { products, names, props });
 }
 
 /**
@@ -58,6 +90,8 @@ function compact(inv, now) {
 async function lookup(ids, env) {
   const db = env.db, now = env.now || Date.now(), coll = db.collection(COLL);
   const want = [...new Set((ids || []).map(x => String(x == null ? "" : x).trim()).filter(x => /^\d{3,20}$/.test(x)))].slice(0, MAX_ASK);
+  // listings the page needs Etsy's value names for (nameIds): a stored table of options with no names is asked again for them, once
+  const needNames = new Set((env.nameIds || []).map(x => String(x == null ? "" : x).trim()));
   const out = { tables: {}, pending: [], why: null, etsyCalls: 0, cap: { used: 0, max: DAY_CAP } };
   if (!want.length) return out;
   const snaps = await db.getAll(...want.map(id => coll.doc(id)), coll.doc(BUDGET_ID));
@@ -66,7 +100,8 @@ async function lookup(ids, env) {
   const stale = [];
   want.forEach((id, i) => {
     const s = snaps[i], t = s.exists ? s.data() : null;
-    if (t && now - (+t.at || 0) < TTL_MS) out.tables[id] = fromStored(t);
+    const noNames = !!t && needNames.has(id) && Array.isArray(t.products) && !Array.isArray(t.nm);   // (stored before the names were kept)
+    if (t && now - (+t.at || 0) < TTL_MS && !noNames) out.tables[id] = fromStored(t);
     else { if (t) out.tables[id] = fromStored(t); stale.push(id); }
   });
   let attempts = 0, stop = !!env.cacheOnly;
@@ -92,4 +127,4 @@ async function lookup(ids, env) {
   return out;
 }
 
-module.exports = { lookup, compact, toStored, fromStored, COLL, TTL_MS, DAY_CAP, CALL_CAP, MAX_ASK };
+module.exports = { lookup, compact, toStored, fromStored, packNames, unpackNames, COLL, TTL_MS, DAY_CAP, CALL_CAP, MAX_ASK };

@@ -83,6 +83,27 @@ const realLine = (rid, metalKey, personalization) => {
   for (const v of [['Metal Choice', '14K SOLID GOLD'], ['Necklace Length', '16"'], ['Charm Size', '14mm']]) eq(go([v]).spec.pieceCount, 1, `${v.join(': ')} is not a count`);
   ok(S.perUnitOf({ spec: { pieceCount: 4, quantity: 2, pair: { kind: 'multi', earring: false } } }) === 2 && S.perUnitOf({ spec: { pieceCount: 4, quantity: 2, pair: { kind: 'pair', earring: true } } }) === 0 && S.perUnitOf({ spec: { pieceCount: 3, quantity: 2, pair: { kind: 'multi' } } }) === 0, 'perUnitOf: per unit, never for an earring pair, never for a count that is no multiple of the quantity'); }
 
+// the six counted-disc listings that carry a font drop-down (FONTAUDIT: option names and values as the shop's orders show them; the font is ONE value for the whole line, shared by every disc)
+{ const LISTINGS = [
+    ['1008014571', 'nitial_Disc_4571', 'Necklace Options', ['GOLD - 2 Disc', 'GOLD - 3 Disc', 'GOLD - 4 Disc', 'ROSEGOLD - 2 Disc', 'SILVER - 2 Disc'], 'Fonts', ['16"/ Typewriter', '20"/ Stylish', '18"/ Angelina', '18"/ Pristina', '16"/ Comic'], true],
+    ['234758391', 'Initial_8391', 'Number of Discs / Metal', ['1 disc \u2022 gold', '2 discs \u2022 gold', '3 discs \u2022 gold', '5 discs \u2022 silver'], 'Font', ['Angelina', 'Stylish', 'Typewriter', 'Comic', 'Pristina'], true],
+    ['880672858', 'TEST1', 'Necklace Options', ['GOLD - 1 Disc', 'GOLD - 3 Discs', 'ROSEGOLD - 1 Disc', 'SILVER- 2 Discs'], 'Font Selection', ['18"/Typewriter', '17"/Angelina', '18"/Stylish'], true],
+    ['479938139', 'Initial_Disc_8139', 'Necklace Options', ['GOLD - 1 Disc'], 'Font Selection', ['16"/Angelina', '16"/Comic'], true],
+    ['1002723802', 'Beady Disc', 'Metal Choice \u00b7 Engraving Options?', ['GOLD \u2022 3 DISCS', 'SILVER \u2022 2 DISCS'], 'Necklace Length and Font', ['18"\u00b7TYPEWRITER\u00b7', '16"\u00b7ANGELINA\u00b7'], false],
+    ['1025856932', 'Disc_Bracelet_6932', 'Material', ['1 Disc \u2022 Gold', '3 Disc \u2022 Gold', '3 Disc \u2022 Silver'], 'Chain Length', ['6 inch \u2022 Comic', '7 inch \u2022 Angelina'], false]];
+  let lines = 0;
+  for (const [listing, sku, cname, counts, fname, fonts, fontReads] of LISTINGS) for (const c of counts) for (const f of fonts) {
+    const k = +/(\d)\s*disc/i.exec(c)[1], words = k > 1 ? [Array.from({ length: k }, (_, i) => `Tag ${i + 1}: ${'JQRZX'[i]}`).join(', ')] : ['J'];
+    const w = world('4170000010', { transactionId: '58', listingId: listing, sku, title: 'Initial Disc Necklace', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: words, variations: [V(cname, c), V(fname, f)] }, ctx({ masterEntry: s => (s ? { sku: s } : null), masterLoose: () => '' }));
+    const label = `${listing} ${cname}: ${c} + ${fname}: ${f}`;
+    eq([w.spec.problems.length, w.spec.pieceCount, w.plan.slots], [0, k, k > 1 ? Array.from({ length: k }, (_, i) => 'D' + (i + 1)) : [null]], `${label}: ${k} piece(s), ${k > 1 ? 'one slot per disc' : 'no slot'}, nothing asked`);
+    if (fontReads) ok(w.spec.font && w.spec.font.asked.toLowerCase() === f.replace(/^[\d"\/ ]+/, '').toLowerCase(), `${label}: the font word is read (${w.spec.font && w.spec.font.asked})`);
+    if (k > 1) { const jobs = w.plan.slots.map(s => ({ key: `k#${s}`, slot: s, lines: [], row: { spec: w.spec } })), recs = S.pieceRecords(jobs, {});
+      eq([new Set(recs.map(r => r.fontAsked)).size, recs.map(r => r.of)], [1, Array(k).fill(k)], `${label}: every disc has the same font (the line's) and the same of`);
+      eq(S.splitWords(w.spec.personalization, k).words, Array.from({ length: k }, (_, i) => 'JQRZX'[i]), `${label}: the words go disc by disc`); }
+    lines++; }
+  eq(lines, 69, "lines of the six listings"); }
+
 // ── 3 · the buyer's words, one disc at a time ─────────────────────────────────────────────────────────────────────────────────────────────
 { const words = (t, k) => { const r = S.splitWords(t, k); return r.ok ? r.words : null; };
   for (const [text, k, want, how] of [
@@ -141,6 +162,6 @@ const realLine = (rid, metalKey, personalization) => {
   ok(/if \(O\.questionGone && O\.questionGone\(row, prev\)\) \{ row\.state = "pulled"; row\.reason = null; delete row\.poolTry; \}/.test(b), 'interpretAll releases a line held for a question that is gone');
   ok(/O\.staleQuestionHold && O\.staleQuestionHold\(row\)/.test(b), "the order window's record row does too");
   const h = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-  for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1"').test(h), `${f}: cache token ends -dr1`); }
+  for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr1 (other workers add theirs after it)`); }
 
 console.log(`disc-read: ${n} checks passed`);

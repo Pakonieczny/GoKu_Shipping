@@ -110,7 +110,7 @@ async function server() {
 /* ── 2 · the sorter in Chromium ── */
 async function browser() {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return false; }
   const srv = await start({ receipts: [] });
   const b = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
@@ -194,6 +194,7 @@ async function browser() {
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ Chromium: one Custom Orders card for 4176744752, no question, no ladybug, the blue Etsy photo, Send to Sheet greyed until a .ai, Hold; re-read by itself, pooled pieces kept');
   } finally { await b.close(); srv.close(); }
+  return true;
 }
 async function designFile() {
   global.window = global; global.PDFLib = require(path.join(root, 'vendor/pdf-lib-1.17.1.min.js'));
@@ -204,7 +205,9 @@ async function designFile() {
 }
 
 (async () => {
+  { const h = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');   // the page asks for the new scripts (other workers add their own tokens after -ac1)
+    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) assert(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-ac1(?:-[a-z0-9]+)*"').test(h), f + ' carries the -ac1 cache token'); }
   await server();
-  await browser();
-  console.log('Add-on listings OK: the Huggie Charm + Shipping line of 4176744752 is a custom order (no question, no master drawing, Send to Sheet after a design), 2 of the 411 snapshot lines change, nothing live written');
+  const ran = await browser();
+  console.log((ran ? 'Add-on listings OK:' : 'Add-on listings (node part only, no browser):') + ' the Huggie Charm + Shipping line of 4176744752 is a custom order (no question, no master drawing, Send to Sheet after a design), 2 of the 411 snapshot lines change, nothing live written');
 })().catch(e => { console.error(e); process.exit(1); });
