@@ -25,8 +25,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const { start } = require('./bridge-server.cjs');
 const FAM = require(path.join(root, 'charm-nest-sandbox-families.js'));
 const CODE = process.env.CHARM_NEST_DELETE_CODE;
-const WRITES = /^(pool|back|set|putSheet|deleteSheet|run|release|arrival|custom|cancel|timelineAdd|sandboxStream|sandboxPut|sandboxCancel|put|alias|noDesign|optionMap|start|laser|rose|flow|purge)/;
-const READS = /(Status)$/;
+const WRITES = /^(poolPut|poolUpdate|setAllocate|setUpdate|putSheet|deleteSheet|runPut|runArchive|backPut|backInvalidate|releasePut|arrivalRecord|customPut|customReopen|customDelete|customDecide|customSheetPut|cancelPut|cancelRestore|timelineAdd|sandboxStream|sandboxPut|sandboxCancel|sandboxPullOrders|putCharms|startAgent|startJob|aliasPut|optionMapPut|noDesignPut|noDesignDelete|roseRecordCut|laserDone|flowApply|purgeHistory|sandboxReset)$/;   // (the ops that write; every other op the page makes is a read)
 
 /** A dirty sandbox, its production twin and the protected records, in the fake's Firestore and Storage. */
 function seed(st) {
@@ -141,6 +140,7 @@ async function main() {
     else assert(/^Wipe everything the sandbox made: .*seals, cancelled orders.*files, and everything this browser saved of it .*The Charm repo and employee efficiency stay, and no real record is touched\./.test(asked[0]), `${name}: the reset question names what goes and what stays: ${asked[0]}`);
 
     if (purge503) {
+      await page.waitForFunction(() => /Sandbox cleaned/.test(document.getElementById('toasts').innerText), null, { timeout: 10000 }).catch(() => {});
       const said = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent).join(' | '));
       assert(/Purged 4 real run record\(s\)\. Sandbox cleaned — /.test(said) && !/press Purge again/i.test(said), `${name}: a purge that ran out of time part way carries on with the wipe and says done only when counted: ${said}`);
     }
@@ -165,7 +165,7 @@ async function main() {
     assert(lastWipe >= 0, `${name}: the page asked the cloud to wipe the sandbox`);
     const after = ops.slice(lastWipe + 1);
     assert(after.includes('sandboxStatus'), `${name}: the cloud was counted after the last delete: ${after}`);
-    assert.deepStrictEqual(after.filter(o => WRITES.test(o) && !READS.test(o)), [], `${name}: nothing was written after the final delete (the line is a read): ${after}`);
+    assert.deepStrictEqual(after.filter(o => WRITES.test(o)), [], `${name}: nothing was written after the final delete (the line is a read): ${after}`);
     if (expect === 'purge') assert(ops.indexOf('purgeHistory') >= 0 && ops.indexOf('purgeHistory') < lastWipe, `${name}: the purge ran first, then the wipe`);
     else assert(!ops.includes('purgeHistory'), `${name}: a Reset never purges production's run history`);
     const shape = ops.filter((o, i) => i === 0 || o !== ops[i - 1]).filter(o => /^(purgeHistory|sandboxReset|sandboxStatus)$/.test(o)).join(' > ');
