@@ -32,7 +32,7 @@
  *    startJob · getJob · stopJob
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
  *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
- *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · listingSkus · aliasGet · aliasPut ·
+ *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · listingSkus · aliasGet · aliasPut · listingKindPut ·
  *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customSheetGet · customSheetPut · customGet · customPut · customReopen
  *      (customDelete: an older page's name for customReopen; nothing deletes a record)
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -1590,7 +1590,7 @@ const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "listingSkus", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
-  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
+  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
@@ -2946,7 +2946,8 @@ async function mapSig(name) {
    by the sandbox (it reads what production stored). See _charmNestListingSkus.js for the cost. */
 async function op_listingSkus(b = {}) {
   const ids = Array.isArray(b.listingIds) ? b.listingIds : String(b.listingIds || b.listingId || "").split(",");
-  return require("./_charmNestListingSkus").lookup(ids, { db, cacheOnly: !!PREFIX || b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
+  const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once; never in the sandbox)
+  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, cacheOnly: !!PREFIX || b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
 }
 async function op_aliasGet(b = {}) {
   const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };
@@ -2980,6 +2981,21 @@ async function op_aliasPut(b) {
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
   await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
+}
+/* A listing's kind, as a person says it (charm-nest-orders.js addOnOf, 10 Oct 2026: "Huggie Charm + Shipping" is an add-on listing, every order of it a custom order).
+   Kept on the listing's own document in the aliases map, Charm_Sku_Aliases/{listing id}.listingKind = { kind, by, at, title, note }, beside the SKU answers
+   it never touches, so the page reads it with the aliases it already reads (aliasGet, same signature) and a new add-on listing needs no code change.
+   kind: custom, rework, addOnToOrder, chainOnly, other, or "regular" (the listing is none of these: the title wording stops applying to it); empty removes the word.
+   In the sandbox it is the sandbox's own copy only. */
+const LISTING_KINDS = ["custom", "rework", "addOnToOrder", "chainOnly", "other", "regular"];
+async function op_listingKindPut(b = {}) {
+  const lid = str(b.listingId, 30).replace(/\D/g, ""); if (!lid) return { error: "listingId required" };
+  const kind = b.kind == null || b.kind === "" ? null : String(b.kind);
+  if (kind !== null && !LISTING_KINDS.includes(kind)) return { error: `kind must be one of ${LISTING_KINDS.join(", ")}, or empty to remove it` };
+  const ref = db.collection(PREFIX + ALIASES).doc(lid);
+  if (kind === null) { if (!(await ref.get()).exists) return { ok: true, listingId: lid, kind: null }; await ref.set({ listingKind: FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true, listingId: lid, kind: null }; }
+  await ref.set({ listingId: lid, listingKind: { kind, by: str(b.by || "operator", 80), at: Date.now(), title: str(b.title, 200), note: str(b.note, 200) }, updatedAt: FV.serverTimestamp() }, { merge: true });
+  return { ok: true, listingId: lid, kind };
 }
 async function op_noDesignGet(b = {}) {
   const sig = await mapSig(NODESIGN); if (sig && b.ifSig === sig) return { unchanged: true, sig };
@@ -3485,7 +3501,7 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
-  listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
+  listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the

@@ -31,6 +31,19 @@ const HEADERS = Object.assign({}, CORS, {
 });
 const json = (statusCode, body) => ({ statusCode, headers: HEADERS, body: JSON.stringify(body) });
 
+/* An engagement belongs to one world, named by the id it was given: olsb_… is the sandbox's (and says sandbox:true), ol_… is
+   production's. These ops act on an engagement by id alone, so a request that says which world it is in and names an id from the
+   other one is refused before anything is read or written: a sandbox page can never retry, cancel, mark, resolve or link a real
+   customer's message, nor a real page a rehearsal's. A request that does not say (an older page) is not judged. */
+const BY_ID = new Set(["retry", "cancel", "copied", "sent", "read", "resolve", "reopen", "lang", "link_url", "simulate"]);
+function otherWorld(body) {
+  if (typeof body.sandbox !== "boolean") return false;
+  const id = String(body.engagementId || "");
+  const theirs = /^olsb_/.test(id) ? true : /^ol_/.test(id) ? false : null;
+  return theirs !== null && theirs !== body.sandbox;
+}
+exports.otherWorld = otherWorld;
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS, body: "" };
   if (event.httpMethod !== "POST") return json(405, { error: "POST only" });
@@ -54,6 +67,7 @@ exports.handler = async (event) => {
     const st = await link.requireStation(event);
     if (!st.ok) return json(st.status || 401, { error: st.error, code: st.code });
     const station = st.station;
+    if (BY_ID.has(op) && otherWorld(body)) return json(404, { error: "That conversation is gone" });
     switch (op) {
       case "whoami":     return json(200, { operator: { username: station.username, name: station.name } });
       case "disconnect": return json(200, await link.disconnect(station));

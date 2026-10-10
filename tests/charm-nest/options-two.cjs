@@ -139,7 +139,7 @@ const mapOf = (...ps) => merge(...ps.map(([v, sku]) => answerFor(LID, SIGN, v, {
   ok(q && /two different designs/.test(q.pairSecond.why) && /names one \(Libra\)/.test(q.pairSecond.why) && /second symbol/.test(q.pairSecond.why), 'only one sign anywhere: ONE plain line asks for the second: ' + (q && q.pairSecond.why));
   ok(!noNote.pair.mismatched && noNote.problems.every(p => p.optionValue !== 'Leo'), 'nothing is made up'); eq(noNote.pieceCount, 4, 'it still counts its pair');
   const sameSign = read('4175402612', { personalization: ['balance'], variations: [V('Metal Choice :', 'Silver • 2 symbols'), V('Zodiac Sign', 'Libra'), V('Personalization', 'balance')] }, ctx({ optionMaps: mapOf(['Libra', 'ZODIAC_ICONS_EARRING_5']) })).spec;
-  ok(!!second(sameSign) && !sameSign.pair.mismatched, 'the note repeats Libra: still one sign, the line waits');
+  eq([sameSign.pair.second.answered, sameSign.pair.second.by, !!second(sameSign), sameSign.pair.mismatched, sameSign.problems.length, sameSign.pair.sides.join('')], ['same', 'note', false, false, 0, 'LRLR'], 'the note repeats Libra (ZODIACTWO): the same sign on both ears, a Left and a Right, nothing asked');
   const three = read('4175402612', { personalization: ['lion, aries'], variations: [V('Metal Choice :', 'Silver • 2 symbols'), V('Zodiac Sign', 'Libra'), V('Personalization', 'lion, aries')] }, ctx({ optionMaps: mapOf(['Libra', 'ZODIAC_ICONS_EARRING_5']) })).spec;
   ok(!!second(three) && /3 signs/.test(second(three).pairSecond.why) && !three.pair.mismatched, 'three signs named: not guessed which two');
   const same = read('4175402612', null, ctx({ optionMaps: merge(mapOf(['Libra', 'ZODIAC_ICONS_EARRING_5'], ['Leo', 'ZODIAC_ICONS_EARRING_5'])) })).spec;

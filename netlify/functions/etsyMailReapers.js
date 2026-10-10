@@ -2542,6 +2542,10 @@ exports.handler = async (event) => {
       if (budgetMs > 3000) {
         try { results.orderLinks = await require("./_etsyMailOrderLink").reconcile({ budgetMs }); }
         catch (e) { errors.push({ pass: "order_links", error: e.message }); console.error("orderLinks pass:", e); }
+      } else {
+        // never silent: earlier passes used the run's time. The link monitor (etsyMailLinkWatchdog) runs this pass itself when it has not reported for 12 minutes.
+        results.orderLinks = { skipped: "no time left in this run" };
+        console.warn("etsyMailReapers: order_links pass skipped, no time left in this run");
       }
     }
 

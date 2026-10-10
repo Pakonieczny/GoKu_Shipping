@@ -28,6 +28,7 @@
 
 const crypto = require("crypto");
 const admin = require("./firebaseAdmin");
+const LinkHealth = require("./_etsyMailLinkHealth");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -266,53 +267,64 @@ function latestThread(list) {
   return list.filter(x => isThreadId(x.id)).sort((a, b) => t(b) - t(a))[0] || null;
 }
 const _convCache = new Map();
-/** The order's conversation: the one whose Etsy heading names this order, else the buyer's latest. */
+/** The order's conversation: the one whose Etsy heading names this order, else the buyer's latest.
+ *  failed: why the buyer could not be looked up (an error, never "this buyer has not written"); such an answer is kept 15 s only. */
 async function findConversation(receiptId, { fresh = false } = {}) {
   const key = String(receiptId);
   const hit = _convCache.get(key);
-  if (!fresh && hit && Date.now() - hit.at < MIN) return hit.value;
-  let value = { thread: null, buyerUserId: null, by: null };
+  if (!fresh && hit && Date.now() - hit.at < (hit.value.failed ? 15 * 1000 : MIN)) return hit.value;
+  let value = { thread: null, buyerUserId: null, by: null, failed: null };
   const byOrder = await db.collection(COLL.threads).where("etsyOrderId", "==", key).limit(10).get();
   const t1 = latestThread(byOrder.docs.map(d => Object.assign({ id: d.id }, d.data())));
-  if (t1) value = { thread: t1, buyerUserId: t1.buyerUserId || null, by: "order" };
+  if (t1) value = { thread: t1, buyerUserId: t1.buyerUserId || null, by: "order", failed: null };
   else {
-    const buyer = await buyerOf(key);
-    if (buyer) {
-      const byBuyer = await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get();
+    const lk = await buyerLookup(key);
+    if (lk.buyer) {
+      const byBuyer = await db.collection(COLL.threads).where("buyerUserId", "==", String(lk.buyer)).limit(25).get();
       const t2 = latestThread(byBuyer.docs.map(d => Object.assign({ id: d.id }, d.data())));
-      value = { thread: t2, buyerUserId: String(buyer), by: t2 ? "buyer" : null };
-    }
+      value = { thread: t2, buyerUserId: String(lk.buyer), by: t2 ? "buyer" : null, failed: null };
+    } else value.failed = lk.failed || null;
   }
   _convCache.set(key, { at: Date.now(), value });
   if (_convCache.size > 300) _convCache.delete(_convCache.keys().next().value);
   return value;
 }
 let _etsyReads = [];
-/** The buyer of a receipt, from the inbox's receipt mirror, our own cache, or at worst one metered
- *  Etsy read (at most once every six hours per receipt, and a few a minute in all). */
-async function buyerOf(receiptId) {
+const BUYER_RETRY_MS = 5 * MIN;           // a failed Etsy lookup is tried again after this (a "no such order" answer waits six hours)
+/** The buyer of a receipt, from the inbox's receipt mirror, our own cache, or at worst one metered Etsy read (at most
+ *  once every six hours per receipt when Etsy answered, once every five minutes when it did not, and a few a minute in
+ *  all). Resolves to { buyer, failed }: failed is the plain reason a lookup did not work, so that "could not look" is
+ *  never taken for "this buyer has no conversation". */
+async function buyerLookup(receiptId) {
   const [r, c] = await db.getAll(db.collection(COLL.receipts).doc(receiptId), db.collection(COLL.buyers).doc(receiptId));
   const rd = r.exists ? r.data() : null;
   const fromMirror = rd && (rd.buyer_user_id || rd.buyerUserId || (rd.raw && rd.raw.buyer_user_id));
-  if (fromMirror) return String(fromMirror);
+  if (fromMirror) return { buyer: String(fromMirror), failed: null };
   if (c.exists) {
     const d = c.data();
-    if (d.buyerUserId) return String(d.buyerUserId);
-    if (Date.now() - (d.atMs || 0) < 6 * HOUR) return null;
+    if (d.buyerUserId) return { buyer: String(d.buyerUserId), failed: null };
+    if (d.failedAtMs) { if (Date.now() - d.failedAtMs < (d.permanent ? 6 * HOUR : BUYER_RETRY_MS)) return { buyer: null, failed: d.failedReason || "Etsy did not answer" }; }
+    else if (Date.now() - (d.atMs || 0) < 6 * HOUR) return { buyer: null, failed: null };
   }
   const now = Date.now();
   _etsyReads = _etsyReads.filter(t => now - t < MIN);
-  if (_etsyReads.length >= 6) return null;
+  if (_etsyReads.length >= 6) return { buyer: null, failed: "too many order lookups at once; trying again in a minute" };
   _etsyReads.push(now);
   let buyer = null;
   try {
     const { getShopReceiptFull } = require("./_etsyMailEtsy");
     const full = await getShopReceiptFull(receiptId);
     buyer = full && full.buyer_user_id ? String(full.buyer_user_id) : null;
-  } catch (e) { console.warn("orderLink buyerOf:", receiptId, e.message); }
+  } catch (e) {
+    console.warn("orderLink buyerOf:", receiptId, e.message);
+    const failedReason = "Etsy could not be asked (" + LinkHealth.plainError(e.message) + ")";
+    await db.collection(COLL.buyers).doc(receiptId).set({ buyerUserId: null, failedAtMs: Date.now(), failedReason, permanent: /\b(404|410)\b/.test(String(e.message)) }).catch(() => {});
+    return { buyer: null, failed: failedReason };
+  }
   await db.collection(COLL.buyers).doc(receiptId).set({ buyerUserId: buyer, atMs: Date.now() }).catch(() => {});
-  return buyer;
+  return { buyer, failed: null };
 }
+const buyerOf = async receiptId => (await buyerLookup(receiptId)).buyer;
 
 /** The inbox marks conversations with an open production question: its folder, its badge, and a
  *  hold on the AI's automatic replies all read these fields. */
@@ -812,13 +824,15 @@ async function conversation(e, { earlier = false } = {}) {
    It is read only from the inbox's stored messages (EtsyMail_Threads/{id}/messages), never from Etsy. First the count
    (cheap aggregation queries), then pages of up to 200 messages, so the sorter can show how far along it is. */
 const _histThreads = new Map();
+/** The buyer's conversations. Resolves to { list, failed }: failed is the plain reason the buyer could not be looked up
+ *  (an empty list with a failed lookup is "could not look", never "no messages"); such an answer is kept 15 s only. */
 async function historyThreads(receiptId, engagementId, sandbox) {
   const key = (sandbox ? "sb:" : "") + receiptId + "|" + (engagementId || "");
   const hit = receiptId === TEST_RID ? null : _histThreads.get(key);   // the test account can change at any moment
-  if (hit && Date.now() - hit.at < 2 * MIN) return hit.list;
+  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : 2 * MIN)) return { list: hit.list, failed: hit.failed, buyerKnown: hit.buyerKnown };
   const found = new Map();
   const take = docs => { for (const d of docs) if (d.exists !== false && isThreadId(d.id)) found.set(d.id, Object.assign({ id: d.id }, d.data())); };
-  let buyer = null;
+  let buyer = null, failed = null;
   const want = cleanId(engagementId);
   if (want) {
     const s = await engRef(want).get();
@@ -833,45 +847,71 @@ async function historyThreads(receiptId, engagementId, sandbox) {
     const t = await testDoc();
     if (t && isThreadId(t.threadId)) take([await db.collection(COLL.threads).doc(t.threadId).get()]);
   } else if (sandbox) {
-    // a sandbox order is a copy of a real one under a new number, with the real buyer: their real history, read only
-    const b = await sandboxBuyer(receiptId);
-    if (b) take((await db.collection(COLL.threads).where("buyerUserId", "==", b).limit(25).get()).docs);
+    // a sandbox order is a real shop order (the sandbox pulls the newest ones under their own Etsy numbers) with the real
+    // buyer: their real history, read only. The sandbox's own copy of the order names the buyer when it has one; when it has
+    // none (a wipe, a run whose set is gone, a pull that has not run yet: the sorter keeps showing the order meanwhile) the
+    // inbox's own records of the same number do: the conversation that names the order, the receipts mirror, the buyer cache.
+    // Never an Etsy call, and nothing is written. If the sandbox's lookup itself failed (not "no such order") and nothing
+    // stored names the buyer either, that failure is reported, never "no messages".
+    const sb = await sandboxBuyer(receiptId);
+    buyer = sb.buyer; failed = sb.failed;
+    if (!buyer) {
+      take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
+      for (const t of found.values()) buyer = buyer || (t.buyerUserId ? String(t.buyerUserId) : null);
+      if (!buyer) buyer = await storedBuyerOf(receiptId);
+    }
+    if (buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get()).docs);
   } else {
     take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
     for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
-    if (!buyer) buyer = await buyerOf(receiptId);
+    if (!buyer) { const lk = await buyerLookup(receiptId); buyer = lk.buyer; failed = lk.failed; }
     if (buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get()).docs);
   }
   const list = [...found.values()];
-  _histThreads.set(key, { at: Date.now(), list });
+  if (list.length) failed = null;   // a conversation was found: whatever else could not be looked up does not matter to what is shown
+  const buyerKnown = receiptId === TEST_RID || !!buyer || list.length > 0;
+  _histThreads.set(key, { at: Date.now(), list, failed, buyerKnown });
   if (_histThreads.size > 200) _histThreads.delete(_histThreads.keys().next().value);
-  return list;
+  return { list, failed, buyerKnown };
 }
 const _sbBuyers = new Map();
-/** The buyer of a sandbox order, from the sandbox's own copy of it (never from Etsy). */
+/** The buyer of a sandbox order, from the sandbox's own copy of it (never from Etsy). Resolves to { buyer, failed }. */
 async function sandboxBuyer(receiptId) {
   const hit = _sbBuyers.get(receiptId);
-  if (hit && Date.now() - hit.at < (hit.buyer ? 30 : 2) * MIN) return hit.buyer;
-  let buyer = null;
+  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : hit.buyer ? 30 * MIN : 2 * MIN)) return { buyer: hit.buyer, failed: hit.failed };
+  let buyer = null, failed = null;
   try {
     const r = await require("./etsySandbox").serve({ httpMethod: "GET", queryStringParameters: { fn: "etsyOrderProxy", orderId: receiptId } });
-    const d = r && r.statusCode === 200 ? JSON.parse(r.body) : null;
-    const b = d && d.receipt && d.receipt.buyer_user_id;
-    buyer = b ? String(b) : null;
-  } catch (e) { console.warn("orderLink sandbox buyer:", receiptId, e.message); }
-  _sbBuyers.set(receiptId, { at: Date.now(), buyer });
+    if (r && (r.statusCode === 404 || r.statusCode === 410)) buyer = null;   // the sandbox has no copy of this order: not a failure (the inbox's own records are asked next)
+    else if (!r || r.statusCode !== 200) failed = "the sandbox's order lookup answered " + (r ? r.statusCode : "nothing");
+    else { const d = JSON.parse(r.body); const b = d && d.receipt && d.receipt.buyer_user_id; buyer = b ? String(b) : null; }
+  } catch (e) { console.warn("orderLink sandbox buyer:", receiptId, e.message); failed = "the sandbox's order lookup failed (" + LinkHealth.plainError(e.message) + ")"; }
+  _sbBuyers.set(receiptId, { at: Date.now(), buyer, failed });
   if (_sbBuyers.size > 300) _sbBuyers.delete(_sbBuyers.keys().next().value);
-  return buyer;
+  return { buyer, failed };
+}
+/** The buyer of a receipt from what the inbox already stores (the receipts mirror, the buyer cache): buyerOf() without its Etsy call. */
+async function storedBuyerOf(receiptId) {
+  try {
+    const [r, c] = await db.getAll(db.collection(COLL.receipts).doc(receiptId), db.collection(COLL.buyers).doc(receiptId));
+    const rd = r.exists ? r.data() : null, cd = c.exists ? c.data() : null;
+    const b = (rd && (rd.buyer_user_id || rd.buyerUserId || (rd.raw && rd.raw.buyer_user_id))) || (cd && cd.buyerUserId) || null;
+    return b ? String(b) : null;
+  } catch (e) { console.warn("orderLink stored buyer:", receiptId, e.message); return null; }
 }
 const threadAt = t => Math.max(tsMs(t.lastInboundAt), tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt), tsMs(t.updatedAt));
-/** How many messages the buyer's history holds, per conversation, before anything is pulled. */
+/** How many messages the buyer's history holds, per conversation, before anything is pulled.
+ *  why: "ok" (counted), "none" (the buyer is known and the inbox holds no conversation of theirs), "no_buyer" (nothing the
+ *  inbox stores names this order's buyer), "lookup_failed" (the buyer could not be looked up: an error) or "count_failed" (a
+ *  conversation's messages could not all be counted): the sorter says "no messages" only for "none". */
 async function historyInfo(body) {
   const receiptId = cleanId(body.receiptId);
   if (!receiptId) throw httpError(400, "Which order?");
-  const list = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
+  const { list, failed, buyerKnown } = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
   const msgs = t => db.collection(COLL.threads).doc(t.id).collection("messages");
+  const countErrors = [];
   const [counts, ghosts] = await Promise.all([
-    Promise.all(list.map(t => msgs(t).count().get().then(s => s.data().count).catch(() => null))),
+    Promise.all(list.map(t => msgs(t).count().get().then(s => s.data().count).catch(e => { countErrors.push(LinkHealth.plainError(e && e.message)); return null; }))),
     // the inbox keeps one "just sent" stand-in per conversation (optim_draft_<id>); it is not a message of its own
     list.length ? db.getAll(...list.map(t => msgs(t).doc("optim_draft_" + t.id))).catch(() => []) : []
   ]);
@@ -879,13 +919,17 @@ async function historyInfo(body) {
     threadId: t.id, count: counts[i] == null ? null : Math.max(0, counts[i] - (ghosts[i] && ghosts[i].exists ? 1 : 0)),
     lastAtMs: threadAt(t), orderId: t.etsyOrderId || null, customer: customerFrom(t, null)
   })).sort((a, b) => b.lastAtMs - a.lastAtMs);
-  return { receiptId, threads, total: threads.reduce((n, t) => n + (t.count || 0), 0), exact: threads.every(t => t.count != null) };
+  const exact = threads.every(t => t.count != null);
+  let why = "ok", reason = "";
+  if (!threads.length) { why = failed ? "lookup_failed" : buyerKnown ? "none" : "no_buyer"; reason = failed || ""; }
+  else if (!exact) { why = "count_failed"; reason = countErrors[0] || "the count did not finish"; }
+  return { receiptId, threads, total: threads.reduce((n, t) => n + (t.count || 0), 0), exact, why, reason };
 }
 /** One page of one of the buyer's conversations, oldest first. */
 async function history(body) {
   const receiptId = cleanId(body.receiptId), threadId = String(body.threadId || "");
   if (!receiptId || !isThreadId(threadId)) throw httpError(400, "Which conversation?");
-  const list = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
+  const { list } = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
   if (!list.some(t => t.id === threadId)) throw httpError(404, "That conversation is not this buyer's");
   const limit = Math.min(200, Math.max(20, Number(body.limit) || 150));
   const col = db.collection(COLL.threads).doc(threadId).collection("messages");
@@ -1013,7 +1057,8 @@ async function sync(body) {
   if (bell.waiting && Object.keys(bell.waiting).length && now - (bell.waitingCheckedAtMs || 0) > 15000) moved += await checkWaiting(bell.waiting).catch(e => { console.warn("orderLink waiting:", e.message); return 0; });
   const n = Number(bell.n) || 0;
   let full = !since || body.full === true;
-  if (!full && !moved && seenN === n) return { n, v: since, changes: [], full: false, now };
+  const link = bell.link || null;   // the link monitor's judgement (etsyMailLinkWatchdog): every sorter shows it, at no extra read
+  if (!full && !moved && seenN === n) return { n, v: since, changes: [], full: false, now, link };
   let docs = null;
   if (!full) {
     const q = await db.collection(COLL.eng).where("v", ">", since - DELTA_OVERLAP_MS).orderBy("v").limit(300).get();
@@ -1032,7 +1077,7 @@ async function sync(body) {
   let v = since;
   for (const e of docs) if ((e.v || 0) > v) v = e.v;
   // a test to our own account is real in any sorter, the sandbox's included
-  return { n, v, changes: docs.filter(e => !!e.sandbox === sandbox || (sandbox && e.receiptId === TEST_RID)).map(summary), full, now };
+  return { n, v, changes: docs.filter(e => !!e.sandbox === sandbox || (sandbox && e.receiptId === TEST_RID)).map(summary), full, now, link };
 }
 
 /** Everything the Customer panel of one order needs, in one round trip. */
@@ -1041,7 +1086,7 @@ async function order(body) {
   if (!receiptId) throw httpError(400, "Which order?");
   const sandbox = body.sandbox === true;
   const list = await engagementsForReceipt(receiptId, sandbox);
-  let conv = null;
+  let conv = null, lookupFailed = null;
   if (!sandbox && receiptId === TEST_RID) {
     const t = await testDoc({ fresh: true });
     conv = t && isThreadId(t.threadId) ? { threadId: t.threadId, customer: t.customer || null, by: "test" } : null;
@@ -1051,6 +1096,7 @@ async function order(body) {
     else {
       const c = await findConversation(receiptId);
       conv = c.thread ? { threadId: c.thread.id, customer: customerFrom(c.thread, null), by: c.by } : null;
+      if (!conv && c.failed) lookupFailed = c.failed;   // "could not look" is not "this buyer has not written"
     }
   }
   const want = cleanId(body.engagementId);
@@ -1064,7 +1110,7 @@ async function order(body) {
     || list.find(e => e.status === "open")
     || list[0] || null;
   return {
-    receiptId, sandbox, conversation: conv, inboxUrl: INBOX_URL,
+    receiptId, sandbox, conversation: conv, inboxUrl: INBOX_URL, lookupFailed,
     engagements: list.map(summary),
     active: active ? Object.assign(summary(active), await conversation(active)) : null
   };
@@ -1260,88 +1306,18 @@ async function simulateReply(body) {
 
 // ─── is the line working? the sorter's Active light ──────────────────────
 
-/* Every part a message passes through, read from what that part leaves behind: the inbox's send switch, the drafts
-   waiting for the Etsy helper, the helper's last check-in (etsyMailJobs notes it), the Gmail watcher that notices a
-   customer's answer, and the scrape jobs that read it into the inbox. A part is called broken only on evidence (a switch
-   turned off, work waiting too long, a watcher that stopped or failed), never because a signal is merely missing.
-   Nothing here writes, and every sorter shares one answer per server instance for 20 seconds. */
+/* Every part a message passes through, read from what that part leaves behind (see _etsyMailLinkHealth.js, the one place
+   that judges it; the 5-minute etsyMailLinkWatchdog judges the same way for the inbox's banner). Nothing here writes, and
+   every sorter shares one answer per server instance for 20 seconds. */
 const HEALTH_TTL_MS = 20 * 1000;
-const RANK = { ok: 0, unknown: 0, warn: 1, down: 2 };
-const ago = ms => ms < 90 * 1000 ? Math.max(1, Math.round(ms / 1000)) + " s"
-  : ms < 90 * MIN ? Math.round(ms / MIN) + " min" : ms < 48 * HOUR ? Math.round(ms / HOUR) + " h" : Math.round(ms / DAY) + " days";
 let _health = null, _healthForcedAt = 0;
 async function health(body = {}) {
   const now = Date.now();
   const force = body.fresh === true && now - _healthForcedAt > 10 * 1000;
   if (!force && _health && now - _health.at < HEALTH_TTL_MS) return _health.value;
   if (force) _healthForcedAt = now;
-  const soft = p => p.catch(e => { console.warn("orderLink health:", e.message); return null; });
-  const cfg = db.collection("EtsyMail_Config");
-  const [inboxCfg, watcher, gmail, helper, drafts, jobs] = await Promise.all([
-    soft(cfg.doc("global").get()), soft(cfg.doc("gmailWatcher").get()), soft(cfg.doc("gmailSyncState").get()),
-    soft(db.collection(COLL.meta).doc("helper").get()),
-    soft(db.collection(COLL.drafts).where("status", "==", "queued").limit(25).get()),
-    soft(db.collection("EtsyMail_Jobs").where("status", "==", "queued").limit(40).get())
-  ]);
-  const data = s => s && s.exists ? s.data() : null;
-  const checks = [];
-  // pri: which problem the light names when several are equally bad (the switch, then the helper, then the rest)
-  const add = (id, label, level, text, short, pri) => checks.push({ id, label, level, text, short: short || "", pri: pri == null ? 9 : pri });
-
-  // the work waiting for the helper: messages to send, and new Etsy messages to read in
-  const queued = drafts ? drafts.docs.map(d => tsMs(d.data().queuedAt) || now) : [];
-  const oldest = queued.length ? now - Math.min(...queued) : 0;
-  const nq = queued.length;
-  const scrapes = jobs ? jobs.docs.map(d => d.data()).filter(j => j.jobType === "scrape") : [];
-  const ns = scrapes.length;
-  const late = ns ? Math.max(...scrapes.map(j => now - (tsMs(j.createdAt) || now))) : 0;
-
-  // the Etsy helper: the inbox's Chrome extension, which sends on Etsy and reads new messages. With nothing to do it can
-  // go quiet for ten minutes or so, which is no fault; a silent helper with work waiting for it is. On its own, only a
-  // long silence counts against it.
-  const hp = data(helper);
-  const seen = hp && hp.seenAtMs ? now - hp.seenAtMs : null;
-  const stuck = Math.max(oldest, late);
-  const offline = `The inbox's Etsy helper (its Chrome extension) last checked in ${ago(seen)} ago. Until it is back, messages wait and answers are not read.`;
-  if (seen == null) add("helper", "Etsy helper", "unknown", "Not heard from yet");
-  else if (seen > 5 * MIN && stuck > 15 * MIN) add("helper", "Etsy helper", "down", offline, "Helper offline", 1);
-  else if (seen > 5 * MIN && stuck > 5 * MIN) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago, and work is waiting for it.`, "Helper slow", 1);
-  else if (seen > 2 * HOUR) add("helper", "Etsy helper", "down", offline, "Helper offline", 1);
-  else if (seen > 45 * MIN) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago. Is a browser with the inbox's extension open?`, "Helper quiet", 1);
-  else add("helper", "Etsy helper", "ok", `Checked in ${ago(seen)} ago`);
-
-  // sending: the inbox's switch, and messages waiting for the helper
-  const g = data(inboxCfg) || {};
-  if (g.sendDisabled) add("send", "Sending", "down", "Sending is switched off in the inbox" + (g.sendDisabledReason ? ` (${cleanText(g.sendDisabledReason, 120)})` : "") + ". Messages wait here until it is on again.", "Sending paused", 0);
-  else if (!drafts) add("send", "Sending", "unknown", "Could not look at the messages waiting to go out");
-  else if (oldest > 15 * MIN) add("send", "Sending", "down", `A message has waited ${ago(oldest)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
-  else if (oldest > 5 * MIN) add("send", "Sending", "warn", `A message has waited ${ago(oldest)} for the inbox's Etsy helper.`, "Sending slowly", 2);
-  else add("send", "Sending", "ok", nq ? `${nq} ${nq === 1 ? "message" : "messages"} on the way` : "Nothing waiting to go out");
-
-  // noticing answers: the Gmail watcher sees Etsy's email about each new message within a minute or two
-  const w = data(watcher), gs = data(gmail);
-  const done = gs ? tsMs(gs.lastSyncCompletedAt) : 0;
-  const failed = gs && gs.lastSyncError && tsMs(gs.lastSyncErrorAt) > done ? cleanText(gs.lastSyncError, 140) : "";
-  if (watcher && (!w || w.enabled !== true)) add("notice", "Noticing answers", "down", "The inbox is not watching for new Etsy messages (its Gmail watcher is off), so answers will not arrive.", "Not receiving", 3);
-  else if (!done) add("notice", "Noticing answers", failed ? "warn" : "unknown", failed ? `The inbox's check for new Etsy messages failed: ${failed}` : "No check for new Etsy messages recorded yet", "Answers delayed", 3);
-  else if (now - done > 30 * MIN) add("notice", "Noticing answers", "down", `The inbox last checked for new Etsy messages ${ago(now - done)} ago${failed ? ", and then failed: " + failed : ""}.`, "Not receiving", 3);
-  else if (failed) add("notice", "Noticing answers", "warn", `The inbox's last check for new Etsy messages failed: ${failed}`, "Answers delayed", 3);
-  else if (now - done > 10 * MIN) add("notice", "Noticing answers", "warn", `The inbox last checked for new Etsy messages ${ago(now - done)} ago.`, "Answers delayed", 3);
-  else add("notice", "Noticing answers", "ok", `Checked for new Etsy messages ${ago(now - done)} ago`);
-
-  // reading answers in: each new message is a scrape job for the helper
-  const waitText = `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox, the oldest for ${ago(late)}.`;
-  if (!jobs) add("read", "Reading answers", "unknown", "Could not look at the messages waiting to be read");
-  else if (late > 30 * MIN) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
-  else if (late > 10 * MIN) add("read", "Reading answers", "warn", waitText, "Answers delayed", 4);
-  else add("read", "Reading answers", "ok", ns ? `${ns} being read now` : "Nothing waiting to be read");
-
-  const worst = checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)[0];
-  const level = RANK[worst.level] ? worst.level : "ok";
-  const value = {
-    at: now, level, short: level === "ok" ? "" : worst.short, problem: level === "ok" ? "" : worst.text,
-    checks: checks.map(({ id, label, level, text }) => ({ id, label, level, text }))
-  };
+  const ev = await LinkHealth.gather(db);
+  const value = LinkHealth.evaluate(ev, now);
   _health = { at: now, value };
   return value;
 }
@@ -1634,7 +1610,8 @@ async function reconcile({ budgetMs = 20000 } = {}) {
       out.deleted += await prune();
       note({ prunedAtMs: Date.now() });
     }
-  } catch (e) { console.warn("orderLink reconcile:", e.message); out.error = e.message; }
+    note({ reconcileAtMs: Date.now(), reconcileError: FV.delete(), reconcileErrorAtMs: FV.delete() });   // the catch-up pass ran (the link monitor reads this stamp)
+  } catch (e) { console.warn("orderLink reconcile:", e.message); out.error = e.message; note({ reconcileErrorAtMs: Date.now(), reconcileError: String(e.message).slice(0, 200) }); }
   finally { await flush(); }
   return out;
 }

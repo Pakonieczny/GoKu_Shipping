@@ -1803,7 +1803,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return out.length ? ": " + out.join("; ") : "";
   }
   /** The words before a piece's size: "Left piece · " for an ear, "Copy 2 of 3 · " for a copy, nothing for a single. */
-  const copyText = x => { const q = sideOfPiece(x); return q ? `${sideWord(q)} piece · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""; };
+  /** The disc a charm is, of the counted order it belongs to ("Disc 2 of 3"), from the engraving job that holds it (one job per disc); null for any other piece. */
+  function discOfPiece(x) {
+    const OE = window.OrderEngraving; if (!x || !x.poolId || !OE || !OE.cycleOf) return null;
+    const job = jobOfPiece(x); if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return null;
+    const c = tryDo(() => OE.cycleOf(rowOf(x), job.key)); const at = c && c.pieces.find(p => p.key === job.key);
+    return at ? { n: at.n, of: c.pieces.length, name: at.name } : null;
+  }
+  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x); return d ? `Disc ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""; };
   const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
   const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 
@@ -2210,11 +2217,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if(window.Seal?.defer('sheet-engrave',()=>renderEng(x,flash)))return;
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
     x.eng = engOf(x); const e = x.eng;
-    host.innerHTML = CNEngravingSeals.panel(e);
-    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
+    // (the discs of a counted order, one at a time: the Engrave tab's own switch, charm-nest-piece-switch.js; a press selects that disc's charm, here or on the sheet it is on)
+    const cyc = e.job && window.OrderEngraving && OrderEngraving.cycleOf ? tryDo(() => OrderEngraving.cycleOf(rowOf(x), e.job.key)) : null, shown = cyc ? Object.assign({}, e, { cycle: cyc }) : e;
+    host.innerHTML = CNEngravingSeals.panel(shown);
+    CNEngravingSeals.wirePanel(host,shown,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 
+  /** A press on a disc of the switch, or Back / Next: that disc's charm, on this sheet (selectPiece) or on the other sheet it is on (switchSheet, as its row of "This order" does). */
+  function pickDisc(x, cyc, key) {
+    const p = cyc && cyc.pieces.find(q => q.key === key); if (!p) return;
+    const pid = (p.job.copies || [])[0] || "", here = pid && W.byPool.get(pid);
+    if (here && !here.gone) { selectPiece(here, { from: "disc" }); return; }
+    const it = x.rid ? trailItems(x, x.rid).find(q => q.poolId === pid) : null;
+    if (it && it.sheetId && it.sheetId !== W.id) { switchSheet(it.sheetId, { select: pid, from: "trail" }); return; }
+    toast(`${p.name} is not on a sheet yet: its engraving is in the Engraving tab`, "", 5000);
+  }
   async function approveHere(x, b) {
     const job = x.eng && x.eng.job; if (!job) return;
     if (job.state !== 'review') { renderEng(x); return; }   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)

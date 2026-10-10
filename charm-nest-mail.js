@@ -24,7 +24,7 @@
   const sbOf = rid => SANDBOX && String(rid) !== TEST;
   // drafts are the sandbox's own there: its orders carry the real Etsy numbers, and words typed in a rehearsal must never
   // wait in the real order's box (a message in the outbox carries its own sandbox mark to the server)
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts" + (SANDBOX ? ":sandbox" : ""), out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts" + (SANDBOX ? ":sandbox" : ""), out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health", linkTold: "cn.mail.linkTold" };
   // gone from the page, and their saved copies with them: the test box, and the inbox-wide "waiting" marks
   try { localStorage.removeItem("cn.mail.test"); localStorage.removeItem("cn.mail.waiting"); } catch (_) {}
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
@@ -67,7 +67,10 @@
   try { M.pair = JSON.parse(sessionStorage.getItem(PAIR) || "null"); } catch (_) { M.pair = null; }
 
   // ─── the one door to the server ──────────────────────────────────────────
+  // an engagement belongs to one world (sandbox or production): the ops that name one by id say which world this page believes it is in
+  const BY_ID = new Set(["retry", "cancel", "copied", "sent", "read", "resolve", "reopen", "lang", "link_url", "simulate"]);
   async function call(op, body = {}, { timeout = 25000, key = M.key } = {}) {
+    if (BY_ID.has(op) && body.sandbox === undefined && body.engagementId) { const known = M.store.get(body.engagementId); if (known) body = Object.assign({ sandbox: !!known.sandbox }, body); }
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), timeout);
     try {
       const headers = { "Content-Type": "application/json" };
@@ -206,14 +209,16 @@
      see health in _etsyMailOrderLink.js). Anything wrong turns it amber or red, with one plain sentence under the box
      being written in. It is checked about once a minute while a place to write is on screen, once for all tabs. */
   const HEALTH_EVERY = 60000;
-  let healthTimer = 0, healthBusy = false, healthErr = "";
-  M.health = get(LS.health, null);
+  let healthTimer = 0, healthBusy = false, healthErr = "", healthErrAt = 0;
+  M.health = get(LS.health, null); M.healthFails = 0; M.linkBell = null;
   const writingShown = () => !!M.key && ([...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => L.node.isConnected && !!L.node.offsetParent));
   function healthLater() {
     clearTimeout(healthTimer); healthTimer = 0;
     if (!writingShown()) return;
     const age = M.health ? Date.now() - M.health.at : Infinity;
-    healthTimer = setTimeout(() => checkHealth(false), Math.max(1000, (document.hidden ? 3 * HEALTH_EVERY : HEALTH_EVERY) - age));
+    // after a failed check: 5 s, 10 s, 20 s, 40 s, then once a minute (a tab in the background a third as often)
+    const back = M.healthFails ? Math.min(60000, 5000 * 2 ** (M.healthFails - 1)) * (document.hidden ? 3 : 1) : 1000;
+    healthTimer = setTimeout(() => checkHealth(false), Math.max(back, (document.hidden ? 3 * HEALTH_EVERY : HEALTH_EVERY) - age));
   }
   /** A place to write came on screen: a check that is due happens now. */
   function healthSoon() {
@@ -230,19 +235,84 @@
     healthBusy = true; paintLights();
     try {
       const res = await call("health", { fresh: !!fresh }, { timeout: 15000 });
-      M.health = { at: Date.now(), res }; healthErr = "";
+      M.health = { at: Date.now(), res }; healthErr = ""; M.healthFails = 0;
       put(LS.health, M.health);
       if (bc) try { bc.postMessage({ t: "health", h: M.health }); } catch (_) {}
-    } catch (e) { if (!authLost(e)) healthErr = e.message; }
+    } catch (e) { if (!authLost(e)) { healthErr = e.message; healthErrAt = Date.now(); M.healthFails++; } }
     finally { healthBusy = false; paintLights(); healthLater(); }
+  }
+  /* Two sources, and the light is never greener than the worse of them: the full check above (asked for while a place to
+     write is on screen), and the inbox's own link monitor, whose four-field judgement arrives in every sync answer (so the
+     top-bar envelope knows without anyone opening a conversation). A judgement that is missing or older than 12 minutes is
+     not "fine": the monitor itself has stopped, which is shown in amber. */
+  const LINK_STALE = 12 * 60000, ALERT_AFTER = 5 * 60000;
+  function noteLink(res) {
+    if (!("link" in res)) return;
+    const now = Date.now();
+    if (!M.linkBell) M.linkBell = { first: now, link: null, at: now };
+    M.linkBell.link = res.link && typeof res.link === "object" ? res.link : null; M.linkBell.at = now;
+    linkAlert(M.linkBell.link);
+    const mon = monitorState();
+    if (mon && mon.stale) staleAlert(mon);
+    if (linkSig() !== lastLinkSig) { paintLights(); paintSoon([]); }   // (against what is painted: a state that changed with the clock counts too)
+  }
+  /** The monitor's judgement as a light state, or null while it says all is well. */
+  function monitorState() {
+    const b = M.linkBell; if (!b || !M.key) return null;
+    const now = Date.now(), l = b.link;
+    if (l && l.atMs) {
+      if (now - l.atMs > LINK_STALE) return { stale: true, tone: "warn", word: "Monitor stopped", text: `Nothing has confirmed the email link for ${Math.round((now - l.atMs) / 60000)} minutes: the inbox's link monitor has stopped reporting. Messages may still be going, but that cannot be confirmed.` };
+      if (l.level === "warn" || l.level === "down") return { tone: l.level, word: l.short || "Problem", text: l.problem || "The email link has a problem." };
+      return null;
+    }
+    if (now - b.first > LINK_STALE) return { stale: true, tone: "warn", word: "Monitor not running", text: "The inbox's link monitor has not reported yet, so nothing is confirming the email link works. Messages may still be going." };
+    return null;
+  }
+  /** The monitor itself has gone quiet: said once in three hours, quietly (it does not mean a message was lost). */
+  function staleAlert(st) {
+    const told = get(LS.linkTold, null) || {}, now = Date.now();
+    if (now - (told.staleAt || 0) < 3 * 3600000) return;
+    put(LS.linkTold, Object.assign({}, told, { staleAt: now }));
+    say(st.text, "", 12000);
   }
   /** What the light says: tone (ok, warn, down, wait; the same in the sandbox), its word, and the sentence under the box when it is not ok. */
   function lightState() {
-    const h = M.health && Date.now() - M.health.at < 5 * 60000 ? M.health.res : null;
+    const now = Date.now();
+    const h = M.health && now - M.health.at < 5 * 60000 ? M.health.res : null;
     if (M.link === "offline") return { tone: "down", word: "Offline", text: "This sorter cannot reach the inbox's server right now. What you write is kept, and goes as soon as it answers again." };
+    const mon = monitorState();
+    const full = h && h.level !== "ok" ? { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "" } : null;
+    // the check itself cannot be made: that is not "all is well" (one failure is shown at once when there is nothing older to go on)
+    const blind = healthErr && now - healthErrAt < 3 * 60000 && (!h || M.healthFails >= 2)
+      ? { tone: "warn", word: "Can't check", text: `Can't check the email link: ${healthErr} - retrying.` } : null;
+    const worst = [full, mon, blind].filter(Boolean).sort((a, b) => (b.tone === "down") - (a.tone === "down"))[0];
+    if (worst) return worst;
     if (!h) return { tone: "wait", word: "Checking…", text: "" };
-    if (h.level === "ok") return { tone: "ok", word: "Active", text: "" };
-    return { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "" };
+    return { tone: "ok", word: "Active", text: "" };
+  }
+  let lastLinkSig = "";
+  const linkSig = () => { const st = M.key ? lightState() : null; return st ? st.tone + "|" + st.word + "|" + st.text : ""; };
+  /** The light's problem (amber or red) as the top-bar envelope shows it, or null. */
+  const linkProblem = () => { if (!M.key) return null; const st = lightState(); return st.tone === "warn" || st.tone === "down" ? st : null; };
+  /* An alert Paul will see: once per incident, only after the trouble has lasted 5 minutes (a blip says nothing), again if
+     it gets worse, and once when it clears. A toast and a ding in the tab being looked at; in a tab that is not, the title
+     and (when allowed) a desktop notification. What was told is remembered, so a reload does not repeat it. */
+  function linkAlert(l) {
+    if (!l || !M.key) return;
+    const told = get(LS.linkTold, null) || {}, now = Date.now();
+    if (l.level === "warn" || l.level === "down") {
+      if (!l.incidentId || !l.downSinceMs || now - l.downSinceMs < ALERT_AFTER) return;
+      if (told.id === l.incidentId && (told.level === "down" || l.level !== "down")) return;
+      put(LS.linkTold, { id: l.incidentId, level: l.level, at: now });
+      const msg = `${l.level === "down" ? "The email link is down" : "The email link needs attention"}: ${l.problem || l.short || "see the light under the message box"}`;
+      say(msg, "bad", 15000);
+      try { if (typeof ding === "function") ding(); } catch (_) {}
+      try { if (typeof notifyPerson === "function") notifyPerson("Customer email link", msg); } catch (_) {}
+      if (document.hidden) { if (titleBase == null) titleBase = document.title; document.title = `⚠ Email link · ${titleBase}`; }
+    } else if (l.level === "ok" && told.id && !told.cleared) {
+      put(LS.linkTold, Object.assign({}, told, { cleared: now }));
+      if (now - (told.at || 0) < 3 * 3600000) say("The email link is working again.", "ok", 8000);
+    }
   }
   function lightHtml(st) {
     const tip = st.tone === "ok" ? "Connected: sending and receiving are working. Click for details."
@@ -260,7 +330,11 @@
     const row = (level, label, text) => `<li class="${E(level)}"><i></i><b>${E(label)}</b><span>${E(text)}</span></li>`;
     const rows = [row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : ""))];
     if (h) for (const c of h.checks) rows.push(row(c.level, c.label, c.text));
-    else rows.push(`<li class="wait"><i></i><b>Checking the rest</b><span>${healthErr ? E(healthErr) : "…"}</span></li>`);
+    else {
+      const mon = monitorState();
+      if (mon) rows.push(row(mon.tone, "Link monitor", mon.text));
+      rows.push(healthErr ? row("warn", "Full check", `Can't check: ${healthErr} - retrying`) : `<li class="wait"><i></i><b>Checking the rest</b><span>…</span></li>`);
+    }
     const when0 = healthBusy ? `<span class="cmSpin" aria-hidden="true"></span>checking` : M.health ? "checked " + when(M.health.at) : "";
     return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`;
   }
@@ -294,14 +368,16 @@
     if (el.foot) el.foot.hidden = !light;
   }
   function paintLights() {
-    const st = lightState();
+    const st = lightState(); lastLinkSig = M.key ? st.tone + "|" + st.word + "|" + st.text : "";
     for (const P of M.panes) if (P.host.isConnected) { paintLight(P.el, P.host, "cmWarn", st); if (P.visible()) paintHist(P); }
     for (const L of M.lines.values()) if (L.node.isConnected) paintLight(L.el, L.node, "cmLWarn", st);
     if (healthBox) { if (healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); else closeHealth(); }
+    paintPill();
   }
 
   function apply(res, mine) {
     if (!res || typeof res !== "object") return;
+    noteLink(res);
     const changed = new Set();
     if (res.full) {
       const keep = new Set((res.changes || []).map(s => s.id));
@@ -389,11 +465,15 @@
     }
     const open = [...M.store.values()].filter(s => s.status === "open");
     const unread = open.filter(s => s.unread > 0), stuck = open.filter(s => s.failed > 0 || s.manual > 0);
-    const n = unread.length || stuck.length;
-    b.classList.toggle("hidden", !M.key || !n);
-    b.classList.toggle("bad", !unread.length && !!stuck.length);
-    b.innerHTML = ICON.mail + `<b>${n}</b>`;
-    b.title = unread.length ? `${unread.length} customer ${unread.length === 1 ? "conversation has" : "conversations have"} a new reply` : stuck.length ? `${stuck.length} message${stuck.length === 1 ? "" : "s"} to customers did not go` : "";
+    const n = unread.length || stuck.length, lp = linkProblem();
+    // the envelope is also the email link's light: amber or red whenever a part of the line is not working, whatever else is waiting
+    const bad = (lp ? lp.tone === "down" : false) || (!lp && !unread.length && !!stuck.length);
+    b.classList.toggle("hidden", !M.key || (!n && !lp));
+    b.classList.toggle("bad", bad);
+    b.classList.toggle("warn", !!lp && !bad);
+    const html0 = ICON.mail + `<b>${n || "!"}</b>`;
+    if (b.dataset.v !== html0) { b.dataset.v = html0; b.innerHTML = html0; }
+    b.title = [lp ? `Email link: ${lp.word}. ${lp.text}` : "", unread.length ? `${unread.length} customer ${unread.length === 1 ? "conversation has" : "conversations have"} a new reply` : stuck.length ? `${stuck.length} message${stuck.length === 1 ? "" : "s"} to customers did not go` : ""].filter(Boolean).join(" · ");
     if (pillMenu && pillMenu.isConnected) fillPillMenu();
   }
   function togglePillMenu() {
@@ -410,12 +490,14 @@
   function fillPillMenu() {
     const open = [...M.store.values()].filter(s => s.status === "open" && (s.unread > 0 || s.failed > 0 || s.manual > 0))
       .sort((a, b) => (b.unread > 0) - (a.unread > 0) || (b.lastInboundAtMs || b.updatedAtMs || 0) - (a.lastInboundAtMs || a.updatedAtMs || 0));
-    pillMenu.innerHTML = `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
+    const lp = linkProblem();
+    pillMenu.innerHTML = (lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy ? " disabled" : ""}>Check now</button></div>` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
       const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : "Waiting to be sent by hand on Etsy";
       return `<button type="button" class="mmRow${s.unread > 0 ? " new" : " bad"}" data-id="${E(s.id)}"><span class="mmTop"><b>${E(who)}</b><span class="mono">${String(s.receiptId) === TEST ? "email link test" : E(s.receiptId)}${s.scope === "engraving" ? " · engraving" : ""}</span><span class="mmWhen">${E(when(s.lastInboundAtMs || s.updatedAtMs))}</span></span><span class="mmLine">${line}</span></button>`;
     }).join("") : `<div class="mmEmpty">Nothing waiting.</div>`);
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
+    pillMenu.querySelectorAll("[data-pill-check]").forEach(x => x.onclick = e => { e.stopPropagation(); checkHealth(true); });
   }
 
   /** Show one question: in the order window when its order is in the pull, otherwise in the order window that is
@@ -710,7 +792,7 @@
     } catch (e) { if (seq === P.seq && !authLost(e)) P.err = e.message; }
     finally {
       if (seq === P.seq) {
-        P.loading = false; paintPane(P); markRead(P); if (P.lang) translateAll(P);
+        P.loading = false; paneRetry(P); paintPane(P); markRead(P); if (P.lang) translateAll(P);
         if (P.pullOnLoad) { P.pullOnLoad = false; pullAll(P); }
       }
     }
@@ -724,7 +806,20 @@
       P.eng = d; P.err = null; merge(Object.assign({}, d, { messages: undefined, earlier: undefined }));
       if (earlier) P.earlier = d.earlier || [];
     } catch (e) { if (seq === P.seq && !authLost(e)) P.err = e.message; }
-    if (seq === P.seq) { paintPane(P); markRead(P); if (P.lang) translateAll(P); }
+    if (seq === P.seq) { paneRetry(P); paintPane(P); markRead(P); if (P.lang) translateAll(P); }
+  }
+  /* A pane that could not reach the inbox, or whose buyer lookup failed, asks again by itself while it is on screen:
+     after 5 s, 15 s, 30 s, then every minute. It never settles on an empty conversation. */
+  const needsRetry = P => !!P.err || !!(P.data && P.data.lookupFailed && !P.eng && !P.data.conversation);
+  function paneRetry(P) {
+    clearTimeout(P.retryT);
+    if (!needsRetry(P)) { P.fails = 0; return; }
+    P.fails = (P.fails || 0) + 1;
+    P.retryT = setTimeout(() => {
+      if (!M.key || !P.host.isConnected || !needsRetry(P)) return;
+      if (!P.visible()) { P.fails = 0; return; }
+      if (P.eng && P.engId) refreshEng(P); else load(P);
+    }, HRETRY[Math.min(P.fails - 1, HRETRY.length - 1)]);
   }
   let readBusy = new Set();
   async function markRead(P) {
@@ -806,9 +901,10 @@
   }
 
   function noticeFor(P, s, conv) {
-    if (P.err && !s) return `<span class="bad">${E(P.err)}</span> <button type="button" class="lnk" data-cm-do="reload">Try again</button>`;
+    if (P.err) return `<span class="bad">Can't reach the inbox: ${E(P.err)} - retrying</span> <button type="button" class="lnk" data-cm-do="reload">Retry</button>`;
     if (!s) {
       if (!P.data) return "";
+      if (!conv && P.data.lookupFailed) return `<span class="bad">Can't look up this buyer's conversation: ${E(P.data.lookupFailed)} - retrying</span> <button type="button" class="lnk" data-cm-do="reload">Retry</button>`;
       if (sbOf(P.rid)) return "";
       if (!conv && P.rid === TEST) return "No test account is set up.";
       if (!conv) return "This buyer has not written to the shop yet, so the inbox has no conversation to send through. What you write here is kept, and you send it on Etsy by hand.";
@@ -1058,17 +1154,43 @@
     // a count already on its way is waited for, not taken as missing ("the count did not come back")
     if (c && c.busy && c.flight) { await c.flight; return hcount.get(rid) || c; }
     if (!rid || !M.key || (c && !force && Date.now() - c.at < HCOUNT_TTL)) return c || null;
-    const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null, flight: null };
+    const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null, flight: null, fails: (c && c.fails) || 0 };
     hcount.set(rid, cur);
     if (hcount.size > 100) hcount.delete(hcount.keys().next().value);
     paintHistFor(rid);
     cur.flight = (async () => {
-      try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: sbOf(rid) }, { timeout: 30000 }); cur.at = Date.now(); }
+      try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: sbOf(rid) }, { timeout: 30000 }); cur.at = Date.now(); cur.err = null; }
       catch (e) { if (!authLost(e)) cur.err = e.message; cur.at = Date.now() - HCOUNT_TTL + 30000; }
-      finally { cur.busy = false; cur.flight = null; paintHistFor(rid); }
+      finally {
+        cur.busy = false; cur.flight = null;
+        // "could not look" is never shown as "nothing there": it says why, and asks again (5 s, 15 s, 30 s, then every minute) while someone is looking
+        if (histTruth(cur, rid).k === "fail") { cur.fails++; cur.at = Date.now() - HCOUNT_TTL + 30000; histRetry(rid, engId, cur); } else cur.fails = 0;
+        paintHistFor(rid);
+      }
     })();
     await cur.flight;
     return cur;
+  }
+  const HRETRY = [5000, 15000, 30000, 60000];
+  function histRetry(rid, engId, cur) {
+    clearTimeout(cur.retry);
+    cur.retry = setTimeout(() => {
+      if (hcount.get(rid) !== cur || cur.busy || !M.key) return;
+      const looked = [...M.panes].some(P => String(P.rid) === rid && P.host.isConnected && P.visible()) || [...M.lines.values()].some(L => L.rid === rid && L.node.isConnected);
+      if (looked) histCount(rid, engId, true); else cur.at = 0;   // nobody is looking: the next look asks again
+    }, HRETRY[Math.min(cur.fails - 1, HRETRY.length - 1)]);
+  }
+  /** What a buyer's message count truly says. wait: still counting. fail: it could not be read (the reason is given, never "no messages").
+   *  none: it was read and there is nothing. count: there are messages. */
+  function histTruth(c, rid) {
+    const whose = rid === TEST ? "the test account's" : "this buyer's", i = c && c.info;
+    if (!c || (c.busy && !i)) return { k: "wait", text: `Counting ${whose} messages…` };
+    if (!i) return { k: "fail", text: `Can't reach ${whose} messages: ${c.err || "no answer"} - retrying` };
+    if (i.why === "lookup_failed") return { k: "fail", text: `Can't reach ${whose} messages: ${i.reason || "the lookup did not finish"} - retrying` };
+    if (i.why === "count_failed" || i.exact === false) return { k: "fail", text: `Can't count all of ${whose} messages: ${i.reason || "the count did not finish"} - retrying` };
+    if (i.why === "no_buyer") return { k: "none", text: sbOf(rid) ? "Sandbox: no order loaded" : "The inbox does not know who bought this order yet" };
+    if (!i.total) return { k: "none", text: `No messages with ${rid === TEST ? "the test account" : "this buyer"} in the inbox yet` };
+    return { k: "count", total: i.total };
   }
   function paintHistFor(rid) {
     for (const P of M.panes) if (String(P.rid) === rid && P.host.isConnected) paintHist(P);
@@ -1081,7 +1203,7 @@
     const c = hcount.get(String(P.rid));
     if (!c || (!c.busy && Date.now() - c.at > HCOUNT_TTL)) setTimeout(() => histCount(P.rid, P.engId), 0);
     const H = P.hist && P.hist.rid === P.rid ? P.hist : null;
-    const whose = P.rid === TEST ? "the test account's" : "this buyer's";
+    const T = histTruth(c, P.rid);
     let v;
     if (H && H.busy) {
       const got = Math.min(H.got, H.total || H.got), pct = H.total ? Math.round(got / H.total * 100) : 0;
@@ -1090,9 +1212,9 @@
     else if (H && H.done) v = showingAll(P)
       ? `<span class="cmHistT">All <b>${plural(H.rows.length, "message", "messages")}</b> with ${P.rid === TEST ? "the test account" : "this buyer"}</span><button type="button" class="lnk" data-cm-do="only">Only this question</button>`
       : `<span class="cmHistT">Only this question</span><button type="button" class="lnk" data-cm-do="showall">Show all ${H.rows.length}</button>`;
-    else if (!c || (c.busy && !c.info)) v = `<span class="cmHistT soft"><span class="cmSpin" aria-hidden="true"></span>Counting ${whose} messages…</span>`;
-    else if (!c.info) v = `<span class="cmHistT soft">Could not count ${whose} messages.</span><button type="button" class="lnk" data-cm-do="recount">Try again</button>`;
-    else if (!c.info.total) v = `<span class="cmHistT soft">No messages with ${P.rid === TEST ? "the test account" : "this buyer"} in the inbox yet</span>`;
+    else if (T.k === "wait") v = `<span class="cmHistT soft"><span class="cmSpin" aria-hidden="true"></span>${E(T.text)}</span>`;
+    else if (T.k === "fail") v = `<span class="cmHistT bad">${E(T.text)}</span><button type="button" class="lnk" data-cm-do="recount">Retry</button>`;
+    else if (T.k === "none") v = `<span class="cmHistT soft">${E(T.text)}</span>`;
     else v = `<span class="cmHistT">${P.rid === TEST ? "The test account's" : "This buyer's"} full history: <b>${plural(c.info.total, "message", "messages")}</b>${c.info.threads.length > 1 ? ` in ${c.info.threads.length} conversations` : ""}</span><button type="button" class="cmPull" data-cm-do="pull">Pull all messages</button>`;
     if (el.dataset.v !== v) { el.dataset.v = v; el.innerHTML = v; }
     el.hidden = false;
@@ -1108,6 +1230,7 @@
       if (!c || !c.info || Date.now() - c.at > 60000) c = await histCount(rid, P.engId, true);
       if (seq !== P.hseq) return;
       if (!c || !c.info) throw new Error((c && c.err) || "the count did not come back");
+      if (histTruth(c, rid).k === "fail") throw new Error(c.info.reason || "the inbox could not read this buyer's conversations");
       P.hist.total = c.info.total;
       const threads = c.info.threads.slice().sort((a, b) => a.lastAtMs - b.lastAtMs);
       for (const t of threads) {
@@ -1158,7 +1281,7 @@
         out.push(msgHtml(P, Object.assign({}, r, { old: g.k !== q || (start && r.atMs < start - 120000) })));
       }
     }
-    return out.join("") || `<div class="cmEmpty soft">No messages with this buyer in the inbox yet.</div>`;
+    return out.join("") || (P.hist.total ? `<div class="cmEmpty soft">The inbox counted ${plural(P.hist.total, "message", "messages")} but none came back. Press Pull all messages to try again.</div>` : `<div class="cmEmpty soft">No messages with this buyer in the inbox yet.</div>`);
   }
 
   // ─── the order window: a Customer tab beside the team's chat ────────────
@@ -1277,6 +1400,7 @@
         if (c.dataset.lDo === "connect") connect();
         else if (c.dataset.lDo === "inbox" && M.pair) openInbox(M.pair.url);
         else if (c.dataset.lDo === "tr") lineTranslate(L, c.dataset.lang);
+        else if (c.dataset.lDo === "recount") histCount(L.rid, (lineEng(L) || {}).id, true);
         else if (c.dataset.lDo === "pull") { const s = lineEng(L); openConversation(s || { receiptId: L.rid, scope: "engraving", lineId: lineIdOf(L.row) }, L.row.key, { pull: true }); }
       });
       M.lines.set(key, L);
@@ -1350,11 +1474,13 @@
   /** The engraving card's way into the whole history: the count once it is known, then one press to pull it all. */
   function paintLinePull(L) {
     const b = L.el.pull;
-    const c = hcount.get(L.rid), n = c && c.info ? c.info.total : null;
-    b.hidden = !M.key || (n == null && !(c && c.busy));
-    const v = n == null ? `<span class="cmSpin" aria-hidden="true"></span>Counting messages…` : n ? `Pull all messages · ${n}` : "No messages with this buyer yet";
+    const c = hcount.get(L.rid), T = histTruth(c, L.rid), n = T.k === "count" ? T.total : null;
+    b.hidden = !M.key || (!c);
+    const v = T.k === "wait" ? `<span class="cmSpin" aria-hidden="true"></span>Counting messages…` : T.k === "fail" ? "Can't reach this buyer's messages · Retry" : T.k === "none" ? T.text : `Pull all messages · ${n}`;
     if (b.dataset.v !== v) { b.dataset.v = v; b.innerHTML = v; }
-    b.disabled = !n;
+    b.title = T.k === "fail" ? T.text : "Every message with this buyer, from the inbox";
+    b.dataset.lDo = T.k === "fail" ? "recount" : "pull";
+    b.disabled = T.k === "wait" || T.k === "none";
   }
   // an engraving card that comes into view counts its buyer's messages (cards scrolled past cost nothing)
   const lineSeen = "IntersectionObserver" in window ? new IntersectionObserver(entries => {

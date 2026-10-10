@@ -17,6 +17,7 @@
  *    reconcile(base, live)          base pieces, with each live sheet's own pieces in place of the ones it was recorded with
  *    splitNotes(sheetId, pieces, only?)  the lines a sheet's QR label carries for the groups that sit on more than one sheet ([] when none); only: the order numbers of one label's part
  *    backWord(b)                    " · Left" for a back record with a side, else ""
+ *    discWord(b)                    " · Disc 2" for a back record of one disc of a counted line (slot D2), else ""
  *    labelPieces(row, entry)        the stickers an earring pair line needs (Left then Right per unit), or the one ear of a single earring that names its ear: [{ side, n, of }], else null
  *    stickerPieces(rows, entryOf)   the same for a card's lines (what QR Printer.html prints one page for)
  *    pieceCount(rows, entryOf)      pieces behind a card's lines (an earring pair makes two per unit), else null
@@ -151,6 +152,8 @@
 
   /** " · Left" for a back (an engraving) of a piece with a side, else "": appended to the back's line in files people read. */
   const backWord = b => { const w = wordOf(b); return w ? " · " + w : ""; };
+  /** " · Disc 2" for a back (an engraving) of one disc of a counted line (its slot is D1..Dn), else "": the manifest names the disc, not only its copy number. An ear, a single and a plain quantity-N line say "". */
+  const discWord = b => { const m = /^D(\d{1,2})$/.exec(String((b && (b.slot || (b.piece && b.piece.slot))) || "")); return m ? " · Disc " + +m[1] : ""; };
 
   /** Is this master entry (or charm) a mismatched pair design? */
   function mismatchedDesign(entry) {
@@ -217,5 +220,5 @@
     return any ? n : null;
   }
 
-  return { sideOf, groupedOf, wordOf, copyWord, manifestEntries, piecesOfOrders, piecesOfCharms, reconcile, splitNotes, shortSheet, backWord, mismatchedDesign, earPieces, labelPieces, stickerPieces, pieceCount, MAX_NOTES };
+  return { sideOf, groupedOf, wordOf, copyWord, manifestEntries, piecesOfOrders, piecesOfCharms, reconcile, splitNotes, shortSheet, backWord, discWord, mismatchedDesign, earPieces, labelPieces, stickerPieces, pieceCount, MAX_NOTES };
 });

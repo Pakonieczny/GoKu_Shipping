@@ -578,6 +578,37 @@
     if (/\bcharms?\b|\bpendants?\b/.test(t)) return "customCharm";
     return "customOther";
   }
+  /* ADD-ON LISTINGS (Paul, 10 Oct 2026, order 4176744752: "This should be classified as a custom order because it's in addition of a
+     charm by itself, and it has the classical blue Custom thumbnail"). The shop sells some charms as a listing of their own that is
+     bought on top of a charm bought separately ("Huggie Charm + Shipping", Etsy photo "ADD A HUGGIE CHARM"; "Custom Charm + Shipping").
+     What the buyer wants is told in their words, never by a master design: the SKU of such a listing is its name plus the last four digits
+     of its listing id (Huggie_3722, Custom_6673), and the master file happens to hold designs named like that (HUGGIE_3722 is a ladybug),
+     so the line used to be read as that design and asked about its "Price" option. These lines are custom orders. Three things say so,
+     all of them plain words a person can read and change, none of them a guess about look-alikes:
+       1 · the listing's id in a person's list: Firebase, Charm_Sku_Aliases/{listing id}.listingKind (charmNestLibrary listingKindPut), which
+           also says "regular" to take a listing out again, and names another kind (rework, chain only…) for the same kind of listing;
+       2 · the listing's id in ADDON_LISTINGS (what was found in the shop's own orders when this rule was made);
+       3 · the title's first phrase, nothing but "Add a <up to three words> Charm" or "<up to three words> Charm + Shipping".
+     The words "add on" in a title are still no rule (Paul, 25 Sep: many regular charm-only listings say it somewhere in a long title). */
+  const ADDON_LISTINGS = { "1777293722": "Huggie Charm + Shipping" };
+  const ADDON_TITLE = [
+    ["Add a … Charm", /^add\s+an?\s+(?:[a-z0-9'’&-]+\s+){0,3}charms?$/],
+    ["… Charm + Shipping", /^(?:[a-z0-9'’&-]+\s+){0,3}charms?\s*\+\s*shipping$/]
+  ];
+  const KIND_WORDS_ = { custom: "a custom order", rework: "a rework", addOnToOrder: "an add-on to an order", chainOnly: "chain only", other: "a special order" };
+  /** What says this line's listing is an add-on listing: { kind, why } (kind: custom, rework…), { regular: true } when a person took the listing out, or null. */
+  function addOnOf(line, listingKind) {
+    line = line || {};
+    const lid = String(line.listingId || "").replace(/\D/g, ""), lk = listingKind && typeof listingKind === "object" ? listingKind : null;
+    if (lk && lk.kind) {
+      if (lk.kind === "regular") return { regular: true };
+      if (KIND_WORDS_[lk.kind]) return { kind: lk.kind, why: `listing ${lid}: ${lk.by || "a person"} said every order of it is ${KIND_WORDS_[lk.kind]}` };
+    }
+    if (lid && ADDON_LISTINGS[lid]) return { kind: "custom", why: `listing ${lid} “${ADDON_LISTINGS[lid]}” is an add-on listing: a charm made to the buyer's own request, not a master design` };
+    const title = String(line.title || "").replace(/&#0*39;/g, "'").replace(/&amp;/g, "&").trim(), lead = title.toLowerCase().split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+|\s+\/\s+/)[0].trim();
+    for (const [name, re] of ADDON_TITLE) if (re.test(lead)) return { kind: "custom", why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” is an add-on listing (“${name}”): a charm made to the buyer's own request, not a master design` };
+    return null;
+  }
   /* Claude's reading of a line (Charm Sorter › Custom Orders, charmNestLibrary customRead) and a person's decision name
      one of these kinds; each is one of the special kinds above, or none ("regular"). */
   const READ_KINDS = { custom: null, rework: "rework", addOnToOrder: "addOn", chainOnly: "chainOnly", other: "special", regular: null };
@@ -585,7 +616,7 @@
   /**
    * Is this line a special (non-catalogue) purchase? → null, or
    * { kind, label, group, notCut, why, signals[], read? }. opts: { sku (the resolved SKU), masterEntry?, optionMaps?,
-   * read? (Claude's reading of the line), decided? (a person's decision) }.
+   * read? (Claude's reading of the line), decided? (a person's decision), listingKind? (a person's word for the listing: aliases[listing].listingKind) }.
    * A SKU with a design in a master file is a catalogue charm unless its own SKU or the buyer says otherwise. A line with
    * no design is read by Claude (the words "add on" in a title never decide it: Paul, 25 Sep, many regular charm-only
    * listings say it); until it has been read, the shop's own SKU codes and the few unmistakable title phrases below stand.
@@ -612,6 +643,13 @@
       const hit = optionLookup(opts.optionMaps, line.listingId, v.name, v.value);
       if (hit && hit.source !== "default") continue;
       return make("chainOnly", `option “${v.name}: ${v.value}”`, "option");
+    }
+    // 1b · the listing is an add-on listing (addOnOf): the charm is the buyer's own request, whatever master design its SKU happens to match.
+    // A person's word for the listing and the listing's own wording stand over Claude's reading and over the SKU codes; `own` tells interpretLine the design is not a master's
+    const addOn = addOnOf(line, opts.listingKind);
+    if (addOn && !addOn.regular) {
+      const k = addOn.kind === "custom" ? customKind(sku || raw, title, vars) : READ_KINDS[addOn.kind] || null;
+      if (k) return Object.assign(make(k, addOn.why, "listing"), READ_LABEL[addOn.kind] ? { label: READ_LABEL[addOn.kind] } : {}, { own: true });
     }
     // 2 · Claude's reading of everything the shop holds about the line. Chain only is never cut, so an unsure reading of
     // it waits for a person as a special order instead.
@@ -641,6 +679,7 @@
     return null;
   }
 
+  specialOf.addOn = { of: addOnOf, listings: ADDON_LISTINGS, titles: ADDON_TITLE, wait: "custom add-on listing: no master design, waits for the order's own designs (Send to Sheet) or Complete Order" };   // (for the tests and for a reader: what says a listing is an add-on listing)
   /* The Team's workflow stamps ("DESIGNED :)", "QA1", "QA2", "PE", "am") are on nearly every order: they say where the
      order is in the shop, never what to engrave. Counted as engraving evidence, they sent every line to the engraving
      reader and every charm of a sheet showed a back engraving (Paul, 25 Sep: "Backs 69" on a sheet of 69 charms). A Team
@@ -997,10 +1036,49 @@
       if (!optionName) optionName = name;
       for (const sg of ss) add(sg, { from: "option", name, value, variation: v });
     }
-    if (!list.length) return null;
+    // no option names a sign, but a drop-down value says "2 symbols" (the Zodiac REVAMP listing's 13th Zodiac Sign value is "2 symbols-leave note": the buyer writes BOTH signs in the note):
+    // the signs are the note's, the first named the Left; that value is the option the signs are looked up under
+    let byNote = null;
+    if (!list.length) {
+      const v = ((line && line.variations) || []).find(x => { const nm = lvName(x), val = lvValue(x).trim(); return !!nm && !!val && !isPersonalisation(nm) && !isMetalOption(nm) && TWO_DESIGNS.test(val); });
+      if (!v) return null;
+      byNote = v; optionName = lvName(v);
+    }
     const notes = [].concat(((line && line.variations) || []).filter(v => isPersonalisation(lvName(v))).map(lvValue), (line && line.personalization) || [], (line && (line.buyerMessage || line.message_from_buyer)) || []);
-    for (const t of notes) for (const sg of signsOfText(t)) add(sg, { from: "note", name: optionName, value: sg, text: visible(t).trim() });
-    return { signs: list, optionName };
+    const said = [];   // (every sign any note names, each note's own words: a sign the drop-down already has is the same sign again, not a second one)
+    for (const t of notes) for (const sg of signsOfText(t)) { said.push(sg); add(sg, { from: "note", name: optionName, value: sg, text: visible(t).trim() }); }
+    const own = byNote || (list.find(x => x.from === "option" && x.variation) || {}).variation, pid = own ? idOf(own.propertyId != null ? own.propertyId : own.property_id) : "";
+    const text = [...new Set(notes.map(t => visible(t).trim()).filter(Boolean))].join(" · ");
+    return Object.assign({ signs: list, optionName, propertyId: pid, said, noteText: text }, byNote ? { byNote: true, optionValue: lvValue(byNote).trim() } : {});
+  }
+  /** What the buyer's note says, as one short quoted piece for a row: “balance et lion”, or "there is no buyer's note". */
+  const noteSays = text => text ? `the buyer's note says “${clip(text, 80)}”` : "there is no buyer's note";
+
+  /* The charm a SIGN stands for on a listing, from the listing's OWN inventory (ZODIACTWO, 10 Oct 2026). The buyer wrote the second sign in a note ("balance et lion"); the
+     drop-down of the listing has one value per sign and Etsy keeps the SKU of the product bought with each value. So: the table's value names (Etsy's text for each value of
+     the option, kept with the table) are read with the SAME closed list of the twelve signs the note is read with (signsOfText: whole words, exact, never fuzzy): the one value of
+     this option whose text names exactly this sign; the SKU of the live products with that value (one SKU, given to no other value of the option: tiesToOption's test); the
+     master design that SKU is, of the line's own kind of piece (a necklace pendant is never an earring). Never the title, never the listing's description, never a look-alike,
+     never AI. → { sku } or { why, needNames } saying in one plain line what stops it. */
+  function signValueSku(table, line, optionName, propertyId, sign, me, loose) {
+    if (!table || typeof table !== "object") return { why: "Etsy's list of this listing's options is not loaded yet", needNames: false };
+    if (!Array.isArray(table.products)) return { why: table.uni ? `Etsy keeps one SKU (${upSku(table.uni)}) for every choice of this listing, so it cannot say which charm ${sign} is` : "Etsy keeps no SKU on this listing's options" };
+    if (!table.names || typeof table.names !== "object") return { why: `Etsy's names for this listing's “${optionName}” values are not loaded yet`, needNames: true };
+    let pid = idOf(propertyId);
+    if (!pid) { const hit = Object.keys(table.props || {}).filter(k => norm(table.props[k]) === norm(optionName)); if (hit.length === 1) pid = hit[0]; }
+    if (!pid) return { why: `Etsy's list has no option called “${optionName}”` };
+    const vids = Object.keys(table.names).filter(k => k.startsWith(pid + ":")).filter(k => { const ss = signsOfText(table.names[k]); return ss.length === 1 && ss[0] === sign; }).map(k => k.slice(pid.length + 1));
+    if (!vids.length) return { why: `no value of “${optionName}” on this listing is named ${sign}` };
+    if (vids.length > 1) return { why: `more than one value of “${optionName}” on this listing is named ${sign}` };
+    const vid = vids[0], live = (table.products || []).filter(p => p && !p.d), has = (p, x) => (p.pv || []).some(a => idOf(a[0]) === pid && idOf(a[1]) === x);
+    const mine = live.filter(p => has(p, vid)), skus = [...new Set(mine.map(p => upSku(p.sku)).filter(Boolean))];
+    if (!skus.length) return { why: `Etsy keeps no SKU on the ${sign} value of “${optionName}”` };
+    if (skus.length > 1) return { why: `Etsy gives the ${sign} value of “${optionName}” more than one SKU (${skus.slice(0, 3).join(", ")})` };
+    if (live.some(p => !has(p, vid) && upSku(p.sku) === skus[0])) return { why: `Etsy's SKU ${skus[0]} is shared by other values of “${optionName}”, so it does not say ${sign}` };
+    const own = me ? masterSku(skus[0], me, loose) : skus[0];
+    if (!own) return { why: `Etsy's SKU for ${sign}, ${skus[0]}, is not in any master file` };
+    if (skuFamilyConflict(own, line)) { const f = lineFamily(line); return { why: `Etsy's SKU for ${sign}, ${own}, is a ${skuFamily(own)} design and this line is ${f === "earring" ? "earrings" : f}` }; }
+    return { sku: own, etsy: skus[0] };
   }
 
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
@@ -1055,19 +1133,26 @@
       if (nm && nm.members) return { members: nm.members, source: nm.source };
       if (nm && nm.why && sig.says && !rep.why) rep.why = nm.why;
     }
-    // "Silver • 2 symbols" and a sign in the options: the second sign, from the line's own words
+    // "Silver • 2 symbols" and a sign in the options: the second sign, from the line's own words (the options, then the buyer's note). The note is shown with every wait.
     if (sig.says && sig.soldAs === "pair" && o.designOf && !rep.why) {
       const sl = signsOfLine(line);
       if (sl) {
         rep.signs = sl.signs.map(x => x.sign);
-        if (sl.signs.length === 1) rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but names one (${sl.signs[0].sign}): write the second symbol in the order's note, name the second design, or say it is the same on both ears`;
-        else if (sl.signs.length > 2) rep.why = `the line says two different designs but names ${sl.signs.length} signs (${sl.signs.map(x => x.sign).join(", ")}): name the right two, or say it is the same on both ears`;
+        const first = sl.signs[0] || {}, note = noteSays(sl.noteText);
+        if (!sl.signs.length) rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but no sign is named: ${note}. Write the two symbols in the order's note, name the two designs, or say it is the same on both ears`;
+        else if (sl.signs.length === 1) {
+          // the note names the SAME sign as the drop-down (or only repeats it): both ears are that sign, nothing to ask (a Left and a Right, the Right the mirror of the Left)
+          if (first.from === "option" && sl.said.length && sl.said.every(x => x === first.sign)) rep.same = { sign: first.sign, text: sl.noteText, why: `the buyer's note repeats ${first.sign}: the same sign on both ears` };
+          else rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but names one (${first.sign}): ${note}. Write the second symbol in the order's note, name the second design, or say it is the same on both ears`;
+        } else if (sl.signs.length > 2) rep.why = `the line says two different designs but names ${sl.signs.length} signs (${sl.signs.map(x => x.sign).join(", ")}): ${note}. Name the right two, or say it is the same on both ears`;
         else {
-          const designs = sl.signs.map(x => { const virt = x.from === "option" ? x.variation : { name: sl.optionName, value: x.sign }; return { x, sku: has(o.designOf(virt, x.from === "option") || "") }; });
-          if (designs.every(d => d.sku) && designs[0].sku !== designs[1].sku) return { members: [{ side: "L", sku: designs[0].sku }, { side: "R", sku: designs[1].sku }], source: "signs", signs: rep.signs };
-          rep.asks = designs.filter(d => !d.sku && d.x.from === "note").map(d => ({ name: sl.optionName, value: d.x.sign, why: `second symbol of a 2-symbols line: ${d.x.sign}, from the buyer's words “${clip(d.x.text, 40)}”; the line's own symbol is ${sl.signs[0].sign}` }));
-          if (designs.every(d => d.sku) && designs[0].sku === designs[1].sku) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}) but both signs are the same charm (${designs[0].sku}): name the second design, or say it is the same on both ears`;
-          else if (!rep.asks.length) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}): “${designs.filter(d => !d.sku).map(d => d.x.sign).join(", ")}” has no charm chosen on this listing yet`;
+          rep.lack = rep.lack || {};
+          const designs = sl.signs.map(x => { const virt = x.from === "option" ? x.variation : { name: sl.optionName, value: x.sign, propertyId: sl.propertyId }; return { x, sku: has(o.designOf(virt, x.from === "option") || "") }; });
+          if (designs.every(d => d.sku) && designs[0].sku !== designs[1].sku) return Object.assign({ members: [{ side: "L", sku: designs[0].sku }, { side: "R", sku: designs[1].sku }], source: "signs", signs: rep.signs, note: sl.noteText }, sl.byNote ? { byNote: true, optionName: sl.optionName, optionValue: sl.optionValue } : {});
+          rep.asks = designs.filter(d => !d.sku && d.x.from === "note").map(d => ({ name: sl.optionName, value: d.x.sign, lack: (rep.lack[d.x.sign] || {}).why || "", needNames: !!(rep.lack[d.x.sign] || {}).needNames, why: `second symbol of a 2-symbols line: ${d.x.sign}, from the buyer's words “${clip(d.x.text, 40)}”; the line's own symbol is ${first.sign}` }));
+          if (designs.every(d => d.sku) && designs[0].sku === designs[1].sku) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}) but both signs are the same charm (${designs[0].sku}): ${note}. Name the second design, or say it is the same on both ears`;
+          else if (!rep.asks.length) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}): “${designs.filter(d => !d.sku).map(d => d.x.sign).join(", ")}” has no charm chosen on this listing yet (${note})`;
+          else rep.needNames = rep.asks.some(a => a.needNames);
         }
       }
     }
@@ -1108,7 +1193,9 @@
       const ans = o.lineId ? optionLookup(o.optionMaps, line.listingId, SECOND_OPT, o.lineId) : null, same = !!ans && ans.field === "ignore", rep = o.report || {};
       // (two signs named but one has no charm yet: the question is that option value's, asked like every option value; else one plain line of what is missing)
       const viaOption = !!(rep.asks && rep.asks.length);
-      info.second = same ? { answered: "same" } : { answered: "", why: viaOption ? rep.asks[0].why : rep.why || `the line says two different designs (${sig.signals[0] || "its words"}) but names one: name the second, or say it is the same on both ears`, viaOption };
+      // (the buyer's note names the same sign as the drop-down, or repeats it: both ears are that sign, a person is not asked)
+      info.second = same ? { answered: "same" } : rep.same ? { answered: "same", by: "note", sign: rep.same.sign, why: rep.same.why }
+        : { answered: "", why: viaOption ? rep.asks[0].why : rep.why || `the line says two different designs (${sig.signals[0] || "its words"}) but names one: name the second, or say it is the same on both ears`, viaOption, needNames: !!rep.needNames };
     }
     if (cr.n > 1 || cr.answered) info.count = { n: cr.n, answered: cr.answered, rule: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).rule || "", from: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).name || "" };
     // the questions: what the options cannot settle by themselves
@@ -1129,7 +1216,7 @@
     else if (earForm) info.notes.push("a person said this listing is " + (earForm === "huggie" ? "huggie hoops" : "a pair of earrings"));
     if (info.single && !info.sideSaid) info.notes.push("single earring: the line does not say left or right");
     else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
-    if (info.second) info.notes.push(info.second.answered === "same" ? "the line says two different designs: a person said the same design on both ears" : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
+    if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the line says two different designs: ${info.second.why}` : "the line says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
     if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
@@ -1263,19 +1350,36 @@
     // read and held exactly as before, and the members are only told in spec.pair.
     const secondId = order && line && line.transactionId != null ? String(order.receiptId) + "/" + String(line.transactionId) : "";
     // the charm a value of an option decides on this listing (a person's answer for it, or the SKU Etsy ties to that value alone), "" when none yet
-    const designOf = v => { const hit = optionLookup(ctx.optionMaps, line.listingId, v.name || v.formatted_name, String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim()); return hit && hit.field === "design" && hit.value ? upSku(hit.value) : !viaPick && tied(v) ? sku : ""; };
-    const report = {}, members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
+    // (a sign read from the line's words, the buyer's note included, has no SKU on the transaction: its charm is the one the listing's own inventory keeps for that value, signValueSku; what stops it is told in report.lack)
+    const report = {};
+    const designOf = v => {
+      const value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim(), name = v.name || v.formatted_name;
+      const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
+      if (hit && hit.field === "design" && hit.value) return upSku(hit.value);
+      if (!viaPick && tied(v)) return sku;
+      const ss = signsOfText(value); if (ss.length !== 1) return "";
+      const r = signValueSku(table, line, name, idOf(v.propertyId != null ? v.propertyId : v.property_id), ss[0], me, loose);
+      if (r.sku) return r.sku;
+      (report.lack = report.lack || {})[ss[0]] = { why: r.why, needNames: !!r.needNames };
+      return "";
+    };
+    const members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
     if (members && PIECE_RULES.mismatchedMakesTwo) { sku = members.members[0].sku; skuSource = "pair"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
     const lk = lineKey(order, line);
-    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk] });
+    const alias = ctx.aliases && ctx.aliases[String(line.listingId)];
+    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk], listingKind: alias && alias.listingKind });
     const done = (ctx.customDone && ctx.customDone[lk]) || null;
     const noDesign = listed || !!(special && special.notCut) || !!done;
+    // an add-on listing's line (specialOf: own): its design is the order's own, never the master design its SKU happens to match. It is not "no design" (nothing cuts it and
+    // nothing closes its order until its own designs are sent to a sheet or a person completes it), and nothing is asked about it: no metal, SKU or option question, no engraving
+    const own = !!(special && special.own && !special.notCut);
+    const quiet = noDesign || own;
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
-    if (!noDesign && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
+    if (!quiet && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
     const spec = { designSku: sku || null, skuSource, material, materialKey: metalKey || null, materialLabel: line.metalLabel || (material ? CARD_LABEL[material] : ""), form: null, size: null, chain: null, quantity: Math.max(1, Math.round(+line.quantity || 1)), personalization: (line.personalization || []).map(s => visible(s).trim()).filter(Boolean), buyerMessage: visible(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5), updateTs: +order.updateTs || 0, options: [], problems, noDesign, sources: { material: "station classifier (Metal/Colour option first)", sku: skuSource } };
     if (special) spec.special = special;
     if (done) spec.customDone = done;
@@ -1285,7 +1389,8 @@
     // a line with no design of its own (not on the no-design list, not finished by hand) is one Claude reads to tell a
     // custom order from a regular listing whose SKU is not indexed yet (Custom Orders)
     const byOption = special && special.signals[0] === "option";
-    spec.readable = !listed && !done && !byOption && !set && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
+    spec.readable = !listed && !done && !byOption && !own && !set && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
+    if (own) spec.ownDesign = true;
     if (noDesign) spec.noDesignWhy = done ? "completed by hand (Custom Orders)" : listed ? "on the no-design list" : special.label.toLowerCase() + " · not laser cut";
     // the options that name how many pieces ONE unit makes (2 Disc, Number of Discs: 3, a person's answer): read once, for the options below and for the count
     const cr = countRead(line, { optionMaps: ctx.optionMaps });
@@ -1310,6 +1415,8 @@
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
       const fr = fontRead(name, value, fx), fh = fr ? null : fontHidden(name, value, fx);
       if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
+      // the drop-down value that says "2 symbols" and leaves the signs to the note ("2 symbols-leave note"): once the note's two signs are two charms, the option is answered by them
+      if (!mapped && members && members.source === "signs" && members.byNote && name === members.optionName && value === members.optionValue) mapped = { field: "design", value: members.members[0].sku, source: "rule:signs-in-note" };
       // a Left-ear / Right-ear option whose value is a master design is that side's design (the pair's members): nothing to ask about it
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
@@ -1341,7 +1448,7 @@
       if (fh && !spec.font) spec.font = fontSpecOf(fh, fh.listing ? "rule:font-listing" : "rule:font-in-length");
       spec.options.push({ name, value, mapped });
       // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
-      if (!mapped) { if (!noDesign) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp())); continue; }
+      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp())); continue; }
       if (mapped.field === "font") {   // the font the buyer asked for and the app font it is (none: asked only); the length it came with is the line's chain
         const af = fontById(mapped.value);
         if (!spec.font) spec.font = fr ? fontSpecOf(Object.assign({}, fr, { id: af ? af.id : "", name: af ? af.name : "" }), mapped.source) : { asked: value, id: af ? af.id : "", name: af ? af.name : "", source: mapped.source };
@@ -1357,9 +1464,9 @@
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
     // listing whose signs share one SKU), and a charm given to the SKU instead would be every sign's
     const optionOpen = problems.some(p => p.kind === "needsMapping");
-    if (!noDesign && !sku && !optionOpen) problems.push(set ? { kind: "unmatchedSku", reason: "no SKU on the transaction · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: String(line.listingId || ""), title: line.title || "" }
+    if (!quiet && !sku && !optionOpen) problems.push(set ? { kind: "unmatchedSku", reason: "no SKU on the transaction · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: String(line.listingId || ""), title: line.title || "" }
       : { kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
-    if (ctx.masterEntry && sku && !noDesign) {
+    if (ctx.masterEntry && sku && !quiet) {
       const entry = ctx.masterEntry(sku);
       if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
@@ -1367,18 +1474,18 @@
     }
     // pairs (Paul, 9 Oct): what the line says about being a pair, and the one count of its pieces (pieceCountOf: every caller reads it)
     // a 2-symbols line whose second symbol (from the buyer's words) has no charm yet: that value of the option is asked once, like any option value
-    if (!noDesign && !members) for (const a of report.asks || []) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value)) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", note: a.why });
+    if (!quiet && !members) for (const a of report.asks || []) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value)) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", note: a.why }, a.lack ? { why: a.lack } : {}));
     spec.pair = pairInfo(line, { spec, sku, entry: me && sku ? me(sku) : null, members, optionMaps: ctx.optionMaps, count: cr, lineId: secondId, report });
     spec.pieceCount = pieceCountOf(spec);
     spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.sides = sidesOf(spec);
     // a count the options cannot settle waits for a person: one plain question per option, like an unmatched SKU
-    if (!noDesign) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && (p.count || p.earWords))) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "" }, a.rule === "ear:words" ? { earWords: { why: a.why } } : { count: { guess: a.guess || 0, why: a.why, rule: a.rule } }));
+    if (!quiet) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && (p.count || p.earWords))) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "" }, a.rule === "ear:words" ? { earWords: { why: a.why } } : { count: { guess: a.guess || 0, why: a.why, rule: a.rule } }));
     // a person said this listing's words are a pair of earrings: the form it is (what an answered option does too)
     if (!spec.form && spec.pair.earForm) spec.form = spec.pair.earForm;
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
-    if (!noDesign && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
-    spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
+    if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
+    spec.engraveCandidate = !quiet && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     return spec;
   }
   /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
@@ -1748,7 +1855,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,

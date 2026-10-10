@@ -1122,6 +1122,7 @@ dialog.phv.layer.phvIn{background:transparent}
 /* the envelope in the top bar, its list, and the Orders tab's badge */
 .mailPill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--slate);background:var(--slate);color:#fff;border-radius:999px;padding:4px 9px 4px 8px;font:700 11.5px var(--mono);cursor:pointer;flex:0 0 auto}
 .mailPill svg{width:14px;height:14px}
+.mailPill.warn{background:#fbf1dc;border-color:#ecd49c;color:#7c5a17}
 .mailPill.bad{background:var(--claySoft);border-color:var(--clay);color:#8a3a26}
 .mailMenu{position:fixed;z-index:400;width:min(360px,94vw);max-height:min(70vh,520px);overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:0 18px 50px rgba(20,16,10,.18);padding:6px}
 .mmHead{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700;padding:6px 9px 4px}
@@ -2990,7 +2991,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1">
 </head>
 <body>
 <div class="app" id="app">
@@ -3220,20 +3221,20 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-vf1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-vf1"></script>
-<script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1"></script>
+<script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1"></script>
 <script src="charm-nest-set-rules.js?v=20261010-sf2"></script>
-<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1"></script>
+<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-bb1-rlp1-rlp3-ba1-sx1-ba2-lv1-lm1"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -7193,7 +7194,7 @@ boot();
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-vf1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7241,7 +7242,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-vf1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
@@ -7250,7 +7251,7 @@ try {
 <script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1-cg1-sn1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
-<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
+<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
@@ -7276,7 +7277,7 @@ try {
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1"></script>
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
 <script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2"></script>
