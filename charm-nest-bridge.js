@@ -203,7 +203,7 @@ const ListMedia = (() => {
   // (a line of TWO separate designs, the Left's and the Right's (OPTTWO: Tennis Ball Left, Tennis Racket Right): its picture is the two designs side by side, each from its own master file; the SKU of the Right's design, else '')
   const twoOf = row => { try { return !!row && !row.spec?.noDesign && earPairRow(row) && earDesign(row, "L") ? earDesign(row, "R") : ""; } catch (_) { return ""; } };
   // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
-  /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that reads one way, or faces the other way, is not): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
+  /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that faces the other way is not; letters and numbers are mirrored like any other): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
   const earMirror = (row, side) => { try { const e = Master.entryFor(row?.spec?.designSku || row?.line?.sku || ''); return !!(e && (side === 'L' || side === 'R') && earTurn(row, side, e)); } catch (_) { return false; } };
   const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
   function pair(row) {
@@ -2757,7 +2757,7 @@ const Master = window.Master = (() => {
       const v2 = sel.value, two = sel.dataset.body != null;   // (a mismatched pair has one box per body: both words are saved together, body 0 is also `facing`)
       const words = two ? [...sel.parentNode.querySelectorAll("select[data-faces][data-body]")].sort((x, y) => x.dataset.body - y.dataset.body).map(x => x.value || null) : null;
       const patch = two ? { facing: words[0], facings: words.some(Boolean) ? words : null } : { facing: v2 === "" ? null : v2 };
-      const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (cut as drawn on both sides)" : "facing not set (the drawing is the Left)";
+      const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (no longer used: earrings are always mirrored)" : "facing not set (the drawing is the Left)";
       sel.disabled = true;
       patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
@@ -2794,7 +2794,7 @@ const Pool = window.Pool = (() => {
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
     // a design that draws two DIFFERENT bodies under one label (a mismatched pair, charm-nest-pair.js) also gets one charm per body
     // which way the drawing faces, when a person set it on the master record (charm-nest-pair.js facingOf reads these two): decides which piece of a pair is the mirror image
-    { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the design reads one way, letters and numbers: never turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
+    { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the old "reads one way" word; it no longer stops a Right being turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
     await splitBodies(src);
     S.poolSources[srcId] = src; B.pool.sources.set(key, src);
     return src;
@@ -3062,7 +3062,7 @@ const Pool = window.Pool = (() => {
     const l = m && m.find(x => x && x.side === "L"), r = m && m.find(x => x && x.side === "R");
     return l && r && l.sku && r.sku && String(l.sku) !== String(r.sku) ? { L: String(l.sku), R: String(r.sku) } : null;
   }
-  /** Is this ear (its own design) cut turned over? The same word charm-nest-pair.js gives a matching pair of that design: the Left as drawn and the Right turned over, unless the drawing faces the other way (a person's facing) or reads one way. */
+  /** Is this ear (its own design) cut turned over? The same word charm-nest-pair.js gives a matching pair of that design: the Left as drawn and the Right turned over, unless the drawing faces the other way (a person's facing; letters and numbers are turned over like any other design). */
   function earMirror(piece, ear, row) {
     const Pair = window.CharmNestPair, c = ear.src.charms[0];
     const line = Object.assign({}, row.line, { receiptId: row.order.receiptId, transactionId: row.line.transactionId, quantity: 1, form: row.spec.form, spec: { quantity: 1, form: row.spec.form, pieceCount: 2, pair: { earring: true, mismatched: false, glued: false, perUnit: 2, sides: ["L", "R"] } } });
