@@ -11723,22 +11723,30 @@ const Sandbox = window.Sandbox = (() => {
   /** The whole clean-up, once a person has agreed: the cloud's sandbox records (until the server says none is left and a
       count agrees), then this browser's copy of them, then a reload that restores nothing. ui: { button, note } — the button
       shows a spinner and what it is doing, the note is the calm line under it. Never says done while any record remains. */
+  let wiping = false;
   async function wipe(ui = {}, how = {}) {
+    // three buttons, one wipe: a second press while it runs would start a second loop over the same records
+    if (wiping) { toast("The sandbox is already being wiped: wait until it finishes", "bad", 5000); return { ok: false, text: "already wiping" }; }
+    wiping = true;
     const btn = ui.button, note = ui.note, was = ui.was || (btn ? Array.from(btn.childNodes) : []);
     const line = (text, bad) => { if (note) { note.textContent = text; note.style.color = bad ? "var(--clay)" : ""; } };
     const spin = text => { if (btn) { btn.disabled = true; btn.setAttribute("aria-busy", "true"); const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode(text)); } line(text); };
     const rest = () => { if (btn) { btn.disabled = false; btn.removeAttribute("aria-busy"); btn.replaceChildren(...was); } };
     const tally = { records: 0, files: 0 }, verb = how.verb === "Purging" ? "purge" : "reset";
+    /* One complete wipe for every button (Reset sandbox records, Reset the sandbox…, Purge all run history…), from either
+       page: a sandbox page also puts down its own live state and reloads; a production page (the sandbox switched off)
+       wipes the same cloud records and the same stored browser side, and leaves its own live state alone. */
+    const own = on(), reload = how.reload != null ? !!how.reload : own; let finished = false;
     const stop = text => { line(text, true); toast(text, "bad", 12000); noteReset({ ok: false, verb, text, records: tally.records, files: tally.files }); return { ok: false, text }; };
     spin(`${how.verb || "Resetting"} the sandbox…`);
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
-    await Arrivals.pause(); let reloading = false;
-    bar(); W.active = true;   // from here nothing but this clean-up writes to the cloud (api, the queues and the recoveries look at it)
+    if (own) await Arrivals.pause(); let reloading = false;
+    if (own) { bar(); W.active = true; }   // from here nothing but this clean-up writes to the cloud (api, the queues and the recoveries look at it)
     try {
-      if (RunCtl.clearRunState(null, { drop: "all" }) === false) return stop("Nothing was deleted: a Rose Gold sheet is still being nested or saved. Wait until it finishes, then press again.");   // (its own toast says so too)
+      if (own && RunCtl.clearRunState(null, { drop: "all" }) === false) return stop("Nothing was deleted: a Rose Gold sheet is still being nested or saved. Wait until it finishes, then press again.");   // (its own toast says so too)
       // the rehearsal's timeline events still waiting to be sent (kept on the disk across the reload) go with its records,
       // before the wipe and again after it: sent later, they would stand on the replay of the same real order numbers
-      const dropEvents = () => { try { window.CNTimeline?.forget?.(); } catch (_) {} };
+      const dropEvents = () => { if (own) try { window.CNTimeline?.forget?.(); } catch (_) {} };
       dropEvents();
       // a sandbox that streamed for days holds more than one call can delete: each works a few seconds and says if more is left
       let r = null, records = 0, files = 0, filesError = null, errors = 0, idle = 0;
@@ -11755,20 +11763,24 @@ const Sandbox = window.Sandbox = (() => {
       dropEvents();
       if (!r || r.more) return stop(`The sandbox was not fully reset: the cloud stopped part way (${nf(records)} record(s) and ${nf(files)} file(s) removed) and says more are left. Press again to finish.`);
       // the cloud's own count of what is left (only a count that says none lets this say done)
-      let left = null;
-      try { const st = await api("charmNestLibrary", { op: "sandboxStatus" }, { quiet: true }); left = Object.entries(st.records || {}).filter(([, n]) => n > 0); } catch (_) { left = null; }
-      if (left && left.length) return stop(`The sandbox was not fully reset: ${nf(left.reduce((a, [, n]) => a + n, 0))} record(s) are still in the cloud (${left.map(([k, n]) => `${k.replace(/^Charm_(Nest_)?/, "")} ${n}`).join(", ")}); ${nf(records)} were removed. Press again to finish.`);
+      // (one read, no write: the same answer fills the "In the sandbox now" line of Settings, every family at its count)
+      let left = null, kinds = 0;
+      try { const st = await api("charmNestLibrary", { op: "sandboxStatus" }, { quiet: true }); status = st; kinds = Object.keys(st.records || {}).length; left = Object.entries(st.records || {}).filter(([, n]) => n > 0); } catch (_) { left = null; }
+      try { paintLines(); } catch (_) {}
+      if (left && left.length) return stop(`The sandbox was not fully reset: ${nf(left.reduce((a, [, n]) => a + n, 0))} record(s) are still in the cloud (${left.map(([k, n]) => `${famLabel(k)} ${nf(n)}`).join(", ")}); ${nf(records)} were removed. Press again to finish.`);
       spin("Clearing this browser's copy…");
       // the sandbox now waits, empty, until Start (the reload that follows starts no stream, no Auto run and no pull)
       hold();
       // the cloud is clean: every other tab of this browser learns it now (Session.listen) and stands down before it can send
       // or save anything it still holds
       try { if (window.Session && Session.bumpEpoch) Session.bumpEpoch("sandbox"); } catch (_) {}
-      const stationOk = await forgetCompletions();
-      const gone = await wipeBrowser(true);
+      const stationOk = own ? await forgetCompletions() : null;   // (the station's own list of finished orders is the sandbox page's to clear)
+      const gone = await wipeBrowser(own);
       const bad = !!filesError || stationOk === false;
-      noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, station: stationOk, browser: gone });
-      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}. ${how.next || "The sandbox now waits, empty, until you press Start."}`;
+      noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, kinds: left === null ? 0 : kinds, station: stationOk, browser: gone });
+      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}.${how.next ? " " + how.next : own ? " The sandbox now waits, empty, until you press Start." : " The sandbox is empty."}`;
+      finished = true;
+      if (!reload) { line(text, bad); toast(text, bad ? "bad" : "ok", 7000); return { ok: true, records, files, text }; }   // (a production page keeps its own state: nothing to reload for)
       // said on the clean page after the reload too (a toast under this dialog is not seen)
       try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
       line(`${text} · reloading`, bad); toast(text, bad ? "bad" : "ok", 7000);
@@ -11777,11 +11789,11 @@ const Sandbox = window.Sandbox = (() => {
       return { ok: true, records, files, text };
     } catch (e) {
       return stop(`The sandbox was not reset: ${e.message}`);
-    } finally { if (!reloading) { W.active = false; Arrivals.resume(); rest(); refresh().catch(() => {}); } }
+    } finally { if (!reloading) { wiping = false; if (own) { W.active = false; Arrivals.resume(); } rest(); if (!finished) refresh().then(() => paintLines()).catch(() => {}); } }   // (a clean-up that stopped says what the sandbox still holds, from a fresh read)
   }
   /** Settings → Reset the sandbox: one question, then the clean-up. Answers null when it was not agreed to. */
   async function reset(ui = {}) {
-    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, custom orders, locks, ledger, archive) and the sandbox's files, and everything this browser kept of them (its saved workspace, queued messages, drafts)? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched. The sorter reloads, and the sandbox then waits, empty, until you press Start (or turn Auto on).`)) return null;
+    if (!confirm(`Wipe everything the sandbox made: its orders, sheets, sets, set counters, seals, cancelled orders, cuts and leftovers, pool rows, runs, custom orders, saved answers, files, and everything this browser saved of it (workspace, drafts, queued messages)? The Charm repo and employee efficiency stay, and no real record is touched. ${on() ? "The sorter reloads, and the sandbox then waits, empty, until you press Start (or turn Auto on)." : "The sandbox is then empty."}`)) return null;
     return wipe(ui, { verb: "Resetting" });
   }
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
@@ -11804,6 +11816,9 @@ const Sandbox = window.Sandbox = (() => {
      and what was in the sandbox again a moment later? ── */
   const FRIENDLY = { Charm_Pool: "pool rows", Charm_Pool_Back: "back records", Charm_Nest_Sheets: "sheets", Charm_Nest_Sets: "sets", Charm_Nest_Runs: "runs", Charm_Nest_Run_Lines: "run piece archives", Charm_Nest_Run_Live: "live run parts", Charm_Nest_Counters: "set counters", Charm_Nest_Release: "release records",
     Charm_Nest_Arrivals: "arrivals", Charm_Nest_Rose_Stock: "Rose Gold stock records", Charm_Nest_Cancelled: "cancelled orders", Charm_Nest_Cancelled_History: "cancel history records", Design_Bridge: "bridge logs", Charm_Custom_Orders: "custom orders", Charm_Custom_Sheet: "custom sheets" };
+  /** The registry's family list (charm-nest-sandbox-families.js): what the wipe clears; the words of each come from it. */
+  const families = () => { try { const f = window.CharmNestSandboxFamilies; return f && f.families ? f.families() : []; } catch (_) { return []; } };
+  const famLabel = k => { const f = families().find(x => x.key === k); return (f && f.label) || FRIENDLY[k] || String(k).replace(/^(Charm_)?(Nest_)?/, "").replace(/_/g, " ").toLowerCase(); };
   const when = t => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   function lastText() {
     const l = lsJSON(LAST); if (!l || !l.at) return "No reset or purge has been made from this browser yet.";
@@ -11811,28 +11826,52 @@ const Sandbox = window.Sandbox = (() => {
     if (!l.ok) return `Last ${what} ${when(l.at)} — not finished: ${l.text || "it stopped part way"}`;
     const rec = l.records == null ? "the cloud's sandbox records" : `${nf(l.records)} cloud record(s)`, fil = l.files == null ? "" : ` and ${nf(l.files)} file(s)`;
     const b = l.browser ? `this browser's saved copy cleared (${nf(l.browser.workspace)} saved workspace part(s), ${nf(l.browser.keys)} stored key(s))` : "this browser's saved copy cleared";
-    return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
+    return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" + (l.kinds ? ` (all ${nf(l.kinds)} kinds counted at 0)` : "") : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
   }
+  /** "In the sandbox now": EVERY family the wipe knows with its count, those that still hold something first and the rest at
+      0 (Paul, 10 Oct: show that each one is empty, not only the few that were). Read from the status answer, one read, no write. */
   function nowText() {
     if (!status || status.light) return "";
     if (status.error) return `In the sandbox now: could not be read (${status.error})`;
-    const parts = Object.entries(status.records || {}).filter(([, n]) => n > 0).map(([k, n]) => `${nf(n)} ${FRIENDLY[k] || k.replace(/^(Charm_)?(Nest_)?/, "").replace(/_/g, " ").toLowerCase()}`);
-    return parts.length ? `In the sandbox now: ${parts.join(", ")}.` : "In the sandbox now: nothing.";
+    const rec = status.records || {}, capped = status.recordsCapped || {}, fam = families().filter(f => f.store !== "browser");
+    const keys = fam.map(f => f.key).concat(Object.keys(rec).filter(k => !fam.some(f => f.key === k)));   // (a family the page does not know yet is still listed)
+    const rows = keys.filter(k => rec[k] != null).map(k => ({ n: +rec[k] || 0, text: `${nf(rec[k])}${capped[k] ? "+" : ""} ${famLabel(k)}` }));
+    // what this browser still holds of the sandbox (the stored side), when the browser's own registry can count it
+    try { const b = typeof window.Sandbox?.browserLeft === "function" ? Sandbox.browserLeft() : null; if (Array.isArray(b)) for (const x of b) rows.push({ n: +x.n || 0, text: `${nf(x.n)} ${x.label || x.key} (this browser)` }); } catch (_) {}
+    const unknown = fam.filter(f => rec[f.key] == null).map(f => f.label);
+    const list = rows.filter(r => r.n > 0).concat(rows.filter(r => !r.n)).map(r => r.text).join(", ");
+    const tail = unknown.length ? ` Not counted by this server yet: ${unknown.join(", ")}.` : "";
+    return rows.length ? `In the sandbox now: ${rows.some(r => r.n > 0) ? "" : "nothing — "}${list}.${tail}` : unknown.length ? "In the sandbox now: the server gave no counts." : "In the sandbox now: nothing.";
+  }
+  /** What the wipe never touches, with its own counts (read-only, from the same status answer). */
+  function keptText() {
+    if (!status || status.light || status.error) return "";
+    const k = status.kept || {}, parts = [];
+    if (k.charmRepo != null) parts.push(`Charm repo ${nf(k.charmRepo)} designs`);
+    if (k.efficiencyDays != null) parts.push(`employee efficiency ${nf(k.efficiencyDays)} daily records${k.efficiencySandboxDays ? ` (${nf(k.efficiencySandboxDays)} made in the sandbox)` : ""}`);
+    return parts.length ? `Kept, never wiped: ${parts.join("; ")}.` : "Kept, never wiped: the Charm repo and employee efficiency.";
+  }
+  /** The two read-only lines under "Build · last reset", from the status already held (no read of its own). */
+  function paintLines(host) {
+    host = host || document.getElementById("stBuildNote"); if (!host) return;
+    const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
+    const set = (n, text) => { n.textContent = text; };
+    set(line("now"), nowText()); set(line("kept"), keptText());
   }
   const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }), m = /charm-nest-bridge\.js\?v=([\w.-]+)/.exec(await r.text()); return m ? m[1] : ""; } catch (_) { return ""; } };
   async function paintInfo(host) {
     host = host || document.getElementById("stBuildNote"); if (!host) return;
     const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
     const set = (n, text, bad) => { n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; };
-    const b = line("build"), l = line("last"), n = line("now"), p = pageBuild(), stale = !!p && p !== BUILD;
+    const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), p = pageBuild(), stale = !!p && p !== BUILD;
     set(b, stale ? `Page build ${p}, but this script is build ${BUILD}: the page file is out of date — reload with Ctrl+Shift+R` : `Page build ${BUILD}`, stale);
-    set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText());
-    refresh().then(() => set(n, nowText())).catch(() => {});
+    set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText()); set(kp, keptText());
+    refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); }).catch(() => {});   // (a production page's first read is the light one: Settings wants the counts)
     const latest = await latestBuild();
     if (latest && latest !== BUILD) set(b, `Page build ${BUILD} — a newer build (${latest}) is live: reload this page with Ctrl+Shift+R to run it`, true);
     else if (latest && !stale) set(b, `Page build ${BUILD} (the latest on the server)`);
   }
-  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: () => BUILD, pageBuild, lastText, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: () => BUILD, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
