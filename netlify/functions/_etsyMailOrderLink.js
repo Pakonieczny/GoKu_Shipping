@@ -833,9 +833,18 @@ async function historyThreads(receiptId, engagementId, sandbox) {
     const t = await testDoc();
     if (t && isThreadId(t.threadId)) take([await db.collection(COLL.threads).doc(t.threadId).get()]);
   } else if (sandbox) {
-    // a sandbox order is a copy of a real one under a new number, with the real buyer: their real history, read only
-    const b = await sandboxBuyer(receiptId);
-    if (b) take((await db.collection(COLL.threads).where("buyerUserId", "==", b).limit(25).get()).docs);
+    // a sandbox order is a real shop order (the sandbox pulls the newest ones under their own Etsy numbers) with the real
+    // buyer: their real history, read only. The sandbox's own copy of the order names the buyer when it has one; when it has
+    // none (a wipe, a run whose set is gone, a pull that has not run yet: the sorter keeps showing the order meanwhile) the
+    // inbox's own records of the same number do: the conversation that names the order, the receipts mirror, the buyer cache.
+    // Never an Etsy call, and nothing is written.
+    let b = await sandboxBuyer(receiptId);
+    if (!b) {
+      take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
+      for (const t of found.values()) b = b || (t.buyerUserId ? String(t.buyerUserId) : null);
+      if (!b) b = await storedBuyerOf(receiptId);
+    }
+    if (b) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(b)).limit(25).get()).docs);
   } else {
     take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
     for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
@@ -862,6 +871,15 @@ async function sandboxBuyer(receiptId) {
   _sbBuyers.set(receiptId, { at: Date.now(), buyer });
   if (_sbBuyers.size > 300) _sbBuyers.delete(_sbBuyers.keys().next().value);
   return buyer;
+}
+/** The buyer of a receipt from what the inbox already stores (the receipts mirror, the buyer cache): buyerOf() without its Etsy call. */
+async function storedBuyerOf(receiptId) {
+  try {
+    const [r, c] = await db.getAll(db.collection(COLL.receipts).doc(receiptId), db.collection(COLL.buyers).doc(receiptId));
+    const rd = r.exists ? r.data() : null, cd = c.exists ? c.data() : null;
+    const b = (rd && (rd.buyer_user_id || rd.buyerUserId || (rd.raw && rd.raw.buyer_user_id))) || (cd && cd.buyerUserId) || null;
+    return b ? String(b) : null;
+  } catch (e) { console.warn("orderLink stored buyer:", receiptId, e.message); return null; }
 }
 const threadAt = t => Math.max(tsMs(t.lastInboundAt), tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt), tsMs(t.updatedAt));
 /** How many messages the buyer's history holds, per conversation, before anything is pulled. */
