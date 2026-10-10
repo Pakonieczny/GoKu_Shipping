@@ -11472,7 +11472,7 @@ const Sandbox = window.Sandbox = (() => {
   let clearing = null, starting = null;
   const clearThenStart = () => clearing ||= (async () => {
     setNext("start");
-    const r = await wipe({}, { verb: "Resetting" });
+    const r = await wipe({}, { verb: "Resetting", next: "Now it pulls the 250 newest Etsy orders." });
     if (!r || !r.ok) { setNext(""); const text = (r && r.text) || "the old sandbox orders could not be cleared"; hold({ dirty: true, failed: text }); throw new Error(text); }
     return r;
   })().finally(() => { clearing = null; });
@@ -11740,7 +11740,7 @@ const Sandbox = window.Sandbox = (() => {
       const gone = await wipeBrowser(true);
       const bad = !!filesError || stationOk === false;
       noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, station: stationOk, browser: gone });
-      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}. The sandbox now waits, empty, until you press Start.`;
+      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}. ${how.next || "The sandbox now waits, empty, until you press Start."}`;
       // said on the clean page after the reload too (a toast under this dialog is not seen)
       try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
       line(`${text} · reloading`, bad); toast(text, bad ? "bad" : "ok", 7000);
