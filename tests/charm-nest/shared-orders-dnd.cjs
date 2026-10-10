@@ -35,7 +35,8 @@ const PLAN = [
   { setId: 'set-t-3', seq: 3, ready: false, sheets: [['dC01', 'gold']] },
   { setId: 'set-t-4', seq: 4, ready: false, sheets: [['dD01', 'gold']] }
 ];
-function seed(st, blobUrl, roseReady = false) {
+// (committed: the real-engine page: its sets are COMMITTED, the way a sheet is moved from set to set; a set that is still being made takes a sheet only from the open run on the screen)
+function seed(st, blobUrl, roseReady = false, committed = false) {
   const now = Date.now(), today = new Date(now).toISOString().slice(0, 10);
   let n = 0; const lines = {};
   for (const s of PLAN) {
@@ -50,7 +51,7 @@ function seed(st, blobUrl, roseReady = false) {
       } else Object.assign(rec, { placedCount: orders.length - 1 });
       st.put(SHEETS, id, rec);
     });
-    st.put(SETS, s.setId, { setId: s.setId, seq: s.seq, day: today, runId: `run-${today}`, name: `Set-${s.seq}`, sheetIds: s.sheets.map(x => x[0]), materials: s.sheets.map(x => x[1]), orders: {}, labels: null, labelFiles: [], status: 'nesting', updatedAt: Timestamp.fromMillis(now - s.seq * 1000), createdAt: Timestamp.fromMillis(now - 86400000), ...(s.ready ? { processReady: true, processSeals: [{ id: `laserReady-${now}-s${s.seq}`, how: 'laserReady', at: now - 3600000, by: 'Anna' }] } : {}) });
+    st.put(SETS, s.setId, { setId: s.setId, seq: s.seq, day: today, runId: `run-${today}`, name: `Set-${s.seq}`, sheetIds: s.sheets.map(x => x[0]), materials: s.sheets.map(x => x[1]), orders: {}, labels: null, labelFiles: [], status: committed ? 'labelled' : 'nesting', ...(committed ? { committedAt: now - 3600000 } : {}), updatedAt: Timestamp.fromMillis(now - s.seq * 1000), createdAt: Timestamp.fromMillis(now - 86400000), ...(s.ready ? { processReady: true, processSeals: [{ id: `laserReady-${now}-s${s.seq}`, how: 'laserReady', at: now - 3600000, by: 'Anna' }] } : {}) });
   }
   for (const [runId, ls] of Object.entries(lines)) st.put('Charm_Nest_Runs', runId, { runId, lines: ls });
 }
@@ -122,7 +123,7 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
 
   /** The Library page with the fake LibraryFlow and SharedOrders. o.realUi keeps the real LibraryApprovalUI; o.noModal leaves the shared-orders window out. */
   async function open(o = {}) {
-    st.docs.clear(); seed(st, srv.blobUrl, false);
+    st.docs.clear(); seed(st, srv.blobUrl, false, !!o.real);
     // (o.real: order 3700000010 has a second piece on dA02, so the real engine finds dA01 and dA02 sharing a multi-piece order)
     if (o.real) { const r = st.doc(SHEETS, 'dA02'); st.put(SHEETS, 'dA02', { poolIds: [...r.poolIds, '3700000010_2_1'], orders: [...r.orders, '3700000010'] }); }
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 1500 } });
