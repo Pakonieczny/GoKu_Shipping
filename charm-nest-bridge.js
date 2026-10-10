@@ -10315,7 +10315,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -10495,13 +10495,11 @@ const Review = window.Review = (() => {
     const sync = () => { const empty = !String(f.value || "").trim(); b.disabled = empty; b.title = empty ? "fill the field beside it first" : ""; };
     f.addEventListener("input", sync); f.addEventListener("change", sync); sync();
   }
-  /** The master's SKUs an option value names ("Pisces" → PISCES_68933): every word of the value is a word of the SKU. */
-  function optionCharms(value) {
-    const words = CharmNestOrders.norm(value).toUpperCase().split(/[^A-Z0-9]+/).filter(w => w.length >= 3 && !/^\d+$/.test(w));
-    if (!words.length) return [];
-    const out = [];
-    for (const k of B.master.entries.keys()) { const has = new Set(k.split(/[^A-Z0-9]+/)); if (words.every(w => has.has(w))) out.push(k); if (out.length > 12) break; }
-    return out.sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, 3);
+  /** The charms offered for an option that picks the charm, best first: Etsy's own SKU for the option (or its family twin), then the
+   *  master's SKUs the value names ("Pisces" → PISCES_68933: every word of the value is a word of the SKU), exact name first. */
+  function optionCharms(p, row) {
+    // what Etsy's inventory gives the product bought comes first, then the master SKUs named like the value (charm-nest-orders.js suggestCharms)
+    return CharmNestOrders.suggestCharms({ value: p.optionValue, line: row && row.line, picks: p.picks, skus: B.master.entries.keys() });
   }
   /** One list of the master's SKUs for every field that picks a charm, made again when the index changes. */
   let skuListFor = null;
@@ -10591,11 +10589,11 @@ const Review = window.Review = (() => {
       const guess = CharmNestOrders.FORM_VALUES[CharmNestOrders.norm(p.optionValue)] || null;
       // the option may pick the charm itself (Zodiac Sign: Pisces on a listing whose signs share one SKU): the master's
       // SKUs named by the value are offered, and the answer is kept for this listing and value
-      const cands = guess ? [] : optionCharms(p.optionValue), designFirst = !guess && cands.length > 0;
+      const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
-        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.pictureTag(Master.entryFor(k))}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
+        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
       Master.mountPictures(c);
