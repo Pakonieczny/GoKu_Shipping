@@ -643,7 +643,7 @@
     if (bc) try { bc.postMessage({ t: "out" }); } catch (_) {}
     flushOut();
   }
-  function dropOut(id) { put(LS.out, pendingOut().filter(x => x.id !== id)); }
+  function dropOut(id) { flown.delete(id); put(LS.out, pendingOut().filter(x => x.id !== id)); }
   /** A sandbox reset (the sorter's Sandbox.wipe): the sandbox's own drafts and queued messages go. Production's stay. */
   function wipeSandbox() {
     if (!SANDBOX) return 0;
@@ -679,6 +679,7 @@
             // a refusal is final and shown on the message; a lost connection is tried again
             if (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429) it.error = e.message;
             put(LS.out, all);
+            if (it.error) foldBack(it);
           }
           paintAll();
           if (!it || !it.error) { setTimeout(flushOut, Math.min(60000, 3000 * 2 ** Math.min(it ? it.tries : 1, 4))); break; }
@@ -771,7 +772,8 @@
     const $ = n => host.querySelector(`[data-cm="${n}"]`);
     P.el = { back: host.querySelector(".cmBack"), mark: host.querySelector(".cmMark"), name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox"), hist: $("hist") };
     const input = P.el.input;
-    const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(160, hh + 2) + "px" : ""; P.el.send.disabled = !input.value.trim(); };
+    // (a box that grows with what is written takes room from the thread above it: the newest message stays in view)
+    const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(160, hh + 2) + "px" : ""; P.el.send.disabled = !input.value.trim(); const t = P.el.thread; if (P.stick && t && t.scrollHeight - t.scrollTop - t.clientHeight > 1) t.scrollTop = t.scrollHeight; };
     input.addEventListener("input", () => { grow(); setDraft(draftKey(P), input.value); if (P.undo && input.value !== P.undo.to) { P.undo = null; paintUndo(P); } });
     input.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(P); } });
     P.el.send.onclick = () => send(P);
@@ -948,6 +950,13 @@
   /** The thread: this question's stretch of the conversation, plus what this browser has not handed over yet. */
   function paintThread(P, s) {
     const t = P.el.thread;
+    // a send is flying into this thread (SendFlight, the inbox's own animation), or a refused one is folding away: draw after,
+    // so the bubble the words aim at stays where it is
+    if (P.hold) return;
+    if (window.SendFlight && window.SendFlight.holding(t)) {
+      window.SendFlight.afterFlight(P.repaintLater || (P.repaintLater = () => { if (P.host.isConnected || P.opts.keep) paintThread(P, P.eng || (P.engId && M.store.get(P.engId)) || null); }));
+      return;
+    }
     const wasAt = t.scrollTop, stick = P.stick;
     const rows = [];
     if (P.fresh) {
@@ -1045,7 +1054,7 @@
     const trBox = tr && !tr.same ? `<div class="cmTr"><span class="cmTrLbl">${E(LANG[tro])}${tr.from && tr.from !== tro ? " · from " + E(langName(tr.from)) : ""}</span>${html(tr.text)}</div>`
       : tro && text.trim() && !tr ? `<div class="cmTr soft">Translating…</div>` : "";
     const trBtns = text.trim() && !m.local ? `<span class="cmTrB" role="group" aria-label="Translate this message"><button type="button" data-cm-tr="en" data-id="${E(m.id)}" class="${tro === "en" ? "on" : ""}" title="Translate into English">EN</button><button type="button" data-cm-tr="uk" data-id="${E(m.id)}" class="${tro === "uk" ? "on" : ""}" title="Translate into Ukrainian">УКР</button></span>` : "";
-    return `<div class="cmMsg ${side}${tone}${m.old ? " old" : ""}" data-id="${E(m.id)}"><div class="cmMeta"><b>${E(who)}</b><span>${E(when(m.atMs))}</span>${status}${trBtns}</div>${text.trim() ? `<div class="cmBody">${html(text)}</div>` : ""}${images ? `<div class="cmImgs${pics.length > 1 ? " many" : ""}">${images}</div>` : ""}${cards}${trBox}${acts}</div>`;
+    return `<div class="cmMsg ${side}${tone}${m.old ? " old" : ""}" data-id="${E(m.id)}" data-mid="${E(m.itemId || (m.local && m.local.id) || m.id)}"><div class="cmMeta"><b>${E(who)}</b><span>${E(when(m.atMs))}</span>${status}${trBtns}</div>${text.trim() ? `<div class="cmBody">${html(text)}</div>` : ""}${images ? `<div class="cmImgs${pics.length > 1 ? " many" : ""}">${images}</div>` : ""}${cards}${trBox}${acts}</div>`;
   }
 
   /** Every text a pane shows, for translating the lot. */
@@ -1192,11 +1201,49 @@
       engagementId: P.fresh ? null : (s ? s.id : null), newQuestion: !!P.fresh,
       lineLabel: P.ctx.lineLabel || "", orderNumber: String(P.rid), buyerName: P.ctx.buyerName || ""
     };
+    // the words fly from the box into the message's bubble (send-flight.js: the very same SendFlight the inbox runs); what the
+    // flight needs is measured before the box is emptied, and the box eases back to its height when the words have landed
+    let flight = null;
+    try { if (window.SendFlight && P.visible()) flight = window.SendFlight.prepare(flightOf(P, text)); } catch (e) { console.warn("[send] flight prepare:", e); }
     P.waitingFor = clientId;
     setDraft(draftKey(P), "");
-    P.el.input.value = ""; P.grow(); P.undo = null; paintUndo(P); P.stick = true;
+    P.el.input.value = ""; P.undo = null; paintUndo(P); P.stick = true;
+    if (flight) P.el.send.disabled = true; else P.grow();
+    flown.set(clientId, P);
     queueOut(body);
     paintPane(P);
+    if (flight) { try { window.SendFlight.launch(flight, clientId); } catch (e) { console.warn("[send] flight:", e); P.grow(); } }
+  }
+  /* SendFlight in this pane: the thread scrolls itself, the box stays beneath it and the newest message stays in view (the
+     phone's way in the inbox). The flying words go inside the window the pane is in, which a pop-up would otherwise cover. */
+  const flown = new Map();   // message id → the pane whose box its words flew from
+  const flightOf = (P, text) => ({
+    surface: "pane", list: P.el.thread, scroller: P.el.thread, host: P.el.comp, bounds: P.el.comp,
+    textarea: P.el.input, text, textSelector: ".cmBody", layerHost: P.host.closest("dialog"), fit: () => P.grow()
+  });
+  /** A message the server refused for good (the outbox holds it as "Not sent"): when the pane it was written in is open and
+   *  its box is empty, the bubble folds away and the words are back in the box, as in the inbox; otherwise it keeps its place
+   *  in the thread with Edit and send again. Nothing is dropped until the words are safe in the box. */
+  function foldBack(it) {
+    const P = flown.get(it.id), F = window.SendFlight;
+    flown.delete(it.id);
+    // (the pane must still be showing this message: it may have moved on to another question or order since it was sent)
+    const here = () => P.host.isConnected && localRows(P).some(r => r.local && r.local.id === it.id);
+    if (!P || !F || !P.visible() || P.el.input.value.trim() || !here()) return false;
+    P.hold = true;
+    const back = () => {
+      P.hold = false;
+      const mine = pendingOut().find(y => y.id === it.id);
+      if (mine && mine.error && here() && !P.el.input.value.trim()) {
+        dropOut(it.id);
+        P.el.input.value = mine.body.text; P.grow(); setDraft(draftKey(P), mine.body.text);
+        say(`Not sent: ${mine.error}. Your message is back in the box.`, "bad", 7000);
+        F.flash(P.el.input);
+      }
+      paintPane(P);
+    };
+    F.retract(it.id, { surface: "pane", list: P.el.thread, scroller: P.el.thread }).then(back, back);
+    return true;
   }
 
   // ─── the buyer's whole history: counted first, pulled on request ─────────
