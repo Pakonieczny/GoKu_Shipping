@@ -5,6 +5,7 @@
    the Library's cards (jsdom, the real LaserReview). Pure or fake backends only: no live endpoint, no paid AI, no Etsy call. */
 const assert = require('node:assert/strict');
 const R = require('../../charm-nest-readiness.js');
+require('../../charm-nest-set-rules.js').enforce(false);   // (this suite is about approval mechanics and its fixture sets predate the set principle, a completed GF and a completed SS sheet: that has its own suite, sets-form.cjs)
 
 const sheet = (id, extra = {}) => ({ id, metal: 'gold', sheetIndex: 1, poolIds: [id + '1'], placedCount: 1, verification: { ok: true }, preview: 'p', outputs: { ai: 'f' }, label: { files: [] }, backPool: [], engraving: { [id + '1']: { needed: false, state: 'none', approved: true } }, updatedAt: 1, ...extra });
 // n pieces to engrave, `done` of them approved

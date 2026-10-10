@@ -32,6 +32,8 @@ function earPairRow(row) {
     return !!CP.isEarringPair({ form: sp.form || "", spec: sp, quantity: sp.quantity || (row.line && row.line.quantity) || 1 }, e);
   } catch (_) { return false; }
 }
+/** What an earring pair line's quantity says besides the number (Paul, 10 Oct 2026: counts that say pairs and pieces truthfully): one pair is " · Left + Right"; q pairs are q Left and q Right. */
+const pairFactOf = q => (+q > 1 ? ` · ${+q} pairs, Left + Right each` : " · Left + Right");
 function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec);
   return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
@@ -195,8 +197,13 @@ const ListMedia = (() => {
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
   const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
+  // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
+  // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
+  const earPair = row => { try { return !!row && !row.spec?.noDesign && !earDesign(row, "L") && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };   // (a line of TWO separate designs is not this picture: it is drawn per ear, see earDesign)
+  // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
+  const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${pairRow(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false,zoomKey=key) {
@@ -267,15 +274,19 @@ const ListMedia = (() => {
     if(!row || row.spec?.noDesign)return null;
     // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
     const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
+    // (a MATCHING earring pair line, asked for as the line and not for one ear: the Left and the Right side by side, the Right turned over; drawn from the master design, never from one pool piece, which may already be the turned one;
+    //  not a line of TWO separate designs, which has no one design to draw twice)
+    const both=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight)) && matchPair(row);
     const own=opts?earDesign(row,opts.side):'';
-    const charm=(pairRow(row) || sideOne || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    const charm=(pairRow(row) || sideOne || both || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
-    const ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
+    let ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
     if(charm)return P.frontPreview ? (ro ? P.frontPreview(charm,px || 220,ro) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
     const sku=own || row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
+    if(both){const g=Pool.sizeEntry(entry,row.spec?.size),f=(g&&g.facing)||entry.facing;ro={pair:true,sku:String(entry.sku||sku),...(f==='L'||f==='R'||f==='X'?{facing:f}:{})};}   // (which way the master drawing faces, a person's word: the same rule as the piece the sheet cuts)
     if(own){const turnOwn=earTurn(row,opts.side,entry)?{mirror:true}:null;return turnOwn?(px?Pool.masterFront(entry,row.spec?.size,px,turnOwn):Pool.masterPreview(entry,row.spec?.size,true,turnOwn)):(px?Pool.masterFront(entry,row.spec?.size,px):Pool.masterPreview(entry,row.spec?.size,true));}
     if(ro)return px ? Pool.masterFront(entry,row.spec?.size,px,ro) : Pool.masterPreview(entry,row.spec?.size,true,ro);
     return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
@@ -297,14 +308,16 @@ const ListMedia = (() => {
     if(!row || row.spec?.noDesign)return '';
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'');
+    // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && matchPair(row)?'|pair':'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)]),false,JSON.stringify([sku,row?.spec?.size]));
+    const both=matchPair(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -323,7 +336,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,pairRow,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,earPair,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
 window.PieceMedia = { vectorKey: ListMedia.vectorKey, vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow };
@@ -2002,7 +2015,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? " · Left + Right" : ""} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : ""} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -2824,7 +2837,7 @@ const Pool = window.Pool = (() => {
     if(!path)throw new Error("No design file");
     const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
-    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+":":"")+path;
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
     // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
     // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
@@ -3538,6 +3551,7 @@ const Gate = window.Gate = (() => {
      so an order taken off, a piece nested somewhere else or a sheet finishing moves the sets at once. */
   function policy(sh, seq, choices = selected()) {
     const r = basePolicy(sh, seq, choices);
+    if (sh.setWait && r.include) return Object.assign({}, r, { include: false, reason: sh.setWait });   // (a set needs a completed GF and a completed SS sheet: Gate.assembleNow, SetRules.settle)
     if (sh.cardinalHold && r.include) return Object.assign({}, r, { include: false, reason: sh.cardinalHold });
     if (sh.cardinalPull && !r.include) return Object.assign({}, r, { include: true, reason: sh.cardinalPull });
     return r;
@@ -3667,6 +3681,17 @@ const Gate = window.Gate = (() => {
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
     cardinalApply(run, pages, set, choices);   // (sheets that share a multi-piece order come in together, or wait together)
+    /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet."
+       (charm-nest-set-rules.js, the one definition; the server and the Library read the same). The sheets that want in now (full sheets, rose
+       by its rule, and the partners the cardinal rule pulls with them) join only when the set would then be valid: a set that does not exist is
+       not made for them, and a set that exists but still lacks a class takes only a batch that completes it. The others wait outside any set,
+       each with the reason on its card (p.setWait: derived, never saved, like the cardinal marks); a partial sheet never makes a set on its own. */
+    for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
+    if (window.CharmNestSetRules) {
+      const inOpen = p => !!set && p.setId === set.setId && !p.draft, wanting = pages.filter(p => !inOpen(p) && release(p, set ? set.seq : 2).include);
+      const settled = window.CharmNestSetRules.settle(allSheets().filter(p => p.runId === run.runId && inOpen(p)), wanting);
+      for (const w of settled.wait) w.sheet.setWait = w.why;
+    }
     const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
     const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
     if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
@@ -4004,7 +4029,7 @@ const Gate = window.Gate = (() => {
     const spin=inc.querySelector('[data-solid="busy"]');if(spin){spin.hidden=!working;const t=spin.querySelector('[data-solid="busy-text"]');if(t&&t.textContent!==working)t.textContent=working;}
     // (the line read aloud by a screen reader; the line a person sees is [data-solid="say"], drawn only by a refused press)
     const sr=inc.querySelector('[data-solid="status"]'),lineUp=inc.querySelector('[data-solid="say"]');
-    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
+    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
@@ -5633,7 +5658,7 @@ const Engrave = window.Engrave = (() => {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
     // a mismatched pair design: both bodies side by side with Left / Right chips (charm-nest-pair-thumb.js); any other charm is drawn below, unchanged
-    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
+    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
     if (pairCv) return pairCv;
     const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }
@@ -7558,6 +7583,9 @@ const Sets = window.Sets = (() => {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
+    // Paul, 10 Oct: a set goes to the laser only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; a set committed before is never blocked)
+    const principle = window.CharmNestSetRules && window.CharmNestSetRules.gate(set, sheets);
+    if (principle && principle.applies && !principle.ok) throw pendingRelease(`${set.name || "This set"} ${principle.short}: a set needs at least 1 completed GF sheet and 1 completed SS sheet`);
     // the cardinal rule: every sheet that shares a multi-piece order with a sheet of this set is in it
     const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
     if (split.length) {
