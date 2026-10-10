@@ -113,7 +113,7 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   // the stream never brings
   const snapshot = Array.from({ length: 40 }, (_, i) => receipt(3521000101 + i, i + 1, 80 - i)).concat([receipt(3521000999, 2, 90, { is_shipped: true, status: 'Completed' })]);
   blobs.set('charmnest/sandbox/orders-cur.json', { buf: Buffer.from(JSON.stringify({ at: snapAt, count: snapshot.length, receipts: snapshot })), contentType: 'application/json' });
-  const meta = { path: 'charmnest/sandbox/orders-cur.json', count: snapshot.length, at: snapAt, takenBy: 'test' };
+  const meta = { path: 'charmnest/sandbox/orders-cur.json', count: snapshot.length, at: snapAt, takenBy: 'test', source: 'etsy-pull' };
   store.set('Charm_Sandbox/current', meta);
   const simStart = Math.floor(T0 / STEP) * STEP;
   const streamAt = (tick, startedAt = T0) => ({ on: true, v: 2, seed: 4242, speed: 50, stepMs: STEP, min: 2, max: 5, simStart, simNow: simStart + tick * STEP, tick, snapshotPath: meta.path, startedAt, tickAt: T0 });

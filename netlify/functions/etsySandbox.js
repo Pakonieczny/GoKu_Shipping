@@ -11,6 +11,9 @@
  *    ?fn=refreshEtsyToken          → 409: the sandbox has and issues no Etsy tokens
  *    ?fn=status                    → { ok, count, at, path, stream }  what the snapshot holds
  *
+ *  The orders are the 250 NEWEST Etsy receipts the sorter's sandbox pulled when it started (charmNestLibrary op
+ *  sandboxPullOrders, _charmNestSandboxPull.js): only a pointer written by a pull (source "etsy-pull") is served; the old
+ *  Sep 17 snapshot, or any pointer without that source, is no set and lists nothing.
  *  All reads are offline from Etsy, including listing photographs. Images reuse
  *  the saved listing catalog or durable image cache; a missing photo stays missing.
  *  The order snapshot is Charm_Sandbox/current plus its Storage JSON file.
@@ -36,19 +39,23 @@ async function listingImages(listingId) {
   return r.images;
 }
 
-async function loadSnapshot() {
-  if(cache.at && Date.now()-cache.at<60000)return {meta:cache.meta,receipts:cache.receipts};
+/** The order set the sandbox pulled. `stream` is the stream document the caller already read (null when there is none): a warm
+    instance keeps the set in memory for a minute, but only while the stream playing says it is still the same set, so a wipe
+    (no stream), a new pull (another path) or a failed pull (nothing) is never answered from memory. */
+async function loadSnapshot(stream) {
+  if (cache.at && Date.now()-cache.at<60000 && cache.path && stream && stream.snapshotPath===cache.path)return {meta:cache.meta,receipts:cache.receipts};
   if(snapshotFlight)return snapshotFlight;
   snapshotFlight=readSnapshot();try{return await snapshotFlight;}finally{snapshotFlight=null;}
 }
+const PULL = "etsy-pull";
 async function readSnapshot() {
   const doc = await db.collection(SANDBOX).doc("current").get();
-  if (!doc.exists) { cache={path:null,at:Date.now(),meta:null,receipts:[]};return {meta:null,receipts:[]}; }
-  const meta = doc.data();
+  const meta = doc.exists ? doc.data() : null;
+  if (!meta || meta.source !== PULL) { cache={path:null,at:Date.now(),meta:null,receipts:[]};return {meta:null,receipts:[]}; }
   if (cache.path === meta.path && cache.meta) {cache.at=Date.now();cache.meta=meta;return { meta, receipts: cache.receipts };}
   const [buf] = await admin.storage().bucket().file(meta.path).download();
   let receipts = [];
-  try { const parsed = JSON.parse(buf.toString("utf8")); receipts = Array.isArray(parsed) ? parsed : (parsed.receipts || []); } catch (e) { throw new Error("sandbox snapshot is not valid JSON: " + e.message); }
+  try { const parsed = JSON.parse(buf.toString("utf8")); receipts = Array.isArray(parsed) ? parsed : (parsed.receipts || []); } catch (e) { throw new Error("sandbox orders are not valid JSON: " + e.message); }
   cache = { path: meta.path, at: Date.now(), receipts, meta };
   return { meta, receipts };
 }
@@ -249,13 +256,13 @@ async function serve(event) {
       // behind the passcode: only this browser may keep a copy, never a shared cache
       return {...json(200,images),headers:{...CORS,'Cache-Control':images.length?'private, max-age=86400':'private, max-age=300','X-Etsy-Calls':'0'}};
     }
-    let { meta, receipts } = await loadSnapshot();
-    const stream = fn === "listOpenOrders" || fn === "status" ? await loadStream() : null;
+    const stream = fn === "listOpenOrders" || fn === "status" || fn === "etsyOrderProxy" ? await loadStream() : null;
+    let { meta, receipts } = await loadSnapshot(stream);
     // arrived: the streamed orders listed now (arrived and not shipped); total: the open orders the stream brings in all,
     // left: those it has not brought yet
     if (fn === "status") {
       const h = playing(stream) ? view(stream, receipts, meta) : null, tick = h ? Math.max(0, Math.floor(+stream.tick || 0)) : 0;
-      return json(200, { ok: true, sandbox: true, count: receipts.length, at: meta ? meta.at : null, path: meta ? meta.path : null, takenBy: meta ? meta.takenBy || null : null, stream: h ? { seed: stream.seed, tick: stream.tick, simNow: stream.simNow, arrived: (await streamed(stream, receipts, meta)).length, total: h.ctx.pool.length, left: Math.max(0, h.ctx.pool.length - before(h.s, h.ctx, tick + 1)) } : null });
+      return json(200, { ok: true, sandbox: true, count: receipts.length, at: meta ? meta.at : null, path: meta ? meta.path : null, takenBy: meta ? meta.takenBy || null : null, source: meta ? meta.source || null : null, open: meta && meta.open != null ? meta.open : null, pulledAt: meta ? meta.pulledAt || null : null, stream: h ? { seed: stream.seed, tick: stream.tick, simNow: stream.simNow, arrived: (await streamed(stream, receipts, meta)).length, total: h.ctx.pool.length, left: Math.max(0, h.ctx.pool.length - before(h.s, h.ctx, tick + 1)) } : null });
     }
     // (a stream of the old kind lists nothing: the sorter's next check starts a new one)
     if (stream && stream.on) receipts = playing(stream) ? await streamed(stream, receipts, meta) : [];
@@ -266,7 +273,7 @@ async function serve(event) {
       return json(200, { results: open.slice(offset, offset + PAGE), count: open.length, sandbox: true });
     }
     if (fn === "etsyOrderProxy") {
-      const id = String(q.orderId || ""), s = await loadStream();
+      const id = String(q.orderId || ""), s = stream;
       // with the stream playing, an order read on its own is the one the stream brought (none before it comes), from the
       // stream playing now (another instance may have seen a reset): built again from its number alone, however old.
       // Without it, the snapshot's own; a stream of the old kind has nothing.
