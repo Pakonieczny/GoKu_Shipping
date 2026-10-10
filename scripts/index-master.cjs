@@ -119,6 +119,8 @@ function thumbnailPng(Geom, charm, size, PDF) {
     // a cut silhouette the master drew as a black fill is the cut line, drawn as an outline: a solid body would read as a solid engraving.
     // A black fill INSIDE the charm (m.hatchBlue, stamped by the grouping: charm-nest-pdf.js "a black FILL is blue hatching") is hatching: filled blue below.
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { emit(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
+    // the red edge of thin strips that run across the charm (BASKETBALL_9338's seams, charm-nest-pdf.js "thin strips outlined in red are hatching") is the hatched strip itself: filled blue, no line
+    if (m.hatchStrip && m.hatchBlue && m.stroke && !m.fill) { emit(`<path d="${d}" fill="rgb(0,0,255)" fill-rule="evenodd" stroke="none"/>`); continue; }
     // a cut line is drawn black, as the app's canvas does (charm-nest-pdf.js drawCharm: the outline and every cut-line member get a black pen whatever colour the master gave them)
     const cutPen = m === charm.outline || (Geom.isCutLine && Geom.isCutLine(m));
     const st = m.stroke ? (cutPen ? "#000" : Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none"; emit(`<path d="${d}" fill="${m.fill ? (m.hatchBlue && !m.stroke ? "rgb(0,0,255)" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); }
