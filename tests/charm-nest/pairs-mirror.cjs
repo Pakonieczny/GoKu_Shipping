@@ -3,8 +3,8 @@
 // Offline, deterministic, nothing paid, no network, no Firestore. Proves, with the real modules (charm-nest-pair.js, charm-nest-solver.js, charm-nest-pdf.js, charm-nest-export.js):
 //  A  the Right of a matching pair is the EXACT mirror of the Left (cut line, hole, hoop, engraving, bits, hole direction), the mirror of the mirror is the original, the original is untouched
 //  B  text is not reversed (a text member of a mirrored charm is the very same object, as drawn; a facing a person set turns with the mirror)
-//  C  which piece is mirrored: unknown facing = the Left as drawn and the Right turned; a person's facing; a design that reads one way (letters, numbers, "X") is cut as drawn;
-//     singles, necklaces, discs and letters are never mirrored; old records without side, mirror or facing still work
+//  C  which piece is mirrored: unknown facing = the Left as drawn and the Right turned; a person's facing; letters, initials, numbers and an old facing "X" are mirrored like any other earring
+//     (Paul, 10 Oct 2026: the "reads one way" exemption is gone; see pairs-lettermirror.cjs); singles, necklaces and discs (no side) are never mirrored; old records without side, mirror or facing still work
 //  D  a mismatched pair turns each body to its own ear; a symmetric design gives identical-looking pieces
 //  E  the facing method: symmetric -> nothing to decide; a directional shape with no word is UNKNOWN (no guess); a person wins; the second body is read from the first
 //  F  the nester never reflects: no mirror code in the solver, lookahead, GPU, workers; a pair placed under every rotation is still a mirror pair; a Right is never a rotation of its Left
@@ -95,10 +95,10 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
   const neck = Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, spec: { quantity: 1, pieceCount: 3, form: 'necklace' } }, c);
   ok(neck.length === 3 && neck.every(p => p.side === null && p.mirror === false), 'C6 three discs or charms on a necklace: three pieces, no side, never mirrored');
   ok(Pair.piecesFor({ receiptId: 1, transactionId: 2, quantity: 1, form: 'necklace' }, c).every(p => !p.mirror && p.side === null), 'C7 a pendant is never mirrored');
-  // a design that reads one way is cut as drawn on both sides
+  // a design that "reads one way" is mirrored too (Paul, 10 Oct 2026, 15:42: every earring pair is a Left and an exact-mirror Right, letters, initials and numbers included)
   const X = Object.assign(design(), { facing: 'X' });
-  ok(Pair.readsOneWay(X) && Pair.facingOf(X) === null && sideWord(Pair.piecesFor(ear, X)) === 'L,R', 'C8 facing "X" (reads one way): a Left and a Right, both cut as drawn');
-  ok(sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'ALPHABET LETTER A' }))) === 'L,R' && sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'BIBLE SCRIPTURE (HUGGIE)' }))) === 'L,R', 'C9 a design named a letter or scripture is cut as drawn');
+  ok(Pair.facingOf(X) === null && sideWord(Pair.piecesFor(ear, X)) === 'L,Rm', 'C8 an old facing "X" no longer stops mirroring: a Left and a mirrored Right');
+  ok(sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'ALPHABET LETTER A' }))) === 'L,Rm' && sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'BIBLE SCRIPTURE (HUGGIE)' }))) === 'L,Rm', 'C9 a design named a letter or scripture is mirrored on an earring pair');
   ok(sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'HEART LOVE LETTER' }))) === 'L,Rm' && sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'PIRATE SWORD' }))) === 'L,Rm', 'C10 LOVE LETTER and SWORD are pictures, not lettering: still mirrored');
   ok(sideWord(Pair.piecesFor(ear, Object.assign(design(), { sku: 'INITIAL M', facing: 'L' }))) === 'L,Rm', 'C11 a person who says it faces left stands over the name');
   ok(Pair.readsOneWay({ sku: 'NUMBER 7' }) && !Pair.readsOneWay({ sku: 'MITTENS 1' }) && !Pair.readsOneWay(null), 'C12 readsOneWay on an entry, a plain name, nothing');
@@ -313,8 +313,8 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
     const ctl = Pair.facingControl;
     ok(ctl({ sku: 'A', sym: 'directional' }).show && ctl({ sku: 'A', sym: 'directional' }).value === '' && !ctl({ sku: 'A', sym: 'symmetric' }).show && !ctl({ sku: 'A', sym: 'slight' }).show && !ctl({ sku: 'A' }).show, 'H1 the box is shown for a directional design only (a symmetric one or one not measured yet shows nothing)');
     ok(ctl({ sku: 'A', sym: 'symmetric', facing: 'R' }).show && ctl({ sku: 'A', facing: 'X' }).value === 'X' && ctl({ sku: 'A' }, 'directional').show && ctl(null).show === false, 'H2 a word a person set stays visible and can be changed; the page may bring its own measure; nothing at all shows nothing');
-    ok(ctl({ sku: 'A', facing: 'sideways', sym: 'directional' }).value === '' && ctl({}).options.map(o => o[0]).join() === ',L,R,X', 'H3 four choices (not set, left, right, reads one way); junk is "not set"');
-    ok(ctl({ sku: 'INITIAL LETTER A', sym: 'directional' }).options[0][1] === 'reads one way (name)' && ctl({ sku: 'INITIAL LETTER A', sym: 'directional', facing: 'L' }).options[0][1] === 'faces: not set' && ctl({ sku: 'MITTEN', sym: 'directional' }).options[0][1] === 'faces: not set', 'H3b a lettering SKU says it is already cut as drawn; a word a person set, or any other design, reads "not set"');
+    ok(ctl({ sku: 'A', facing: 'sideways', sym: 'directional' }).value === '' && ctl({}).options.map(o => o[0]).join() === ',L,R' && ctl({ sku: 'A', facing: 'X' }).options.map(o => o[0]).join() === ',L,R,X', 'H3 three choices (not set, left, right: "reads one way" is not offered any more, it would stop nothing); a record that still holds X shows it so it can be cleared; junk is "not set"');
+    ok(ctl({ sku: 'INITIAL LETTER A', sym: 'directional' }).options[0][1] === 'faces: not set' && ctl({ sku: 'INITIAL LETTER A', sym: 'directional', facing: 'L' }).options[0][1] === 'faces: not set' && ctl({ sku: 'MITTEN', sym: 'directional' }).options[0][1] === 'faces: not set' && /no longer used/.test(ctl({ sku: 'A', facing: 'X' }).options[3][1]) && !/reads one way|cut as drawn/.test(ctl({ sku: 'A', sym: 'directional' }).hint), 'H3b a lettering SKU is a design like any other (not set); the leftover X says it is no longer used; the explanation no longer promises a design is cut as drawn');
     const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
     const a = bridge.indexOf('    const heldSym = e =>'), b = bridge.indexOf('    grid.innerHTML = shown.map(d => {', a);
     ok(a > 0 && b > a, 'H4 the Master card code is where the test expects it');
@@ -326,7 +326,7 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
     const Bf = { pool: { sources: new Map([['pathA', holder], ['pathCS', holder], ['pathCL', holder], ['pathE', { charms: [design()] }]]) } };
     const M = mk({ CharmNestPair: Pair }, fakePool, Bf, esc, sku => entries[sku]);
     const html = M.facesBox(entries.D, 'D'), none = M.facesBox(entries.B, 'B'), set = M.facesBox(entries.A, 'A|A2');
-    ok(/^<select data-faces="D"/.test(html) && /<option value="" selected>faces: not set<\/option>/.test(html) && /value="L">faces left/.test(html) && /value="R">faces right/.test(html) && /value="X">reads one way/.test(html) && /title="Which way the master file draws/.test(html), 'H5 a directional design gets the box with its four words and its explanation: ' + html.slice(0, 120));
+    ok(/^<select data-faces="D"/.test(html) && /<option value="" selected>faces: not set<\/option>/.test(html) && /value="L">faces left/.test(html) && /value="R">faces right/.test(html) && !/value="X"/.test(html) && /title="Which way the master file draws/.test(html), 'H5 a directional design gets the box with its three words (no "reads one way") and its explanation: ' + html.slice(0, 120));
     ok(none === '' && /<option value="R" selected>/.test(set) && /data-faces="A\|A2"/.test(set), 'H6 a symmetric design gets nothing, one a person set shows the word (the box saves for every SKU of the charm)');
     ok(M.facesBox({ sku: 'E' }, 'E') !== '' && M.facesBox({ sku: 'Q' }, 'Q') === '', 'H7 a design with no measure yet is judged from the copy the page already holds (a mitten is directional), and shown nothing when there is none');
     // the handler: saves through patchMany for every SKU, tells the held copy, says "from now on"; a failure puts the old word back and says so

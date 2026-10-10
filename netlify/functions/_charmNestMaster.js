@@ -25,12 +25,12 @@ function cleanPair(p) {
   return { v: 1, bodies, mismatched: p.mismatched === true };
 }
 
-/** The optional `facing` of a design (Paul, amendment 2): the way the master drawing faces, "L" or "R" (or "X": it reads one way, never turned over). Same shape as `pair`:
+/** The optional `facing` of a design (Paul, amendment 2): the way the master drawing faces, "L" or "R" (or "X": the old "reads one way" word, kept if a record holds it; it no longer stops a Right being turned over). Same shape as `pair`:
     undefined = says nothing (what is stored stays), null = take it away, anything else that is not "L" or "R" is ignored. */
 function cleanFacing(f) {
   if (f === undefined) return undefined;
   if (f === null) return null;
-  return f === "L" || f === "R" || f === "X" ? f : undefined;   // "X": a person says the design reads one way (letters, numbers, words) and is never turned over
+  return f === "L" || f === "R" || f === "X" ? f : undefined;   // "X": the old "reads one way" word (letters, numbers); stored values are kept, but nothing reads them any more (Paul, 10 Oct 2026: every earring pair is mirrored)
 }
 
 /** The optional `facings` of a MISMATCHED design (a left body and a right body under one SKU): the way each body faces as a person said it, a flat list of "L" | "R" | null (null = not said),
