@@ -286,14 +286,28 @@
   const PAIR_FORMS = new Set(["earrings", "earring", "pair", "pair of earrings", "stud", "studs", "stud earrings", "hoop", "hoops", "hoop earrings", "huggie", "huggies", "huggie earrings", "huggie hoops", "huggie charm set"]);
   const formOf = line => String((line && ((line.spec && line.spec.form) || line.form || (line.row && line.row.spec && line.row.spec.form))) || "").toLowerCase().trim();
   const pairSpecOf = line => line && ((line.spec && line.spec.pair) || line.pair || (line.row && line.row.spec && line.row.spec.pair)) || null;
+  /** A line that is NOT an earring line and not a single earring either: a necklace, pendant, bracelet, key ring or charm-only line (Paul, 10 Oct 2026: only earring pairs are
+   *  a Left and a Right; everything else is never split into two ears or mirrored, even when its design draws two bodies). The intake's own answer wins (spec.pair.earring false
+   *  and not single); a line the intake never read (no spec.pair) says it with its own form (a form that is no earring form) or its own title (it names another product and no earring word). */
+  const OTHER_PRODUCT = /\b(?:necklaces?|pendants?|bracelets?|anklets?|key\s*(?:chains?|rings?)|keychains?|chokers?)\b/i, EAR_WORDS = /\b(?:ear\s?rings?|studs?|huggies|huggie|hoops?)\b/i;
+  function plainLine(line) {
+    if (!line || typeof line !== "object") return false;
+    const pr = pairSpecOf(line);
+    if (pr && typeof pr.earring === "boolean") return pr.earring === false && !pr.single;
+    if (pr && pr.kind) return false;
+    const form = formOf(line);
+    if (form) return !PAIR_FORMS.has(form) && form !== "earring-single" && form !== "single earring" && form !== "single";
+    const title = String(line.title || "");
+    return OTHER_PRODUCT.test(title) && !EAR_WORDS.test([title].concat((Array.isArray(line.variations) ? line.variations : []).map(v => v && (v.value != null ? v.value : v.formatted_value))).filter(Boolean).join(" "));
+  }
   /** Is this line an earring PAIR (its pieces are a Left and a Right)? The intake's own answer wins (spec.pair.earring, which is true only for an earring pair line
    *  that is not a mismatched design counted as one glued copy and not an old line pinned to the pieces it already has); else spec.pair.kind; else a mismatched
-   *  design is; else the form decides. */
+   *  design is, unless the line is a necklace, pendant, bracelet, key ring or charm (plainLine); else the form decides. */
   function isEarringPair(line, charm) {
     const pr = pairSpecOf(line);
     if (pr && typeof pr.earring === "boolean") return pr.earring === true && !pr.glued && !pr.legacy;
     if (pr && pr.kind) return pr.kind === "pair" || pr.kind === "mismatched";
-    if (charm && isMismatched(charm)) return true;
+    if (charm && isMismatched(charm)) return !plainLine(line);
     return PAIR_FORMS.has(formOf(line));
   }
   /** The side the intake gave each piece, in order (spec.pair.sides: "L" | "R" | null each, a flat array), or null when the line carries none. */
@@ -318,7 +332,7 @@
   function piecesFor(line, charm, opts) {
     const key = groupKey(line), total = pieceCountOf(line, charm), pr = pairSpecOf(line), out = [];
     // a mismatched design (by its geometry, or because the intake says so) is two bodies, unless the line is one glued copy per unit or an old line pinned to the pieces it had
-    const mis = !(pr && (pr.glued || pr.legacy)) && ((!!charm && isMismatched(charm)) || !!(pr && pr.mismatched === true));
+    const mis = !(pr && (pr.glued || pr.legacy)) && !plainLine(line) && ((!!charm && isMismatched(charm)) || !!(pr && pr.mismatched === true));
     const pair = total >= 2 && isEarringPair(line, charm);
     let said = sidesSaid(line);   // (the intake's own sides win; without them the pieces alternate L, R)
     if (!said && total === 1 && pr && pr.single && (pr.sideSaid === "L" || pr.sideSaid === "R")) said = [pr.sideSaid];   // a single earring that names its ear
@@ -342,7 +356,7 @@
       return "multi";
     }
     if (pr && /^(single|pair|mismatched|multi)$/.test(pr.kind || "")) return pr.kind;   // the intake's own answer
-    const mis = !!charm && isMismatched(charm);
+    const mis = !!charm && isMismatched(charm) && !plainLine(line);   // (a necklace, pendant or charm of a two-body design is no pair: Paul, 10 Oct)
     if (mis) return total === 2 ? "mismatched" : total <= 1 ? "mismatched" : "multi";   // (one glued copy of a mismatched design is still the mismatched kind)
     if (total <= 1) return "single";
     return total === 2 ? "pair" : "multi";
@@ -882,7 +896,7 @@
     BODY_MIN_PT, RING_MAX_PT, SECOND_BODY_MIN_RATIO,
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet, isGroupLine, groupSizeOf, inGroup, sharedKey,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
-    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, charmOfBody,
+    facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, plainLine, charmOfBody,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, entryFields, heldPair, keepPairs,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };

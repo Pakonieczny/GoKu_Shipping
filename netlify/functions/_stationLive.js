@@ -276,6 +276,9 @@ async function archives(ctx, rids) {
  *  charm: each such piece becomes a Left piece and a Right piece of one group, both marked `both` (the design's picture draws both bodies, so the console
  *  shows ONE tile "Left + Right"), and the order's piece count grows by one per piece split. A piece the page already gave a side is left as it is. No read:
  *  the master documents are the ones dress() reads for the thumbnails. */
+/** The line's title names another product (a necklace, pendant, bracelet, anklet, key ring) and no earring word (Paul, 10 Oct 2026: only an earring pair is a Left and a Right,
+ *  whatever its design draws; a Wolf necklace whose design file holds two bodies is ONE piece, and the console tells it as one, never "Left + Right"). */
+const notEarringLabel = label => { const t = String(label || ""); return /\b(?:necklaces?|pendants?|bracelets?|anklets?|key\s*(?:chains?|rings?)|keychains?|chokers?)\b/i.test(t) && !/\b(?:ear\s?rings?|studs?|huggies|huggie|hoops?)\b/i.test(t); };
 function expandPairs(c, M) {
   if (!c || !Array.isArray(c.pieces) || !c.pieces.length) return;
   const out = [], list = c.pieces; let added = 0;
@@ -290,7 +293,7 @@ function expandPairs(c, M) {
   list.forEach((p, i) => {
     const mm = p.sku && M ? M.get(String(p.sku).toUpperCase()) : null;
     const room = out.length + 2 + (list.length - i - 1) <= MAX_PIECES;     // (what follows is kept whole too)
-    if (p.side || !mm || !mm.pair || !mm.pair.mismatched || mm.pair.bodies !== 2 || !room) { out.push(p); return; }
+    if (p.side || !mm || !mm.pair || !mm.pair.mismatched || mm.pair.bodies !== 2 || !room || notEarringLabel(p.label)) { out.push(p); return; }
     const grp = groupOfPiece(p);
     for (const side of ["L", "R"]) { const q = Object.assign({}, p, { id: String(p.id || "p") + "-" + side, side, both: true, of: 2, n: side === "L" ? 1 : 2 }); if (grp) q.grp = grp; out.push(q); }
     added++;
