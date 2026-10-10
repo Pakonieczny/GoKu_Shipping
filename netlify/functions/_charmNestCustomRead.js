@@ -246,7 +246,7 @@ async function decide(db, FV, b, sandbox) {
   try { for (let i = 0; i < keys.length; i += 100) (await db.getAll(...keys.slice(i, i + 100).map(k => db.collection(COLL).doc(k)))).forEach((d, j) => { const x = d.exists ? d.data() || {} : {}; was.set(keys[i + j], (x[field] && x[field].kind) || null); }); }
   catch (e) { was.clear(); console.warn("[customRead] decisions not read for the timeline:", e.message || e); }
   const batch = db.batch();
-  for (const key of keys) batch.set(db.collection(COLL).doc(key), { [field]: rec || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
+  for (const key of keys) batch.set(db.collection(COLL).doc(key), Object.assign({ [field]: rec || FV.delete() }, sandbox ? {} : { updatedAt: FV.serverTimestamp() }), { merge: true });   // (the sandbox adds its own field and nothing else: the line's shared record stays as production keeps it, and the sandbox wipe takes the field away again)
   await batch.commit();
   await stampDecisions(db, FV, keys.filter(k => !was.has(k) || was.get(k) !== kind), was, kind, rec, b, sandbox);
   return { ok: true, decided: rec, keys };

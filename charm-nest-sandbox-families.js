@@ -121,6 +121,8 @@
       return f ? { kind: "family", key: f.key } : null;
     }
     const coll = p.split("/")[0], id = p.split("/")[1] || "";
+    const named = SERVER.find(x => x.store === "doc" && x.docs && x.collection === coll && x.docs.includes(id));   // (a document the sandbox alone writes in a shared collection: config/charmNestPartialsSandbox)
+    if (named) return { kind: "family", key: named.key };
     const k = PROTECTED.find(x => x.store === "firestore" && (x.key === coll || x.also === coll || p === x.key || p.startsWith(x.key + "/")));
     if (k) return { kind: "protected", key: k.key };
     if (coll.startsWith(PREFIX)) { const f = SERVER.find(x => x.store === "firestore" && PREFIX + x.key === coll); return f ? { kind: "family", key: f.key } : null; }

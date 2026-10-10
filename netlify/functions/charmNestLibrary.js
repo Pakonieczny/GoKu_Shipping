@@ -523,7 +523,8 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    the documents themselves: the safety net for a write that did not move the revision. The slow check that records seals asks the
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
 const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; production only, as that one is: the sandbox keeps no counter, a leftover of every reset, and its readers ask in full)
-const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "sandboxCancel", "sandboxPut", "sandboxReset", "purgeHistory"]);
+// (the sandbox-only ops are not here: they write Sandbox_ records only, whatever the request says, so not even a sandbox request without its flag moves the production counter)
+const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory"]);
 /** The Library's revision now (its update time), "0" before the first write, null when it cannot be read (the reader then asks in full). */
 async function readRev() {
   if (PREFIX) return null;
@@ -1053,7 +1054,7 @@ async function op_startJob(b) {
   const job = b.job; if (!job || !Array.isArray(job.pieces) || !job.pieces.length) return { error: "no job" };
   if (job.pieces.length > 400) return { error: "too many pieces" };
   const id = "job-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  await db.collection(JOBS).doc(id).set({ id, sheetId: str(b.sheetId, 80), status: "pending", trials: 0, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(), pieceCount: job.pieces.length });
+  await db.collection(JOBS).doc(id).set(Object.assign({ id, sheetId: str(b.sheetId, 80), status: "pending", trials: 0, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(), pieceCount: job.pieces.length }, PREFIX ? { sandbox: true } : {}));   // (the jobs collection is shared: a sandbox job says so, and the sandbox wipe deletes only those)
   const fetch = require("node-fetch");
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
   fetch(`${base}/.netlify/functions/charmNestSolve-background`, { method: "POST", headers: { "Content-Type": "application/json", "X-Charm-Nest-Job": id }, body: JSON.stringify({ id, job }) }).catch(err => console.warn("[charmNestLibrary] background kick failed", err.message));
@@ -1678,23 +1679,23 @@ async function op_sandboxStatus(b) {
   const doc = await db.collection(SANDBOX).doc("current").get(), set = pulled(doc.exists ? doc.data() : null);
   // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
   if (b && b.light === true) return { ok: true, light: true, snapshot: set, records: {} };
-  const counts = {}, capped = {}, id = admin.firestore.FieldPath.documentId(), jobs = [];
+  const counts = {}, capped = {}, kept = {}, jobs = [];
   const count = q => q.count().get().then(s => s.data().count);
+  // each count is asked on its own and all at once; one that cannot be read is null (the page says so), never the whole answer lost
+  const ask = (into, key, fn) => jobs.push(Promise.resolve().then(fn).then(n => { into[key] = n; }, e => { console.warn("[charmNestLibrary] sandbox count of", key, "failed:", e && e.message); into[key] = null; }));
   const budget = SandboxPull.readBudget().catch(() => null);   // (one read of Charm_Sandbox/pulls, the pull budget ledger)
-  const ask = (key, p) => jobs.push(Promise.resolve(p).then(n => { counts[key] = n; }, e => { console.warn("[charmNestLibrary] sandbox count of", key, "failed:", e && e.message); counts[key] = null; }));
   for (const f of Families.server()) {
-    if (f.store === "firestore") ask(f.key, count(db.collection("Sandbox_" + f.key)));
-    else if (f.store === "shared" && f.idPrefix) ask(f.key, count(db.collection(f.collection).where(id, ">=", f.idPrefix).where(id, "<", idAfter(f.idPrefix))));
-    else if (f.store === "shared" && f.field) ask(f.key, count(db.collection(f.collection).where(f.field + ".kind", "in", require("./_charmNestCustomRead").KINDS)));
-    else if (f.store === "doc" && f.keepDocs) ask(f.key, db.collection(f.collection).select().get().then(s => s.docs.filter(d => !f.keepDocs.includes(d.id)).length));
-    else if (f.store === "doc" && f.docs) ask(f.key, Promise.all(f.docs.map(n => db.collection(f.collection).doc(n).get())).then(l => l.filter(d => d.exists).length));
-    else if (f.store === "storage") ask(f.key, admin.storage().bucket().getFiles({ prefix: f.prefix, autoPaginate: false, maxResults: 1000 }).then(([list, next]) => { if (next && next.pageToken) capped[f.key] = true; return list.filter(x => !(f.keep || []).some(k => x.name.startsWith(k))).length; }));
+    if (f.store === "firestore") ask(counts, f.key, () => count(db.collection("Sandbox_" + f.key)));
+    else if (f.store === "shared" && f.idPrefix) ask(counts, f.key, () => { const id = admin.firestore.FieldPath.documentId(); return count(db.collection(f.collection).where(id, ">=", f.idPrefix).where(id, "<", idAfter(f.idPrefix))); });
+    else if (f.store === "shared" && f.flag) ask(counts, f.key, () => count(db.collection(f.collection).where(Object.keys(f.flag)[0], "==", Object.values(f.flag)[0])));
+    else if (f.store === "shared" && f.field) ask(counts, f.key, () => count(db.collection(f.collection).where(f.field + ".kind", "in", require("./_charmNestCustomRead").KINDS)));
+    else if (f.store === "doc" && f.keepDocs) ask(counts, f.key, () => db.collection(f.collection).select().get().then(s => s.docs.filter(d => !f.keepDocs.includes(d.id)).length));
+    else if (f.store === "doc" && f.docs) ask(counts, f.key, () => Promise.all(f.docs.map(n => db.collection(f.collection).doc(n).get())).then(l => l.filter(d => d.exists).length));
+    else if (f.store === "storage") ask(counts, f.key, () => admin.storage().bucket().getFiles({ prefix: f.prefix, autoPaginate: false, maxResults: 1000 }).then(([list, next]) => { if (next && next.pageToken) capped[f.key] = true; return list.filter(x => !(f.keep || []).some(k => x.name.startsWith(k))).length; }));
   }
-  const kept = {};
-  const keep = (name, p) => jobs.push(Promise.resolve(p).then(n => { kept[name] = n; }, () => { kept[name] = null; }));
-  keep("charmRepo", count(db.collection("Charm_Master_Index")));                    // the Charm repo's designs (one document each)
-  keep("efficiencyDays", count(db.collection("Efficiency_Daily")));                 // employee efficiency: one daily rollup per person per day
-  keep("efficiencySandboxDays", count(db.collection("Sandbox_Efficiency_Daily")));  // the same, as the sandbox's stations wrote them (kept too)
+  ask(kept, "charmRepo", () => count(db.collection("Charm_Master_Index")));                    // the Charm repo's designs (one document each)
+  ask(kept, "efficiencyDays", () => count(db.collection("Efficiency_Daily")));                 // employee efficiency: one daily rollup per person per day
+  ask(kept, "efficiencySandboxDays", () => count(db.collection("Sandbox_Efficiency_Daily")));  // the same, as the sandbox's stations wrote them (kept too)
   await Promise.all(jobs);
   return { ok: true, snapshot: set, budget: await budget, records: counts, recordsCapped: capped, kept };
 }
@@ -1768,14 +1769,20 @@ async function sandboxWipe(budgetMs) {
         if (doomed.length) { const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += doomed.length; }
         after = s.docs[s.docs.length - 1].id; if (s.size < 300) break;
       }
+    } else if (f.flag) {
+      // a shared collection whose sandbox documents say so (the nesting jobs: sandbox:true): only those, a page at a time
+      const [k, v] = Object.entries(f.flag)[0];
+      if (!(await wipe(db.collection(f.collection).where(k, "==", v)))) return more();
     } else if (f.field) {
       // the readings of lines are shared with production and stay, and so does production's own decision (decided); the
       // sandbox's decision beside them (decidedSandbox) is the rehearsal's and goes with it, or the replay of the same real
       // order meets its line already decided and its timeline says so
       for (const KINDS = require("./_charmNestCustomRead").KINDS;;) {
         if (late()) return more();
-        const s = await db.collection(f.collection).where(f.field + ".kind", "in", KINDS).select().limit(300).get(); if (s.empty) break;
-        const batch = db.batch(); s.docs.forEach(d => batch.update(d.ref, { [f.field]: FV.delete() })); await batch.commit(); deleted += s.size;
+        const s = await db.collection(f.collection).where(f.field + ".kind", "in", KINDS).limit(300).get(); if (s.empty) break;
+        // a record the sandbox created alone (nothing but its own field, and the time older builds stamped) goes whole; one production also
+        // holds (a reading, its decision) only loses the sandbox's field
+        const batch = db.batch(); s.docs.forEach(d => { const own = Object.keys(d.data() || {}).filter(k => k !== f.field && k !== "updatedAt"); own.length ? batch.update(d.ref, { [f.field]: FV.delete() }) : batch.delete(d.ref); }); await batch.commit(); deleted += s.size;
         if (s.size < 300) break;
       }
     }
