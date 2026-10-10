@@ -314,7 +314,7 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   // F7 · a line that says two designs but names one waits; a person's answer settles it, for this line only
   const mis = (extra, c) => row(Object.assign({ title: 'Mismatched Tennis Ball and Racket Huggie Hoops', sku: 'A', variations: [V('HOOP SIZE', '8.5mm')] }, extra), c);
   const m0 = mis({}), p0 = m0.spec.problems.find(x => x.pairSecond);
-  ok(p0 && p0.kind === 'needsMapping' && p0.optionName === 'Two designs on this line' && p0.optionValue === '4170000001/5200000001', 'F7: the line waits with a pairSecond question, one per line'); ok(/names one/.test(p0.pairSecond.why), 'in one plain line');
+  ok(p0 && p0.kind === 'needsMapping' && p0.optionName === 'Two designs on this line' && p0.optionValue === '4170000001/5200000001', 'F7: the line waits with a pairSecond question, one per line'); ok(/two different designs/.test(p0.pairSecond.why) && /no single master design reads as either/.test(p0.pairSecond.why), 'in one plain line');
   eq(m0.spec.pair.second.answered, '', 'asked, not answered'); eq(counts(m0).pieces, 2, 'meanwhile it counts the pair (2)');
   const same = mis({}, ctx({ optionMaps: { '1718': { 'two designs on this line': { '4170000001/5200000001': { field: 'ignore', value: null } } } } }));
   eq([same.spec.problems.some(x => x.pairSecond), same.spec.pair.second.answered, counts(same).pieces, counts(same).sides], [false, 'same', 2, 'LR'], 'F7: answered "the same on both ears": nothing left to ask, a matching pair');
