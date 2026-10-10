@@ -247,7 +247,9 @@ PT.use(Pair);
     ok(/3 pieces · 2 orders/.test(counts.pairPlain), 'a pair + a plain line: 3 pieces, 2 orders: ' + counts.pairPlain);
     ok(/5 pieces · 2 orders/.test(counts.twoPairsPlain), 'two pairs + a plain line: 5 pieces, 2 orders: ' + counts.twoPairsPlain);
     ok(/3 pieces · 2 orders/.test(counts.misPlain), 'a mismatched pair + a plain line: 3 pieces, 2 orders: ' + counts.misPlain);
-    ok(/2 pieces · 2 orders/.test(counts.plainPlain4) && /2 pieces · 2 orders/.test(counts.singlePlain) && /2 pieces · 2 orders/.test(counts.discsPlain), 'a plain line, a quantity-4 line, a single named ear and a disc necklace count as the one line they always did: ' + [counts.plainPlain4, counts.singlePlain, counts.discsPlain].join(' | '));
+    ok(/2 pieces · 2 orders/.test(counts.plainPlain4) && /2 pieces · 2 orders/.test(counts.singlePlain), 'a plain line, a quantity-4 line and a single named ear count as the one line they always did: ' + [counts.plainPlain4, counts.singlePlain].join(' | '));
+    // (DISCREAD 3: a counted line, "3 discs", is its 3 pieces wherever the app says how many, the count the pipeline cuts: it used to count as one line)
+    ok(/4 pieces · 2 orders/.test(counts.discsPlain), 'a 3-disc necklace + a plain line: 3 + 1 pieces, 2 orders: ' + counts.discsPlain);
     ok(/8 pieces · 4 orders/.test(counts.mixed), 'a mixed group adds them up: ' + counts.mixed);
     ok(/6 pieces · 2 orders/.test(counts.pairs), 'two pair orders are 2 orders and 6 pieces, never "2 pieces": ' + counts.pairs);
     // a line of TWO separate designs (order 4171010675's shape: Left Tennis Ball, Right Tennis Racket): ONE row, the two designs side by side, each its own size, a Left and a Right chip

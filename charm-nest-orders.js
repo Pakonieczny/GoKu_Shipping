@@ -1149,6 +1149,18 @@
     if (own > 0) return own;
     return unitsOf(x) * perUnitOf(pairOf(x));
   }
+  /** A COUNTED line ("ROSEGOLD - 2 Disc", "3 discs": n separate pieces of ONE necklace, more than the Etsy quantity says): { total, qty, noun } with total = pieceCountOf (the count the
+   *  pipeline cuts, engraves and puts on sheets), qty = the Etsy quantity, noun = "disc" when the option named discs, else "piece". null for every other line: an earring pair, a single,
+   *  a plain quantity-N line (pieces = quantity), an old glued record. Every place that SAYS how many pieces such a line is reads this (DISCREAD 3), so none says "1 piece" for two discs. */
+  function countedPieces(x) {
+    try {
+      const sp = (x && x.spec) || {}, pr = sp.pair, pc = Math.floor(+sp.pieceCount), q = unitsOf(x);
+      if (!pr || pr.kind !== "multi" || pr.earring || pr.glued || !(pc >= 2) || pc <= q) return null;
+      return { total: pc, qty: q, noun: pr.discs > 0 && pr.discs * q === pc ? "disc" : "piece" };
+    } catch (_) { return null; }
+  }
+  /** What a counted line adds to its Etsy quantity in words: " · 2 discs" (Quantity 1 · 2 discs); "" for every other line. */
+  const countedFact = x => { const c = countedPieces(x); return c ? ` · ${c.total} ${c.noun}s` : ""; };
   /** The pieces of a line in order: [{ n, of, unit, side, bodyIndex }] (flat). An earring pair is a Left then a Right for every unit (L R L R),
    *  matching or mismatched (bodyIndex 0 then 1 for a mismatched design's own bodies); a single earring has the side its line names, or null;
    *  a glued mismatched copy, discs, letters and charms: no side. A piece an old line already has carries no side. */
@@ -1743,7 +1755,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_RULES, fontById, fontRead, fontParts, isFontOption,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,

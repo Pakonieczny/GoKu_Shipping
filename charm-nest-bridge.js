@@ -734,7 +734,11 @@ const CNLive = window.CNLive = (() => {
 })();
 const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + O.pieceCountOf(r), 0); } catch (_) { return 0; } };   // (the one count of a line's pieces: CharmNestOrders.pieceCountOf)
 /** The pieces a list of lines stands for in a scope note ("3 orders · 6 pieces"): an earring pair is its Left and its Right for every unit (the one count, CharmNestOrders.pieceCountOf), every other line counts as the ONE it always did (ROWLISTS, 10 Oct 2026: a pair is 1 order and 2 pieces, never "2 orders"). */
-const groupPieces = rows => { try { return (rows || []).reduce((n, r) => n + (earPairRow(r) ? Math.max(1, Math.round(+O.pieceCountOf(r)) || 1) : 1), 0); } catch (_) { return (rows || []).length; } };
+/** A COUNTED line ("2 Disc", "3 discs": n pieces of one necklace): { total, qty, noun } from CharmNestOrders.countedPieces, null for every other line (a pair, a single, a plain quantity-N line: they say what they said). */
+const countedOf = row => { try { return O.countedPieces(row); } catch (_) { return null; } };
+/** The pieces one line counts for in a list's note: a counted line is its n pieces, every other line the one it always was (DISCREAD 3). */
+const lineTotal = row => { const c = countedOf(row); return c ? c.total : 1; };
+const groupPieces = rows => { try { return (rows || []).reduce((n, r) => n + (earPairRow(r) ? Math.max(1, Math.round(+O.pieceCountOf(r)) || 1) : lineTotal(r)), 0); } catch (_) { return (rows || []).length; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
    asked at the first approval, decision or label), the one every other sorter event carries. Nobody named: by "" with
@@ -884,7 +888,7 @@ const LiveStrip = window.LiveStrip = (() => {
 const Ladder = window.Ladder = (() => {
   const STEPS = [
     { id: "pull", label: "Pull", covers: ["pull", "claim"], tab: "orders",
-      count: () => { const n = Orders.rows().filter(r => r.state !== "gone").length; return n ? `${n} piece${n === 1 ? "" : "s"}` : ""; } },
+      count: () => { const n = Orders.rows().filter(r => r.state !== "gone").reduce((m, r) => m + lineTotal(r), 0); return n ? `${n} piece${n === 1 ? "" : "s"}` : ""; } },
     { id: "pool", label: "Pool", covers: ["pool", "plan"], tab: "orders",
       count: () => { const n = Orders.rows().filter(r => r.poolIds && r.poolIds.length).length; return n ? `${n} on the cards` : ""; } },
     { id: "nest", label: "Nest", covers: ["nest"], tab: "nest",
@@ -917,7 +921,7 @@ const Ladder = window.Ladder = (() => {
     const { r, here, revN, engN } = shape();
     if (!r) {
       // no run: the ladder still answers "what is here" — the library, the pull, and what the library is missing
-      const pulled = Orders.rows().filter(x => x.state !== "gone").length;
+      const pulled = Orders.rows().filter(x => x.state !== "gone").reduce((m, x) => m + lineTotal(x), 0);
       const miss = Master.missingCount ? Master.missingCount() : 0;
       host.innerHTML = `<div class="ldBand ldIdle"><b>No run open</b><span>${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library</span></div>`
         + `<div class="ldRows">`
@@ -2045,7 +2049,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : ""} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -8686,10 +8690,10 @@ const RunCtl = window.RunCtl = (() => {
    *  any other row one, as the banner always counted. */
   function bannerPieces(x) {
     try {
-      const CP = window.CharmNestPair; if (!x || !CP || typeof CP.isEarringPair !== "function") return 1;
+      const CP = window.CharmNestPair; if (!x || !CP || typeof CP.isEarringPair !== "function") return lineTotal(x);
       const sp = x.spec || {}, sku = sp.designSku || (x.line && x.line.sku) || "", e = sku && window.Master && Master.entryFor ? Master.entryFor(sku) : null;
       const arg = { form: sp.form || "", spec: sp, quantity: sp.quantity || (x.line && x.line.quantity) || 1 };
-      return CP.isEarringPair(arg, e) ? Math.max(1, CP.pieceCountOf(arg, e) || 1) : 1;
+      return CP.isEarringPair(arg, e) ? Math.max(1, CP.pieceCountOf(arg, e) || 1) : lineTotal(x);   // (a counted line, "2 Disc", is its 2 pieces: DISCREAD 3)
     } catch (_) { return 1; }
   }
   function stepDetail(r) {
@@ -12759,7 +12763,7 @@ const OrderWin = window.OrderWin = (() => {
       t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>`;
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
-    const qty = sibs.reduce((n, x) => n + (pairSides(x).length || +((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);   // (a mismatched pair is two pieces for every unit: its Left and its Right)
+    const qty = sibs.reduce((n, x) => n + (pairSides(x).length || (countedOf(x) || {}).total || +((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);   // (a mismatched pair is two pieces for every unit: its Left and its Right; a counted line, "2 Disc", is its 2 pieces: the count the pipeline uses)
     let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
     // (an order still being read: what is known of it, and a skeleton where the rest is coming)
     const sub = byId("owSub"), buyer = r.order.buyer && r.order.buyer.name;
@@ -12856,7 +12860,7 @@ const OrderWin = window.OrderWin = (() => {
       (placed ? mcell("Purchased", when(placed)) : r.arrivedAt ? mcell("Arrived", when(r.arrivedAt)) : "") +
       (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name + (r.order.isGift ? " · gift" : "")) : r.order.isGift ? mcell("Gift", "yes") : "") +
       (sp.special ? mcell("Custom order", sp.special.label + (sp.special.read && !sp.special.decided ? ` · Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "") + (sp.special.why ? " · " + sp.special.why : "")) : sp.customDone ? mcell("Custom order", sp.customDone.category || "completed") : "") +
-      mcell("Quantity", pairSides(r).length ? `${sp.quantity || r.line.quantity || 1} pair${(sp.quantity || r.line.quantity || 1) > 1 ? "s" : ""} · ${pairSides(r).length} pieces: Left and Right` : String(sp.quantity || r.line.quantity || 1)) +
+      mcell("Quantity", pairSides(r).length ? `${sp.quantity || r.line.quantity || 1} pair${(sp.quantity || r.line.quantity || 1) > 1 ? "s" : ""} · ${pairSides(r).length} pieces: Left and Right` : String(sp.quantity || r.line.quantity || 1) + O.countedFact(r)) +
       (pairSides(r).length ? mcell("Pair", ListMedia.pairRow(r) ? "Mismatched: the Left and the Right are different charms of one listing" : "Matching: the Right is the Left turned over (its mirror image)") : "") +
       // (what the intake says of the piece count in plain words: an old line already pooled keeps its pieces and the note says what the rule gives now; the pair's own notes)
       (() => { const notes = [sp.pieceNote].concat(sp.pair && Array.isArray(sp.pair.notes) ? sp.pair.notes : []).filter(x => typeof x === "string" && x.trim()); return notes.length ? mcell("Pieces", notes.join(" ")) : ""; })() +
@@ -12996,7 +13000,7 @@ const OrderWin = window.OrderWin = (() => {
      slowest piece is, each step saying how many pieces reached it. One piece: one row, nothing to pick. OrderWin.selectPiece(key|null)
      and OrderWin.selectedPiece() are the same thing for other code. */
   const pieceName = x => String((x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
-  const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? ` · ×${p.qty}` : "");
+  const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? (p.counted ? ` · ${p.qty} pieces` : ` · ×${p.qty}`) : "");   // (a counted line, "2 Disc", says "2 pieces": ×2 reads as two copies of one charm)
   /** The Left and the Right of a MISMATCHED pair line (OrderPieces entries that carry a side), [] for every other line: a single, a matching pair, discs, an old glued record. */
   function pairSides(x) {
     const ps = window.OrderPieces && x && x.order ? tryDo(() => OrderPieces.ofRow(x)) : null, l = (ps || []).filter(p => p && (p.side === "L" || p.side === "R"));
@@ -13022,7 +13026,7 @@ const OrderWin = window.OrderWin = (() => {
       const pcs = sides ? 0 : (() => { try { return Math.max(1, Math.round(+O.pieceCountOf(x)) || 1); } catch (_) { return 0; } })();
       return Object.assign({ key: x.key, tid, qty: pcs || Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
-        line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {});
+        line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {}, !sides && countedOf(x) ? { counted: true } : {});
     });
   }
   /** The pieces of an order of several, told to the timeline's two mounts (the header's rail, the Timeline). Which one is shown is picked on
@@ -13284,7 +13288,7 @@ const OrderWin = window.OrderWin = (() => {
         (all ? `<button type="button" class="nm owPcName" title="Show only this order line">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
         pieceStatusHtml(sx, ssp, { inButton: false }) + act + pieceDotsHtml(sx, rid) + `</div>`;
     }).join("");
-    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : list[0] && list[0].sides ? "Its pieces" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + sum.each.map(x => {
+    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : list[0] && (list[0].sides || list[0].counted) ? "Its pieces" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + sum.each.map(x => {
       const slow = all && x.D.step === sum.step;
       if (x.p.sides && sideEach) return sideRows(x, slow);
       const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;

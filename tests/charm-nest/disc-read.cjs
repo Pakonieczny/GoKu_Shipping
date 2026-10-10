@@ -155,13 +155,33 @@ const realLine = (rid, metalKey, personalization) => {
   });
   eq([font > 0, held], [true, 0], `${font} lines with an option named for a font (Font, Fonts, Font Choice): none is held for it`); }
 
+// ── 7 · the count people read (DISCREAD 3): a counted line says 2 pieces / 3 pieces wherever it says how many; every other line says what it always said ──────────────────
+{ const Core = require('../../charm-nest-order-pieces.js');
+  const L = (vars, q, title) => world('4170000002', { transactionId: '66', listingId: '9', sku: 'NECK_1', title: title || 'Initial Necklace', quantity: q || 1, metalKey: 'gold', metalLabel: 'Gold', personalization: [], variations: (vars || []).map(([a, b]) => V(a, b)) });
+  const say = w => [O.countedPieces(w.row), O.countedFact(w.row)];
+  eq(say(L([['Necklace Options', 'ROSEGOLD - 2 Disc']])), [{ total: 2, qty: 1, noun: 'disc' }, ' · 2 discs'], '2 Disc: 2 pieces, "Quantity 1 · 2 discs"');
+  eq(say(L([['Necklace Options', 'GOLD - 3 Disc']]))[1], ' · 3 discs', '3 Disc: 3 discs');
+  eq(say(L([['Necklace Options', 'GOLD - 2 Disc']], 2)), [{ total: 4, qty: 2, noun: 'disc' }, ' · 4 discs'], 'two necklaces of 2 discs: 4 pieces (the count the pipeline cuts)');
+  eq(say(L([['Set', 'Set of 3 charms']])), [{ total: 3, qty: 1, noun: 'piece' }, ' · 3 pieces'], 'a count of charms says pieces, not discs');
+  const earr = L([['Style', 'Stud']], 1, 'Stud Earrings'); ok(earr.spec.pair.earring, 'precondition: the earring line is an earring pair');
+  for (const [what, w] of [['a single', L()], ['a plain quantity-3 line', L([], 3)], ['"1 Disc"', L([['Necklace Options', 'GOLD - 1 Disc']])], ['an earring pair', earr], ['a pair of 2', L([['Style', 'Stud']], 2, 'Stud Earrings')]])
+    eq(say(w), [null, ''], `${what}: not counted, nothing added to its words`);
+  eq([O.countedPieces(null), O.countedPieces({}), O.countedFact(undefined)], [null, null, ''], 'no line, no count');
+  // before the line is pooled it has no pool ids: the pieces of the order are still its 2 (the hook is the intake's count); a plain quantity-3 line and a line without the hook are as they were
+  const lineOf = w => ({ key: w.row.key, transactionId: '66', quantity: w.spec.quantity, poolIds: [], state: 'pulled', problems: [], spec: { pieceCount: w.spec.pieceCount, pair: w.spec.pair }, sku: 'NECK_1' });
+  const pieces = (w, hook) => Core.resolve(Object.assign({ orderId: '4170000002', lines: [lineOf(w)], pools: [], sheets: [], sheetsKnown: true }, hook ? { countOf: l => { const c = O.countedPieces(l); return c ? c.total : 0; } } : {})).length;
+  const d2 = L([['Necklace Options', 'ROSEGOLD - 2 Disc']]), q3 = L([], 3);
+  eq([pieces(d2, false), pieces(d2, true), pieces(q3, false), pieces(q3, true)], [1, 2, 3, 3], 'OrderPieces: a counted line not pooled yet is 2 pieces (it was 1); a plain quantity-3 line is 3 either way'); }
+
 // ── 6 · the bridge uses all of it ────────────────────────────────────────────────────────────────────────────────────────────────────────
 { const b = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
   const split = b.indexOf('const discSplit = discWordsOf(row, jobs);'), paid = b.indexOf('agentCall("engraveIntent"');
   ok(split > 0 && paid > split, 'a counted line whose note is plain is read BEFORE the paid reader (no paid call for it)');
   ok(/if \(O\.questionGone && O\.questionGone\(row, prev\)\) \{ row\.state = "pulled"; row\.reason = null; delete row\.poolTry; \}/.test(b), 'interpretAll releases a line held for a question that is gone');
   ok(/O\.staleQuestionHold && O\.staleQuestionHold\(row\)/.test(b), "the order window's record row does too");
+  ok(/const qty = sibs\.reduce\(\(n, x\) => n \+ \(pairSides\(x\)\.length \|\| \(countedOf\(x\) \|\| \{\}\)\.total \|\|/.test(b) && /O\.countedFact\(r\)\} · <span class="due/.test(b) && /String\(sp\.quantity \|\| r\.line\.quantity \|\| 1\) \+ O\.countedFact\(r\)/.test(b), 'the order window header, its Quantity cell and the list row read the counted line');
   const h = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-  for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr1 (other workers add theirs after it)`); }
+  for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr1 (other workers add theirs after it)`);
+  for (const f of ['charm-nest-orders.js', 'charm-nest-order-pieces.js', 'charm-nest-order-hold.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr2(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr2 (other workers add theirs after it)`); }
 
 console.log(`disc-read: ${n} checks passed`);
