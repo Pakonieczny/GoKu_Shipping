@@ -3792,12 +3792,14 @@ const Gate = window.Gate = (() => {
   /** A sheet in a set the open run no longer makes: a committed set, the set of a saved sheet, the set of a finished run. The Library edits such a set from
    *  the records (LibraryFlow, below); the run's own Include cannot touch it. */
   const fixedSet = sh => !!sh.sheetId && (committedSheet(sh) || (inSetNow(sh) && !membershipEditable(sh)));
-  /** The committed set a person took this saved sheet out of (its hold says "Taken out of Set N", its history names the set): null for any other sheet. */
+  /** The set a person took this saved sheet out of (a hold on it, and its history's last word on its membership is "taken out of" that set): null for any other sheet. */
   function leftSetOf(d) {
     const h = d && d.laserHold;
-    if (!h || !(+h.at > 0) || !/^Taken out of /.test(String(h.note || "")) || (d.setId && !d.draft)) return null;
-    const e = [...(Array.isArray(d.flowHistory) ? d.flowHistory : [])].reverse().find(x => x && x.type === "setLeave" && x.setId);
-    return e ? String(e.setId) : null;
+    if (!h || !(+h.at > 0) || (d.setId && !d.draft)) return null;
+    // (Paul, 10 Oct) the hold may be a person's own, kept when the sheet was taken out: what counts is that the last thing that happened to its membership was a "taken out"
+    const e = [...(Array.isArray(d.flowHistory) ? d.flowHistory : [])].reverse().find(x => x && (x.type === "setLeave" || x.type === "setJoin"));
+    if (!e || e.type !== "setLeave" || !e.setId) return null;
+    return String(e.setId);
   }
   function projectLibraryRecords(rows) {
     window.Cleanups?.seen(rows);   // a sheet here whose record carries a cleanup this page has not applied gets it
@@ -3975,6 +3977,31 @@ const Gate = window.Gate = (() => {
     finally { SETEDIT.busy = null; sh._incBusy = null; }
     try { refreshMembership(); } catch (e) { console.warn("[In current set]", e); }   // every card follows the truth, the switch with them
     if (line) sayNo(node, line);
+  }
+  /** The open run on this screen lets a sheet go from the set it is still making (the Library's drop on In progress, Paul 10 Oct: "I should be able to move it completely freely").
+   *  The Library has already had the server check the rules and write the hold and the "taken out" record. The sheet is marked as taken out of its set and made a draft, and the run's own
+   *  assembly (assembleNow) does the rest, as it does for a sheet that stops qualifying: the pieces back to ready, the membership saved, the set's sheet list, order lines and labels made
+   *  again. Throws, with the page as it was, when the run keeps the sheet in the set (it is being changed in its window, the order rule pulls it, the run is busy or finished). */
+  async function leaveSet(sheetId) {
+    const run = B.run, sh = allSheets().find(p => p.sheetId === sheetId && !p.recalled);
+    if (!run || !sh || sh.runId !== run.runId) throw new Error("This sheet is not on a page of the open run on this screen");
+    if (["complete", "abandoned"].includes(run.status)) throw new Error("This run is finished");
+    if (committing(run)) throw new Error("The set is being committed. Try again soon.");
+    if (committedSheet(sh)) throw new Error("Its set was sent to the station: take it out of there, not here");
+    if (!inSetNow(sh)) return;
+    const was = { leftSet: sh.leftSet, draft: sh.draft, solidPick: sh.solidPick }, setId = sh.setId, undo = () => { sh.leftSet = was.leftSet; sh.draft = was.draft; sh.solidPick = was.solidPick; };
+    sh.leftSet = setId; sh.draft = true;      // (draft first: basePolicy keeps a sheet out only while it is not in its set now)
+    if (solid(sh.metal)) sh.solidPick = false;   // (10K, 14K: its own tick is off, as it is for a sheet taken out of a committed set)
+    try { await assemble(run); }
+    catch (e) { undo(); throw e; }
+    if (sh.setId) {      // (assembleNow lets a sheet go by clearing its set)
+      const why = holding(sh) ? "it is being changed in its sheet window" : sh.cardinalPull ? "an order on it is shared with another sheet of the set" : "the run keeps it";
+      undo();
+      throw new Error(`The sheet could not be taken out of the set: ${why}`);
+    }
+    run.membershipDirty = false;
+    try { await RunCtl.save(run); } catch (_) { /* saved with the run's next save */ }
+    Session.schedule(); try { refreshMembership(); } catch (_) { /* every card follows at its next refresh */ }
   }
   async function flush(run) {
     // A save that failed (the network down, a 5xx, the cloud offline) is tried once more here. Its error used to be thrown
@@ -4809,7 +4836,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -7530,7 +7557,18 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
   const patch=(rec,id)=>{if(rec){record(rec);patchRow(rec);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  /** Why a drop of this sheet or set on Laser cutting (or on Completed, through it) cannot work now, in the words of its card's own grey Approve button ('' when it can be approved, or when a
+   *  press can do the rest by itself). The Library's dock reads it, so a place that cannot take the item says why right where it is dropped (Paul, 10 Oct: never a vague word). */
+  function moveBlock(item){
+    try{
+      if(!item || !item.id)return '';
+      const card=[...document.querySelectorAll('.setCard[data-laser-card]')].find(c=>item.kind==='set'?c._laserSet?.setId===item.id:(c._laserSheets || []).includes(item.id));
+      if(!card)return '';
+      const real=card.dataset.laserCard==='set' && realSet(card._laserSet),c=real?setCase(card):approveCase([records.get(item.id)]);
+      return c && c.why ? String(c.why) : '';
+    }catch(_){return '';}
+  }
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */

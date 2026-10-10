@@ -48,7 +48,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     include: async (id, o) => { joins.push({ id, ...o }); st.put(S, id, { draft: false, setId: o.setId || 'set-9', setSeq: 3 }); },
     live: id => id === 'live1' ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true, byHand: true }, split: [] } : id === 'opn-1' ? { runHere: true, draft: false, dispatchSetId: 'set-3', can: { ok: true } }
       : /^rg-(new|line)$/.test(id) ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true }, rose: { full: false }, split: [] } : id === 'rg-full' ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true }, rose: { full: true }, split: [] }
-      : id === 'cmt-2' ? { runHere: false, draft: false, dispatchSetId: 'set-3', can: { ok: false, reason: 'It is not on a page of the open run.' }, split: [] } : null
+      : id === 'cmt-2' ? { runHere: false, sent: true, draft: false, dispatchSetId: 'set-3', can: { ok: false, reason: 'It is not on a page of the open run.' }, split: [] } : null
   });
   const held = id => !!(st.doc(S, id).laserHold && st.doc(S, id).laserHold.at);
   const area = async (kind, id) => (await LF.plan({ kind, id, to: { area: 'nowhere' } })).from.area;
@@ -270,10 +270,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     LF.configure({ rose: () => null, roseJoin: null }); LF.hooks.roseJoin = null;
 
     // ── I. a sheet out of a committed or finished set: the exact reason, and the way through ──
+    // (Paul, 10 Oct: a sheet moves freely unless it breaks a rule; "Set 4 is committed: take it out first" was a refusal for a sheet that could move. Set 4 holds only this sheet, so the
+    //  reason now is the one that is true: a set is never emptied. The free moves out of a committed set are in library-drag-free.cjs.)
     p = await LF.plan({ kind: 'sheet', id: 'cmt-2', to: { set: 'set-3' } }); assert.equal(p.ok, false);
-    const lc = p.needs.find(x => x.key === 'leaveCommitted'); assert(lc && /Set 4 is committed/.test(lc.label) && lc.label.split(' ').length <= 7 && /out of Set 4 first/.test(lc.detail) && /In progress/.test(lc.detail), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
-    r = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet', 'roseSet'] }); assert.equal(r.ok, false, 'no yes key lifts a block'); assert(/Set 4 is committed/.test(r.error) && /In progress/.test(r.error));
-    p = await LF.plan({ kind: 'sheet', id: 'cmt-1', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'leaveCommitted'), 'a sheet of a committed set of a finished run: the same plain reason');
+    const lc = p.needs.find(x => x.key === 'lastSheet'); assert(lc && /GF Sheet 1 is all that is in Set 4/.test(lc.label), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet', 'roseSet'] }); assert.equal(r.ok, false, 'no yes key lifts a block'); assert(/all that is in Set 4/.test(r.error));
+    p = await LF.plan({ kind: 'sheet', id: 'cmt-1', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'fixedSet' && /Only a sheet of the open run/.test(x.label)), 'a sheet of a committed set of a finished run: the plain reason, no "committed" word');
     p = await LF.plan({ kind: 'sheet', id: 'rg-cut', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCut' && /permanent/.test(x.detail) && /stays in the set it was cut in/.test(x.detail)), JSON.stringify(p.needs));
     st.put(S, 'solo', { laserDoneAt: now - 100 }); p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCompleted' && /cut record/.test(x.detail)), JSON.stringify(p.needs)); st.doc(S, 'solo').laserDoneAt = undefined;
 
