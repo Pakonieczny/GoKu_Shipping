@@ -157,6 +157,12 @@
       // twin beside a stroked outline adds nothing: that outline already cuts the line.
       const cutFill=!!path.cutSilhouette && path.fill && !path.stroke;
       if(cutFill && path.cutSilhouette==='twin')continue;
+      // Black line art the grouping read as hatching (charm-nest-pdf.js "black LINE ART is blue hatching") is a blue HATCH of the area its line covers, never a hairline polyline.
+      if(path.hatchLine && path.hatchBlue && path.stroke && !path.fill) {
+        const loops=vector().filled({subpaths:pdf().lineAreaOf(path),paintOp:'f*'});
+        if(loops.length){const color=rgb([0,0,1]);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
+        continue;
+      }
       if(path.fill && !cutFill) {
         const loops=vector().filled(path);
         if(loops.length) {const color=rgb(path.hatchBlue?[0,0,1]:path.fillRGB);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}

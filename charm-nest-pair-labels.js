@@ -175,7 +175,8 @@
       let list = null; try { list = P.piecesFor(row, entry || undefined); } catch (_) { list = null; }
       if (list && list.length >= 1 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;   // (one piece with a side: a single earring that names its ear prints that ear's sticker)
     }
-    if (mismatchedDesign(entry)) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
+    // (a mismatched design is a pair whatever the form says, EXCEPT on a line that is no earring line: a necklace, pendant, bracelet, key ring or charm of a two-body design prints its one sticker, Paul, 10 Oct)
+    if (mismatchedDesign(entry) && !(P && typeof P.plainLine === "function" && P.plainLine(row))) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
     return null;
   }
 

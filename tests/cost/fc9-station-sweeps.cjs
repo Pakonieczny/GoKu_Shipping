@@ -45,7 +45,7 @@ const snapshot = Array.from({ length: N }, (_, i) => receipt(3521000101 + i, 400
   await page.goto(`${sorterOrigin}/charm-nest-1.html`); await booted(); await settle();
   const snapPath = 'charmnest/sandbox/orders-fc9.json', snapAt = Date.now();
   st.blobs.set(snapPath, { buf: Buffer.from(JSON.stringify({ at: snapAt, count: snapshot.length, receipts: snapshot })), generation: 1, meta: { contentType: 'application/json', metadata: {} } });
-  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: snapAt, takenBy: 'test' });
+  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: snapAt, takenBy: 'test', source: 'etsy-pull' });
   await settle({ sandbox: 'on', sandboxStream: 'on', sandboxSpeed: 1000, sandboxSeed: 3 });
   await page.evaluate(() => sessionStorage.setItem('cn.sandboxAutoPull', '1'));
   const c0 = st.calls.length, t0 = Date.now(); await page.reload(); await booted();

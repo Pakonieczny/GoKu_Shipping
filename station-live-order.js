@@ -65,8 +65,8 @@
   /** the SKU itself says mismatched (MISMATCHED, MISMATCHED_7134) */
   const skuSays = t => SAYS.test(skuOf(t));
   /** the line's own words name earrings (title or a chosen option): the guard that keeps a note or a SKU on a charm, a necklace or a disc line from making a pair of it */
-  const EAR_WORDS = /\b(?:ear\s?rings?|studs?|huggies?)\b/i, HOOP_WORD = /\bhoops?\b/i, OTHER_PRODUCT = /\b(?:necklaces?|pendants?|bracelets?|anklets?|key\s*(?:chains?|rings?)|keychains?|chokers?)\b/i;
-  // (a bare "hoop" in a title that names another product, "Gold Hoop Charm Necklace Pendant", says nothing about earrings: the same rule as CharmNestOrders.lineSignals; a hoop in a chosen option still does)
+  const EAR_WORDS = /\b(?:ear[\s-]?rings?|earings?|studs?|huggies)\b/i, HOOP_WORD = /\b(?:hoops?|hugg(?:ie|y))\b/i, OTHER_PRODUCT = /\b(?:necklaces?|pendants?|bracelets?|anklets?|key\s*(?:chains?|rings?)|keychains?|chokers?)\b/i;
+  // (a bare "hoop" or "huggie" in a title that names another product, "Gold Hoop Charm Necklace Pendant", says nothing about earrings: the same rule as CharmNestOrders.lineSignals; one in a chosen option still does)
   const earWords = t => { try { const title = String((t && t.title) || ""), opts = (Array.isArray(t && t.variations) ? t.variations.map(v => v && (v.formatted_value != null ? v.formatted_value : v.value)) : []).filter(Boolean).join(" "), all = title + " " + opts; return EAR_WORDS.test(all) || (HOOP_WORD.test(all) && !(OTHER_PRODUCT.test(title) && !HOOP_WORD.test(opts))); } catch (_) { return false; } };
   /* A line is a mismatched pair only when it is a pair of EARRINGS (ADVCOUNT, 9 Oct: a necklace charm whose SKU is "CAT(+FISH) - Cat Only", a necklace with the option "Silver • 2 symbols"
      or a note "not mismatched" was told "Pair: Left + Right" and printed a LEFT and a RIGHT sticker). What the buyer's words say (a two-designs option, a Left / Right option name, a

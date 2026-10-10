@@ -29,7 +29,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   // ── fixtures ──
   mkSet('set-1', ['mem-1', 'mem-2']); mkSet('set-2', ['cmt-1'], { status: 'complete', committedAt: now - 1000 }); mkSet('set-3', ['opn-1'], { status: 'open', runId: 'run-live' });
   mk('solo', {}); mk('noqr', { noLabel: true }); mk('noback', { needsBack: true }); mk('nosave', { unsavedBack: true }); mk('draft', { draft: true });
-  mk('mem-1', { setId: 'set-1', setSeq: 1, sheetIndex: 1 }); mk('mem-2', { setId: 'set-1', setSeq: 1, sheetIndex: 2, verification: { ok: false } });
+  mk('mem-1', { setId: 'set-1', setSeq: 1, sheetIndex: 1, releaseFull: true }); mk('mem-2', { setId: 'set-1', setSeq: 1, sheetIndex: 2, metal: 'silver', releaseFull: true, verification: { ok: false } });   // (a set holds a completed GF and a completed SS sheet: charm-nest-set-rules.js)
   mk('cmt-1', { setId: 'set-2', setSeq: 2 });
   mk('rose', { metal: 'rose', roseStockId: 'stock-1', noLabel: false });
   mk('live1', { draft: true, runId: 'run-live' });

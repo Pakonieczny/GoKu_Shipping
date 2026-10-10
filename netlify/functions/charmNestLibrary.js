@@ -1587,7 +1587,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "listingSkus", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
-  "sandboxCancel", "sandboxPut", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
+  "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -1654,20 +1654,27 @@ async function readOrderPieces(rd, ids, sheetIds) {
 /* ── the sandbox snapshot: what the emulated Etsy serves (etsySandbox.js). The sorter uploads the JSON through
    charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
 const SANDBOX = "Charm_Sandbox";
-async function op_sandboxPut(b) {
-  const path = str(b.path, 300); if (!/^charmnest\/sandbox\//.test(path)) return { error: "the snapshot must live under charmnest/sandbox/" };
-  const [exists] = await admin.storage().bucket().file(path).exists(); if (!exists) return { error: "no such snapshot file: " + path };
-  const doc = { path, count: num(b.count) || 0, at: num(b.at) || Date.now(), takenBy: str(b.takenBy, 80) || null, note: str(b.note, 200) || null, updatedAt: FV.serverTimestamp() };
-  await db.collection(SANDBOX).doc("current").set(doc);
-  return { ok: true, snapshot: doc };
+/* The Sep 17 style snapshot (the sorter uploaded a copy of the open orders and recorded it here) is retired as a source (Paul,
+   10 Oct 2026): the sandbox always pulls the 250 newest Etsy orders (sandboxPullOrders, _charmNestSandboxPull.js), a pull
+   replaces the previous set completely, and only a pointer written by a pull (source "etsy-pull") is ever served or played. */
+const SandboxPull = require("./_charmNestSandboxPull");
+const pulled = d => (d && d.source === SandboxPull.SOURCE ? d : null);   // a pointer that is not a pull (an old snapshot) is no set
+async function op_sandboxPut() {
+  return { ok: false, error: "The sandbox snapshot is retired: the sandbox pulls the 250 newest Etsy orders each time it starts (op sandboxPullOrders).", reason: "retired", status: 410 };
+}
+/** The sandbox pulls the 250 newest Etsy receipts (see _charmNestSandboxPull.js and plans/sandbox-wipe-1010/ETSYPULL-contract.md). */
+async function op_sandboxPullOrders(b) {
+  if (!PREFIX) return { ok: false, error: "The order pull exists only in the sandbox.", reason: "bad", empty: false, status: 403 };
+  return SandboxPull.pull(b, { stream: op_sandboxStream });
 }
 async function op_sandboxStatus(b) {
-  const doc = await db.collection(SANDBOX).doc("current").get();
+  const doc = await db.collection(SANDBOX).doc("current").get(), set = pulled(doc.exists ? doc.data() : null);
   // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
-  if (b && b.light === true) return { ok: true, light: true, snapshot: doc.exists ? doc.data() : null, records: {} };
+  if (b && b.light === true) return { ok: true, light: true, snapshot: set, records: {} };
   const counts = {}, names = [...SANDBOXED, ...SANDBOX_MAPS];
-  (await Promise.all(names.map(name => db.collection("Sandbox_" + name).count().get()))).forEach((s, i) => { counts[names[i]] = s.data().count; });   // (one aggregation read per 1,000 records of each, asked all at once)
-  return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
+  const [sizes, budget] = await Promise.all([Promise.all(names.map(name => db.collection("Sandbox_" + name).count().get())), SandboxPull.readBudget().catch(() => null)]);
+  sizes.forEach((s, i) => { counts[names[i]] = s.data().count; });   // (one aggregation read per 1,000 records of each, asked all at once)
+  return { ok: true, snapshot: set, budget, records: counts };
 }
 /* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
    in pages, a parent only once its subcollections are empty, and answers more:true when its time is up; the page calls
@@ -1810,10 +1817,10 @@ async function op_sandboxStream(b) {
   if (!["get", "ensure", "tick", "off"].includes(action)) return { error: "unknown stream action: " + action };
   return db.runTransaction(async t => {
     const [cur, snap] = await Promise.all([t.get(ref), t.get(db.collection(SANDBOX).doc("current"))]);
-    const was = cur.exists ? cur.data() : null, path = snap.exists ? snap.data().path : null;
+    const was = cur.exists ? cur.data() : null, set = pulled(snap.exists ? snap.data() : null), path = set ? set.path : null;
     if (action === "get") return { ok: true, stream: was };
     if (action === "off") { if (was && was.on) t.set(ref, Object.assign({}, was, { on: false })); return { ok: true, stream: null }; }
-    if (!path) return { error: "no sandbox snapshot yet: take one first", status: 409 };
+    if (!path) return { error: "no sandbox orders yet: the sandbox pulls the 250 newest Etsy orders when it starts (sandboxPullOrders)", status: 409 };
     const now = Date.now(), speed = Math.max(1, Math.min(1000, Math.round(num(b.speed)) || 50));
     const mine = !!was && was.snapshotPath === path && was.v === STREAM_V;
     let s = mine ? Object.assign({}, was, { on: true, speed }) : null;
@@ -1821,7 +1828,7 @@ async function op_sandboxStream(b) {
     // step asked of a playing stream of the old kind starts the new kind in its place, at step 0
     if (action === "tick" && !(s && was.on) && !(was && was.on && !mine)) return { ok: true, stream: null, advanced: false };
     // a new stream starts at this ten minutes of the real clock; a seed given in Settings replays a recorded one
-    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: await streamTotal(path, Math.max(0, Math.floor(num(snap.data().count)))), startedAt: now, tickAt: now }; }
+    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: set.open != null ? Math.max(0, Math.floor(num(set.open))) : await streamTotal(path, Math.max(0, Math.floor(num(set.count)))), startedAt: now, tickAt: now }; }
     let advanced = false;
     // every order of the snapshot has come by this step: the clock stays here
     const done = !!s.total && streamBrought(s, s.tick) >= s.total;
@@ -2052,6 +2059,10 @@ async function op_setUpdate(b) {
       // (a person's hold back from Laser cutting is about the laser, not about whether this set may be recorded complete)
       const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id,laserHold:null}));
       await productionReadiness(records,{tx});
+      // Paul, 10 Oct: a set is completed (committed) only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; read from the records just read, no extra read);
+      // a set already committed or completed is never refused afterwards
+      const principle=Readiness.setRules(old.exists?old.data():{},records.filter(s=>s.setId===id));   // (the stored set: one already committed or completed is exempt)
+      if(principle.applies && !principle.ok)throw new Error(`Set cannot be completed: ${next.name || 'the set'} ${principle.short}. A set needs at least 1 completed GF sheet and 1 completed SS sheet.`);
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
       // the cardinal rule (charm-nest-shared-orders.js): a set is completed only with every sheet that shares a multi-piece
       // order with one of its own, unless that sheet can no longer join (cut, or in a set already sent to the station)
@@ -3420,7 +3431,7 @@ function cancelCopy(r) {
 }
 const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
-  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
+  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
@@ -3550,7 +3561,7 @@ async function op_flowState(b) {
    hold pieces of the moving sheets' orders (one query by order for each step outwards, a few steps at most), their sets for
    the reasons a sheet cannot change set (cut, completed, set committed), and the core's answer. `to` is {set} or {newSet}. ── */
 const SharedRule = require("../../charm-nest-shared-orders.js").core;
-const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase", "pieceSides"];   // (pieceSides: a record that says which side each piece is, when two bodies of a mismatched pair share an id)
+const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase", "pieceSides", "releaseFull", "placedCount"];   // (pieceSides: a record that says which side each piece is, when two bodies of a mismatched pair share an id)
 const sharedOrdersOf = d => [...new Set((Array.isArray(d.orders) ? d.orders.map(String) : []).concat((Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey)).filter(x => /^\d{1,30}$/.test(x)))];
 /** The sheets that share orders with `seedIds`, outwards (a sheet that shares with a sheet that shares): { sheets: [core sheets], more: true when a cap cut it short }. */
 async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {

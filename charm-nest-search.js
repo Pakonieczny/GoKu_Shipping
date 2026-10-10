@@ -116,7 +116,9 @@
     for (const [rid, c] of IX.cloud) { const e = at(rid); e.cloud = c; if (!e.buyer && c.buyer) e.buyer = c.buyer; for (const x of c.skus) push(e.skus, x); for (const x of c.titles) push(e.titles, x); for (const x of c.listings) push(e.listings, x); if (!e.at) e.at = c.at || 0; }
     for (const e of list) {
       e.buyerL = e.buyer.toLowerCase();
-      e.hay = (e.buyer + "\u0001" + e.skus.join("\u0001") + "\u0001" + e.titles.join("\u0001") + (e.extra ? "\u0001" + e.extra : "")).toLowerCase();
+      // (a SKU Etsy carries misspelled that Paul named, charm-nest-orders.js KNOWN_SKU_TYPOS, is found by its right spelling too: the words only, the SKUs shown stay as the order has them)
+      const O = W.CharmNestOrders, fixed = O && O.knownTypo ? e.skus.map(x => { try { return O.knownTypo(x); } catch (_) { return ""; } }).filter(Boolean) : [];
+      e.hay = (e.buyer + "\u0001" + e.skus.join("\u0001") + (fixed.length ? "\u0001" + fixed.join("\u0001") : "") + "\u0001" + e.titles.join("\u0001") + (e.extra ? "\u0001" + e.extra : "")).toLowerCase();
       e.dig = (e.num && e.num !== e.rid ? e.num + "|" : "") + e.listings.join("|");
     }
     list.sort((a, b2) => b2.at - a.at);                                          // newest first: every pass keeps this order
