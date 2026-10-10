@@ -75,7 +75,7 @@
   const busy = sh => ['nesting', 'finishing', 'queued'].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   const label = sh => { try { if (G.SheetEvents && G.SheetEvents.label) return G.SheetEvents.label(sh); } catch (_) { /* below */ } return `${(CNx().METAL_TAG || {})[sh.metal] || sh.metal} Sheet ${sh.sheetIndex || sh.page || 1}`; };
   const inSet = sh => !!sh.setId && !sh.draft;
-  const newLabel = metal => { const pages = pagesOf(metal); return `${(CNx().METAL_TAG || {})[metal] || metal} Sheet ${Math.max(pages.length, ...pages.map(p => +p.page || 0)) + 1}`; };
+  const newLabel = metal => { const pages = pagesOf(metal); return `${(CNx().METAL_TAG || {})[metal] || metal} ${G.CharmNestSheetName ? 'Draft' : 'Sheet'} ${Math.max(pages.length, ...pages.map(p => +p.page || 0)) + 1}`; };   // (a sheet not made yet is a draft until it joins a set: charm-nest-sheet-name.js)
 
   /** The sheet the order goes on: the one LiveNest.intakePage and attachPool would choose, without making one (null: a new sheet). */
   function pick(metal, rid) {

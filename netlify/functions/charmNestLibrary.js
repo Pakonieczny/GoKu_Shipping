@@ -41,6 +41,7 @@ const admin = require("./firebaseAdmin");
 const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
 const OrderRules = require("../../charm-nest-orders.js");
+const SheetName = require("../../charm-nest-sheet-name.js");   // the one rule for a sheet's number and name (a number is given when a sheet joins a set and is never reused; a name is read from the record)
 const Readiness = require("../../charm-nest-readiness.js");
 const CutLine = require("../../charm-nest-rose.js");   // which metals have a green line (Cut Sheet): Rose Gold, 10K and 14K solid gold
 
@@ -1284,6 +1285,8 @@ const orderOfKey = k => (/^(\d{1,30})_/.exec(String(k || "")) || [])[1] || "";
 /** "GF Sheet 2": a sheet record's metal and number, or those in its file name (GF_Sep.16.26_Set-3_Sheet-1). */
 function sheetLabel(d, name) {
   const f = String(name || (d && (d.fileBase || d.folder)) || ""), m = /^([A-Za-z0-9]+)_.*_Sheet-(\d+)/.exec(f);
+  // a record is named by charm-nest-sheet-name.js ("GF Sheet 3" in a set, "GF Draft 5" outside every set); a bare file name is read as it says
+  if (d && !name && METAL_CODE[d.metal]) return SheetName.name(d);
   const code = (d && METAL_CODE[d.metal]) || (m && m[1]) || "", no = (d && (num(d.sheetIndex) || num(d.page))) || (m && +m[2]) || 0;
   return code && no ? `${code} Sheet ${no}` : f.slice(0, 80);
 }
@@ -2042,6 +2045,8 @@ async function op_setUpdate(b) {
   const ref=col(SETS).doc(id);
   await db.runTransaction(async tx=>{
     const old=await tx.get(ref),patch=keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {})),next={...(old.exists?old.data():{}),...patch};
+    // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
+    if(Object.prototype.hasOwnProperty.call(patch,'sheetNos')){patch.sheetNos=SheetName.mergeNos(old.exists?old.data().sheetNos:null,patch.sheetNos);next.sheetNos=patch.sheetNos;}
     // (Paul, 7 Oct) a committed set whose sheets were added or taken out (its `setEdit`) may hold a sheet that is not ready yet: the set then waits
     // in In progress (readiness is derived from the sheets), and a later save of it by a page is never refused for that
     const editedCommitted=!!(old.exists && old.data().setEdit && SetEdit.committedSet(old.data()));
@@ -2322,7 +2327,7 @@ function historyRows(q, sets, sheets, runs) {
     if (x.archived) continue;
     const meta = OrderRules.libraryGroup(x), key = meta.key;
     if (!groups.has(key)) groups.set(key, { ...meta, day: x.day, runId: x.runId, status: meta.standalone ? "standalone" : meta.working ? "held" : x.status, draft: meta.working, sheets: [], materials: [], orderIds: [], search: [] });
-    const g = groups.get(key); g.sheets.push(Object.assign(slim(x), { orders: (x.orders || []).length, orderIds: x.orders || [], sheetIndex: x.sheetIndex || x.page || 1 }));
+    const g = groups.get(key); g.sheets.push(Object.assign(slim(x), { orders: (x.orders || []).length, orderIds: x.orders || [], sheetIndex: SheetName.numberOf(x) || x.page || 1 }));
     if (!g.materials.includes(x.metal)) g.materials.push(x.metal);
     g.search.push(x.names || "", x.metalLabel || "", ...(x.charms || []).map(c => c.sku || ""));
     g.orderIds.push(...(x.orders || [])); g.updatedAt = Math.max(g.updatedAt || 0, ms(x.updatedAt) || 0); if (x.exact) g.exact = true;
@@ -2461,18 +2466,18 @@ const previewOf = d => (d.outputs && d.outputs.preview && d.outputs.preview.url)
 /** Text as a search compares it: lower case, and "Sep.24.26", "2026-09-24" or "GF_Sep" split into words. */
 const foldText = s => String(s == null ? "" : s).toLowerCase().replace(/[._\-/·,:]+/g, " ").replace(/\s+/g, " ").trim();
 function doneSheetRow(id, d) {
-  return { kind: "sheet", id, metal: d.metal || null, metalLabel: d.metalLabel || null, day: d.day || null, setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || num(d.page) || 1,
+  return { kind: "sheet", id, metal: d.metal || null, metalLabel: d.metalLabel || null, day: d.day || null, setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: SheetName.numberOf(d) || num(d.page) || 1,
     fileBase: d.fileBase || d.folder || null, draft: !!d.draft || d.solidIncluded === false, orders: (d.orders || []).length, pieces: num(d.placedCount), charms: num(d.charmCount), fill: num(d.density),
     preview: previewOf(d), activityAt:Activity.at(d), processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
 }
 function doneSetRow(id, d, members) {
   const live = members.filter(m => m && !m.archived), orders = new Set(live.flatMap(m => (m.orders || []).map(String)));
   return { kind: "set", setId: id, seq: num(d.seq) || null, day: d.day || null, name: d.name || null, materials: (d.materials && d.materials.length ? d.materials : [...new Set(live.map(m => m.metal))]).filter(Boolean), sheetIds: d.sheetIds || [], status: d.status || null,
-    sheets: live.map(m => ({ id: m.id, metal: m.metal || null, sheetIndex: num(m.sheetIndex) || num(m.page) || 1, fill: num(m.density), pieces: num(m.placedCount), orders: (m.orders || []).length, preview: previewOf(m) })).sort((a, b) => String(a.metal).localeCompare(String(b.metal)) || a.sheetIndex - b.sheetIndex),
+    sheets: live.map(m => ({ id: m.id, metal: m.metal || null, sheetIndex: SheetName.numberOf(m) || num(m.page) || 1, fill: num(m.density), pieces: num(m.placedCount), orders: (m.orders || []).length, preview: previewOf(m) })).sort((a, b) => String(a.metal).localeCompare(String(b.metal)) || a.sheetIndex - b.sheetIndex),
     orders: orders.size, pieces: live.reduce((n, m) => n + num(m.placedCount), 0), fill: live.length ? live.reduce((n, m) => n + num(m.density), 0) / live.length : 0,
     activityAt:Activity.at(d), processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
 }
-const sheetHay = (id, d) => [id, d.fileBase, d.folder, d.names, d.day, d.metal, d.metalLabel, METAL_CODE[d.metal], d.setId, d.setSeq ? "set " + d.setSeq : "", "sheet " + (num(d.sheetIndex) || num(d.page) || 1), (d.orders || []).join(" "), (d.listings || []).join(" "), d.laserDoneBy, (d.sources || []).map(s => s && s.name).join(" "), d.laserDoneAt ? new Date(num(d.laserDoneAt)).toISOString().slice(0, 10) : ""].join(" ");
+const sheetHay = (id, d) => [id, d.fileBase, d.folder, d.names, d.day, d.metal, String(d.metalLabel || "").replace(/\s*·\s*sheet\s+\d+$/i, ""), METAL_CODE[d.metal], d.setId, d.setSeq ? "set " + d.setSeq : "", SheetName.name(d).toLowerCase(), (d.orders || []).join(" "), (d.listings || []).join(" "), d.laserDoneBy, (d.sources || []).map(s => s && s.name).join(" "), d.laserDoneAt ? new Date(num(d.laserDoneAt)).toISOString().slice(0, 10) : ""].join(" ");
 /** Each set's sheets, read for what a Completed row shows (and a search reads): [[setId, [sheet…]]]. */
 async function doneMembers(sets, fields) {
   const ids = [...new Set(sets.flatMap(([, d]) => d.sheetIds || []))].filter(isId), read = new Map();
@@ -3714,10 +3719,14 @@ async function applySetMembers(step, by, device, via) {
       const S = sets[id], leave = leaveOf.get(id) || [], join = joinOf.get(id) || [];
       // the number a sheet gets in the set it joins, counting the sheets that joined before it in this call
       const taken = S.members.filter(x => !leave.some(l => l.id === x.id));
-      for (const j of join) { j.sheetIndex = SetEdit.indexFor(j, taken); j.fileBase = OrderRules.sheetName(j.metal, S.doc.day, S.doc.seq, j.sheetIndex); j.label = null; taken.push(j); }
+      // a number the set has given out stays given out: the numbers of every sheet it holds now (the ones leaving too) and the highest it ever gave (its `sheetNos`) are never given again,
+      // and the page in the run is never a number (charm-nest-sheet-name.js). A sheet returning to the set it left takes its own number again when it is free.
+      let nos = SheetName.raise(S.doc.sheetNos, S.members);
+      for (const j of join) { j.sheetIndex = SetEdit.indexFor(j, taken, nos, n => OrderRules.sheetName(j.metal, S.doc.day, S.doc.seq, n)); j.fileBase = OrderRules.sheetName(j.metal, S.doc.day, S.doc.seq, j.sheetIndex); j.label = null; j.draft = false; j.setId = id; nos = SheetName.raise(nos, [j]); taken.push(j); }
       const after = SetEdit.setAfter(S.doc, { leave, join, members: S.members, skus, sides, by, at });
       const stay = S.members.filter(x => !leave.some(l => l.id === x.id)).concat(join);
       const patch = { sheetIds: after.sheetIds, materials: after.materials, orders: after.orders, labelFiles: after.labelFiles, labels: null, setEdit: { at, by }, updatedAt: FV.serverTimestamp() };
+      if (Object.keys(nos).length) patch.sheetNos = nos;
       if (after.committed) patch.committed = after.committed;
       if (after.committedOut) patch.committedOut = after.committedOut;
       const entry = { id: `edit-${at}-${id}`, at, by, type: "setEdit", out: leave.map(l => l.id), in: join.map(j => j.id), note: [leave.length ? `${leave.map(l => sheetLabel(l)).join(", ")} taken out` : "", join.length ? `${join.map(j => sheetLabel(j)).join(", ")} added` : ""].filter(Boolean).join("; ") };
@@ -3729,7 +3738,7 @@ async function applySetMembers(step, by, device, via) {
         process.push(processRecord("set", id, { ...S.doc, laserDoneAt: patch.laserDoneAt, laserDoneBy: patch.laserDoneBy }));
       }
       setPatch.set(id, patch);
-      membership.sets.push({ setId: id, patch: { sheetIds: patch.sheetIds, materials: patch.materials, orders: patch.orders, labelFiles: patch.labelFiles, labels: null, setEdit: patch.setEdit, ...(patch.committed ? { committed: patch.committed } : {}), ...(patch.committedOut ? { committedOut: patch.committedOut } : {}), ...(patch.laserDoneAt ? { laserDoneAt: patch.laserDoneAt, laserDoneBy: patch.laserDoneBy } : {}) } });
+      membership.sets.push({ setId: id, patch: { sheetIds: patch.sheetIds, materials: patch.materials, orders: patch.orders, labelFiles: patch.labelFiles, labels: null, setEdit: patch.setEdit, ...(patch.sheetNos ? { sheetNos: patch.sheetNos } : {}), ...(patch.committed ? { committed: patch.committed } : {}), ...(patch.committedOut ? { committedOut: patch.committedOut } : {}), ...(patch.laserDoneAt ? { laserDoneAt: patch.laserDoneAt, laserDoneBy: patch.laserDoneBy } : {}) } });
     }
     for (const m of moves) {
       const r = rec.get(m.id), from = SetEdit.inSetOf(r);
@@ -3751,7 +3760,7 @@ async function applySetMembers(step, by, device, via) {
       if (hold !== undefined) patch.laserHold = hold; else delete patch.laserHold;
       tx.set(col(SHEETS).doc(m.id), patch, { merge: true });
       membership.sheets.push({ id: m.id, patch: view });
-      changed.push({ id: m.id, to: m.to, from, d: Object.assign({}, r, view) });
+      changed.push({ id: m.id, to: m.to, from, d: Object.assign({}, r, view), was: r });
     }
     for (const [id, patch] of setPatch) tx.update(col(SETS).doc(id), patch);
     return { ok: true, at, changed, process, membership, doneSets };
@@ -3759,7 +3768,7 @@ async function applySetMembers(step, by, device, via) {
   if (res.error) return res;
   if (res.doneSets && res.doneSets.length) DONE_TOUCH = true;
   const events = (res.changed || []).flatMap(c => {
-    const sheet = sheetLabel(c.d), os = SetEdit.orderIdsOf(c.d).slice(0, 300), word = id => setLabel(id) || "its set", kind = c.to ? "setJoin" : "setLeave";
+    const sheet = sheetLabel(c.to ? c.d : c.was), os = SetEdit.orderIdsOf(c.d).slice(0, 300), word = id => setLabel(id) || "its set", kind = c.to ? "setJoin" : "setLeave";
     return os.map(orderId => ({ orderId, type: "note", at: res.at, by, station: "laser", device, sheetId: c.id, sheet, setId: c.to || c.from || "", text: c.to ? `put in ${word(c.to)} · ${sheet}` : `taken out of ${word(c.from)} · ${sheet}`, data: { flow: kind, signedIn: true, via: via || undefined, from: c.from || undefined, to: c.to || undefined }, id: `flow-${kind}-${c.id}-${res.at}` }));
   });
   if (events.length) await stamp(() => events, "set edit");

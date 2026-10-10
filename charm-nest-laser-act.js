@@ -86,7 +86,7 @@
     try {
       if (!sh) return false;
       const id = text(sh.sheetId || sh.id, 40) || "rose";
-      return send("complete", [{ id, rec: sh }], `${(root.CharmNestRose && root.CharmNestRose.cutCode && root.CharmNestRose.cutCode(sh.metal)) || "RG"} Sheet ${Math.max(1, Math.floor(+sh.page) || 1)} cut (Cut Sheet)`, true);
+      return send("complete", [{ id, rec: sh }], `${root.CharmNestSheetName && sh.metal ? root.CharmNestSheetName.name(sh) : `${(root.CharmNestRose && root.CharmNestRose.cutCode && root.CharmNestRose.cutCode(sh.metal)) || "RG"} Sheet ${Math.max(1, Math.floor(+sh.page) || 1)}`} cut (Cut Sheet)`, true);
     } catch (_) { return false; }
   }
 

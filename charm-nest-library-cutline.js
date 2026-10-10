@@ -167,7 +167,7 @@
   }
 
   /* ── the window ── */
-  const labelOf = (id, c) => { const hit = c && (c.sheets || []).find(s => s && s.sheetId === id); if (hit && hit.label) return hit.label; const r = rowOf(id) || liveOf(id); return r ? `${CODE[r.metal] || ''} Sheet ${r.sheetIndex || r.page || 1}`.trim() : 'A sheet'; };
+  const labelOf = (id, c) => { const hit = c && (c.sheets || []).find(s => s && s.sheetId === id); if (hit && hit.label) return hit.label; const r = rowOf(id) || liveOf(id); return r ? (window.CharmNestSheetName ? CharmNestSheetName.name(r) : `${CODE[r.metal] || ''} Sheet ${r.sheetIndex || r.page || 1}`.trim()) : 'A sheet'; };
   function shotOf(id) {
     const c = cardOf(id), pv = c && c.querySelector('img.pv');
     if (!pv || !pv.getAttribute('src')) return null;

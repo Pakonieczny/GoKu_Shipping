@@ -191,6 +191,7 @@
       return 'The set';
     }
     const r = recordOf(id); if (!r) return 'The sheet';
+    if (window.CharmNestSheetName) return window.CharmNestSheetName.name(r);   // (charm-nest-sheet-name.js: "GF Sheet 3" in a set, "GF Draft 5" outside every set)
     return `${CODE[r.metal] ? CODE[r.metal] + ' ' : ''}Sheet ${r.sheetIndex || (typeof sheetNo === 'function' ? sheetNo(r) : 1)}`;
   }
 
@@ -958,10 +959,10 @@
         + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Return the set and its sheets to Laser cutting">Reopen</button>${ICON.chev}`+'</div>'
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
-    const sn = !r.draft && r.setSeq ? r.setSeq : 0;
-    return `<div class="ldItem" data-kind="sheet" data-id="${esc(r.id)}"><div class="ldLine" role="button" tabindex="0" data-m="${esc(r.metal || '')}" title="${esc(r.fileBase || r.id)}" aria-label="${esc(`${CODE[r.metal] || ''} Sheet ${r.sheetIndex || 1}${sn ? ', Set ' + sn : ''}: open`)}">`
+    const sn = !r.draft && r.setSeq ? r.setSeq : 0, cutWord = window.CharmNestSheetName ? window.CharmNestSheetName.short(Object.assign({}, r, { laserDoneAt: r.at || 1 })) : `Sheet ${r.sheetIndex || 1}`;   // (a row in Completed is a cut sheet: it keeps the number its file and label carry)
+    return `<div class="ldItem" data-kind="sheet" data-id="${esc(r.id)}"><div class="ldLine" role="button" tabindex="0" data-m="${esc(r.metal || '')}" title="${esc(r.fileBase || r.id)}" aria-label="${esc(`${CODE[r.metal] || ''} ${cutWord}${sn ? ', Set ' + sn : ''}: open`)}">`
       + thumb(r.preview)
-      + `<span class="ldName">${swatch(metalOf(r), 0)}<b>Sheet ${esc(r.sheetIndex || 1)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
+      + `<span class="ldName">${swatch(metalOf(r), 0)}<b>${esc(cutWord)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span data-ld-pcs="${esc(r.id)}"><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
       + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';
   }

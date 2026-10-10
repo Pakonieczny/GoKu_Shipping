@@ -3322,7 +3322,7 @@ const SheetEvents = window.SheetEvents = (() => {
   };
   const who = () => { try { return employeeName() || ""; } catch (_) { return ""; } };
   const ridOf = c => { if (!c || !c.poolId) return ""; const v = String(c.order || c.orderInfo?.receiptId || "").split("/")[0]; return /^\d{4,}$/.test(v) ? v : ""; };
-  const label = sh => sh ? `${METAL_TAG[sh.metal] || sh.metal || ""} Sheet ${sh.sheetIndex || sh.page || 1}` : "";
+  const label = sh => sh ? (window.CharmNestSheetName ? CharmNestSheetName.name(sh) : `${METAL_TAG[sh.metal] || sh.metal || ""} Sheet ${sh.sheetIndex || sh.page || 1}`) : "";   // (charm-nest-sheet-name.js: "GF Sheet 3" in a set, "GF Draft 5" outside every set)
   const where = sh => ({ sheetId: sh.sheetId || "", sheet: label(sh), setId: sh.setId && !sh.draft ? sh.setId : "", metal: sh.metal });
   /** The orders a sheet holds (its order pieces, placed or waiting): Map rid → { pieces, lineKey, transactionId } */
   function ordersOf(sh) {
@@ -3423,7 +3423,7 @@ const SheetEvents = window.SheetEvents = (() => {
       const at = Date.now(), by = who(), n = {}, out = [];
       for (const rec of recs || []) {
         n[rec.metal] = (n[rec.metal] || 0) + 1;
-        const w = { sheetId: rec.id || "", sheet: `${METAL_TAG[rec.metal] || rec.metal || ""} Sheet ${rec.sheetIndex || n[rec.metal]}`, setId: rec.setId || "", metal: rec.metal };
+        const w = { sheetId: rec.id || "", sheet: window.CharmNestSheetName && rec.sheetIndex ? CharmNestSheetName.name(rec) : `${METAL_TAG[rec.metal] || rec.metal || ""} Sheet ${rec.sheetIndex || n[rec.metal]}`, setId: rec.setId || "", metal: rec.metal };
         for (const rid of [...new Set((rec.orders || []).map(String))]) if (/^\d{4,}$/.test(rid)) out.push(ev("recalled", rid, null, w, { id: `${w.sheetId}-${Math.floor(at / 60000)}`, at, by, text: `${w.sheet} recalled onto the cards${name ? " · " + name : ""}` }));
       }
       send(out);
@@ -3475,7 +3475,7 @@ const Gate = window.Gate = (() => {
   /** The choice, in a small window of its own (the Options panel closes first: never a pop-up over a pop-up). Resolves
    *  to the sheets to change, or null when the person leaves things as they were. */
   function askSplit(sh, included, split) {
-    const name = p => `${labelOf(p.metal)} Sheet ${p.page}`;
+    const name = p => window.CharmNestSheetName ? CharmNestSheetName.name(p) : `${labelOf(p.metal)} Sheet ${p.page}`;
     const buyer = id => { const r = Orders.rows().find(r => String(r.order?.receiptId) === id); return r?.order?.buyer?.name || ""; };
     const others = split.map(x => x.sheet), orders = [...new Set(split.flatMap(x => x.orders))], one = orders.length === 1;
     const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${!x.orders.length ? "shares an order with another of these sheets" : x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
@@ -3534,7 +3534,7 @@ const Gate = window.Gate = (() => {
   /** A released sheet that pieces are taken off keeps its set and gets its label made again (see holding). */
   const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
   const SOrd = () => (window.SharedOrders && window.SharedOrders.fromPage && window.SharedOrders.core) ? window.SharedOrders : null;
-  const sheetNameOf = p => `${labelOf(p.metal)} Sheet ${p.page}`;
+  const sheetNameOf = p => window.CharmNestSheetName ? CharmNestSheetName.name(p) : `${labelOf(p.metal)} Sheet ${p.page}`;
   const ordersWords = (os, tell) => os.length === 1 ? `order ${os[0]}${tell && tell(os[0]) ? ` (${tell(os[0])})` : ""}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
   /** What an order's pieces are, for the one line a held or pulled sheet says: only a mismatched pair (a left and a right earring on the group's sheets) is told; every other order keeps its plain words. */
   const tellOf = (V, ids) => oid => { const sd = new Set(); for (const id of ids) { const n = V.norm.get(id); for (const p of (n && n.pieces) || []) if (p.orderId === oid && p.side) sd.add(p.side); } return sd.has("L") && sd.has("R") ? "its left and right earrings" : ""; };
@@ -3637,6 +3637,7 @@ const Gate = window.Gate = (() => {
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
+      if (window.CharmNestSheetName) set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);   // (the number it had is retired for this set: nobody else is given it, charm-nest-sheet-name.js)
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       try {
         await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
@@ -3662,8 +3663,14 @@ const Gate = window.Gate = (() => {
       }
       const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
-      // after the highest number in use: a sheet that left the set must not leave its number to be taken twice
-      sh.sheetIndex = 1 + Math.max(0, ...allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).map(p => +p.sheetIndex || 0));
+      // after the highest number in use, and after any number that was ever in use in this set (set.sheetNos): a sheet that left the set must not leave its number to be taken twice.
+      // A sheet coming back to the set it left takes its own number again when it is free; its page in the run is never its number (charm-nest-sheet-name.js)
+      if (window.CharmNestSheetName) {
+        const here = allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal);
+        set.sheetNos = CharmNestSheetName.raise(set.sheetNos, allSheets().filter(p => p !== sh && p.setId === set.setId));
+        sh.sheetIndex = CharmNestSheetName.claim(sh, here, set.sheetNos, n => CN.sheetFileBase(Object.assign({}, sh, { sheetIndex: n })));
+        set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);
+      } else sh.sheetIndex = 1 + Math.max(0, ...allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).map(p => +p.sheetIndex || 0));
       sh.fileBase = CN.sheetFileBase(sh);
       set.labels = null;
       // Membership changes reuse verified artwork and approved backs. Only the
@@ -3909,7 +3916,7 @@ const Gate = window.Gate = (() => {
     if (where === "row") to.insertBefore(node, to.querySelector(".engTogHost")); else to.appendChild(node);
   }
   /** The window's title: "RG 14/20 · Set 1 · Sheet 1" (a sheet outside any set has no set in it). */
-  const optionsTitle = sh => `${labelOf(sh.metal)}${sh.setId && !sh.draft && sh.seq != null ? ` · Set ${sh.seq}` : ""} · Sheet ${sh.page || 1}`;
+  const optionsTitle = sh => `${labelOf(sh.metal)}${sh.setId && !sh.draft && sh.seq != null ? ` · Set ${sh.seq}` : ""} · ${window.CharmNestSheetName ? CharmNestSheetName.short(sh) : `Sheet ${sh.page || 1}`}`;
   /** The Options button: the one large window, with this card's own controls mounted in it (OptionsStudio, charm-nest-options-modal.js). */
   function openOptions(sh, node) {
     if (!window.OptionsStudio || !node._optBox) return;
@@ -4020,7 +4027,8 @@ const Gate = window.Gate = (() => {
   const busyPage = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._learnedStarting || !!(p.persisted && !p.persistedDone);
   const mergeable = p => solid(p.metal) && p.charms.length > 0 && modern(p.runId) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p) && !(p.rosePlan || p.roseProtected);   // (a sheet behind a green line keeps its charms where they are)
   const charmsWord = n => `${n} charm${n === 1 ? "" : "s"}`;
-  const sheetsWord = list => list.length === 1 ? `Sheet ${list[0].page}` : `Sheets ${list.slice(0, -1).map(p => p.page).join(", ")} and ${list.at(-1).page}`;
+  const pw = p => window.CharmNestSheetName ? CharmNestSheetName.short(p) : `Sheet ${p.page}`;   // "Sheet 2" in a set, "Draft 2" outside every set (charm-nest-sheet-name.js)
+  const sheetsWord = list => list.length === 1 ? pw(list[0]) : `${list.slice(0, -1).map(pw).join(", ")} and ${pw(list.at(-1))}`;
   const byDate = (a, b) => O.rankDate(a) - O.rankDate(b);   // (a piece of an order released from hold stays ahead: frontAt)
   /** The metal's sheets a merge takes: the first that can still change, and the later ones of its run. null: nothing to merge. */
   function mergePlan(m) {
@@ -4039,9 +4047,9 @@ const Gate = window.Gate = (() => {
   };
   /** What a press will do, in the words the panel asks with. */
   function mergeWords(plan, kind) {
-    const t = plan.target, inSet = plan.pages.some(p => p.setId && !p.draft), rest = plan.sources.length === 1 ? `Sheet ${plan.sources[0].page}` : "the later sheets";
-    if (kind === "move") return `${charmsWord(plan.moving)}${pairsNote(plan.sources)} from ${sheetsWord(plan.sources)} go into Sheet ${t.page}'s free room, oldest orders first. Sheet ${t.page}'s charms stay where they are, and whatever does not fit stays on ${rest}. A sheet left empty is removed.` +
-      (picked(t) ? (inSet ? ` Sheet ${t.page} gets a new QR label once they are placed.` : "") : plan.sources.some(p => picked(p)) ? ` Sheet ${t.page} is not in the current set, so these orders leave it.` : "");
+    const t = plan.target, inSet = plan.pages.some(p => p.setId && !p.draft), rest = plan.sources.length === 1 ? `${pw(plan.sources[0])}` : "the later sheets";
+    if (kind === "move") return `${charmsWord(plan.moving)}${pairsNote(plan.sources)} from ${sheetsWord(plan.sources)} go into ${pw(t)}'s free room, oldest orders first. ${pw(t)}'s charms stay where they are, and whatever does not fit stays on ${rest}. A sheet left empty is removed.` +
+      (picked(t) ? (inSet ? ` ${pw(t)} gets a new QR label once they are placed.` : "") : plan.sources.some(p => picked(p)) ? ` ${pw(t)} is not in the current set, so these orders leave it.` : "");
     return `All ${charmsWord(plan.total)}${pairsNote(plan.pages)} on ${sheetsWord(plan.pages)} are nested again from scratch, oldest orders first, for the tightest packing. A sheet left empty is removed.` + (inSet ? " Sheets in the current set get new QR labels once nested." : "");
   }
   // a sheet that goes: its saved record is archived at the run's next checkpoint (LiveNest.finish), as a repacked open
@@ -4087,7 +4095,7 @@ const Gate = window.Gate = (() => {
       if (B.run !== run || !now || now.target !== t || now.sources.length !== plan.sources.length || now.sources.some((p, i) => p !== plan.sources[i])) throw new Error("the sheets changed meanwhile. Look again and press it once more");
       if (pagesOf(m).some(busyPage)) throw new Error("a sheet of this metal is nesting or saving. Try again when it is done");
       const { sources, pages } = plan, moveIn = kind === "move";
-      st.busy.text = moveIn ? `Moving ${charmsWord(plan.moving)} into Sheet ${t.page}'s free room…` : `Gathering ${charmsWord(plan.total)} onto Sheet ${t.page}…`; repaintMerge(m);
+      st.busy.text = moveIn ? `Moving ${charmsWord(plan.moving)} into ${pw(t)}'s free room…` : `Gathering ${charmsWord(plan.total)} onto ${pw(t)}…`; repaintMerge(m);
       // the picture of the sheets as they stand, for the merge to be seen (it never holds up what follows)
       let seen = null; try { seen = mergeCapture(m, plan, kind); } catch (e) { console.warn("merge sheets: motion", e); }
       if (moveIn) {
@@ -4126,8 +4134,8 @@ const Gate = window.Gate = (() => {
       }
       const prim = S.sheets[m]; if (prim.pages[prim.active] !== t && window.CN?.showPage) window.CN.showPage(m, prim.pages.indexOf(t));
       t._byHand = true; startNest(t);
-      agent({ metal: m, run: run?.runId }, "nest", moveIn ? `Merged by hand: ${charmsWord(plan.moving)} from ${sheetsWord(sources)} go into Sheet ${t.page}'s free room, oldest orders first; its charms stay where they are, and what does not fit stays on ${sheetsWord(sources.slice(0, 1))}` : `Re-nest by hand: ${charmsWord(plan.total)} of ${sheetsWord(pages)} nested again from scratch from Sheet ${t.page} on, oldest orders first`);
-      st.busy.text = `Nesting Sheet ${t.page}…`;
+      agent({ metal: m, run: run?.runId }, "nest", moveIn ? `Merged by hand: ${charmsWord(plan.moving)} from ${sheetsWord(sources)} go into ${pw(t)}'s free room, oldest orders first; its charms stay where they are, and what does not fit stays on ${sheetsWord(sources.slice(0, 1))}` : `Re-nest by hand: ${charmsWord(plan.total)} of ${sheetsWord(pages)} nested again from scratch from ${pw(t)} on, oldest orders first`);
+      st.busy.text = `Nesting ${pw(t)}…`;
       changed(); repaintMerge(m);
       if (seen) mergeScene(seen, plan.moving);
       return true;
@@ -4152,7 +4160,7 @@ const Gate = window.Gate = (() => {
       await new Promise(r => setTimeout(r, 400));
       const p = mine().find(working);
       if (!p || Date.now() > until) break;
-      const text = p.status === "nesting" ? `Nesting Sheet ${p.page} · ${p.placements.length} of ${activeCharms(p).length} placed` : p.status === "finishing" ? `Writing Sheet ${p.page}…` : p.persisted && !p.persistedDone && !["queued"].includes(p.status) ? `Saving Sheet ${p.page}…` : `Sheet ${p.page} waits its turn…`;
+      const text = p.status === "nesting" ? `Nesting ${pw(p)} · ${p.placements.length} of ${activeCharms(p).length} placed` : p.status === "finishing" ? `Writing ${pw(p)}…` : p.persisted && !p.persistedDone && !["queued"].includes(p.status) ? `Saving ${pw(p)}…` : `${pw(p)} waits its turn…`;
       if (text !== b.text) { b.text = text; repaintMerge(m); } else { const a = activePage(m); if (a?.el && typeof renderProgress === "function") renderProgress(a); }
     }
     for (const p of pagesOf(m)) { delete p._mergeNext; delete p._mergeSpots; }
@@ -4161,7 +4169,7 @@ const Gate = window.Gate = (() => {
     for (const p of [...b.pages].reverse()) if (p !== b.target && pagesOf(m).includes(p) && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0) { gone.push(p.page); retirePage(run, p); removePage(p); }
     const left = mine().filter(p => p.charms.length), trouble = left.find(p => p.problem), waiting = left.find(held);
     st.busy = null;
-    st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `Sheet ${trouble.page} needs a look: ${trouble.problem}` : waiting ? `Sheet ${waiting.page} waits for Resume` : ["Done", ...left.map(p => `Sheet ${p.page}: ${charmsWord(p.charms.length)}`)].join(" · ") };
+    st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `${pw(trouble)} needs a look: ${trouble.problem}` : waiting ? `${pw(waiting)} waits for Resume` : ["Done", ...left.map(p => `${pw(p)}: ${charmsWord(p.charms.length)}`)].join(" · ") };
     if (gone.length) { agent({ metal: m, run: run?.runId }, "nest", `Merge: ${gone.length === 1 ? `Sheet ${gone[0]} was left empty and removed` : `${gone.length} sheets were left empty and removed`}`); changed(); }
     repaintMerge(m); mergeNote(m, st.done); setTimeout(() => repaintMerge(m), 12500);
   }
@@ -4175,14 +4183,14 @@ const Gate = window.Gate = (() => {
     const blocked = !!plan && pagesOf(m).some(busyPage), asking = !!(plan && st.ask && !blocked);
     if (!asking) st.ask = null;
     const move = q("move"), renest = q("renest"), help = q("help");
-    if (plan) { move.textContent = `Move all onto Sheet ${plan.target.page}`; renest.textContent = plan.pages.length === 2 ? "Re-nest both sheets" : `Re-nest all ${plan.pages.length} sheets`; }
+    if (plan) { move.textContent = `Move all onto ${pw(plan.target)}`; renest.textContent = plan.pages.length === 2 ? "Re-nest both sheets" : `Re-nest all ${plan.pages.length} sheets`; }
     q("actions").hidden = asking || (!plan && !st.busy);
     move.disabled = renest.disabled = !!st.busy || !plan || blocked;
     q("ask").hidden = !asking; q("busy").hidden = !st.busy;
     if (st.busy) q("busy-text").textContent = st.busy.text;
     help.hidden = !!st.busy || asking;
     help.classList.toggle("bad", !!done?.bad);
-    help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `Use Move all when Sheet ${plan.target.page} has free room and its charms should stay where they are; use Re-nest to pack every charm again for the tightest fit.` : "";
+    help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `Use Move all when ${pw(plan.target)} has free room and its charms should stay where they are; use Re-nest to pack every charm again for the tightest fit.` : "";
     if (asking) { q("ask-text").textContent = mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : "Re-nest"; }
     const ask = kind => { st.ask = kind; st.done = null; paintMerge(sh, node); q("go").focus(); };
     move.onclick = () => ask("move"); renest.onclick = () => ask("renest");
@@ -7386,7 +7394,7 @@ const Sets = window.Sets = (() => {
     // later intake for good.
     if (followed && followed.savedCommit !== followed.committedAt) await save(followed);
     let set;
-    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly, after }, { label: "Numbering the set" }); if (r.deferred) return null; set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
+    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly, after }, { label: "Numbering the set" }); if (r.deferred) return null; set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], sheetNos: {}, status: "open" }; }
 
     byRun().set(k, set);
     if (B.run && B.run.runId === runId) { B.run.setIds = [...new Set((B.run.setIds || []).concat([set.setId]))]; B.run.setId = B.run.setId || set.setId; B.run.day = set.day; B.run.seq = B.run.seq || set.seq; RunCtl.renderBanner(); }
@@ -7452,7 +7460,7 @@ const Sets = window.Sets = (() => {
     const files = [];
     for (const [i, slice] of parts.entries()) {
       const payload = O.encodeOrderList(slice, metalDS);
-      const label = `${METAL_TAG[sh.metal]} · ${set.name} · Sheet ${sh.sheetIndex || sh.page}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} order${slice.length === 1 ? "" : "s"}`;
+      const label = `${METAL_TAG[sh.metal]} · ${set.name} · Sheet ${sh.sheetIndex || (window.CharmNestSheetName && CharmNestSheetName.numberOf(sh)) || sh.page}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} order${slice.length === 1 ? "" : "s"}`;
       const notes = pairNotes(sh, set, placed, slice);   // (groups split over sheets: said on the label; [] for most sheets)
       const png = await renderLabelPng(payload, label, undefined, notes);
       let up = null; if (S.cloud.ok && sh.folderPath) up = await uploadBytes(`${sh.folderPath}/${sh.fileBase}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ""}.png`, png.blob, "image/png", "Saving the sheet label");
@@ -7480,7 +7488,7 @@ const Sets = window.Sets = (() => {
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
     Orders.render();
   }
-  async function save(set, context) { if(window.CharmNestOperations && !context)return window.CharmNestOperations.run({key:'set-save:'+set.setId,label:'Saving set record',resources:['set-record:'+set.setId],latest:true},token=>save(set,token)); if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, payload:f.payload || null, metal:f.metal || null, ecc:f.ecc || null, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }); if (set.committedAt) set.savedCommit = set.committedAt; }
+  async function save(set, context) { if(window.CharmNestOperations && !context)return window.CharmNestOperations.run({key:'set-save:'+set.setId,label:'Saving set record',resources:['set-record:'+set.setId],latest:true},token=>save(set,token)); if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, payload:f.payload || null, metal:f.metal || null, ecc:f.ecc || null, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0, ...(set.sheetNos && Object.keys(set.sheetNos).length ? { sheetNos: set.sheetNos } : {}) } }); if (set.committedAt) set.savedCommit = set.committedAt; }
   const sheetsOf = set => allSheets().filter(sh => sh.setId === set.setId);
   /** Which orders of the set travel, which are held and why (design §5.4, §8.4). */
   function evaluate(set) {
@@ -8224,7 +8232,7 @@ const RunCtl = window.RunCtl = (() => {
     const sets = [];
     for (const sid of setIds) {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
-      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
+      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0, sheetNos: sd.sheetNos || {} };
       set.committedAt = sd.committedAt || null; set.completedAt = sd.completedAt || null; set.completionDay = sd.completionDay || null; set.savedCommit = set.committedAt;
       Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group), set); sets.push(set);
     }
@@ -10003,7 +10011,7 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const sh of allSheets()) {
       const mine = [...new Set((sh.charms || []).filter(c => ids.has(c.poolId) && !shown.has(c.poolId)).map(c => c.poolId))];
       mine.forEach(id => shown.add(id));
-      if (mine.length) legs.push({ sheetId: sh.sheetId || null, metal: sh.metal, page: sh.page || 1, label: `${labelOf(sh.metal)} · Sheet ${sh.page || 1}`, poolIds: mine, designUrl: thumbOf(sh.metal), designs: designsOf(sh.metal) });
+      if (mine.length) legs.push({ sheetId: sh.sheetId || null, metal: sh.metal, page: sh.page || 1, word: window.CharmNestSheetName ? CharmNestSheetName.short(sh) : null, label: `${labelOf(sh.metal)} · ${window.CharmNestSheetName ? CharmNestSheetName.short(sh) : `Sheet ${sh.page || 1}`}`, poolIds: mine, designUrl: thumbOf(sh.metal), designs: designsOf(sh.metal) });
     }
     // (" — " parts the tour's caption into its name and its reason: a reason keeps to one part)
     const metalOfPc = pc => ((e.files.find(F => F.id === pc.f) || {}).metal) || null, wait = new Map(), one = t => String(t || "").replace(/\s+—\s+/g, ", ");
@@ -13076,13 +13084,14 @@ const OrderWin = window.OrderWin = (() => {
     const sheets = [...pages].map(pg => {
       const placed = (pg.placements || []).length;
       const rep = dec && R.sheet ? tryDo(() => R.sheet({...physical.find(s=>s.id===pg.sheetId),orderReadiness})) : null;
-      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt, uncut: (window.RoseStock && tryDo(() => RoseStock.waiting(pg))) || 0 };
+      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1, page: pg }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt, uncut: (window.RoseStock && tryDo(() => RoseStock.waiting(pg))) || 0 };
     });
     return { lines, sheets };
   }
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
   const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
-  const sheetName = s => `${CODE[s.metal] || ""} Sheet ${s.n || "?"}`.trim();
+  // a sheet the order is on, named by charm-nest-sheet-name.js when its record (or live page) is known: "GF Sheet 3" in a set, "GF Draft 5" outside every set; else by the number it was read with
+  const sheetName = s => { const rec = s.page && s.page.metal ? s.page : s.rec; return rec && window.CharmNestSheetName ? CharmNestSheetName.name(rec) : `${CODE[s.metal] || ""} Sheet ${s.n || "?"}`.trim(); };
 
   /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
   // (the underline moves by transform, never by left/width, which laid the header out again every frame; a fresh opening
@@ -13242,7 +13251,7 @@ const OrderWin = window.OrderWin = (() => {
         try {
           const f = await sheetRead({ op: "findSheets", q: rid, fallback: false });
           if (!current()) return list();
-          for (const s of (f.sheets || [])) if ((s.orders || []).map(String).includes(rid) || (s.match || []).includes("order")) add(s.id, { metal: s.metal, n: s.sheetIndex || s.page || nOf(s.folder || s.fileBase) });
+          for (const s of (f.sheets || [])) if ((s.orders || []).map(String).includes(rid) || (s.match || []).includes("order")) add(s.id, { metal: s.metal, n: s.sheetIndex || s.page || nOf(s.folder || s.fileBase), rec: s });
           for (const s of (f.rows || [])) if (s.kind === "sheet" && s.id) add(s.id, { metal: s.metal, n: s.sheetIndex, state: s.at ? "cut " + new Date(s.at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "" });
         } catch (e) { failed = failed || e; console.warn("order view: the order's sheets", e.message); }
       }
@@ -14674,9 +14683,9 @@ const RunHistory = window.RunHistory = (() => {
   const frameW = f => `min(100cqw, 100cqh * ${+(f.fw / f.fh).toFixed(4)})`;
   const trueWidth = (s, of) => { const f = window.trueFrame?.(s.stock); return f && (f.w < f.fw - .5 || (!of && f.h < f.fh - .5)) ? ` style="width:calc(${of || frameW(f)} * ${+(f.w / f.fw).toFixed(4)});height:auto"` : ""; };
   function tileHtml(s, g, h) {
-    const id = idOf(s), code = codeOf(s.metal), no = s.sheetIndex || s.page || 1, fill = s.density ? Math.round(s.density * 100) + "%" : "", qr = qrOf(s, g);
-    const facts = [`${code} Sheet ${no}`, fill ? fill + " full" : "", s.placedCount ? n(s.placedCount, "piece") : "", s.orders != null ? n(s.orders, "order") : "", qr.text, s.laserDoneAt ? "cut on the laser" : ""].filter(Boolean).join(" · ");
-    return `<button type="button" class="hTile${h && h.sheets.has(id) ? " hit" : ""}" data-sheet="${esc(id)}" style="--c:${colorOf(s.metal)}" title="${esc(facts + " — open it in the sheet window")}" aria-label="${esc(`Open ${code} Sheet ${no} in the sheet window`)}">`
+    const id = idOf(s), code = codeOf(s.metal), SNm = window.CharmNestSheetName, no = SNm ? SNm.short(s).replace(/^Sheet /, "") : s.sheetIndex || s.page || 1, word = SNm ? SNm.name(s) : `${code} Sheet ${no}`, fill = s.density ? Math.round(s.density * 100) + "%" : "", qr = qrOf(s, g);
+    const facts = [word, fill ? fill + " full" : "", s.placedCount ? n(s.placedCount, "piece") : "", s.orders != null ? n(s.orders, "order") : "", qr.text, s.laserDoneAt ? "cut on the laser" : ""].filter(Boolean).join(" · ");
+    return `<button type="button" class="hTile${h && h.sheets.has(id) ? " hit" : ""}" data-sheet="${esc(id)}" style="--c:${colorOf(s.metal)}" title="${esc(facts + " — open it in the sheet window")}" aria-label="${esc(`Open ${word} in the sheet window`)}">`
       + `<span class="hPlate">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s)} src="${esc(cors(s.preview))}">` : `<span class="hNoPv">no preview</span>`}</span>`
       + `<span class="hCap"><b><i></i>${esc(code)} ${esc(no)}</b><span class="hFill">${esc(fill)}</span><span class="hQr ${qr.st}" title="${esc(qr.text)}">${ICON.qr}</span>${s.laserDoneAt ? `<span class="hDone" title="cut on the laser">${ICON.check}</span>` : ""}</span></button>`;
   }

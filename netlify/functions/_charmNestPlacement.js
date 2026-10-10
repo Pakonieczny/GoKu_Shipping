@@ -33,6 +33,7 @@
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const crypto = require("crypto");
+const SheetName = require("../../charm-nest-sheet-name.js");   // the one rule for a sheet's name
 const Pair = require("../../charm-nest-pair.js");   // the one definition of a group (receiptId:transactionId) and of the sides of a pair
 
 const num = v => (Number.isFinite(+v) ? +v : 0);
@@ -166,8 +167,9 @@ function takeOffUpdate(sheet, ids, serverTs) {
   return { update, removed };
 }
 
-/** The label of a sheet as the Library says it ("GF Sheet 2"). */
+/** The label of a sheet as the Library says it ("GF Sheet 2" in a set, "GF Draft 5" outside every set: charm-nest-sheet-name.js). */
 function labelOf(s) {
+  if (s && METAL_CODE[s.metal]) return SheetName.name(s);
   const f = String((s && (s.fileBase || s.folder)) || ""), m = /^([A-Za-z0-9]+)_.*_Sheet-(\d+)/.exec(f);
   const code = (s && METAL_CODE[s.metal]) || (m && m[1]) || "", no = (s && (num(s.sheetIndex) || num(s.page))) || (m && +m[2]) || 0;
   return code && no ? `${code} Sheet ${no}` : f.slice(0, 80);

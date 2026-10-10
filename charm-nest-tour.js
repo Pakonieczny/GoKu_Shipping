@@ -525,7 +525,7 @@
     const NF = root.NestFocus, prev = t.focus;
     if (prev && prev.here) tryDo(() => prev.close());
     let f = null;
-    if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption: leg.label || `${leg.metal} · Sheet ${leg.page || 1}`, noCaption: true, instant, ms: TIME.glide, foot: footOf(t), metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
+    if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption: leg.label || `${leg.metal} · ${leg.word || `Sheet ${leg.page || 1}`}`, noCaption: true, instant, ms: TIME.glide, foot: footOf(t), metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
     if (t.ff) { if (f) tryDo(() => f.close()); return null; }
     if (!f) f = await openHere(t, leg, instant);
     if (f) t.focus = f;
@@ -574,9 +574,9 @@
     const k = leg.poolIds.length;
     if (queued && !soon) {
       // queued, not placed (a Manual run): said where it waits and what places it; the card's own Nest button answers
-      say(t, `Queued on Sheet ${page}`, `press Nest to place ${k === 1 ? "it" : "them"}`, { metal: leg.metal, plus: `+${k}` });
+      say(t, `Queued on ${leg.word || `Sheet ${page}`}`, `press Nest to place ${k === 1 ? "it" : "them"}`, { metal: leg.metal, plus: `+${k}` });
       ring(t, rectOf(card && $('[data-r="nest"]', card)), true);
-    } else say(t, `Placed on Sheet ${page}`, [metalName(leg), of, soon ? "nesting now" : ""].filter(Boolean).join(" · "), { metal: leg.metal, plus: `+${k}` });
+    } else say(t, `Placed on ${leg.word || `Sheet ${page}`}`, [metalName(leg), of, soon ? "nesting now" : ""].filter(Boolean).join(" · "), { metal: leg.metal, plus: `+${k}` });
     await Promise.all([t.hold(), ...after]);
   }
   /** One piece from the Nest tab onto its place: a copy peels off the coin (the last is the coin itself), arcs down,
@@ -753,7 +753,7 @@
       if (!f) f = await dip(() => openLeg(t, leg, o, true));
       if (!f || t.ff) break;
       const of = legs.length > 1 ? `${i + 1} of ${legs.length}` : "";
-      say(t, `${queuedLeg(leg) ? "Queued on" : "Placed on"} Sheet ${leg.page || 1}`, [metalName(leg), of].filter(Boolean).join(" · "), { metal: leg.metal, plus: `+${leg.poolIds.length}` });
+      say(t, `${queuedLeg(leg) ? "Queued on" : "Placed on"} ${leg.word || `Sheet ${leg.page || 1}`}`, [metalName(leg), of].filter(Boolean).join(" · "), { metal: leg.metal, plus: `+${leg.poolIds.length}` });
       await t.hold();
     }
     for (const [j, w] of waiting.entries()) {

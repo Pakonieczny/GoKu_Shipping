@@ -35,7 +35,7 @@
   // person decides), resolving to the sheets to include, or null to leave things as they were
   function askSplit(sh, split) {
     const bar = W.el.name; if (!bar) return Promise.resolve([sh]);
-    const nm = p => `${p.metal === "gold10k" ? "10K" : "14K"} Sheet ${p.page}`;
+    const nm = p => window.CharmNestSheetName ? CharmNestSheetName.name(p) : `${p.metal === "gold10k" ? "10K" : "14K"} Sheet ${p.page}`;
     const orders = [...new Set(split.flatMap(x => x.orders))], others = split.map(x => x.sheet);
     return new Promise(resolve => {
       bar.innerHTML = `<span class="swAsk">${orders.length === 1 ? `Order ${esc(orders[0])} is` : `${orders.length} orders are`} also on ${esc(others.map(nm).join(", "))}, which ${others.length > 1 ? "are" : "is"} not in the set; sheets that share an order go into the same set.</span><button type="button" class="btn sage xs" data-sp="all">Include ${others.length > 1 ? "all" : "both"}</button><button type="button" class="swIcon" data-sp="x" title="Cancel" aria-label="Cancel">${ICON.close}</button>`;
@@ -1044,7 +1044,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const lib = (S.library.rows || []).find(r => r.id === id) || null;
     // (a sheet the page holds live, not in the Library list read here: its card says what it is until its record comes)
     const live0 = lib ? null : allSheets().find(p => p.sheetId === id) || null;
-    head(lib || (live0 ? { id, metal: live0.metal, sheetIndex: live0.sheetIndex || live0.page, setSeq: live0.seq || null, draft: !!live0.draft, cardStartedAt: live0.cardStartedAt || null } : { id, metal: "gold" }), true);
+    head(lib || (live0 ? { id, metal: live0.metal, sheetIndex: live0.sheetIndex || null, page: live0.page, setId: live0.setId || null, setSeq: live0.seq || null, draft: !!live0.draft, cardStartedAt: live0.cardStartedAt || null } : { id, metal: "gold" }), true);
     // (read again after pieces came off it: the plate on screen stays until the saved sheet is drawn over it)
     const again = opts.keepWork && !fresh && W.dlg.open;
     const grow = fresh && !!origin && !still();
@@ -1165,16 +1165,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   const setNoOf = r => r.draft ? 0 : r.setSeq || +((/_Set-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || 0;
   const sheetNoOf = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || r.page || 1;
+  // the name a sheet is called by (charm-nest-sheet-name.js): "Sheet 3" in a set (its number there), "Draft 5" outside every set (its page in the run)
+  const shortOf = r => window.CharmNestSheetName ? CharmNestSheetName.short(r) : `Sheet ${sheetNoOf(r)}`;
+  const nameOf = r => window.CharmNestSheetName ? CharmNestSheetName.name(r) : `${CODE[r.metal] || ""} Sheet ${sheetNoOf(r)}`.trim();
   function head(r, prelim) {
     const E = W.el, m = r.metal;
     E.metal.textContent = CODE[m] || labelOf(m); E.metal.style.setProperty("--c", colorOf(m));
-    E.title.textContent = `Sheet ${sheetNoOf(r)}`;
+    E.title.textContent = shortOf(r);
     const sn = setNoOf(r), started = r.cardStartedAt || r.createdAt;
     const date = started ? new Date(started).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : (r.day || "");
     const working = r.draft || /_working_/.test(r.fileBase || "");
     E.sub.textContent = [labelOf(m), sn ? `Set ${sn}` : "", date, working ? "filling · joins a set when full" : r.folder || r.fileBase || ""].filter(Boolean).join(" · ");
     E.sub.title = r.folder || r.id || "";
-    W.dlg.setAttribute("aria-label", r.folder || `Sheet ${sheetNoOf(r)}`);
+    W.dlg.setAttribute("aria-label", r.folder || shortOf(r));
     const st = E.state.querySelector("span");
     if (E.stateSeal) { const h = prelim ? null : sheetSeal(r); if (E.stateSeal._h !== h) { E.stateSeal._h = h; if (h !== null) E.stateSeal.innerHTML = h; } }
     if (prelim) { E.state.className = "swState"; st.textContent = "…"; }
@@ -1188,7 +1191,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       E.done.textContent = done ? "Move back to current" : "Mark completed";
       E.done.onclick = () => markDone(!done);
       // the live stations board (employee console): a sheet that is ready for the laser, open here, is what the Laser station is on now
-      tryDo(() => { if (window.CNLive) { if (ready) CNLive.sheet(`${CODE[m] || labelOf(m)} Sheet ${sheetNoOf(r)}${sn ? ` · Set ${sn}` : ""}`); else CNLive.close("laser"); } });
+      tryDo(() => { if (window.CNLive) { if (ready) CNLive.sheet(`${nameOf(r) || `${CODE[m] || labelOf(m)} Sheet ${sheetNoOf(r)}`}${sn ? ` · Set ${sn}` : ""}`); else CNLive.close("laser"); } });
     }
     if (!prelim || !W.setSheets.length) renderSheetChips();
   }
@@ -2063,7 +2066,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const made = { files, orders: ids, own: true, at: Date.now() };
     await api("charmNestLibrary", { op: "putSheet", sheet: { id: rec.id, label: made } });
     if (sh) sh.label = made;
-    window.SheetEvents?.qrLabel({ sheetId: rec.id, sheet: `${CODE[rec.metal] || ""} Sheet ${sheetNoOf(rec)}`, setId: "", metal: rec.metal }, ids, files, { own: true, by: whoAmI() });
+    window.SheetEvents?.qrLabel({ sheetId: rec.id, sheet: nameOf(rec), setId: "", metal: rec.metal }, ids, files, { own: true, by: whoAmI() });
     agent({ metal: rec.metal, run: rec.runId || null }, "cloud", `${name}: QR label made by hand for its ${ids.length} order${ids.length === 1 ? "" : "s"} (not in an open set)`);
   }
   function renderMenu() {
@@ -2425,7 +2428,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const RET = { el: null, ctx: null, timer: 0, poll: 0 };
   function goEngrave(x, b) {
     const job = x.eng && x.eng.job, rec = W.rec;
-    RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: `${CODE[rec.metal] || ""} Sheet ${sheetNoOf(rec)}`, was: job ? job.state : null };
+    RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: nameOf(rec), was: job ? job.state : null };
     if (b) b.innerHTML = `<span class="spin"></span>Opening Engraving…`;
     const plain = () => close().then(() => {
       const v = Engrave.view();
@@ -2502,8 +2505,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function sheetWord(id, name, sh) {
     const chip = W.setSheets.find(z => z.id === id);
     if (chip) return `${CODE[chip.metal] || ""} Sheet ${chip.n}`;
-    if (sh) return `${CODE[sh.metal] || ""} Sheet ${sh.sheetIndex || sh.page || 1}`;
-    if (W.rec && id === W.rec.id) return `${CODE[W.rec.metal] || ""} Sheet ${sheetNoOf(W.rec)}`;
+    if (sh) return nameOf(sh);
+    if (W.rec && id === W.rec.id) return nameOf(W.rec);
     const m = /^([A-Z0-9]+)_.*_Sheet-(\d+)/.exec(name || "");
     return m ? `${m[1]} Sheet ${m[2]}` : (name || "a sheet");
   }
@@ -4482,7 +4485,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const hit = orderRecs.get(id), rec = hit && hit.rec; if (!rec) return null;
     return piecesOf(rec).filter(x => x.rid === String(rid)).map(x => x.poolId || x.id).sort().join(",");
   }
-  const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
+  const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, ...(pg.page ? { page: pg.page } : {}), ...(pg.draft !== undefined ? { draft: !!pg.draft } : {}), ...(pg.setId !== undefined ? { setId: pg.setId || null } : {}), placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
     charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "",
       // (an earring pair's piece keeps its ear on the record this page makes of its own sheet, as the saved descriptor does)
       ...(c.side === "L" || c.side === "R" ? { side: c.side, mirror: c.mirror === true, ...(c.bodyIndex != null ? { bodyIndex: c.bodyIndex } : {}), ...(c.groupKey ? { groupKey: c.groupKey } : {}), ...(c.groupSize ? { groupSize: c.groupSize } : {}) } : {}) })) });
@@ -4882,7 +4885,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // a Rose Gold sheet joins a set by its own Cut Sheet press (the Library asks for its yes first); it is ready for that when its layout is saved and verified
     const ok = rose ? runHere && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : !!plan && (plan.kind === "release" || plan.kind === "include");
     const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.roseCutAt || sh.laserDoneAt ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
-    const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, orders: x.orders })) : [];
+    const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: nameOf(x.sheet), orders: x.orders })) : [];
     // (a full Rose Gold sheet takes the rest of the metal whole: no Cut Sheet button, no line, no cut)
     const full = ok && rose ? !!(window.RoseStock && RoseStock.full ? RoseStock.full(sh) : sh.rosePlan && sh.rosePlan.full) : false;
     return { runHere, draft: !!sh.draft, dispatchSetId: open ? open.setId : null, can: { ok, byHand: ok && !!plan && plan.kind === "release", reason: why }, split, ...(rose ? { rose: { full } } : {}) };
@@ -4891,7 +4894,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function splitSay(partners) {
     try {
       const say = partners.map(x => {
-        const lab = `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, sid = x.sheet.sheetId;
+        const lab = nameOf(x.sheet), sid = x.sheet.sheetId;
         return (x.orders || []).map(rid => {
           const ears = [...new Set((orderPieces(rid) || []).filter(p => p.nested && p.sheetId === sid && p.side).map(p => sideWord(p.side)))];
           return `order ${rid}: its ${ears.length ? ears.join(" and ") + " piece is" : "other piece is"} on ${lab}`;

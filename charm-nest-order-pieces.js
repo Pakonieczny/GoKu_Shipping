@@ -46,7 +46,8 @@
   const nOfName = name => +((/_Sheet-(\d+)/.exec(name || '') || [])[1]) || 0;
   /** A sheet's number as the Library cards and the sheet window say it. */
   const sheetNo = s => +s.sheetIndex || nOfName(s.folder) || nOfName(s.fileBase) || nOfName(s.sheetName) || +s.page || 1;
-  const labelOf = s => `${CODE[s.metal] || ''} Sheet ${sheetNo(s)}`.trim();
+  const SNm=()=>{let N=(typeof self!=='undefined'?self:globalThis).CharmNestSheetName;if(!N&&typeof require==='function'){try{N=require('./charm-nest-sheet-name');}catch(_){N=null;}}return N;};   // the one name and number rule (charm-nest-sheet-name.js)
+  const labelOf = s => SNm() ? SNm().name(s) : `${CODE[s.metal] || ''} Sheet ${sheetNo(s)}`.trim();
   const tailNo = k => { const m = /_(\d+)$/.exec(String(k || '')); return m ? +m[1] : 0; };
   const cleanSku = x => String(x || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   const cut = s => !!(s && (+s.laserDoneAt > 0 || +s.roseCutAt > 0));

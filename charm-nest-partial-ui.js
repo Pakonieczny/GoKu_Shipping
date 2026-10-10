@@ -116,7 +116,7 @@
   const availableOf = (items, m) => (items || []).filter(c => (!c.status || c.status === 'available') && (!m || !c.metal || c.metal === m)).slice().sort((a, b) => (+b.lastUsedAt || 0) - (+a.lastUsedAt || 0));
   const policyOf = m => { try { const p = PS() && PS().policy ? PS().policy(m) : null; return p ? { mode: p.mode === 'new' ? 'new' : 'auto', wMm: +p.wMm || 100, hMm: +p.hMm || 50 } : { mode: 'auto', wMm: 100, hMm: 50 }; } catch (_) { return { mode: 'auto', wMm: 100, hMm: 50 }; } };
   const piecesOn = sh => ((sh && sh.placements && sh.placements.length) || (sh && sh.charms && sh.charms.length) || 0);
-  const sheetWord = sh => (root.CN && sh && sh.page ? `Sheet ${sh.page}` : 'this sheet');
+  const sheetWord = sh => (root.CN && sh && sh.page ? (root.CharmNestSheetName ? root.CharmNestSheetName.short(sh) : `Sheet ${sh.page}`) : 'this sheet');
 
   /* ── styles (the app's own tokens; the plain card is the Library card's look) ── */
   const css = doc.createElement('style');

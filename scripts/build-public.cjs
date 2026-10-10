@@ -170,6 +170,7 @@ const assets = [
   "charm-nest-orders.js",
   "charm-nest-shared-orders.js",
   "charm-nest-set-edit.js",
+  "charm-nest-sheet-name.js",
   "charm-nest-laser-act.js",
   "charm-nest-bridge.js",
   "charm-nest-review-live.js",

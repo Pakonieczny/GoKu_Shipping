@@ -161,6 +161,7 @@
   const TYPE_LABEL = t => (W.OrderTimeline && OrderTimeline.TYPES && OrderTimeline.TYPES[t] && OrderTimeline.TYPES[t].label) || (s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())(String(t || "").replace(/([a-z])([A-Z])/g, "$1 $2"));
   const whenTxt = t => { if (!t) return ""; const d = new Date(t), today = new Date(); return d.toDateString() === today.toDateString() ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString([], { month: "short", day: "numeric" }); };
   function nestLabel(page) {
+    if (window.CharmNestSheetName) return CharmNestSheetName.name(page);   // (charm-nest-sheet-name.js)
     try { const i = pagesOf(page.metal).indexOf(page); return `${CODE[page.metal] || ""} Sheet ${i >= 0 ? i + 1 : page.page || "?"}`.trim(); } catch (_) { return `${CODE[page.metal] || ""} Sheet ${page.page || "?"}`.trim(); }
   }
   /** Where the order's pieces are NOW, from the one answer (PiecePlacement: the cloud's sheet records and pool rows, a hold, a cancel, a hand completion), rolled up for the order; null while
@@ -178,7 +179,7 @@
     if (cancelOf(e)) return [...out.values()];   // (a cancelled order's pieces were taken off: the hints below, this page's old pool rows and Library rows, would still name the sheets they were on)
     for (const r of e.rows) for (const id of r.poolIds || []) { const pg = Pool && Pool.sheetOf ? Pool.sheetOf(id) : null; if (pg) add(pg.sheetId ? "s:" + pg.sheetId : "n:" + nestLabel(pg), nestLabel(pg)); }
     for (const p of e.pools) if (p.sheetId || p.sheetName) add("s:" + (p.sheetId || p.sheetName), sheetWords(p.sheetName) || null);
-    for (const r of e.sheets) add("s:" + (r.id || r.sheetId), `${CODE[r.metal] || ""} Sheet ${r.sheetIndex || r.page || 1}`.trim(), +r.laserDoneAt > 0);
+    for (const r of e.sheets) add("s:" + (r.id || r.sheetId), window.CharmNestSheetName ? CharmNestSheetName.name(r) : `${CODE[r.metal] || ""} Sheet ${r.sheetIndex || r.page || 1}`.trim(), +r.laserDoneAt > 0);
     const c = e.cloud; if (c) for (const x of c.sheets) add("s:" + x.id, x.label, x.cut);
     return [...out.values()];
   }
@@ -335,8 +336,8 @@
         items: ((row && row.items) || []).filter(it => it && typeof it === "object").slice(0, 20).map(it => ({ title: it.title || "", variations: Array.isArray(it.variations) ? it.variations : [], sku: it.sku || "" })) };
       for (const it of (row && row.items) || []) { push(c.skus, it.sku); push(c.titles, it.title); push(c.listings, it.listingId && String(it.listingId)); }
       for (const p of pools) { push(c.skus, p.sku); if (p.sheetId || p.sheetName) c.sheets.push({ id: p.sheetId || p.sheetName, label: sheetWords(p.sheetName) || "on a sheet", cut: false }); }
-      for (const s of onSheet) c.sheets.push({ id: s.id, label: `${CODE[s.metal] || ""} Sheet ${s.sheetIndex || s.page || 1}`.trim(), cut: +s.laserDoneAt > 0 });
-      for (const r of cutRows) c.sheets.push({ id: r.id, label: `${CODE[r.metal] || ""} Sheet ${r.sheetIndex || 1}`.trim(), cut: true });
+      for (const s of onSheet) c.sheets.push({ id: s.id, label: window.CharmNestSheetName ? CharmNestSheetName.name(s) : `${CODE[s.metal] || ""} Sheet ${s.sheetIndex || s.page || 1}`.trim(), cut: +s.laserDoneAt > 0 });
+      for (const r of cutRows) c.sheets.push({ id: r.id, label: window.CharmNestSheetName ? CharmNestSheetName.name(Object.assign({}, r, { laserDoneAt: r.at || 1 })) : `${CODE[r.metal] || ""} Sheet ${r.sheetIndex || 1}`.trim(), cut: true });
       for (const l of (c.cancel && c.cancel.lines) || []) { push(c.skus, l.sku); push(c.titles, l.title); }
       c.at = Math.max(0, ...events.map(e => +e.at || 0), row ? +row.completedAtMs || 0 : 0);
       IX.cloud.set(q, c);

@@ -322,7 +322,7 @@
     if(!hasLine(sh)||!inSet(sh)||sh.roseCutAt||sh.recalled||!sh.roseStock?.id||sh.rosePlanHash||!sh.persistedDone||!sh.verification?.ok||sh.dirty||['nesting','finishing','queued'].includes(sh.status)||!addsLine(sh))return 0;
     return unlined(sh).length;
   }
-  const waitWords=sh=>{const n=waiting(sh);return n?`${word(sh)} Sheet ${sh.page||1} has ${n} charm${n===1?'':'s'} not cut yet: press Cut Sheet`:'';};
+  const waitWords=sh=>{const n=waiting(sh);return n?`${word(sh)} ${window.CharmNestSheetName?CharmNestSheetName.short(sh):`Sheet ${sh.page||1}`} has ${n} charm${n===1?'':'s'} not cut yet: press Cut Sheet`:'';};
   // The words lead to the button: the sheet on its card, the card rung, Cut Sheet focused.
   function showCut(sh){
     C.setMode('nest');const i=C.pagesOf(sh.metal).indexOf(sh);if(i>=0&&!sh.el)C.showPage(sh.metal,i);

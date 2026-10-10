@@ -22,10 +22,12 @@
   'use strict';
   let SRnode = null; try { SRnode = require('./charm-nest-shared-orders.js').core; } catch (_) { SRnode = null; }
   const SR = () => root.CharmNestSharedOrders || SRnode;
+  let SNnode = null; try { SNnode = require('./charm-nest-sheet-name.js'); } catch (_) { SNnode = null; }
+  const SN = () => root.CharmNestSheetName || SNnode;   // the one name and number rule (charm-nest-sheet-name.js)
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
   const str = v => String(v == null ? '' : v);
   const idOf = r => str(r && (r.id || r.sheetId));
-  const wordOf = r => `${CODE[r.metal] || r.metalLabel || ''} Sheet ${r.sheetIndex || r.page || 1}`.trim();
+  const wordOf = r => SN() ? SN().name(r) : `${CODE[r.metal] || r.metalLabel || ''} Sheet ${r.sheetIndex || r.page || 1}`.trim();
   const setWord = s => s && (s.seq || s.setSeq) ? `Set ${s.seq || s.setSeq}` : (s && s.name) || 'This set';
   const committedSet = d => !!(d && (+d.committedAt > 0 || /^complete/.test(str(d.status))));
   const inSetOf = r => (r && r.setId && !r.draft && r.solidIncluded !== false) ? str(r.setId) : null;
@@ -125,10 +127,13 @@
     return { ok: reasons.length === 0, reasons, shared };
   }
 
-  /** The number a sheet gets in the set it joins: its own, unless a sheet of the same metal there already has it (the set numbers each metal 1, 2, 3). */
-  function indexFor(rec, members) {
-    const mine = +rec.sheetIndex || +rec.page || 0, taken = new Set((members || []).filter(m => idOf(m) !== idOf(rec) && m.metal === rec.metal).map(m => +m.sheetIndex || +m.page || 0));
-    if (mine && !taken.has(mine)) return mine;
+  /** The number a sheet gets in the set it joins (charm-nest-sheet-name.js: the next number of its metal in that set, counting the numbers the
+   *  set has retired, `sheetNos`; a sheet coming back to the set it left takes its old number if it is free, `fileBaseFor(n)` is the file name
+   *  the set gives number n). It is never the sheet's page in the run: the page is a place in the run, the number is a place in the set, and
+   *  using one for the other left a gap (1, 2, 3, 5) and clashes. members: the sheets of that set now (the sheet itself, if there, is ignored). */
+  function indexFor(rec, members, sheetNos, fileBaseFor) {
+    const N = SN(); if (N) return N.claim(rec, members, sheetNos, fileBaseFor);
+    const taken = (members || []).filter(m => idOf(m) !== idOf(rec) && m.metal === rec.metal).map(m => +m.sheetIndex || 0);
     return 1 + Math.max(0, ...taken);
   }
 
@@ -209,7 +214,7 @@
     for (const rec of recs) {
       const byId = new Map((rec.charms || []).map(c => [c.id, c])), ids = [...new Set((rec.placements || []).map(p => byId.get(p.id)).filter(Boolean).map(c => str(c.order || c.id).split('/')[0]).filter(Boolean))];
       if (!ids.length) throw new Error(`${wordOf(rec)} has no order placed on it`);
-      const metal = O.CARD_TO_METAL[rec.metal] || rec.metal, parts = O.safeChunks(ids, metal, 1000, 500, 8), name = rec.fileBase || rec.folder || rec.id, no = rec.sheetIndex || rec.page || 1;
+      const metal = O.CARD_TO_METAL[rec.metal] || rec.metal, parts = O.safeChunks(ids, metal, 1000, 500, 8), name = rec.fileBase || rec.folder || rec.id, no = rec.sheetIndex || (SN() && SN().numberOf(rec)) || rec.page || 1;
       const base = rec.outputs && rec.outputs.ai && rec.outputs.ai.path ? rec.outputs.ai.path.replace(/\/[^/]*$/, '') : `charmnest/sheets/${rec.day}/${name}`, files = [];
       // a group (pair, discs) with pieces on another sheet of the set is said on the label (pairs, 9 Oct, R3): the set's own record says where its pieces are, this sheet's from its record
       const noteOf = slice => (PL && together.length ? PL.splitNotes(rec.id, PL.reconcile(PL.piecesOfOrders(set.orders), together), slice) : []);

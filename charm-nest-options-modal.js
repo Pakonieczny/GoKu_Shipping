@@ -76,7 +76,7 @@
   const MIN_MM = 5, MAX_MM = 500, WHY_MIN = 3, WHY_MAX = 300;
 
   const colorOf = m => { try { const x = root.CN && root.CN.METALS && root.CN.METALS.find(k => k.key === m); if (x && x.color) return x.color; } catch (_) {} return COLOR[m] || '#938c80'; };
-  const titleOf = sh => { try { return `${root.CN && root.CN.labelOf ? root.CN.labelOf(sh.metal) : CODE[sh.metal]} · Sheet ${sh.page || 1}`; } catch (_) { return 'Sheet options'; } };
+  const titleOf = sh => { try { return `${root.CN && root.CN.labelOf ? root.CN.labelOf(sh.metal) : CODE[sh.metal]} · ${root.CharmNestSheetName ? root.CharmNestSheetName.short(sh) : `Sheet ${sh.page || 1}`}`; } catch (_) { return 'Sheet options'; } };
   const stockOfItem = c => c.stockId || String(c.id || '').replace(/-\d+$/, '');
   const statusOf = c => c.status || 'available';
   /** The signed-in person, the way every other action gets it (nobody types a name). */

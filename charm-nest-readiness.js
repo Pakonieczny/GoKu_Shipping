@@ -366,7 +366,8 @@
   const stepKey=k=>Object.prototype.hasOwnProperty.call(FOLDED,k)?FOLDED[k]:k;
   const stepName=k=>(STEPS.find(t=>t[0]===stepKey(k)) || [k,String(k || '')])[1];
   const sheetNo=s=>s.sheetIndex || +((/_Sheet-(\d+)/.exec(s.folder || s.fileBase || '') || [])[1]) || s.page || 1;
-  const sheetLabel=s=>`${CODE[s.metal] || s.metalLabel || ''} Sheet ${sheetNo(s)}`.trim();
+  const SNm=()=>{let N=(typeof self!=='undefined'?self:globalThis).CharmNestSheetName;if(!N&&typeof require==='function'){try{N=require('./charm-nest-sheet-name');}catch(_){N=null;}}return N;};   // the one name and number rule (charm-nest-sheet-name.js)
+  const sheetLabel=s=>SNm()?SNm().name(s):`${CODE[s.metal] || s.metalLabel || ''} Sheet ${sheetNo(s)}`.trim();
   const setName=s=>s.name || (s.seq || s.setSeq ? `Set ${s.seq || s.setSeq}` : 'This set');
   const count=(n,one,more)=>`${n} ${n===1?one:(more || one+'s')}`;
   const lower=t=>String(t || '').replace(/^./,c=>c.toLowerCase());

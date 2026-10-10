@@ -58,7 +58,8 @@
     const n = +x.sheetIndex || +x.page; if (n > 0) return n;
     const m = /_Sheet-(\d+)/.exec(String(x.fileBase || x.folder || '')); return m ? +m[1] : 0;
   }
-  const labelOf = x => codeOf(x && x.metal) + ' Sheet' + (sheetNo(x || {}) ? ' ' + sheetNo(x) : '');
+  // (charm-nest-sheet-name.js: "RG Sheet 1" in a set, "RG Draft 1" outside every set; the same words the sheet events and the cards say)
+  const labelOf = x => (W.CharmNestSheetName && x && x.metal ? W.CharmNestSheetName.name(x) : codeOf(x && x.metal) + ' Sheet' + (sheetNo(x || {}) ? ' ' + sheetNo(x) : ''));
   // whether a name ("RG Sheet 1") is one of the names in a text (not "RG Sheet 10")
   const mentions = (text, name) => !!name && new RegExp('(^|\\W)' + String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)', 'i').test(String(text || ''));
   // "A Rose Gold sheet" / "A 10K Gold sheet" / "A sheet" (a label naming sheets of several metals)

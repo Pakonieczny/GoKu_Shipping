@@ -261,7 +261,8 @@ function msOf(v) {
   if (typeof v === "object") { const x = v.seconds != null ? v.seconds : v._seconds; return Number.isFinite(+x) ? +x * 1000 : 0; }
   const x = +v; return !Number.isFinite(x) || x <= 0 ? 0 : x < 1e11 ? Math.round(x * 1000) : Math.round(x);
 }
-const sheetLabel = d => `${METAL_CODE[d.metal] || s(d.metalLabel, 20) || ""}${METAL_CODE[d.metal] || d.metalLabel ? " " : ""}Sheet ${n(d.sheetIndex) || n(d.page) || 1}`;
+const SheetName = require("../../charm-nest-sheet-name.js");   // the one rule for a sheet's name: "GF Sheet 3" in a set, "GF Draft 5" outside every set
+const sheetLabel = d => METAL_CODE[d.metal] ? SheetName.name(d) : `${s(d.metalLabel, 20) || ""}${d.metalLabel ? " " : ""}Sheet ${n(d.sheetIndex) || n(d.page) || 1}`;
 const sizeOf = st => (st && n(st.wPt) > 0 && n(st.hPt) > 0 ? `${Math.round(n(st.wPt) / 72 * 25.4)}×${Math.round(n(st.hPt) / 72 * 25.4)} mm` : "");
 const withTimeout = (p, ms) => new Promise(resolve => {
   const t = setTimeout(() => resolve({ value: null, timedOut: true }), ms);

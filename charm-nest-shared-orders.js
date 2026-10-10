@@ -36,7 +36,8 @@
   const sideOk = s => (s === 'L' || s === 'R') ? s : null;
   const sideWord = s => s === 'L' ? 'left' : s === 'R' ? 'right' : '';
   const sideLabel = s => s === 'L' ? 'Left' : s === 'R' ? 'Right' : '';
-  const sheetLabelOf = r => `${CODE[r.metal] || r.metalLabel || ''} Sheet ${r.sheetIndex || r.page || 1}`.trim();
+  const SNm=()=>{let N=(typeof self!=='undefined'?self:globalThis).CharmNestSheetName;if(!N&&typeof require==='function'){try{N=require('./charm-nest-sheet-name');}catch(_){N=null;}}return N;};   // the one name and number rule (charm-nest-sheet-name.js)
+  const sheetLabelOf = r => SNm() ? SNm().name(r) : `${CODE[r.metal] || r.metalLabel || ''} Sheet ${r.sheetIndex || r.page || 1}`.trim();
   const setLabelOf = s => s && (s.seq || s.setSeq) ? `Set ${s.seq || s.setSeq}` : (s && s.name) || 'its set';
   // a sheet is in a set when it has one and is neither a draft nor left out of it (Readiness.sheet reads the same fields)
   const effectiveSet = r => (r && r.setId && !r.draft && r.solidIncluded !== false) ? String(r.setId) : null;

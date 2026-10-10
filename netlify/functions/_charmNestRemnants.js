@@ -503,7 +503,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     // who holds it now: the current leftover's record names the sheet; else one masked read of the sheet (a held stock that was never cut has no record)
     const owner = s.owner ? String(s.owner) : null, head = byRev.get(R);
     let ownerName = owner && head && head.status === 'inUse' && head.inUseBySheetId === owner ? String(head.inUseBySheetName || '') : '';
-    if (owner && !ownerName && okId(owner)) { const od = await lightGet(col('Charm_Nest_Sheets').doc(owner), ['metal', 'sheetIndex', 'page', 'fileBase', 'folder']); if (od && od.exists) ownerName = String((sheetLabel && sheetLabel(od.data() || {})) || ''); }
+    if (owner && !ownerName && okId(owner)) { const od = await lightGet(col('Charm_Nest_Sheets').doc(owner), ['metal', 'sheetIndex', 'page', 'fileBase', 'folder', 'setId', 'draft', 'solidIncluded', 'laserDoneAt', 'roseCutAt']); if (od && od.exists) ownerName = String((sheetLabel && sheetLabel(od.data() || {})) || ''); }
     const made = s.made === true ? { at: +s.madeAt > 0 ? +s.madeAt : null, by: person(s.madeBy) } : null;
     const dr = head && head.status === 'deleted' ? head : s.deleted === true ? s : null, deleted = dr ? { at: +dr.deletedAt > 0 ? +dr.deletedAt : null, by: person(dr.deletedBy), reason: String(dr.deletedReason || '') } : null;
     return { ok: true, stock: { id: stockId, metal, code: CODES[metal] || '', wMm: r3(s.wPt * MM), hMm: r3(s.hPt * MM), revision: R, ownerSheetId: owner, ownerSheetName: ownerName || null, ...(made ? { kind: 'new' } : {}) }, cuts: list, made, deleted, rev: String(R) };

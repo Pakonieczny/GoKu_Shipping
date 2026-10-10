@@ -62,7 +62,8 @@
   // a sheet is included unless it is a draft or left out of its set (Readiness.sheet reads the same fields); it is in a set when it also has one
   const joined = s => !!s && !s.draft && s.solidIncluded !== false;
   const inSet = s => !!(s && s.setId && joined(s));
-  const sheetName = s => `${CODE[s.metal] || s.metalLabel || ''} Sheet ${s.sheetIndex || s.page || 1}`.trim();
+  const SN = () => root.CharmNestSheetName || (typeof require === 'function' ? require('./charm-nest-sheet-name.js') : null);   // the one name and number rule
+  const sheetName = s => SN() ? SN().name(s) : `${CODE[s.metal] || s.metalLabel || ''} Sheet ${s.sheetIndex || s.page || 1}`.trim();
   const setName = d => d && (d.seq || d.setSeq) ? `Set ${d.seq || d.setSeq}` : (d && d.name) || 'This set';
   const count = (n, one, more) => `${n} ${n === 1 ? one : (more || one + 's')}`;
   const laserOf = s => (s.laser && typeof s.laser === 'object' && s.laser.stages) ? s.laser : RD().laserSheet(s);
@@ -943,7 +944,7 @@
   function makeRoseJoin(g) {
     return async (id, o) => {
       const { RoseStock: RS, Gate: G, CN: C, LibraryFlowRose: M } = g();
-      const sh = ((C && C.allSheets && C.allSheets()) || []).find(p => p.sheetId === id && !p.recalled), name = sh ? `RG Sheet ${sh.page || 1}` : 'This sheet';
+      const sh = ((C && C.allSheets && C.allSheets()) || []).find(p => p.sheetId === id && !p.recalled), name = sh ? sheetName(sh) : 'This sheet';
       if (!sh || !RS) return { ok: false, error: `${name} is not open on this page, so it cannot be added to the set from here. Open it on the Nest tab and press Cut Sheet there` };
       const inSetNow = () => !!sh.setId && !sh.draft;
       if (o.line && M && typeof M.calculate === 'function') {
