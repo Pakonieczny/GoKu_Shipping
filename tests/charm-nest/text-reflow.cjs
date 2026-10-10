@@ -41,7 +41,7 @@ console.log('Text reflow OK: whitespace, wrap/unwrap, manual size recovery, hard
 // Exercise the real pointer preview callback: reflow is frame-coalesced and
 // visible before mouse-up, and cancellation leaves the verified job untouched.
 const handlers={},frames=new Map(),paints=[];let frameId=0;
-const pointerJob={lineInput:input,lineMode:'auto',lines:['ANNA BEN'],wantSize:6,mask:m,fit:G.reflowAt(input,font,m,opts,{centre:[25,14],size:6})};
+const pointerJob={state:'review',lineInput:input,lineMode:'auto',lines:['ANNA BEN'],wantSize:6,mask:m,fit:G.reflowAt(input,font,m,opts,{centre:[25,14],size:6})};
 const canvas={width:50,_map:{k:1,tx:(x,y)=>[x,60-y]},_box:{rotate:[-100,-100],corners:[],centrePx:[25,46]},style:{},classList:{add(){},remove(){}},setPointerCapture(){},getBoundingClientRect:()=>({left:0,top:0,width:50}),_paint:p=>paints.push(p),addEventListener:(name,fn)=>(handlers[name] ||= []).push(fn)};
 const pc={G,job:pointerJob,fontFor:()=>font,fitOpts:()=>opts,card:{querySelector:()=>null},PT:72/25.4,requestAnimationFrame:fn=>{frames.set(++frameId,fn);return frameId;},cancelAnimationFrame:id=>frames.delete(id),refresh(){},resize(){},rotateTo(){},moveTo(){},toast(){}};vm.createContext(pc);const ws=source.indexOf('    const wire = bc => {'),we=source.indexOf('    const mountBack =',ws);vm.runInContext(source.slice(ws,we)+'\nthis.wire=wire;',pc);pc.wire(canvas);
 const emit=(name,x,y)=>handlers[name].forEach(fn=>fn({clientX:x,clientY:y,pointerId:1,preventDefault(){}}));
