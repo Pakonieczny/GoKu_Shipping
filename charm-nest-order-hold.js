@@ -176,7 +176,7 @@
     const piece = (o, status) => {
       if (seen.has(o.id)) return; seen.add(o.id);
       const sh = o.sh || holderOf(o.id), pr = (W.B && B.pool && B.pool.rows.get(o.id)) || null, ro = rowOf.get(o.id), r = ro && ro.r;
-      const qty = r && r.spec ? r.spec.quantity || (r.line && r.line.quantity) || 1 : 1, name = o.sku || (r && r.spec && r.spec.designSku) || "a piece";
+      const counted = r && W.CharmNestOrders && W.CharmNestOrders.countedPieces ? W.CharmNestOrders.countedPieces(r) : null, qty = counted ? counted.total : r && r.spec ? r.spec.quantity || (r.line && r.line.quantity) || 1 : 1, name = o.sku || (r && r.spec && r.spec.designSku) || "a piece";
       const c = sh && sh.charms.find(z => z.poolId === o.id), set = setOf(sh);
       // a piece of a pair: its side (a mismatched pair reads "MITTENS · left earring"), its group and its form; any other piece reads "name · 1 of 2" as before
       const side = W.PairRemove ? W.PairRemove.sideOfPiece(pr || { poolId: o.id }, misSku((pr && pr.sku) || name)) : null;

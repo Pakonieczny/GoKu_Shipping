@@ -95,6 +95,9 @@
     // groupLine(line) -> true when the line is a GROUP (an earring pair, a necklace of counted discs / letters / charms, a line the intake marks multi: CharmNestPair.isGroupLine). The copies of a plain
     // quantity-N line each stand alone (Paul 9 Oct, after ADVCOMPAT 2): no group, no pair words, no split. Optional: without it only a pair's plan or a pool row's own groupSize makes a group.
     const groupLine = typeof input.groupLine === 'function' ? input.groupLine : null;
+    // countOf(line) -> the pieces a COUNTED line makes ("2 Disc": CharmNestOrders.countedPieces) when that is more than its Etsy quantity, else 0. Optional: without it a line has `quantity` pieces as it always did.
+    const countOf = typeof input.countOf === 'function' ? input.countOf : null;
+    const countedOf = l => { if (!countOf) return 0; try { return Math.floor(+countOf(l)) || 0; } catch (_) { return 0; } };
     const planOf = l => { if (!pairOf) return null; try { const x = pairOf(l); return Array.isArray(x) && x.length > 1 ? x : null; } catch (_) { return null; } };
 
     // 1 · the pieces: every copy of every line, then pool rows and sheet entries no line explains (a line lost from the pull)
@@ -107,7 +110,7 @@
     // (the order Issues-truth's CharmNestReadiness.pieces counts in, so that "piece 2" is the same piece in the Library's issues panel and here:
     //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
-      const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
+      const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty0 = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1), countedOf(l));
       let plan = planOf(l), glued = false; const wasPlan = plan;
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
       // an OLD record of a mismatched pair (pooled before pairs were tracked) is ONE glued piece per unit that carries both bodies: it is on a sheet whole, with nothing to split.
@@ -252,6 +255,8 @@
     const earringLine = l => { const CP = root.CharmNestPair; try { return !!(CP && l && typeof CP.piecesFor === 'function' && (typeof CP.isEarringPair === 'function' ? CP.isEarringPair(pairArg(l), entryOf(l)) : CP.isMismatched(entryOf(l)))); } catch (_) { return false; } };
     const pairOf = l => { const CP = root.CharmNestPair; if (!earringLine(l)) return null; try { const x = CP.piecesFor(pairArg(l), entryOf(l)); return Array.isArray(x) && x.length > 1 && x.some(p => p.side) ? x : null; } catch (_) { return null; } };
     const groupLine = l => { const CP = root.CharmNestPair; try { return !!(CP && l && typeof CP.isGroupLine === 'function' && CP.isGroupLine(pairArg(l), entryOf(l))); } catch (_) { return false; } };
+    // a counted line ("2 Disc") makes the pieces CharmNestOrders.countedPieces says, from the spec lineOfRow carries (pieceCount, pair); 0 for every other line
+    const countOf = l => { const O = root.CharmNestOrders; try { const c = O && typeof O.countedPieces === 'function' ? O.countedPieces(l) : null; return c ? c.total : 0; } catch (_) { return 0; } };
     const kindOf = l => { const CP = root.CharmNestPair; if (!earringLine(l) || typeof CP.kindOf !== 'function') return null; try { return CP.kindOf(pairArg(l), entryOf(l)) || null; } catch (_) { return null; } };
     function lineOfRow(r) {
       const sp = r.spec || {}, ln = r.line || {};
@@ -277,7 +282,7 @@
         pools.set(id, Object.assign({}, a, b, { sheetId: GONE.has(b.state) ? (b.sheetId || null) : (b.sheetId || a.sheetId || null) }));
       };
       // (how many copies a line makes: its quantity, or the pieces of an earring pair: a Left and a Right for every unit)
-      const copiesOf = l => { const pl = pairOf(l), n = Math.max(1, Math.round(+l.quantity || 1)); return pl ? Math.max(n, (l.poolIds || []).length, pl.length) : n; };
+      const copiesOf = l => { const pl = pairOf(l), n = Math.max(1, Math.round(+l.quantity || 1), countOf(l)); return pl ? Math.max(n, (l.poolIds || []).length, pl.length) : n; };
       if (mem) for (const l of lines) {
         for (let c = 1; c <= copiesOf(l); c++) { const id = `${l.key}_${c}`, p = mem.get(id); if (p) merge(id, p); }
         for (const id of l.poolIds || []) { const p = mem.get(String(id)); if (p) merge(String(id), p); }
@@ -293,7 +298,7 @@
         for (const l of lines) for (let c = 1; c <= copiesOf(l); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
       }
       for (const s of (e && e.sheets) || []) take(s);
-      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet, pairOf, kindOf, groupLine,
+      return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet, pairOf, kindOf, groupLine, countOf,
         thumbOf: id => { try { const c = root.Pool && root.Pool.charmOf ? root.Pool.charmOf(id) : null; return c && c.thumbUrl || null; } catch (_) { return null; } } };
     }
     function enrich(pieces) {

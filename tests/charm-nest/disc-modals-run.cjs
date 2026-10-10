@@ -143,5 +143,17 @@ module.exports = async function run({ page, check, probe, srv, D, E, S1, Q3, poo
   check(tl.includes('No engraving — decided by Test Operator'), 'timeline: a single charm\'s line reads exactly as before: ' + JSON.stringify(tl));
   const dw = await page.evaluate(() => ['D1', 'D2', 'L', 'R', '', undefined].map(sl => CharmNestPairLabels.discWord({ slot: sl })).concat([CharmNestPairLabels.backWord({ slot: 'D2' }), CharmNestPairLabels.backWord({ side: 'L', slot: 'L' })]));
   check(JSON.stringify(dw) === JSON.stringify([' · Disc 1', ' · Disc 2', '', '', '', '', '', ' · Left']), 'manifest: the back of a disc says " · Disc 2", an ear or a single says what it said: ' + JSON.stringify(dw));
+  // ── 6 · the count people read (DISCREAD 3): a counted line says 2 pieces / 3 pieces in the header, the Quantity cell, the "Its pieces" list and the order list row; a single and a plain quantity-3 line keep their words ──
+  const says = async o => { await page.evaluate(k => OrderWin.open(k), keyOf(o)); await page.waitForFunction(() => OrderWin.isOpen());
+    await page.waitForFunction(k => { const t = document.getElementById('owPcSum'); return document.getElementById('owSub') && /piece/.test(document.getElementById('owSub').textContent) && t && !t.hidden && /Its piece/.test(t.textContent); }, keyOf(o), { timeout: 8000 }).catch(() => {});
+    const r = await page.evaluate(() => { const t = e => e ? e.textContent.replace(/\s+/g, ' ').trim() : '', q = [...document.querySelectorAll('#owMeta .m')].find(m => m.querySelector('i') && m.querySelector('i').textContent === 'Quantity');
+      return { head: t(document.getElementById('owSub')), qty: q ? t(q.querySelector('span')) : null, pieces: t(document.getElementById('owPcSum')) }; }); await closeWin(); return r; };
+  const sd = await says(D), se = await says(E), ss = await says(S1), sq = await says(Q3);
+  check(/ · 2 pieces · /.test(sd.head) && sd.qty === '1 · 2 discs' && /^Its pieces/.test(sd.pieces) && /· 2 pieces/.test(sd.pieces), 'the 2-disc order: header "2 pieces", "Quantity 1 · 2 discs", "Its pieces" with "2 pieces": ' + JSON.stringify(sd));
+  check(/ · 3 pieces · /.test(se.head) && se.qty === '1 · 3 discs' && /^Its pieces/.test(se.pieces) && /· 3 pieces/.test(se.pieces), 'the 3-disc order: header "3 pieces", "Quantity 1 · 3 discs", "Its pieces" with "3 pieces": ' + JSON.stringify(se));
+  check(/ · 1 piece · /.test(ss.head) && ss.qty === '1' && /^Its piece(?!s)/.test(ss.pieces) && !/pieces|×/.test(ss.pieces), 'a single charm keeps "1 piece", "Quantity 1", "Its piece": ' + JSON.stringify(ss));
+  check(/ · 3 pieces · /.test(sq.head) && sq.qty === '3' && /^Its piece(?!s)/.test(sq.pieces) && /· ×3/.test(sq.pieces), 'a plain quantity-3 line keeps "3 pieces", "Quantity 3", "Its piece" with "×3": ' + JSON.stringify(sq));
+  const facts = await page.evaluate(ks => ks.map(k => { const e = document.querySelector(`#ordItems [data-key="${k}"] .rowFacts`); return e ? e.textContent.replace(/\s+/g, ' ').trim().replace(/ · Ship by.*$/, '') : null; }), [keyOf(D), keyOf(E), keyOf(S1), keyOf(Q3)]);
+  check(JSON.stringify(facts) === JSON.stringify(['Qty 1 · 2 discs', 'Qty 1 · 3 discs', 'Qty 1', 'Qty 3']), 'the order list rows: counted lines say their discs, a single and a plain quantity-3 line say what they said: ' + JSON.stringify(facts));
   check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
 };
