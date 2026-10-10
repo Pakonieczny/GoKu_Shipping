@@ -265,13 +265,15 @@
     let pr = null; try { pr = root.B && root.B.pool && root.B.pool.rows && root.B.pool.rows.get(p.key); } catch (_) {}
     return { key: p.lineKey, order: { receiptId: rid }, line: { sku: p.sku, listingId: p.listingId }, spec: { designSku: p.sku, size: (pr && pr.size) || null, noDesign: false }, poolIds: [p.key] };
   }
-  function vectorOf(rid, pool) {
+  function vectorOf(rid, pool, side) {
     const PM = root.PieceMedia; if (!PM || typeof PM.vectorThumb !== "function") return Promise.resolve("");
     let row = null; try { row = rowFor(String(rid || "").replace(/\D/g, ""), pool); } catch (_) {}
     if (!row) return Promise.resolve("");
-    let key = ""; try { key = PM.vectorKey ? PM.vectorKey(row) : ""; } catch (_) {}
+    // (the Right piece of an earring pair is the Left turned over, by the one rule of charm-nest-pair.js: its picture is turned the same way; the Left and every other piece are the design as drawn, as before)
+    let opts = null; if (side === "R") { try { if (PM.earMirror && PM.earMirror(row, "R")) opts = { side: "R", mirror: true }; } catch (_) {} }
+    let key = ""; try { key = PM.vectorKey ? (opts ? PM.vectorKey(row, opts) : PM.vectorKey(row)) : ""; } catch (_) {}
     if (!key) return Promise.resolve("");
-    if (!vecCache.has(key)) { if (vecCache.size > 200) vecCache.delete(vecCache.keys().next().value); vecCache.set(key, Promise.resolve().then(() => PM.vectorThumb(row)).then(u => String(u || ""), () => "")); }
+    if (!vecCache.has(key)) { if (vecCache.size > 200) vecCache.delete(vecCache.keys().next().value); vecCache.set(key, Promise.resolve().then(() => opts ? PM.vectorThumb(row, opts) : PM.vectorThumb(row)).then(u => String(u || ""), () => "")); }
     return vecCache.get(key).then(u => { if (!u) vecCache.delete(key); return u; });
   }
   const PH_ICON = '<svg viewBox="0 0 24 24" width="40%" height="40%" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3L16 12l4 4"/></svg>';
@@ -297,13 +299,13 @@
     const vector = (my, afterFail) => {
       if (my !== tok) return;
       if (ctx.vector) {
-        vectorOf(ctx.rid, ctx.pool).then(u => { if (my !== tok) return; if (!u) return ph(afterFail ? "The picture could not be loaded" : "No picture yet"); const im = new root.Image(); im.alt = ""; im.decoding = "async"; im.draggable = false; im.className = "esImg contain"; im.onload = () => { if (my !== tok) return; box.replaceChildren(im); box.dataset.state = "ready"; raf(() => im.classList.add("on")); }; im.onerror = () => { if (my === tok) ph("The picture could not be loaded"); }; im.src = u; });
+        vectorOf(ctx.rid, ctx.pool, ctx.side).then(u => { if (my !== tok) return; if (!u) return ph(afterFail ? "The picture could not be loaded" : "No picture yet"); const im = new root.Image(); im.alt = ""; im.decoding = "async"; im.draggable = false; im.className = "esImg contain"; im.onload = () => { if (my !== tok) return; box.replaceChildren(im); box.dataset.state = "ready"; raf(() => im.classList.add("on")); }; im.onerror = () => { if (my === tok) ph("The picture could not be loaded"); }; im.src = u; });
       } else ph(afterFail ? "The picture could not be loaded" : "No picture yet");
     };
     box.set = o => {
       const urls = (o.urls || (o.url ? [{ u: o.url, fit: o.fit }] : [])).filter(x => x && x.u);
-      const s = JSON.stringify([urls.map(x => x.u + "|" + x.fit), o.rid || "", o.pool || "", o.vector !== false, o.icon || ""]); if (s === sig) return; sig = s; const my = ++tok;
-      ctx = { urls, rid: o.rid, pool: o.pool, vector: o.vector !== false && !o.icon, icon: o.icon || "" };
+      const s = JSON.stringify([urls.map(x => x.u + "|" + x.fit), o.rid || "", o.pool || "", o.vector !== false, o.icon || "", o.side || ""]); if (s === sig) return; sig = s; const my = ++tok;
+      ctx = { urls, rid: o.rid, pool: o.pool, side: o.side === "R" ? "R" : "", vector: o.vector !== false && !o.icon, icon: o.icon || "" };
       if (o.label) box.setAttribute("aria-label", o.label);
       if (!box.firstChild) box.dataset.state = "wait";
       if (urls.length) show(0, my); else vector(my, false);
@@ -494,7 +496,7 @@
           if (p.both && p.side === "R" && before && before.both && before.side === "L" && before.grp === p.grp) return;   // (a left and a right drawn in one picture are one tile, captioned "Left + Right")
           const fig = h("figure", "esPc"), box = pictureBox("esPcTh", 136); box.dataset.kind = "piece"; box.dataset.n = p.n; box.tabIndex = i === 0 ? 0 : -1;
           const cap = p.both ? "Left + Right" : SIDE_WORD[p.side] || String(p.n);
-          const label = (p.label || `Piece ${p.n}`) + (p.both ? " · Left + Right" : p.side ? ` · ${SIDE_WORD[p.side]}` : ""); box.title = label; box.set({ urls: urlsOf(p, true), rid: c.rid, pool: p.id, label: `${label}` });
+          const label = (p.label || `Piece ${p.n}`) + (p.both ? " · Left + Right" : p.side ? ` · ${SIDE_WORD[p.side]}` : ""); box.title = label; box.set({ urls: urlsOf(p, true), rid: c.rid, pool: p.id, side: p.both ? "" : p.side, label: `${label}` });
           zoomBind(box);
           box.addEventListener("keydown", ev => { if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") return; const all = [...pcs.querySelectorAll(".esPcTh")], to = all[clamp(all.indexOf(box) + (ev.key === "ArrowRight" ? 1 : -1), 0, all.length - 1)]; if (to && to !== box) { ev.preventDefault(); all.forEach(x => { x.tabIndex = -1; }); to.tabIndex = 0; to.focus({ preventScroll: true }); } });
           fig.append(box, h("figcaption", "", cap)); pcs.appendChild(fig);

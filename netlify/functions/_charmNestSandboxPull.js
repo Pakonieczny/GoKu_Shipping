@@ -30,7 +30,8 @@ const PAGES = [[0, 100], [100, 100], [200, 50]];   // [offset, limit]: 3 calls
 const MAX_PULLS = 6;              // sandbox starts per UTC day (Etsy's day): 6 x 3 = 18 calls
 const MAX_CALLS = 20;             // and never more than this many sandbox receipt calls in a day
 const CLAIM_MS = 90000;           // a pull that did not finish releases its claim after this
-const FETCH_MS = 8000;            // one Etsy call may take this long
+const FETCH_MS = 6000;            // one Etsy call may take this long
+const WORK_MS = 8200;             // and the whole pull this long: the function's own limit is 10 s, and a pull cut off mid-way leaves a claim
 const OAUTH_DOC = "config/etsyOauth";   // where production keeps the Etsy token (_etsyMailEtsy.js)
 const TOKEN_BUFFER_MS = 2 * 60 * 1000;  // the same margin _etsyMailEtsy.js refreshes at
 
@@ -67,10 +68,9 @@ const fail = (reason, error, status, extra) => Object.assign({ ok: false, error,
 async function discard() {
   const was = await currentRef().get(), old = was.exists ? String((was.data() || {}).path || "") : "";
   await currentRef().delete();
-  await streamRef().delete();
   const bucket = admin.storage().bucket();
   // the file the old pointer named (an old snapshot lives elsewhere under charmnest/sandbox/; never the master files)
-  if (/^charmnest\/sandbox\//.test(old) && !/^charmnest\/sandbox\/master\//.test(old) && !old.includes("..")) await bucket.file(old).delete({ ignoreNotFound: true });
+  await Promise.all([streamRef().delete(), /^charmnest\/sandbox\//.test(old) && !/^charmnest\/sandbox\/master\//.test(old) && !old.includes("..") ? bucket.file(old).delete({ ignoreNotFound: true }) : null]);
   let pageToken;
   do {
     const [list, next] = await bucket.getFiles({ prefix: DIR, autoPaginate: false, maxResults: 200, pageToken });
@@ -103,10 +103,10 @@ async function tokenDue(now) {
   return { seeded: !!t.refresh_token, due: !(t.access_token && exp - now > TOKEN_BUFFER_MS) };
 }
 class EtsyError extends Error { constructor(reason, message, status) { super(message); this.reason = reason; this.etsyStatus = status || 0; } }
-async function page(fetchFn, meter, env, token, [offset, limit], tally) {
+async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline) {
   const qs = new URLSearchParams({ limit: String(limit), offset: String(offset), sort_on: "created", sort_order: "desc" });   // any status: no filters
   const url = `https://api.etsy.com/v3/application/shops/${env.shop}/receipts?${qs}`;
-  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), FETCH_MS), mark = meter.bump("sandbox.receiptsPage");
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), Math.max(1000, Math.min(FETCH_MS, deadline - Date.now()))), mark = meter.bump("sandbox.receiptsPage");
   tally.pages += 1;
   try {
     let res;
@@ -129,6 +129,7 @@ async function page(fetchFn, meter, env, token, [offset, limit], tally) {
 }
 /** The newest 250 receipts: page one first (a failure there costs one call), then the other two together. */
 async function readNewest(deps, tally, now) {
+  const deadline = Date.now() + WORK_MS;
   const env = etsyEnv();
   if (!env.shop || !env.id || !env.secret) throw new EtsyError("token", "The server has no Etsy settings, so the sandbox is empty.");
   const due = await tokenDue(now);
@@ -136,10 +137,10 @@ async function readNewest(deps, tally, now) {
   let token;
   try { token = await deps.token(); tally.refreshes = due.due ? 1 : 0; }
   catch (e) { tally.refreshes = due.due ? 1 : 0; console.warn("[sandboxPull] Etsy token not available:", (e && e.message || "").slice(0, 200)); throw new EtsyError("token", "The server's Etsy sign-in is not working, so the sandbox is empty."); }
-  const first = await page(deps.fetch, deps.meter, env, token, PAGES[0], tally);
+  const first = await page(deps.fetch, deps.meter, env, token, PAGES[0], tally, deadline);
   let rest = [];
   if (first.length >= PAGES[0][1]) {
-    const more = await Promise.allSettled(PAGES.slice(1).map(p => page(deps.fetch, deps.meter, env, token, p, tally)));
+    const more = await Promise.allSettled(PAGES.slice(1).map(p => page(deps.fetch, deps.meter, env, token, p, tally, deadline)));
     const bad = more.find(r => r.status === "rejected");
     if (bad) throw bad.reason;
     rest = more.flatMap(r => r.value);
@@ -215,9 +216,8 @@ async function pull(b, ctx, deps) {
       takenBy: String(b.by || "").slice(0, 80) || null, label: `${list.length} newest Etsy orders`, calls: tally.pages, tokenRefreshes: tally.refreshes, bytes: body.length, note: null };
     try { await currentRef().set(Object.assign({}, doc, { updatedAt: FV.serverTimestamp() })); }
     catch (e) { await file.delete({ ignoreNotFound: true }).catch(() => {}); throw e; }
-    const led = await settle(startId, tally, true, now);
-    try { await deps.meter.flushNow(); } catch (_) {}
-    return Object.assign(setAnswer(doc, led, { calls: tally.pages, tokenRefreshes: tally.refreshes }), await startStream(ctx, b));
+    const [led, , started] = await Promise.all([settle(startId, tally, true, now), Promise.resolve().then(() => deps.meter.flushNow()).catch(() => {}), startStream(ctx, b)]);
+    return Object.assign(setAnswer(doc, led, { calls: tally.pages, tokenRefreshes: tally.refreshes }), started);
   } catch (e) {
     let led = null;
     try { led = await settle(startId, tally, false, now); } catch (se) { console.warn("[sandboxPull] budget not settled:", se && se.message); }

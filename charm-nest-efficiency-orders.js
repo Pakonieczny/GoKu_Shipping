@@ -125,7 +125,7 @@
     if (!o || typeof o !== "object") return null;
     const rid = S_(o.rid != null ? o.rid : o.orderId).trim(); if (!rid) return null;
     const steps = arr(o.steps).filter(s => s && s.station).map(s => ({ station: S_(s.station), firstAt: T(s.firstAt), lastAt: T(s.lastAt), durationMs: s.durationMs == null ? null : N(s.durationMs), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), parts: N(s.parts) }));
-    const pieces = arr(o.pieces).filter(p => p && typeof p === "object").map((p, i) => ({ id: S_(p.id != null ? p.id : i + 1), label: S_(p.label), sku: S_(p.sku), thumbUrl: safeUrl(p.thumbUrl) }));
+    const pieces = arr(o.pieces).filter(p => p && typeof p === "object").map((p, i) => ({ id: S_(p.id != null ? p.id : i + 1), label: S_(p.label), sku: S_(p.sku), side: p.side === "L" || p.side === "R" ? p.side : "", thumbUrl: safeUrl(p.thumbUrl) }));   // (side: an earring pair's Left and Right piece, kept so the tile says which ear it is)
     const issues = arr(o.issues).filter(i => i && (i.kind || i.label)).map(i => ({ kind: S_(i.kind), label: S_(i.label), at: T(i.at), note: S_(i.note) }));
     const stations = arr(o.stations).map(S_).filter(Boolean), station = S_(o.station) || stations[0] || "";
     if (station && !stations.includes(station)) stations.unshift(station);
@@ -210,17 +210,19 @@
   function vpump() {
     while (vrun < options.vectorConc && vq.length) {
       const j = vq.shift(); vrun++;
-      Promise.resolve().then(() => root.PieceMedia.vectorThumb(j.row)).then(u => j.done(typeof u === "string" && u ? u : null), () => j.done(null)).then(() => { vrun--; vpump(); });
+      Promise.resolve().then(() => root.PieceMedia.vectorThumb(j.row, j.opts)).then(u => j.done(typeof u === "string" && u ? u : null), () => j.done(null)).then(() => { vrun--; vpump(); });
     }
   }
-  function vecThumb(sku) {
+  function vecThumb(sku, side) {
     sku = S_(sku).trim(); const PM = root.PieceMedia;
     if (!sku || !PM || typeof PM.vectorThumb !== "function") return Promise.resolve(null);
     const row = { spec: { designSku: sku, size: null, noDesign: false }, line: { sku }, poolIds: [] };
-    let key = "sku:" + sku.toUpperCase(); try { if (typeof PM.vectorKey === "function") key = PM.vectorKey(row) || key; } catch (_) {}
+    // (the Right piece of an earring pair is the Left turned over, by the one rule of charm-nest-pair.js: its picture is turned the same way; the Left, a single piece and every other tile are the design as drawn, as before)
+    let opts = null; if (side === "R") { try { if (PM.earMirror && PM.earMirror(row, "R")) opts = { side: "R", mirror: true }; } catch (_) {} }
+    let key = "sku:" + sku.toUpperCase(); try { if (typeof PM.vectorKey === "function") key = PM.vectorKey(row, opts || undefined) || key; } catch (_) {}
     const had = VC.get(key); if (had && (had.url || Date.now() - had.at < 60000)) { VC.delete(key); VC.set(key, had); return had.p; }
     const e = { at: Date.now(), url: "", p: null };
-    e.p = new Promise(res => vq.push({ row, done: u => { e.url = u || ""; e.at = Date.now(); res(u); } }));
+    e.p = new Promise(res => vq.push({ row, opts, done: u => { e.url = u || ""; e.at = Date.now(); res(u); } }));
     VC.set(key, e); while (VC.size > options.vectorCap) VC.delete(VC.keys().next().value);
     vpump(); return e.p;
   }
@@ -671,7 +673,7 @@
     function tileHtml(o, p, i, n, over) {
       const url = thumbOf(o, p), label = n > 1 ? `Piece ${i + 1} of ${n}${p && p.label ? ": " + p.label : ""}` : p && p.label ? `Picture: ${p.label}` : "Order picture";
       const inner = url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" draggable="false">` : PH;
-      return `<button type="button" class="efoZ efoTh${url ? "" : " ph"}${over ? " over" : ""}" data-zoom-dot="${options.zoom}" data-i="${i}"${n > 1 ? ` data-n="${i + 1}"` : ""}${p && p.sku ? ` data-sku="${esc(p.sku)}"` : ""} tabindex="-1" aria-label="${esc(label)}">${inner}</button>`;
+      return `<button type="button" class="efoZ efoTh${url ? "" : " ph"}${over ? " over" : ""}" data-zoom-dot="${options.zoom}" data-i="${i}"${n > 1 ? ` data-n="${p && p.side ? p.side : i + 1}"` : ""}${p && p.sku ? ` data-sku="${esc(p.sku)}"` : ""}${p && p.sku && p.side ? ` data-side="${p.side}"` : ""} tabindex="-1" aria-label="${esc(label)}">${inner}</button>`;
     }
     function thumbsHtml(o, open) {
       const n = Math.max(1, o.piecesCount), tiles = [];
@@ -685,7 +687,7 @@
       if (e._sig === sig) return;
       e._sig = sig; e._o = o; e.dataset.rid = o.rid;
       const R = e._r, open = M.expanded.has(o.rid);
-      const tsig = JSON.stringify([o.piecesCount, o.pieces.map(p => [p.id, p.sku, p.thumbUrl]), o.thumbUrl, open]);
+      const tsig = JSON.stringify([o.piecesCount, o.pieces.map(p => [p.id, p.sku, p.thumbUrl, p.side]), o.thumbUrl, open]);
       if (R.th._s !== tsig) { R.th._s = tsig; R.th.innerHTML = thumbsHtml(o, open); }
       const np = o.piecesCount, labels = o.pieces.map(p => p.label).filter(Boolean);
       const sub = np ? `${np} piece${np === 1 ? "" : "s"}${labels.length ? " · " + labels.slice(0, 3).join(", ") + (labels.length > 3 ? "…" : "") : ""}` : "";
@@ -705,7 +707,7 @@
       const vec = opts.prefer === "vector";
       for (const t of scope.querySelectorAll(".efoTh[data-sku]:not(.over)")) {
         if (t._v) continue; if (!vec && !t.classList.contains("ph")) continue;
-        t._v = 1; vecThumb(t.dataset.sku).then(u => { if (u && t.isConnected && !M.dead && (vec || t.classList.contains("ph"))) { t.classList.remove("ph"); t.innerHTML = `<img src="${esc(u)}" alt="" decoding="async" draggable="false">`; } });
+        t._v = 1; vecThumb(t.dataset.sku, t.dataset.side).then(u => { if (u && t.isConnected && !M.dead && (vec || t.classList.contains("ph"))) { t.classList.remove("ph"); t.innerHTML = `<img src="${esc(u)}" alt="" decoding="async" draggable="false">`; } });
       }
     }
     M.repaintQr = () => { for (const e of M.els.values()) { e._sig = ""; } paintList(null); };
@@ -733,13 +735,13 @@
     }
     function piecesHtml(o) {
       const n = Math.max(1, o.piecesCount);
-      const cells = []; for (let i = 0; i < Math.min(n, TILES); i++) { const p = o.pieces[i], url = thumbOf(o, p); cells.push(`<div><i${p && p.sku ? ` data-sku="${esc(p.sku)}"` : ""}>${url ? `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer">` : PH}</i><span>${esc(p && p.label ? p.label : "Piece " + (i + 1))}</span></div>`); }
+      const cells = []; for (let i = 0; i < Math.min(n, TILES); i++) { const p = o.pieces[i], url = thumbOf(o, p); cells.push(`<div><i${p && p.sku ? ` data-sku="${esc(p.sku)}"` : ""}${p && p.sku && p.side ? ` data-side="${p.side}"` : ""}>${url ? `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer">` : PH}</i><span>${esc(p && p.label ? p.label : "Piece " + (i + 1))}</span></div>`); }
       return `<div class="efoTipH"><b>#${esc(o.number)}</b><span>${n} pieces</span></div><div class="efoTipP">${cells.join("")}</div>${n > TILES ? `<div class="efoTipW">and ${n - TILES} more</div>` : ""}`;
     }
     function showTip(row, kind) {
       const o = row._o; if (!o || M.dead || M.zooming || doc.visibilityState === "hidden") return;
       const t = tipEl(); t.innerHTML = kind === "pieces" ? piecesHtml(o) : factsHtml(o);
-      if (kind === "pieces") for (const i of t.querySelectorAll("i[data-sku]")) { if (!i.querySelector("img")) vecThumb(i.dataset.sku).then(u => { if (u && i.isConnected && !i.querySelector("img")) i.innerHTML = `<img src="${esc(u)}" alt="">`; }); }
+      if (kind === "pieces") for (const i of t.querySelectorAll("i[data-sku]")) { if (!i.querySelector("img")) vecThumb(i.dataset.sku, i.dataset.side).then(u => { if (u && i.isConnected && !i.querySelector("img")) i.innerHTML = `<img src="${esc(u)}" alt="">`; }); }
       t.classList.remove("on"); t.style.visibility = "hidden";
       const r = row.getBoundingClientRect(), vw = root.innerWidth || 1200, vh = root.innerHeight || 800, tb = doc.querySelector(".topbar"), top0 = tb && tb.getClientRects().length ? tb.getBoundingClientRect().bottom : 0;
       const w = t.offsetWidth, h = t.offsetHeight;
