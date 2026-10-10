@@ -4983,12 +4983,14 @@ const Engrave = window.Engrave = (() => {
       if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
       const row=existing ? {...existing.row,engrave:{...existing.row.engrave},poolIds:[poolId]} : {key:"back:"+poolId,state:"written",poolIds:[poolId],order:{receiptId:saved.order},line:{transactionId:saved.transactionId,sku:saved.sku},spec:{designSku:saved.sku,personalization:[saved.text || ""]},engrave:{needed:true,state:"review"}};
       const job={key:"back:"+poolId,row,copies:[poolId],editingBack:true,editSheet:sheet,editCharm:charm,editOriginal:saved,expectedApprovedAt:saved.approvedAt,engravingSeals:CNEngravingSeals.merge(saved),
+        fontKey:O.fontOfRecord(saved),fontAsked:saved.fontAsked || "",fontLocked:true,   // (a back that is edited stays in the font it was written in)
         lineGap:saved.lineGap ?? .18,lineMode:saved.lineMode || "preserve",lineInput:saved.lineInput || saved.lines, state:"review",text:saved.text || "",lines:saved.lines?.length ? saved.lines.slice() : String(saved.text || "").split("\n"),
         solidBack:!!saved.solidBack,source:saved.source || "personalization",quote:saved.sourceQuote || null,confidence:1,questions:[],requests:{side:"back"},backs:[],t:Date.now(),materialVersion:2};
       await loadFonts(); if(!F_.ok) throw new Error("Engraving font is unavailable");
+      await ensureJobFont(job);   // (the font the back was saved in, from its record: job.fontKey is set from it above)
       job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,solidBack:job.solidBack});
       job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm.backKeepOut || []});
-      const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
+      const font=fontFor(saved.weight,job),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
         const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(job,true),{centre:layout.centre,angle:layout.angle});
@@ -5118,8 +5120,9 @@ const Engrave = window.Engrave = (() => {
         if (!row) continue;
         const j = jobForPool(row, bk.poolId);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
-        Object.assign(j, { state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: bk.approvedAt || null, engravingSeals:bk.engravingSeals || [], backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
+        Object.assign(j, { fontKey: O.fontOfRecord(bk), fontAsked: bk.fontAsked || "", fontName: bk.font || undefined, fontLocked: true, state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: bk.approvedAt || null, engravingSeals:bk.engravingSeals || [], backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
         j.row.engrave = { ...j.row.engrave, needed:true,state:"written",approved:true,text:j.text,approvedBy:j.approvedBy,approvedAt:j.approvedAt };CNEngravingSeals.keep(j);
+        if (j.fontKey !== O.DEFAULT_FONT) loadFontSet(j.fontKey).catch(() => {});   // (a recalled back in another font: its font is read now, for the picture and a reopen)
       }
     }
     render();
@@ -5242,7 +5245,9 @@ const Engrave = window.Engrave = (() => {
     // restoring another set, or deciding this job meanwhile must not undo approval.
     if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
     if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: F_.error }); return job; }
-    const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
+    await ensureJobFont(job);   // (the font this piece engraves in; a font that will not load is Source Sans 3)
+    if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
+    const cov = G.glyphCoverage(setOf(job).Regular, job.lines.join("\n"));
     if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { ...job.row.engrave, needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
@@ -5338,7 +5343,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col",fonts:F_.workerFonts});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
     }
     return workerClient;
   }
@@ -5346,7 +5351,7 @@ const Engrave = window.Engrave = (() => {
     // Keep path identity (outline may also be a member), but exclude UI/cache
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
-      lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),
+      lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),
       viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT}),
       maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm?.backKeepOut || []}};
   }
@@ -5367,7 +5372,10 @@ const Engrave = window.Engrave = (() => {
     job.reason = null; job.verify = null; job.fit = null; delete job.writtenFit;
     job.lineInput ||= job.lines.slice();
     job.lines = job.lineInput.slice();
-    if (!F_.ok || !G.glyphCoverage(F_.Regular, job.lines.join("\n")).ok) return setReady(job);
+    if (!F_.ok) return setReady(job);
+    await ensureJobFont(job);
+    if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
+    if (!G.glyphCoverage(setOf(job).Regular, job.lines.join("\n")).ok) return setReady(job);
     const poolId = job.copies[0]; const charm = charmFor(job); if (!charm) { job.state = "ready"; return job; }
     job.state = "fitting"; job.row.engrave.state = "fitting"; render();
     const entry = Master.entryFor(job.row.spec.designSku) || {};
@@ -5404,7 +5412,7 @@ const Engrave = window.Engrave = (() => {
   async function claudeRead(job) {
     if (!S.cloud.ok || !job.fit) return;
     const png = renderBack(job, 700, { grid: true }).toDataURL("image/png");
-    const r = await agentCall("engraveReview", { image: png, order: job.row.order.receiptId, sku: job.row.spec.designSku, text: job.lines.join("\n"), capMm: job.fit.capMm, font: "Source Sans 3", weight: job.fit.weight, angle: job.fit.angle, small: job.fit.small }, { label: `Claude looks at the back of ${job.row.order.receiptId}`, background: true });
+    const r = await agentCall("engraveReview", { image: png, order: job.row.order.receiptId, sku: job.row.spec.designSku, text: job.lines.join("\n"), capMm: job.fit.capMm, font: job.fontName || "Source Sans 3", weight: job.fit.weight, angle: job.fit.angle, small: job.fit.small }, { label: `Claude looks at the back of ${job.row.order.receiptId}`, background: true });
     if (r.skipped) { job.claude = { skipped: r.skipped }; render(); return; }
     job.claude = { legible: !!r.legible, notes: r.notes || "", concerns: r.concerns || [] };
     agent({ engrave: true }, r.legible ? "ENGRAVE" : "warn", `${job.row.order.receiptId}: Claude ${r.legible ? "reads it fine" : "finds it hard to read"} — ${r.notes}`);
@@ -5464,7 +5472,7 @@ const Engrave = window.Engrave = (() => {
   /** The cap-height readout beside the controls: the number, and when the room (not the request) set it, the reason it stops. */
   const capText = f => f.capMm.toFixed(2) + " mm" + (f.atLimit ? " · largest that fits" : "");
   function refit(job, place) {
-    const font=fontFor(job.fit.weight),want=place.size ?? job.wantSize ?? job.fit.size;
+    const font=fontFor(job.fit.weight,job),want=place.size ?? job.wantSize ?? job.fit.size;
     const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job,true),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
     if(!f.ok)return false;
     f.atLimit=f.size<want-.005;      // the metal, not the request, set this size
@@ -5533,7 +5541,7 @@ const Engrave = window.Engrave = (() => {
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
     const src=sourceOf(charm.sourceId),poolId=job.copies[0];
     const glyphs=fit.glyphs.map(g=>({cmds:g.cmds.map(c=>{const o={type:c.type};if(c.type!=="Z"){o.x=c.x-view.cx;o.y=c.y-view.cy;}if(c.type==="C" || c.type==="Q"){o.x1=c.x1-view.cx;o.y1=c.y1-view.cy;}if(c.type==="C"){o.x2=c.x2-view.cx;o.y2=c.y2-view.cy;}return o;})}));
-    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:"Source Sans 3",weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
+    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:job.fontName || "Source Sans 3",fontKey:fontIdOf(job),weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
     const verified=await verifyBackFile(built.bytes,job);
     if(!verified.ok)throw new Error(`The back file needs adjustment (${verified.why}). Move or resize the words before approving.`);
     return {fit,view};
@@ -5917,12 +5925,12 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
-        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written back file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
         // Keep the exact uploaded payload before sending it. A lost reply must replay
         // these same file tokens, not upload again and look like a different edit.
@@ -5971,12 +5979,13 @@ const Engrave = window.Engrave = (() => {
     const w = job.writtenFit, again = why => Object.assign(new Error(why), { engravingInvalid: true });
     if (!w || w.approvedAt !== job.approvedAt) throw again("This engraving's placement is not kept — fit the words again");
     if (!F_.ok) throw new Error("Engraving font is unavailable");
+    if (!fontSetOf(job)) { loadFontSet(fontIdOf(job)); throw Object.assign(new Error("The engraving font is loading; retry in a moment"), { engravingPending: true }); }
     const charm = charmFor(job); if (!charm) throw Object.assign(new Error("The charm is being moved between sheets; retry saving its engraving after nesting finishes"),{engravingPending:true});
     let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle, holeOnly: true }); } catch (e) { throw again(`This charm's back could not be read again (${e.message}) — fit the words again`); }
     const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: charm.backKeepOut || [] });
     // the charm's back is not what the words were approved on (its drawing or keep-out changed): a person fits them again
     if (maskKey(mask) !== w.maskKey) throw again("This charm's back changed since the words were approved — fit the words again");
-    const layout = G.layoutLines(w.lines, fontFor(w.weight), w.size, w.lineGap, w.angle || 0, w.centre), geometry = G.verifyInk(layout.cmds, mask);
+    const layout = G.layoutLines(w.lines, fontFor(w.weight, job), w.size, w.lineGap, w.angle || 0, w.centre), geometry = G.verifyInk(layout.cmds, mask);
     if (!geometry.ok) throw again("The approved words no longer fit this charm's back — fit the words again");
     const { approvedAt, upAngle, marginMm, lineGap, filledArtwork, maskKey: k, ...fit } = w;
     job.view = view; job.mask = mask; job.fit = Object.assign(fit, { layout, glyphs: layout.glyphs, cmds: layout.cmds }); job.verify = { geometry, at: Date.now() };
@@ -5990,7 +5999,7 @@ const Engrave = window.Engrave = (() => {
       if (!job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt && b.outputs?.ai?.url && b.outputs?.png?.url))) continue;
       const fit = job.fit, lines = (fit.lines || job.lines).slice(), lineGap = fitOpts(job).lineGap;
       let same = false;
-      try { same = JSON.stringify(G.layoutLines(lines, fontFor(fit.weight), fit.size, lineGap, fit.angle || 0, fit.centre).cmds) === JSON.stringify(fit.cmds); } catch (_) {}
+      try { same = JSON.stringify(G.layoutLines(lines, fontFor(fit.weight, job), fit.size, lineGap, fit.angle || 0, fit.centre).cmds) === JSON.stringify(fit.cmds); } catch (_) {}
       if (!same) { job._shelveTried = job.approvedAt; continue; }
       const { layout, glyphs, cmds, ...rest } = fit;
       job.writtenFit = Object.assign({}, rest, { lines, approvedAt: job.approvedAt, upAngle: job.view.upAngle, marginMm: job.mask.marginMm, lineGap, filledArtwork: !!job.view.detail?.filledArtwork, maskKey: maskKey(job.mask) });
@@ -6464,7 +6473,7 @@ const Engrave = window.Engrave = (() => {
                 <div class="dd front">${j2.view?.detail?.filledArtwork || j2.writtenFit?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
-                  ${j2.fit || j2.writtenFit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit || j2.writtenFit || {}).capMm || 0)).toFixed(2)} mm · Source Sans 3${(j2.fit || j2.writtenFit || b0).weight ? " " + esc((j2.fit || j2.writtenFit || b0).weight) : ""}</dd>` : ""}
+                  ${j2.fit || j2.writtenFit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit || j2.writtenFit || {}).capMm || 0)).toFixed(2)} mm · ${esc(j2.fontName || b0.font || "Source Sans 3")}${(j2.fit || j2.writtenFit || b0).weight ? " " + esc((j2.fit || j2.writtenFit || b0).weight) : ""}</dd>` : ""}
                   <dt>Decided</dt><dd>${esc(who || "—")}${j2.approvedAt ? " · " + esc(new Date(j2.approvedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })) : ""}${j2.decision && j2.decision.why ? " · " + esc(j2.decision.why) : ""}</dd>
                   ${(j2.backs || []).length ? `<dt>File</dt><dd>${(j2.backs || []).map(b => { const u = b.ai || (b.outputs && b.outputs.ai && b.outputs.ai.url); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" title="the back file, as it went to the laser">${esc((b.name || "back") + ".ai")}</a>` : "not saved to the cloud"; }).join(" · ")}</dd>` : ""}
                   ${j2.copies && j2.copies.length ? `<dt>Pieces</dt><dd>${j2.copies.length} on ${[...new Set(j2.copies.map(pid => (Pool.sheetOf(pid) || {}).fileBase).filter(Boolean))].map(esc).join(", ") || "the sheet"}</dd>` : ""}
@@ -6624,11 +6633,14 @@ const Engrave = window.Engrave = (() => {
     const wants = [];
     if (requests.side && !["back", "unspecified"].includes(requests.side)) wants.push(`Requested side: ${requests.side}`);
     if (requests.font) wants.push(`Requested font: ${requests.font}`);
-    // a font the buyer chose in a drop-down (Font: Typewriter) that the app does not have (spec.font, charm-nest-orders.js fontRead): the shop decides, so it is said here, beside the words
-    if (sp.font && sp.font.asked && !sp.font.id && String(sp.font.asked).toLowerCase() !== String(requests.font || "").toLowerCase()) wants.push(`Requested font: ${sp.font.asked} (the app engraves in ${O.ENGRAVING_FONTS.map(f => f.name).join(", ")})`);
+    // the font a drop-down chose (spec.font, charm-nest-orders.js fontRead): one the app has is shown as "Font: Stylish → Playwrite US Trad" under From the order; a font the app does not have
+    // falls back to Source Sans 3, is never a hold, and is said here, beside the words, for the shop to decide ("Requested font: Script (engraved in Source Sans 3)")
+    const pIx = pieceIndexOf(job), fontText = O.fontLine(sp, pIx), fontMapped = O.pieceFont(sp, pIx).mapped;
+    if (fontText && !fontMapped && String(sp.font && sp.font.asked || "").toLowerCase() !== String(requests.font || "").toLowerCase()) wants.push(fontText);
+    if (job.fontFallback) wants.push(`${job.fontFallback}: engraved in Source Sans 3`);
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
-    const fromOrder = `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
+    const fromOrder = `${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? " (an earring line's Left and Right are one placement)" : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, jobsOf(job.row).length))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the back file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears) : ""}</div><div class="backHost"></div></div>
@@ -6717,7 +6729,7 @@ const Engrave = window.Engrave = (() => {
       const paintFlow = () => {
         flowFrame=0;if(!drag)return;
         const centre=drag.pending || drag.c,angle=drag.pendingAngle ?? drag.angle,size=drag.pendingSize ?? drag.want;
-        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(job,true),measure:false},{centre,angle,size},job.lineMode || "auto");
+        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight,job),job.mask,{...fitOpts(job,true),measure:false},{centre,angle,size},job.lineMode || "auto");
         if(f.ok){f.atLimit=f.size<size-.005;bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=capText(f);}
         else bc._paint();
       };
@@ -6889,7 +6901,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, jobForPool, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, jobForPool, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */

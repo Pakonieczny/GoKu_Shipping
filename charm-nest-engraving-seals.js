@@ -69,8 +69,8 @@
     const r=job.requests || {};
     if(r.side && !['back','unspecified'].includes(r.side))add(`Asked for the ${r.side} side`);
     if(r.font)add(`Asked for the font ${r.font}`);
-    const of=job.row?.spec?.font;   // a font chosen in a drop-down that the app does not have (Font: Typewriter): said like one asked for in a note
-    if(of?.asked && !of.id && String(of.asked).toLowerCase()!==String(r.font || '').toLowerCase())add(`Asked for the font ${of.asked} (a drop-down option)`);
+    const of=job.row?.spec?.font;   // a font chosen in a drop-down that the app does not have (Font: Script): said like one asked for in a note; one the app has is engraved in its lookalike (spec.font.id) and is no question
+    if(of?.asked && !of.id && String(of.asked).toLowerCase()!==String(r.font || '').toLowerCase())add(`Requested font: ${of.asked} (a drop-down option, engraved in Source Sans 3)`);
     if(r.handwriting)add('Asked for handwriting');
     if(r.image)add('Asked for an image');
     return out.slice(0,4);

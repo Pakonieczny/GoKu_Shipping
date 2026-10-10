@@ -58,8 +58,8 @@
 
   // One worker, one active calculation. Queued inputs stay on the caller's
   // side; they are not cloned into dozens of workers or an unbounded inbox.
-  function createClient({WorkerClass, url, fonts, timeoutMs=120000}) {
-    let worker=null, active=null, seq=0;
+  function createClient({WorkerClass, url, fonts, fontsFor, timeoutMs=120000}) {
+    let worker=null, active=null, seq=0, sent=new Set();   // sent: the other fonts (a piece in Stylish, Typewriter...) this worker already has
     const queue=[];
     function finish(error,result) {
       if(!active)return;
@@ -76,7 +76,7 @@
       active=queue.shift();
       try {
         if(!worker) {
-          worker=new WorkerClass(url);
+          worker=new WorkerClass(url); sent=new Set();
           const current=worker;
           worker.onerror=error=>{if(worker===current)failed(error);};
           worker.onmessageerror=()=>{if(worker===current)failed(new Error("The engraving worker returned an unreadable result."));};
@@ -86,6 +86,12 @@
             else finish(null,data.result);
           };
           worker.postMessage({type:"fonts",fonts});
+        }
+        // a piece engraved in another font than the default sends that font's files once to this worker, before its first fit
+        const key=active.input && active.input.fontKey;
+        if(key && fontsFor && !sent.has(key)) {
+          const set=fontsFor(key);
+          if(set){worker.postMessage({type:"fonts",key,fonts:set});sent.add(key);}
         }
         active.timer=setTimeout(()=>failed(new Error("This engraving preview took too long. Retry this placement.")),timeoutMs);
         worker.postMessage({type:"fit",id:active.id,input:active.input});
