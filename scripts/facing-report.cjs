@@ -54,7 +54,7 @@ function report(designs, meta) {
     if (d.level === 'slight') slight.push({ skus: d.skus, cut: d.cut, art: d.art });   // (nearly the same in a mirror: a hoop off to one side, a wobble; the Right is still cut turned over, no word is asked)
     if (d.level !== 'directional') continue;
     const reads = d.skus.some(s => Pair.readsOneWay({ sku: s }));
-    if (reads) { counts.readsOneWayByName++; lettering.push({ skus: d.skus, mm: d.mm }); continue; }   // (a letter, number or script: both earrings are cut as drawn, nothing to say)
+    if (reads) { counts.readsOneWayByName++; lettering.push({ skus: d.skus, mm: d.mm }); continue; }   // (a letter, number or script by name: the Right is mirrored like any other earring, and which way a letter faces is of no interest, so it is listed apart)
     const score = Math.max(d.cut != null ? d.cut / CUT_DIR : 0, d.art != null ? d.art / ART_DIR : 0);
     out.push({ skus: d.skus, family: familyOf(d.skus), use: useOf(d.skus), why: [d.cut != null && d.cut >= CUT_DIR ? 'shape' : null, d.art != null && d.art >= ART_DIR ? 'engraving' : null].filter(Boolean), cut: d.cut, art: d.art, score: +score.toFixed(2),
       readsOneWay: reads, mismatched: !!d.mismatched, mm: d.mm, guess: null });
