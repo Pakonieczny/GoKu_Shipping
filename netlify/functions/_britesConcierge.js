@@ -10,9 +10,41 @@ const COUNTRIES=[
   ['Australia',/\baustralia\b/i],['New Zealand',/\bnew zealand\b/i],['Ireland',/\bireland\b/i],['Netherlands',/\b(?:netherlands|holland)\b/i],['Norway',/\bnorway\b/i],['Denmark',/\bdenmark\b/i],['Switzerland',/\bswitzerland\b/i],['Mexico',/\bmexico\b/i],['India',/\bindia\b/i],['China',/\bchina\b/i],['Singapore',/\bsingapore\b/i]
 ];
 const PRIVATE_REQUEST=/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i;
+const shoppingGuide=require('../../brites-concierge-shopping-guide.js');
+const catalogueDiscovery=require('./_britesCatalogueDiscovery.js');
 const SHIPPING_SCOPE=/\b(?:ships?\s+(?:worldwide|abroad|internationally|overseas|anywhere|everywhere|to|my|this|it)|(?:worldwide|international|overseas)\s+shipping|(?:do|can|will|would)\s+you\s+ship)\b/i;
 const CUSTOMS_REQUEST=/\b(?:customs(?:[ -]+dut(?:y|ies))?|import[ -]+(?:dut(?:y|ies)|tax(?:es)?))\b/i;
 const tidy=(value,max=3000)=>String(value??'').replace(/\u0000/g,'').trim().slice(0,max);
+// This selects knowledge for the current piece, never a website action. Shared
+// intent classification keeps quoted, hypothetical and private setter words
+// out of this route. The live catalogue and reviewed-meaning gate own facts.
+function meaningContextRequest(message,context={}){
+  const text=tidy(message,2000),intent=shoppingGuide.classifyShopperIntent(text);
+  if(intent.kind!=='meaning'||!intent.recognized||intent.denied||PRIVATE_REQUEST.test(text))return null;
+  const handle=context.currentHandle;
+  if(typeof handle!=='string'||!/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/.test(handle)||handle.length>180)return null;
+  if(/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th))\b/i.test(text))return null;
+  const normal=value=>value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim(),identities=catalogueDiscovery.inventoryIdentities(context.inventoryPieces),names=new Map(),matched=new Set();let masked=' '+normal(text)+' ';
+  for(const product of identities){const name=' '+normal(product.title)+' ';if(!names.has(name))names.set(name,[]);names.get(name).push(product.handle);if(new RegExp('(?:^|[^a-z0-9_-])'+product.handle+'(?=$|[^a-z0-9_-])','i').test(text))matched.add(product.handle);}
+  for(const [name,handles]of [...names].sort((a,b)=>b[0].length-a[0].length))if(masked.includes(name)){handles.forEach(handle=>matched.add(handle));masked=masked.split(name).join(' ');}
+  if([...matched].some(named=>named!==handle))return null;
+  const urls=[...text.matchAll(/https?:\/\/[^\s<>"']+/gi)].map(hit=>hit[0].replace(/[),.!?]+$/,''));
+  if(urls.length&&urls.some(value=>{try{const u=new URL(value);return u.protocol!=='https:'||u.username||u.password||u.port||!['britesjewelry.com','www.britesjewelry.com'].includes(u.hostname)||!new RegExp('^/products/'+handle+'/?$').test(u.pathname)||u.search||u.hash;}catch{return true;}}))return null;
+  const current=/\b(?:this|that|its?|current|selected)\b/i.test(text);
+  return current||urls.length?{handle}:null;
+}
+function meaningContextReply({product,meaning,personalContext={}}={}){
+  if(!product||!meaning||meaning.productId!==product.id||meaning.kind!=='interpretation'||!Array.isArray(meaning.sources)||!meaning.sources.length)return null;
+  const context=shoppingGuide.normalizeShopperContext(personalContext),text=tidy(meaning.text,1500),title=tidy(product.title,300);
+  if(!title||!text||PRIVATE_REQUEST.test(text))return null;
+  const recipient=context.recipient.replace(/^(?:my|our)\s+/i,'your '),label=recipient==='myself'?'yourself':recipient&&!/^(?:your|a|an|the)\b/i.test(recipient)?'your '+recipient:recipient;
+  const scope=context.occasion?(label&&label!=='yourself'?label+'’s '+context.occasion:context.occasion):label;
+  // Never cut a source sentence into a stronger claim. Long interpretations
+  // stay intact on their cited card instead of being copied into the reply.
+  const interpretation=text.length<=500?'this reviewed interpretation: “'+text+'”':'the reviewed interpretation shown below';
+  const reason=context.reason?' You described the personal reason as “'+context.reason+'”.':'';
+  return {reply:(scope?'For '+scope+', ':'')+title+' has '+interpretation+'.'+reason+' It is a possible personal connection, rather than a universal meaning.',question:scope||context.reason?'Does that interpretation fit what you want the piece to express?':null};
+}
 function decodeHtml(value){const entities={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' ',ndash:'–',mdash:'—',rsquo:"'",lsquo:"'",ldquo:'"',rdquo:'"'};return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,(whole,code)=>{if(code[0]!=='#')return entities[code.toLowerCase()]??whole;const n=code[1].toLowerCase()==='x'?parseInt(code.slice(2),16):parseInt(code.slice(1),10);return Number.isInteger(n)&&n>31&&n<=0x10ffff&&!(n>=0xd800&&n<=0xdfff)?String.fromCodePoint(n):' ';});}
 function policyBlocks(html){
   if(typeof html!=='string'||Buffer.byteLength(html)>MAX_HTML_BYTES)return [];
@@ -181,4 +213,4 @@ function createPolicyGuide({fetch=globalThis.fetch,now=Date.now,ttlMs=60000,time
   }
   return {read,answer};
 }
-module.exports={POLICIES,MAX_HTML_BYTES,policyBlocks,timing,parseShipping,parseRefund,countryIn,classify,shippingAnswer,refundAnswer,policyCoverage,unavailableAnswer,createPolicyGuide};
+module.exports={POLICIES,MAX_HTML_BYTES,policyBlocks,timing,parseShipping,parseRefund,countryIn,classify,shippingAnswer,refundAnswer,policyCoverage,unavailableAnswer,createPolicyGuide,meaningContextRequest,meaningContextReply};

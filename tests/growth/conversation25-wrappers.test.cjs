@@ -9,14 +9,14 @@ test('public concierge social turn skips policy, catalogue reads and runtime set
   const recorder={reference:'synthetic',attach(){},run:async(stage,fn)=>fn(),optionalMessage:async fn=>fn(),flush:async()=>{},degraded(){}};
   const service={rateLimit:async()=>{counts.limit++;return true;},event:async()=>{counts.message++;},setup:async()=>{throw Error('Must not inspect AI control for greetings.');}};
   const mockCore={...core,makeDb:()=>({}),createGrowthService:()=>service,createShopify:()=>({search:async()=>{throw Error('Must not search.');},byHandle:async()=>{throw Error('Must not inspect.');}})};
-  const handler=await new AsyncFunction('core','claude','policy','diagnostics','Netlify',source('britesConcierge.js'))(mockCore,{}, {createPolicyGuide:()=>({answer:async()=>{throw Error('Must not read policies.');}}),classify:()=>{throw Error('Must not classify a policy after a social match.');}}, {createRecorder:()=>recorder},{env:{get:()=>undefined}});
+  const handler=await new AsyncFunction('core','claude','policy','diagnostics','shoppingGuide','Netlify',source('britesConcierge.js'))(mockCore,{}, {createPolicyGuide:()=>({answer:async()=>{throw Error('Must not read policies.');}}),classify:()=>{throw Error('Must not classify a policy after a social match.');}}, {createRecorder:()=>recorder},require('../../brites-concierge-shopping-guide.js'),{env:{get:()=>undefined}});
   const response=await handler(req({message:'Hello, how are you?',preferences,context:{productHandles:['bunny-necklace']}}),{ip:'synthetic'}),value=await response.json();
   assert.equal(response.status,200);assert.equal(value.conversationOnly,true);assert.equal(value.needsModelConversation,false);assert.deepEqual(value.preferences,preferences);assert.equal(counts.limit,1);assert.equal(counts.message,1);
 });
 test('social wrapper still refuses cross-origin, invalid and rate-limited requests before a response',async()=>{
   let storage=0;const recorder={reference:'synthetic',attach(){},run:async(stage,fn)=>fn(),flush:async()=>{},optionalMessage:async()=>{}};
   const mockCore={...core,makeDb:()=>{storage++;return {};},createShopify:()=>({}),createGrowthService:()=>({rateLimit:async()=>false})};
-  const handler=await new AsyncFunction('core','claude','policy','diagnostics','Netlify',source('britesConcierge.js'))(mockCore,{}, {createPolicyGuide:()=>({})}, {createRecorder:()=>recorder},{env:{get:()=>undefined}});
+  const handler=await new AsyncFunction('core','claude','policy','diagnostics','shoppingGuide','Netlify',source('britesConcierge.js'))(mockCore,{}, {createPolicyGuide:()=>({})}, {createRecorder:()=>recorder},require('../../brites-concierge-shopping-guide.js'),{env:{get:()=>undefined}});
   assert.equal((await handler(new Request('https://preview.test/api/concierge',{method:'POST',headers:{Origin:'https://evil.test'},body:'{"message":"hello"}'}),{})).status,403);
   assert.equal((await handler(req({message:123}),{})).status,400);assert.equal(storage,0);
   assert.equal((await handler(req({message:'hello'}),{})).status,429);assert.equal(storage,1);

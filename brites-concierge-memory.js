@@ -94,7 +94,7 @@
     var result = {};
     ['style', 'occasion', 'recipient', 'relationship', 'metal', 'material', 'color', 'colour', 'category', 'meaning', 'theme', 'intent', 'budget', 'maxPrice', 'currency', 'budgetCurrency'].forEach(function (key) {
       if (!value || !Object.prototype.hasOwnProperty.call(value, key)) return;
-      if (typeof value[key] === 'string' && (!['currency', 'budgetCurrency'].includes(key) || /^[A-Z]{3}$/.test(value[key]))) result[key] = redact(value[key], hostRedact).slice(0, 120);
+      if (typeof value[key] === 'string' && (!['currency', 'budgetCurrency'].includes(key) || /^[A-Z]{3}$/.test(value[key]))) result[key] = redact(value[key], hostRedact).slice(0, key === 'intent' ? 300 : 120);
       else if (['budget', 'maxPrice'].includes(key) && typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0) result[key] = Math.min(value[key], 100000);
     });
     return result;

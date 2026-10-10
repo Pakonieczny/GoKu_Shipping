@@ -51,7 +51,125 @@
   function key(value) { return text(value, 16000).normalize('NFKC').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim(); }
   function words(value) { return key(value).split(' ').filter(Boolean); }
   function unique(values) { return Array.from(new Set(values)); }
+  var PERSONAL_LIMITS = { recipient: 120, occasion: 120, reason: 300, topicKey: 160 };
+  var RELATIVES = 'grandmother|grandfather|grandma|grandpa|mother|father|mom|mum|dad|sister|brother|daughter|son|wife|husband|partner|friend|teacher|colleague|coworker|niece|nephew|aunt|uncle|myself|me';
+  var QUOTED = /"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’|(?:^|\s)'[^'\n]+'(?=\s|[,.!?;:]|$)/g;
+  var PRIVATE_COMMAND = /\b(?:set|change|write|save|add|fill|clear|erase|remove|apply|use|stage)\s+(?:(?:the|my)\s+)?(?:(?:cart|bag|order|gift)\s+(?:note|message|instructions)|(?:custom\s+)?design\s+(?:brief|idea)|(?:engraving|engraved)(?:\s+(?:text|message|wording|field))?|(?:(?:cart|bag)\s+)?(?:discount|promo|coupon)\s+code)\b/i;
+  var PRIVATE_PAYLOAD = /\b(?:(?:(?:cart|bag|order|gift)\s+)?(?:note|message|instructions)|(?:custom\s+)?design\s+(?:brief|idea)|engraving(?:\s+(?:text|message|wording|field))?|(?:discount|promo|coupon)\s+code)\s*(?::|\b(?:is|says?|reads?|contains?|should (?:say|read)|to read)\b)/i;
+  function personalText(value, max) {
+    var clean = text(value, max);
+    return !clean || /https?:\/\/|www\.|<[^>]*>|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:\d[ -]?){13,19}\b|\+?\d(?:[ ().-]*\d){9,18}\b|(?:system|developer|assistant|author|internal|hidden)\s+(?:prompt|message|instructions?)|ignore .*instructions|(?:api|secret)[ -]?key|credentials?|password|access[ -]?token|id[ -]?token|authorization\s*[:=]?\s*bearer/i.test(clean) || PRIVATE_COMMAND.test(clean) || PRIVATE_PAYLOAD.test(clean) ? '' : clean.replace(/\s+/g, ' ');
+  }
+  function normalizeShopperContext(value) {
+    value = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    var out = {};
+    Object.keys(PERSONAL_LIMITS).forEach(function (name) {
+      var clean = personalText(value[name], PERSONAL_LIMITS[name]);
+      QUOTED.lastIndex = 0;
+      if (name !== 'topicKey' && (QUOTED.test(clean) || /\b(?:hypothetically|suppose|what if|if i|if we)\b/i.test(clean) || name !== 'reason' && /\b(?:not|never|no longer|dont|don't|don’t|do not)\b/i.test(clean))) clean = '';
+      if (name === 'recipient') { var relative = new RegExp('^(?:(?:my|our|the)\\s+)?(' + RELATIVES + ')$', 'i').exec(clean); if (relative) clean = canonicalRecipient(relative[1]); }
+      out[name] = clean;
+    });
+    return out;
+  }
+  function shopperStatement(value) {
+    var raw = personalText(value, 2000);
+    if (!raw) return '';
+    // Quoted text is data, including a request copied from a note or another
+    // person. Contractions are retained; only paired quotation marks are cut.
+    var unquoted = raw.replace(QUOTED, ' ').replace(/\s+/g, ' ').trim();
+    if (/\b(?:hypothetically|what if|suppose|imagine that|if i|if we|if she|if he|if they)\b|^(?:if|would i|would we)\b/i.test(unquoted)) return '';
+    return unquoted;
+  }
+  function negatedAt(value, index) {
+    var prefix = value.slice(Math.max(0, index - 55), index).split(/[.!?;,]/).at(-1);
+    return /\b(?:not|never|isnt|isn't|isn’t|dont|don't|don’t|do not|doesnt|doesn't|doesn’t|no longer)(?:\s+[a-z]+){0,4}\s*$/i.test(prefix);
+  }
+  function canonicalRecipient(value) {
+    var v = value.toLowerCase();
+    return ({ mom: 'mother', mum: 'mother', dad: 'father', grandma: 'grandmother', grandpa: 'grandfather', me: 'myself' })[v] || v;
+  }
+  function topicHash(value) {
+    var hash = 2166136261;
+    for (var i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+    return 'gift-' + (hash >>> 0).toString(36);
+  }
+  function updateShopperContext(before, message) {
+    var prior = normalizeShopperContext(before), statement = shopperStatement(message);
+    if (!statement) return prior;
+    if (/\b(?:dont|don't|don’t|do not|never)\s+(?:want|need|plan|intend)\b/i.test(statement) && !/\b(?:but|instead|actually)\b/i.test(statement)) return prior;
+    var next = Object.assign({}, prior), low = statement.toLowerCase(), changed = false;
+    var newGift = /\b(?:another|new|different|next) gift\b|\b(?:switch(?:ing)? topics?|different topic|moving on)\b/i.exec(statement);
+    var reset = !!newGift && !negatedAt(statement, newGift.index);
+    var recipient = '', foundRecipient = false;
+    var matcher = new RegExp('\\bfor\\s+(?:(?:my|our|a|the|his|her|their)\\s+)?(' + RELATIVES + ')\\b', 'gi'), match;
+    while ((match = matcher.exec(statement))) {
+      if (negatedAt(statement, match.index)) {
+        if (canonicalRecipient(match[1]) === prior.recipient) { next.recipient = ''; changed = true; }
+      } else { recipient = canonicalRecipient(match[1]); foundRecipient = true; }
+    }
+    var correction = new RegExp('\\bnot (?:for )?(?:(?:my|our|the) )?(' + RELATIVES + ')(?:[,;]\\s*(?:(?:but|instead|actually)\\s+)?|\\s+(?:but|instead)\\s+)(?:for )?(?:(?:my|our|the) )?(' + RELATIVES + ')\\b', 'i').exec(statement);
+    if (correction) { recipient = canonicalRecipient(correction[2]); foundRecipient = true; }
+    // A named recipient requires an explicit gift statement. Product-search
+    // nouns following "for" never become a person inferred by the guide.
+    if (!foundRecipient) {
+      var named = /\bgift for\s+([A-Z][a-zA-Z-]{1,39}(?:\s+[A-Z][a-zA-Z-]{1,39}){0,2})(?=[,.;!?]|\s+(?:because|for|to|on|in)\b|$)/g;
+      while ((match = named.exec(statement))) if (!negatedAt(statement, match.index)) { recipient = match[1]; foundRecipient = true; }
+    }
+    if (foundRecipient && recipient === 'myself' && prior.recipient !== 'myself') reset = true;
+    if (reset) { next = normalizeShopperContext({}); changed = true; }
+    if (foundRecipient) { changed = changed || recipient !== next.recipient; next.recipient = recipient; }
+    var occasions = /\b(graduation|birthday|anniversary|wedding|retirement|milestone|memorial|remembrance)\b/gi, occasion = '';
+    while ((match = occasions.exec(statement))) {
+      if (negatedAt(statement, match.index)) {
+        if (next.occasion === match[1].toLowerCase() || /^(?:memorial|remembrance)$/.test(match[1].toLowerCase()) && /^(?:memorial|remembrance)$/.test(next.occasion)) { next.occasion = ''; changed = true; }
+      } else occasion = match[1].toLowerCase();
+    }
+    if (occasion) { changed = changed || occasion !== next.occasion; next.occasion = occasion; }
+    var memory = /\b(?:in memory of|in remembrance of|remembering|to remember)\s+([^.!?;]{1,220})/gi;
+    while ((match = memory.exec(statement))) {
+      if (negatedAt(statement, match.index)) { if (/\b(?:in memory of|in remembrance of|remembering|to remember)\b/i.test(next.reason)) { next.reason = ''; changed = true; } }
+      else { next.reason = match[0].trim(); next.occasion = 'remembrance'; changed = true; }
+    }
+    var reason = /\bbecause\s+([^.!?;]{1,300})/i.exec(statement);
+    var giftScoped = foundRecipient || !!occasion || /\b(?:this|the|my|our) (?:gift|piece|charm|necklace|earrings)\b/i.test(statement) || /^because\b/i.test(statement) && !!(prior.recipient || prior.occasion);
+    if (reason && giftScoped && !negatedAt(statement, reason.index) && !/\b(?:not|dont|don't|don’t|do not|never|just browsing|take (?:my|some|your) time|hesitat\w*|frustrat\w*|angry|pissed off)\b/i.test(reason[1])) { var safe = personalText(reason[1], 300); if (safe) { changed = changed || safe !== next.reason; next.reason = safe; } }
+    if (/\b(?:no one|nobody) (?:died|passed away)\b/i.test(statement) && /\b(?:memory|remembrance|remembering)\b/i.test(next.reason)) { next.reason = ''; if (/^(?:memorial|remembrance)$/.test(next.occasion)) next.occasion = ''; changed = true; }
+    if (changed && (next.recipient || next.occasion || next.reason || reset)) next.topicKey = topicHash(prior.topicKey + '|' + statement);
+    return normalizeShopperContext(next);
+  }
+  function classifyShopperIntent(message) {
+    var statement = shopperStatement(message), low = key(statement), none = { kind: 'none', recognized: false, explicit: false, denied: !statement };
+    if (!statement) return none;
+    if (/^(?:no thanks|no thank you|stop (?:suggesting|recommending)|(?:im|i am) just browsing|just browsing)\b/.test(low) || /\b(?:do not|dont|never|stop)\b/.test(low)) return Object.assign({}, none, { denied: true });
+    if (/\b(?:not (?:hesitating|uncertain|undecided|convinced that)|no longer (?:hesitating|uncertain|undecided)|not (?:sure|convinced) that (?:i|we) (?:want|need) (?:alternatives|matching|a set)|(?:dont|do not|not) (?:love|like|want|need)\b)/.test(low) && !/\bnot (?:sure|convinced|sold) (?:about|on|by|this|that|it)\b/.test(low)) return Object.assign({}, none, { denied: true });
+    var meaningQuestion = statement.split(/[.!?;]/).some(function (sentence) { var query = key(sentence); return /^(?:please )?(?:why|what|how|which|is|would|could|can|tell me|explain|describe|compare)\b/.test(query) && (/\b(?:meaning|meaningful|symbolism|symbolic|symbolize|symbolise|significant|significance|history|story|stories|represents?)\b/.test(query) || /\b(?:why|how) (?:would|could|does|might)?\s*(?:this|that|the) (?:charm|piece|motif|symbol) (?:suit|fit|matter)\b/.test(query) || /\bwhat (?:does|could|can) this mean\b/.test(query)); });
+    var kind = /\b(?:not sure|unsure|undecided|hesitating|hesitant|on the fence|not convinced|not sold|having doubts)\b/.test(low) ? 'hesitant' :
+      /\b(?:similar|alternatives?|other designs|other pieces|anything else|something else|what else|another design|different design|more like (?:that|this)|not those|cheaper|less expensive|lower price|lower priced|smaller|more petite|more delicate|tinier)\b/.test(low) ? 'alternatives' :
+      /\b(?:matching|what matches|what would match|(?:go|goes) with|pair with|complete (?:the|a) set|make (?:the|a) set)\b/.test(low) ? 'matching' :
+      meaningQuestion ? 'meaning' :
+      /\b(?:help me (?:choose|pick|select)|walk me through|guide me through|what should i (?:choose|pick)|suggest|recommend)\b/.test(low) ? 'options' :
+      /\b(?:i (?:really |absolutely )?(?:love|like) (?:this|that|it|this one)|(?:this|that|it) (?:is|feels) (?:perfect|just right)|(?:im|i am) (?:really |so )?excited (?:about|by|for) (?:this|that|it))\b/.test(low) ? 'eager' : 'none';
+    if (kind === 'eager' && /\b(?:not|never|no longer|would|might|could|if|in memory of|memorial|remembrance|grief|grieving|died|passed away|frustrat\w*|angry|pissed off)\b/.test(low)) return Object.assign({}, none, { denied: true });
+    QUOTED.lastIndex = 0;
+    return { kind: kind, recognized: kind !== 'none', explicit: kind !== 'none', denied: kind === 'none' && (QUOTED.test(String(message || '')) || /\b(?:i|we) (?:would|might|could) (?:love|like) (?:this|that|it)\b/.test(low)) };
+  }
   function visibleDescription(value) { return value.replace(/<!--[^]*?-->/g, ' ').replace(/<(script|style|template|noscript)\b[^>]*>[^]*?<\/\1\s*>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function reviewedText(value, max) {
+    var clean = personalText(value, max);
+    return clean && !/\b(?:tell|ask|instruct|advise|remind)\s+(?:the\s+)?(?:shopper|user|customer)|for (?:the )?concierge|(?:you|the assistant) should|when (?:suggesting|recommending)/i.test(clean) ? clean : '';
+  }
+  function meaningSource(value, at) {
+    try {
+      var u = new URL(value && value.url), host = u.hostname.replace(/^www\./, '').toLowerCase(), title = reviewedText(value.title, 300), checked = value.checkedAt;
+      if (u.protocol !== 'https:' || u.username || u.password || u.port || u.href.length > 1000 || !host.includes('.') || /^(?:localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(host) || /(?:^|[./_-])(?:internal|private|admin|staging|author|prompt)(?:[./_-]|$)|(?:^|\/)(?:products?|shop|cart|checkout)(?:\/|$)/i.test(host + u.pathname) || /(?:^|\.)(?:etsy|amazon|ebay|aliexpress|walmart|shopify)\.[a-z.]+$/i.test(host) || !title || !Number.isFinite(checked) || checked <= 0 || checked > at + 60000 || at - checked > 30 * 86400000) return null;
+      return { title: title, url: u.href, checkedAt: checked };
+    } catch (e) { return null; }
+  }
+  function boundedSet(set, value, limit) {
+    set.delete(value); set.add(value);
+    while (set.size > limit) set.delete(set.values().next().value);
+  }
   function freeze(value) { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.keys(value).forEach(function (name) { freeze(value[name]); }); Object.freeze(value); } return value; }
   function nativeMoney(price, currency) { try { return new Intl.NumberFormat('en', { style: 'currency', currency: currency }).format(price) + ' ' + currency; } catch (e) { return price.toFixed(2) + ' ' + currency; } }
   function category(value) {
@@ -264,7 +382,7 @@
       var family = { animals: 'animal', birds: 'animal', pets: 'animal', insects: 'animal', ocean: 'ocean', flowers: 'botanical', nature: 'botanical', celestial: 'celestial' };
       vocabulary.themeNames.forEach(function (theme) { vocabulary.searchTerms({ themes: [theme] }).forEach(function (word) { if (word.length > 2 && !STOP.has(word) && !['forget', 'not'].includes(word) && !knownMotifs.has(word)) knownMotifs.set(word, [word, family[theme] || theme]); }); });
     }
-    var products = new Map(), byCategory = new Map(), byMotif = new Map(), pref = preferences(options.preferences), muted = false, dismissed = new Set(), shown = new Set(), shownProducts = new Set(), lastShownAt = -Infinity;
+    var products = new Map(), byCategory = new Map(), byMotif = new Map(), pref = preferences(options.preferences), personal = normalizeShopperContext(options.personalContext), meanings = new Map(), muted = false, dismissed = new Set(), shown = new Set(), shownProducts = new Set(), lastShownAt = -Infinity;
     function persist() { try { if (storage && typeof storage.setItem === 'function') storage.setItem(storageKey, JSON.stringify({ muted: muted, dismissed: Array.from(dismissed).slice(-300), shown: Array.from(shown).slice(-300), shownProducts: Array.from(shownProducts).slice(-300) })); } catch (e) {} }
     try {
       var saved = storage && typeof storage.getItem === 'function' && JSON.parse(storage.getItem(storageKey) || 'null');
@@ -284,6 +402,43 @@
       return products.size;
     }
     function setPreferences(value) { pref = preferences(value); return freeze(Object.assign({}, pref, { themes: pref.themes.slice(), excludedThemes: pref.excludedThemes.slice(), excludedMaterials: pref.excludedMaterials.slice(), excludedTypes: pref.excludedTypes.slice() })); }
+    function setShopperContext(value) {
+      var next = normalizeShopperContext(value);
+      if (next.topicKey !== personal.topicKey) { dismissed.clear(); shown.clear(); shownProducts.clear(); lastShownAt = -Infinity; persist(); }
+      personal = next;
+      return freeze(Object.assign({}, personal));
+    }
+    function setMeanings(rows) {
+      meanings = new Map();
+      (Array.isArray(rows) ? rows : []).slice(0, 320).forEach(function (row) {
+        if (!row || !PRODUCT.test(row.productId || '') || row.kind !== 'interpretation') return;
+        var body = reviewedText(row.text, 1500), context = reviewedText(row.context, 300), sources = (Array.isArray(row.sources) ? row.sources : []).slice(0, 4).map(function (source) { return meaningSource(source, now()); });
+        if (!body || !context || !sources.length || sources.some(function (source) { return !source; })) return;
+        var checkedAt = Number.isFinite(row.checkedAt) ? row.checkedAt : Math.min.apply(null, sources.map(function (source) { return source.checkedAt; }));
+        if (checkedAt <= 0 || checkedAt > now() + 60000 || now() - checkedAt > maxAge) return;
+        var existing = meanings.get(row.productId) || [];
+        if (existing.length < 2 && (meanings.has(row.productId) || meanings.size < 160)) { existing.push(freeze({ text: body, context: context, sources: sources, checkedAt: checkedAt })); meanings.set(row.productId, existing); }
+      });
+      return meanings.size;
+    }
+    function meaningConnection(p, context) {
+      var pc = context.productControls;
+      if (!p || context.pageKind !== 'product' || context.currentHandle !== p.handle || !pc || pc.handle !== p.handle || pc.productId !== p.id || !isFresh(p) || p.meaningHold || p.recommendationHold || p.cartHold || !personal.recipient && !personal.occasion && !personal.reason) return null;
+      var record = (meanings.get(p.id) || []).find(function (row) { return row.checkedAt <= now() + 60000 && now() - row.checkedAt <= maxAge && row.sources.every(function (source) { return meaningSource(source, now()); }); });
+      if (!record && !personal.reason) return null;
+      var recipient = personal.recipient === 'myself' ? 'you' : /^[A-Z]/.test(personal.recipient) ? personal.recipient : personal.recipient ? 'your ' + personal.recipient : '', audience = recipient ? 'For ' + recipient : 'For this gift';
+      if (personal.occasion) audience += ' for ' + personal.occasion;
+      var connection = audience + ', ';
+      if (record) connection += 'the reviewed interpretation for ' + p.title + ' says “' + record.text.slice(0, 360) + '”. Interpretations can vary.';
+      else connection += 'the meaning can be personal to you.';
+      if (personal.reason) {
+        connection += ' You said “' + personal.reason + '”.';
+        var reasonWords = words(personal.reason), shared = p.evidence.motifs.filter(function (motif) { return reasonWords.some(function (word) { return (knownMotifs.get(word) || motifWords.get(word) || [word])[0] === motif; }); });
+        if (shared.length) connection += ' This listing names the ' + shared.slice(0, 2).join(' and ') + ' motif, which you can connect with that reason.';
+        else connection += ' That stated reason can give this piece your own meaning.';
+      }
+      return freeze({ kind: record ? 'reviewed-interpretation' : 'personal-connection', text: connection, sources: record ? record.sources.map(function (source) { return Object.assign({}, source); }) : [] });
+    }
     function comparisonFor(p, context, request) {
       if (!request || !['cheaper', 'smaller', 'category'].includes(request.kind)) return null;
       var result = { kind: request.kind, status: 'missing-reference', requestedCategories: (request.requestedCategories || []).filter(function (v) { return Object.hasOwn(CATEGORY_LABELS, v); }), requireSmaller: request.kind === 'smaller' || request.requireSmaller === true, reference: null };
@@ -406,6 +561,7 @@
       pack.optionSuggestions = help.suggestions; pack.nextStep = help.next;
       pack.alternatives = candidates(p, 'alternatives', context, flags.passive === true, comparison);
       pack.matching = candidates(p, 'matching', context, flags.passive === true, comparison);
+      var connection = meaningConnection(p, context); if (connection) pack.meaningConnection = connection;
       if (comparison) { if (comparison.status === 'confirmed' && !(comparison.kind === 'category' ? pack.matching : pack.alternatives).length) comparison.status = 'no-match'; pack.comparison = comparison; }
       if ((pref.max !== null || pref.min !== null) && pref.currency && pref.currency !== p.currency) pack.warnings.push('This listing is priced in ' + p.currency + '; your ' + pref.currency + ' budget cannot be compared without a verified exchange rate.');
       if ((pref.max !== null || pref.min !== null) && !pref.currency) pack.warnings.push('Your item budget is being interpreted in ' + p.currency + ', the current listing’s currency.');
@@ -415,17 +571,24 @@
     }
     function suggest(request) {
       request = request && typeof request === 'object' ? request : {};
-      var context = request.context || {}, message = key(text(request.message, 2000)), trigger = request.trigger || '';
+      var context = request.context || {}, statement = shopperStatement(request.message), message = key(statement), trigger = request.trigger || '', intent = classifyShopperIntent(request.message);
+      if (request.message && (!statement || intent.denied)) return { pack: prepare(context), suggestion: null, reply: null };
       var cheaper = /\b(?:cheaper|less expensive|lower priced|lower price)\b/.test(message), smaller = /\b(?:smaller|more petite|more delicate|tinier)\b/.test(message);
       var moreLike = /\bmore like (?:that|this)\b/.test(message), rejected = /\bnot those\b/.test(message);
-      var explicit = cheaper || smaller || moreLike || rejected || /\b(?:similar|alternatives?|other options|other designs|other pieces|anything else|something else|what else|another design|different design|not sure|unsure|undecided|what matches|what would match|(?:go|goes) with|matching|pair with|complete the set|make a set|help me choose|help me pick|walk me through|help me select|suggest|recommend)\b/.test(message);
-      var kind = moreLike || rejected ? 'alternatives' : /\b(?:matching|what matches|what would match|(?:go|goes) with|pair with|set)\b/.test(message) || trigger === 'matching' ? 'matching' : cheaper || smaller || /\b(?:similar|alternatives?|other designs|other pieces|anything else|something else|what else|another|different|not sure|unsure|undecided)\b/.test(message) || trigger === 'uncertain' ? 'alternatives' : 'options';
+      var explicit = intent.recognized || cheaper || smaller || moreLike || rejected || /\b(?:similar|alternatives?|other options|other designs|other pieces|anything else|something else|what else|another design|different design|not sure|unsure|undecided|what matches|what would match|(?:go|goes) with|matching|pair with|complete the set|make a set|help me choose|help me pick|walk me through|help me select|suggest|recommend)\b/.test(message);
+      var eager = intent.kind === 'eager', quiet = /^(?:support|repair)$/.test(context.emotionalContext || '') || /\b(?:memorial|remembrance|in memory of|in remembrance of|remembering)\b/i.test(personal.occasion + ' ' + personal.reason);
+      if (eager && (quiet || muted || !pref.allowProactive)) return { pack: prepare(context), suggestion: null, reply: null };
+      var kind = moreLike || rejected || intent.kind === 'hesitant' ? 'alternatives' : intent.kind === 'matching' || eager || trigger === 'matching' ? 'matching' : cheaper || smaller || intent.kind === 'alternatives' || trigger === 'uncertain' ? 'alternatives' : 'options';
       var categories = requestedCategories(message), comparative = cheaper ? 'cheaper' : smaller ? 'smaller' : categories.length && kind === 'matching' ? 'category' : '';
       var pack = prepare(context, { passive: !explicit, comparison: comparative ? { kind: comparative, requireSmaller: smaller, requestedCategories: categories } : null }), current = pack.current && pack.current.handle || '', suggestion = null;
       if (context.loading === true || context.busy === true || context.speaking === true || context.hidden === true) return { pack: pack, suggestion: null };
       if (!explicit && (muted || !pref.allowProactive || now() - lastShownAt < cooldown)) return { pack: pack, suggestion: null };
       if (['bag', 'cart'].includes(context.pageKind)) kind = 'bag';
       if (!explicit && (dismissed.has('kind:' + kind) || dismissed.has('handle:' + current))) return { pack: pack, suggestion: null };
+      if (intent.kind === 'meaning') {
+        var meaningful = pack.meaningConnection;
+        return { pack: pack, suggestion: null, reply: meaningful ? meaningful.text : 'The meaning can be personal to you. Tell me who this is for, the occasion, or why this motif matters to you; I won’t assume a symbolism without a reviewed source.' };
+      }
       if (kind === 'alternatives' || kind === 'matching') {
         var rows = pack[kind].slice(0, 2);
         if (rows.length) suggestion = { kind: kind, handle: current, text: cheaper ? 'I found ' + rows.length + (smaller ? ' lower-priced, smaller alternative' : ' lower-priced alternative') + (rows.length === 1 ? '' : 's') + ' in the same currency and ' + (pack.comparison.reference.materialIsPreference ? 'your requested material' : 'material') + '.' : smaller ? 'I found ' + rows.length + ' alternative' + (rows.length === 1 ? '' : 's') + ' with smaller comparable published dimensions.' : kind === 'matching' ? 'I have ' + rows.length + (rows.length === 1 ? ' piece that shares' : ' pieces that share') + ' this design’s motif for a possible pairing.' : 'I have ' + rows.length + ' other ' + CATEGORY_LABELS[products.get(current).category] + ' option' + (rows.length === 1 ? '' : 's') + ' ready if you’d like to compare.', products: rows, actions: rows.map(function (row) { return row.action; }) };
@@ -440,23 +603,23 @@
       } else if (pack.nextStep && (trigger === 'options' || trigger === 'product-open' || trigger === 'bag-ready' || explicit)) suggestion = { kind: kind, handle: current, text: pack.nextStep.text, products: [], optionSuggestions: pack.optionSuggestions, actions: pack.nextStep.action ? [pack.nextStep.action] : [], requiresCustomerClick: pack.nextStep.requiresCustomerClick === true };
       if (suggestion) {
         suggestion.key = kind + ':' + current + ':' + (suggestion.products || []).map(function (p) { return p.handle; }).join(',') + ':' + suggestion.actions.map(function (a) { return a.optionName || a.variantId || a.type; }).join(',');
-        if (!explicit && shown.has(suggestion.key)) suggestion = null;
+        if ((!explicit || eager) && (shown.has(suggestion.key) || eager && now() - lastShownAt < cooldown)) suggestion = null;
         else suggestion = freeze(suggestion);
       }
       return { pack: pack, suggestion: suggestion, reply: suggestion ? suggestion.text : null };
     }
     function markShown(suggestion) {
       if (!suggestion || !KINDS.includes(suggestion.kind) || !text(suggestion.key, 1000)) return false;
-      shown.add(suggestion.key); (Array.isArray(suggestion.products) ? suggestion.products : []).forEach(function (p) { if (HANDLE.test(p.handle || '') && p.handle.length <= 180) shownProducts.add(p.handle); }); lastShownAt = now(); persist(); return true;
+      boundedSet(shown, suggestion.key, 300); (Array.isArray(suggestion.products) ? suggestion.products : []).forEach(function (p) { if (HANDLE.test(p.handle || '') && p.handle.length <= 180) boundedSet(shownProducts, p.handle, 300); }); lastShownAt = now(); persist(); return true;
     }
     function dismiss(value) {
       if (!value) muted = true;
-      else { if (KINDS.includes(value.kind)) dismissed.add('kind:' + value.kind); if (HANDLE.test(value.handle || '') && value.handle.length <= 180) dismissed.add('handle:' + value.handle); }
+      else { if (KINDS.includes(value.kind)) boundedSet(dismissed, 'kind:' + value.kind, 300); if (HANDLE.test(value.handle || '') && value.handle.length <= 180) boundedSet(dismissed, 'handle:' + value.handle, 300); }
       persist(); return true;
     }
-    function reset() { muted = false; dismissed.clear(); shown.clear(); shownProducts.clear(); lastShownAt = -Infinity; persist(); }
+    function reset() { muted = false; dismissed.clear(); shown.clear(); shownProducts.clear(); personal = normalizeShopperContext({}); meanings.clear(); lastShownAt = -Infinity; persist(); }
     updateProducts(options.products);
-    return Object.freeze({ updateProducts: updateProducts, setPreferences: setPreferences, prepare: prepare, suggest: suggest, markShown: markShown, dismiss: dismiss, reset: reset });
+    return Object.freeze({ updateProducts: updateProducts, setPreferences: setPreferences, setShopperContext: setShopperContext, setMeanings: setMeanings, prepare: prepare, suggest: suggest, markShown: markShown, dismiss: dismiss, reset: reset });
   }
   function questionOptions(facts,text){
     var question=String(text||'').normalize('NFKC').toLowerCase();
@@ -539,5 +702,5 @@
     var summary=measurementReply(dimensions,component,requestedAxes);
     return {dimensions:dimensions,optionGroups:optionGroups,unknown:unknown,summary:summary,reply:[summary,optionReply(optionGroups,broad||wantsSize),unknown].filter(Boolean).join(' ')};
   }
-  return Object.freeze({ create: create, productMeasurements: productMeasurements, questionOptions:questionOptions, optionReply:optionReply });
+  return Object.freeze({ create: create, normalizeShopperContext: normalizeShopperContext, updateShopperContext: updateShopperContext, classifyShopperIntent: classifyShopperIntent, productMeasurements: productMeasurements, questionOptions:questionOptions, optionReply:optionReply });
 });

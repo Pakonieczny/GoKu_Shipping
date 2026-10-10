@@ -72,7 +72,7 @@ export default async (req,context) => {
       if(op==='research'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,productIssues]=await Promise.all([service.research(ids),service.productIssues(ids)]);return json({dossiers,productIssues});}
       if(op==='issues')return json({products:await service.productIssues((url.searchParams.get('ids')||'').split(','))});
       if(op==='demand')return json({products:await demandStore.createDemandStore(service).read((url.searchParams.get('ids')||'').split(',').filter(Boolean))});
-      if(op==='knowledge'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,issues,supplements]=await Promise.all([service.research(ids),service.productIssues(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);const merged=core.mergeStorySupplements(dossiers,supplements,issues,Date.now());return json({products:core.publicMeanings(merged,ids,Date.now(),issues)});}
+      if(op==='knowledge'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,issues,supplements]=await Promise.all([service.research(ids),service.productIssues(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);const checkedAt=Date.now(),merged=core.mergeStorySupplements(dossiers,supplements,issues,checkedAt);return json({products:core.publicMeanings(merged,ids,checkedAt,issues).map(meaning=>({...meaning,checkedAt})),checkedAt});}
       return json({error:'Unknown operation.'},404);
     }
     if(req.method!=='POST')return json({error:'Method not allowed.'},405);

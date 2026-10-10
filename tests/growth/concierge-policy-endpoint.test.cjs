@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const core=require('../../netlify/functions/_britesGrowth'),policy=require('../../netlify/functions/_britesConcierge'),diagnostics=require('../../netlify/functions/_britesConciergeDiagnostics'),storefront=require('../../netlify/functions/_britesStorefront');
 const source=fs.readFileSync(path.join(__dirname,'../../netlify/functions/britesConcierge.js'),'utf8')
-  .replace(/^import (?:core|claude|policy|diagnostics) from .*;\s*$/gm,'')
+  .replace(/^import (?:core|claude|policy|diagnostics|shoppingGuide) from .*;\s*$/gm,'')
   .replace('export default async (req,context) => {','return async (req,context) => {')
   .replace(/export const config = [\s\S]*$/,'');
 const shipping=['Standard production takes 2–4 business days.','Transit time (after production):','United States & Canada: 4–6 business days','Your total delivery time = production time + transit time.','Where we ship. United States, Canada.'];
@@ -17,7 +17,7 @@ function fixture({failGuide=false,failMessageEvent=false,allowed=true,policyAnsw
   const checkedServices=storefront.createStorefrontServices({fetch:async url=>new Response(url===storefront.HOME?'<p>Materials sourced in the United States.</p>':html(shipping),{headers:{'content-type':'text/html'}})});
   const injectedCore={...core,makeDb:()=>({}),createShopify:()=>shopify,createGrowthService:()=>service,readStorefrontServices:async()=>{calls.services++;return checkedServices.read();},concierge:async args=>{calls.concierge++;return conciergeAnswer?conciergeAnswer(args):core.concierge(args);}};
   const injectedPolicy={...policy,createPolicyGuide:()=>policyAnswer?{answer:policyAnswer}:failGuide?{answer:async()=>{throw Error('PRIVATE_POLICY_ERROR');}}:policy.createPolicyGuide({fetch:async url=>{calls.policy.push(url);return new Response(html(url===policy.POLICIES.shipping.url?shipping:refund),{headers:{'content-type':'text/html'}});}})};
-  const handler=new Function('core','claude','policy','diagnostics','Netlify',source)(injectedCore,{createClaudeClient:()=>{calls.model++;throw Error('Paid model must not be called.');}},injectedPolicy,diagnostics,{env:{get:()=>undefined}});
+  const handler=new Function('core','claude','policy','diagnostics','shoppingGuide','Netlify',source)(injectedCore,{createClaudeClient:()=>{calls.model++;throw Error('Paid model must not be called.');}},injectedPolicy,diagnostics,require('../../brites-concierge-shopping-guide.js'),{env:{get:()=>undefined}});
   return {handler,calls,products,catalogueStarted};
 }
 async function call(f,body,{origin='https://britesjewelry.com',method='POST',raw}={}){

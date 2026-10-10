@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const diagnostics=require('../../netlify/functions/_britesConciergeDiagnostics'),core=require('../../netlify/functions/_britesGrowth'),policy=require('../../netlify/functions/_britesConcierge');
 const source=fs.readFileSync(path.join(__dirname,'../../netlify/functions/britesConcierge.js'),'utf8')
-  .replace(/^import (?:core|claude|policy|diagnostics) from .*;\s*$/gm,'')
+  .replace(/^import (?:core|claude|policy|diagnostics|shoppingGuide) from .*;\s*$/gm,'')
   .replace('export default async (req,context) => {','return async (req,context) => {')
   .replace(/export const config = [\s\S]*$/,'');
 const PRIVATE='PRIVATE_SHOPPER_CREDENTIAL_EXCEPTION_AND_URL';
@@ -17,7 +17,7 @@ function fixture({failure=null,error=secretError(),diagnosticFailure=false,diagn
   const shopify={search:async()=>{touch('catalogue_search');return {products};},byHandle:async()=>{touch('catalogue_product');return products[0];}};
   const injectedCore={...core,makeDb:()=>{touch('storage_connect');return db;},createShopify:()=>{touch('catalogue_connect');return shopify;},createGrowthService:()=>{touch('service_connect');return service;},readStorefrontServices:async()=>({schema:1,checkedAt:Date.now(),conflicts:[],offers:{status:'none_observed',partial:false,items:[],sources:[{title:'Brites storefront',url:'https://britesjewelry.com/',checkedAt:Date.now()}]}}),concierge:async args=>{touch('conversation');if(conciergeFailure)throw error;return core.concierge(args);}};
   const injectedPolicy={...policy,createPolicyGuide:()=>({answer:async args=>{touch('policy_read');if(partialPolicy)return policy.unavailableAnswer(args);return {reply:'The published policy lists production separately from transit.',question:'Which country is the gift going to?',policyOnly:policy.classify(args.message,args.history).policyOnly,policyKnowledge:{status:'verified',sources:[{title:'Shipping policy',url:policy.POLICIES.shipping.url,checkedAt:Date.now()}]},policyUnavailable:false,policyLinks:[{label:'Shipping policy',url:policy.POLICIES.shipping.url}]};}})};
-  const handler=new Function('core','claude','policy','diagnostics','Netlify',source)(injectedCore,{createClaudeClient:()=>{touch('paid_model');throw secretError();}},injectedPolicy,{...diagnostics,createRecorder:()=>diagnostics.createRecorder({writeTimeoutMs:5,optionalTimeoutMs:5})},{env:{get:key=>key==='BRITES_GROWTH_NAMESPACE'?'Brites_Growth_Sandbox':PRIVATE}});
+  const handler=new Function('core','claude','policy','diagnostics','shoppingGuide','Netlify',source)(injectedCore,{createClaudeClient:()=>{touch('paid_model');throw secretError();}},injectedPolicy,{...diagnostics,createRecorder:()=>diagnostics.createRecorder({writeTimeoutMs:5,optionalTimeoutMs:5})},require('../../brites-concierge-shopping-guide.js'),{env:{get:key=>key==='BRITES_GROWTH_NAMESPACE'?'Brites_Growth_Sandbox':PRIVATE}});
   return {handler,calls,writes,attempts};
 }
 async function call(f,body={message:'Find a silver bunny necklace under $60 USD'},context={ip:PRIVATE}){
