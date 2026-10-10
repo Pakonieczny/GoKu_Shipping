@@ -199,11 +199,15 @@ const ListMedia = (() => {
   const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
-  const earPair = row => { try { return !!row && !row.spec?.noDesign && !earDesign(row, "L") && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };   // (a line of TWO separate designs is not this picture: it is drawn per ear, see earDesign)
+  const earPair = row => { try { return !!row && !row.spec?.noDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
+  // (a line of TWO separate designs, the Left's and the Right's (OPTTWO: Tennis Ball Left, Tennis Racket Right): its picture is the two designs side by side, each from its own master file; the SKU of the Right's design, else '')
+  const twoOf = row => { try { return !!row && !row.spec?.noDesign && earPairRow(row) && earDesign(row, "L") ? earDesign(row, "R") : ""; } catch (_) { return ""; } };
   // (the line's picture is the matching pair drawn twice: an earring pair of ONE design, not the mismatched design, which holds two bodies of its own, and not two separate designs)
+  /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that reads one way, or faces the other way, is not): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
+  const earMirror = (row, side) => { try { const e = Master.entryFor(row?.spec?.designSku || row?.line?.sku || ''); return !!(e && (side === 'L' || side === 'R') && earTurn(row, side, e)); } catch (_) { return false; } };
   const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false,zoomKey=key) {
@@ -276,7 +280,16 @@ const ListMedia = (() => {
     const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
     // (a MATCHING earring pair line, asked for as the line and not for one ear: the Left and the Right side by side, the Right turned over; drawn from the master design, never from one pool piece, which may already be the turned one;
     //  not a line of TWO separate designs, which has no one design to draw twice)
-    const both=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight)) && matchPair(row);
+    const both=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true)) && matchPair(row);
+    // (a line of TWO separate designs, asked for as the line: the Left's design and the Right's side by side, each from its own master file, the Right turned by its own drawing's direction; if either cannot be had the line falls back to the one picture it had)
+    const sr=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true))?twoOf(row):'';
+    if(sr){
+      try{
+        const sl=earDesign(row,'L'),entryOf=async k=>{let e=Master.entryFor(k);if(!e){if(!catalog.has(k))catalog.set(k,Master.fetchEntry(k).finally(()=>catalog.delete(k)));e=await catalog.get(k);}return e;};
+        const [el,er]=await Promise.all([entryOf(sl),entryOf(sr)]);
+        if(el && er)return await Pool.masterTwo(el,er,row.spec?.size,px,earTurn(row,'R',er));
+      }catch(_){/* the one picture the line always had */}
+    }
     const own=opts?earDesign(row,opts.side):'';
     const charm=(pairRow(row) || sideOne || both || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
@@ -300,7 +313,8 @@ const ListMedia = (() => {
   /** A line's vector design as ONE small picture for a hover card (the piece dots, charm-nest-piece-dots.js): the very picture the order window's
    *  "Vector design" shows (vector(row): its renderer and its master-preview cache), as a data address; null when the line has no design. Never a second renderer. */
   async function vectorThumb(row,opts) {
-    const out=await vector(row,opts?.px,opts);
+    // (a hover card, a station tile or a piece dot shows ONE piece: the design as drawn, or the ear it names; the Left + Right picture of a pair line is asked for with opts.pair)
+    const out=await vector(row,opts?.px,opts?.pair===true?opts:Object.assign({},opts,{piece:true}));
     return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
@@ -309,15 +323,15 @@ const ListMedia = (() => {
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && matchPair(row)?'|pair':'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
-    const both=matchPair(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[])));
+    const both=matchPair(row),two=twoOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -336,10 +350,10 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,pairRow,earPair,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,earPair,earMirror,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
-window.PieceMedia = { vectorKey: ListMedia.vectorKey, vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow };
+window.PieceMedia = { vectorKey: (row, opts) => ListMedia.vectorKey(row, opts && opts.pair === true ? opts : Object.assign({}, opts, { piece: true })), vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow, earMirror: ListMedia.earMirror };
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -719,6 +733,8 @@ const CNLive = window.CNLive = (() => {
   return { order, sheet, close, pressed };
 })();
 const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + O.pieceCountOf(r), 0); } catch (_) { return 0; } };   // (the one count of a line's pieces: CharmNestOrders.pieceCountOf)
+/** The pieces a list of lines stands for in a scope note ("3 orders · 6 pieces"): an earring pair is its Left and its Right for every unit (the one count, CharmNestOrders.pieceCountOf), every other line counts as the ONE it always did (ROWLISTS, 10 Oct 2026: a pair is 1 order and 2 pieces, never "2 orders"). */
+const groupPieces = rows => { try { return (rows || []).reduce((n, r) => n + (earPairRow(r) ? Math.max(1, Math.round(+O.pieceCountOf(r)) || 1) : 1), 0); } catch (_) { return (rows || []).length; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
    asked at the first approval, decision or label), the one every other sorter event carries. Nobody named: by "" with
@@ -1540,7 +1556,7 @@ const Orders = window.Orders = (() => {
     if (run) { run.lines = Object.fromEntries(B.orders.rows.map(lineRecord)); run.orders = picked.map(o => o.receiptId); run.step = "pull"; await RunCtl.save(run); }
     const held = B.orders.rows.filter(x => x.problems.length).length;
     agent({ bridge: true }, "DS", `Pulled ${picked.length} order(s), ${B.orders.rows.length} piece(s)${B.orders.filtered ? ` (${B.orders.filtered} more open orders left out by the pull rule)` : ""} · ${held} piece(s) need a decision`);
-    if (!silent) toast(`${picked.length} orders · ${B.orders.rows.length} pieces pulled from the Design Station`, "ok");
+    if (!silent) toast(`${picked.length} order${picked.length === 1 ? "" : "s"} · ${groupPieces(B.orders.rows)} pieces pulled from the Design Station`, "ok");
     render();ListMedia.prepare(B.orders.rows);
     return B.orders.rows;
     } finally { if (pullBar) pullBar.end(); }
@@ -1980,10 +1996,12 @@ const Orders = window.Orders = (() => {
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
     const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
-    if (!rowsOf().length && window.Sandbox?.held?.()) {
+    if (!rowsOf().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
       const sb = n.querySelector(".sbWait"), t = Sandbox.heldText(); if (sb.textContent !== t) sb.textContent = t;
+      // the pull of the 250 newest orders (or the clean-up before it) is a wait: the button says so, with a spinner
+      { const go = n.querySelector("[data-sb-start]"), busy = Sandbox.pulling() || ""; if ((go.dataset.busy || "") !== busy) { go.dataset.busy = busy; go.disabled = !!busy; if (busy) { const sp = el("span", "spin"); sp.setAttribute("aria-hidden", "true"); go.setAttribute("aria-busy", "true"); go.replaceChildren(sp, document.createTextNode(busy === "pull" ? "Pulling the 250 newest orders…" : "Starting…")); } else { go.removeAttribute("aria-busy"); go.replaceChildren(document.createTextNode("Start")); } } }
       wanted.push(n);
     }
     else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
@@ -2856,6 +2874,18 @@ const Pool = window.Pool = (() => {
     const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
     return P.frontPreview ? P.frontPreview(charm,px,opts) : Engrave.renderFront(charm,px,opts);
   }
+  /** The picture of an earring line of TWO separate designs (the Left's design and the Right's), side by side in one picture (charm-nest-pair-thumb.js, opts.pair with opts.other): kept in memory under both files. */
+  async function masterTwo(entryL,entryR,size,px,turnRight) {
+    const pathL=sizeEntry(entryL,size)?.aiPath,pathR=sizeEntry(entryR,size)?.aiPath;
+    if(!pathL || !pathR)throw new Error("No design file");
+    const key="two:"+(turnRight?"m":"")+":"+(px || 220)+":"+pathL+"|"+pathR;
+    if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
+    const charmOf=async (entry,path)=>{const cached=B.pool.sources.get(path);return cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;};
+    const task=Promise.all([charmOf(entryL,pathL),charmOf(entryR,pathR)]).then(([cl,cr])=>{const ro={pair:true,other:cr,turnRight:!!turnRight};return P.frontPreview?P.frontPreview(cl,px || 220,ro):Engrave.renderFront(cl,px || 220,ro);});
+    masterPreviewCache.set(key,task);
+    while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
+    try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
+  }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
     const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
@@ -3318,7 +3348,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size)) n = 2 * q;   // (the master entry says two bodies; the charm is not traced yet)
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -3762,12 +3792,14 @@ const Gate = window.Gate = (() => {
   /** A sheet in a set the open run no longer makes: a committed set, the set of a saved sheet, the set of a finished run. The Library edits such a set from
    *  the records (LibraryFlow, below); the run's own Include cannot touch it. */
   const fixedSet = sh => !!sh.sheetId && (committedSheet(sh) || (inSetNow(sh) && !membershipEditable(sh)));
-  /** The committed set a person took this saved sheet out of (its hold says "Taken out of Set N", its history names the set): null for any other sheet. */
+  /** The set a person took this saved sheet out of (a hold on it, and its history's last word on its membership is "taken out of" that set): null for any other sheet. */
   function leftSetOf(d) {
     const h = d && d.laserHold;
-    if (!h || !(+h.at > 0) || !/^Taken out of /.test(String(h.note || "")) || (d.setId && !d.draft)) return null;
-    const e = [...(Array.isArray(d.flowHistory) ? d.flowHistory : [])].reverse().find(x => x && x.type === "setLeave" && x.setId);
-    return e ? String(e.setId) : null;
+    if (!h || !(+h.at > 0) || (d.setId && !d.draft)) return null;
+    // (Paul, 10 Oct) the hold may be a person's own, kept when the sheet was taken out: what counts is that the last thing that happened to its membership was a "taken out"
+    const e = [...(Array.isArray(d.flowHistory) ? d.flowHistory : [])].reverse().find(x => x && (x.type === "setLeave" || x.type === "setJoin"));
+    if (!e || e.type !== "setLeave" || !e.setId) return null;
+    return String(e.setId);
   }
   function projectLibraryRecords(rows) {
     window.Cleanups?.seen(rows);   // a sheet here whose record carries a cleanup this page has not applied gets it
@@ -3945,6 +3977,31 @@ const Gate = window.Gate = (() => {
     finally { SETEDIT.busy = null; sh._incBusy = null; }
     try { refreshMembership(); } catch (e) { console.warn("[In current set]", e); }   // every card follows the truth, the switch with them
     if (line) sayNo(node, line);
+  }
+  /** The open run on this screen lets a sheet go from the set it is still making (the Library's drop on In progress, Paul 10 Oct: "I should be able to move it completely freely").
+   *  The Library has already had the server check the rules and write the hold and the "taken out" record. The sheet is marked as taken out of its set and made a draft, and the run's own
+   *  assembly (assembleNow) does the rest, as it does for a sheet that stops qualifying: the pieces back to ready, the membership saved, the set's sheet list, order lines and labels made
+   *  again. Throws, with the page as it was, when the run keeps the sheet in the set (it is being changed in its window, the order rule pulls it, the run is busy or finished). */
+  async function leaveSet(sheetId) {
+    const run = B.run, sh = allSheets().find(p => p.sheetId === sheetId && !p.recalled);
+    if (!run || !sh || sh.runId !== run.runId) throw new Error("This sheet is not on a page of the open run on this screen");
+    if (["complete", "abandoned"].includes(run.status)) throw new Error("This run is finished");
+    if (committing(run)) throw new Error("The set is being committed. Try again soon.");
+    if (committedSheet(sh)) throw new Error("Its set was sent to the station: take it out of there, not here");
+    if (!inSetNow(sh)) return;
+    const was = { leftSet: sh.leftSet, draft: sh.draft, solidPick: sh.solidPick }, setId = sh.setId, undo = () => { sh.leftSet = was.leftSet; sh.draft = was.draft; sh.solidPick = was.solidPick; };
+    sh.leftSet = setId; sh.draft = true;      // (draft first: basePolicy keeps a sheet out only while it is not in its set now)
+    if (solid(sh.metal)) sh.solidPick = false;   // (10K, 14K: its own tick is off, as it is for a sheet taken out of a committed set)
+    try { await assemble(run); }
+    catch (e) { undo(); throw e; }
+    if (sh.setId) {      // (assembleNow lets a sheet go by clearing its set)
+      const why = holding(sh) ? "it is being changed in its sheet window" : sh.cardinalPull ? "an order on it is shared with another sheet of the set" : "the run keeps it";
+      undo();
+      throw new Error(`The sheet could not be taken out of the set: ${why}`);
+    }
+    run.membershipDirty = false;
+    try { await RunCtl.save(run); } catch (_) { /* saved with the run's next save */ }
+    Session.schedule(); try { refreshMembership(); } catch (_) { /* every card follows at its next refresh */ }
   }
   async function flush(run) {
     // A save that failed (the network down, a 5xx, the cloud offline) is tried once more here. Its error used to be thrown
@@ -4779,7 +4836,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -5658,7 +5715,7 @@ const Engrave = window.Engrave = (() => {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
     // a mismatched pair design: both bodies side by side with Left / Right chips (charm-nest-pair-thumb.js); any other charm is drawn below, unchanged
-    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
+    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, other: opts && opts.other, turnRight: opts && opts.turnRight, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
     if (pairCv) return pairCv;
     const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }
@@ -7500,7 +7557,18 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
   const patch=(rec,id)=>{if(rec){record(rec);patchRow(rec);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  /** Why a drop of this sheet or set on Laser cutting (or on Completed, through it) cannot work now, in the words of its card's own grey Approve button ('' when it can be approved, or when a
+   *  press can do the rest by itself). The Library's dock reads it, so a place that cannot take the item says why right where it is dropped (Paul, 10 Oct: never a vague word). */
+  function moveBlock(item){
+    try{
+      if(!item || !item.id)return '';
+      const card=[...document.querySelectorAll('.setCard[data-laser-card]')].find(c=>item.kind==='set'?c._laserSet?.setId===item.id:(c._laserSheets || []).includes(item.id));
+      if(!card)return '';
+      const real=card.dataset.laserCard==='set' && realSet(card._laserSet),c=real?setCase(card):approveCase([records.get(item.id)]);
+      return c && c.why ? String(c.why) : '';
+    }catch(_){return '';}
+  }
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -10465,7 +10533,7 @@ const Review = window.Review = (() => {
     tlSettle(false);
     if (n === items().length) return;
     if (gone && !/^(eng|held):/.test(String(key))) {
-      settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+      settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, pieces: groupPieces((gone.rows || [gone.row]).filter(Boolean)), orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
       const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
       // held: the order is under Orders › On hold (its decision is kept under Completed); answered: under Completed
       const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
@@ -10676,7 +10744,7 @@ const Review = window.Review = (() => {
     const group = rowsOf(it);
     const orders = [...new Set(group.map(x => x.order.receiptId))];
     const scope = group.length > 1
-      ? `<span class="pill neutral" title="${esc(orders.slice(0, 20).join(" · ") + (orders.length > 20 ? " …" : ""))}">${group.length} pieces · ${orders.length} order${orders.length === 1 ? "" : "s"} · one decision</span>` : "";
+      ? `<span class="pill neutral" title="${esc(orders.slice(0, 20).join(" · ") + (orders.length > 20 ? " …" : ""))}">${groupPieces(group)} pieces · ${orders.length} order${orders.length === 1 ? "" : "s"} · one decision</span>` : "";
     const head = (kind, ttl, sub) => `<div class="rh"><span class="kind">${esc(kind)}</span><span class="ttl">${esc(ttl)}</span><span class="sub">${esc(sub || "")}</span>${scope}</div>`;
     const evRow = (lbl, val) => `<div><span class="lbl">${esc(lbl)}</span>${val}</div>`;
     const orderSub = r ? `${r.order.receiptId} · ${sp && sp.designSku || r.line.sku || "no SKU"} · ${r.line.title}` : "";
@@ -11127,7 +11195,7 @@ const Review = window.Review = (() => {
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
@@ -11171,7 +11239,7 @@ const Review = window.Review = (() => {
     const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(ax?CustomPrint.failNote(ax)
       +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its piece is then completed by hand`,'sm')+CustomPrint.keptButtonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s piece completed now, made by hand, without printing its label`,'sm'):'')
       +(cs?CustomSheet.buttonsHtml(ax,true,false):''):'');
-    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
+    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.pieces || d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
     if(ax||row)wireAct(node,ax||{key:'rvs:'+d.key,rows:[]},cs,row);
     if(was){const pair=was.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     settledRows.set(d, node); return node;
@@ -11381,29 +11449,110 @@ const Sandbox = window.Sandbox = (() => {
   const HOLD = "cn.sandboxHold", LAST = "cn.sandboxLastReset";
   const held = () => { try { return on() && localStorage.getItem(HOLD) != null; } catch (_) { return false; } };
   const lsJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (_) { return null; } };
-  function hold() { try { localStorage.setItem(HOLD, JSON.stringify({ at: Date.now() })); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  /** The waiting sandbox's record: `dirty` (it may still hold an earlier run's orders: a start clears them first),
+      `failed` (the pull of the 250 newest orders did not work: the plain line the cloud gave, and the Etsy calls it used). */
+  const holdInfo = () => lsJSON(HOLD) || {};
+  function hold(info) { try { localStorage.setItem(HOLD, JSON.stringify(Object.assign({ at: Date.now() }, info || {}))); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  /* ── the sandbox's orders are the 250 newest Etsy orders, pulled once each time a sandbox run starts (Paul, 10 Oct:
+     "when in the Sandbox mode always pull the 250 newest orders from etsy. Never retain previous or old orders from prior
+     Sandbox runs/testing"). A run starts when the sandbox is switched on from the real orders, and when Start (or Auto,
+     or Pull orders) is pressed after a clean-up. The previous sandbox is cleared first (Sandbox.wipe, the one complete
+     clean-up), then the cloud's sandboxPullOrders op asks Etsy for them (about 3 calls, a daily cap of its own) and starts
+     the stream on them. A page reload with the sandbox on does none of this: the stored set plays on. If the pull does
+     not work the sandbox stays empty with the cloud's one-line reason (it never plays the old orders), and only the
+     next Start asks again: nothing here retries by itself, and one start is one startId, so a repeat of that very
+     request (a slow answer) is answered with the stored set and costs Etsy nothing. ── */
+  const PULL_NEXT = "cn.sandboxPullNext";   // (sessionStorage, this tab) the page that opens next starts the sandbox by itself: switched on, or cleared first
+  const PULL_LABEL = "Pulling the 250 newest orders";
+  let pullTask = null, pulled = null, setCheck = null;
+  const nextFlag = () => { try { return sessionStorage.getItem(PULL_NEXT) || ""; } catch (_) { return ""; } };
+  const setNext = v => { try { if (v) sessionStorage.setItem(PULL_NEXT, v); else sessionStorage.removeItem(PULL_NEXT); } catch (_) {} };
+  /** The pull is out, or this page is opening to start by itself: Settings, the pill and the Orders tab say so. */
+  const pulling = () => pullTask ? "pull" : held() && nextFlag() === "start" ? "start" : "";
+  const calls = n => `${n} Etsy call${n === 1 ? "" : "s"}`;
   /** What the calm line says (also the Orders tab's empty state while the sandbox waits). */
   function heldText() {
-    const at = status && status.snapshot && status.snapshot.at, day = at ? new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
-    const auto = S.settings.runMode === "auto";
-    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to replay the ${day ? day + " " : ""}orders.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+    if (pulling()) return pullTask ? "Asking Etsy for the shop's 250 newest orders, a few seconds…" : "Starting the sandbox: clearing the old orders, then pulling the 250 newest…";
+    const h = holdInfo(), auto = S.settings.runMode === "auto";
+    if (h.failed) return `Sandbox is empty. ${h.failed}${h.reason === "cap" || /press start/i.test(h.failed) ? "" : " Press Start to try again."}${h.calls ? ` (${calls(h.calls)} used)` : ""}`;
+    if (h.dirty) return `Sandbox is empty: it held orders from an earlier run, which are cleared first. Press Start to pull the 250 newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to pull the 250 newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
   }
-  /** Start was pressed, Auto turned on, or orders were pulled: from here the sandbox plays as it always did. */
+  /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the 250 newest orders
+      begins (a start asks for it exactly once; the stream and every check wait for it). false: nothing started (it was not
+      waiting, or it holds an earlier run's orders, which are cleared first: the page reloads and starts by itself). */
   function release() {
     if (!held()) return false;
+    if (holdInfo().dirty) { clearThenStart().catch(e => toast(e.message, "bad", 9000)); return false; }
     try { localStorage.removeItem(HOLD); } catch (_) {}
-    agent({ bridge: true }, "DS", "Sandbox started: the replay begins");
-    try { if (window.Arrivals && Arrivals.start) Arrivals.start(); } catch (_) {}   // the checks begin now: the first at once in Auto, else after one step's wait, as on a fresh load
+    setNext("");
+    agent({ bridge: true }, "DS", "Sandbox started: pulling the 250 newest Etsy orders");
+    pullTask = pullNewest(); pullTask.catch(() => {});
+    try { if (window.Arrivals && Arrivals.start) Arrivals.start(); } catch (_) {}   // the checks begin now: the first at once in Auto, else after one step's wait, as on a fresh load (each waits for the pull)
     try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
     return true;
   }
-  /** The Start button: the stream begins (at step 0, with the seed in Settings) or, with the whole snapshot at once, the
-      orders are pulled; Auto then starts its run as it does on a fresh load. */
-  async function start() {
+  const newStartId = () => { let r = ""; try { r = Array.from(crypto.getRandomValues(new Uint8Array(9)), b => b.toString(36).padStart(2, "0")).join(""); } catch (_) { r = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); } return `sbx-${Date.now().toString(36)}-${r}`.slice(0, 80); };
+  const pause = ms => new Promise(res => setTimeout(res, ms));
+  /** One pull: one startId, one request. Only the very same request is asked again, never a new pull: while the cloud is
+      still working on it (busy), and once after an answer that never came (it is then returned as it stands, or worked
+      on, or begun: still one pull). Every answer that says why it failed is final. */
+  async function askPull(startId) {
+    const body = { op: "sandboxPullOrders", sandbox: true, startId, seed: +S.settings.sandboxSeed || 0, speed: speed(), stream: streaming() };
+    for (let n = 0; ; n++) {
+      try { return await api("charmNestLibrary", body, { quiet: true, timeoutMs: 120000 }); }
+      catch (e) {
+        const d = (e && e.data) || {};
+        if (d.reason === "busy" && n < 8) { await pause(4000); continue; }
+        if (!d.reason && e.transient && n < 1) { await pause(3000); continue; }
+        throw Object.assign(new Error(String(d.error || e.message || "no answer").slice(0, 300)), { reason: d.reason || "", data: d });
+      }
+    }
+  }
+  /** The cloud's answer, kept for the Settings line: when, how many, how many open, the Etsy calls it used. */
+  function remember(r) {
+    pulled = { count: r.count, open: r.open, closed: r.closed, pulledAt: r.pulledAt, calls: r.already ? null : r.calls, tokenRefreshes: r.tokenRefreshes, label: r.label, startId: r.startId, already: !!r.already, callsToday: r.callsToday, pullsToday: r.pullsToday, cap: r.cap, capLeft: r.capLeft, callsCap: r.callsCap };
+    return pulled;
+  }
+  async function pullNewest() {
+    const bar = window.CNProgress ? CNProgress.start(PULL_LABEL) : null;
+    try {
+      render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
+      const r = await askPull(newStartId());
+      if (!r || r.ok === false) throw new Error((r && r.error) || "Etsy gave no orders, so the sandbox is empty.");
+      remember(r); setCheck = Promise.resolve(true);
+      adopt(r.stream && r.stream.on ? r.stream : null);
+      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} of ${r.callsCap || 20} today` : ""}`);
+      toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} of ${r.callsCap || 20} today, ${r.capLeft} pull${r.capLeft === 1 ? "" : "s"} left)` : ""}`, "ok", 9000);
+      return r;
+    } catch (e) {
+      // the sandbox stays empty and waits (the cloud holds no orders after a failed pull, and none are played from before)
+      const d = e.data || {}; stream = null; pulled = null; setCheck = null; SimClock.set(null);
+      hold({ failed: e.message, reason: e.reason || "", calls: d.calls || 0 });
+      agent({ bridge: true }, "warn", `Sandbox: the 250 newest orders could not be pulled — ${e.message}`);
+      throw e;
+    } finally { if (bar) bar.end(); pullTask = null; render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  }
+  /** The previous sandbox is cleared (the complete clean-up, which reloads the page and leaves it waiting), and the page
+      that opens then starts by itself (PULL_NEXT). If the clean-up stops, the sandbox stays waiting and says why. */
+  let clearing = null, starting = null;
+  const clearThenStart = () => clearing ||= (async () => {
+    setNext("start");
+    const r = await wipe({}, { verb: "Resetting", next: "Now it pulls the 250 newest Etsy orders." });
+    if (!r || !r.ok) { setNext(""); const text = (r && r.text) || "the old sandbox orders could not be cleared"; hold({ dirty: true, failed: text }); throw new Error(text); }
+    return r;
+  })().finally(() => { clearing = null; });
+  /** The Start button: the sandbox clears an earlier run's orders first if it holds any, then pulls the 250 newest Etsy
+      orders and plays them (the stream, at step 0 with the seed in Settings; or, with the whole set at once, a pull of
+      the orders); Auto then starts its run as it does on a fresh load. */
+  const start = () => held() ? (starting ||= startOnce().finally(() => { starting = null; })) : Promise.resolve(false);   // (a second press, or the page's own start, while one is out is the same start)
+  async function startOnce() {
     if (!held()) return false;
+    if (holdInfo().dirty) { await clearThenStart(); return true; }
     release();
     const auto = S.settings.runMode === "auto";
-    if (streaming()) { await ready(true); toast(`Sandbox started — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000); }
+    try { await pullTask; } catch (e) { throw new Error(e.message); }   // (the pull's own plain words; the sandbox is waiting again)
+    if (streaming()) toast(`Sandbox started — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000);
     else { try { setMode("orders"); } catch (_) {} if (!auto) await Orders.pull(null); }
     if (auto) setTimeout(() => { if (!(B.openRuns && B.openRuns.length) && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500);
     return true;
@@ -11413,19 +11562,33 @@ const Sandbox = window.Sandbox = (() => {
      charmNestLibrary sandboxStream keeps the seed and the clock). Each arrivals check moves the clock one step; SimClock
      plays the time between steps at the chosen speed. Each order comes once: when all have come, the clock stops (done). ── */
   const streaming = () => on() && S.settings.sandboxStream === "on";
-  /** Every order of the snapshot has come: nothing more arrives (a new snapshot brings more). */
+  /** Every order of the pulled set has come: nothing more arrives until the sandbox is started again. */
   const done = () => !!(stream && stream.done && streaming());
   const speed = () => Math.max(1, Math.min(1000, Math.round(+S.settings.sandboxSpeed || 50)));
   let stream = null, readyTask = null;
   const streamApi = (action, extra) => api("charmNestLibrary", Object.assign({ op: "sandboxStream", action, seed: +S.settings.sandboxSeed || 0, speed: speed() }, extra || {}), { quiet: true });
-  function adopt(s) { stream = s && s.on ? s : null; SimClock.set(stream && streaming() ? { base: stream.simNow, stepMs: stream.stepMs, speed: speed() } : null); render(); return stream; }
-  /** The stream exists before the station's first sweep in the sandbox, or the emulator would list the whole snapshot.
-      `strict` (a sweep about to go ahead): a stream that cannot start is an error, not a warning. */
+  function adopt(s) { stream = s && s.on ? s : null; SimClock.set(stream && streaming() ? { base: stream.simNow, stepMs: stream.stepMs, speed: speed() } : null); render(); paintLine(); return stream; }
+  /** Does the cloud hold a pulled set? One light read, once per page: a reload plays what is stored (no pull, no wipe). A sandbox
+      with no pulled set (an earlier run's snapshot from before the pull, or a set another computer cleared) is empty and waits
+      for Start, whose first step clears whatever is left of it. A cloud that cannot say lets the page carry on as before. */
+  function checkSet() {
+    return setCheck ||= api("charmNestLibrary", { op: "sandboxStatus", light: true }, { quiet: true }).then(st => {
+      if (st && st.ok && !st.error) status = st;
+      if (st && st.ok && !st.snapshot) { hold({ dirty: true }); toast("The sandbox holds no pulled orders. Press Start on the Orders tab: it clears what is left and pulls the 250 newest Etsy orders.", "", 9000); return false; }
+      return true;
+    }).catch(() => true);
+  }
+  /** The stream exists before the station's first sweep in the sandbox, or the emulator would list the whole set. A sandbox
+      that is starting has its one pull out first: the stream is the one that pull began. `strict` (a sweep about to go ahead):
+      a stream that cannot start is an error, not a warning. */
   function ready(strict) {
-    if (strict && held()) release();   // a pull or a run asked for orders: that is Start
-    if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
-    const task = stream ? Promise.resolve(stream) : (readyTask ||= streamApi("ensure").then(r => adopt(r.stream)).finally(() => { readyTask = null; }));
-    return task.then(s => { if (!s) throw new Error("it is off"); return s; }).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });
+    if (strict && held() && !release()) return Promise.reject(new Error("The sandbox order stream could not start: the sandbox still holds an earlier run's orders, so it is clearing them first and then pulls the 250 newest"));   // a pull or a run asked for orders: that is Start
+    const go = () => {
+      if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
+      const task = stream ? Promise.resolve(stream) : (readyTask ||= checkSet().then(ok => { if (!ok) throw new Error("the sandbox holds no pulled orders: press Start"); return streamApi("ensure"); }).then(r => adopt(r.stream)).finally(() => { readyTask = null; }));
+      return task.then(s => { if (!s) throw new Error("it is off"); return s; });
+    };
+    return (pullTask ? pullTask.then(go) : go()).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });
   }
   /** One simulated step: the next ten minutes of orders become listable. The arrivals check calls it before it sweeps. */
   async function advance() {
@@ -11444,70 +11607,53 @@ const Sandbox = window.Sandbox = (() => {
   }
   const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
-  function label() { return !on() ? "" : held() ? "Sandbox · paused" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
-  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
+  function label() { return !on() ? "" : held() ? (pulling() ? "Sandbox · starting" : "Sandbox · paused") : pullTask ? "Sandbox · pulling orders" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
+  /** Where the orders come from, as the Settings line says it: the pulled set, when, how many were open, the Etsy calls it cost. */
+  const pulledNow = () => pulled || (status && status.snapshot && status.snapshot.source === "etsy-pull" ? status.snapshot : null);
+  function sourceText() {
+    const p = pulledNow(); if (!p) return "";
+    const n = p.count != null ? p.count : 250, at = p.pulledAt || p.at;
+    return `${n} newest Etsy orders, pulled ${at ? when(at) : "just now"}${p.open != null && p.open < n ? ` (${p.open} open)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
+  }
+  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: ${sourceText() ? sourceText() + " · " : ""}seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? `Orders: ${sourceText() || "the 250 newest Etsy orders"}, all at once` : ""; }
+  /** Settings' line beside the buttons says it again when the pull, the stream or the stored set changes (it is read when the dialog opens). */
+  function paintLine() { try { const el = document.getElementById("stSbStatus"); if (el) { const t = streamText(); if (el.textContent !== t) el.textContent = t; } } catch (_) {} }
   async function refresh(light) {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
-    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
+    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();paintLine();return status;})();
     try{return await refreshTask;}finally{refreshTask=null;}
   }
-  /** One real read of the open orders through the station (production mode), stored as JSON under charmnest/sandbox/. */
-  async function snapshot() {
-    if (on()) throw new Error("switch the sandbox OFF first: the snapshot is taken from the real Etsy through the station");
-    if (!S.cloud.ok) throw new Error("cloud offline");
-    await DesignLink.ensure();
-    if (!DesignLink.etsyBudgetOk("the sandbox snapshot")) throw new Error("Etsy call budget reached");
-    const r = await DesignLink.call("orders.raw", { refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (p.text) agent({ bridge: true }, "DS", `Snapshot: ${p.text}`); } });
-    DesignLink.meter(r, "the sandbox snapshot");
-    const at = Date.now(); const path = `charmnest/sandbox/orders-${new Date(at).toISOString().replace(/[:.]/g, "-")}.json`;
-    const bytes = new TextEncoder().encode(JSON.stringify({ at, count: r.count, receipts: r.receipts }));
-    const up = await uploadBytes(path, bytes, "application/json", "Saving the sandbox snapshot");
-    const put = await api("charmNestLibrary", { op: "sandboxPut", path: up.path, count: r.count, at, takenBy: employeeName() || "operator" });
-    agent({ bridge: true }, "ok", `Sandbox snapshot: ${r.count} open order(s) copied to ${up.path} (${(bytes.length / 1024).toFixed(0)} KB)`);
-    toast(`Snapshot taken: ${r.count} orders — switch the sandbox ON in Settings to run against it`, "ok", 8000);
-    await refresh(); return put.snapshot;
-  }
-  const waitFor = (fn, ms, why) => new Promise((res, rej) => { const t0 = Date.now(); (function tick() { if (fn()) return res(true); if (Date.now() - t0 > ms) return rej(new Error(why)); setTimeout(tick, 500); })(); });
-  /** The whole chain from one press: the station signed in (its own window if needed), the snapshot taken, the sandbox
-      switched on, the sorter reloaded, and the orders pulled from the copy (a run starts by itself in Auto mode). */
+  /** "Rehearse a run in the sandbox": a start from the real orders. The sandbox is switched on and the sorter reloads with the
+      sandbox waiting (nothing plays, nothing is checked); that page clears the previous sandbox (the complete clean-up),
+      reloads once more, and then pulls the 250 newest Etsy orders by itself (afterReload, the stream plays them). Nothing
+      real is touched: the real side's records and browser state are never matched by the clean-up. */
   async function enable() {
     if (on()) return;
-    if (!(status && status.snapshot)) {
-      toast("No snapshot yet — taking one from Etsy first", "", 5000);
-      await DesignLink.ensure();
-      if (!(DesignLink.state() && DesignLink.state().etsy.signedIn)) {
-        toast("The station is not signed in — Connect Etsy opens in its own window", "", 6000);
-        await DesignLink.connectEtsy();
-        await waitFor(() => DesignLink.state() && DesignLink.state().etsy.signedIn, 4 * 60 * 1000, "the Etsy sign-in did not complete within 4 minutes");
-      }
-      await snapshot();
-    }
+    if (S.cloud.ok === false) throw new Error("the cloud is offline: the sandbox needs it to clear the old orders and pull the new ones");
     S.settings.sandbox = "on"; saveSettings();
-    try { localStorage.removeItem(HOLD); } catch (_) {}   // "Rehearse a run" is a start: a sandbox that was waiting plays
-    try { sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
-    toast(S.settings.sandboxStream === "on" ? "Sandbox ON — reloading; the orders then arrive a few at a time" : "Sandbox ON — reloading, then pulling the orders from the copy", "ok", 4000);
+    hold({ dirty: true }); setNext("start");
+    toast("Sandbox ON — reloading; it clears the previous sandbox, then pulls the 250 newest Etsy orders", "ok", 5000);
     setTimeout(() => location.reload(), 700);
   }
-  /** After the reload that switched the sandbox on: straight to the Orders tab and a pull (Auto mode starts its run instead).
-      With the stream the orders come by themselves, one simulated ten minutes per check. */
+  /** After a reload in the sandbox. A sandbox that is waiting (switched on just now, or cleaned) starts by itself when the page
+      opened for that (PULL_NEXT: the clean-up, if the sandbox held an earlier run, and then the one pull of the 250 newest
+      orders), else it waits for Start. A sandbox that is not waiting plays what is stored: no pull, no clean-up. */
   function afterReload() {
-    // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen)
+    // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen);
+    // a clean-up that is the first step of a start says nothing here: the start says what it did
+    const next = on() ? nextFlag() : "";
     let said = false;
-    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text) { said = true; setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } } catch (_) {}
-    let want = false; try { want = sessionStorage.getItem("cn.sandboxAutoPull") === "1"; sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
-    // a sandbox that was cleaned waits for Start: no stream, no pull, no Auto run (the Orders tab says so, with its Start)
+    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text && !(next === "start" && !n.bad)) { said = true; setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } } catch (_) {}
     if (held()) {
-      if (on()) { refresh().catch(() => {}); if (said) setTimeout(() => { try { setMode("orders"); } catch (_) {} }, 900); }   // (the page that follows a reset opens on Orders, where Start is)
+      if (on()) {
+        if (next === "start") setTimeout(() => { try { setMode("orders"); } catch (_) {} start().catch(e => toast(e.message, "bad", 9000)); }, 900);
+        else { refresh().catch(() => {}); if (said) setTimeout(() => { try { setMode("orders"); } catch (_) {} }, 900); }   // (the page that follows a reset opens on Orders, where Start is)
+      }
       return;
     }
-    if (streaming()) ready(); else if (on()) streamApi("off").catch(() => {});   // this sorter asks for the whole snapshot: a stream left playing would hide it
-    if (!want || !on()) return;
-    setTimeout(async () => {
-      setMode("orders");
-      if (S.settings.runMode === "auto") { agent({ bridge: true }, "DS", "Sandbox on — Auto mode starts the run"); return; }
-      if (streaming()) { toast(`Sandbox on — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000); return; }
-      try { await Orders.pull(null); } catch (e) { toast(e.message, "bad", 8000); }
-    }, 900);
+    setNext("");
+    if (!on()) return;
+    if (streaming()) ready(); else checkSet().then(ok => { if (ok) streamApi("off").catch(() => {}); });   // (this sorter asks for the whole set: a stream left playing would hide it)
   }
   /** The station keeps the orders it finished in a browser ledger of its own, which the records' reset cannot reach: an
       order replayed under the same number would stay hidden there as finished. (A station without the command keeps it.)
@@ -11615,22 +11761,30 @@ const Sandbox = window.Sandbox = (() => {
   /** The whole clean-up, once a person has agreed: the cloud's sandbox records (until the server says none is left and a
       count agrees), then this browser's copy of them, then a reload that restores nothing. ui: { button, note } — the button
       shows a spinner and what it is doing, the note is the calm line under it. Never says done while any record remains. */
+  let wiping = false;
   async function wipe(ui = {}, how = {}) {
+    // three buttons, one wipe: a second press while it runs would start a second loop over the same records
+    if (wiping) { toast("The sandbox is already being wiped: wait until it finishes", "bad", 5000); return { ok: false, text: "already wiping" }; }
+    wiping = true;
     const btn = ui.button, note = ui.note, was = ui.was || (btn ? Array.from(btn.childNodes) : []);
     const line = (text, bad) => { if (note) { note.textContent = text; note.style.color = bad ? "var(--clay)" : ""; } };
     const spin = text => { if (btn) { btn.disabled = true; btn.setAttribute("aria-busy", "true"); const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode(text)); } line(text); };
     const rest = () => { if (btn) { btn.disabled = false; btn.removeAttribute("aria-busy"); btn.replaceChildren(...was); } };
     const tally = { records: 0, files: 0 }, verb = how.verb === "Purging" ? "purge" : "reset";
+    /* One complete wipe for every button (Reset sandbox records, Reset the sandbox…, Purge all run history…), from either
+       page: a sandbox page also puts down its own live state and reloads; a production page (the sandbox switched off)
+       wipes the same cloud records and the same stored browser side, and leaves its own live state alone. */
+    const own = on(), reload = how.reload != null ? !!how.reload : own; let finished = false;
     const stop = text => { line(text, true); toast(text, "bad", 12000); noteReset({ ok: false, verb, text, records: tally.records, files: tally.files }); return { ok: false, text }; };
     spin(`${how.verb || "Resetting"} the sandbox…`);
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
-    await Arrivals.pause(); let reloading = false;
-    bar(); W.active = true;   // from here nothing but this clean-up writes to the cloud (api, the queues and the recoveries look at it)
+    if (own) await Arrivals.pause(); let reloading = false;
+    if (own) { bar(); W.active = true; }   // from here nothing but this clean-up writes to the cloud (api, the queues and the recoveries look at it)
     try {
-      if (RunCtl.clearRunState(null, { drop: "all" }) === false) return stop("Nothing was deleted: a Rose Gold sheet is still being nested or saved. Wait until it finishes, then press again.");   // (its own toast says so too)
+      if (own && RunCtl.clearRunState(null, { drop: "all" }) === false) return stop("Nothing was deleted: a Rose Gold sheet is still being nested or saved. Wait until it finishes, then press again.");   // (its own toast says so too)
       // the rehearsal's timeline events still waiting to be sent (kept on the disk across the reload) go with its records,
       // before the wipe and again after it: sent later, they would stand on the replay of the same real order numbers
-      const dropEvents = () => { try { window.CNTimeline?.forget?.(); } catch (_) {} };
+      const dropEvents = () => { if (own) try { window.CNTimeline?.forget?.(); } catch (_) {} };
       dropEvents();
       // a sandbox that streamed for days holds more than one call can delete: each works a few seconds and says if more is left
       let r = null, records = 0, files = 0, filesError = null, errors = 0, idle = 0;
@@ -11647,20 +11801,24 @@ const Sandbox = window.Sandbox = (() => {
       dropEvents();
       if (!r || r.more) return stop(`The sandbox was not fully reset: the cloud stopped part way (${nf(records)} record(s) and ${nf(files)} file(s) removed) and says more are left. Press again to finish.`);
       // the cloud's own count of what is left (only a count that says none lets this say done)
-      let left = null;
-      try { const st = await api("charmNestLibrary", { op: "sandboxStatus" }, { quiet: true }); left = Object.entries(st.records || {}).filter(([, n]) => n > 0); } catch (_) { left = null; }
-      if (left && left.length) return stop(`The sandbox was not fully reset: ${nf(left.reduce((a, [, n]) => a + n, 0))} record(s) are still in the cloud (${left.map(([k, n]) => `${k.replace(/^Charm_(Nest_)?/, "")} ${n}`).join(", ")}); ${nf(records)} were removed. Press again to finish.`);
+      // (one read, no write: the same answer fills the "In the sandbox now" line of Settings, every family at its count)
+      let left = null, kinds = 0;
+      try { const st = await api("charmNestLibrary", { op: "sandboxStatus" }, { quiet: true }); status = st; kinds = Object.keys(st.records || {}).length; left = Object.entries(st.records || {}).filter(([, n]) => n > 0); } catch (_) { left = null; }
+      try { paintLines(); } catch (_) {}
+      if (left && left.length) return stop(`The sandbox was not fully reset: ${nf(left.reduce((a, [, n]) => a + n, 0))} record(s) are still in the cloud (${left.map(([k, n]) => `${famLabel(k)} ${nf(n)}`).join(", ")}); ${nf(records)} were removed. Press again to finish.`);
       spin("Clearing this browser's copy…");
       // the sandbox now waits, empty, until Start (the reload that follows starts no stream, no Auto run and no pull)
       hold();
       // the cloud is clean: every other tab of this browser learns it now (Session.listen) and stands down before it can send
       // or save anything it still holds
       try { if (window.Session && Session.bumpEpoch) Session.bumpEpoch("sandbox"); } catch (_) {}
-      const stationOk = await forgetCompletions();
-      const gone = await wipeBrowser(true);
+      const stationOk = own ? await forgetCompletions() : null;   // (the station's own list of finished orders is the sandbox page's to clear)
+      const gone = await wipeBrowser(own);
       const bad = !!filesError || stationOk === false;
-      noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, station: stationOk, browser: gone });
-      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}. The sandbox now waits, empty, until you press Start.`;
+      noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, kinds: left === null ? 0 : kinds, station: stationOk, browser: gone });
+      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}.${how.next ? " " + how.next : own ? " The sandbox now waits, empty, until you press Start." : " The sandbox is empty."}`;
+      finished = true;
+      if (!reload) { line(text, bad); toast(text, bad ? "bad" : "ok", 7000); return { ok: true, records, files, text }; }   // (a production page keeps its own state: nothing to reload for)
       // said on the clean page after the reload too (a toast under this dialog is not seen)
       try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
       line(`${text} · reloading`, bad); toast(text, bad ? "bad" : "ok", 7000);
@@ -11669,17 +11827,17 @@ const Sandbox = window.Sandbox = (() => {
       return { ok: true, records, files, text };
     } catch (e) {
       return stop(`The sandbox was not reset: ${e.message}`);
-    } finally { if (!reloading) { W.active = false; Arrivals.resume(); rest(); refresh().catch(() => {}); } }
+    } finally { if (!reloading) { wiping = false; if (own) { W.active = false; Arrivals.resume(); } rest(); if (!finished) refresh().then(() => paintLines()).catch(() => {}); } }   // (a clean-up that stopped says what the sandbox still holds, from a fresh read)
   }
   /** Settings → Reset the sandbox: one question, then the clean-up. Answers null when it was not agreed to. */
   async function reset(ui = {}) {
-    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, custom orders, locks, ledger, archive) and the sandbox's files, and everything this browser kept of them (its saved workspace, queued messages, drafts)? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched. The sorter reloads, and the sandbox then waits, empty, until you press Start (or turn Auto on).`)) return null;
+    if (!confirm(`Wipe everything the sandbox made: its orders, sheets, sets, set counters, seals, cancelled orders, cuts and leftovers, pool rows, runs, custom orders, saved answers, files, and everything this browser saved of it (workspace, drafts, queued messages)? The Charm repo and employee efficiency stay, and no real record is touched. ${on() ? "The sorter reloads, and the sandbox then waits, empty, until you press Start (or turn Auto on)." : "The sandbox is then empty."}`)) return null;
     return wipe(ui, { verb: "Resetting" });
   }
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
      and Reset and the switch live in Settings. */
   function mountPanel(v) { void v; const old = document.getElementById("sandboxBar"); if (old) old.remove(); const pill = document.getElementById("sandboxPill"); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => { if (window.CN && CN.openSettings) CN.openSettings(); else { const b = document.getElementById("btnSettings"); if (b) b.click(); } }; } if (!status) refresh(!on()); }   // (a production page only needs to know whether a snapshot was taken: it does not count the sandbox's records)
-  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
+  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn && sn.source === "etsy-pull" ? `${sn.count} newest Etsy orders, pulled ${new Date(sn.pulledAt || sn.at).toLocaleString()}${sn.calls ? ` with ${calls(sn.calls)}` : ""}` : "no orders pulled yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
   function render() {
     const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title;
     // the speed and the word "sim" are their own spans, so a narrow top bar can leave them out (the pill took the room of
@@ -11696,6 +11854,9 @@ const Sandbox = window.Sandbox = (() => {
      and what was in the sandbox again a moment later? ── */
   const FRIENDLY = { Charm_Pool: "pool rows", Charm_Pool_Back: "back records", Charm_Nest_Sheets: "sheets", Charm_Nest_Sets: "sets", Charm_Nest_Runs: "runs", Charm_Nest_Run_Lines: "run piece archives", Charm_Nest_Run_Live: "live run parts", Charm_Nest_Counters: "set counters", Charm_Nest_Release: "release records",
     Charm_Nest_Arrivals: "arrivals", Charm_Nest_Rose_Stock: "Rose Gold stock records", Charm_Nest_Cancelled: "cancelled orders", Charm_Nest_Cancelled_History: "cancel history records", Design_Bridge: "bridge logs", Charm_Custom_Orders: "custom orders", Charm_Custom_Sheet: "custom sheets" };
+  /** The registry's family list (charm-nest-sandbox-families.js): what the wipe clears; the words of each come from it. */
+  const families = () => { try { const f = window.CharmNestSandboxFamilies; return f && f.families ? f.families() : []; } catch (_) { return []; } };
+  const famLabel = k => { const f = families().find(x => x.key === k); return (f && f.label) || FRIENDLY[k] || String(k).replace(/^(Charm_)?(Nest_)?/, "").replace(/_/g, " ").toLowerCase(); };
   const when = t => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   function lastText() {
     const l = lsJSON(LAST); if (!l || !l.at) return "No reset or purge has been made from this browser yet.";
@@ -11703,28 +11864,52 @@ const Sandbox = window.Sandbox = (() => {
     if (!l.ok) return `Last ${what} ${when(l.at)} — not finished: ${l.text || "it stopped part way"}`;
     const rec = l.records == null ? "the cloud's sandbox records" : `${nf(l.records)} cloud record(s)`, fil = l.files == null ? "" : ` and ${nf(l.files)} file(s)`;
     const b = l.browser ? `this browser's saved copy cleared (${nf(l.browser.workspace)} saved workspace part(s), ${nf(l.browser.keys)} stored key(s))` : "this browser's saved copy cleared";
-    return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
+    return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" + (l.kinds ? ` (all ${nf(l.kinds)} kinds counted at 0)` : "") : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
   }
+  /** "In the sandbox now": EVERY family the wipe knows with its count, those that still hold something first and the rest at
+      0 (Paul, 10 Oct: show that each one is empty, not only the few that were). Read from the status answer, one read, no write. */
   function nowText() {
     if (!status || status.light) return "";
     if (status.error) return `In the sandbox now: could not be read (${status.error})`;
-    const parts = Object.entries(status.records || {}).filter(([, n]) => n > 0).map(([k, n]) => `${nf(n)} ${FRIENDLY[k] || k.replace(/^(Charm_)?(Nest_)?/, "").replace(/_/g, " ").toLowerCase()}`);
-    return parts.length ? `In the sandbox now: ${parts.join(", ")}.` : "In the sandbox now: nothing.";
+    const rec = status.records || {}, capped = status.recordsCapped || {}, fam = families().filter(f => f.store !== "browser");
+    const keys = fam.map(f => f.key).concat(Object.keys(rec).filter(k => !fam.some(f => f.key === k)));   // (a family the page does not know yet is still listed)
+    const rows = keys.filter(k => rec[k] != null).map(k => ({ n: +rec[k] || 0, text: `${nf(rec[k])}${capped[k] ? "+" : ""} ${famLabel(k)}` }));
+    // what this browser still holds of the sandbox (the stored side), when the browser's own registry can count it
+    try { const b = typeof window.Sandbox?.browserLeft === "function" ? Sandbox.browserLeft() : null; if (Array.isArray(b)) for (const x of b) rows.push({ n: +x.n || 0, text: `${nf(x.n)} ${x.label || x.key} (this browser)` }); } catch (_) {}
+    const unknown = fam.filter(f => rec[f.key] == null).map(f => f.label);
+    const list = rows.filter(r => r.n > 0).concat(rows.filter(r => !r.n)).map(r => r.text).join(", ");
+    const tail = unknown.length ? ` Not counted by this server yet: ${unknown.join(", ")}.` : "";
+    return rows.length ? `In the sandbox now: ${rows.some(r => r.n > 0) ? "" : "nothing — "}${list}.${tail}` : unknown.length ? "In the sandbox now: the server gave no counts." : "In the sandbox now: nothing.";
+  }
+  /** What the wipe never touches, with its own counts (read-only, from the same status answer). */
+  function keptText() {
+    if (!status || status.light || status.error) return "";
+    const k = status.kept || {}, parts = [];
+    if (k.charmRepo != null) parts.push(`Charm repo ${nf(k.charmRepo)} designs`);
+    if (k.efficiencyDays != null) parts.push(`employee efficiency ${nf(k.efficiencyDays)} daily records${k.efficiencySandboxDays ? ` (${nf(k.efficiencySandboxDays)} made in the sandbox)` : ""}`);
+    return parts.length ? `Kept, never wiped: ${parts.join("; ")}.` : "Kept, never wiped: the Charm repo and employee efficiency.";
+  }
+  /** The two read-only lines under "Build · last reset", from the status already held (no read of its own). */
+  function paintLines(host) {
+    host = host || document.getElementById("stBuildNote"); if (!host) return;
+    const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
+    const set = (n, text) => { n.textContent = text; };
+    set(line("now"), nowText()); set(line("kept"), keptText());
   }
   const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }), m = /charm-nest-bridge\.js\?v=([\w.-]+)/.exec(await r.text()); return m ? m[1] : ""; } catch (_) { return ""; } };
   async function paintInfo(host) {
     host = host || document.getElementById("stBuildNote"); if (!host) return;
     const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
     const set = (n, text, bad) => { n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; };
-    const b = line("build"), l = line("last"), n = line("now"), p = pageBuild(), stale = !!p && p !== BUILD;
+    const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), p = pageBuild(), stale = !!p && p !== BUILD;
     set(b, stale ? `Page build ${p}, but this script is build ${BUILD}: the page file is out of date — reload with Ctrl+Shift+R` : `Page build ${BUILD}`, stale);
-    set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText());
-    refresh().then(() => set(n, nowText())).catch(() => {});
+    set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText()); set(kp, keptText());
+    refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); }).catch(() => {});   // (a production page's first read is the light one: Settings wants the counts)
     const latest = await latestBuild();
     if (latest && latest !== BUILD) set(b, `Page build ${BUILD} — a newer build (${latest}) is live: reload this page with Ctrl+Shift+R to run it`, true);
     else if (latest && !stale) set(b, `Page build ${BUILD} (the latest on the server)`);
   }
-  return { on, refresh, snapshot, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, paintInfo, build: () => BUILD, pageBuild, lastText, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: () => BUILD, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 

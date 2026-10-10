@@ -269,8 +269,11 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const add = (spec, name, sub) => {
       const key = specKey(spec), t = legal.get(key);
       let ok = !!t && t.ok !== false && !t.illegal, reason = (t && t.reason) || '';
-      if (spec.area && here.area === spec.area && !(t && t.leaveSet)) { ok = false; reason = `Already in ${name}`; }   // (leaveSet: a sheet of a committed set that waits in In progress can still be taken out of its set, Paul 7 Oct)
-      if (spec.set && here.setId === spec.set) { ok = false; reason = 'Already in this set'; }
+      // LibraryFlow.explainTargets answers every place with ok and the plain reason (Paul, 10 Oct: never "Already in In progress" for a sheet that can leave its set, and never a
+      // vague word): its answer stands. The "already here" words are only for a plain list of the allowed places (no ok in it) that still lists the item's own place.
+      const engine = !!(t && typeof t.ok === 'boolean');
+      if (!engine && spec.area && here.area === spec.area && !(t && t.leaveSet)) { ok = false; reason = `Already in ${name}`; }
+      if (!engine && spec.set && here.setId === spec.set) { ok = false; reason = 'Already in this set'; }
       if (!ok && !reason) reason = defaultReason(item, spec, reasons);
       // (never: a place that is the item's own, or that this kind of item can never go to: the Move to… menu leaves it out)
       const never = !ok && ((item.kind === 'set' && !!(spec.set || spec.newSet)) || NEVER.test(reason));
