@@ -1,0 +1,1041 @@
+{
+  "schema": 1,
+  "release": "charm-stories-52",
+  "researchedAt": 1791609720000,
+  "provenance": "agent_researched",
+  "records": [
+    {
+      "schema": 1,
+      "id": "butterfly",
+      "motif": "butterfly",
+      "aliases": [
+        "butterfly",
+        "butterflies"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Biology, plus one seventeenth-century Chinese jade object; the cultural associations are specific, not universal.",
+      "facts": [
+        {
+          "text": "Butterflies develop from larvae through a pupa into adults: a biological change of form.",
+          "sourceIds": [
+            "smithsonian-butterfly"
+          ]
+        },
+        {
+          "text": "For a seventeenth-century Chinese jade butterfly, the Met describes associations with joy, weddings and longevity, including a language pun.",
+          "sourceIds": [
+            "met-butterfly"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A butterfly can be your own reminder of a new chapter, or a garden memory shared with someone you love.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "smithsonian-butterfly",
+          "title": "Butterflies and Beyond",
+          "url": "https://naturalhistory.si.edu/education/teaching-resources/life-science/butterflies-and-beyond",
+          "publisher": "Smithsonian National Museum of Natural History",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        },
+        {
+          "id": "met-butterfly",
+          "title": "Butterfly, China, seventeenth century",
+          "url": "https://www.metmuseum.org/art/collection/search/43763",
+          "publisher": "The Metropolitan Museum of Art",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "sea-otter",
+      "motif": "sea otter",
+      "aliases": [
+        "sea otter"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Coastal ecology of the sea otter, especially California kelp forests; not a claim about all otter species.",
+      "facts": [
+        {
+          "text": "Sea otters eat sea urchins, helping keep kelp forests in balance and supporting the community of life around them.",
+          "sourceIds": [
+            "aquarium-sea-otter"
+          ]
+        },
+        {
+          "text": "A sea otter can use a rock to open hard-shelled food while floating at the surface.",
+          "sourceIds": [
+            "aquarium-sea-otter"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "This motif can mark care for a shared world, or a playful memory of the sea. It does not promise romantic fidelity.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "aquarium-sea-otter",
+          "title": "Sea otter",
+          "url": "https://www.montereybayaquarium.org/animals-the-ocean/animals-a-to-z/sea-otter",
+          "publisher": "Monterey Bay Aquarium",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "lotus",
+      "motif": "lotus",
+      "aliases": [
+        "lotus"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Ancient Egypt: the Met’s Middle Kingdom model represents the Egyptian water lily called lotus, not every modern lotus species.",
+      "facts": [
+        {
+          "text": "The Met connects the Egyptian lotus’s daily reopening with the rising sun and ideas of rebirth in ancient Egyptian art.",
+          "sourceIds": [
+            "met-lotus"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "If a fresh start is your own reason for the gift, the flower can hold that personal association without assigning a religious belief to the recipient.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "met-lotus",
+          "title": "Model Lotus Flower, Middle Kingdom Egypt",
+          "url": "https://www.metmuseum.org/art/collection/search/545285",
+          "publisher": "The Metropolitan Museum of Art",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "north-star",
+      "motif": "North Star",
+      "aliases": [
+        "north star",
+        "polaris"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Astronomy and navigation in the Northern Hemisphere; this is not a reading of generic five-pointed stars.",
+      "facts": [
+        {
+          "text": "Polaris lies near Earth’s northern rotational axis and can indicate true north in the Northern Hemisphere. It is not the brightest star in the sky.",
+          "sourceIds": [
+            "nasa-polaris"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "You might choose the North Star as a reminder of a person who gives you direction, or of finding your own way.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "nasa-polaris",
+          "title": "What is the North Star and How Do You Find It?",
+          "url": "https://science.nasa.gov/solar-system/what-is-the-north-star-and-how-do-you-find-it/",
+          "publisher": "NASA",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "moon",
+      "motif": "moon",
+      "aliases": [
+        "moon",
+        "crescent moon"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Astronomy: Moon phases seen from Earth, rather than astrology or a health claim.",
+      "facts": [
+        {
+          "text": "Moonlight is reflected sunlight. As the Moon orbits Earth, our view of its illuminated half changes, making a cycle of phases.",
+          "sourceIds": [
+            "nasa-moon"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A moon can be your personal image for gradual change, a quiet evening together, or continuity through different seasons.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "nasa-moon",
+          "title": "Moon Phases",
+          "url": "https://science.nasa.gov/moon/moon-phases/",
+          "publisher": "NASA",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "dragon",
+      "motif": "dragon",
+      "aliases": [
+        "dragon"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Chinese art: an early eighteenth-century Qing vase. Other cultures and fantasy traditions give dragons different roles.",
+      "facts": [
+        {
+          "text": "In the Met’s account of Chinese art, dragons have several meanings, including associations with water and imperial rule; five-clawed dragons were made for court use.",
+          "sourceIds": [
+            "met-dragon"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A dragon may stand for a favourite fantasy story or a courage you personally admire. This modern charm does not inherit imperial status or protective powers.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "met-dragon",
+          "title": "Vase with Dragon amid Clouds, Qing China",
+          "url": "https://www.metmuseum.org/art/collection/search/42364",
+          "publisher": "The Metropolitan Museum of Art",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "owl",
+      "motif": "owl",
+      "aliases": [
+        "owl"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Classical Greece: a bronze of Athena with an owl, about 460 BCE; not a universal meaning for all owl imagery.",
+      "facts": [
+        {
+          "text": "The Met links the owl with Athena in ancient Athens and notes that Athenian coins paired the goddess’s head with an owl.",
+          "sourceIds": [
+            "met-athena-owl"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "For a graduation or a love of learning, you can choose the owl as your own thoughtful companion to that achievement.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "met-athena-owl",
+          "title": "Bronze statuette of Athena flying her owl, Classical Greece",
+          "url": "https://www.metmuseum.org/art/collection/search/254648",
+          "publisher": "The Metropolitan Museum of Art",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "acorn",
+      "motif": "acorn",
+      "aliases": [
+        "acorn",
+        "acorns"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Botany and ecology, using the white oak of eastern North America as a documented example.",
+      "facts": [
+        {
+          "text": "White oaks grow from acorns, and their acorns are food for many wildlife species. Acorn crops vary from year to year.",
+          "sourceIds": [
+            "usfs-white-oak"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "An acorn can be a personal reminder of a small beginning with room to grow, or of someone who has nurtured your ambitions.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "usfs-white-oak",
+          "title": "White Oak, Silvics of North America",
+          "url": "https://research.fs.usda.gov/silvics/white-oak",
+          "publisher": "US Forest Service",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "daisy",
+      "motif": "daisy",
+      "aliases": [
+        "daisy",
+        "daisies"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Botany of the common daisy, Bellis perennis; species on a stylised charm are not assumed.",
+      "facts": [
+        {
+          "text": "What looks like one common daisy flower is a head made of many small flowers together, including the yellow centre and white outer flowers.",
+          "sourceIds": [
+            "kew-street-plants"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A daisy can carry an everyday garden memory or appreciation for small joys, if that is what it means to you.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "kew-street-plants",
+          "title": "Plants on your street",
+          "url": "https://www.kew.org/read-and-watch/identify-plants-street",
+          "publisher": "Royal Botanic Gardens, Kew",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "elephant",
+      "motif": "elephant",
+      "aliases": [
+        "elephant",
+        "elephants"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Zoology of Asian elephants; this example is not a statement about every elephant species or religious tradition.",
+      "facts": [
+        {
+          "text": "Asian elephants form complex social relationships in groups of related females and young, cooperating in the care of calves.",
+          "sourceIds": [
+            "smithsonian-elephant"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "You might connect an elephant with the people who helped raise you, or with steady support within a family of your own choosing.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "smithsonian-elephant",
+          "title": "Asian elephant",
+          "url": "https://nationalzoo.si.edu/animals/asian-elephant",
+          "publisher": "Smithsonian National Zoo",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "dragonfly",
+      "motif": "dragonfly",
+      "aliases": [
+        "dragonfly",
+        "dragonflies"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Natural history: aquatic nymphs become flying adults without the butterfly’s intermediate pupa stage.",
+      "facts": [
+        {
+          "text": "Dragonflies live as aquatic nymphs before emerging into their adult winged form. Adults can manoeuvre their four wings independently.",
+          "sourceIds": [
+            "nhm-dragonfly"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "This can be your image of adapting to a new setting or noticing life beside the water; that reading is personal, not a universal tradition.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "nhm-dragonfly",
+          "title": "Dragonflies: The ultimate hunters",
+          "url": "https://www.nhm.ac.uk/discover/dragonflies-the-ultimate-hunters.html",
+          "publisher": "Natural History Museum, London",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "bee",
+      "motif": "bee",
+      "aliases": [
+        "bee",
+        "bees",
+        "honeybee",
+        "honey bee"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Pollination biology, alongside a particular late nineteenth-century British wedding-jewellery tradition.",
+      "facts": [
+        {
+          "text": "Bees visiting flowers can move pollen between plants, helping plants produce fruit and seeds.",
+          "sourceIds": [
+            "usda-pollinators"
+          ]
+        },
+        {
+          "text": "The V&A describes a bee on an 1893 wedding brooch as a couple’s initial and explains its romantic association with honey in jewellery of that context.",
+          "sourceIds": [
+            "va-bridesmaids"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A bee can represent a shared garden, a community you cherish, or the pleasure of doing something together.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "usda-pollinators",
+          "title": "Insects and Pollinators",
+          "url": "https://www.nrcs.usda.gov/conservation-basics/animals/insects-pollinators",
+          "publisher": "USDA Natural Resources Conservation Service",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        },
+        {
+          "id": "va-bridesmaids",
+          "title": "Brooches for bridesmaids",
+          "url": "https://www.vam.ac.uk/articles/brooches-for-bridesmaids",
+          "publisher": "Victoria and Albert Museum",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "guitar",
+      "motif": "guitar",
+      "aliases": [
+        "guitar",
+        "guitars",
+        "acoustic guitar"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Instrument history: the Met’s Italian guitar of about 1800 and the spread of the six-string form.",
+      "facts": [
+        {
+          "text": "The Met describes six-string single-course guitars becoming popular in Naples near the end of the eighteenth century, then spreading elsewhere in Europe.",
+          "sourceIds": [
+            "met-guitar"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A guitar can carry the memory of a favourite song, a first performance, or the person who taught you to play.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "met-guitar",
+          "title": "Guitar, Italy, about 1800",
+          "url": "https://www.metmuseum.org/art/collection/search/503932",
+          "publisher": "The Metropolitan Museum of Art",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "anchor",
+      "motif": "anchor",
+      "aliases": [
+        "anchor",
+        "anchors"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "European maritime imagery: a brooch of about 1800 in the National Maritime Museum collection.",
+      "facts": [
+        {
+          "text": "Royal Museums Greenwich identifies a figure leaning on an anchor in a circa-1800 brooch as an emblem of Hope.",
+          "sourceIds": [
+            "greenwich-hope"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "You can choose an anchor for someone who feels steady in your life, while keeping that personal connection distinct from the historical emblem.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "greenwich-hope",
+          "title": "Symbolic female figure with an anchor, representing Hope",
+          "url": "https://www.rmg.co.uk/collections/objects/rmgc-object-42045",
+          "publisher": "Royal Museums Greenwich",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "compass",
+      "motif": "compass",
+      "aliases": [
+        "compass"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Navigation history: an eighteenth-century mariner’s compass; this charm is not a navigation instrument.",
+      "facts": [
+        {
+          "text": "The Greenwich mariner’s compass records an innovation by Gowin Knight in 1745: a steel needle that retained its magnetism longer during voyages.",
+          "sourceIds": [
+            "greenwich-compass"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A compass can be a personal reminder of a new journey, a mentor’s guidance or choosing your own direction.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "greenwich-compass",
+          "title": "Mariner’s compass",
+          "url": "https://www.rmg.co.uk/collections/objects/rmgc-object-42595",
+          "publisher": "Royal Museums Greenwich",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "heart",
+      "motif": "heart",
+      "aliases": [
+        "heart",
+        "hearts",
+        "double heart"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Late nineteenth-century British and transatlantic wedding-gift jewellery; the modern gift-giver decides the relationship.",
+      "facts": [
+        {
+          "text": "The V&A records heart motifs in bridesmaids’ brooches, including a double-heart design given for an 1893 wedding.",
+          "sourceIds": [
+            "va-bridesmaids"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A heart can express affection, friendship or a family bond as you define it; it does not have to imply romance.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "va-bridesmaids",
+          "title": "Brooches for bridesmaids",
+          "url": "https://www.vam.ac.uk/articles/brooches-for-bridesmaids",
+          "publisher": "Victoria and Albert Museum",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "flower",
+      "motif": "flower",
+      "aliases": [
+        "flower",
+        "flowers",
+        "floral",
+        "rose",
+        "roses",
+        "sunflower",
+        "sunflowers",
+        "lily",
+        "lilies",
+        "tulip",
+        "tulips",
+        "orchid",
+        "orchids",
+        "peony",
+        "peonies"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "European nineteenth-century jewellery and the period’s interest in botany. This is general floral history, not a fixed meaning for each flower species.",
+      "facts": [
+        {
+          "text": "The V&A describes recognisable flowers and fruit in nineteenth-century jewellery, with floral designs used to express love and friendship in that period.",
+          "sourceIds": [
+            "va-jewellery"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A flower can connect to a garden, a favourite bloom or a time you shared. The specific flower’s meaning can be your own rather than a borrowed flower-language rule.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "va-jewellery",
+          "title": "A history of jewellery",
+          "url": "https://www.vam.ac.uk/articles/a-history-of-jewellery",
+          "publisher": "Victoria and Albert Museum",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "cross",
+      "motif": "cross",
+      "aliases": [
+        "cross",
+        "crosses",
+        "crucifix"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Christian devotional jewellery in late medieval Europe, using a German reliquary cross of about 1450–1475 as a documented example.",
+      "facts": [
+        {
+          "text": "The V&A describes images on a late medieval pendant cross as a focus for meditation and its interior as a place that could hold a relic.",
+          "sourceIds": [
+            "va-jewellery"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "If faith is part of your stated reason, this can be a personal expression of it. A cross should not be chosen by assuming another person’s beliefs.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "va-jewellery",
+          "title": "A history of jewellery",
+          "url": "https://www.vam.ac.uk/articles/a-history-of-jewellery",
+          "publisher": "Victoria and Albert Museum",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "peacock",
+      "motif": "peacock",
+      "aliases": [
+        "peacock",
+        "peacocks"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "British Arts and Crafts jewellery around 1900; the example is a designer’s preference rather than universal peacock symbolism.",
+      "facts": [
+        {
+          "text": "The V&A notes that the peacock was a favourite motif of C. R. Ashbee and describes a brooch traditionally said to have been designed for his wife.",
+          "sourceIds": [
+            "va-jewellery"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A peacock can recall a memorable bird, a love of vivid design or the recipient’s own sense of style, without assigning pride or vanity to them.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "va-jewellery",
+          "title": "A history of jewellery",
+          "url": "https://www.vam.ac.uk/articles/a-history-of-jewellery",
+          "publisher": "Victoria and Albert Museum",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "hummingbird",
+      "motif": "hummingbird",
+      "aliases": [
+        "hummingbird",
+        "hummingbirds"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Bird natural history: Rufous Hummingbirds are one example; different hummingbird species have different migration patterns.",
+      "facts": [
+        {
+          "text": "Audubon describes Rufous Hummingbirds taking a seasonal route northwest in spring and southeast later in the year.",
+          "sourceIds": [
+            "audubon-hummingbird"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A hummingbird may recall a garden visitor or be your own tribute to a small but determined journey.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "audubon-hummingbird",
+          "title": "Rufous Hummingbird",
+          "url": "https://www.audubon.org/field-guide/bird/rufous-hummingbird",
+          "publisher": "National Audubon Society",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "sea-turtle",
+      "motif": "sea turtle",
+      "aliases": [
+        "sea turtle",
+        "turtle",
+        "turtles"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Marine ecology, using the green sea turtle as a documented example rather than identifying the species of a stylised charm.",
+      "facts": [
+        {
+          "text": "Green sea turtles use their flippers to move through the water; their grazing also helps maintain healthy seagrass habitats.",
+          "sourceIds": [
+            "aquarium-green-turtle"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "This can be a personal reminder of a coastal trip or caring for the sea. It does not promise longevity or safety.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "aquarium-green-turtle",
+          "title": "Green turtle",
+          "url": "https://www.montereybayaquarium.org/animals-the-ocean/animals-a-to-z/green-turtle",
+          "publisher": "Monterey Bay Aquarium",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "swallow",
+      "motif": "swallow",
+      "aliases": [
+        "swallow",
+        "swallows",
+        "barn swallow"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Natural history of the Barn Swallow; no sailor’s tattoo rule or universal loyalty claim is inferred.",
+      "facts": [
+        {
+          "text": "Barn Swallows catch insects in flight and build cup-shaped mud nests, often on human-made structures.",
+          "sourceIds": [
+            "cornell-swallow"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A swallow can recall the feeling of returning home or a place shared with someone, if that connection is yours.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "cornell-swallow",
+          "title": "Barn Swallow overview",
+          "url": "https://www.allaboutbirds.org/guide/barn_swallow",
+          "publisher": "Cornell Lab of Ornithology",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "snake",
+      "motif": "snake",
+      "aliases": [
+        "snake",
+        "snakes",
+        "serpent"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Snake biology, not a universal spiritual or medical interpretation.",
+      "facts": [
+        {
+          "text": "Snakes shed their outer skin as they grow and through other changes in their lives; their protective eye caps are shed too.",
+          "sourceIds": [
+            "smithsonian-snake"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A snake can be your own image for leaving an old chapter behind, or simply a favourite animal. No therapeutic or protective effect is implied.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "smithsonian-snake",
+          "title": "Do Snakes Have Ears? And Other Sensational Serpent Questions",
+          "url": "https://nationalzoo.si.edu/animals/news/do-snakes-have-ears-and-other-sensational-serpent-questions",
+          "publisher": "Smithsonian National Zoo",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "alligator",
+      "motif": "alligator",
+      "aliases": [
+        "alligator",
+        "alligators",
+        "gator"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Zoology: alligators and crocodiles are different animals, despite their similar appearance.",
+      "facts": [
+        {
+          "text": "Smithsonian keepers distinguish alligators’ broader U-shaped snouts from crocodiles’ narrower V-shaped snouts.",
+          "sourceIds": [
+            "smithsonian-alligator"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "An alligator can hold a memory of wetlands, a wildlife interest or a place meaningful to you; the gift need not impose a personality trait.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "smithsonian-alligator",
+          "title": "How Long Can an Alligator Hold Its Breath? And Other Questions, Answered",
+          "url": "https://www.nationalzoo.si.edu/animals/news/how-long-can-alligator-hold-its-breath-and-other-questions-answered",
+          "publisher": "Smithsonian National Zoo",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "sand-dollar",
+      "motif": "sand dollar",
+      "aliases": [
+        "sand dollar",
+        "sand dollars"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Marine natural history of Dendraster excentricus, not the folklore sometimes attached to its washed-up skeleton.",
+      "facts": [
+        {
+          "text": "A sand dollar’s flower-like pattern belongs to its body structure. A living sand dollar has tiny spines and can partly bury itself in sand.",
+          "sourceIds": [
+            "aquarium-sand-dollar"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A sand dollar may hold a beachcombing memory or your own appreciation of the details in nature.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "aquarium-sand-dollar",
+          "title": "Sand dollar",
+          "url": "https://www.montereybayaquarium.org/animals-the-ocean/animals-a-to-z/sand-dollar",
+          "publisher": "Monterey Bay Aquarium",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "sea-star",
+      "motif": "sea star",
+      "aliases": [
+        "sea star",
+        "sea stars",
+        "starfish"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Echinoderm biology; sea stars are animals rather than stars in the sky.",
+      "facts": [
+        {
+          "text": "Sea stars move using many small tube feet driven by a water vascular system.",
+          "sourceIds": [
+            "smithsonian-echinoderms"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A sea star can be a personal reminder of a tide-pool discovery or of many small efforts working together.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "smithsonian-echinoderms",
+          "title": "Echinoderms: Sea Stars, Urchins, Sand Dollars, and Relatives",
+          "url": "https://ocean.si.edu/ocean-life/invertebrates/sea-stars-urchins-and-relatives",
+          "publisher": "Smithsonian Ocean",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "sun",
+      "motif": "sun",
+      "aliases": [
+        "sun",
+        "sunburst"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Solar astronomy: the physical Sun, without an astrological, mood-treatment or energy-product claim.",
+      "facts": [
+        {
+          "text": "The Sun is the star at the centre of our solar system. Its light and energy make life on Earth possible.",
+          "sourceIds": [
+            "nasa-sun"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A sun can be your image for warmth, a favourite summer or someone whose company you appreciate.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "nasa-sun",
+          "title": "Our Sun: Facts",
+          "url": "https://science.nasa.gov/sun/facts/",
+          "publisher": "NASA",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "id": "star",
+      "motif": "star",
+      "aliases": [
+        "star",
+        "stars",
+        "shooting star"
+      ],
+      "status": "active",
+      "provenance": "agent_researched",
+      "context": "Astronomy of stars, not a claim that a charm predicts fate or grants wishes.",
+      "facts": [
+        {
+          "text": "During the main part of a star’s life, nuclear fusion in its core releases the energy that makes it shine.",
+          "sourceIds": [
+            "nasa-stars"
+          ]
+        }
+      ],
+      "interpretation": {
+        "text": "A star can mark an achievement, a shared night sky or an aspiration you personally want to celebrate.",
+        "context": "An optional personal reading chosen by the gift-giver; not a universal tradition or a promised effect.",
+        "optional": true
+      },
+      "sources": [
+        {
+          "id": "nasa-stars",
+          "title": "Stars",
+          "url": "https://science.nasa.gov/universe/stars/",
+          "publisher": "NASA",
+          "checkedAt": 1791609720000,
+          "inspection": "agent_inspected"
+        }
+      ]
+    }
+  ]
+}

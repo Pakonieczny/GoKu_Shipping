@@ -100,7 +100,7 @@ function sessionConfig(env={}){
   // Keep native VAD commits and interruption, but issue responses from the
   // client with echoed per-turn metadata. Arrival timing is not action identity.
   // https://developers.openai.com/api/docs/guides/realtime-conversations
-  return {type:'realtime',model,instructions,max_output_tokens:1200,output_modalities:['audio'],audio:{input:{noise_reduction:{type:'near_field'},transcription:{model:'gpt-4o-mini-transcribe'},turn_detection:{type:'server_vad',threshold:0.5,prefix_padding_ms:300,silence_duration_ms:450,create_response:false,interrupt_response:true}},output:{voice:'marin'}},tools,tool_choice:'auto'};
+  return {type:'realtime',model,instructions,max_output_tokens:1200,output_modalities:['audio'],audio:{input:{noise_reduction:{type:'near_field'},transcription:{model:'gpt-4o-mini-transcribe'},turn_detection:{type:'semantic_vad',eagerness:'low',create_response:false,interrupt_response:true}},output:{voice:'marin'}},tools,tool_choice:'auto'};
 }
 function signature(data,secret){return crypto.createHmac('sha256',secret).update(data).digest('base64url');}
 function stopToken(callId,expiresAt,secret){const data=Buffer.from(JSON.stringify({callId,expiresAt})).toString('base64url');return data+'.'+signature(data,secret);}

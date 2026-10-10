@@ -79,7 +79,7 @@ test('the actual Git build removes stale output and retains only the complete is
   const entries = fs.readdirSync(path.join(out, 'netlify/production-functions')).sort();
   assert.deepEqual(entries, ['britesConcierge.js', 'britesConciergeDemoTurn.js', 'britesConciergeMemory.js', 'britesConciergeVoice.js',
     'britesConciergeVoiceDeadline-background.js', 'britesConciergeVoiceReaper.js', 'britesGrowthAds.js',
-    'britesGrowthApi.js', 'britesGrowthCatalogue-background.js', 'britesGrowthCorrections.js', 'britesGrowthTick.js']);
+    'britesGrowthApi.js', 'britesGrowthCatalogue-background.js', 'britesGrowthCorrections.js', 'britesGrowthTick.js', 'deploy-succeeded.js']);
   for (const file of ['concierge-sandbox.html', 'brites-concierge-avatar.js',
     'brites-concierge-voice.js', 'brites-concierge-memory-config.js', 'brites-concierge-memory.js', 'brites-concierge-guide.js', 'assets/brites-concierge-avatar-scene.mjs']) {
     assert.deepEqual(fs.readFileSync(path.join(out, 'public-site', file)), fs.readFileSync(path.join(root, file)));
@@ -89,6 +89,11 @@ test('the actual Git build removes stale output and retains only the complete is
       || fs.readFileSync(path.join(out, 'netlify/production-functions', file), 'utf8').includes('schedule: ' + schedule));
   }
   assert.equal(fs.existsSync(path.join(out, 'public-site/netlify')), false);
+  assert.equal(fs.existsSync(path.join(out,'public-site/_britesCharmStoryBootstrap.json')),false);
+  assert.equal(fs.existsSync(path.join(out,'public-site/_britesConciergeLibraryDeploy.js')),false);
+  assert.deepEqual(fs.readFileSync(path.join(out,'netlify/functions/_britesConciergeLibraryDeploy.js')),fs.readFileSync(path.join(root,'netlify/functions/_britesConciergeLibraryDeploy.js')));
+  const deployEvent=fs.readFileSync(path.join(out,'netlify/production-functions/deploy-succeeded.js'),'utf8');
+  assert.match(deployEvent,/export default handler/);assert.doesNotMatch(deployEvent,/config\s*=|schedule\s*:/);
   const memoryRoute = fs.readFileSync(path.join(out, 'netlify/production-functions/britesConciergeMemory.js'), 'utf8');
   assert.match(memoryRoute, /path:\s*['"]\/api\/concierge-memory['"]/);
   assert.deepEqual(fs.readFileSync(path.join(out, 'netlify/functions/_britesConciergeMemory.js')),

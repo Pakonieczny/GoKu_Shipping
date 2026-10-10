@@ -119,3 +119,6 @@
   :host([data-open="true"][data-storefront-control-assist="true"]) .composer input{font-size:16px;min-height:44px;padding:8px 10px}
   :host([data-open="true"][data-storefront-control-assist="true"]) .send{min-height:44px;padding:8px 12px;font-size:12px}
 }
+
+/* Coordinated proposals stay distinct from the current product picker. */
+.set-builder{margin:10px 14px;padding:14px;background:#faf7f2;border:1px solid #e2d7c8;border-radius:16px;max-height:390px;overflow:auto}.set-builder[hidden]{display:none}.set-builder h3{font-size:15px;margin:0 0 6px}.set-builder-note{font-size:11px;color:#70695f;margin:5px 0}.set-builder-row{display:flex;gap:10px;border-top:1px solid #e2d7c8;padding:12px 0}.set-builder-row img{width:48px;height:48px;border-radius:8px;object-fit:cover}.set-builder-row>div{min-width:0;flex:1}.set-builder-row strong{font-size:12px}.set-builder-row p{font-size:11px;margin:4px 0}.set-builder-row select{width:100%;padding:7px;border:1px solid #cfc2af;border-radius:8px;background:white;font:inherit;font-size:11px}.set-builder-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.set-builder-total{font-size:12px;font-weight:600}.set-builder-actions button{font-size:11px;padding:7px 10px;border-radius:9px}

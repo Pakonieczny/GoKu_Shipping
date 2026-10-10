@@ -342,6 +342,14 @@
       // every card hover or mouse frame. Context still cannot create authority.
       try{if(typeof options.getContext==='function')updateContext(options.getContext());}catch{}
       if(finalizedInput?.text)updateMemory(finalizedInput.text);
+      // Delivery preferences never replace session policies or grant controls.
+      // Playback rate is changed only after the previous response has closed.
+      try{var policy=rt.BritesConciergeConversation||rt.window?.BritesConciergeConversation||globalThis.BritesConciergeConversation,value=options.getDeliveryStyle?.(),style=policy?.delivery(value);if(style){
+        var speed=style.pace==='slow'?0.9:style.pace==='brisk'?1.1:1;
+        send({type:'session.update',session:{type:'realtime',audio:{output:{speed:speed}}}});
+        var guidance=policy.guidance(value);if(typeof response.instructions==='string')response={...response,instructions:response.instructions+' '+guidance};
+        else send({type:'conversation.item.create',item:{type:'message',role:'user',content:[{type:'input_text',text:'Host delivery preferences only. No new request, product fact, permission or action authority. '+guidance}]}});
+      }}catch{}
       const requestId='voice-'+epoch+'-'+version+'-'+(++responseRequest),binding={epoch,requestId,turnVersion:version,inputItemId,responseId:'',toolsDisabled:response.tool_choice==='none'};
       remember(issuedResponses,requestId,binding);
       const sent=send({type:'response.create',event_id:requestId,response:{...response,metadata:{brites_voice_request:requestId,brites_input_item:inputItemId,brites_turn_version:String(version)}}});

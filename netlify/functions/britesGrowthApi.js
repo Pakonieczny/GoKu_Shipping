@@ -34,6 +34,7 @@ export default async (req,context) => {
         return json(await storefrontInventory.createInventory({shopify:publicShop,service,core}).read(page));
       }
       if(op==='status')return json(await service.status());
+      if(op==='meaning-library')return json(await service.charmStoryStatus());
       if(op==='etsy-cache-state')return json(await etsyCacheReadOnly.read({db}));
       if(op==='concierge-diagnostics'){
         if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
@@ -68,16 +69,30 @@ export default async (req,context) => {
         return json({products,pageInfo:r.pageInfo,checkedAt:r.checkedAt||Date.now(),live:true,...(seed?{seed:r.seed}:{}),...(r.discovery?{discovery:r.discovery}:{})});
       }
       if(op==='storefront-services')return json(await core.readStorefrontServices());
-      if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}
+      if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true,checkedAt:Date.now()});}
       if(op==='research'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,productIssues]=await Promise.all([service.research(ids),service.productIssues(ids)]);return json({dossiers,productIssues});}
       if(op==='issues')return json({products:await service.productIssues((url.searchParams.get('ids')||'').split(','))});
       if(op==='demand')return json({products:await demandStore.createDemandStore(service).read((url.searchParams.get('ids')||'').split(',').filter(Boolean))});
-      if(op==='knowledge'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,issues,supplements]=await Promise.all([service.research(ids),service.productIssues(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);const checkedAt=Date.now(),merged=core.mergeStorySupplements(dossiers,supplements,issues,checkedAt);return json({products:core.publicMeanings(merged,ids,checkedAt,issues).map(meaning=>({...meaning,checkedAt})),checkedAt});}
+      if(op==='knowledge'){
+        const ids=[...new Set((url.searchParams.get('ids')||'').split(',').filter(Boolean))];
+        if(ids.length>20||ids.some(id=>!/^gid:\/\/shopify\/Product\/[1-9]\d{0,19}$/.test(id)))return json({error:'Provide at most 20 exact product IDs.'},400);
+        const [dossiers,issues,supplements,liveProducts]=await Promise.all([service.research(ids),service.productIssues(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[],typeof service.charmStoryProducts==='function'?service.charmStoryProducts(ids):[]]);
+        const storyRead=typeof service.charmStories==='function'?await service.charmStories(liveProducts,issues):{stories:[],libraryAvailable:false};
+        const checkedAt=Date.now(),merged=core.mergeStorySupplements(dossiers,supplements,issues,checkedAt);
+        const clearedIds=ids.filter(id=>!(storyRead.productHolds||[]).some(hold=>hold.productId===id&&(hold.meaningHold||hold.recommendationHold||hold.cartHold)));
+        return json({products:core.publicMeanings(merged,clearedIds,checkedAt,issues).map(meaning=>({...meaning,checkedAt})),stories:storyRead.stories||[],storyLibraryAvailable:storyRead.libraryAvailable===true,checkedAt});
+      }
       return json({error:'Unknown operation.'},404);
     }
     if(req.method!=='POST')return json({error:'Method not allowed.'},405);
     const raw=await req.text();if(raw.length>900000)return json({error:'Request is too large.'},413);const body=JSON.parse(raw||'{}');
     if(!body||typeof body!=='object'||Array.isArray(body))return json({error:'Send a JSON object.'},400);
+    if(op==='meaning-library'){
+      if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+      if(body.action==='bootstrap'&&Object.keys(body).length===1)return json(await service.bootstrapCharmStories());
+      if(body.action==='save'&&Object.keys(body).every(key=>['action','record','expectedVersion'].includes(key))&&Object.hasOwn(body,'expectedVersion'))return json(await service.saveCharmStory(body.record,{expectedVersion:body.expectedVersion}));
+      return json({error:'Use bootstrap with no caller records, or save one record with its current version.'},400);
+    }
     if(op==='keyword-revision'){
       if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
       return json(await keywordRevision.createKeywordRevision({service}).revise(body));

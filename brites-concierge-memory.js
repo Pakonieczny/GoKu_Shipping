@@ -97,6 +97,8 @@
       if (typeof value[key] === 'string' && (!['currency', 'budgetCurrency'].includes(key) || /^[A-Z]{3}$/.test(value[key]))) result[key] = redact(value[key], hostRedact).slice(0, key === 'intent' ? 300 : 120);
       else if (['budget', 'maxPrice'].includes(key) && typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0) result[key] = Math.min(value[key], 100000);
     });
+    var delivery={voicePace:['normal','slow','brisk'],voiceDetail:['brief','expanded'],suggestions:['ask','welcome','off']};
+    Object.keys(delivery).forEach(function(key){if(delivery[key].includes(value?.[key]))result[key]=value[key];});
     return result;
   }
   function randomId(env) {
@@ -110,7 +112,9 @@
     var storage; try { storage = options.storage || env.sessionStorage; } catch (_) {}
     var storagePrefix = options.storageKey || 'brites-concierge-cloud-v1';
     var endpoint = String(options.apiBase || '').replace(/\/$/, '') + '/api/concierge-memory';
-    var syncInterval = Math.max(1000, options.syncIntervalMs || 60000), maxJournalBytes = Math.max(8192, Math.min(1048576, options.maxJournalBytes || 524288));
+    // Firestore is the archive. This same-tab journal only retains a bounded
+    // unsent batch and hashed reload deduplication markers, never read archives.
+    var syncInterval = Math.max(1000, options.syncIntervalMs || 60000), maxJournalBytes = Math.max(8192, Math.min(65536, options.maxJournalBytes || 65536));
     var hostRedact = options.redactText || function (text) { return env.BritesStorefrontBridge?.redactRequestText?.(text) || text; };
     var uid = null, user = null, epoch = 0, disposed = false, paused = false, auth = null, unsubscribe = null, customUnsubscribe = null, customAccount = null, accountNotified = false, notifiedPending = false;
     var authGate = null, authGateResolve = null, authGateTimer = null, authPending = false;
@@ -233,6 +237,9 @@
           var result = await response.json(); if (stale(requestEpoch) || stopped) return null;
           if (!response.ok || result?.ok !== true) {
             if (response.status === 409 && result?.resetRequired) return { resetRequired: true, generation: result.generation };
+            if (response.status === 409 && result?.conflictRequired) return { conflictRequired:true, version:Number.isSafeInteger(result.version)?result.version:null };
+            if (body.action?.startsWith('draft-') && response.status === 429) return { retryAfterMs:Math.max(1000,Math.min(3600000,Number(result?.retryAfterMs)||60000)) };
+            if (body.action?.startsWith('draft-') && response.status === 409 && result?.draftLimit) return { draftLimit:true };
             throw new Error(response.status === 401 || response.status === 403 ? 'account_access_unavailable' : 'cloud_memory_unavailable');
           }
           return result;
@@ -429,7 +436,17 @@
     }
     poll();
     function readyAccount() { return refreshIdentity() || Promise.resolve(null); }
-    return { append: append, browse: browse, sync: sync, read: read, relevant: relevant, cachedRelevant: cachedRelevant, purchases: purchases, clear: clear, ready: readyAccount, refreshIdentity: refreshIdentity, status: status, dispose: dispose };
+    async function draftOperation(action,value){
+      var spec=value||{},owner=uid;if(spec.consent!==true||disposed||paused)return null;
+      await readyAccount();if(!uid||owner&&uid!==owner)return null;
+      if(!ready)await read();if(!ready||!uid||owner&&uid!==owner||spec.signal?.aborted)return null;
+      var requestEpoch=epoch,body={action:action,consent:true,generation:generation===0?'0':generation};
+      if(action==='draft-save'){var hints=env.BritesConciergeSetBuilder?.sanitizeDraftHints(spec.draft);if(!hints)return null;body.draft=hints;}
+      if(spec.id!=null){if(typeof spec.id!=='string'||!/^[A-Za-z0-9_.-]{1,96}$/.test(spec.id))return null;body.id=spec.id;}
+      if(action!=='draft-read'){if(!Number.isSafeInteger(spec.expectedVersion)||spec.expectedVersion<0)return null;body.expectedVersion=spec.expectedVersion;}
+      try{var result=await request(body,requestEpoch,{signal:spec.signal});if(stale(requestEpoch)||!result)return null;if(result.resetRequired){ready=false;await read();return null;}return result;}catch(error){if(!stale(requestEpoch))report(error.message==='account_access_unavailable'?error.message:'cloud_memory_unavailable');return null;}
+    }
+    return { append: append, browse: browse, sync: sync, read: read, relevant: relevant, cachedRelevant: cachedRelevant, purchases: purchases, clear: clear, ready: readyAccount, refreshIdentity: refreshIdentity, status: status, dispose: dispose,readDrafts:function(value){return draftOperation('draft-read',value);},saveDraft:function(value){return draftOperation('draft-save',value);},clearDraft:function(value){return draftOperation('draft-clear',value);} };
   }
   return { create: create, redactText: redact };
 });

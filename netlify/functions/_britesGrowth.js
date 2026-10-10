@@ -11,6 +11,7 @@ const catalogueIntents = require('../../brites-catalogue-intents.js');
 const shoppingGuide = require('../../brites-concierge-shopping-guide.js');
 const {productMeasurements} = shoppingGuide;
 const conciergePolicy = require('./_britesConcierge.js');
+const charmLibrary = require('./_britesCharmMeaningLibrary.js');
 const publicSeedCache = {};
 const CATALOG_QUERY = `query GrowthProducts($query:String!, $after:String){products(first:50,query:$query,after:$after){nodes{id handle title status onlineStoreUrl descriptionHtml productType tags updatedAt featuredImage{url altText} images(first:16){nodes{url altText}} options{name values} variants(first:100){nodes{id title sku price availableForSale selectedOptions{name value}} pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}shop{name currencyCode}}`;
 const STOP_AT = Date.parse('2026-10-11T02:00:00Z');
@@ -195,6 +196,24 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
 }
 function createGrowthService({db,env={},shopify,now=Date.now}){
   const ns=namespace(env), col=suffix=>db.collection(ns+'_'+suffix), state=()=>col('State').doc('control'), pid=id=>hash(id).slice(0,40);
+  const charmStoriesStore=charmLibrary.createLibrary({db,namespace:ns,now});
+  async function charmStories(products,issues=[]){
+    const preserve=(before,after)=>after.map((product,index)=>({...product,...Object.fromEntries(['meaningHold','recommendationHold','cartHold'].map(key=>[key,product[key]===true||before[index]?.[key]===true]))})),original=Array.isArray(products)?products:[],first=preserve(original,applyProductIssues(original,issues));
+    const result=await charmStoriesStore.read(first,{issues});
+    const currentIssues=await productIssues(original.slice(0,20).map(product=>product.id)),current=preserve(first,applyProductIssues(first,currentIssues)),at=now();
+    return {...result,stories:result.stories.filter(story=>current.some(product=>charmLibrary.shared.storyMatchesProduct(story,product,at))),productHolds:current.map(product=>({productId:product.id,meaningHold:product.meaningHold===true,recommendationHold:product.recommendationHold===true,cartHold:product.cartHold===true})),checkedAt:at};
+  }
+  async function charmStoryProducts(ids){
+    // Stored catalogue rows provide identity hints only. The current public
+    // product must be re-read before it can bind a library record or fallback.
+    const selected=[...new Set(Array.isArray(ids)?ids:[])].filter(validIdentity).slice(0,20),products=[];
+    if(!shopify||typeof shopify.byHandle!=='function')return products;
+    for(let i=0;i<selected.length;i+=5){
+      const rows=await Promise.all(selected.slice(i,i+5).map(async id=>{try{const hint=await getProduct(id);if(!hint||hint.id!==id||!/^[a-z0-9_-]{1,180}$/.test(hint.handle||''))return null;const current=await shopify.byHandle(hint.handle);return current?.id===id&&current.handle===hint.handle?current:null;}catch{return null;}}));
+      products.push(...rows.filter(Boolean));
+    }
+    return products;
+  }
   async function setup(){const ref=state();await db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)tx.set(ref,{schema:1,enabled:true,stopAt:STOP_AT,createdAt:now(),catalogueCursor:null,catalogueComplete:false,aiEnabled:false,aiDailyUsdCap:1});});return (await ref.get()).data();}
   async function getProduct(id){const s=await col('Products').doc(pid(id)).get();return s.exists?s.data():null;}
   async function saveProducts(items){for(let i=0;i<items.length;i+=100){const b=db.batch();for(const p of items.slice(i,i+100)){if(!validIdentity(p.id)||!publicUrl(p.url,true))throw Error('Invalid catalogue product.');b.set(col('Products').doc(pid(p.id)),p);}await b.commit();}}
@@ -386,7 +405,7 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
   async function block(value){if(!/^[a-z0-9-]{1,100}$/.test(value.id||''))throw Error('Invalid blocker ID.');await col('Blockers').doc(value.id).set({task:clean(value.task,300),detail:clean(value.detail,2500),status:clean(value.status||'queued_for_morning',100),at:now()},{merge:true});return {ok:true};}
   async function event(type,data={}){const allowed=['opened','dismissed','message','product_opened','cart_requested','cart_added','cart_failed','api_error','test'];if(!allowed.includes(type))throw Error('Invalid event.');await col('Events').add({type,productId:validIdentity(data.productId)?data.productId:null,scenario:clean(data.scenario,100),at:now()});return {ok:true};}
   async function rateLimit(key,limit=25){const bucket=Math.floor(now()/60000),ref=col('Rate').doc(hash(key+'-'+bucket));return db.runTransaction(async tx=>{const s=await tx.get(ref),count=s.exists?s.data().count:0;if(count>=limit)return false;tx.set(ref,{count:count+1,expiresAt:new Date((bucket+5)*60000)});return true;});}
-  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,storySupplements,saveStorySupplement,rebuildMilestoneIndex,catalogueCandidateHandles,milestoneCandidateHandles,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns};
+  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,storySupplements,saveStorySupplement,rebuildMilestoneIndex,catalogueCandidateHandles,milestoneCandidateHandles,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns,charmStories,charmStoryProducts,bootstrapCharmStories:charmStoriesStore.bootstrap,saveCharmStory:charmStoriesStore.save,charmStoryStatus:charmStoriesStore.status};
 }
 function productIssueHolds(record){
   const open=(Array.isArray(record?.issues)?record.issues:[]).filter(x=>x&&x.status!=='resolved'),blocks=new Set(open.flatMap(x=>Array.isArray(x.blocks)?x.blocks:[]));
@@ -1291,11 +1310,22 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     products=products.filter(product=>reviewedIds.has(product.id)).slice(0,3).map(product=>({...product,why:'A possible personal connection with '+milestonePlan.label+'; see the reviewed interpretation below.'}));
     allMeanings=products.flatMap(product=>allMeanings.filter(m=>m.productId===product.id).slice(0,1));
   }
-  const meanings=allMeanings.slice(0,3).map(meaning=>meaningRequest&&!knowledgeUnavailable?{...meaning,checkedAt:knowledgeCheckedAt}:meaning);
+  let meanings=allMeanings.slice(0,3).map(meaning=>meaningRequest&&!knowledgeUnavailable?{...meaning,checkedAt:knowledgeCheckedAt}:meaning);
+  let storyRead=null;
+  if(meaningRequest&&typeof service.charmStories==='function'){
+    try{storyRead=await service.charmStories(products,issueRecords);}catch{}
+    knowledgeCheckedAt=now();
+    // Re-check every clock after the cloud read; no delayed response can renew
+    // expired product evidence, sources or an old human-approved dossier.
+    const newHolds=Array.isArray(storyRead?.productHolds)?storyRead.productHolds:[];
+    products=products.filter(product=>Number.isFinite(product.checkedAt)&&knowledgeCheckedAt-product.checkedAt<=5*60000&&product.checkedAt<=knowledgeCheckedAt+60000&&!newHolds.some(hold=>hold.productId===product.id&&(hold.meaningHold||hold.recommendationHold||hold.cartHold)));
+    meanings=publicMeanings(dossiers,products.map(product=>product.id),knowledgeCheckedAt,issueRecords).slice(0,3).map(meaning=>({...meaning,checkedAt:knowledgeCheckedAt}));
+  }
   const recovery=!products.length&&!unavailableSelection?recoveryQuestion(eligibleProducts,intent,at):null;
   let reply=products.length?'These available pieces connect with '+(intent.query||'the preferences you’ve shared')+giftContext(intent)+'.':'I couldn’t confirm an available match for those preferences. We can adjust the selection together.';
   let question=!products.length?(recovery?.question||'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null&&!intent.unlimitedBudget?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':intent.giftDiscovery&&!intent.recipient&&!intent.recipientSkipped?'Who is the gift for?':intent.giftDiscovery&&!intent.occasion&&!intent.occasionSkipped?'Is there an occasion for the gift?':null;
   const result={schema:1,reply,question,preferences:intent,personalContext,products,meanings,actions:products.map(p=>({type:'navigate',productId:p.id,url:p.url,label:'View '+p.title})),checkedAt:meaningRequest?knowledgeCheckedAt:at,live:true,aiUsed:false};
+  if(storyRead){result.stories=(Array.isArray(storyRead.stories)?storyRead.stories:[]).filter(story=>products.some(product=>charmLibrary.shared.storyMatchesProduct(story,product,knowledgeCheckedAt)));result.storyLibraryAvailable=storyRead.libraryAvailable===true;}
   if(seedDiscovery)result.discovery={...queried.discovery,partial:discoveryPartial,exactListingsChecked:checkedProducts.length};
   if(!freshBrowse&&intent.milestone&&!(useContext&&handles.length)&&!command){
     const presentation=milestoneDiscovery.presentation(intent.milestone);
@@ -1310,8 +1340,12 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(mismatchedCurrency){result.reply+=' Catalogue prices are shown in '+products[0].currency+'. I haven’t applied your '+intent.budgetCurrency+' budget to those prices.';result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';result.currencyMismatch=true;}
   if(semanticInquiry(text)){result.reply=meanings.length?'Here are reviewed interpretations associated with the displayed pieces. Meanings vary by culture and by the person wearing them.':'I don’t yet have reviewed symbolism or history for these pieces. I can still help you choose by the person’s interests and the published product details.';result.question=null;}
   if(meaningRequest){
-    const product=products.find(product=>product.handle===meaningRequest.handle),meaning=meanings.find(meaning=>meaning.productId===product?.id),connection=conciergePolicy.meaningContextReply({product,meaning,personalContext});
+    const product=products.find(product=>product.handle===meaningRequest.handle),meaning=meanings.find(meaning=>meaning.productId===product?.id&&publicMeanings(dossiers,[product.id],knowledgeCheckedAt,issueRecords).some(current=>current.text===meaning.text)),connection=conciergePolicy.meaningContextReply({product,meaning,personalContext});
     if(connection){Object.assign(result,connection);result.meaningConnection={handle:product.handle,productId:product.id,kind:'personal_interpretation'};}
+    else if(product&&(result.stories||[]).some(story=>story.productId===product.id)){
+      const story=result.stories.find(story=>story.productId===product.id),bound=charmLibrary.shared.storyConnection(story,personalContext,{expanded:shoppingGuide.meaningDetailRequest(text)});
+      result.reply=bound.reply;result.question=null;result.story=story;result.storyConnection=bound;result.meaningConnection=bound;
+    }
     else{result.reply='I don’t yet have a current reviewed interpretation for this exact piece. I can help with its published details, but I can’t verify a symbolic connection to the gift.';result.question=null;}
     result.preserveSelection=true;
   }
