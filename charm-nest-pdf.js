@@ -765,7 +765,11 @@
         const black = drawableWithChains.filter(s => isOutline(s) && !reds.includes(s) && !redPen(s.strokeRGB) && !(s.fill && !s.stroke && !achromatic(s.fillRGB)));
         for (const s of reds) {
           const pts = samples(s, polysCache);
-          if (black.some(o => bbArea(o.bbox) > bbArea(s.bbox) && bbInter(s.bbox, o.bbox) && insideFrac(pts, polysOf(o)) >= 0.9)) s.manufacturingRole = "engrave";
+          const around = black.filter(o => bbArea(o.bbox) > bbArea(s.bbox) && bbInter(s.bbox, o.bbox) && insideFrac(pts, polysOf(o)) >= 0.9);
+          if (!around.length) continue;
+          s.manufacturingRole = "engrave";
+          // the edge of thin strips that run across the whole charm (a basketball's seams) is the edge of a hatched area: blue hatching, not a drawn line (see hatchStripOf)
+          if (hatchStripOf(s, around.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a), polysOf(s))) { s.manufacturingRole = "hatch"; s.hatchBlue = true; s.hatchStrip = true; }
         }
       }
     }
@@ -1130,13 +1134,20 @@
     g.pageFrames = parsed._frames || [];
     return g;
   }
+  /** What the grouping decides ABOUT a segment and writes on it: the shop role (`manufacturingRole`: the red engraving inside a cut line, a body drawn on an engraving
+   *  layer, hatching), the black-fill and thin-strip hatching flags, and the notes of what it took out of a charm. The browser groups in a worker, on a copy of the page's
+   *  segments, so these exist only on the copy; adoptGrouping carries them back to the page's own segment. Without that the page read a design differently from the server,
+   *  the audit and the catalogue index: the BASKETBALL's seams (a red outline on the CUT layer, engraving by the role rule) were a cut line in the app, drawn as black double lines
+   *  on the Back engraving card and as cut-out strips on the sheet. */
+  const GROUPING_STAMPS = ["manufacturingRole", "hatchBlue", "hatchStrip", "marker", "sample"];
   function adoptGrouping(g, parsed) {
     const own = v => { const r = v.pageRef; if (typeof r !== "string") return null; const m = (r[0] === "s" ? parsed.segments : parsed.nested || [])[+r.slice(1)]; return m && m.kind === v.kind ? m : null; };
     const seen = new Map();
     const walk = v => {
       if (!v || typeof v !== "object" || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || v instanceof Map || v instanceof Set) return v;
       if (seen.has(v)) return seen.get(v);
-      const mine = own(v); seen.set(v, mine || v); if (mine) return mine;
+      const mine = own(v); seen.set(v, mine || v);
+      if (mine) { if (mine !== v) for (const k of GROUPING_STAMPS) if (v[k] !== undefined && mine[k] !== v[k]) mine[k] = v[k]; return mine; }
       if (Array.isArray(v)) for (let i = 0; i < v.length; i++) v[i] = walk(v[i]);
       else for (const k of Object.keys(v)) v[k] = walk(v[k]);
       return v;
@@ -1294,6 +1305,7 @@
     // a blue plate ("POLICE") is white in the master, not black.
     drawSegments(ctx, c.members.map(m => isCutSilhouetteFill(c, m) ? cutLineOf(m)
       : m.hatchBlue && m.fill && !m.stroke ? {...m, fillRGB: HATCH_BLUE}      // a black fill inside the charm is blue hatching (see "a black FILL is blue hatching")
+      : m.hatchStrip && m.hatchBlue && m.stroke && !m.fill ? {...m, fill: true, stroke: false, fillRGB: HATCH_BLUE, paintOp: "f*"}      // the red edge of thin strips is the hatched strip itself (see "thin strips outlined in red are hatching")
       : m === c.outline || isCutLine(m) ? {...m, strokeRGB:[0,0,0], fillRGB:m !== c.outline && m.fill && m.fillRGB && lum(m.fillRGB) > 0.35 ? m.fillRGB : [0,0,0]} : m), tx, scale);
     ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
     ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (isCutSilhouetteFill(c, c.outline) ? CUT_HAIRLINE_PT : c.outline.lwPt || .25) * scale); ctx.stroke();
@@ -1315,6 +1327,30 @@
   }
   /** The cut line a filled cut silhouette stands for: the same path, stroked black at the cut hairline, not filled. */
   const cutLineOf = m => ({ ...m, fill: false, stroke: true, paintOp: "S", strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: CUT_HAIRLINE_PT });
+
+  /* ═══ thin strips outlined in red are hatching ════════════════════════════════════════════════════════════════════
+     Paul, 10 Oct 2026: "The basketball should have blue hatching engravings in place of the black lines." BASKETBALL_9338 draws its
+     seams as ONE closed red outline of thin strips on the CUT layer, inside the black cut circle; the master's own siblings
+     (BASKETBALL_99143, _70779) draw the same strips as blue HATCH fills. A red outline on CUT inside a black cut line is engraving
+     (the role rule above); when that outline is the edge of strips that are everywhere thin and run across the whole charm, the
+     strips are the hatched area, so the path is read as hatching (hatchStrip, role "hatch"): drawn as a blue fill, written as a
+     blue fill (hatchCopies), never a cut-out and never a drawn line. Anything else the role rule engraves (a cross's inner line,
+     a flag's star, a lattice, short details) stays an engraved line. */
+  const STRIP_MAX_WIDTH_MM = 0.6;      // mean width of the strips: 2 x area / perimeter. The basketball's seams are 0.3 mm; an engraved outline of a real shape is wider
+  const STRIP_MIN_SPAN = 0.8;          // the strips run across at least this share of the cut outline's short side (the seams: 0.95)
+  const STRIP_MIN_LONG = 0.6;          // and at least this share of its long side (a hoop welded into the outline makes it taller; a long charm's short details stay engraving)
+  const STRIP_MIN_LEN_MM = 6;          // and are at least this long (a small detail is not a pattern)
+  const STRIP_MAX_SUBPATHS = 3;        // one outline of a connected strip network (a lattice of separate cells is not this)
+  function hatchStripOf(s, outline, polys) {
+    if (!s || s.kind !== "path" || !s.closed || s.fill || !s.stroke || !outline || !outline.bbox || !s.bbox || !(s.subpaths || []).length || s.subpaths.length > STRIP_MAX_SUBPATHS) return false;
+    const filled = fillFacts({ subpaths: s.subpaths, paintOp: "f*" }).filled; let perimeter = 0;
+    for (const p of polys || []) for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; perimeter += Math.hypot(q[0] - p[i][0], q[1] - p[i][1]); }
+    if (!(filled > 0) || !(perimeter > 0)) return false;
+    // (across the body: at least STRIP_MIN_SPAN of the cut outline's short side and STRIP_MIN_LONG of its long side. The short side keeps the answer the same in the master, where the hoop is a ring
+    //  beside the body, and in a per-SKU file, where the hoop is welded into the outline and makes it taller; the long side keeps a long charm's short details out)
+    const mm = 25.4 / 72, sb = s.bbox, ob = outline.bbox, longS = Math.max(sb[2] - sb[0], sb[3] - sb[1]), shortO = Math.min(ob[2] - ob[0], ob[3] - ob[1]), longO = Math.max(ob[2] - ob[0], ob[3] - ob[1]);
+    return 2 * filled / perimeter * mm <= STRIP_MAX_WIDTH_MM && longS * mm >= STRIP_MIN_LEN_MM && longS >= STRIP_MIN_SPAN * shortO && longS >= STRIP_MIN_LONG * longO;
+  }
 
   /* ═══ a black FILL is blue hatching ═══════════════════════════════════════════════════════════════════════════════
      Paul's rule for the master drawings: black means a cut LINE and nothing else. A black FILLED area is never a real black
@@ -2084,15 +2120,16 @@
     if (!c || !Array.isArray(c.members) || !parsed || !Array.isArray(parsed.segments)) return null;
     let byIndex = null, out = null; const keepSet = new Set(keep), f = v => (Math.round(v * 1000) / 1000).toString();
     for (const m of c.members) {
-      if (!m || !m.hatchBlue || m.kind !== "path" || !m.fill || m.stroke || m.synthetic || m.parent != null || m.index == null || m.parts || !keepSet.has(m.index)) continue;
+      const strip = !!m && !!m.hatchStrip, plain = x => strip ? (x.stroke && !x.fill && x.closed) : (x.fill && !x.stroke);   // (a thin-strip outline is painted `S`; its blue copy is the area it edges)
+      if (!m || !m.hatchBlue || m.kind !== "path" || !plain(m) || m.synthetic || m.parent != null || m.index == null || m.parts || !keepSet.has(m.index)) continue;
       if (!byIndex) { byIndex = new Map(); for (const s of parsed.segments) if (s && s.index != null) byIndex.set(s.index, s); }
       const seg = byIndex.get(m.index), k = seg && seg.ctm;
-      if (!seg || seg.kind !== "path" || !seg.fill || seg.stroke || seg.start !== m.start || !Array.isArray(k) || k.length < 6 || !Array.isArray(seg.subpaths)) continue;
+      if (!seg || seg.kind !== "path" || !plain(seg) || seg.start !== m.start || !Array.isArray(k) || k.length < 6 || !Array.isArray(seg.subpaths)) continue;
       const det = k[0] * k[3] - k[1] * k[2]; if (!isFinite(det) || Math.abs(det) < 1e-12) continue;
       const inv = [k[3] / det, -k[1] / det, -k[2] / det, k[0] / det, (k[2] * k[5] - k[3] * k[4]) / det, (k[1] * k[4] - k[0] * k[5]) / det];   // the paths are stored in page space: undo the matrix they were written under
       let t = `q ${inv.map(v => (Math.round(v * 1e9) / 1e9).toString()).join(" ")} cm 0 0 1 rg `;
       for (const sp of seg.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") t += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") t += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") t += "h "; }
-      t += (String(seg.paintOp || "f").endsWith("*") ? "f*" : "f") + " Q";
+      t += (strip || String(seg.paintOp || "f").endsWith("*") ? "f*" : "f") + " Q";
       (out || (out = new Map())).set(m.index, t);
     }
     return out;
@@ -2115,5 +2152,7 @@
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
   // the black-fill rule (kept off the long list for the same reason)
+  // the thin-strip hatching rule and the stamp list the worker hand-back carries (kept off the long list for the same reason)
+  root.CharmNestPDF.hatchStripOf = hatchStripOf; root.CharmNestPDF.GROUPING_STAMPS = GROUPING_STAMPS;
   root.CharmNestPDF.classifyBlackFills = classifyBlackFills; root.CharmNestPDF.engravedDiscOf = engravedDiscOf; root.CharmNestPDF.isBlackFill = isBlackFill; root.CharmNestPDF.HATCH_BLUE = HATCH_BLUE; root.CharmNestPDF.hatchCopies = hatchCopies;
 })(typeof window !== "undefined" ? window : self);

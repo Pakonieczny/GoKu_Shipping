@@ -13,7 +13,8 @@
  *    · Firestore: one read per listing asked about (plus one for the day's budget), one write per listing fetched (plus one
  *      for the budget). The page asks only for listings with a line that waits on its SKU and keeps the answers for 7 days.
  *  A table is { at, n, uni } when every product of the listing has the one SKU (or none), else { at, n, products: [{ id,
- *  sku, d, pv: [[propertyId, valueId]…] }] }; { gone: true } for a listing Etsy no longer has. */
+ *  sku, d, pv: [[propertyId, valueId]…] }] }; { gone: true } for a listing Etsy no longer has. (Stored with each pair as one
+ *  "propertyId:valueId" string, read back as pairs: Firestore refuses an array in an array.) */
 "use strict";
 
 const COLL = "Charm_Listing_Skus", BUDGET_ID = "_budget";
@@ -21,6 +22,15 @@ const TTL_MS = 7 * 86400000, DAY_CAP = 60, CALL_CAP = 6, MAX_ASK = 25, MAX_PRODU
 
 const sku = v => String(v == null ? "" : v).trim().slice(0, 80);
 const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
+
+/* Firestore refuses an array directly inside an array (the project's rule: "Nested arrays are not allowed"), and pv is a list of
+   pairs. A table is therefore STORED with each pair as one "propertyId:valueId" string and READ BACK as pairs, so the page and
+   every reader see the one shape the table always had; a table stored before (pairs, which Firestore happened to take) reads the
+   same. Property and value ids are digits, so the colon never occurs inside one. */
+const packPv = pv => (Array.isArray(pv) ? pv : []).map(a => (Array.isArray(a) ? String(a[0]) + ":" + String(a[1]) : String(a)));
+const unpackPv = pv => (Array.isArray(pv) ? pv : []).map(a => { if (Array.isArray(a)) return [String(a[0]), String(a[1])]; const i = String(a).indexOf(":"); return [String(a).slice(0, i), String(a).slice(i + 1)]; });
+const toStored = t => (t && Array.isArray(t.products) ? Object.assign({}, t, { products: t.products.map(p => Object.assign({}, p, { pv: packPv(p.pv) })) }) : t);
+const fromStored = t => (t && Array.isArray(t.products) ? Object.assign({}, t, { products: t.products.map(p => Object.assign({}, p, { pv: unpackPv(p.pv) })) }) : t);
 
 /** Etsy's inventory of one listing → the compact table above. */
 function compact(inv, now) {
@@ -56,8 +66,8 @@ async function lookup(ids, env) {
   const stale = [];
   want.forEach((id, i) => {
     const s = snaps[i], t = s.exists ? s.data() : null;
-    if (t && now - (+t.at || 0) < TTL_MS) out.tables[id] = t;
-    else { if (t) out.tables[id] = t; stale.push(id); }
+    if (t && now - (+t.at || 0) < TTL_MS) out.tables[id] = fromStored(t);
+    else { if (t) out.tables[id] = fromStored(t); stale.push(id); }
   });
   let attempts = 0, stop = !!env.cacheOnly;
   if (stop && stale.length) out.why = "cache";
@@ -66,7 +76,7 @@ async function lookup(ids, env) {
     attempts++; used++;
     try {
       const table = compact(await env.fetchInventory(id), now);
-      await coll.doc(id).set(table);
+      await coll.doc(id).set(toStored(table));
       out.tables[id] = table;
     } catch (e) {
       const st = +(e && e.status) || 0;
@@ -82,4 +92,4 @@ async function lookup(ids, env) {
   return out;
 }
 
-module.exports = { lookup, compact, COLL, TTL_MS, DAY_CAP, CALL_CAP, MAX_ASK };
+module.exports = { lookup, compact, toStored, fromStored, COLL, TTL_MS, DAY_CAP, CALL_CAP, MAX_ASK };
