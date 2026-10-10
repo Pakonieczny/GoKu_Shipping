@@ -224,7 +224,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     const html = Switch.html(ps, d2.key, { fonts: true });
     assert.equal((html.match(/class="egEarTab"/g) || []).length, 3); assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1); assert.match(html, /data-ear="[^"]*#D2"[^>]*aria-pressed="true"/);
     assert.match(html, /<span class="egPiece" data-slot="D1">DISC 1 of 3<\/span><span class="egEarWords">J<\/span><span class="egEarFont">Typewriter<\/span><span class="egEarStage">Placement to check<\/span>/, 'each disc: its tag, its words, its font by name, where it stands');
-    assert.match(html, /aria-label="The discs of this order, one by one"/);
+    assert.match(html, /aria-label="The discs of this order, one by one"/); assert.match(html, /^<span class="egEarSwitch egMany" /, 'a switch of discs may wrap on a narrow window');
     // two ears: the Left | Right switch of the editor, character for character (the old markup is rebuilt here from its own parts)
     const L = Object.assign(job(ROW.duck, 'L', 'review', ['Mom']), readyFit()), R = Object.assign(job(ROW.duck, 'R', 'review', ['Mom & "Dad"']), readyFit(), { copies: ['a', 'b'] });
     const old = (job_, ears) => `<span class="egEarSwitch" role="group" aria-label="The left and the right ear of this line">${ears.map(j => {
@@ -256,7 +256,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     const document = dom.window.document, jobs = new Map(), frames = [], timers = [], errors = [], pairCalls = [], mountCalls = [];
     dom.window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
     dom.window.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {} });
-    Object.assign(dom.window, { CharmNestEngraveRows: Rows, CharmNestEngraveSides: Sides, CharmNestPair: Pair, CNListActivity: Activity, CNEngravingSeals: Seals });
+    Object.assign(dom.window, { CharmNestEngraveRows: Rows, CharmNestPieceSwitch: Switch, CharmNestEngraveSides: Sides, CharmNestPair: Pair, CNListActivity: Activity, CNEngravingSeals: Seals });
     const pool = poolOf(W);
     const ListMedia = { pair: row => { pairCalls.push(row); return '<div class="comparePair"><figure><span data-vector></span></figure><figure><span data-listing></span></figure></div>'; }, mount: (node, row) => mountCalls.push([node, row]), more() {}, pairRow: () => false };
     const c = vm.createContext({ WORKSPACE_SANDBOX: true, localStorage: { getItem() { return null; }, setItem() {} }, CNListActivity: Activity, CNEngravingSeals: Seals, window: dom.window, document, console: { error: (...x) => errors.push(x), warn() {}, log() {} },
@@ -302,10 +302,10 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       assert.deepEqual(Array.from(made.pend, j => j.slot || null), [null]); assert.deepEqual(Array.from(made.old, j => j.slot || null), [null], 'an old line without sides is one job');
       assert.equal(jobs.size, 2 + 2 + 2 + 3 + 1 + 1 + 1 + 1);
     });
-    await t('2c Placements: ONE row for the duck line with both ears told on it; discs, a single, a plain quantity-3 line and an old pair are rows of their own', () => {
+    await t('2c Placements: ONE row for the duck line with both ears told on it, ONE row for the necklace with its three discs; a single, a plain quantity-3 line and an old pair are rows of their own', () => {
       showList();
       const rows = rowsOnPage();
-      assert.equal(rows.length, 10, '13 jobs (2+2+2+3+1+1+1+1) are 10 rows');
+      assert.equal(rows.length, 8, '13 jobs (2+2+2+3+1+1+1+1) are 8 rows: three pair lines, the necklace, four plain ones');
       const duck = rows.filter(r => r.dataset.rid === ROW.duck.order.receiptId); assert.equal(duck.length, 1, 'the duck order is ONE row, not two');
       const d = duck[0]; assert.ok(d.classList.contains('earPairRow')); assert.equal(d.querySelectorAll('.comparePair').length, 1, 'one picture block for the line');
       assert.deepEqual([...d.querySelectorAll('.egEar')].map(e => e.querySelector('.egPiece').textContent), ['LEFT EAR', 'RIGHT EAR']);
@@ -320,8 +320,11 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const p2 = rows.find(r => r.dataset.rid === ROW.pair2.order.receiptId); assert.deepEqual([...p2.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['LEFT EAR ×2', 'RIGHT EAR ×2']);
       assert.deepEqual([...p2.querySelectorAll('.egEar .w')].map(n => n.textContent), ['Anna', 'Ben'], 'ears with different words show both');
       assert.equal(rows.filter(r => r.dataset.rid === ROW.mis.order.receiptId).length, 1);
-      // discs: three rows, each as a row of one job, no ear block
-      const discs = rows.filter(r => r.dataset.rid === ROW.disc.order.receiptId); assert.equal(discs.length, 3); assert.ok(discs.every(r => !r.querySelector('.egEars') && !r.classList.contains('earPairRow')));
+      // the necklace: ONE row, its three discs told on it (DISCCYCLE)
+      const discs = rows.filter(r => r.dataset.rid === ROW.disc.order.receiptId); assert.equal(discs.length, 1, 'the necklace is ONE row, not three'); const nk = discs[0];
+      assert.deepEqual([...nk.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['DISC 1 of 3', 'DISC 2 of 3', 'DISC 3 of 3']); assert.deepEqual([...nk.querySelectorAll('.egEar .w')].map(n => n.textContent), ['A', 'B', 'C'], 'the words of each disc');
+      assert.deepEqual([...nk.querySelectorAll('.egEar [data-stage]')].map(n => n.textContent), ['Placement to check', 'Placement to check', 'Placement to check']); assert.equal(nk.dataset.jobs, made.disc.map(j => j.key).join(' ')); assert.equal(nk.dataset.open, made.disc[0].key, 'a click opens Disc 1');
+      assert.equal(nk.querySelectorAll('.comparePair').length, 1, 'one picture block for the line'); assert.ok(pairCalls.some(r => r === made.disc[0].row.parentRow), 'drawn from the line\'s row');
       // a single, a single earring, a plain quantity-3 line, an old pair: the row they had (one words line, one stage line, the job's own row handed to the picture)
       for (const k of ['pend', 'ear1', 'plain3', 'old']) {
         const r = rows.filter(x => x.dataset.rid === ROW[k].order.receiptId); assert.equal(r.length, 1, k); const row = r[0];
@@ -340,19 +343,19 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const dn = [...document.querySelectorAll('#egDone .decidedRow')]; assert.equal(dn.length, 1); assert.equal(norm(dn[0]), GOLD_DONE);
       made.pend[0].state = was; delete made.pend[0].approvedAt; delete made.pend[0].approvedBy; E.restoreView({ tab: 'place', chosen: true, list: true, focus: null }); E.render();
       // none of these carry the ear markup or the row's extra attributes
-      for (const k of ['pend', 'ear1', 'plain3', 'old', 'disc']) for (const r of rowsOnPage().filter(x => x.dataset.rid === ROW[k].order.receiptId)) { assert.equal(r.hasAttribute('data-jobs'), false, k); assert.equal(r.querySelectorAll('.egEars,.egEar').length, 0, k); }
+      for (const k of ['pend', 'ear1', 'plain3', 'old']) for (const r of rowsOnPage().filter(x => x.dataset.rid === ROW[k].order.receiptId)) { assert.equal(r.hasAttribute('data-jobs'), false, k); assert.equal(r.querySelectorAll('.egEars,.egEar').length, 0, k); }
     });
-    await t('2d the tab badges count rows: Placements 10, Decided 0 (the ears are not counted twice), and the rail says 10 to settle', () => {
+    await t('2d the tab badges count rows: Placements 8, Decided 0 (neither the ears nor the discs are counted twice), and the rail says 8 to settle', () => {
       showList();
-      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '10'); assert.equal(document.querySelector('.egTab[data-tab="done"] b'), null);
-      assert.equal(E.pendingRows(), 10, 'rows still to settle'); assert.equal(E.pendingCount(), 13, 'jobs: what the run itself checks, unchanged');
+      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '8'); assert.equal(document.querySelector('.egTab[data-tab="done"] b'), null);
+      assert.equal(E.pendingRows(), 8, 'rows still to settle'); assert.equal(E.pendingCount(), 13, 'jobs: what the run itself checks, unchanged');
       assert.equal(E.reviewedRows(), 0);
     });
     await t('2e a click on the duck row opens the editor on its Left ear: a Left | Right switch, the counter in rows, the line told once', () => {
       showList();
       const d = rowsOnPage().find(r => r.dataset.rid === ROW.duck.order.receiptId); d.click();
       const card = document.querySelector('#egQueue .rvItem'); assert.ok(card, 'the editor opened'); assert.equal(card.dataset.key, made.duck[0].key, 'on the Left');
-      const kind = card.querySelector('.rh .kind').textContent; assert.equal(kind, '1 of 10 · 0 done', 'the counter counts rows (10), not jobs (13)');
+      const kind = card.querySelector('.rh .kind').textContent; assert.equal(kind, '1 of 8 · 0 done', 'the counter counts rows (8), not jobs (13)');
       const sw = card.querySelector('.egEarSwitch'); assert.ok(sw, 'a Left | Right switch'); const tabs = [...sw.querySelectorAll('.egEarTab')];
       assert.deepEqual(tabs.map(b => b.querySelector('.egPiece').textContent), ['LEFT EAR', 'RIGHT EAR']); assert.deepEqual(tabs.map(b => b.getAttribute('aria-pressed')), ['true', 'false']);
       assert.deepEqual(tabs.map(b => b.querySelector('.egEarWords').textContent), ['Mom', 'Mom'], 'both ears\' words are on the switch');
@@ -362,7 +365,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const both = card.querySelector('[data-a="approveBoth"]'); assert.ok(both, 'same words: the row offers Approve both ears'); assert.equal(both.disabled, true, 'but not before both placements have been on screen');
       // the Right ear
       tabs[1].click(); const card2 = document.querySelector('#egQueue .rvItem'); assert.equal(card2.dataset.key, made.duck[1].key, 'the switch shows the Right ear\'s own card');
-      assert.deepEqual([...card2.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.equal(card2.querySelector('.rh .kind').textContent, '1 of 10 · 0 done', 'the other ear is not another step');
+      assert.deepEqual([...card2.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.equal(card2.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'the other ear is not another step');
     });
     await t('2e2 "Approve both ears" wakes only once both placements have been on screen: shown on the Left alone it stays asleep, and on the Right (the Left already seen) it is ready', () => {
       reset(); frames.length = 0; showList();
@@ -375,9 +378,10 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       // words that differ: no such press at all
       made.duck[1].lines = ['Dad']; made.duck[1].text = 'Dad'; card = open(made.duck[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'ears with different words are approved one by one');
       made.duck[1].lines = ['Mom']; made.duck[1].text = 'Mom';
-      // a single and a necklace disc never have it
+      // a single never has it; a necklace with different words on its discs has no "all discs" press either, only the Disc 1 | Disc 2 | Disc 3 switch
       assert.equal(open(made.pend[0].key).querySelector('[data-a="approveBoth"]'), null); assert.equal(open(made.disc[0].key).querySelector('[data-a="approveBoth"]'), null);
-      assert.equal(open(made.disc[0].key).querySelector('.egEarSwitch'), null, 'a disc has no Left | Right switch'); assert.equal(open(made.disc[0].key).querySelector('.rh .reviewIdentity > .egPiece').textContent, 'DISC 1 of 3');
+      assert.equal(open(made.pend[0].key).querySelector('.egEarSwitch'), null, 'a single has no switch'); assert.equal(open(made.disc[0].key).querySelectorAll('.egEarSwitch .egEarTab').length, 3, 'the necklace has Disc 1 | Disc 2 | Disc 3');
+      assert.equal(open(made.disc[0].key).querySelectorAll('.rh .reviewIdentity > .egPiece').length, 0, 'the switch replaces the single tag');
     });
     await t('2e3 the Review list\'s embedded card (no row context) counts in rows too and has no switch', () => {
       reset(); const card = E.placementCard(made.duck[0], 1);
@@ -387,7 +391,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     await t('2f Back / Next move row by row: from either ear of the duck line to the next ROW; wrap at the ends; a single is a stop of its own', () => {
       showList();
       const order = [...new Set([...jobs.values()].filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)).map(j => Rows.lineKeyOf(j) + (Rows.earOf(j) ? '' : '#' + j.key)))];   // the stops, in the order Back / Next walk
-      assert.equal(order.length, 10);
+      assert.equal(order.length, 10, 'the stops: each disc is one, so the necklace is three of them');
       const open = k => { E.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); E.render(); return document.querySelector('#egQueue .rvItem'); };
       const press = (card, a) => { card.querySelector(`[data-a="${a}"]`).click(); return document.querySelector('#egQueue .rvItem').dataset.key; };
       const walk = []; let card = open(made.duck[0].key); walk.push(card.dataset.key);
@@ -408,16 +412,16 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const done = [...document.querySelectorAll('#egDone .decidedRow')]; assert.equal(done.length, 1, 'one Decided row for the line'); const d = done[0];
       assert.ok(d.classList.contains('earPairRow')); assert.deepEqual([...d.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['LEFT EAR', 'RIGHT EAR']);
       assert.deepEqual([...d.querySelectorAll('[data-a="reopen"]')].map(b => b.textContent), ['Reopen Left', 'Reopen Right'], 'each ear can be reopened on its own (the other keeps its approval)');
-      assert.equal(document.querySelector('.egTab[data-tab="done"] b').textContent, '1'); assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '9');
+      assert.equal(document.querySelector('.egTab[data-tab="done"] b').textContent, '1'); assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '7');
       assert.equal(pairCalls.filter(r => r.key === ROW.duck.key).length > 0, true); assert.ok(pairCalls.some(r => r === made.duck[0].row.parentRow), 'the Decided row draws the line\'s picture too');
       E.restoreView({ tab: 'place', chosen: true, list: false, focus: made.pend[0].key }); E.render();
-      assert.equal(document.querySelector('#egQueue .rvItem .kind').textContent, '2 of 10 · 1 done', '1 decided row + 9 rows still to settle');
+      assert.equal(document.querySelector('#egQueue .rvItem .kind').textContent, '2 of 8 · 1 done', '1 decided row + 7 rows still to settle');
       // one ear of the quantity-2 pair decided: it is a one-ear row in Decided, the other ear a one-ear row in Placements
       made.pair2[0].state = 'approved'; made.pair2[0].approvedBy = 'Paul'; made.pair2[0].approvedAt = 1.7e12; made.pair2[0].backs = [];
       E.restoreView({ tab: 'place', chosen: true, list: true, focus: null }); E.render();
       const rows = rowsOnPage(), p2 = rows.filter(r => r.dataset.rid === ROW.pair2.order.receiptId); assert.equal(p2.length, 1); assert.equal(p2[0].classList.contains('earPairRow'), false, 'one ear left: the row a single piece has');
       assert.equal(p2[0].dataset.open, made.pair2[1].key);
-      assert.equal(document.querySelector('.egTab[data-tab="done"] b').textContent, '2'); assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '9');
+      assert.equal(document.querySelector('.egTab[data-tab="done"] b').textContent, '2'); assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '7');
       E.restoreView({ tab: 'done', chosen: true, list: true, focus: null }); E.render();
       assert.equal(document.querySelectorAll('#egDone .decidedRow').length, 2); assert.equal(E.reviewedRows(), 2);
       made.pair2[0].state = 'words';
@@ -441,6 +445,42 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const rows = rowsOnPage(); assert.equal(rows.length, 1); assert.deepEqual([...rows[0].querySelectorAll('.egEar .w')].map(n => n.textContent), ['Mom', 'Dad']);
       E.restoreView({ tab: 'place', chosen: true, list: true, focus: null, q: '' }); made.duck[1].lines = ['Mom']; made.duck[1].text = 'Mom';
     });
+    await t('2j DISCCYCLE: a necklace is ONE row; the editor has Disc 1 | Disc 2 | Disc 3, each with its own words, font and state; Back / Next walk every disc of every order; "Approve all discs" only for the same words on every disc once each was shown; Decided lists the discs with a Reopen each', () => {
+      reset(); made.disc[0].font = { name: 'Typewriter', asked: 'Typewriter' }; made.disc[1].font = 'Source Sans 3'; frames.length = 0; showList();
+      const nk = rowsOnPage().find(r => r.dataset.rid === ROW.disc.order.receiptId);
+      assert.deepEqual([...nk.querySelectorAll('.egEar [data-font]')].map(n => n.textContent), ['Typewriter', 'Source Sans 3', ''], 'the list says each disc\'s font by name');
+      nk.click(); let card = document.querySelector('#egQueue .rvItem'); assert.equal(card.dataset.key, made.disc[0].key, 'a click on the row opens Disc 1');
+      assert.equal(card.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'the counter counts the necklace as ONE order');
+      let tabs = [...card.querySelectorAll('.egEarSwitch .egEarTab')]; assert.equal(tabs.length, 3);
+      assert.deepEqual(tabs.map(b => b.querySelector('.egPiece').textContent), ['DISC 1 of 3', 'DISC 2 of 3', 'DISC 3 of 3']); assert.deepEqual(tabs.map(b => b.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+      assert.deepEqual(tabs.map(b => b.querySelector('.egEarWords').textContent), ['A', 'B', 'C'], 'each disc\'s own words'); assert.deepEqual(tabs.map(b => (b.querySelector('.egEarFont') || {}).textContent), ['Typewriter', 'Source Sans 3', undefined], 'its own font, by name');
+      assert.deepEqual(tabs.map(b => b.querySelector('.egEarStage').textContent), ['Placement to check', 'Placement to check', 'Placement to check']);
+      assert.equal(card.querySelectorAll('[data-f="words"]').length, 1, 'one card at a time: each disc keeps its own words box, approval, seal and back file'); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'the words differ: no "all discs" press');
+      tabs[2].click(); card = document.querySelector('#egQueue .rvItem'); assert.equal(card.dataset.key, made.disc[2].key, 'the switch shows Disc 3\'s own card'); assert.equal(card.querySelector('[data-f="words"]').value, 'C');
+      assert.deepEqual([...card.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'false', 'true']); assert.equal(card.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'a disc is not another step');
+      // Back / Next: through every disc of every order
+      const press = (a) => { card.querySelector(`[data-a="${a}"]`).click(); card = document.querySelector('#egQueue .rvItem'); return card.dataset.key; };
+      const open = k => { E.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); E.render(); runFrames(); card = document.querySelector('#egQueue .rvItem'); return card; };
+      open(made.disc[0].key); assert.equal(press('next'), made.disc[1].key, 'Next from Disc 1 is Disc 2 of the same order'); assert.equal(press('next'), made.disc[2].key); const after = press('next'); assert.notEqual(Rows.lineKeyOf(jobs.get(after)), ROW.disc.key, 'after Disc 3: the next order');
+      assert.equal(press('prev'), made.disc[2].key, 'Back from there is the last disc of the order before'); assert.equal(press('prev'), made.disc[1].key); assert.equal(press('prev'), made.disc[0].key);
+      const before = press('prev'); assert.notEqual(Rows.lineKeyOf(jobs.get(before)), ROW.disc.key, 'Back from Disc 1: the order before'); assert.equal(press('next'), made.disc[0].key, 'and Next comes back to Disc 1');
+      // "Approve all discs": the very same words on every disc, and every disc has been on screen
+      for (const j of made.disc) { j.lines = ['Mom']; j.text = 'Mom'; } delete made.disc[0].font;
+      card = open(made.disc[0].key); let b = card.querySelector('[data-a="approveBoth"]'); assert.ok(b, 'the same words: the row offers one press'); assert.equal(b.textContent, 'Approve all discs'); assert.equal(b.disabled, true, 'but Disc 2 and Disc 3 have not been on screen'); assert.match(b.title, /Look at Disc 2's placement first/);
+      card = open(made.disc[1].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b.disabled, true); assert.match(b.title, /Look at Disc 3's placement first/);
+      card = open(made.disc[2].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b.disabled, false, 'all three were shown'); assert.match(b.title, /each with its own seal and back file/);
+      made.disc[1].lines = ['Dad']; made.disc[1].text = 'Dad'; card = open(made.disc[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'one disc with other words: each disc is approved on its own'); made.disc[1].lines = ['Mom']; made.disc[1].text = 'Mom';
+      // Decided: Disc 1 and Disc 3 approved, Disc 2 left: the order is in both tabs, each holding its discs; the Placements row of one disc reads as a single piece's
+      for (const k of [0, 2]) { const j = made.disc[k]; j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; }
+      E.restoreView({ tab: 'done', chosen: true, list: true, focus: null }); E.render();
+      const done = [...document.querySelectorAll('#egDone .decidedRow')].filter(r => r.dataset.rid === ROW.disc.order.receiptId); assert.equal(done.length, 1, 'ONE Decided row'); const dr = done[0];
+      assert.deepEqual([...dr.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['DISC 1 of 3', 'DISC 3 of 3']); assert.deepEqual([...dr.querySelectorAll('[data-a="reopen"]')].map(x => x.textContent), ['Reopen Disc 1', 'Reopen Disc 3'], 'each disc can be reopened on its own (the other discs keep their approval)');
+      assert.match(dr.querySelector('[data-a="reopen"]').title, /the other discs keep theirs/);
+      E.restoreView({ tab: 'place', chosen: true, list: true, focus: null }); E.render();
+      const left = rowsOnPage().filter(r => r.dataset.rid === ROW.disc.order.receiptId); assert.equal(left.length, 1); assert.equal(left[0].hasAttribute('data-jobs'), false, 'one disc left: the row a single piece has'); assert.equal(left[0].dataset.open, made.disc[1].key);
+      card = open(made.disc[1].key); assert.equal(card.querySelector('.egEarSwitch'), null); assert.equal(card.querySelector('.rh .reviewIdentity > .egPiece').textContent, 'DISC 2 of 3', 'the plain tag, as a single piece has');
+      reset();
+    });
     assert.equal(errors.length, 0, 'no errors were logged by the page code: ' + JSON.stringify(errors.slice(0, 2)));
     dom.window.close();
   }
@@ -451,16 +491,16 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     const jobsA = new Map(), saved = [], events = [], toasts = [], removed = [], moved = [];
     const pool = poolOf(W);
     const win = { CharmNestEngraveRows: Rows, CharmNestEngraveSides: Sides, CharmNestPair: Pair };
-    const parent = Object.assign({}, ROW.duck, { engrave: undefined });
+    const parent = Object.assign({}, opts.discs ? ROW.disc : ROW.duck, { engrave: undefined });
     const mkJob = (slot, lines) => { const j = Object.assign({ key: Sides.jobKey(parent.key, slot), rowKey: parent.key, slot, groupKey: '', state: 'review', lines, text: lines.join('\n'), copies: Sides.idsOfSlot(CTX, parent, slot), engraveRec: { needed: true, state: 'review', approved: false }, backs: [] }, readyFit()); j.view = { cx: 0, cy: 0, cutMembers: [] }; j.fit.glyphs = []; j.row = Sides.sideRow(CTX, parent, slot, j); return j; };
-    const L = mkJob('L', opts.words ? opts.words[0] : ['Mom']), R = mkJob('R', opts.words ? opts.words[1] : ['Mom']);
-    jobsA.set(L.key, L); jobsA.set(R.key, R); Sides.linkParent(CTX, parent, [L, R]);
+    const list = (opts.discs ? ['D1', 'D2', 'D3'].slice(0, opts.discs) : ['L', 'R']).map((sl, i) => mkJob(sl, opts.words ? opts.words[i] : ['Mom'])), [L, R] = list;
+    for (const j of list) jobsA.set(j.key, j); Sides.linkParent(CTX, parent, list);
     const names = [];
     const ctx = { window: win, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, console, PT: 72 / 25.4, P: { buildBackFile: async () => ({ bytes: new Uint8Array([1]) }) }, S: { settings: {} }, B: { pool: { rows: pool } },
       charmFor: () => ({ sourceId: 'source' }), sheetFor: () => ({ sheetId: 'sheet-1' }), sourceOf: () => ({ parsed: {} }), fitOpts: () => ({ lineGap: .18 }), verifyBackFile: async () => ({ ok: true }), EG: { cardKey: null, card: null, drafts: {} },
       CNListActivity: Activity, CNEngravingSeals: Object.assign({}, Seals, { press: async () => {} }), employeeName: () => 'Paul', needEmployee: async () => { names.push('asked'); return 'Paul'; }, Review: { remove(k) { removed.push(k); } }, goes(j) { moved.push(j.key); }, EG_TAB: () => '',
       agent() {}, render() {}, saveBacks: async j => { saved.push(j.key); }, toast: m => toasts.push(m), humanAct() {}, TL: { rec: ev => events.push(ev) }, SheetEvents: { label: () => 'Sheet 1' }, SIDES: () => Sides,
-      items: () => jobsA, fitTasks: new WeakMap(), DECIDED: ['approved', 'written', 'skipped'], isWorking: () => false, lineOf: r => r.parentRow || r,
+      items: () => jobsA, jobsOf: () => [...jobsA.values()], fitTasks: new WeakMap(), DECIDED: ['approved', 'written', 'skipped'], isWorking: () => false, lineOf: r => r.parentRow || r,
       queuedJobs: js => js.filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)), decidedJobs: () => [...jobsA.values()].filter(j => ['approved', 'written', 'skipped'].includes(j.state)), esc: s => String(s) };
     vm.createContext(ctx);
     const rowsHelpers = source.slice(source.indexOf('  const ROWS = () =>'), source.indexOf('  // a draft outlives its card only while'));
@@ -468,10 +508,10 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     const earCode = source.slice(source.indexOf('  const earTagText = job'), source.indexOf('  /** The row of the Engrave lists for one job'));
     const rowApprove = source.slice(source.indexOf('  /** The Left | Right switch of a row'), source.indexOf('  /** The placement review card'));
     vm.runInContext(rowsHelpers + approveCode + earCode + rowApprove + '\nthis.__api = { approve, approveRow, approveBothHtml, rowsIn, queueUniverse, markShown };', ctx);
-    if (opts.shown !== false) { ctx.__api.markShown(L); ctx.__api.markShown(R); }
-    return { ctx, L, R, parent, saved, events, toasts, moved, names, mark: j => ctx.__api.markShown(j), api: ctx.__api };
+    if (opts.shown !== false) for (const j of list) ctx.__api.markShown(j);
+    return { ctx, L, R, list, parent, saved, events, toasts, moved, names, mark: j => ctx.__api.markShown(j), api: ctx.__api };
   };
-  const summary = w => [w.L, w.R].map(j => ({ slot: j.slot, state: j.state, by: j.approvedBy, text: j.text, rec: { needed: j.row.engrave.needed, state: j.row.engrave.state, approved: j.row.engrave.approved, text: j.row.engrave.text, approvedBy: j.row.engrave.approvedBy }, seals: Seals.list(j).map(s => [s.how, s.by]),
+  const summary = (w, list) => (list || [w.L, w.R]).map(j => ({ slot: j.slot, state: j.state, by: j.approvedBy, text: j.text, rec: { needed: j.row.engrave.needed, state: j.row.engrave.state, approved: j.row.engrave.approved, text: j.row.engrave.text, approvedBy: j.row.engrave.approvedBy }, seals: Seals.list(j).map(s => [s.how, s.by]),
     events: w.events.filter(e => e.data.poolId && j.copies.includes(e.data.poolId)).map(e => [e.type, e.id.startsWith(e.data.poolId + '-'), e.data.slot, e.data.side, e.by, e.text]) }));
 
   await t('3a "Approve both ears" writes exactly what two separate presses write: per ear a state, a seal, a record on its own side row, a timeline event, a back save (Left first)', async () => {
@@ -504,6 +544,28 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     await A.api.approveRow(single); assert.equal(single.state, 'review'); assert.match(A.toasts[0], /one ear to approve/);
     await A.api.approve(single, 'Paul'); assert.equal(single.state, 'approved', 'approving a single is the ordinary approval'); assert.deepEqual(A.saved, ['S']); assert.equal(A.L.state, 'review', 'nothing else moved');
     assert.equal(Rows.group([single], [single])[0].pair, false);
+  });
+
+  await t('3f "Approve all discs" writes exactly what three separate presses write: per disc a state, a seal, a record on its own side row, a timeline event, a back save (Disc 1 first)', async () => {
+    const A = approvalWorld({ discs: 3 }); for (const j of A.list) await A.api.approve(j, 'Paul');
+    const B = approvalWorld({ discs: 3 }); await B.api.approveRow(B.list[1], undefined);
+    assert.deepEqual(summary(B, B.list), summary(A, A.list), 'the same records, seals and timeline events, whichever disc was on screen');
+    assert.deepEqual(B.saved, A.saved); assert.deepEqual(B.saved, B.list.map(j => j.key), 'the back files are written for Disc 1, then Disc 2, then Disc 3, each through the ordinary save');
+    assert.ok(B.list.every(j => j.state === 'approved')); assert.ok(summary(B, B.list).every(x => x.events.length === 1), 'each disc has its own timeline event'); assert.equal(new Set(B.list.map(j => j.row.engrave)).size, 3, 'three records');
+    assert.equal(B.parent.engrave.approved, true, 'the order reads approved only now that every disc is');
+    const C = approvalWorld({ discs: 2 }); await C.api.approveRow(C.L); assert.ok(C.list.every(j => j.state === 'approved'), 'two discs work the same way');
+  });
+  await t('3g discs whose words differ, a disc not put in front of the person, or a disc that does not settle: never approved together; the discs after a failed one are left as they are', async () => {
+    const A = approvalWorld({ discs: 3, words: [['J'], ['Q'], ['J']] });
+    assert.equal(A.api.approveBothHtml(A.list, A.L), '', 'no button for different words'); await A.api.approveRow(A.L); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /words differ between the discs/); assert.deepEqual(A.saved, []);
+    const B = approvalWorld({ discs: 3, shown: false }); const h = B.api.approveBothHtml(B.list, B.L); assert.match(h, />Approve all discs</); assert.match(h, /disabled/); assert.match(h, /placement first/);
+    await B.api.approveRow(B.L); assert.ok(B.list.every(j => j.state === 'review')); assert.match(B.toasts[0], /Look at Disc 1's placement first/);
+    B.list.slice(0, 2).forEach(B.mark); await B.api.approveRow(B.L); assert.match(B.toasts[1], /Look at Disc 3's placement first/); assert.deepEqual(B.saved, []); B.mark(B.list[2]); assert.doesNotMatch(B.api.approveBothHtml(B.list, B.L), /disabled/);
+    const C = approvalWorld({ discs: 3 }); C.ctx.verifyBackFile = async (bytes, job) => (job === C.list[1] ? { ok: false, why: 'engraving intersects a cut-out' } : { ok: true });
+    await C.api.approveRow(C.L); assert.deepEqual(C.list.map(j => j.state), ['approved', 'review', 'review'], 'Disc 1 settled, Disc 2 did not pass its file check, so Disc 3 was left as it is'); assert.deepEqual(C.saved, [C.list[0].key]); assert.ok(C.toasts.some(m => /discs after it were left as they are/.test(m)));
+    // two of the three still to settle (one decided): the press says so and approves those two
+    const D = approvalWorld({ discs: 3 }); D.list[0].state = 'approved'; D.mark(D.list[1]); assert.match(D.api.approveBothHtml(D.list.slice(1), D.list[1]), />Approve the 2 discs left</);
+    await D.api.approveRow(D.list[1]); assert.deepEqual(D.list.map(j => j.state), ['approved', 'approved', 'approved']);
   });
 
   console.log(`\npair-rows-engrave: ${passed} passed, ${failed} failed`);
