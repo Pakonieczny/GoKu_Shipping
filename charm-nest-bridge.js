@@ -1490,28 +1490,31 @@ const Orders = window.Orders = (() => {
     if (!(l.productId || (l.variations || []).some(v => v.propertyId != null && v.valueId != null))) return false;
     return (sp.problems || []).some(p => p.kind === "unmatchedSku" || p.kind === "needsMapping");
   }
+  /** Does this line wait on a SIGN named in its note (ZODIACTWO), whose charm is found by Etsy's own value names for the listing, which the table the page holds does not have? */
+  const needsNames = r => !!(r.spec && r.spec.pair && r.spec.pair.second && r.spec.pair.second.needNames);
   function wantTables() {
     if (tableTimer || tableBusy || !S.cloud.ok) return;
     tableTimer = setTimeout(() => { tableTimer = 0; askTables().catch(e => console.warn("SKU tables", e)); }, 800);
   }
   async function askTables() {
     if (tableBusy || !S.cloud.ok) return;
-    const now = Date.now(), ids = [];
+    const now = Date.now(), ids = [], nameIds = [];
     for (const r of rowsOf()) {
       if (!needsTable(r)) continue;
-      const id = String(r.line.listingId), have = B.maps.listingSkus[id], t = tableTry.get(id);
-      if ((have && now - (+have.at || 0) < TABLES_ASK_MS) || (t && now < t.until) || ids.includes(id)) continue;
-      ids.push(id);
+      // (a table the page already holds is asked for again, once, only when a line needs Etsy's value names and the table has none: the cloud answers from its cache in the sandbox, from Etsy in production)
+      const id = String(r.line.listingId), have = B.maps.listingSkus[id], t = tableTry.get(id), names = needsNames(r) && !!have && Array.isArray(have.products) && !have.names;
+      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names) || (t && now < t.until) || ids.includes(id)) continue;
+      ids.push(id); if (names) nameIds.push(id);
     }
     if (!ids.length) return;
     tableBusy = true;
     try {
       for (let i = 0; i < ids.length; i += 25) {
-        const part = ids.slice(i, i + 25), r = await api("charmNestLibrary", { op: "listingSkus", listingIds: part }, { quiet: true }).catch(() => null);
+        const part = ids.slice(i, i + 25), r = await api("charmNestLibrary", { op: "listingSkus", listingIds: part, ...(nameIds.length ? { nameIds: part.filter(id => nameIds.includes(id)) } : {}) }, { quiet: true }).catch(() => null);
         const pending = new Set((r && r.pending || []).map(String));
         for (const id of part) {
-          const t = tableTry.get(id), n = t ? t.n : 0;
-          if (r && r.tables && r.tables[id] && !pending.has(id)) tableTry.delete(id);
+          const t = tableTry.get(id), n = t ? t.n : 0, back = r && r.tables && r.tables[id], noNames = nameIds.includes(id) && !!back && Array.isArray(back.products) && !back.names;   // (asked for names and still none: not again before the backoff)
+          if (back && !pending.has(id) && !noNames) tableTry.delete(id);
           else if (r && r.why === "batch") tableTry.set(id, { until: Date.now() + 90000, n });   // (the cloud's six for this request were used: the rest come in the next)
           else tableTry.set(id, { until: Date.now() + Math.min(6 * 3600000, 600000 * 3 ** n), n: Math.min(5, n + 1) });
         }

@@ -2946,7 +2946,8 @@ async function mapSig(name) {
    by the sandbox (it reads what production stored). See _charmNestListingSkus.js for the cost. */
 async function op_listingSkus(b = {}) {
   const ids = Array.isArray(b.listingIds) ? b.listingIds : String(b.listingIds || b.listingId || "").split(",");
-  return require("./_charmNestListingSkus").lookup(ids, { db, cacheOnly: !!PREFIX || b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
+  const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once; never in the sandbox)
+  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, cacheOnly: !!PREFIX || b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
 }
 async function op_aliasGet(b = {}) {
   const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };
