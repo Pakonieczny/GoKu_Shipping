@@ -67,7 +67,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert.strictEqual((await lib({ op: 'sandboxStream', action: 'ensure', sandbox: true })).status, 409, 'no order stream without a snapshot');
   const snapPath = 'charmnest/sandbox/orders-stream-test.json', snapAt = Date.now();
   st.blobs.set(snapPath, { buf: Buffer.from(JSON.stringify({ at: snapAt, count: snapshot.length, receipts: snapshot })), generation: 1, meta: { contentType: 'application/json', metadata: {} } });
-  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: snapAt, takenBy: 'test' });
+  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: snapAt, takenBy: 'test', source: 'etsy-pull' });
   let op = await lib({ op: 'sandboxStream', action: 'ensure', sandbox: true, seed: 777 });
   assert(op.status === 200 && op.body.stream.seed === 777 && op.body.stream.tick === 0, 'a seed given in Settings starts the stream');
   assert.strictEqual((await etsy({ fn: 'listOpenOrders' })).body.results.length, 0, 'a new stream lists nothing yet');

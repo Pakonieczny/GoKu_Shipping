@@ -34,7 +34,7 @@ const measure = async (name, fn) => { const a = m.snapshot(); const out = await 
     const tx = k => ({ transaction_id: Number(`${rid}${k}`), listing_id: 1718000 + k, receipt_id: rid, sku: `BR-TST-0${k + 1}`, title: 'Personalised 14k gold filled initial charm necklace, dainty bridesmaid gift, custom letter charm ' + k, quantity: 1, create_timestamp: created, created_timestamp: created, paid_timestamp: created, expected_ship_date: ship, is_digital: false, personalization: ['Name: Emily'], variations: [{ formatted_name: 'Metal', formatted_value: '14k Gold Filled' }, { formatted_name: 'Length', formatted_value: '16 inches' }, { formatted_name: 'Personalization', formatted_value: 'Emily' }], message_from_buyer: 'Please ship by the date, thank you so much! ' });
     return { receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', is_paid: true, create_timestamp: created, created_timestamp: created, update_timestamp: created, expected_ship_date: ship, status: 'Paid', transactions: [tx(0), tx(1)] }; };
   const snapshot = Array.from({ length: N }, (_, i) => receipt(i));
-  const path0 = 'charmnest/sandbox/orders-fc9.json', meta = { path: path0, count: N, at: snapAt, takenBy: 'fc9' };
+  const path0 = 'charmnest/sandbox/orders-fc9.json', meta = { path: path0, count: N, at: snapAt, takenBy: 'fc9', source: 'etsy-pull' };
   bucket.files.set(path0, Buffer.from(JSON.stringify({ at: snapAt, count: N, receipts: snapshot })));
   db.seed({ 'Charm_Sandbox/current': meta });
   console.log(`snapshot: ${N} open orders, ${fmt(bucket.files.get(path0).length)} bytes in Storage (${fmt(bucket.files.get(path0).length / N)} per order)\n`);

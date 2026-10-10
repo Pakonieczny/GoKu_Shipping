@@ -19,7 +19,7 @@ const receipt = (rid, i) => ({ receipt_id: rid, order_number: rid, name: 'Buyer 
   const { st, sorterOrigin, stationOrigin } = srv;
   const snapPath = 'charmnest/sandbox/orders-passcode-test.json', snapshot = [receipt(4170000101, 1), receipt(4170000102, 2)];
   st.blobs.set(snapPath, { buf: Buffer.from(JSON.stringify({ at: Date.now(), count: snapshot.length, receipts: snapshot })), generation: 1, meta: { contentType: 'application/json', metadata: {} } });
-  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: Date.now(), takenBy: 'test' });
+  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: Date.now(), takenBy: 'test', source: 'etsy-pull' });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const errors = [];
   async function context(init) {
