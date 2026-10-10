@@ -4874,7 +4874,7 @@ const Engrave = window.Engrave = (() => {
         const map = await fontResource("vendor/fonts/emoji-sequences.json","json","no-cache");
         const bytes = await fontResource("vendor/fonts/NotoEmoji-Regular.ttf?v="+map.fontSha256);
         if (await CN.sha256(new Uint8Array(bytes)) !== map.fontSha256) throw new Error("Emoji font version differs from its shape map");
-        const emoji = opentype.parse(bytes);
+        const emoji = opentype.parse(bytes); F_.emojiFont = emoji;
         for (const weight of ["Regular", "Semibold"]) if (F_[weight]) F_[weight] = window.CharmNestText.withEmoji(F_[weight], emoji, map, opentype.Path);
         F_.workerFonts.emoji = bytes; F_.workerFonts.emojiMap = map; F_.emoji = true;
         // (loaded late: the fitting worker takes it at its next start, and words held for their emoji are looked at again)
@@ -4887,7 +4887,56 @@ const Engrave = window.Engrave = (() => {
     })().finally(() => { F_.loading = null; });
     return F_.loading;
   }
-  const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
+  /* ═══ the engraving font of a piece (FONTMAP; charm-nest-orders.js ENGRAVING_FONTS, pieceFont) ═══
+     Source Sans 3 is F_ itself (loaded above). Every other installed font is a SET { id, name, Regular, Semibold?, workerFonts, ok, error } read from vendor/fonts/ the first
+     time a piece needs it and wrapped for emoji exactly like F_. A piece keeps the id of the font it was fitted in (job.fontKey) and its saved back says it (font name, fontKey,
+     fontAsked), so a re-open renders the same font. A font whose files cannot be had never holds a piece: it falls back to Source Sans 3 and the card says so (job.fontFallback).
+     A font with one weight (the scripts) has no Semibold: fontFor gives its Regular at every size, as it does for any family whose Semibold is missing. */
+  const FONT_SETS = new Map();
+  const fontIdOf = who => (typeof who === "string" ? who : who && (who.fontKey || who.fontId)) || O.DEFAULT_FONT;
+  const fontSetOf = who => { const id = fontIdOf(who); return id === O.DEFAULT_FONT ? F_ : (FONT_SETS.get(id) && FONT_SETS.get(id).ok ? FONT_SETS.get(id) : null); };
+  /** The loaded set a job, a saved record or a font id engraves with: Source Sans 3 when it is that, or when the font is not loaded (callers load it first: ensureJobFont, loadFontSet). */
+  const setOf = who => fontSetOf(who) || F_;
+  const fontFor = (weight, who) => { const s = setOf(who); return (weight === "Semibold" && s.Semibold) || s.Regular; };
+  function loadFontSet(id) {
+    const meta = O.fontById(id); if (!meta || meta.id === O.DEFAULT_FONT) return loadFonts();
+    let set = FONT_SETS.get(meta.id);
+    if (set && (set.ok || set.loading)) return set.loading || Promise.resolve(set);
+    if (set && Date.now() - set.triedAt < 60000) return Promise.resolve(set);            // (a font that failed is tried again at most once a minute)
+    set = { id: meta.id, name: meta.name, ok: false, triedAt: Date.now(), workerFonts: {} }; FONT_SETS.set(meta.id, set);
+    set.loading = (async () => {
+      try {
+        await loadFonts();                                                              // (the emoji font and its map come with the default set)
+        for (const [w, path] of Object.entries(meta.files)) {
+          try { const buf = await fontResource(path); if (buf.byteLength < 1000) throw new Error("empty file"); set[w] = opentype.parse(buf); set.workerFonts[w] = buf; }
+          catch (e) { if (w === "Regular") throw e; set.semiboldMissing = `${path}: ${e.message}`; }
+        }
+        if (F_.emojiFont && F_.workerFonts && F_.workerFonts.emojiMap) for (const w of ["Regular", "Semibold"]) if (set[w]) set[w] = window.CharmNestText.withEmoji(set[w], F_.emojiFont, F_.workerFonts.emojiMap, opentype.Path);
+        set.ok = true; agent({ engrave: true }, "ENGRAVE", `Engraving font loaded: ${meta.name}${set.Semibold ? " + Semibold" : " (one weight: Regular at every size)"}`);
+      } catch (e) { set.error = `${meta.name}: ${e.message}`; agent({ engrave: true }, "warn", `Engraving font ${meta.name} could not load (${e.message}): Source Sans 3 is used`); }
+      finally { set.loading = null; }
+      return set;
+    })();
+    return set.loading;
+  }
+  /** The slot's index among a line's pieces ("D2" is the second disc: 1), null for a single charm or an ear. */
+  const pieceIndexOf = job => { const m = /^D(\d+)$/.exec(String(job && job.slot || "")); return m ? +m[1] - 1 : null; };
+  /** Settles the font of a piece before its words are fitted: the font its line asks for (listing exception, the buyer's drop-down, a font per disc), loaded; a font that will not load
+   *  falls back to Source Sans 3. A job that already has a fit, a saved back or a person's edit keeps the font it has. */
+  async function ensureJobFont(job) {
+    if (!job) return null;
+    if (!job.fontKey || !(job.fit || job.fontLocked || job.writtenFit)) {
+      const p = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job));
+      job.fontKey = p.id; job.fontAsked = p.asked; job.fontMapped = p.mapped; job.fontListing = p.listing;
+    }
+    if (job.fontKey !== O.DEFAULT_FONT) {
+      const set = await loadFontSet(job.fontKey);
+      if (!set || !set.ok) { job.fontFallback = `${(O.fontById(job.fontKey) || {}).name || job.fontKey} could not be loaded`; job.fontKey = O.DEFAULT_FONT; }
+      else delete job.fontFallback;
+    }
+    job.fontName = (O.fontById(job.fontKey) || O.fontById(O.DEFAULT_FONT)).name;
+    return setOf(job);
+  }
   /* Settings "Max height (fraction)" is the taste of the AUTOMATIC first placement. It was also the ceiling of every size
      the person set by hand (the corner handles), measured on the back view's HEIGHT: a flat bar, whose height is its short
      side, could not be enlarged past about a quarter of that height (cap 1.57 mm, "SMALL", on a bar that takes 3.8 mm;
