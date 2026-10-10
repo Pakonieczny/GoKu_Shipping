@@ -9,7 +9,7 @@ const fnDir = path.join(__dirname, '../../netlify/functions');
 
 /* ── a small firebase-admin: one sandbox snapshot of one order, an empty archive ── */
 const snapPath = 'charmnest/sandbox/orders-lock.json';
-const docs = new Map([['Charm_Sandbox/current', { path: snapPath, count: 1, at: Date.now() }]]);
+const docs = new Map([['Charm_Sandbox/current', { path: snapPath, count: 1, at: Date.now(), source: 'etsy-pull' }]]);
 const blobs = new Map([[snapPath, Buffer.from(JSON.stringify({ receipts: [{ receipt_id: 4170000001, is_paid: true, status: 'Paid', name: 'Test Buyer', transactions: [{ transaction_id: 41700000011, receipt_id: 4170000001 }] }] }))]]);
 const docRef = (c, id) => ({ id, async get() { const d = docs.get(c + '/' + id); return { exists: !!d, id, data: () => d && { ...d }, get: f => d && d[f] }; } });
 const query = c => { const q = { where: () => q, orderBy: () => q, limit: () => q, select: () => q, startAfter: () => q, async get() { return { empty: true, size: 0, docs: [], forEach() {} }; }, count: () => ({ get: async () => ({ data: () => ({ count: 0 }) }) }), doc: id => docRef(c, id) }; return q; };
