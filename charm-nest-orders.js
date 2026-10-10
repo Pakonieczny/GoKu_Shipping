@@ -591,12 +591,113 @@
     const parts = String(sku == null ? "" : sku).replace(/\bw\//gi, "w ").split(/\s*(?:\/|\+|&|;|,)\s*|\s+AND\s+/i).map(s => s.trim()).filter(Boolean);
     return parts.length === 2 ? parts : null;
   }
+  /* ── two designs named in WORDS (Paul, 10 Oct 2026: "Mismatched Tennis Ball and Raquet Huggie Hoops", SKU "Huggie Hoops-Tennis Ball/Racket3") ─────────────
+     A line that says two designs and names both, each reading as exactly ONE master design, is a mismatched pair: the first named is the Left, the second the Right.
+     Exact only: a name is the master SKU spelled with other spacing or punctuation (masterSku), nothing that merely looks like it. On a huggie-hoops line a name is
+     "HUGGIE HOOPS- NAME", else the same design drawn small, "NAME (HUGGIE)" (the huggie charm of the master, the size those hoops carry); never the necklace-size
+     charm of that name. The second name may leave out what the first starts with ("Tennis Ball and Racket": the Racket of Tennis). A shop's own spelling of a word
+     (Raquet, Racquet) is read as the master's; a number a SKU ends its name with ("Racket3") is dropped only when the TITLE names the same two designs. */
+  const SPELLING = { raquet: "racket", racquet: "racket", raquets: "rackets", racquets: "rackets", tenis: "tennis" };
+  const FAMILY_HEAD = /^\s*huggie\s*hoops?\s*[-–:]*\s*/i;
+  const wordsOfName = s => String(s == null ? "" : s).toLowerCase().replace(/&amp;/g, " ").replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean).map(w => SPELLING[w] || w);
+  const bareWords = ws => ws.map((w, i) => (i === ws.length - 1 ? w.replace(/^([a-z]+)\d+$/, "$1") : w));
+  const agreeWords = (a, b) => { const x = bareWords(a).join(" "), y = bareWords(b).join(" "); return !!x && !!y && (x === y || x.endsWith(" " + y) || y.endsWith(" " + x)); };
+  /** The two design names a SKU gives ("Huggie Hoops-Tennis Ball/Racket3" → ["Tennis Ball", "Racket3"]), or null. */
+  function skuNames(line) {
+    const parts = splitSkus(line && line.sku); if (!parts) return null;
+    const a = parts[0].replace(FAMILY_HEAD, "").trim(), b = parts[1].replace(FAMILY_HEAD, "").trim();
+    return a && b ? [a, b] : null;
+  }
+  /** The two design names a title that says "mismatched" gives ("Mismatched Tennis Ball and Raquet Huggie Hoops Charm, …" → ["Tennis Ball", "Raquet"]), or null.
+   *  Only the title's first phrase; the product words (huggie, hoops, studs, earrings, charm, set, pair…) end the names. */
+  function titleNames(title) {
+    const lead = String(title || "").split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+/)[0].replace(MIS_WORD, " ").replace(/\bmix(?:ed)?\s*(?:and|&|n)?\s*match(?:ed)?\b/gi, " ");
+    const cut = /\b(?:huggies|huggie|hoops?|studs?|earrings?|charms?|sets?|pairs?|dangles?|drops?|jewell?e?ry)\b/i.exec(lead);
+    const names = (cut ? lead.slice(0, cut.index) : lead).trim().replace(/^(?:a|an|the|one|1)\s+/i, "").split(/\s+(?:and|&|\+)\s+|\s*\/\s*/i).map(x => x.replace(/^(?:a|an|the|one|1)\s+/i, "").trim()).filter(Boolean);
+    return names.length === 2 ? names : null;
+  }
+  /** The master SKU a design name stands for, in the line's family, "" when none. */
+  function designByName(ws, me, loose, huggie) {
+    const name = ws.join(" ").toUpperCase(); if (!name) return "";
+    for (const c of huggie ? ["HUGGIE HOOPS- " + name, name + " (HUGGIE)"] : [name]) { const k = masterSku(c, me, loose); if (k) return k; }
+    return "";
+  }
+  /** Both names of a pair, each as a master SKU or "". digits: the SKU's trailing number may be dropped (the title agrees). → { found: [sku, sku], ok } */
+  function resolveNames(names, me, loose, huggie, digits) {
+    const w = names.map(wordsOfName), found = ["", ""];
+    for (let i = 0; i < 2; i++) {
+      const tries = [w[i]]; if (digits) tries.push(bareWords(w[i]));
+      if (i === 1 && w[0].length > 1) for (const t of tries.slice()) tries.push(w[0].slice(0, -1).concat(t));   // (the first name's lead words: "Tennis" Ball, so "Racket" is "Tennis Racket")
+      for (const t of tries) { found[i] = designByName(t, me, loose, huggie); if (found[i]) break; }
+    }
+    return { found, ok: !!found[0] && !!found[1] && found[0] !== found[1] };
+  }
+  const HUGGIE_LINE = /\bhuggie|\bhoops?\b/i;
+  /** { members, source: "skus" | "title", names, found } when the SKU's two names or the title's two names are each exactly one master design (and agree when both
+   *  are there); else { names, found, why } saying in one plain line which design is missing; null when the line names no two designs. */
+  function nameMembers(line, me, loose, said) {
+    const sn = skuNames(line), tn = MIS_WORD.test(String(line.title || "")) ? titleNames(line.title) : null;
+    if (!sn && !tn) return null;
+    const huggie = HUGGIE_LINE.test([String(line.title || "")].concat(((line && line.variations) || []).filter(v => !isPersonalisation(lvName(v))).map(lvValue)).join(" ") + " " + String(line.sku || ""));
+    const agree = !!sn && !!tn && agreeWords(wordsOfName(sn[0]), wordsOfName(tn[0])) && agreeWords(wordsOfName(sn[1]), wordsOfName(tn[1]));
+    const tries = [];
+    if (tn) tries.push({ from: "title", names: tn, r: resolveNames(tn, me, loose, huggie, false) });
+    if (sn) tries.push({ from: "skus", names: sn, r: resolveNames(sn, me, loose, huggie, agree) });
+    const good = tries.filter(t => t.r.ok);
+    if (good.length === 2 && (good[0].r.found[0] !== good[1].r.found[0] || good[0].r.found[1] !== good[1].r.found[1]))
+      return { names: good[0].names, found: good[0].r.found, why: `the SKU and the title name different designs (${good[1].r.found.join(" + ")} and ${good[0].r.found.join(" + ")}): name the right second design, or say it is the same on both ears` };
+    // one source is exact, the other names a design that is one of the master's but not the same: the line contradicts itself, nothing is chosen between them
+    if (good.length === 1 && tries.length === 2) { const o = tries.find(t => !t.r.ok), a = good[0].r.found, b = o.r.found || []; const hit = b.map((f, i) => f && a[i] && f !== a[i] ? f : "").filter(Boolean);
+      if (hit.length) return { names: good[0].names, found: a, why: `the ${o.from === "skus" ? "SKU" : "title"} names ${hit.map(h => `“${h}”`).join(" and ")} but the ${good[0].from === "skus" ? "SKU" : "title"} names ${a.join(" + ")}: the line says two different designs that do not agree. Name the right second design, or say it is the same on both ears` }; }
+    if (good.length) { const g = good[good.length - 1]; return { members: [{ side: "L", sku: g.r.found[0] }, { side: "R", sku: g.r.found[1] }], source: g.from, names: g.names, found: g.r.found }; }
+    const t = tries[0], lack = t.names.map((n, i) => t.r.found[i] ? "" : `“${clip(n, 30)}”`).filter(Boolean), have = t.names.map((n, i) => t.r.found[i] ? `“${clip(n, 30)}” is ${t.r.found[i]}` : "").filter(Boolean);
+    return { names: t.names, found: t.r.found, why: `the line says two different designs (${said || "its words"}) and names ${t.names.map(n => `“${clip(n, 30)}”`).join(" and ")}, but ${have.length ? have.join(", ") + " and " : ""}no single master design reads as ${lack.length === 2 ? "either" : lack[0]}: name the missing design, or say it is the same on both ears` };
+  }
+
+  /* ── a Zodiac line that says 2 symbols (Paul, 10 Oct 2026: "Silver • 2 symbols", Zodiac Sign Libra, note "balance et lion") ────────────────────────────
+     The second symbol is looked for in the line: another option value that is a sign, then the buyer's note and personalisation, in English and the common
+     shop languages (balance = Libra, lion = Leo). Two different signs make a pair, the first named the Left. Each sign's charm is what that value of the Zodiac Sign
+     option decides on this listing (a person's answer, or the SKU Etsy ties to the value): a sign with no charm yet is asked once like any option value, never
+     picked by looks. A second sign found nowhere is not invented: the line waits and says so. */
+  const SIGN_WORDS = { Aries: "aries belier ariete widder", Taurus: "taurus taureau tauro stier toro touro", Gemini: "gemini gemeaux geminis zwillinge gemelli gemeos tweelingen", Cancer: "cancer cancro krebs",
+    Leo: "leo lion leone loewe lowe leao leeuw", Virgo: "virgo vierge jungfrau vergine virgem maagd", Libra: "libra balance waage bilancia weegschaal", Scorpio: "scorpio scorpion escorpio skorpion scorpione escorpiao schorpioen",
+    Sagittarius: "sagittarius sagittaire sagitario schuetze schutze sagittario boogschutter", Capricorn: "capricorn capricorne capricornio steinbock capricorno steenbok", Aquarius: "aquarius verseau acuario wassermann acquario aquario waterman", Pisces: "pisces poissons piscis fische pesci peixes vissen" };
+  const SIGN_OF = new Map(); for (const [sign, ws] of Object.entries(SIGN_WORDS)) for (const w of ws.split(" ")) SIGN_OF.set(w, sign);
+  const plainText = s => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/ß/g, "ss");
+  /** The signs a piece of text names, in order, each once: ["Libra", "Leo"] for "balance et lion". */
+  function signsOfText(text) {
+    const out = []; for (const w of plainText(visible(text)).split(/[^a-z]+/)) { const s = w && SIGN_OF.get(w); if (s && !out.includes(s)) out.push(s); }
+    return out;
+  }
+  /** { signs: [{ sign, name, value, from: "option" | "note", variation }], optionName } for a line whose options name a sign, or null. */
+  function signsOfLine(line) {
+    const list = []; let optionName = "";
+    const add = (sign, rec) => { if (!list.some(x => x.sign === sign)) list.push(Object.assign({ sign }, rec)); };
+    for (const v of (line && line.variations) || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isPersonalisation(name)) continue;
+      const ss = value.split(/\s+/).length <= 4 ? signsOfText(value) : []; if (!ss.length) continue;
+      if (!optionName) optionName = name;
+      for (const sg of ss) add(sg, { from: "option", name, value, variation: v });
+    }
+    if (!list.length) return null;
+    const notes = [].concat(((line && line.variations) || []).filter(v => isPersonalisation(lvName(v))).map(lvValue), (line && line.personalization) || [], (line && (line.buyerMessage || line.message_from_buyer)) || []);
+    for (const t of notes) for (const sg of signsOfText(t)) add(sg, { from: "note", name: optionName, value: sg, text: visible(t).trim() });
+    return { signs: list, optionName };
+  }
+
   /** The two designs of a mismatched pair a line names, when both are in the master: [{ side: "L", sku }, { side: "R", sku }] or null.
-   *  From the SKU naming two ("Huggie Hoops-Tennis Ball/Racket3": the second part may leave out the first's prefix), or from two options
-   *  named for the left and the right (an option map answer, or a value that is a master SKU). → { members, source: "skus" | "options" } or null. */
+   *  A person's "the same on both ears" for the line is kept and ends the search. Else, in this order: the SKU naming two ("Huggie Hoops-Tennis Ball/Racket3": the
+   *  second part may leave out the first's prefix); a person's second design for this line; two options named for the left and the right (an option map answer, or a
+   *  value that is a master SKU); two designs named in words, by the SKU or a "Mismatched …" title, each exactly one master design (nameMembers); two signs of a
+   *  "2 symbols" line (signsOfLine). → { members, source: "skus" | "answer" | "options" | "title" | "signs" } or null.
+   *  o.report, when given, is filled with what is missing: { why: one plain line, asks: [{ name, value, why }] (option values to answer), signs }. o.designOf(variation) gives the
+   *  master design a value of an option decides on this listing ("" when none yet). */
   function pairMembers(line, o) {
     o = o || {}; const me = o.me; if (!me || !line) return null;
-    const has = s => masterSku(s, me, o.loose);
+    const has = s => masterSku(s, me, o.loose), rep = o.report || {};
+    // a person's answer for this line ("the same on both ears", kept under SECOND_OPT) is the last word: nothing below changes it
+    const said = o.lineId ? optionLookup(o.optionMaps, line.listingId, SECOND_OPT, o.lineId) : null;
+    if (said && said.field === "ignore") return null;
     const parts = splitSkus(line.sku);
     if (parts && !has(String(line.sku || ""))) {
       // (the second part may leave out what the first starts with: "Huggie Hoops-Tennis Ball/Racket3" is "Huggie Hoops-Racket3")
@@ -605,7 +706,7 @@
       if (a && b && a !== b) return { members: [{ side: "L", sku: a }, { side: "R", sku: b }], source: "skus" };
     }
     // a person named the second design for this line (Review: "Which second design goes on the other ear?"): the line's own design is the Left, theirs the Right
-    if (o.lineId && o.sku) { const ans = optionLookup(o.optionMaps, line.listingId, SECOND_OPT, o.lineId); if (ans && ans.field === "design" && ans.value) { const a = has(o.sku), b = has(ans.value); if (a && b && a !== b) return { members: [{ side: "L", sku: a }, { side: "R", sku: b }], source: "answer" }; } }
+    if (o.lineId && o.sku) { const ans = said; if (ans && ans.field === "design" && ans.value) { const a = has(o.sku), b = has(ans.value); if (a && b && a !== b) return { members: [{ side: "L", sku: a }, { side: "R", sku: b }], source: "answer" }; } }
     const side = { L: "", R: "" };
     for (const v of line.variations || []) {
       const name = lvName(v), value = lvValue(v).trim(); if (!value || !SIDE_THING.test(name)) continue;
@@ -613,7 +714,31 @@
       const hit = optionLookup(o.optionMaps, line.listingId, name, value);
       side[k] = hit && hit.field === "design" && hit.value ? upSku(hit.value) : has(value);
     }
-    return side.L && side.R && side.L !== side.R ? { members: [{ side: "L", sku: side.L }, { side: "R", sku: side.R }], source: "options" } : null;
+    if (side.L && side.R && side.L !== side.R) return { members: [{ side: "L", sku: side.L }, { side: "R", sku: side.R }], source: "options" };
+    // two designs named in words (the SKU's or a "Mismatched …" title's), each exactly one master design: a mismatched pair; else the one missing design is told (report.why)
+    const sig = lineSignals(line);
+    if (sig.soldAs === "pair" && (sig.says || parts)) {   // (only a line sold as an earring pair: a necklace that names two charms is not two ears)
+      const nm = nameMembers(line, me, o.loose, sig.signals[0]);
+      if (nm && nm.members) return { members: nm.members, source: nm.source };
+      if (nm && nm.why && sig.says) rep.why = nm.why;
+    }
+    // "Silver • 2 symbols" and a sign in the options: the second sign, from the line's own words
+    if (sig.says && sig.soldAs === "pair" && o.designOf && !rep.why) {
+      const sl = signsOfLine(line);
+      if (sl) {
+        rep.signs = sl.signs.map(x => x.sign);
+        if (sl.signs.length === 1) rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but names one (${sl.signs[0].sign}): write the second symbol in the order's note, name the second design, or say it is the same on both ears`;
+        else if (sl.signs.length > 2) rep.why = `the line says two different designs but names ${sl.signs.length} signs (${sl.signs.map(x => x.sign).join(", ")}): name the right two, or say it is the same on both ears`;
+        else {
+          const designs = sl.signs.map(x => { const virt = x.from === "option" ? x.variation : { name: sl.optionName, value: x.sign }; return { x, sku: has(o.designOf(virt, x.from === "option") || "") }; });
+          if (designs.every(d => d.sku) && designs[0].sku !== designs[1].sku) return { members: [{ side: "L", sku: designs[0].sku }, { side: "R", sku: designs[1].sku }], source: "signs", signs: rep.signs };
+          rep.asks = designs.filter(d => !d.sku && d.x.from === "note").map(d => ({ name: sl.optionName, value: d.x.sign, why: `second symbol of a 2-symbols line: ${d.x.sign}, from the buyer's words “${clip(d.x.text, 40)}”; the line's own symbol is ${sl.signs[0].sign}` }));
+          if (designs.every(d => d.sku) && designs[0].sku === designs[1].sku) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}) but both signs are the same charm (${designs[0].sku}): name the second design, or say it is the same on both ears`;
+          else if (!rep.asks.length) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}): “${designs.filter(d => !d.sku).map(d => d.x.sign).join(", ")}” has no charm chosen on this listing yet`;
+        }
+      }
+    }
+    return null;
   }
   /** What a line is as a group of pieces. line: the sorter's line (or a raw Etsy transaction). o: { spec (form), sku, entry (the master index
    *  entry of the design), members (pairMembers), optionMaps, count (a countRead already made) }.
@@ -633,8 +758,10 @@
     info.earring = soldAs === "pair" || (info.mismatched && soldAs !== "single");
     // a line that says two different designs but names ONE waits for a person (never guessed): the second design, or "the same on both ears" (the answer under SECOND_OPT)
     if (sig.says && !info.mismatched && info.earring) {
-      const ans = o.lineId ? optionLookup(o.optionMaps, line.listingId, SECOND_OPT, o.lineId) : null, same = !!ans && ans.field === "ignore";
-      info.second = same ? { answered: "same" } : { answered: "", why: `the line says two different designs (${sig.signals[0] || "its words"}) but names one: name the second, or say it is the same on both ears` };
+      const ans = o.lineId ? optionLookup(o.optionMaps, line.listingId, SECOND_OPT, o.lineId) : null, same = !!ans && ans.field === "ignore", rep = o.report || {};
+      // (two signs named but one has no charm yet: the question is that option value's, asked like every option value; else one plain line of what is missing)
+      const viaOption = !!(rep.asks && rep.asks.length);
+      info.second = same ? { answered: "same" } : { answered: "", why: viaOption ? rep.asks[0].why : rep.why || `the line says two different designs (${sig.signals[0] || "its words"}) but names one: name the second, or say it is the same on both ears`, viaOption };
     }
     if (cr.n > 1 || cr.answered) info.count = { n: cr.n, answered: cr.answered, rule: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).rule || "", from: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).name || "" };
     // the questions: what the options cannot settle by themselves
@@ -653,7 +780,7 @@
     // what a person should see, plainly
     if (info.single && !info.sideSaid) info.notes.push("single earring: the line does not say left or right");
     else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
-    if (info.second) info.notes.push(info.second.answered === "same" ? "the line says two different designs: a person said the same design on both ears" : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
+    if (info.second) info.notes.push(info.second.answered === "same" ? "the line says two different designs: a person said the same design on both ears" : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
     return info;
@@ -767,7 +894,9 @@
     // members. Pooled as those two only once the pool makes a piece for each (PIECE_RULES.mismatchedMakesTwo); until then the line is
     // read and held exactly as before, and the members are only told in spec.pair.
     const secondId = order && line && line.transactionId != null ? String(order.receiptId) + "/" + String(line.transactionId) : "";
-    const members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, sku, lineId: secondId });
+    // the charm a value of an option decides on this listing (a person's answer for it, or the SKU Etsy ties to that value alone), "" when none yet
+    const designOf = v => { const hit = optionLookup(ctx.optionMaps, line.listingId, v.name || v.formatted_name, String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim()); return hit && hit.field === "design" && hit.value ? upSku(hit.value) : !viaPick && tied(v) ? sku : ""; };
+    const report = {}, members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, sku, lineId: secondId, report, designOf });
     if (members && PIECE_RULES.mismatchedMakesTwo) { sku = members.members[0].sku; skuSource = "pair"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
@@ -834,14 +963,16 @@
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
     // pairs (Paul, 9 Oct): what the line says about being a pair, and the one count of its pieces (pieceCountOf: every caller reads it)
-    spec.pair = pairInfo(line, { spec, sku, entry: me && sku ? me(sku) : null, members, optionMaps: ctx.optionMaps, count: cr, lineId: secondId });
+    // a 2-symbols line whose second symbol (from the buyer's words) has no charm yet: that value of the option is asked once, like any option value
+    if (!noDesign && !members) for (const a of report.asks || []) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value)) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", note: a.why });
+    spec.pair = pairInfo(line, { spec, sku, entry: me && sku ? me(sku) : null, members, optionMaps: ctx.optionMaps, count: cr, lineId: secondId, report });
     spec.pieceCount = pieceCountOf(spec);
     spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.sides = sidesOf(spec);
     // a count the options cannot settle waits for a person: one plain question per option, like an unmatched SKU
     if (!noDesign) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && p.count)) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", count: { guess: a.guess || 0, why: a.why, rule: a.rule } });
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
-    if (!noDesign && spec.pair.second && !spec.pair.second.answered && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
+    if (!noDesign && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     return spec;
   }
