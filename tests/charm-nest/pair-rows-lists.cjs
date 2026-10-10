@@ -84,9 +84,9 @@ PT.use(Pair);
   ok(/opts\.pair===true/.test(bg) && /pair:opts\.pair===true\?true:undefined/.test(bg) && /facing:opts\.pair===true\?opts\.facing:undefined/.test(bg), 'the page proxy hands pair, facing and sku to the worker');
   ok(/pair:a\.opts&&a\.opts\.pair,facing:a\.opts&&a\.opts\.facing,sku:a\.opts&&a\.opts\.sku/.test(wk), 'the worker hands them to the component');
   ok(/pair: opts && opts\.pair, facing: opts && opts\.facing, sku: opts && opts\.sku/.test(br), 'renderFront (no worker) hands them to the component');
-  ok(br.includes('const earPair = row =>') && br.includes('${earPair(row) ? " · Left + Right" : ""}'), 'the Vector design caption says Left + Right for every earring pair line');
-  ok(/const both=!\(opts && \(opts\.side==='L' \|\| opts\.side==='R' \|\| opts\.highlight\)\) && !pairRow\(row\) && earPairRow\(row\)/.test(br), 'the line picture is the pair only when no single ear is asked for');
-  ok(br.includes("(opts?.highlight && !opts?.side && !pairRow(row) && earPairRow(row)") === false && br.includes("'|pair'"), 'a pair line is its own picture key');
+  ok(br.includes('const earPair = row =>') && br.includes('${earPair(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}'), 'the Vector design caption says Left + Right for every earring pair line (a line of two separate designs keeps its own wording)');
+  ok(/const both=!\(opts && \(opts\.side==='L' \|\| opts\.side==='R' \|\| opts\.highlight\)\) && matchPair\(row\)/.test(br) && /const matchPair = row => .*!pairRow\(row\).*earPairRow\(row\)/.test(br), 'the line picture is the pair only when no single ear is asked for');
+  ok(/!opts\?\.highlight && !opts\?\.side && matchPair\(row\)\?'\|pair'/.test(br), 'a pair line is its own picture key');
   ok(html.includes('.comparePair figure:first-child figcaption{white-space:normal'), 'the longer caption wraps under its picture instead of running into the Etsy listing caption');
   ok(/"charm-nest-pair-thumb\.js"/.test(read('scripts/build-public.cjs')), 'the public build ships the component (it already did)');
 }

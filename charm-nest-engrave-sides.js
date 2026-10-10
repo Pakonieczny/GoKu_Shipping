@@ -44,6 +44,8 @@
   /** A pair of earrings whose design draws two different bodies: the master entry says so (`pair`), or the glued charm shows two bodies. */
   function mismatchedDesign(ctx, row, poolId) {
     const P = pairLib(ctx); if (!P) return false;
+    // (not on a line that is no earring line: a necklace, pendant or charm of a two-body design is one piece per unit, never a Left and a Right ear: Paul, 10 Oct)
+    try { if (row && row.spec && typeof P.plainLine === 'function' && P.plainLine({ spec: row.spec, form: row.spec.form })) return false; } catch (_) { /* decided below */ }
     const sku = row && row.spec && row.spec.designSku;
     try { const dp = ctx && ctx.entryFor && sku ? P.designPair && P.designPair(ctx.entryFor(sku)) : null; if (dp) return !!dp.mismatched && dp.bodies === 2; } catch (_) { /* fall through to the charm */ }
     try { const ch = ctx && ctx.charmOf && poolId ? ctx.charmOf(poolId) : null; return !!(ch && ch.outline && P.isMismatched(ch)); } catch (_) { return false; }

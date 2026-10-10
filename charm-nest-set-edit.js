@@ -13,8 +13,21 @@
  *   · sheets that share a multi-piece order are always in ONE set (the cardinal rule; rule A when taking out, the same rule with
  *     "together" when adding);
  *   · a completed set takes and gives nothing; a set is never left empty (it keeps its seals: Undo set is for that).
+ * Paul, 10 Oct 2026 (Library drag and drop): "Unless the move violates one of the core principals of the Set then I should be able to move it
+ * completely freely". So the rule now also covers a set that is not committed yet (the sheets of the set the open run is still making), and a
+ * fourth refusal is added, the core principle of a Set (charm-nest-set-rules.js, SETFORM): "a Set needs at minimum 1 Completed GF sheet and
+ * 1 Completed SS sheet", so a sheet may not leave when that would leave its set without the completed GF or the completed SS sheet it has now.
+ * What still refuses a move, each with one plain line (reasons[].label is that line):
+ *   setPrinciple    the set would have no completed GF (or SS) sheet any more
+ *   sharedOrders    rule A: a multi-piece order (pair, counted-option necklace) would be split over two sets
+ *   sheetCut / sheetCompleted   rule B: the sheet was laser cut
+ *   lastSheet       a set is never emptied
+ *   setOpen         the set is still being made by a run that is open on ANOTHER screen (two screens would undo each other); the screen that
+ *                   holds the run passes `owned` (its run ids) and may change it; a set of a finished run has no such owner
+ *   setCompleted / setClosed / roseSet / missing / noSet / notInSet   as before
  * ONE rule, for the server and the page (charmNestLibrary.js requires this file; the page's plan reads it too):
- *   SetEdit.verifyMoves({ moves:[{id, to:<setId>|null}], recs:{id:record}, sets:{setId:{doc, members:[record]}}, others:[record] })
+ *   SetEdit.verifyMoves({ moves:[{id, to:<setId>|null}], recs:{id:record}, sets:{setId:{doc, members:[record]}}, others:[record],
+ *                         runs?:{runId:{open}}, owned?:[runId] })
  *     → { ok, reasons:[{key,label,detail,items?,sheetId?,mates?}], shared:[{orderId,here,there,hereIds,thereIds}] }
  * Records are Library rows or sheet documents (id, metal, page, sheetIndex, setId, draft, solidIncluded, poolIds, orders,
  * laserDoneAt, roseCutAt, archived). Nothing here reads or writes the cloud. */
@@ -22,6 +35,8 @@
   'use strict';
   let SRnode = null; try { SRnode = require('./charm-nest-shared-orders.js').core; } catch (_) { SRnode = null; }
   const SR = () => root.CharmNestSharedOrders || SRnode;
+  let RULEnode = null; try { RULEnode = require('./charm-nest-set-rules.js'); } catch (_) { RULEnode = null; }
+  const RULES = () => root.CharmNestSetRules || RULEnode;      // (SETFORM's definition of a Completed sheet and of a valid set: the one copy)
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
   const str = v => String(v == null ? '' : v);
   const idOf = r => str(r && (r.id || r.sheetId));
@@ -72,9 +87,28 @@
     return [...out.values()];
   }
 
+
+  /** The core principle of a Set, for the sets some sheets leave (and others join, in the same move): [{key:'setPrinciple', label, detail, extra:{sheetId, missing, set}}].
+   *  `leaving` / `joining`: Map(setId -> [sheet ids]); `sets`: {setId:{doc,members}}; `recs`: {id: record}. Nothing when the rules file is not there. */
+  function principleReasons(leaving, joining, sets, recs) {
+    const R = RULES(), out = [];
+    if (!R || typeof R.wouldStayValid !== 'function') return out;
+    for (const [setId, ids] of leaving) {
+      const F = sets[setId]; if (!F || !F.doc) continue;
+      const members = (F.members || []).filter(Boolean), came = (joining.get(setId) || []).map(i => recs[i]).filter(Boolean);
+      const before = R.validSet(members), after = R.wouldStayValid(members, ids, came), lost = after.missing.filter(c => !before.missing.includes(c));
+      if (!lost.length) continue;
+      const set = setWord(F.doc), names = ids.map(i => wordOf(recs[i])), alone = ids.length === 1;
+      out.push({ key: 'setPrinciple', label: `${set} needs a completed ${lost.join(' and a completed ')} sheet, and ${alone ? names[0] + ' is the only one it has' : 'these sheets are the only ones it has'}`,
+        detail: 'A set needs at least 1 completed GF sheet and 1 completed SS sheet. Put another completed ' + lost.join(' / ') + ' sheet in first.', extra: { sheetId: ids[0], missing: lost, setId } });
+    }
+    return out;
+  }
+
   /** The one rule. See the head of this file. */
   function verifyMoves(inp) {
     const reasons = [], moves = {}, recs = inp.recs || {}, sets = inp.sets || {}, real = [];
+    const runOpen = d => !!(d && inp.runs && inp.runs[str(d.runId)] && inp.runs[str(d.runId)].open), ownsRun = d => !!(d && (inp.owned || []).map(str).includes(str(d.runId)));
     for (const m of inp.moves || []) moves[str(m.id)] = m.to ? str(m.to) : null;
     const add = (key, label, detail, extra) => reasons.push(Object.assign({ key, label, detail }, extra || {}));
     const leaving = new Map(), joining = new Map();
@@ -91,7 +125,8 @@
         const F = sets[from];
         if (!F || !F.doc) add('noSet', `The set of ${w} could not be found`, 'Refresh the Library and try again.', { sheetId: id });
         else {
-          if (!committedSet(F.doc)) add('setOpen', `${setWord(F.doc)} is still being made by its run`, 'Its sheets are changed from the open run, not from here.', { sheetId: id });
+          // a set that is not committed is made by its run: while that run is open on another screen only that screen changes it (two screens would undo each other)
+          if (!committedSet(F.doc) && runOpen(F.doc) && !ownsRun(F.doc)) add('setOpen', `${setWord(F.doc)} is still being made by its run`, 'Its run is open on another screen: change its sheets there.', { sheetId: id });
           else if (finished(F.doc, F.members || [])) add('setCompleted', `${setWord(F.doc)} is completed`, 'A completed set keeps its sheets.', { sheetId: id });
           if (!(F.members || []).some(x => idOf(x) === id) && !(F.doc.sheetIds || []).includes(id)) add('notInSet', `${w} is not in ${setWord(F.doc)}`, 'The set changed since this was planned. Refresh the Library.', { sheetId: id });
         }
@@ -100,7 +135,7 @@
       if (to) {
         const T = sets[to];
         if (!T || !T.doc) add('noSet', 'That set could not be found', 'Refresh the Library and try again.', { sheetId: id });
-        else if (!committedSet(T.doc)) add('setOpen', `${setWord(T.doc)} is still being made by its run`, 'Its sheets are changed from the open run, not from here.', { sheetId: id });
+        else if (!committedSet(T.doc)) add('setOpen', `${setWord(T.doc)} is still being made by its run`, 'A sheet joins it from that run, by its Include.', { sheetId: id });
         else if (finished(T.doc, T.members || [])) add('setCompleted', `${setWord(T.doc)} is completed`, 'A completed set takes no more sheets.', { sheetId: id });
         else if (/superseded/.test(str(T.doc.status))) add('setClosed', `${setWord(T.doc)} was replaced`, 'Drop it on a current set.', { sheetId: id });
         (joining.get(to) || joining.set(to, []).get(to)).push(id);
@@ -110,8 +145,12 @@
     for (const [setId, ids] of leaving) {
       const F = sets[setId]; if (!F || !F.doc) continue;
       const stay = (F.members || []).filter(x => !ids.includes(idOf(x)) && !(joining.get(setId) || []).includes(idOf(x)));
-      if (!stay.length && !(joining.get(setId) || []).length) add('lastSheet', `${ids.length === 1 ? wordOf(recs[ids[0]]) : 'These sheets'} ${ids.length === 1 ? 'is' : 'are'} all that is in ${setWord(F.doc)}`, `A set keeps at least one sheet: press Undo set on ${setWord(F.doc)} to take it apart.`, { sheetId: ids[0] });
+      if (!stay.length && !(joining.get(setId) || []).length) add('lastSheet', `${ids.length === 1 ? wordOf(recs[ids[0]]) : 'These sheets'} ${ids.length === 1 ? 'is' : 'are'} all that is in ${setWord(F.doc)}`, committedSet(F.doc) ? `A set keeps at least one sheet: press Undo set on ${setWord(F.doc)} to take it apart.` : `A set keeps at least one sheet: put another sheet in first, or leave it where it is.`, { sheetId: ids[0] });
     }
+    // the core principle of a Set (Paul, 10 Oct): it keeps at least 1 completed GF sheet and 1 completed SS sheet. A move may not take away a completed
+    // sheet of a kind the set has now and would no longer have (a set that already lacks a kind is not made worse, and is never stopped from being mended)
+    const principle = principleReasons(leaving, joining, sets, recs);
+    for (const r of principle) add(r.key, r.label, r.detail, r.extra);
     if (reasons.length || !real.length) return { ok: reasons.length === 0, reasons, shared: [], noop: !real.length && !reasons.length };
     // the cardinal rule over where every sheet ends up
     const all = [].concat(Object.values(recs), ...Object.values(sets).map(s => s.members || []), inp.others || []);
@@ -160,7 +199,7 @@
       const orderGone = new Set(leave.flatMap(orderIdsOf)), kept = new Set(stay.concat(join).flatMap(orderIdsOf));
       const left = [...orderGone].filter(o => !kept.has(o));
       if (Array.isArray(doc.committed)) out.committed = doc.committed.filter(o => !left.includes(str(o)));
-      out.committedOut = (Array.isArray(doc.committedOut) ? doc.committedOut : []).concat(left.filter(o => Array.isArray(doc.committed) && doc.committed.map(str).includes(o)).map(o => ({ orderId: o, at, by }))).slice(-300);
+      if (committedSet(doc) || Array.isArray(doc.committed)) out.committedOut = (Array.isArray(doc.committedOut) ? doc.committedOut : []).concat(left.filter(o => Array.isArray(doc.committed) && doc.committed.map(str).includes(o)).map(o => ({ orderId: o, at, by }))).slice(-300);   // (a set that was never committed has nothing to record)
     }
     return out;
   }
@@ -273,6 +312,9 @@
       for (const pg of (C && C.allSheets ? C.allSheets() : [])) {
         const x = sheets.find(s => s.id === pg.sheetId); if (!x) continue;
         const p = x.patch || {};
+        // a sheet taken out is kept out of the run's sets (Gate.basePolicy reads leftSet) until it is put in again: the hold the edit wrote is its record after a reload
+        if (x.fromSetId && !('setId' in p && p.setId)) pg.leftSet = x.fromSetId; else if ('setId' in p && p.setId) delete pg.leftSet;
+        if (x.run) continue;       // (a sheet the open run itself takes out of its set: the run's own assembly changes its membership, this only carries the hold)
         if ('draft' in p) pg.draft = !!p.draft;
         if ('setId' in p) pg.setId = p.setId || null;
         if ('setSeq' in p) pg.seq = p.setSeq || null;
@@ -312,5 +354,5 @@
     try { if (sheets.length && C && C.loadLibrary) Promise.resolve(C.loadLibrary()).catch(() => {}); } catch (_) { /* refreshed at its next read */ }
   }
 
-  return { relabel, remakeFiles, applyMembership, verifyMoves, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
+  return { relabel, remakeFiles, applyMembership, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
 });
