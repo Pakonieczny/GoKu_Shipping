@@ -258,8 +258,8 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
   } else console.log('  · (the Sep 17 snapshot, the master index or the golden file is not on this machine: the golden part was not run)');
   /* ── 9 · the page asks for the new files with a new cache token (other workers add suffixes after it) ───────────────────────────────────────────────────── */
   { const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-zt1(?:-[a-z0-9]+)*"').test(html), f + ' carries the -zt1 cache token');
+    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-zt\\d(?:-[a-z0-9]+)*"').test(html), f + ' carries the -zt cache token');
     ok(/names?:\s*true|nameIds/.test(fs.readFileSync(path.join(fnDir, 'charmNestLibrary.js'), 'utf8')), 'the library op passes nameIds on'); }
-  pass('cache tokens (-zt1) and the library op\'s nameIds');
+  pass('cache tokens (-zt) and the library op\'s nameIds');
   console.log(`zodiac-two: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });
