@@ -50,7 +50,16 @@
     try { const dp = ctx && ctx.entryFor && sku ? P.designPair && P.designPair(ctx.entryFor(sku)) : null; if (dp) return !!dp.mismatched && dp.bodies === 2; } catch (_) { /* fall through to the charm */ }
     try { const ch = ctx && ctx.charmOf && poolId ? ctx.charmOf(poolId) : null; return !!(ch && ch.outline && P.isMismatched(ch)); } catch (_) { return false; }
   }
+  /** How many pieces ONE unit of a counted-option line makes (discs, tags, charms of one necklace): the intake's own count first (spec.pieceCount over the quantity,
+   *  never for an earring pair or a line it does not call a group: the one source of truth, charm-nest-orders.js countRead), else the words of the listing (discsOf).
+   *  (DISCREAD: a "3 Tags" or "Set of 3 charms" necklace made 3 pieces but, found by the word "disc" alone, had ONE engraving job for all three.) */
+  function perUnitOf(row) {
+    const sp = row && row.spec, pr = sp && sp.pair, pc = Math.floor(+(sp && sp.pieceCount)), q = Math.max(1, Math.round(+(sp && sp.quantity) || +(row && row.line && row.line.quantity) || 1));
+    if (!sp || !pr || pr.earring || pr.glued || pr.legacy || !(pc >= 2) || pr.kind !== 'multi' || pc % q) return 0;
+    const per = pc / q; return per >= 2 && per <= 24 ? per : 0;
+  }
   function discsOf(ctx, row) {
+    const own = perUnitOf(row); if (own) return own;
     const P = pairLib(ctx); if (!P || !P.discsOf) return 0;
     try { return P.discsOf(Object.assign({}, row && row.line, { spec: row && row.spec })) || 0; } catch (_) { return 0; }
   }
@@ -184,5 +193,90 @@
     Object.defineProperty(parent, 'engrave', { value, writable: true, enumerable: true, configurable: true });
     return parent;
   }
-  return { jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, STATE_ORDER, SLOT: SLOT };
+
+  /* ── the buyer's words, one disc at a time (DISCREAD, Paul 10 Oct: "Tag 1: J, Tag 2: Q" is disc 1 = J, disc 2 = Q) ─────────────────────────────────────
+     splitWords(texts, n) -> { ok, words: [n strings], how, why }. Deterministic, no AI, nothing guessed: it answers only when the note says plainly which words
+     go on which disc, and otherwise says why not (the paid reader or a person decides, as before). A line of n discs gives exactly n words, disc 1 first.
+       numbered     "Tag 1: J, Tag 2: Q" · "Disc 1: A; Disc 2: B" · "Initial 1 - J, Initial 2 - Q" · "1: J, 2: Q" · "1) J 2) Q" · "First disc: J, second: Q" · "Charm #2 = Q" (any order, each number once, 1..n)
+       lines        n entries of the personalisation field, or n lines ("J" / "Q"), or n comma / semicolon / slash / ampersand separated words ("J, Q")
+       letters      n single characters separated by spaces ("J Q")
+       same         the buyer says it is the same on every disc ("All discs: J", "Same on all: J", "J on each disc"): the one word on every disc
+     NOT answered (ok false): a count that differs from n, a number used twice or missing, one bare word with no sign it is for all discs, any other text around the markers. */
+  const NUMW = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+  const NUMRX = '(\\d{1,2}(?:st|nd|rd|th)?|' + Object.keys(NUMW).join('|') + ')', UNITRX = '(?:tags?|discs?|disks?|charms?|pendants?|circles?|initials?|letters?|names?|words?|pieces?)';
+  const numOfWord = w => { w = String(w || '').toLowerCase(); const d = /^(\d{1,2})(?:st|nd|rd|th)?$/.exec(w); return d ? +d[1] : NUMW[w] || 0; };
+  const clean = x => String(x == null ? '' : x).replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
+  const trimWord = x => clean(x).replace(/^[\s,;|/&:\-–—]+/, '').replace(/(?:[\s,;|/&]|\band\b)+$/i, '').replace(/^(["'“‘])(.*)(["'”’])$/, '$2').trim();
+  const LEAD = /^(?:please\s+)?(?:engrav\w*|initials?|letters?|names?|text|words?|personali[sz]ation|discs?|tags?)?\s*[:\-]?\s*$/i;
+  function splitWords(texts, n) {
+    n = Math.floor(+n);
+    const fail = why => ({ ok: false, words: [], how: '', why });
+    if (!(n >= 2)) return fail('fewer than two discs');
+    const parts = (Array.isArray(texts) ? texts : [texts]).map(x => String(x == null ? '' : x).replace(/\r/g, '').split('\n').map(clean).filter(Boolean).join('\n')).filter(Boolean);
+    if (!parts.length) return fail('no words written');
+    const text = parts.join('\n');
+    // same on every disc, said so
+    const all = /^(?:(?:all|each|every|both)(?:\s+(?:of\s+(?:the\s+)?)?(?:discs?|tags?|charms?|pendants?))?|same(?:\s+(?:on|for)\s+(?:all|each|every|both)(?:\s+(?:discs?|tags?|charms?|pendants?))?)?)\s*[:=\-–]\s*(.+)$/i.exec(text) || /^(.+?)\s+(?:on|for)\s+(?:all|each|every|both)(?:\s+(?:of\s+(?:the\s+)?)?(?:discs?|tags?|charms?|pendants?))?\s*$/i.exec(text);
+    if (all) { const w = trimWord(all[1]); return w ? { ok: true, words: Array.from({ length: n }, () => w), how: 'same', why: '' } : fail('the same words on every disc, but no words'); }
+    // numbered markers
+    const re = new RegExp('(^|[,;|/&(\\n]|\\s)\\s*(?:' + UNITRX + '\\s*#?\\s*' + NUMRX + '|' + NUMRX + '\\s*' + UNITRX + '|#?(\\d{1,2}|' + Object.keys(NUMW).join('|') + '))\\s*(?:[:=)\\-\\u2013\\u2014.]+)\\s*', 'gi');
+    const marks = [];
+    for (let m; (m = re.exec(text));) { const k = numOfWord(m[2] || m[3] || m[4]); marks.push({ k, at: m.index + m[1].length, end: m.index + m[0].length }); if (m[0].length === 0) re.lastIndex++; }
+    if (marks.length) {
+      const nums = marks.map(x => x.k);
+      if (marks.length !== n || new Set(nums).size !== n || nums.some(k => k < 1 || k > n)) return fail(`the note numbers ${[...new Set(nums)].sort((a, b) => a - b).join(', ')}, the line has ${n} discs`);
+      const lead = text.slice(0, marks[0].at); if (clean(lead) && !LEAD.test(clean(lead))) return fail('other words come before the numbered ones');
+      const words = new Array(n).fill('');
+      marks.forEach((x, i) => { words[x.k - 1] = trimWord(text.slice(x.end, i + 1 < marks.length ? marks[i + 1].at : text.length)); });
+      return words.every(Boolean) ? { ok: true, words, how: 'numbered', why: '' } : fail('a numbered disc has no words');
+    }
+    // n entries of the field, or n lines
+    const nonEmpty = list => list.map(trimWord).filter(Boolean);
+    if (parts.length === n) { const w = nonEmpty(parts); if (w.length === n) return { ok: true, words: w, how: 'lines', why: '' }; }
+    const lines = nonEmpty(text.split(/\n/));
+    if (lines.length === n) return { ok: true, words: lines, how: 'lines', why: '' };
+    const items = nonEmpty(text.replace(/\n/g, ' ').split(/\s*[,;|/&]\s*|\s+and\s+/i));
+    if (items.length === n) return { ok: true, words: items, how: 'list', why: '' };
+    const chars = clean(text).split(' ');
+    if (chars.length === n && chars.every(c => Array.from(c).length === 1)) return { ok: true, words: chars, how: 'letters', why: '' };
+    return fail(items.length === 1 && !/\s/.test(clean(text)) ? 'one word and no sign it goes on every disc' : `the note does not say which words go on which of the ${n} discs`);
+  }
+
+  /** The words of each disc of a counted line from its reading (a line spec: personalization, buyerMessage, staffNote, messages) and its slots ("D1".."Dn", in order), or null:
+   *  the personalisation field must say it plainly (splitWords) and nobody else may have spoken (a buyer message, a staff note, an engraving-like message: the reader weighs them all).
+   *  o.engravingNote(text) says whether a staff message is about the engraving. Returns { ok, words, how }. */
+  function wordsForDiscs(spec, slots, o) {
+    const sp = spec || {}, list = (slots || []).filter(Boolean);
+    if (list.length < 2 || !list.every(x => /^D\d{1,2}$/.test(x))) return null;
+    const note = o && typeof o.engravingNote === 'function' ? o.engravingNote : () => true;
+    if (String(sp.staffNote || '').trim() || String(sp.buyerMessage || '').trim() || (sp.messages || []).some(m => note(m && m.text))) return null;
+    const r = splitWords(sp.personalization || [], list.length);
+    return r.ok ? r : null;
+  }
+
+  /* ── the per-piece record (DISCCYCLE, DISCMODALS, the engraving cards): the existing job read as the disc it is. Derived, never stored, no nested arrays. ──
+     pieceRecord(job, o) -> { index (1-based), of, slot, key, lineKey, groupKey, tag "DISC 2 of 3", label "Disc 2", poolIds, words, lines, font, fontAsked, state, approved,
+                              approvedBy, approvedAt, sealed, wordsSource }
+     o: { of } (the number of discs of the line; else the line's own count) */
+  const fontOf = job => {
+    const f = (job && job.font) || (job && job.row && job.row.spec && job.row.spec.font) || (job && job.row && job.row.parentRow && job.row.parentRow.spec && job.row.parentRow.spec.font) || null;
+    return f && typeof f === 'object' && (f.asked || f.id || f.name) ? { asked: String(f.asked || ''), id: String(f.id || ''), name: String(f.name || ''), source: String(f.source || '') } : null;
+  };
+  function pieceRecord(job, o) {
+    if (!job) return null;
+    const slot = job.slot || (job.row && job.row.slot) || null, m = /^D(\d{1,2})$/.exec(slot || ''), idx = m ? +m[1] : slot === 'L' ? 1 : slot === 'R' ? 2 : 1;
+    const of = Math.max(1, Math.floor(+(o && o.of) || 0) || (job.row && job.row.parentRow && perUnitOf(job.row.parentRow)) || idx);
+    const lines = (Array.isArray(job.lines) ? job.lines : []).map(x => String(x).trim()).filter(Boolean), font = fontOf(job);
+    const seals = [].concat(job.engravingSeals || [], (job.engraveRec && job.engraveRec.seals) || [], job.seals || []);
+    return { index: idx, of, slot, key: job.key, lineKey: job.rowKey || parseKey(job.key).rowKey, groupKey: job.groupKey || '', tag: tagOf(slot, of), label: labelOf(slot),
+      poolIds: (Array.isArray(job.copies) ? job.copies : []).slice(), words: lines.join(' / '), lines, font, fontAsked: font ? font.asked : '', state: job.state || '',
+      approved: ['approved', 'written'].includes(job.state), approvedBy: job.approvedBy || (job.engraveRec && job.engraveRec.approvedBy) || '', approvedAt: +job.approvedAt || +(job.engraveRec && job.engraveRec.approvedAt) || 0, sealed: seals.length > 0, wordsSource: job.wordsSource || job.source || '' };
+  }
+  const bySlot = (a, b) => order(a.slot) - order(b.slot);
+  /** The discs of one line, D1..Dn, each record saying the same `of`. */
+  function pieceRecords(jobs, o) {
+    const list = (jobs || []).filter(Boolean).slice().sort(bySlot), of = Math.floor(+(o && o.of) || 0) || list.length;
+    return list.map(j => pieceRecord(j, { of }));
+  }
+  return { jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, STATE_ORDER, SLOT: SLOT };
 });
