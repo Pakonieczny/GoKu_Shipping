@@ -523,7 +523,8 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    the documents themselves: the safety net for a write that did not move the revision. The slow check that records seals asks the
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
 const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; production only, as that one is: the sandbox keeps no counter, a leftover of every reset, and its readers ask in full)
-const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "sandboxCancel", "sandboxPut", "sandboxReset", "purgeHistory"]);
+// (the sandbox-only ops are not here: they write Sandbox_ records only, whatever the request says, so not even a sandbox request without its flag moves the production counter)
+const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory"]);
 /** The Library's revision now (its update time), "0" before the first write, null when it cannot be read (the reader then asks in full). */
 async function readRev() {
   if (PREFIX) return null;
@@ -1053,7 +1054,7 @@ async function op_startJob(b) {
   const job = b.job; if (!job || !Array.isArray(job.pieces) || !job.pieces.length) return { error: "no job" };
   if (job.pieces.length > 400) return { error: "too many pieces" };
   const id = "job-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  await db.collection(JOBS).doc(id).set({ id, sheetId: str(b.sheetId, 80), status: "pending", trials: 0, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(), pieceCount: job.pieces.length });
+  await db.collection(JOBS).doc(id).set(Object.assign({ id, sheetId: str(b.sheetId, 80), status: "pending", trials: 0, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(), pieceCount: job.pieces.length }, PREFIX ? { sandbox: true } : {}));   // (the jobs collection is shared: a sandbox job says so, and the sandbox wipe deletes only those)
   const fetch = require("node-fetch");
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
   fetch(`${base}/.netlify/functions/charmNestSolve-background`, { method: "POST", headers: { "Content-Type": "application/json", "X-Charm-Nest-Job": id }, body: JSON.stringify({ id, job }) }).catch(err => console.warn("[charmNestLibrary] background kick failed", err.message));
@@ -1667,52 +1668,69 @@ async function op_sandboxPullOrders(b) {
   if (!PREFIX) return { ok: false, error: "The order pull exists only in the sandbox.", reason: "bad", empty: false, status: 403 };
   return SandboxPull.pull(b, { stream: op_sandboxStream });
 }
+const Families = require("../../charm-nest-sandbox-families.js");   // the ONE list of what a sandbox run leaves behind: the status below, the wipe after it and tests/charm-nest/sandbox-wipe-guard.cjs all read it
+/** The id that ends a prefix range: "olsb_" → "olsb`" (the character after the last one), as the wipe has always asked it. */
+const idAfter = p => p.slice(0, -1) + String.fromCharCode(p.charCodeAt(p.length - 1) + 1);
+/** One count for EVERY server family of the registry (0 included), read-only: an aggregation count() of each Sandbox_ collection
+    (one read per 1,000 records), the same for the marked places of shared collections, the documents of the sandbox's own
+    collection but its budget ledger, and the files of each Storage prefix (a list, no Firestore read; 1,000 at most, recordsCapped says so).
+    kept: what a wipe never touches, as counts only (the Charm repo's designs, the employee efficiency's day records). */
 async function op_sandboxStatus(b) {
   const doc = await db.collection(SANDBOX).doc("current").get(), set = pulled(doc.exists ? doc.data() : null);
   // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
   if (b && b.light === true) return { ok: true, light: true, snapshot: set, records: {} };
-  const counts = {}, names = [...SANDBOXED, ...SANDBOX_MAPS];
-  const [sizes, budget] = await Promise.all([Promise.all(names.map(name => db.collection("Sandbox_" + name).count().get())), SandboxPull.readBudget().catch(() => null)]);
-  sizes.forEach((s, i) => { counts[names[i]] = s.data().count; });   // (one aggregation read per 1,000 records of each, asked all at once)
-  return { ok: true, snapshot: set, budget, records: counts };
+  const counts = {}, capped = {}, kept = {}, jobs = [];
+  const count = q => q.count().get().then(s => s.data().count);
+  // each count is asked on its own and all at once; one that cannot be read is null (the page says so), never the whole answer lost
+  const ask = (into, key, fn) => jobs.push(Promise.resolve().then(fn).then(n => { into[key] = n; }, e => { console.warn("[charmNestLibrary] sandbox count of", key, "failed:", e && e.message); into[key] = null; }));
+  const budget = SandboxPull.readBudget().catch(() => null);   // (one read of Charm_Sandbox/pulls, the pull budget ledger)
+  for (const f of Families.server()) {
+    if (f.store === "firestore") ask(counts, f.key, () => count(db.collection("Sandbox_" + f.key)));
+    else if (f.store === "shared" && f.idPrefix) ask(counts, f.key, () => { const id = admin.firestore.FieldPath.documentId(); return count(db.collection(f.collection).where(id, ">=", f.idPrefix).where(id, "<", idAfter(f.idPrefix))); });
+    else if (f.store === "shared" && f.flag) ask(counts, f.key, () => count(db.collection(f.collection).where(Object.keys(f.flag)[0], "==", Object.values(f.flag)[0])));
+    else if (f.store === "shared" && f.field) ask(counts, f.key, () => count(db.collection(f.collection).where(f.field + ".kind", "in", require("./_charmNestCustomRead").KINDS)));
+    else if (f.store === "doc" && f.keepDocs) ask(counts, f.key, () => db.collection(f.collection).select().get().then(s => s.docs.filter(d => !f.keepDocs.includes(d.id)).length));
+    else if (f.store === "doc" && f.docs) ask(counts, f.key, () => Promise.all(f.docs.map(n => db.collection(f.collection).doc(n).get())).then(l => l.filter(d => d.exists).length));
+    else if (f.store === "storage") ask(counts, f.key, () => admin.storage().bucket().getFiles({ prefix: f.prefix, autoPaginate: false, maxResults: 1000 }).then(([list, next]) => { if (next && next.pageToken) capped[f.key] = true; return list.filter(x => !(f.keep || []).some(k => x.name.startsWith(k))).length; }));
+  }
+  ask(kept, "charmRepo", () => count(db.collection("Charm_Master_Index")));                    // the Charm repo's designs (one document each)
+  ask(kept, "efficiencyDays", () => count(db.collection("Efficiency_Daily")));                 // employee efficiency: one daily rollup per person per day
+  ask(kept, "efficiencySandboxDays", () => count(db.collection("Sandbox_Efficiency_Daily")));  // the same, as the sandbox's stations wrote them (kept too)
+  await Promise.all(jobs);
+  return { ok: true, snapshot: set, budget: await budget, records: counts, recordsCapped: capped, kept };
 }
-/* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
-   in pages, a parent only once its subcollections are empty, and answers more:true when its time is up; the page calls
-   again until it is done, and nothing is lost between calls. The records go first, then the sandbox's files (every one
-   under charmnest/sandbox/ but the snapshot the stream plays and the master files the shared index points to, and the
-   archive's design-archive/sandbox/), then the stream. The cache of engraving readings Claude was paid for (AGENT_CACHE)
-   is not a record of a replay and stays.
-   EVERY family the sandbox can write goes (Paul, 3 Oct: "the same records just keep on coming back"): the sorter's own
-   (every SANDBOXED name, so Review's custom orders and custom sheets with their seals, the cancel records and their
-   history: production keeps those for good, the sandbox's explicit Reset and Purge clear them), the order timeline, the
-   stations' Sandbox_ copies (orders and their messages, locks, finished orders, sign-in sessions, activity and its daily
-   rollups, the archive), the engraving jobs and shape guidance, the Rose Gold rehearsals, a person's sandbox decision on
-   the shared line readings (decidedSandbox), and the customer messages the sorter's sandbox keeps in the inbox's own
-   collection (EtsyMail_OrderLinks: flagged sandbox:true and named olsb_…, which production never makes), and the
-   sandbox's own copy of the learned maps (the listing → SKU aliases, option maps and no-design SKUs a person answered in
-   the sandbox: SANDBOX_MAPS). Only ever the sandbox's: every collection is named Sandbox_…, and the two shared places
-   are cut by the sandbox's own marks. The sandbox's custom design files (charmnest/custom/{order}/…, which the file
-   door moves to charmnest/sandbox/custom/…) go with the files below.
+/* THE ONE WIPE of everything a sandbox run leaves behind (Paul, 10 Oct 2026: "completely wipe ALL sandbox data and order info; the
+   only thing that remains is the employee efficiency and the Charm repo"). Reset sandbox records, Reset the sandbox... and Purge
+   all run history... all end here (sandboxReset, and purgeHistory after production's own part), and every family it clears is read
+   from charm-nest-sandbox-families.js, never listed here: a family added to the registry is wiped, counted in sandboxStatus and
+   tested by tests/charm-nest/sandbox-wipe-guard.cjs, which also fails when a sandbox write lands somewhere the registry does not name.
+   It clears: every Sandbox_ collection of the registry (the sorter's own records: sheets, sets and counters, runs, pool and back rows,
+   cancelled orders and their history, custom orders and custom seals, cuts and leftovers, the Rose Gold rehearsals, the sandbox's
+   copies of the learned maps, the stations' orders with their messages, finished orders, locks and archive, the order timeline,
+   the engraving jobs, shape guidance and saved readings), the sandbox's customer messages in the inbox's collection (olsb_ and
+   sandbox:true), the sandbox's decision on shared line readings (decidedSandbox), the stream and the snapshot of orders it
+   plays (Charm_Sandbox, but the pull budget ledger: a Reset must not hand out new Etsy calls), the sandbox's partial-sheets
+   setting, and every file under charmnest/sandbox/ and design-archive/sandbox/ (but the master files the shared index points to).
+   It NEVER touches: production records, the Charm repo, employee efficiency (Station_Activity, Efficiency_Daily, Station_Sessions,
+   Station_Live, Laser_Sheet_Times, and the sandbox's copies of them), config and passcodes (see protected() in the registry).
+   It works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes in pages, a parent
+   only once its subcollections are empty, and answers more:true when its time is up; the page calls again until it is done.
    Used by sandboxReset and, after production's own part, by purgeHistory. */
 const ORDERLINKS = "EtsyMail_OrderLinks";
 async function sandboxWipe(budgetMs) {
   const until = Date.now() + budgetMs, late = () => Date.now() > until;
   let deleted = 0, files = 0;
-  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, ...SANDBOX_MAPS, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
-  const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
-  // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
-  // which no query of that collection returns: they go with the collection's list of such parents, last of all
-  // (listDocuments names a document that only holds a subcollection too). They used to be looked for once more under every
-  // document of four order families first (one query each, a read each, thousands in a long replay) for the same orders.
-  const KIN = new Set(), kinDone = new Set();
-  const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };
+  const fam = Families.server(), names = fam.filter(f => f.store === "firestore");
+  // this instance's own memory of sandbox answers (the runs that hold an order, kept a minute) goes with the records they came from
+  for (const k of [...holders.keys()]) if (k.startsWith("Sandbox_")) holders.delete(k);
+  const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };   // (deleting a document never deletes its subcollections: they go first)
   const more = () => ({ ok: true, more: true, deleted, files });
   // which collections still hold anything, asked all at once: a call that follows another goes straight to the work left
-  const left = await Promise.all(names.map(name => db.collection("Sandbox_" + name).select().limit(1).get().then(s => !s.empty)));
-  for (const [i, name] of names.entries()) {
+  const left = await Promise.all(names.map(f => db.collection("Sandbox_" + f.key).select().limit(1).get().then(s => !s.empty)));
+  for (const [i, f] of names.entries()) {
     if (!left[i]) continue;
-    const coll = db.collection("Sandbox_" + name);
-    if (!SUBS[name] && !KIN.has(name)) { if (!(await wipe(coll))) return more(); continue; }
+    const coll = db.collection("Sandbox_" + f.key);
+    if (!f.subs) { if (!(await wipe(coll))) return more(); continue; }
     for (;;) {
       if (late()) return more();
       const page = await coll.select().limit(100).get(); if (page.empty) break;
@@ -1720,8 +1738,7 @@ async function sandboxWipe(budgetMs) {
       await Promise.all(Array.from({ length: Math.min(16, page.size) }, async () => {
         while (cursor < page.docs.length) {
           const d = page.docs[cursor++]; let clear = true;
-          for (const sub of SUBS[name] || []) clear = (await wipe(d.ref.collection(sub))) && clear;
-          if (KIN.has(name) && !kinDone.has(d.id)) { const ok = await wipe(db.collection("Sandbox_Brites_Orders").doc(d.id).collection("messages")); if (ok) kinDone.add(d.id); clear = ok && clear; }
+          for (const sub of f.subs) clear = (await wipe(d.ref.collection(sub))) && clear;
           if (clear) gone.push(d.ref);
         }
       }));
@@ -1729,52 +1746,68 @@ async function sandboxWipe(budgetMs) {
       if (gone.length < page.size) return more();   // the clock ran out inside a page
     }
   }
-  // messages under an order nothing else names (a parent never written): the collection's parents, written or not
-  {
-    const brites = db.collection("Sandbox_Brites_Orders"), parents = typeof brites.listDocuments === "function" ? await brites.listDocuments() : []; let cursor = 0, incomplete = false;
-    await Promise.all(Array.from({ length: Math.min(16, parents.length) }, async () => { while (cursor < parents.length) { if (!(await wipe(parents[cursor++].collection("messages")))) incomplete = true; } }));
+  // what hangs under a parent nothing else names (an order's messages under a Brites_Orders document that was never written, a bridge log or
+  // a cut under a record that is gone): the collection's parents, written or not (listDocuments names a document that only holds a subcollection too)
+  for (const f of names.filter(x => x.subs)) {
+    const coll = db.collection("Sandbox_" + f.key), parents = typeof coll.listDocuments === "function" ? await coll.listDocuments() : []; let cursor = 0, incomplete = false;
+    await Promise.all(Array.from({ length: Math.min(16, parents.length) }, async () => { while (cursor < parents.length) { const p = parents[cursor++]; for (const sub of f.subs) if (!(await wipe(p.collection(sub)))) incomplete = true; } }));
     if (incomplete || late()) return more();
   }
-  // the sorter's customer messages the sandbox keeps in the inbox's collection: only a document that says sandbox:true AND
-  // is named olsb_… (production's engagements are ol_… and say sandbox:false), a page at a time by name
-  {
-    let after = null;
-    for (;;) {
-      if (late()) return more();
-      const id = admin.firestore.FieldPath.documentId();
-      let q = db.collection(ORDERLINKS).where(id, ">=", "olsb_").where(id, "<", "olsb`").orderBy(id).select("sandbox").limit(300);
-      if (after) q = q.startAfter(after);
-      const s = await q.get(); if (s.empty) break;
-      const doomed = s.docs.filter(d => /^olsb_/.test(d.id) && (d.data() || {}).sandbox === true);
-      if (doomed.length) { const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += doomed.length; }
-      after = s.docs[s.docs.length - 1].id; if (s.size < 300) break;
+  // the places production shares, cut by the sandbox's own marks only
+  for (const f of fam.filter(x => x.store === "shared")) {
+    if (f.idPrefix) {
+      // the sorter's customer messages the sandbox keeps in the inbox's collection: only a document that says sandbox:true AND
+      // is named olsb_… (production's engagements are ol_… and say sandbox:false), a page at a time by name
+      let after = null;
+      for (;;) {
+        if (late()) return more();
+        const id = admin.firestore.FieldPath.documentId();
+        let q = db.collection(f.collection).where(id, ">=", f.idPrefix).where(id, "<", idAfter(f.idPrefix)).orderBy(id).select(...Object.keys(f.flag)).limit(300);
+        if (after) q = q.startAfter(after);
+        const s = await q.get(); if (s.empty) break;
+        const doomed = s.docs.filter(d => d.id.startsWith(f.idPrefix) && Object.entries(f.flag).every(([k, v]) => (d.data() || {})[k] === v));
+        if (doomed.length) { const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += doomed.length; }
+        after = s.docs[s.docs.length - 1].id; if (s.size < 300) break;
+      }
+    } else if (f.flag) {
+      // a shared collection whose sandbox documents say so (the nesting jobs: sandbox:true): only those, a page at a time
+      const [k, v] = Object.entries(f.flag)[0];
+      if (!(await wipe(db.collection(f.collection).where(k, "==", v)))) return more();
+    } else if (f.field) {
+      // the readings of lines are shared with production and stay, and so does production's own decision (decided); the
+      // sandbox's decision beside them (decidedSandbox) is the rehearsal's and goes with it, or the replay of the same real
+      // order meets its line already decided and its timeline says so
+      for (const KINDS = require("./_charmNestCustomRead").KINDS;;) {
+        if (late()) return more();
+        const s = await db.collection(f.collection).where(f.field + ".kind", "in", KINDS).limit(300).get(); if (s.empty) break;
+        // a record the sandbox created alone (nothing but its own field, and the time older builds stamped) goes whole; one production also
+        // holds (a reading, its decision) only loses the sandbox's field
+        const batch = db.batch(); s.docs.forEach(d => { const own = Object.keys(d.data() || {}).filter(k => k !== f.field && k !== "updatedAt"); own.length ? batch.update(d.ref, { [f.field]: FV.delete() }) : batch.delete(d.ref); }); await batch.commit(); deleted += s.size;
+        if (s.size < 300) break;
+      }
     }
   }
-  // the readings of lines are shared with production and stay, and so does production's own decision (decided); the
-  // sandbox's decision beside them (decidedSandbox) is the rehearsal's and goes with it, or the replay of the same real
-  // order meets its line already decided and its timeline says so
-  for (const KINDS = require("./_charmNestCustomRead").KINDS;;) {
-    if (late()) return more();
-    const s = await db.collection("Charm_Nest_CustomRead").where("decidedSandbox.kind", "in", KINDS).select().limit(300).get(); if (s.empty) break;
-    const batch = db.batch(); s.docs.forEach(d => batch.update(d.ref, { decidedSandbox: FV.delete() })); await batch.commit(); deleted += s.size;
-    if (s.size < 300) break;
-  }
+  // the files: every one under the sandbox's prefixes but the master files the shared index points to (the Charm repo)
   let filesError = null;
   try {
-    const cur = await db.collection(SANDBOX).doc("current").get(), keep = cur.exists ? cur.data().path : null;
     const bucket = admin.storage().bucket();
-    for (const prefix of ["charmnest/sandbox/", "design-archive/sandbox/"]) {
+    for (const f of fam.filter(x => x.store === "storage")) {
       let pageToken;
       do {
         if (late()) return more();
-        const [list, next] = await bucket.getFiles({ prefix, autoPaginate: false, maxResults: 500, pageToken });
-        const doomed = list.filter(f => f.name !== keep && !f.name.startsWith("charmnest/sandbox/master/")); let cursor = 0;
+        const [list, next] = await bucket.getFiles({ prefix: f.prefix, autoPaginate: false, maxResults: 500, pageToken });
+        const doomed = list.filter(x => !(f.keep || []).some(k => x.name.startsWith(k))); let cursor = 0;
         await Promise.all(Array.from({ length: Math.min(16, doomed.length) }, async () => { while (cursor < doomed.length) { await doomed[cursor++].delete({ ignoreNotFound: true }); files++; } }));
         pageToken = next && next.pageToken;
       } while (pageToken);
     }
   } catch (e) { console.warn("[charmNestLibrary] sandbox files not deleted:", e.message); filesError = e.message; }
-  await db.collection(SANDBOX).doc("stream").delete();   // the order stream starts over with the records it fed
+  // the sandbox's own documents in shared collections, last: the stream starts over with the records it fed and the snapshot of orders it
+  // played goes (the next sandbox run pulls its own), but the pull budget ledger (keepDocs) stays; one named setting of config goes
+  for (const f of fam.filter(x => x.store === "doc")) {
+    const ids = f.docs ? f.docs.slice() : (await db.collection(f.collection).select().get()).docs.map(d => d.id).filter(n => !(f.keepDocs || []).includes(n));
+    for (const n of ids) { if (late()) return more(); const ref = db.collection(f.collection).doc(n); if ((await ref.get()).exists) { await ref.delete(); deleted++; } }
+  }
   return { ok: true, more: false, deleted, files, filesError };
 }
 async function op_sandboxReset() { return sandboxWipe(7000); }

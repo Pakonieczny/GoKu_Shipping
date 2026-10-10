@@ -124,8 +124,9 @@ const measure = async (name, fn) => { const a = m.snapshot(); const out = await 
   for (let i = 0; i < 30; i++) { bucket.files.set(`charmnest/sandbox/sets/f${i}.ai`, Buffer.alloc(50)); }
   seedC['Charm_Production_Canary/keep'] = { keep: true };
   db.seed(seedC);
-  const kept = ['Charm_Production_Canary/keep', 'EtsyMail_OrderLinks/ol_keep', 'Charm_Sandbox/current'];
-  const sandboxLeft = () => [...db.docs.keys()].filter(p => /^Sandbox_/.test(p) && !/^Sandbox_Charm_Nest_Agent_Cache/.test(p));
+  db.seed({ 'Charm_Sandbox/pulls': { day: '2026-10-10', n: 3 } });   // the daily Etsy pull budget: a reset must not hand out new calls
+  const kept = ['Charm_Production_Canary/keep', 'EtsyMail_OrderLinks/ol_keep', 'Charm_Sandbox/pulls'];
+  const sandboxLeft = () => [...db.docs.keys()].filter(p => /^Sandbox_/.test(p) && !/^Sandbox_(Station_Activity|Efficiency_Daily|Station_Sessions|Station_Live|Laser_Sheet_Times)\//.test(p));   // (the employee efficiency's copies stay: Paul, 10 Oct 2026)
   const seeded = sandboxLeft().length;
   let calls = 0, more = true; const a = m.snapshot(); let tot = null;
   await m.op('C.reset', async () => { while (more && calls < 400) { const r = await L('sandboxReset'); calls++; more = !!r.more; } });
@@ -133,9 +134,10 @@ const measure = async (name, fn) => { const a = m.snapshot(); const out = await 
   line(`  sandboxReset: ${seeded} sandbox docs in ${calls} call(s)`, d, `(${(d.reads + (d.aggs || 0)) / seeded > 0 ? ((d.reads + (d.aggs || 0)) / seeded).toFixed(2) : 0} reads per document deleted)`);
   assert.strictEqual(sandboxLeft().length, 0, 'every sandbox record is gone: ' + sandboxLeft().slice(0, 5));
   assert(!db.has('Charm_Sandbox/stream'), 'the stream is gone');
+  assert(!db.has('Charm_Sandbox/current'), 'the snapshot pointer is gone');
   for (const p of kept) assert(db.has(p), 'kept: ' + p);
   assert.strictEqual([...bucket.files.keys()].filter(f => f.startsWith('charmnest/sandbox/sets/')).length, 0, 'sandbox files gone');
-  assert(bucket.files.has(path0), 'the snapshot file stays');
-  console.log('  verified: every Sandbox_ record, the stream and the sandbox files are gone; production canary, olsb-less inbox record and the snapshot stay\n');
+  assert(!bucket.files.has(path0), 'the snapshot file is gone');
+  console.log('  verified: every Sandbox_ record, the stream and the sandbox files are gone; the snapshot and the saved readings go; production canary, olsb-less inbox record, the pull budget ledger and the employee efficiency copies stay\n');
   m.uninstall();
 })().catch(e => { console.error(e); process.exit(1); });
