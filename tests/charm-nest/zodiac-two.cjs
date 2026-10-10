@@ -179,7 +179,7 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
   pass('the cache asks Etsy once for the names (never in the sandbox, never past the day\'s cap), a table without names is the only one asked again');
 
   /* ── 7 · the page: a held line re-reads when the names arrive, and keeps its pieces ─────────────────────────────────────────────────────────────────────── */
-  const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), a = src.indexOf('  const TABLES_LS = "cn.listingSkus.v1"'), b = src.indexOf('  async function pull(run, { silent = false');
+  const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), a = src.indexOf('  const TABLES_LS = "cn.listingSkus.v1"'), b = src.indexOf('  async function pull(');
   assert(a > 0 && b > a, 'the SKU-table code is where the test expects it');
   const vm = require('vm');
   async function page(rows, apiAnswer) {
