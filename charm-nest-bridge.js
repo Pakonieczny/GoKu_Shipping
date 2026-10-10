@@ -11463,11 +11463,24 @@ const Review = window.Review = (() => {
 const Sandbox = window.Sandbox = (() => {
   const on = () => WORKSPACE_SANDBOX;
   let status = null,refreshTask=null;
-  /* The build this file is (keep it the same as the ?v= of its script tag in charm-nest-1.html, which a test checks). A
-     page kept open across a deploy, or a page file kept by a cache, runs an older build than the one on the server:
-     Settings shows both (Paul, 3 Oct: "it still didn't purge the system fully" — which build was he running?). */
-  const BUILD = "20261003-approve-btn";
-  const pageBuild = () => { try { const s = Array.from(document.scripts || []).find(x => /charm-nest-bridge\.js/.test(x.src || "")); return s ? new URL(s.src, location.href).searchParams.get("v") || "" : ""; } catch (_) { return ""; } };
+  /* The build a page runs is what that page loaded, never a constant typed into a file (Paul, 3 Oct: "it still didn't purge
+     the system fully": which build was he running?). A constant typed here went stale with the next release and Settings
+     was red for everyone from then on. The build is read from the page's own tags: the ?v= cache token of every script and
+     stylesheet in its HTML (the token is what makes the browser fetch a changed file). The live side is the same read
+     of the HTML the server holds now (latestBuild, below), so the two are equal exactly when the page runs what is live.
+     A page kept open across a deploy, or a page file kept by a cache, still carries its old tokens and says so. */
+  const buildOf = root => {
+    try {
+      const toks = [];
+      root.querySelectorAll("script[src],link[rel~='stylesheet'][href]").forEach(e => { const u = new URL(e.getAttribute("src") || e.getAttribute("href"), "http://x/"), v = u.searchParams.get("v"); if (v) toks.push(u.pathname.split("/").pop() + "?v=" + v); });
+      if (!toks.length) return null;
+      const sig = toks.sort().join(" "); let h = 2166136261;
+      for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = Math.imul(h, 16777619); }
+      const day = toks.map(t => (/\?v=(2\d{7})/.exec(t) || [])[1] || "").sort().pop() || "build";
+      return { sig, id: day + "-" + (h >>> 0).toString(16).padStart(8, "0").slice(0, 6) };   // (sig: the whole comparison; id: the short name Settings shows)
+    } catch (_) { return null; }
+  };
+  const pageBuild = () => { const b = buildOf(document); return b ? b.id : ""; };
   /* ── the sandbox that was cleaned waits (Paul, 3 Oct: "it still didn't purge the system fully"). After the reload a
      reset ends with, the stream used to start again at step 0, and in Auto the run began, within seconds: the emulated
      Etsy replayed the 17 Sep orders with their real numbers, arrivals, pool rows, sheets and a set came back, and the
@@ -12000,20 +12013,20 @@ const Sandbox = window.Sandbox = (() => {
     set(line("now"), nowText()); set(line("kept"), keptText());
     readBrowser().then(() => set(line("now"), nowText())).catch(() => {});   // (the browser's own counts follow: IndexedDB and the cache answer later)
   }
-  const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }), m = /charm-nest-bridge\.js\?v=([\w.-]+)/.exec(await r.text()); return m ? m[1] : ""; } catch (_) { return ""; } };
+  const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }); return r.ok ? buildOf(new DOMParser().parseFromString(await r.text(), "text/html")) : null; } catch (_) { return null; } };   // (the one check there already was; a parsed copy loads nothing)
   async function paintInfo(host) {
     host = host || document.getElementById("stBuildNote"); if (!host) return;
     const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
     const set = (n, text, bad) => { n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; };
-    const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), p = pageBuild(), stale = !!p && p !== BUILD;
-    set(b, stale ? `Page build ${p}, but this script is build ${BUILD}: the page file is out of date — reload with Ctrl+Shift+R` : `Page build ${BUILD}`, stale);
+    const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), cur = buildOf(document);
+    set(b, cur ? `Page build ${cur.id}` : "Page build unknown", false);
     set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText()); set(kp, keptText());
     refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); return readBrowser(); }).then(() => set(n, nowText())).catch(() => {});   // (a production page's first read is the light one: Settings wants the counts)
     const latest = await latestBuild();
-    if (latest && latest !== BUILD) set(b, `Page build ${BUILD} — a newer build (${latest}) is live: reload this page with Ctrl+Shift+R to run it`, true);
-    else if (latest && !stale) set(b, `Page build ${BUILD} (the latest on the server)`);
+    if (cur && latest && latest.sig !== cur.sig) set(b, `Page build ${cur.id} — a newer build (${latest.id}) is live: reload this page with Ctrl+Shift+R to run it`, true);
+    else if (cur && latest) set(b, `Page build ${cur.id} — up to date`);
   }
-  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, staleStop, restoredStream, runId: () => streamIdent, browserLeft, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: () => BUILD, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, staleStop, restoredStream, runId: () => streamIdent, browserLeft, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: pageBuild, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
