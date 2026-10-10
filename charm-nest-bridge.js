@@ -1437,6 +1437,8 @@ const Orders = window.Orders = (() => {
       if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
       window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
+      // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
+      if (O.questionGone && O.questionGone(row, prev)) { row.state = "pulled"; row.reason = null; delete row.poolTry; }
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
       else if (row.state === "noDesign" && prev && prev.noDesign && prev.noDesignWhy && prev.noDesignWhy !== "on the no-design list" && !(row.poolIds || []).length && !row.hold) { row.state = "pulled"; row.reason = null; }
@@ -5149,6 +5151,11 @@ const Engrave = window.Engrave = (() => {
       TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
     } catch (_) {}
   }
+  /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
+  function discWordsOf(row, jobs) {
+    const S = SIDES(); if (!S || !S.wordsForDiscs) return null;
+    return S.wordsForDiscs(row.spec || {}, jobs.map(j => j.slot), { engravingNote: typeof O !== "undefined" && O ? O.engravingNote : null });
+  }
   async function classifyOnce(row) {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
@@ -5158,6 +5165,19 @@ const Engrave = window.Engrave = (() => {
     // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
     if (jobs.length > 1 && jobs.every(j => j.seededFrom && j.text)) {
       for (const j of jobs) { const earOf = SIDES().earOf(j.slot); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
+      return job;
+    }
+    // the discs of one counted line whose note says plainly which words go on which disc ("Tag 1: J, Tag 2: Q", DISCREAD): each disc takes its own words here, no paid reading;
+    // anything the note leaves open (or another voice on the order: a buyer message, a staff note) goes to the reader below as before
+    const discSplit = discWordsOf(row, jobs);
+    if (discSplit) {
+      for (const j of jobs) {
+        const w = discSplit.words[+String(j.slot).slice(1) - 1];
+        j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
+        Object.assign(j, { text: w, lines: [w], source: "personalization", quote: (sp.personalization || []).join(" / "), confidence: 1, questions: [], claudeReasoning: null, requests: { side: "back", font: null, handwriting: false, image: false }, wordsSource: "personalization:" + discSplit.how });
+        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${SIDES().earOf(j.slot)}: "${w}" read from the note (${discSplit.how}), no paid reading`);
+        await setReady(j);
+      }
       return job;
     }
     for (const j of jobs) {
@@ -14755,7 +14775,10 @@ const OrderWin = window.OrderWin = (() => {
     try { row.spec = O.interpretLine(row.order, row.line, Orders.ctx()); } catch (_) { row.spec = { quantity: row.line.quantity || 1, designSku: row.line.sku, personalization: row.line.personalization || [] }; }
     if (row.metal && !row.spec.material) row.spec.material = row.metal;
     row.material = row.materialOverride || row.spec.material || row.metal || null;
-    row.problems = []; return row;
+    row.problems = [];
+    // the run's stored line says "held" for a question the line no longer raises (read again just now): it is not held for that
+    if (O.staleQuestionHold && O.staleQuestionHold(row)) { row.state = "pulled"; row.reason = null; }
+    return row;
   }
   async function lookUp(rid, say) {
     let pools = [], failed = null;

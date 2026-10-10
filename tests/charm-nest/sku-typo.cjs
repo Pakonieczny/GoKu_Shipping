@@ -121,9 +121,9 @@ eq([asked, viaInventory, read2], [180, 180, 360], '180 products read twice (with
   eq(c, 180, 'with no inventory table loaded the 180 products still resolve (the transaction carries the SKU)'); }
 
 // ── 4 · any other misspelling still waits ───────────────────────────────────────────────────────────────────────────────────────────────
-const waits = (sku, why) => {
+const waits = (sku, why, extra) => {
   const s = read('4170000009', lineOf(Object.assign({}, real, { sku })));
-  eq([s.designSku, problems(s)], [String(sku).trim().toUpperCase(), ['unmatchedSku:not in any master file']], `${JSON.stringify(sku)}: ${why}`);
+  eq([s.designSku, problems(s)], [String(sku).trim().toUpperCase(), ['unmatchedSku:not in any master file'].concat(extra || [])], `${JSON.stringify(sku)}: ${why}`);
   eq(s.skuSource, 'transaction', `${JSON.stringify(sku)}: no alias applied`);
 };
 waits('nitial_Disc_9999', 'a different number: the master has INITIAL_DISC_9999, a look-alike is never taken');
@@ -133,7 +133,7 @@ waits('INITIA_DISC_4571', 'the last letter of the word lost');
 waits('nitial_Disc_4571x', 'a letter added');
 waits('NIITIAL_DISC_4571', 'a letter doubled');
 waits('NITIAL_DISC_4571-CO', 'the typo with the charm-only mark is not exactly the typo');
-waits('NITIAL_DISC_4571 (HUGGIE)', 'a huggie version of the typo is not exactly the typo');
+waits('NITIAL_DISC_4571 (HUGGIE)', 'a huggie version of the typo is not exactly the typo', ['needsMapping']);   // (EARWORDS: an earring SKU under a necklace title is also asked once, "is this a pair of earrings?")
 waits('Nitial_Disc_4572', 'another number');
 { const s = read('4170000009', lineOf(Object.assign({}, real, { sku: 'INITIAL_8391' }))); eq([s.designSku, s.skuSource, problems(s)], ['INITIAL_8391', 'transaction', []], 'a SKU the master holds reads as it always did'); }
 { const s = read('4170000009', lineOf(Object.assign({}, real, { sku: 'initial disc 4571' }))); eq([s.designSku, s.skuSource], [GOOD, 'spelling'], 'the correct SKU in other spacing and case is the master spelling rule, not the typo table'); }
