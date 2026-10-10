@@ -25,8 +25,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const { start } = require('./bridge-server.cjs');
 const FAM = require(path.join(root, 'charm-nest-sandbox-families.js'));
 const CODE = process.env.CHARM_NEST_DELETE_CODE;
-const WRITES = /^(pool|back|set|putSheet|deleteSheet|run|release|arrival|custom|cancel|timelineAdd|sandboxStream|sandboxPut|sandboxCancel|put|alias|noDesign|optionMap|start|laser|rose|flow|purge)/;
-const READS = /(Status)$/;
+const WRITES = /^(poolPut|poolUpdate|setAllocate|setUpdate|putSheet|deleteSheet|runPut|runArchive|backPut|backInvalidate|releasePut|arrivalRecord|customPut|customReopen|customDelete|customDecide|customSheetPut|cancelPut|cancelRestore|timelineAdd|sandboxStream|sandboxPut|sandboxCancel|sandboxPullOrders|putCharms|startAgent|startJob|aliasPut|optionMapPut|noDesignPut|noDesignDelete|roseRecordCut|laserDone|flowApply|purgeHistory|sandboxReset)$/;   // (the ops that write; every other op the page makes is a read)
 
 /** A dirty sandbox, its production twin and the protected records, in the fake's Firestore and Storage. */
 function seed(st) {
@@ -141,6 +140,7 @@ async function main() {
     else assert(/^Wipe everything the sandbox made: .*seals, cancelled orders.*files, and everything this browser saved of it .*The Charm repo and employee efficiency stay, and no real record is touched\./.test(asked[0]), `${name}: the reset question names what goes and what stays: ${asked[0]}`);
 
     if (purge503) {
+      await page.waitForFunction(() => /Sandbox cleaned/.test(document.getElementById('toasts').innerText), null, { timeout: 10000 }).catch(() => {});
       const said = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent).join(' | '));
       assert(/Purged 4 real run record\(s\)\. Sandbox cleaned — /.test(said) && !/press Purge again/i.test(said), `${name}: a purge that ran out of time part way carries on with the wipe and says done only when counted: ${said}`);
     }
@@ -165,13 +165,14 @@ async function main() {
     assert(lastWipe >= 0, `${name}: the page asked the cloud to wipe the sandbox`);
     const after = ops.slice(lastWipe + 1);
     assert(after.includes('sandboxStatus'), `${name}: the cloud was counted after the last delete: ${after}`);
-    assert.deepStrictEqual(after.filter(o => WRITES.test(o) && !READS.test(o)), [], `${name}: nothing was written after the final delete (the line is a read): ${after}`);
+    assert.deepStrictEqual(after.filter(o => WRITES.test(o)), [], `${name}: nothing was written after the final delete (the line is a read): ${after}`);
     if (expect === 'purge') assert(ops.indexOf('purgeHistory') >= 0 && ops.indexOf('purgeHistory') < lastWipe, `${name}: the purge ran first, then the wipe`);
     else assert(!ops.includes('purgeHistory'), `${name}: a Reset never purges production's run history`);
     const shape = ops.filter((o, i) => i === 0 || o !== ops[i - 1]).filter(o => /^(purgeHistory|sandboxReset|sandboxStatus)$/.test(o)).join(' > ');
 
     // ── Settings after: EVERY family at 0, the kept line, the last-reset line ──
     await openSettings(page);
+    await page.waitForFunction(() => /\(this browser\)/.test((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || ''), null, { timeout: 20000 });   // (the browser's own counts follow the cloud's: IndexedDB and the cache answer a moment later)
     const now = await line(page, 'now'), kept = await line(page, 'kept'), last = await line(page, 'last');
     const fams = FAM.server();
     assert(/^In the sandbox now: nothing — /.test(now), `${name}: the line says the sandbox holds nothing: ${now.slice(0, 160)}`);
@@ -180,6 +181,8 @@ async function main() {
     const missing = fams.filter(f => !now.includes(`0 ${f.label}`)).map(f => f.label);
     assert.deepStrictEqual(missing, [], `${name}: every family of the registry is listed at 0 (${fams.length} of them), missing: ${missing.join(', ')}`);
     assert(!/Not counted by this server/.test(now), `${name}: the server counted every family: ${now.slice(-200)}`);
+    const bmissing = FAM.browser().filter(f => f.kind !== 'station').filter(f => !now.includes(`0 ${f.label} (this browser)`)).map(f => f.label);
+    assert.deepStrictEqual(bmissing, [], `${name}: every browser store of the registry is listed at 0 as well, missing: ${bmissing.join(', ')}`);
     assert.strictEqual(kept, 'Kept, never wiped: Charm repo 3 designs; employee efficiency 5 daily records (2 made in the sandbox).', `${name}: the kept line is unchanged by the wipe`);
     assert(/Last (reset|purge) .+ — \d+ cloud record\(s\) and \d+ file\(s\) removed .*nothing left in the cloud \(all \d+ kinds counted at 0\)/.test(last), `${name}: the last-reset line says nothing is left and how many kinds read 0: ${last}`);
     const inside = await page.evaluate(() => { const n = document.getElementById('stBuildNote'), d = document.getElementById('dlgSettings'); return { inside: d.contains(n), open: document.querySelectorAll('dialog[open]').length }; });
@@ -203,22 +206,23 @@ async function main() {
     await page.goto(`${sorterOrigin}/charm-nest-1.html`); await page.waitForFunction(() => window.CN && window.Sandbox, null, { timeout: 60000 });
     await page.evaluate(station => { const s = JSON.parse(localStorage.getItem('cn.settings') || '{}'); Object.assign(s, { sandbox: 'on', dsOrigin: station, pollOrders: 'off' }); localStorage.setItem('cn.settings', JSON.stringify(s)); localStorage.setItem('cn.sandboxHold', '{"at":1}'); }, stationOrigin);
     await page.reload(); await page.waitForFunction(() => window.CN && window.Sandbox && Session.ready() && CN.S.cloud.ok !== null, null, { timeout: 60000 });
-    const ask = async () => { await page.evaluate(() => { openSettings(); return Sandbox.refresh(); }); await page.waitForTimeout(400); return page.evaluate(() => ({ now: Sandbox.nowText(), kept: Sandbox.keptText(), dom: [...document.querySelectorAll('#stBuildNote [data-i]')].map(n => n.dataset.i + ': ' + n.textContent) })); };
+    const ask = async until => { for (let i = 0; i < 5; i++) { await page.evaluate(() => { openSettings(); return Sandbox.refresh(); }); if (await page.waitForFunction(until, null, { timeout: 3000, polling: 100 }).then(() => true, () => false)) break; }   // (a read still out from the page's load may land after ours: wait for the answer this step asked for)
+      return page.evaluate(() => ({ now: Sandbox.nowText(), kept: Sandbox.keptText(), dom: [...document.querySelectorAll('#stBuildNote [data-i]')].map(n => n.dataset.i + ': ' + n.textContent) })); };
     const cap = 'Storage:charmnest/sandbox/';
     answer = { ok: true, snapshot: null, records: { Charm_Nest_Sheets: 12, Charm_Pool: 1500, [cap]: 1000, Charm_Nest_Sets: 0 }, recordsCapped: { [cap]: true }, kept: { charmRepo: 1234, efficiencyDays: 1000 } };
-    await page.evaluate(() => { Sandbox.browserLeft = () => [{ key: 'idb', label: 'saved workspace parts', n: 2 }, { key: 'ls', label: 'stored keys', n: 0 }]; });
-    let r = await ask();
-    assert(/^In the sandbox now: 12 sheets, 1,500 pool rows, 1,000\+ sandbox files, 2 saved workspace parts \(this browser\), 0 sets, 0 stored keys \(this browser\)\. Not counted by this server yet: .*set counters/.test(r.now), 'formatting: what holds something comes first, a capped count says so, the browser rows are listed, a family the server did not count is named: ' + r.now);
+    await page.evaluate(() => { localStorage.setItem('cn.team.drafts:sandbox', '{"1":{"t":"x","at":1}}'); });   // (one stored sandbox key in this browser: the registry's browser rows count it)
+    let r = await ask('/12 sheets/.test(Sandbox.nowText()) && /\\(this browser\\)/.test(Sandbox.nowText())');
+    assert(/^In the sandbox now: 12 sheets, 1,500 pool rows, 1,000\+ sandbox files, [1-9]\d* stored sandbox keys \(this browser\), 0 sets, .*0 saved workspace parts \(this browser\).*\. Not counted by this server yet: .*set counters/.test(r.now) && !/nothing — /.test(r.now), 'formatting: what holds something comes first, a capped count says so, the browser rows are listed (a stored key counted), a family the server did not count is named: ' + r.now + ' || ' + JSON.stringify(r.dom.map(x => x.slice(0, 60))));
     assert.strictEqual(r.kept, 'Kept, never wiped: Charm repo 1,234 designs; employee efficiency 1,000 daily records.', 'formatting: the kept line without a sandbox share');
     assert(r.dom.length >= 4 && /^kept: Kept, never wiped/.test(r.dom[r.dom.length - 1]) && /^now: In the sandbox now/.test(r.dom[r.dom.length - 2]), 'formatting: the now line, then the kept line: ' + r.dom.map(x => x.slice(0, 40)).join(' | '));
     answer = { ok: true, snapshot: null, records: {}, kept: {} };
-    await page.evaluate(() => { delete Sandbox.browserLeft; });
-    r = await ask(); assert(/^In the sandbox now: the server gave no counts\.$/.test(r.now) && /^Kept, never wiped: the Charm repo and employee efficiency\.$/.test(r.kept), 'formatting: an answer with no counts says so (it does not claim 0), and the kept line still names what stays: ' + r.now + ' / ' + r.kept);
-    answer = { error: 'boom' }; r = await ask();
+    r = await ask('/Not counted by this server yet: sheets, sets/.test(Sandbox.nowText())'); assert(!/nothing — /.test(r.now) && /Not counted by this server yet: sheets, sets/.test(r.now) && /^Kept, never wiped: the Charm repo and employee efficiency\.$/.test(r.kept), 'formatting: an answer with no counts never claims "nothing", names the families it lacks, and the kept line still names what stays: ' + r.now.slice(0, 200) + ' / ' + r.kept);
+    answer = { error: 'boom' }; r = await ask('/could not be read/.test(Sandbox.nowText())');
     assert(/could not be read/.test(r.now) && r.kept === '', 'formatting: an unreadable status says so and claims no kept counts: ' + r.now);
     await ctx.close(); srv.close(); console.log('ok: formatting of the line');
   }
   await formatting();
+  if (process.env.ONLY_FORMAT) { await browser.close(); process.exit(0); }
 
   const a = await scenario('1 Reset sandbox records', { sandbox: true, button: '#stSbReset', expect: 'reset' });
   const b = await scenario('2 Reset the sandbox…', { sandbox: true, button: '#stSandboxReset', expect: 'reset' });
