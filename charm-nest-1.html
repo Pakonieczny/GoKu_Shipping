@@ -2430,6 +2430,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .doneRow .rowFacts{line-height:1.6}.doneRow .rowExcerpt{line-height:1.6;-webkit-line-clamp:3}.doneRow .engravingIdentity .w{white-space:pre-wrap;line-height:1.6;font-size:13px;max-width:100%}
 .doneRow .reviewDetails,.doneRow>.doneDetail{grid-column:1/-1;grid-row:2}
 .comparePair figcaption{position:relative;display:flex;justify-content:center;align-items:center;gap:3px;min-height:18px;white-space:nowrap}
+/* the Vector design caption of an earring pair line says "Vector design · Left + Right" (Paul, 10 Oct 2026): longer than the 88px box, so it wraps under its picture instead of running into the Etsy listing's caption */
+.comparePair figure:first-child figcaption{white-space:normal;text-align:center;line-height:1.2;text-wrap:balance}
 .comparePair .placementThumb{overflow:hidden;display:block;isolation:isolate;text-align:center}.comparePair .placementThumb:not(.zoomReady){display:grid;place-items:center}
 .comparePair .placementThumb img,.comparePair .placementThumb canvas{display:block;width:100%;height:100%;object-fit:contain;transform-origin:center center;transition:transform .3s ease;user-select:none;-webkit-user-drag:none;max-width:none}
 .comparePair .zoomReady{cursor:grab;touch-action:none;user-select:none}.comparePair .zoomReady:active{cursor:grabbing}
@@ -3203,7 +3205,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1"></script>
-<script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2"></script>
+<script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache"></script>
@@ -3213,22 +3215,22 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-backs.js?v=20261005-engtog1-pe1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
-<script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
+<script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-ew1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2"></script>
-<script src="charm-nest-set-rules.js?v=20261010-sf1"></script>
+<script src="charm-nest-set-rules.js?v=20261010-sf2"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1"></script>
-<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-bb1"></script>
+<script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-bb1-rlp1"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -7180,7 +7182,7 @@ boot();
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-ew1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7243,8 +7245,8 @@ try {
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2"></script>
-<script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1"></script>
+<script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1"></script>
@@ -7263,7 +7265,7 @@ try {
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1"></script>
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
 <script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1"></script>

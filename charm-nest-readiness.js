@@ -8,6 +8,11 @@
    * The test is charm-nest-rose.js holdsLine, the one the Library flow asks too (GF1): readiness and a move can never read a record differently. */
   const lineMissing=s=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestRose;if(!R&&typeof require==='function'){try{R=require('./charm-nest-rose');}catch(_){R=null;}}return !!(R&&(typeof R.holdsLine==='function'?R.holdsLine(s):R.cuts(s.metal)&&s.roseStockId&&!s.rosePlanHash));};
   const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
+  /* Paul, 10 Oct: a Set of Sheets may exist only with at least 1 Completed GF sheet and 1 Completed SS sheet (charm-nest-set-rules.js, the one definition).
+   * An uncommitted set without them is not ready, whatever its sheets have done: it waits, and says so. A set already committed, completed or replaced is never
+   * blocked afterwards (SetRules.gate says applies:false), nor is one whose records carry no completion mark. Looked up when asked, so script order does not matter. */
+  const noRules={applies:false,ok:true,missing:[],reason:'',short:'',line:'',have:{GF:0,SS:0}};
+  const setRules=(st,sheets)=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R&&R.gate?R.gate(st,sheets):noRules;};
   const url=x=>typeof x==='string'?x:x?.url;
   /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders: EITHER button, or both, in any order and
    * any number of reprints, releases the piece: both write state 'completed' on the record; Paul, 5 Oct: "this chain only piece
@@ -69,7 +74,8 @@
     const unique=[...new Map((sheets || []).map(x=>[x.id || x.sheetId,x])).values()],reports=unique.map(sheet);
     const expected=s.sheetIds || unique.map(x=>x.id || x.sheetId),complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
     const stages=Object.fromEntries(['layout','front','approval','backs','qr','orders'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
-    return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready),sheets:unique.length};
+    const rules=setRules(s,unique);
+    return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready) && rules.ok,rules,sheets:unique.length};
   }
   // Completion is proof that this saved sheet already passed through Laser cutting.
   // Reopening clears its current completion flag, not that approval. Blue readiness seals
@@ -85,7 +91,8 @@
     const unique=[...new Map((sheets || []).filter(x=>!x.archived).map(x=>[x.id || x.sheetId,x])).values()];
     const expected=[...new Set(s.sheetIds || unique.map(x=>x.id || x.sheetId))];
     const complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
-    return {...set(s,unique),ready:complete && unique.every(x=>laserSheet(x).ready)};
+    const grouped=set(s,unique);
+    return {...grouped,ready:complete && unique.every(x=>laserSheet(x).ready) && grouped.rules.ok};
   }
   /* ── Pieces, and what an order waits for (Paul, 5 Oct: "Pooled orders are only truthful when a given order has multi pieces that
    * are spread across 2 or more sheets. Same with the SKU missing issues"). One piece is one copy of a line (a line of quantity 2 is
@@ -632,8 +639,11 @@
       if(b){Object.assign(row,b,{text:`${label} · ${b.why}`});blockers.push({sheetId:i,sheetLabel:label,...b,text:row.text});}
       out.push(row);
     }
+    // the principle (Paul, 10 Oct): an uncommitted set without a completed GF sheet and a completed SS sheet is not ready, and is told first
+    const rules=setRules(st,live);
+    if(rules.applies && !rules.ok){const b={sheetId:'',sheetLabel:setName(st),step:'nesting',stepLabel:stepName('nesting'),why:rules.short,counter:null,rule:'setPrinciple'};b.text=`${b.sheetLabel} · ${b.why}`;blockers.unshift(b);}
     const reason=blockers.length?blockers[0].text+(blockers.length>1?`, and ${blockers.length-1} more`:''):'';
-    return {ready:order.length>0 && !blockers.length,blockers,reason,sheets:out,toApprove:out.filter(x=>!x.missing && x.state!=='past').map(x=>x.sheetId),single:order.length<2,setLabel:setName(st)};
+    return {ready:order.length>0 && !blockers.length,blockers,reason,rules,sheets:out,toApprove:out.filter(x=>!x.missing && x.state!=='past').map(x=>x.sheetId),single:order.length<2,setLabel:setName(st)};
   }
   // the card the page draws: x[k] = {ok,hard,items,detail,short} for the three gated steps, in the words of a sheet or a set
   function build(kind,id,label,x,ready,done,laserWords,laserShort,laserItems){
@@ -705,7 +715,10 @@
       const lead=gone.length?`${count(gone.length,'sheet')} of this set cannot be found${holding.length?`, and ${count(holding.length,'sheet')} ${holding.length===1?'is':'are'} not ready`:''}`:holding.length?`${holding.length} of ${parts.length} sheets ${holding.length===1?'is':'are'} not ready: ${bits.join(', ')}${holding.length>3?`, and ${holding.length-3} more`:''}`:'';
       if(lead)e.nextText=sentence(lead);
     }
+    // the principle first: a set without a completed GF sheet and a completed SS sheet cannot go on, whatever its sheets have done
+    const rules=setRules(st,live);
+    if(!done && rules.applies && !rules.ok){e.nextText=sentence(rules.line);e.rules=rules;}
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,setRules,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });
