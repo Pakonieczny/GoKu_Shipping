@@ -112,6 +112,134 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     assert.equal(Rows.approveBoth(row, o).ok, true); void mk;
   });
 
+  // ═══ 1 (continued) · DISCCYCLE (10 Oct 2026): a counted-disc order is ONE row, its discs cycled one by one; the same pure module and the shared piece switch ═══
+  const Switch = require(path.join(root, 'charm-nest-piece-switch.js'));
+  await t('1g GOLDEN: for pairs, singles and plain quantity-N lines the grouping is byte for byte what it was (the ROWENGRAVE group(), copied here, on 3000 random sets); opting into discs changes nothing without discs', () => {
+    // the module as ROWENGRAVE shipped it (f275e21a), for the comparison
+    const KEY0 = /^(.*)#(L|R|D\d{1,2})$/;
+    const slot0 = j => { if (!j) return null; if (j.slot) return String(j.slot); const m = KEY0.exec(String(j.key == null ? '' : j.key)); return m ? m[2] : null; };
+    const ear0 = j => { const s = slot0(j); return s === 'L' || s === 'R' ? s : null; };
+    const line0 = j => { if (!j) return ''; if (j.rowKey) return String(j.rowKey); const m = KEY0.exec(String(j.key == null ? '' : j.key)); return m ? m[1] : String(j.key == null ? '' : j.key); };
+    const mk0 = (lineKey, jobs) => ({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: jobs.length === 2 });
+    function group0(selected, universe) {
+      const uni = Array.isArray(universe) ? universe : selected || [], ears = new Map();
+      for (const j of uni) { const s = ear0(j); if (!s) continue; const k = line0(j); if (!ears.has(k)) ears.set(k, {}); if (!ears.get(k)[s]) ears.get(k)[s] = j; }
+      const out = [], done = new Set();
+      for (const j of selected || []) {
+        const s = ear0(j), k = line0(j);
+        if (!s) { out.push(mk0(k, [j])); continue; }
+        if (done.has(k)) continue; done.add(k);
+        const e = Object.assign({}, ears.get(k) || {}); if (!e[s]) e[s] = j;
+        out.push(mk0(k, ['L', 'R'].filter(x => e[x]).map(x => e[x])));
+      }
+      return out;
+    }
+    let seed = 20261010; const rnd = n => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed % n; };
+    for (let round = 0; round < 3000; round++) {
+      const all = [];
+      for (let ln = 0; ln < 1 + rnd(5); ln++) {
+        const key = 'ord' + rnd(4) + ':' + ln, kind = rnd(4);   // 0 pair, 1 single ear, 2 plain line, 3 a one-slot line
+        const mkj = (slot, extra) => Object.assign({ key: slot ? key + '#' + slot : key, rowKey: slot ? key : undefined, slot: slot || undefined, state: 'review', lines: ['w' + rnd(3)] }, extra || {});
+        if (kind === 0) { if (rnd(5)) all.push(mkj('L')); if (rnd(5)) all.push(mkj('R')); }
+        else if (kind === 1) all.push(mkj(rnd(2) ? 'L' : 'R'));
+        else if (kind === 2) all.push(mkj(null));
+        else all.push(mkj(null, { key: key + '/' + rnd(9) }));
+      }
+      for (let i = all.length - 1; i > 0; i--) { const j = rnd(i + 1); [all[i], all[j]] = [all[j], all[i]]; }
+      const sel = all.filter(() => rnd(4)), uni = rnd(3) ? all : sel;
+      const want = group0(sel, uni);
+      for (const got of [Rows.group(sel, uni), Rows.group(sel, uni, {}), Rows.group(sel, uni, { discs: true }), Rows.group(sel, uni, { discs: false })]) {
+        assert.equal(got.length, want.length); got.forEach((r, i) => { assert.deepEqual(Object.keys(r), Object.keys(want[i])); assert.equal(r.key, want[i].key); assert.equal(r.lineKey, want[i].lineKey); assert.equal(r.pair, want[i].pair); assert.equal(r.lead, want[i].lead); assert.equal(r.jobs.length, want[i].jobs.length); r.jobs.forEach((j, x) => assert.equal(j, want[i].jobs[x])); });
+      }
+    }
+    // the rest of the module, for lines with no discs
+    const jl = job(ROW.duck, 'L', 'review', ['Mom']), jr = job(ROW.duck, 'R', 'review', ['Mom']), pend = job(ROW.pend, null, 'review', ['Mom']);
+    const q = Rows.group([jl, jr, pend], [jl, jr, pend], { discs: true });
+    assert.deepEqual(Rows.counts(q, []), { decided: 0, remaining: 2, n: 1, of: 2, text: '1 of 2 · 0 done' });
+    assert.equal(Rows.neighbour(q, jr.key, 1).lead, pend); assert.equal(Rows.kindOf(q[0]), 'ears'); assert.equal(Rows.kindOf(q[1]), null); assert.equal(Rows.multi(q[0]), true); assert.equal(Rows.multi(q[1]), false);
+    assert.equal(Rows.step(q, jl.key, 1).row, q[1], 'an earring line is ONE stop: from the Left, Next is the next row'); assert.equal(Rows.step(q, jr.key, 1).row, q[1]); assert.equal(Rows.step(q, pend.key, -1).row, q[0]);
+    assert.equal(Rows.step(q, jl.key, 1).job, null, 'a row that is not a disc row is one stop: the caller opens its lead');
+    assert.equal(Rows.approveAll(q[0], { shown: () => true }).ok, false, 'two ears are never approved by "all discs"');
+  });
+  await t('1h discs: the discs of one counted line are ONE row (D1, D2, D3 in disc order, wherever they stood), placed where the first one stood; ears, singles and plain lines around them are as before', () => {
+    const duckL = job(ROW.duck, 'L', 'review', ['Mom']), duckR = job(ROW.duck, 'R', 'review', ['Mom']);
+    const d1 = job(ROW.disc, 'D1', 'review', ['J']), d2 = job(ROW.disc, 'D2', 'review', ['Q']), d3 = job(ROW.disc, 'D3', 'review', ['K']);
+    const pend = job(ROW.pend, null, 'review', ['Mom']), plain = job(ROW.plain3, null, 'review', ['Mom']);
+    const jobs = [d2, duckL, pend, d1, duckR, plain, d3];
+    const rows = Rows.group(jobs, jobs, { discs: true });
+    assert.deepEqual(rows.map(r => r.jobs.map(j => j.key)), [[d1.key, d2.key, d3.key], [duckL.key, duckR.key], [pend.key], [plain.key]], 'one row per line; the discs are in disc order, the row is where the first of them stood');
+    assert.equal(rows[0].discs, true); assert.equal(rows[0].pair, false); assert.equal(rows[0].lead, d1, 'the lead is Disc 1, not the first that happened to come'); assert.equal(rows[0].key, d1.key); assert.equal(rows[0].lineKey, ROW.disc.key);
+    assert.equal(Rows.kindOf(rows[0]), 'discs'); assert.equal(Rows.multi(rows[0]), true); assert.equal(Rows.discOf(d3), 3); assert.equal(Rows.discOf(duckL), 0); assert.equal(Rows.pieceOf(d2), 'D2'); assert.equal(Rows.pieceOf(duckR), 'R'); assert.equal(Rows.pieceOf(pend), null);
+    assert.equal(Rows.discOf({ key: ROW.disc.key + '#D10' }), 10, 'ten discs and more read from the key');
+    // without the option the discs are rows of their own, as ROWENGRAVE shipped
+    assert.equal(Rows.group(jobs, jobs).length, 7 - 1, 'seven jobs, the two ears one row');
+    // a search that finds one disc, or a tab holding one disc, gives the row the others from the same set; with one disc here it is a row of one disc
+    assert.deepEqual(Rows.group([d2], [d1, d2, d3], { discs: true })[0].jobs, [d1, d2, d3]);
+    const one = Rows.group([d3], [d3], { discs: true }); assert.equal(one.length, 1); assert.equal(one[0].discs, false); assert.equal(Rows.multi(one[0]), false); assert.deepEqual(one[0].jobs, [d3]);
+    const two = Rows.group([d1, d3], [d1, d3], { discs: true }); assert.equal(two.length, 1); assert.equal(two[0].discs, true); assert.deepEqual(two[0].jobs, [d1, d3], 'Disc 2 is decided: the row holds the discs still to settle');
+    // two necklaces, three discs and two discs
+    const n2a = job(ROW.disc, 'D1', 'review', ['A']), n2b = job(ROW.disc, 'D2', 'review', ['B']);
+    assert.equal(Rows.group([n2a, n2b], [n2a, n2b], { discs: true })[0].discs, true);
+  });
+  await t('1i counts in ROWS (an order of 3 discs is one), and Back / Next walk through every disc of every order in turn', () => {
+    const d1 = job(ROW.disc, 'D1', 'review', ['J']), d2 = job(ROW.disc, 'D2', 'review', ['Q']), d3 = job(ROW.disc, 'D3', 'review', ['K']);
+    const pend = job(ROW.pend, null, 'review', ['Mom']), duckL = job(ROW.duck, 'L', 'review', ['Mom']), duckR = job(ROW.duck, 'R', 'review', ['Mom']);
+    const rows = Rows.group([pend, d1, d2, d3, duckL, duckR], [pend, d1, d2, d3, duckL, duckR], { discs: true });
+    assert.equal(rows.length, 3); assert.deepEqual(Rows.counts(rows, []), { decided: 0, remaining: 3, n: 1, of: 3, text: '1 of 3 · 0 done' }, 'three orders to settle, as ROWENGRAVE counts');
+    assert.equal(Rows.counts(rows, [{}, {}]).text, '3 of 5 · 2 done');
+    const order = []; let at = pend.key; for (let i = 0; i < 6; i++) { const s = Rows.step(rows, at, 1); order.push(s.job ? s.job.key : s.row.lead.key); at = s.job ? s.job.key : s.row.lead.key; }
+    assert.deepEqual(order, [d1.key, d2.key, d3.key, duckL.key, pend.key, d1.key], 'Next: pendant, Disc 1, Disc 2, Disc 3, the ears (one stop), the pendant again (wraps)');
+    const back = []; at = pend.key; for (let i = 0; i < 6; i++) { const s = Rows.step(rows, at, -1); const k = s.job ? s.job.key : s.row.lead.key; back.push(k); at = k; }
+    assert.deepEqual(back, [duckL.key, d3.key, d2.key, d1.key, pend.key, duckL.key], 'Back: the ears, then Disc 3, Disc 2, Disc 1, the pendant');
+    assert.equal(Rows.step(rows, 'nowhere', 1).row, rows[0], 'a key not in the rows: the first stop'); assert.equal(Rows.step(rows, 'nowhere', -1).row, rows[2], 'or the last'); assert.equal(Rows.step([], 'x', 1), null);
+    assert.equal(Rows.step(rows, d2.key, 1).job, d3); assert.equal(Rows.step(rows, d2.key, -1).job, d1); assert.equal(Rows.step(rows, duckR.key, -1).job, d3, 'from the Right ear, Back is the last disc of the order before');
+  });
+  await t('1j "Approve all discs": only when every remaining disc is ready with a placement that passed, nothing running, the very same words, and every disc has been shown', () => {
+    const mkd = (n, words) => Object.assign(job(ROW.disc, 'D' + n, 'review', words), readyFit());
+    const d1 = mkd(1, ['Mom']), d2 = mkd(2, ['Mom']), d3 = mkd(3, ['Mom']);
+    const row = { discs: true, jobs: [d1, d2, d3] }, shown = new Set([d1, d2, d3]), o = { shown: j => shown.has(j) };
+    assert.equal(Rows.approveAll(row, o).ok, true);
+    assert.equal(Rows.approveAll({ discs: false, jobs: [d1] }, o).ok, false, 'one disc: nothing to approve together'); assert.equal(Rows.approveAll(null, o).ok, false);
+    d3.lines = ['Dad']; assert.match(Rows.approveAll(row, o).why, /words differ between the discs/); assert.equal(Rows.sameWordsAll(row.jobs), false); d3.lines = ['Mom']; assert.equal(Rows.sameWordsAll(row.jobs), true);
+    shown.delete(d2); assert.match(Rows.approveAll(row, o).why, /Look at Disc 2's placement first/); shown.add(d2);
+    d2.state = 'words'; assert.match(Rows.approveAll(row, o).why, /placement to check first/); d2.state = 'review';
+    d1.verify = { geometry: { ok: false } }; assert.equal(Rows.approveAll(row, o).ok, false, 'a placement that failed its check is never approved'); d1.verify = { geometry: { ok: true } };
+    d3.approvalPreparing = true; assert.match(Rows.approveAll(row, o).why, /still being prepared/); d3.approvalPreparing = false;
+    assert.equal(Rows.approveAll(row, { shown: o.shown, busy: j => j === d1 }).ok, false);
+    d1.lines = []; d2.lines = []; d3.lines = []; assert.equal(Rows.approveAll(row, o).ok, false, 'no words is never "the same words"'); d1.lines = d2.lines = d3.lines = ['Mom'];
+    assert.equal(Rows.approveAll(row, {}).ok, true, 'without a shown() test the caller owns the check');
+  });
+  await t('1k the piece switch (shared by every place that shows a counted line): pieces, the current one, next / back, per-piece state, and the very markup of the Left | Right switch for two ears', () => {
+    const d1 = Object.assign(job(ROW.disc, 'D1', 'review', ['J']), readyFit(), { font: { name: 'Typewriter', asked: 'Typewriter' } }), d2 = job(ROW.disc, 'D2', 'words', ['Q'], { font: 'Source Sans 3' }), d3 = job(ROW.disc, 'D3', 'classify', []);
+    const ps = Switch.list([d1, d2, d3], { of: 3, isWorking: j => j === d3 });
+    assert.deepEqual(ps.map(p => [p.slot, p.kind, p.n, p.label, p.name, p.tag, p.words, p.font.name, p.stage, p.busy]), [
+      ['D1', 'disc', 1, 'Disc 1', 'Disc 1', 'DISC 1 of 3', 'J', 'Typewriter', 'Placement to check', false],
+      ['D2', 'disc', 2, 'Disc 2', 'Disc 2', 'DISC 2 of 3', 'Q', 'Source Sans 3', 'Words to confirm', false],
+      ['D3', 'disc', 3, 'Disc 3', 'Disc 3', 'DISC 3 of 3', '', '', 'Reading words…', true]]);
+    assert.equal(Switch.kindOf(ps), 'discs');
+    const c = Switch.cursor(ps, d2.key); assert.equal(c.index, 1); assert.equal(c.count, 3); assert.equal(c.current.slot, 'D2'); assert.equal(c.prev.slot, 'D1'); assert.equal(c.next.slot, 'D3'); assert.equal(c.hasPrev, true); assert.equal(c.hasNext, true);
+    assert.equal(Switch.cursor(ps, d3.key).next.slot, 'D1', 'next wraps round the line'); assert.equal(Switch.cursor(ps, d1.key).prev.slot, 'D3'); assert.equal(Switch.cursor(ps, d3.key).hasNext, false);
+    assert.equal(Switch.step(ps, d3.key, 1), null, 'no wrap: the end'); assert.equal(Switch.step(ps, d3.key, 1, true).slot, 'D1'); assert.equal(Switch.step(ps, d2.key, -1).slot, 'D1'); assert.equal(Switch.step(ps, 'x', 1).slot, 'D1'); assert.equal(Switch.step(ps, 'x', -1).slot, 'D3');
+    assert.equal(Switch.allSameWords(ps), false);
+    const html = Switch.html(ps, d2.key, { fonts: true });
+    assert.equal((html.match(/class="egEarTab"/g) || []).length, 3); assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1); assert.match(html, /data-ear="[^"]*#D2"[^>]*aria-pressed="true"/);
+    assert.match(html, /<span class="egPiece" data-slot="D1">DISC 1 of 3<\/span><span class="egEarWords">J<\/span><span class="egEarFont">Typewriter<\/span><span class="egEarStage">Placement to check<\/span>/, 'each disc: its tag, its words, its font by name, where it stands');
+    assert.match(html, /aria-label="The discs of this order, one by one"/);
+    // two ears: the Left | Right switch of the editor, character for character (the old markup is rebuilt here from its own parts)
+    const L = Object.assign(job(ROW.duck, 'L', 'review', ['Mom']), readyFit()), R = Object.assign(job(ROW.duck, 'R', 'review', ['Mom & "Dad"']), readyFit(), { copies: ['a', 'b'] });
+    const old = (job_, ears) => `<span class="egEarSwitch" role="group" aria-label="The left and the right ear of this line">${ears.map(j => {
+      const on = j === job_, words = Rows.wordsOf(j), stage = Rows.stageOf(j, false), ear = Sides.earOf(j.slot).toLowerCase(), esc = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const chip = `<span class="egPiece" data-slot="${esc(j.slot)}">${esc(Sides.tagOf(j.slot) + ((j.copies || []).length > 1 ? ' ×' + j.copies.length : ''))}</span>`;
+      return `<button type="button" class="egEarTab" data-a="ear" data-ear="${esc(j.key)}" aria-pressed="${on}" title="${on ? 'Shown now' : 'Show'}: the ${esc(ear)} · ${esc(words || 'words not settled')} · ${esc(stage)}">${chip}<span class="egEarWords">${esc(words || '…')}</span><span class="egEarStage">${esc(stage)}</span></button>`;
+    }).join('')}</span>`;
+    for (const cur of [L, R]) assert.equal(Switch.html(Switch.list([L, R]), cur.key), old(cur, [L, R]), 'the ears\' switch is the very markup it was');
+    assert.equal(Switch.html(Switch.list([L, R]), L.key, { fonts: true }).includes('egEarFont'), false, 'ears carry no font in the switch (no font name known)');
+    // the page binds one handler for every button
+    const picked = []; const host = { listeners: [], contains: () => true, addEventListener(t, f) { this.listeners.push(f); }, removeEventListener(t, f) { this.listeners = this.listeners.filter(x => x !== f); } };
+    const off = Switch.bind(host, (k, b) => picked.push([k, b.tag])); host.listeners[0]({ target: { closest: sel => (sel === '[data-a="ear"][data-ear]' ? { dataset: { ear: d3.key }, tag: 'b' } : null) } }); host.listeners[0]({ target: { closest: () => null } });
+    assert.deepEqual(picked, [[d3.key, 'b']]); off(); assert.equal(host.listeners.length, 0);
+  });
+
   // ═══ 2 · the real Engrave module, drawn in a fake page ═══
   const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');

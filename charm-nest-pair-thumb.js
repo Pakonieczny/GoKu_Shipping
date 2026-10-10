@@ -22,7 +22,7 @@
  *                                        In a mismatched pair each body is drawn facing its own side (CharmNestPair.facingOf): the one facing the wrong way is mirrored
  *                                        pair true (Paul, 10 Oct: an earring ORDER LINE is one row with both ears side by side): a MATCHING pair, one body, is drawn twice side by side, the Left earring and the
  *                                        Right earring (turned over left to right, its mirror image), each with its chip, by the same layout and chips as a mismatched pair;
- *                                        opts.facing ("L" | "R" | "X", a person's word on the master record) and opts.sku decide which of the two is as drawn, exactly as CharmNestPair.piecesFor does
+ *                                        opts.facing ("L" | "R", a person's word on the master record) decides which of the two is as drawn, exactly as CharmNestPair.piecesFor does
  *                                        pair true with opts.other (a charm) and opts.turnRight: a line of TWO SEPARATE DESIGNS, `charm` the Left's and `other` the Right's, each drawn once at one scale (twoCanvas)
  *    matchPlan(charm, opts)              null, or the two-ear plan of a matching pair { bodies:[{ index, side, label, short, bbox, mirror }], one, dx } (what canvasFor draws for opts.pair)
  *    paintTags(ctx, plan, tx, k, opts)   only the chips, on a canvas the caller already owns (a placed charm's drawing)
@@ -86,7 +86,7 @@
             // wrong way is drawn mirrored left to right about its own centre. facing null (symmetric or unknown) means it is drawn facing left, the same
             // rule as CharmNestPair.piecesFor (mirror = side !== (facing || "L")): so the Right ear of a pair drawn both ways alike (Paul's two thumb-left mittens)
             // is shown turned, exactly as the piece is cut.
-            const facing = facingOfBody(P, charm, b), mirror = (side === "L" || side === "R") && !(typeof P.readsOneWay === "function" && P.readsOneWay(charm)) && side !== (facing || "L");
+            const facing = facingOfBody(P, charm, b), mirror = (side === "L" || side === "R") && side !== (facing || "L");
             return { index: b.index != null ? b.index : i, side, label, short: label.charAt(0).toUpperCase(), bbox: b.bbox.slice(), outline: b.outline || null, members: b.members || null, facing, mirror };
           }) };
         }
@@ -97,7 +97,7 @@
   }
 
   /** The way one MATCHING pair's two ears face (Paul, 9 Oct 18:47; the very rule of CharmNestPair.piecesFor: mirror = side !== (facing || "L")): the Left as the Left earring faces, the Right turned
-      over. A design that reads one way (letters, numbers) is drawn as it is on both. `o.facing` is the master record's word ("L" | "R" | "X"), `o.sku` its name; without them the charm's own are read. */
+      over, letters, initials and numbers too (Paul, 10 Oct 2026: the old "reads one way" exemption is gone). `o.facing` is the master record's word ("L" | "R"; an old "X" says nothing); without it the charm's own is read. */
   function matchPlan(charm, o) {
     o = o || {};
     if (!charm || !okBox(charm.bbox) || !charm.outline || !Array.isArray(charm.members)) return null;   // (nothing drawable)
@@ -114,16 +114,15 @@
     } catch (_) { return null; }
     const b = one.bbox, w = b[2] - b[0], gap = Math.max(w * 0.18, 8), dx = w + gap;
     const rec = { sku: o.sku || charm.sku || charm.name || "", name: charm.name, facing: o.facing === "L" || o.facing === "R" || o.facing === "X" ? o.facing : charm.facing };
-    let facing = null, flat = false;
+    let facing = null;
     try {
-      flat = typeof P.readsOneWay === "function" && P.readsOneWay(rec);
       const set = rec.facing === "L" || rec.facing === "R" ? rec.facing : null;
       facing = set || (typeof P.facingOf === "function" ? P.facingOf(Object.assign({}, one, { facing: rec.facing === "X" ? undefined : rec.facing })) : null);
       facing = facing === "L" || facing === "R" ? facing : null;
     } catch (_) { facing = null; }
     const ear = (side, shift) => {
       const label = side === "L" ? "Left" : "Right", bb = [b[0] + shift, b[1], b[2] + shift, b[3]];
-      return { index: 0, side, label, short: side, bbox: bb, outline: null, members: null, facing, mirror: !flat && side !== (facing || "L") };
+      return { index: 0, side, label, short: side, bbox: bb, outline: null, members: null, facing, mirror: side !== (facing || "L") };
     };
     return { bodies: [ear("L", 0), ear("R", dx)], one, dx, matching: true };
   }

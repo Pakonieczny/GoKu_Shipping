@@ -733,7 +733,13 @@
     // An outline drawn as several open strokes whose ends meet (a bar from a U-shape plus a line) is one closed outline.
     // Chain single-subpath achromatic open strokes by coincident endpoints; a fully closed chain becomes a synthetic
     // outline whose real parts stay the charm's members (the writer copies the parts; the synthetic path is geometry only).
-    const chained = chainOpenStrokes(preDrawable.filter(s => s.kind === "path" && s.stroke && !s.closed && pathRole(s) !== "artwork" && (pathRole(s) === "cut" || achromatic0(s.strokeRGB)) && s.subpaths && s.subpaths.length === 1), 1.0);
+    const chainable = s => s.kind === "path" && s.stroke && !s.closed && pathRole(s) !== "artwork" && (pathRole(s) === "cut" || achromatic0(s.strokeRGB)) && s.subpaths;
+    const chain1 = chainOpenStrokes(preDrawable.filter(s => chainable(s) && s.subpaths.length === 1), 1.0);
+    // Second pass, only for strokes the first pass left alone: an outline cut in two open pieces whose ends are a hair too far apart for the first
+    // pass, or whose piece also holds a closed hole (see "an outline drawn in two open pieces"). It never touches a chain the first pass made.
+    const taken1 = new Set(); for (const ch of chain1) for (const part of ch.parts) taken1.add(part);
+    const chain2 = chainOpenStrokes(preDrawable.filter(s => chainable(s) && !taken1.has(s) && openSubOf(s) >= 0), SPLIT_OUTLINE_TOL_PT, { openSub: openSubOf, minSide: opts.minPt, maxParts: SPLIT_OUTLINE_MAX_PARTS });
+    const chained = chain1.concat(chain2);
     const partOf = new Map(); for (const ch of chained) for (const part of ch.parts) partOf.set(part, ch);
     const cand0 = preDrawable.concat(chained).filter(s => s.kind === "path" && isCutLine(s) && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
     const isRectLike = s => s.kind === "path" && s.closed && s.subpaths.length === 1 && s.subpaths[0].filter(x => x[0] !== "h").length <= 5 && !s.subpaths[0].some(x => x[0] === "c");
@@ -1098,9 +1104,43 @@
     return taken;
   }
 
+  /* ═══ an outline drawn in two open pieces ══════════════════════════════════════════════════════════════════════════
+     The first chaining pass (1 pt, single-subpath strokes) joins a body drawn as a U-shape plus a line. LIVING #721 (the
+     grenade shared by ARMY_83276, ENGRAVED_71405, GRENADE_45535, SOLDIER_63845, TACTICAL_27863, TACTICAL_76428) has, above the
+     finished grenade, a second unlabelled drawing of it whose cut line is two open pieces (the top: lever, handle and the top
+     of the body, which also holds the handle's closed hole; the bottom: half the body). They end 1.13 pt from each other on
+     the two sides of a red stripe band, so the first pass skipped them (1 pt; one piece has two subpaths), the lower piece fell
+     to the grenade as a loose "detail" and the card showed a half circle floating above it (10.4 x 18.5 mm).
+     The second pass chains what the first left: strokes with exactly ONE open subpath (any others are closed holes), ends
+     within SPLIT_OUTLINE_TOL_PT, at most SPLIT_OUTLINE_MAX_PARTS pieces, the same layer, colour and pen width, a loop at least
+     as big as a charm (minPt each way) and a simple polygon (it does not cross itself). Nothing else changes. */
+  const SPLIT_OUTLINE_TOL_PT = 1.25, SPLIT_OUTLINE_MAX_PARTS = 4;
+  /** The index of the one open subpath of a stroked path whose other subpaths are all closed; -1 when there is not exactly one. */
+  function openSubOf(s) {
+    let at = -1;
+    for (let i = 0; i < (s.subpaths || []).length; i++) { const sub = s.subpaths[i]; if (sub.some(o => o[0] === "h")) continue; if (at >= 0 || !sub.length || sub[0][0] !== "m") return -1; at = i; }
+    return at;
+  }
+  /** A closed polygon (points, last joins first) that no two of its edges cross. */
+  function isSimpleLoop(poly) {
+    const n = poly.length; if (n < 3) return false;
+    const o = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    const eps = 1e-9;
+    for (let i = 0; i < n; i++) {
+      const a = poly[i], b = poly[(i + 1) % n];
+      for (let j = i + 2; j < n; j++) {
+        if (i === 0 && j === n - 1) continue;
+        const c = poly[j], d = poly[(j + 1) % n];
+        const d1 = o(a, b, c), d2 = o(a, b, d), d3 = o(c, d, a), d4 = o(c, d, b);
+        if (((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps)) && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))) return false;
+      }
+    }
+    return true;
+  }
   /** Chain open strokes by coincident endpoints into closed synthetic outlines. */
-  function chainOpenStrokes(segs, tolPt) {
-    const ends = s => { const sub = s.subpaths[0]; const first = sub[0] && sub[0][0] === "m" ? sub[0][1] : null; let last = null; for (const o of sub) { if (o[0] === "m" || o[0] === "l") last = o[1]; else if (o[0] === "c") last = o[3]; } return first && last ? [first, last] : null; };
+  function chainOpenStrokes(segs, tolPt, o) {
+    const subOf = s => (o ? s.subpaths[o.openSub(s)] : s.subpaths[0]);
+    const ends = s => { const sub = subOf(s); const first = sub[0] && sub[0][0] === "m" ? sub[0][1] : null; let last = null; for (const o of sub) { if (o[0] === "m" || o[0] === "l") last = o[1]; else if (o[0] === "c") last = o[3]; } return first && last ? [first, last] : null; };
     const pts = []; segs.forEach((s, i) => { const e = ends(s); if (!e) return; if (Math.hypot(e[0][0] - e[1][0], e[0][1] - e[1][1]) <= tolPt) return; pts.push({ s, i, k: 0, p: e[0] }, { s, i, k: 1, p: e[1] }); });
     const mate = new Map();
     for (const a of pts) { if (mate.has(a)) continue; let best = null, bd = tolPt; for (const b of pts) { if (b.s === a.s || mate.has(b)) continue; const d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]); if (d <= bd) { bd = d; best = b; } } if (best) { mate.set(a, best); mate.set(best, a); } }
@@ -1111,18 +1151,23 @@
       const parts = [], poly = []; let cur = start.s, enterK = start.k, closed = false; const visited = new Set();
       while (cur && !visited.has(cur)) {
         visited.add(cur); parts.push(cur);
-        const flat = flatten(cur, 16)[0] || []; const pl = enterK === 0 ? flat : flat.slice().reverse(); poly.push(...pl);
+        const flat = (o ? flatten({ subpaths: [subOf(cur)] }, 16)[0] : flatten(cur, 16)[0]) || []; const pl = enterK === 0 ? flat : flat.slice().reverse(); poly.push(...pl);
         const exit = pts.find(q => q.s === cur && q.k !== enterK); const m = exit && mate.get(exit);
         if (!m) break; if (m.s === start.s) { closed = true; break; } cur = m.s; enterK = m.k;
       }
       if (!closed || parts.length < 2) continue;
+      if (o) {   // the second pass is narrower: few pieces, one look, charm-sized, and a loop that does not cross itself
+        const look = (a, b) => a.layer === b.layer && Math.abs((a.lwPt || 0) - (b.lwPt || 0)) <= 0.02 && (a.strokeRGB || []).every((v, k) => Math.abs(v - ((b.strokeRGB || [])[k] || 0)) <= 0.02);
+        const bb0 = parts.reduce((a, pp) => bbUnion(a, pp.bbox), null);
+        if (parts.length > o.maxParts || !parts.every(pp => look(pp, parts[0])) || (bb0[2] - bb0[0]) < o.minSide || (bb0[3] - bb0[1]) < o.minSide || !isSimpleLoop(poly)) continue;
+      }
       parts.forEach(pp => seen.add(pp.s || pp));
       const bb = parts.reduce((a, pp) => bbUnion(a, pp.bbox), null);
       const sub = poly.map((pt, i) => [i ? "l" : "m", pt]); sub.push(["h"]);
       // the chain is on the layer its parts are on: without it a green plate drawn on CUT in open strokes was no cut line at all
       // (a chromatic stroke counts only by its layer), so the plate had no outline and its ink went to the next charm
       const sameLayer = parts.every(pp => pp.layer === parts[0].layer), sameRole = parts.every(pp => pp.manufacturingRole === parts[0].manufacturingRole);
-      out.push({ kind: "path", synthetic: true, parts, ...(sameLayer && parts[0].layer != null ? { layer: parts[0].layer } : {}), ...(sameRole && parts[0].manufacturingRole ? { manufacturingRole: parts[0].manufacturingRole } : {}), stroke: true, fill: false, closed: true, strokeRGB: parts[0].strokeRGB, lwPt: Math.max(...parts.map(pp => pp.lwPt || 0)), paintOp: "S", subpaths: [sub], bbox: bb, start: Math.min(...parts.map(pp => pp.start)), end: Math.max(...parts.map(pp => pp.end)), depth: parts[0].depth, parent: parts[0].parent });
+      out.push({ kind: "path", synthetic: true, parts, ...(sameLayer && parts[0].layer != null ? { layer: parts[0].layer } : {}), ...(sameRole && parts[0].manufacturingRole ? { manufacturingRole: parts[0].manufacturingRole } : {}), stroke: true, fill: false, closed: true, strokeRGB: parts[0].strokeRGB, lwPt: Math.max(...parts.map(pp => pp.lwPt || 0)), paintOp: "S", subpaths: [sub], bbox: bb, start: Math.min(...parts.map(pp => pp.start)), end: Math.max(...parts.map(pp => pp.end)), depth: parts[0].depth, parent: parts[0].parent, ...(o ? { splitOutline: true } : {}) });
       parts.forEach(pp => seen.add(pp));
     }
     return out;

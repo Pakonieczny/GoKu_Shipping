@@ -109,6 +109,7 @@
 .egEarTab[aria-pressed=true]{background:var(--card);box-shadow:0 0 0 1px var(--ink45)}
 .egEarTab .egEarWords{font:600 12px var(--serif);max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .egEarTab .egEarStage{font:10.5px var(--sans);color:var(--ink45);white-space:nowrap}
+.egEarTab .egEarFont{font:600 10.5px var(--sans);color:var(--ink45);white-space:nowrap}
 .doneDetail.egPairDetail{grid-template-columns:1fr;gap:14px}
 .egEarDetail{display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(140px,.7fr) minmax(220px,1.2fr);gap:14px 18px;align-items:start}
 .egEarDetail .egEarHead{grid-column:1/-1}
