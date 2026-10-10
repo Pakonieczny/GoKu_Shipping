@@ -49,6 +49,8 @@ function thumbnailPng(Geom, charm, size, PDF) {
     if (PDF && PDF.isCutSilhouetteFill(charm, m)) { parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.max(0.6 / s, 0.25)}"/>`); continue; }
     // the red edge of thin strips that run across the charm (charm-nest-pdf.js "thin strips outlined in red are hatching") is the hatched strip itself: blue fill, no line
     if (m.hatchStrip && m.hatchBlue && m.stroke && !m.fill) { parts.push(`<path d="${d}" fill="rgb(0,0,255)" fill-rule="evenodd" stroke="none"/>`); continue; }
+    // black line art (charm-nest-pdf.js "black LINE ART is blue hatching") is the same line in blue
+    if (m.hatchLine && m.hatchBlue && m.stroke && !m.fill) { parts.push(`<path d="${d}" fill="none" stroke="rgb(0,0,255)" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`); continue; }
     const st = m.stroke ? (physical ? "#000" : (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB))) : "none";
     // a black fill INSIDE the charm (stamped by the grouping, charm-nest-pdf.js "a black FILL is blue hatching") is hatching: blue. A light fill a cut path carries stays as drawn (MAPLE_4007's
     // white leaf was painted as a solid black body here: "physical" meant black for every fill), as drawCharm and scripts/index-master.cjs already draw it.
