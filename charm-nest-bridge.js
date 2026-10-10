@@ -2332,8 +2332,8 @@ const Master = window.Master = (() => {
   async function strayInkUnder(parsed, group, charms, gapPt, onTick) {
     const owned = new Set();
     for (const c of group.charms) { owned.add(c.outline); for (const m of c.members) owned.add(m); }
-    // sample text and markers taken out of a charm are still its own writing, not an outlined label to be read
-    for (const t of (group.sampleText || []).concat(group.markers || [])) if (t && t.seg) owned.add(t.seg);
+    // sample text, markers and loose ink taken out of a charm are still its own writing, not an outlined label to be read
+    for (const t of (group.sampleText || []).concat(group.markers || [], group.stray || [])) if (t && t.seg) owned.add(t.seg);
     const cand = parsed.segments.concat(parsed.nested).filter(s => s.bbox && !owned.has(s) && (s.kind === "path" || s.kind === "text" || s.kind === "image"));
     const out = [];
     for (let i = 0; i < charms.length; i++) {
