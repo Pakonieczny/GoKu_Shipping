@@ -109,25 +109,27 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
   await carry(sheetSel('dE01'), sheetSel('dF01'));
   let s = await state('dF01');
   assert.deepEqual({ state: s.state, hot: s.hot }, { state: 'armed', hot: true }, 'the 14K card is the place under the hand: ' + JSON.stringify(s));
-  assert.match(s.label, /^Drop to combine with 14K Sheet 1$/, s.label);
+  assert.match(s.label, /^Drop to combine with 14K Draft 1$/, s.label);
   assert.notDeepEqual((await progressHot()).hot, true, 'the whole In progress section is not what answers any more');
   const zc = await page.evaluate(() => window.__calls.filter(c => c[0] === 'sheetZone'));
-  assert.deepEqual(zc, [['sheetZone', 'dE01', 'dF01', 'GF Sheet 1', '14K Sheet 1']], 'asked once, with both names: ' + JSON.stringify(zc));
+  assert.deepEqual(zc, [['sheetZone', 'dE01', 'dF01', 'GF Draft 1', '14K Draft 1']], 'asked once, with both names: ' + JSON.stringify(zc));
   assert.equal(await page.evaluate(() => [...document.querySelectorAll('.dndChip')].some(c => /Combine/.test(c.textContent))), false, 'a sheet is a place on the page, not a chip');
   assert.equal(await page.evaluate(() => document.querySelectorAll('#libBody [data-dnd-state][data-dnd-label^="Drop to combine"]').length), 1, 'only the card under the hand is framed');
   await page.mouse.up();
   await until(() => page.evaluate(() => window.__calls.some(c => c[0] === 'commit')), 10000, 'committed');
   const calls = await page.evaluate(() => window.__calls.filter(c => c[0] === 'plan' || c[0] === 'commit'));
   assert.deepEqual(calls.map(c => [c[0], c[0] === 'plan' ? c[2] : c[1]]).slice(0, 2), [['plan', 'dE01'], ['commit', 'dE01']]); assert.equal(calls[0][3], '{"sheet":"dF01"}', 'the drop is planned as a drop on that sheet: ' + calls[0][3]); assert.equal(calls[1][2], '{"sheet":"dF01"}');
+  // (the dock folds into the bar once the card has landed on the sheet: that is a flight of about a second, so it is waited for, not read at the instant of the commit)
+  await until(() => page.evaluate(() => /^Moving /.test((document.querySelector('.dndDockHead b') || {}).textContent || '')), 8000, 'the dock is a bar');
   const title = await page.evaluate(() => (document.querySelector('.dndDockHead b') || {}).textContent);
-  assert.match(title || '', /to a set with 14K Sheet 1/, 'the bar says where: ' + title);
+  assert.match(title || '', /to a set with 14K Draft 1/, 'the bar says where: ' + title);
   await dismiss(); await clean('1');
   ok.push('1 · a draft sheet dragged over another draft sheet: that card is the place (Combine with 14K Sheet 1), planned and committed as a drop on it, the bar names it');
 
   // 2 · a sheet that is not ready: the card says why, in red, and the drop plans and writes nothing
   await page.evaluate(() => { window.__calls.length = 0; });
   await carry(sheetSel('dE01'), sheetSel('dG01'));
-  s = await state('dG01'); assert.deepEqual({ state: s.state, hot: s.hot }, { state: 'dim', hot: true }); assert.match(s.label, /SS Sheet 2 is not ready to join a set\. Its layout has not been verified yet\./, s.label);
+  s = await state('dG01'); assert.deepEqual({ state: s.state, hot: s.hot }, { state: 'dim', hot: true }); assert.match(s.label, /SS Draft 2 is not ready to join a set\. Its layout has not been verified yet\./, s.label);
   await page.mouse.up();
   await page.waitForSelector('.dndMovingWrap .dndLine.bad', { timeout: 6000 });
   assert.match(await page.textContent('.dndMovingWrap .dndLine.bad'), /not ready to join a set/);

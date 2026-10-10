@@ -178,7 +178,7 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
     const subject = mode === 'rows' ? all.find(x => x.id === GF) : P.serverLike(img2).find(x => x.id === GF), list = NEW.issues(subject, mode === 'rows' ? { rows, allSheets: all, set, sheets: members } : { set, sheets: members });
     assert.deepEqual(list.map(i => [i.step, i.key]).sort(), [['orders', 'otherSheetNotReady'], ['orders', 'unmatched'], ['orders', 'unmatched'], ['orders', 'unmatched']], `${mode}: exactly the four orders of this sheet, nothing else`);
     assert.doesNotMatch(JSON.stringify(list), /SS Sheet 1|ss-sheet-1|waitsOnSheet|"quiet"/, `${mode}: nothing in GF Sheet 1's list names or opens SS Sheet 1`);
-    const leslie = list.find(i => i.orderId === '4170837249'); assert(leslie && leslie.pieces.length === 1 && leslie.pieces[0].sheetLabel === 'RG Sheet 1', `${mode}: the order with a piece on RG Sheet 1 stays listed, naming RG Sheet 1`);
+    const leslie = list.find(i => i.orderId === '4170837249'); assert(leslie && leslie.pieces.length === 1 && leslie.pieces[0].sheetLabel === 'RG Draft 1', `${mode}: the order with a piece on RG Sheet 1 stays listed, naming RG Sheet 1`);
   }
 
   // ── 7a. the old rule put back is caught by 1 + 2 (and the server twin reads each sheet with its own set)
@@ -260,7 +260,7 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
               if (panel.querySelector('.lisWait,[data-quiet],[data-issue-key="waitsOnSheet"],[data-issue-sheet]')) bad.push(`${label}: a wait row is in GF Sheet 1's list`);
               if (/Waiting|SS Sheet|\bEngraving ?\d/.test(text)) bad.push(`${label}: the panel mentions the other sheet or a wait: "${text.slice(0, 160)}"`);
               const chips = rows.map(r => r.querySelector('.lisChip').textContent.trim()).sort();
-              if (JSON.stringify(chips) !== JSON.stringify(['Unknown SKU', 'Unknown SKU', 'Unknown SKU', 'Waits on RG Sheet 1, in no set'])) bad.push(`${label}: the four orders say ${JSON.stringify(chips)}`);   // (round 8: RG Sheet 1 is in no set, so the one real wait says so)
+              if (JSON.stringify(chips) !== JSON.stringify(['Unknown SKU', 'Unknown SKU', 'Unknown SKU', 'Waits on RG Draft 1, in no set'])) bad.push(`${label}: the four orders say ${JSON.stringify(chips)}`);   // (round 8: RG Sheet 1 is in no set, so the one real wait says so)
               if (panel.querySelector('.lisBody').firstElementChild && !panel.querySelector('.lisBody').firstElementChild.querySelector('.lisRow')) bad.push(`${label}: the first thing in the list is not an order of this sheet`);
               await closePanel();
             }

@@ -260,7 +260,7 @@ async function joinOnScreen() {
     const say = (type, detail) => out.push({ type, sheet: 'gf-sheet-1', detail: `${name}: ${detail}` });
     if (!bangsOf(body, 'gf-sheet-1').includes('orders')) say('joinBeforeNoBang', `no '!' on Order check before the join (${bangsOf(body, 'gf-sheet-1').join(',')})`); else seen.before++;
     const open = [...body.querySelectorAll('button[data-issues-open]')].find(x => x.getAttribute('data-issues-id') === 'gf-sheet-1' && x.getAttribute('data-issues-step') === 'orders');
-    if (open) { open.click(); const panel = await until(() => d.getElementById('libIssuesPanel')); const text = panel ? panel.textContent.replace(/\s+/g, ' ') : ''; if (!/Waits on RG Sheet 1, in no set/.test(text)) say('joinBeforeWords', SHOW(text)); LI.close(); await sleep(5); }
+    if (open) { open.click(); const panel = await until(() => d.getElementById('libIssuesPanel')); const text = panel ? panel.textContent.replace(/\s+/g, ' ') : ''; if (!new RegExp('Waits on RG ' + (a.own === 'draft' ? 'Draft' : 'Sheet') + ' 1, in no set').test(text)) say('joinBeforeWords', SHOW(text)); LI.close(); await sleep(5); }
     // the answer after the Cut Sheet press: RG Sheet 1's own record now carries the set, and GF Sheet 1's answer no longer waits for it
     for (const r of recsB) L.record(r);
     L.changed(); await sleep(60);

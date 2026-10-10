@@ -4885,7 +4885,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // a Rose Gold sheet joins a set by its own Cut Sheet press (the Library asks for its yes first); it is ready for that when its layout is saved and verified
     const ok = rose ? runHere && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : !!plan && (plan.kind === "release" || plan.kind === "include");
     const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.roseCutAt || sh.laserDoneAt ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
-    const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: nameOf(x.sheet), orders: x.orders })) : [];
+    const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: window.CharmNestSheetName ? CharmNestSheetName.name(x.sheet) : `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, orders: x.orders })) : [];
     // (a full Rose Gold sheet takes the rest of the metal whole: no Cut Sheet button, no line, no cut)
     const full = ok && rose ? !!(window.RoseStock && RoseStock.full ? RoseStock.full(sh) : sh.rosePlan && sh.rosePlan.full) : false;
     return { runHere, draft: !!sh.draft, dispatchSetId: open ? open.setId : null, can: { ok, byHand: ok && !!plan && plan.kind === "release", reason: why }, split, ...(rose ? { rose: { full } } : {}) };
@@ -4894,7 +4894,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function splitSay(partners) {
     try {
       const say = partners.map(x => {
-        const lab = nameOf(x.sheet), sid = x.sheet.sheetId;
+        const lab = window.CharmNestSheetName ? CharmNestSheetName.name(x.sheet) : `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, sid = x.sheet.sheetId;
         return (x.orders || []).map(rid => {
           const ears = [...new Set((orderPieces(rid) || []).filter(p => p.nested && p.sheetId === sid && p.side).map(p => sideWord(p.side)))];
           return `order ${rid}: its ${ears.length ? ears.join(" and ") + " piece is" : "other piece is"} on ${lab}`;

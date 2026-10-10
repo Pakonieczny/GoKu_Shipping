@@ -91,7 +91,7 @@ const { start } = require('./bridge-server.cjs');
       const merged = await events('merged');
       assert.deepEqual(ids(merged), ['4170000200', '4170000201'], 'merged (moved): only the orders that landed on Sheet 1: ' + JSON.stringify(merged.map(e => e.orderId)));
       assert.equal(merged.length, 2, 'once each');
-      assert(merged.every(e => e.data.kind === 'move' && e.data.to === '14K Sheet 1' && e.sheetId === 'gold14k-t2' && e.by === 'Tester'), JSON.stringify(merged[0]));
+      assert(merged.every(e => e.data.kind === 'move' && e.data.to === '14K Draft 1' && e.sheetId === 'gold14k-t2' && e.by === 'Tester'), JSON.stringify(merged[0]));
       assert.equal((await events('moved')).length + (await events('renested')).length, 0, 'no other event from the page');
       console.log('  ✓ Move all: "merged" only for the two orders that landed on Sheet 1, after the nest; none for the two that stayed');
     }

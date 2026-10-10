@@ -68,7 +68,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     assert.equal(z(list, x => x.set === 'set-1').ok, true, 'Set 1 is committed but takes a sheet now (Paul 7 Oct; rules in library-set-edit.cjs)'); assert.equal(z(list, x => x.set === 'set-1').reason, '');
     assert.equal(z(list, x => x.newSet).ok, true, 'New set is open to a draft when no set is open');
     // Laser cutting and Completed are armed but refused with the reason that it is not in a set yet (it is a draft)
-    for (const area of ['laser', 'completed']) { const p = await plan('k14-1', { area }); assert.equal(p.ok, false); assert(keys(p).includes('membership'), JSON.stringify(keys(p))); assert.match(p.needs.find(n => n.key === 'membership').label, /14K Sheet 1 is not in a set yet/); }
+    for (const area of ['laser', 'completed']) { const p = await plan('k14-1', { area }); assert.equal(p.ok, false); assert(keys(p).includes('membership'), JSON.stringify(keys(p))); assert.match(p.needs.find(n => n.key === 'membership').label, /14K Draft 1 is not in a set yet/); }
     // the committed set: takes the sheet as one server step (its rules are checked in library-set-edit.cjs), no longer refused by name
     let p = await plan('k14-1', { set: 'set-1' }); assert(!keys(p).includes('setCommitted'), JSON.stringify(keys(p))); assert(p.steps.some(x => x.type === 'setMember'), JSON.stringify(p.steps)); assert.equal(joins.length, 0, 'planning writes nothing');
     // New set: a plan that can be committed, nothing written by planning
@@ -89,11 +89,11 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     p = await plan('k14-1', { sheet: 'gf-2' });
     assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm, [], 'two sheets that share nothing: the drop is the yes');
     assert.deepEqual(p.steps.map(x => [x.type, x.sheetId, !!x.also, x.newSet]), [['include', 'k14-1', false, true], ['include', 'gf-2', true, false]]);
-    assert(p.auto.some(a => a.key === 'membership' && /14K Sheet 1 added to a new set/.test(a.label)) && p.auto.some(a => a.key === 'membership:gf-2' && /GF Sheet 2 added to a new set/.test(a.label)), JSON.stringify(p.auto.map(a => a.label)));
+    assert(p.auto.some(a => a.key === 'membership' && /14K Draft 1 added to a new set/.test(a.label)) && p.auto.some(a => a.key === 'membership:gf-2' && /GF Draft 2 added to a new set/.test(a.label)), JSON.stringify(p.auto.map(a => a.label)));
     assert.deepEqual(p.move.to, { sheet: 'gf-2' }, 'commit plans again from the drop'); assert.equal(joins.length, 0, 'planning writes nothing');
     let r = await LF.commit(p, { by: 'Paul' });
     assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(joins.map(j => [j.id, j.newSet, j.setId]), [['k14-1', true, null], ['gf-2', false, null]], 'the first starts the set, the second joins it');
-    assert(r.applied.some(a => /14K Sheet 1 added/.test(a.label)) && r.applied.some(a => /GF Sheet 2 added/.test(a.label)), JSON.stringify(r.applied));
+    assert(r.applied.some(a => /14K Draft 1 added/.test(a.label)) && r.applied.some(a => /GF Draft 2 added/.test(a.label)), JSON.stringify(r.applied));
     assert.equal(st.doc(S, 'k14-1').draft, false); assert.equal(st.doc(S, 'gf-2').draft, false);
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(joins.length, 2, 'a repeat finds both in the set and writes nothing more');
 
@@ -101,7 +101,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     st.put(SET, 'set-8', { setId: 'set-8', seq: 8, day, runId: 'run-live', sheetIds: ['k14-1', 'gf-2'], materials: ['gold'], orders: {}, status: 'open', updatedAt: ts, createdAt: ts });
     assert.equal(z(zs('ss-3'), x => x.newSet).ok, false); assert.match(z(zs('ss-3'), x => x.newSet).reason, /open set takes it/);
     sz = LF.sheetZone({ kind: 'sheet', id: 'ss-3' }, 'gf-10', { self: 'SS Sheet 3', name: 'GF Sheet 10' }); assert.equal(sz.ok, true); assert.equal(sz.sub, 'both join Set 8');
-    joins.length = 0; p = await plan('ss-3', { sheet: 'gf-10' }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.equal(p.to.setId, 'set-8'); assert(p.auto.some(a => /SS Sheet 3 added to Set 8/.test(a.label)));
+    joins.length = 0; p = await plan('ss-3', { sheet: 'gf-10' }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.equal(p.to.setId, 'set-8'); assert(p.auto.some(a => /SS Draft 3 added to Set 8/.test(a.label)));
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(joins.map(j => [j.id, j.newSet, j.setId]), [['ss-3', false, 'set-8'], ['gf-10', false, 'set-8']]);
     // the other sets: an uncommitted set that is not the open one is dimmed, said in plain words, before any plan is asked for
     const sets0 = LF.hooks.sets; LF.configure({ sets: () => sets0().concat([{ setId: 'set-7', seq: 7 }]) });
@@ -114,7 +114,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     joins.length = 0; for (const k of Object.keys(pulls)) delete pulls[k];
     // gf-4 and ss-5 share an order. Dropping gf-4 on gf-6: ss-5 must come too, so the one yes is asked, naming both sheets that travel
     p = await plan('gf-4', { sheet: 'gf-6' }); assert.equal(p.ok, true, JSON.stringify(p.needs));
-    const tog = p.confirm.find(c => c.key === 'together'); assert(tog && /SS Sheet 5 joins a new set with GF Sheet 4 and GF Sheet 6/.test(tog.label), JSON.stringify(p.confirm));
+    const tog = p.confirm.find(c => c.key === 'together'); assert(tog && /SS Draft 5 joins a new set with GF Draft 4 and GF Draft 6/.test(tog.label), JSON.stringify(p.confirm));
     assert.deepEqual(p.steps.map(x => [x.type, x.sheetId, !!x.also]), [['include', 'gf-4', false], ['include', 'gf-6', true]]); assert.deepEqual(p.steps[0].with, ['ss-5']);
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false); assert.match(r.error, /Needs your yes first/, 'no yes, nothing done'); assert.equal(joins.length, 0);
     pulls['gf-4'] = ['ss-5'];                                                          // (Gate.assemble pulls the sheet that shares the order along)
@@ -124,7 +124,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     for (const id of ['gf-4', 'ss-5', 'gf-6']) { st.put(S, id, { draft: true, setId: null }); draft(id); }
     p = await plan('gf-4', { sheet: 'ss-5' }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm, [], 'the orders only tie the two sheets that were dropped together');
     for (const k of Object.keys(pulls)) delete pulls[k]; joins.length = 0; pulls['gf-4'] = ['ss-5'];                // (ss-5 comes along with gf-4: the second step finds it in and does nothing)
-    r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(joins.map(j => j.id), ['gf-4'], 'one include: the other was already in'); assert(r.applied.some(a => /SS Sheet 5 added/.test(a.label)), JSON.stringify(r.applied));
+    r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(joins.map(j => j.id), ['gf-4'], 'one include: the other was already in'); assert(r.applied.some(a => /SS Draft 5 added/.test(a.label)), JSON.stringify(r.applied));
     for (const id of ['gf-4', 'ss-5']) { st.put(S, id, { draft: true, setId: null }); draft(id); } for (const k of Object.keys(pulls)) delete pulls[k];
 
     // ═══ F. what blocks a drop on a sheet, each said in plain words, and nothing is written ═══
@@ -135,14 +135,14 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     await blocked('gf-6', 'gf-9', 'sheetCut', /was already cut|permanent/);
     await blocked('gf-6', 'gf-8', 'sheetCompleted', /is completed/);
     st.put(S, 'in-set', { draft: false, setId: 'set-9' }); await blocked('gf-6', 'in-set', 'alsoInSet', /already in/);
-    L['gf-10'].can = { ok: false, reason: 'It is still being nested or saved.' }; await blocked('gf-6', 'gf-10', 'include', /GF Sheet 10 is not ready to join a set.*nested or saved/); L['gf-10'].can = { ok: true, byHand: true };
-    delete L['gf-10']; await blocked('gf-6', 'gf-10', 'runElsewhere', /GF Sheet 10: its run is open on another screen/);      // (its run is open, and this page does not hold the sheet)
-    st.put(RUN, 'run-old', { runId: 'run-old', status: 'complete', lines: {} }); st.put(S, 'gf-10', { runId: 'run-old' }); await blocked('gf-6', 'gf-10', 'fixedSet', /GF Sheet 10 is closed.*run is finished/); st.put(S, 'gf-10', { runId: 'run-live' }); draft('gf-10');
+    L['gf-10'].can = { ok: false, reason: 'It is still being nested or saved.' }; await blocked('gf-6', 'gf-10', 'include', /GF Draft 10 is not ready to join a set.*nested or saved/); L['gf-10'].can = { ok: true, byHand: true };
+    delete L['gf-10']; await blocked('gf-6', 'gf-10', 'runElsewhere', /GF Draft 10: its run is open on another screen/);      // (its run is open, and this page does not hold the sheet)
+    st.put(RUN, 'run-old', { runId: 'run-old', status: 'complete', lines: {} }); st.put(S, 'gf-10', { runId: 'run-old' }); await blocked('gf-6', 'gf-10', 'fixedSet', /GF Draft 10 is closed.*run is finished/); st.put(S, 'gf-10', { runId: 'run-live' }); draft('gf-10');
     L['gf-6'].can = { ok: false, reason: 'No charms are placed on it.' }; await blocked('gf-6', 'gf-2', 'include', /Not ready to join a set.*No charms/); L['gf-6'].can = { ok: true, byHand: true };
     // the sheet dropped on could not join after the first did: the first is in, and the answer says so
     st.put(S, 'k14-1', { draft: true, setId: null }); st.put(S, 'gf-2', { draft: true, setId: null }); draft('k14-1'); draft('gf-2');
     joins.length = 0; down.add('gf-2'); p = await plan('k14-1', { sheet: 'gf-2' }); r = await LF.commit(p, { by: 'Paul' }); down.delete('gf-2');
-    assert.equal(r.ok, false); assert.match(r.error, /14K Sheet 1 added to a new set, but GF Sheet 2 could not join: Waits for GF Sheet 2/, r.error); assert.deepEqual(joins.map(j => j.id), ['k14-1']);
+    assert.equal(r.ok, false); assert.match(r.error, /14K Draft 1 added to a new set, but GF Draft 2 could not join: Waits for GF Sheet 2/, r.error); assert.deepEqual(joins.map(j => j.id), ['k14-1']);
 
     // ═══ G. the old ways are as they were: a sheet on New set or on the open set, one at a time ═══
     st.put(S, 'k14-1', { draft: true, setId: null }); draft('k14-1'); joins.length = 0;

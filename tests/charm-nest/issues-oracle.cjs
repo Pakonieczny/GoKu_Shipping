@@ -77,8 +77,11 @@ const sheetId = s => s.id || s.sheetId;
 const handDoc = (shop, key) => { const c = shop.customs && shop.customs[key]; return !!c && c.state !== 'open' && c.how !== 'sheet'; };
 
 function labelOf(s) {
-  const n = +s.sheetIndex || +((/_Sheet-(\d+)/.exec(s.folder || s.fileBase || '') || [])[1]) || +s.page || 1;
-  return `${CODE[s.metal] || s.metalLabel || ''} Sheet ${n}`.trim();
+  // the rule of charm-nest-sheet-name.js, written out again here on purpose (an oracle does not call the code it checks): a sheet in a set, already cut, or numbered and not a draft
+  // is "Sheet <its number>" (its number in its set, which is also its file name's); a draft outside every set is "Draft <its page in the run>"
+  const n = +s.sheetIndex || +((/_Sheet-(\d+)/.exec(s.folder || s.fileBase || '') || [])[1]) || 0, cut = +s.laserDoneAt > 0 || +s.roseCutAt > 0;
+  const numbered = cut || (s.draft !== true && s.solidIncluded !== false && (!!s.setId || n > 0));
+  return `${CODE[s.metal] || s.metalLabel || ''} ${numbered ? `Sheet ${n || +s.page || 1}` : `Draft ${+s.page || 1}`}`.trim();
 }
 
 /** What a copy's engraving decision is, from the LINE it belongs to (the server derives sheet.engraving the same way). */

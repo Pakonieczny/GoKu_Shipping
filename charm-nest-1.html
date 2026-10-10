@@ -4310,7 +4310,7 @@ function overflowToNextSheet(sh, announce = true) {
   sh.movedOn.page = next.page;
   next.isolated = sh.isolated;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
-  agent({ metal: sh.metal }, "nest", `${pageWord(sh)} retained its best verified layout — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to ${pageWord(next).toLowerCase()}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
+  agent({ metal: sh.metal }, "nest", `${window.CharmNestSheetName ? CharmNestSheetName.short(sh) : `Sheet ${sh.page}`} retained its best verified layout — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to ${(window.CharmNestSheetName ? CharmNestSheetName.short(next) : `Sheet ${next.page}`).toLowerCase()}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
   // a pair (a line of pieces) that still has pieces on another sheet after the move is split: it is on record (the card's moved-on note, the log, a toast) and the sets read it from the pieces' pool ids (rule R3)
   const lineKeys = new Set(moving.map(gid).filter(Boolean)), split = lineKeys.size && typeof splitGroups === "function" ? splitGroups(prim.pages, lineKeys) : [];
   if (split.length) {

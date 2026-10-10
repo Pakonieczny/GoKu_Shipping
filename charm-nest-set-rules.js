@@ -57,7 +57,9 @@
     const n = placedOf(sheet);
     return n === null || n > 0;                                                  // a release with nothing placed is no sheet
   }
-  const describe = sheet => { const c = metalClass(sheet); return `${c || 'A'} Sheet ${sheet && (sheet.sheetIndex || sheet.page) || 1}`.replace(/^A Sheet/, 'Sheet'); };
+  // (SETNUMBER) a sheet's name is decided in one place, charm-nest-sheet-name.js: "GF Sheet 3" in a set, "GF Draft 5" outside every set. The page in the run is never a number in a set.
+  const nameFile = () => { try { return root.CharmNestSheetName || (typeof module === 'object' && typeof require === 'function' ? require('./charm-nest-sheet-name.js') : null); } catch (_) { return null; } };
+  const describe = sheet => { const N = nameFile(); if (N && sheet && typeof sheet === 'object' && (sheet.metal || sheet.metalLabel)) return N.name(sheet); const c = metalClass(sheet); return `${c || 'A'} Sheet ${sheet && (sheet.sheetIndex || sheet.page) || 1}`.replace(/^A Sheet/, 'Sheet'); };
 
   /** One plain line: what a sheet that is not completed still waits for ("" when it is completed). */
   function whyNotCompleted(sheet) {

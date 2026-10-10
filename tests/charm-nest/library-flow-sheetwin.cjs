@@ -42,7 +42,7 @@ const plain = x => JSON.parse(JSON.stringify(x));   // (objects made inside the 
     let __sheets = []; const allSheets = () => getSheets();
     const BUSY = ['nesting', 'finishing', 'queued'], busy = sh => BUSY.includes(sh.status) || !!(sh.persisted && !sh.persistedDone && !sh.problem);
     const sentToStation = sh => false;
-    const sheetName = sh => sh.metal + ' · sheet ' + sh.page, ridOf = c => c.order, sheetNoOf = r => r.sheetIndex || 1, whoAmI = () => 'Paul';
+    const sheetName = sh => sh.metal + ' · sheet ' + sh.page, ridOf = c => c.order, sheetNoOf = r => r.sheetIndex || 1, whoAmI = () => 'Paul', nameOf = r => ((CODE[r.metal] || '') + ' Sheet ' + sheetNoOf(r)).trim();   // (nameOf: the page's one sheet-name helper, charm-nest-sheet-name.js, is not loaded in this slice)
     const agent = () => {}, toast = (m) => toasts.push(m), open2 = () => {}, askSplit = async () => null;
     const window = { B: { run: ${JSON.stringify(run)} }, Gate, Sets, CN, CharmNestOrders: O, Session: { schedule() {} }, SheetEvents: { qrLabel() {} } };
     const B = window.B, Session = window.Session;

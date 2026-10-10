@@ -48,7 +48,7 @@ const gold = (n, keys, extra) => sheet('gold', n, keys, extra), silver = (n, key
   const g3 = gold(2, ['2001_1_2', '2005_1_1'], { status: 'nesting', persistedDone: false });
   pages.push(g3); await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'SS1'], 'nothing is thrown out of the set for it');
   assert(/also on GF Sheet 2, which cannot join the set yet: it is still being nested or saved/.test(g2.cardinalNote), g2.cardinalNote);
-  const split = Gate.cardinalSplit(sets[0]); assert.deepEqual(split.map(i => i.orderId), ['2001']); assert.deepEqual(split[0].there, ['GF Sheet 2'], 'the set cannot be released while it is outside');
+  const split = Gate.cardinalSplit(sets[0]); assert.deepEqual(split.map(i => i.orderId), ['2001']); assert.deepEqual(split[0].there, ['GF Draft 2'], 'the set cannot be released while it is outside');
   g3.status = 'complete'; g3.persistedDone = true; await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'GF2', 'SS1'], 'saved: it joins'); assert.deepEqual(Gate.cardinalSplit(sets[0]), []);
   // ── 5. Rose Gold is never pulled in by itself ──
   const g5 = gold(1, ['5001_1_1'], { releaseFull: true }), r5 = sheet('rose', 1, ['5001_2_1']);

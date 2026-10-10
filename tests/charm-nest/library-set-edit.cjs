@@ -123,7 +123,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     await refused('add: open set', [['d-free', 'set-8']], /Set 8 is still being made by its run/);
     await refused('add: unknown set', [['d-free', 'set-404']], /could not be found/);
     // sharing an order: a sheet cannot come in without its mates, and a mate that stays elsewhere blocks it
-    r = await refused('add: a mate left behind', [['d-m1', 'set-2']], /^Order 5100000031 has pieces on GF Sheet 1 and SS Sheet 1: they go into one set together$/);
+    r = await refused('add: a mate left behind', [['d-m1', 'set-2']], /^Order 5100000031 has pieces on GF Draft 1 and SS Draft 1: they go into one set together$/);
     assert.deepEqual(r.reasons[0].mates, ['d-m2']);
     await refused('add: a mate in another set', [['d-c2', 'set-1']], /Order 5100000010 has pieces on .*: they go into one set together/);
     // the mates in, in one yes: both are in the set, or neither
@@ -188,12 +188,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     // in: a lone sheet, then a sheet with its mate
     p = await LF.plan({ kind: 'sheet', id: 'd-plan', to: { set: 'set-2' } });
     assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.steps.map(x => x.type), ['setMember', 'relabel', 'setFiles']); assert(!p.needs.some(n => n.key === 'setCommitted'));
-    assert(p.auto.some(a => a.key === 'membership' && /GF Sheet 1 added to Set 2/.test(a.label)), JSON.stringify(p.auto.map(a => a.label)));
+    assert(p.auto.some(a => a.key === 'membership' && /GF Draft 1 added to Set 2/.test(a.label)), JSON.stringify(p.auto.map(a => a.label)));
     assert(!p.confirm.some(x => /approv/i.test(x.label)), 'nothing is approved for anyone');
     c = await LF.commit(p, { by: 'Paul', confirmed: p.confirm.map(x => x.key) }); assert.equal(c.ok, true, JSON.stringify(c)); assert.equal(sheet('d-plan').setId, 'set-2'); assert(hooksSeen.relabel.some(x => x.sheetIds.includes('d-plan')) && hooksSeen.files.includes('set-2'));
     mk('d-n1', 'gold', ['5100000090_1_1']); mk('d-n2', 'silver', ['5100000090_2_1']);
     p = await LF.plan({ kind: 'sheet', id: 'd-n1', to: { set: 'set-2' } });
-    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert(p.confirm.some(x => x.key === 'together' && /SS Sheet 1 joins Set 2/.test(x.label)), JSON.stringify(p.confirm)); assert.equal(p.steps[0].moves.length, 2);
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert(p.confirm.some(x => x.key === 'together' && /SS Draft 1 joins Set 2/.test(x.label)), JSON.stringify(p.confirm)); assert.equal(p.steps[0].moves.length, 2);
     c = await LF.commit(p, { by: 'Paul', confirmed: p.confirm.map(x => x.key) }); assert.equal(c.ok, true, JSON.stringify(c)); assert.equal(sheet('d-n1').setId, 'set-2'); assert.equal(sheet('d-n2').setId, 'set-2');
     // the words alone (the page's rule and the server's are the one file)
     const v = SE.verifyMoves({ moves: [{ id: 'x', to: null }], recs: { x: { id: 'x', metal: 'gold', setId: 'set-1', draft: false, laserDoneAt: 5 } }, sets: { 'set-1': { doc: { setId: 'set-1', seq: 1, committedAt: 1 }, members: [{ id: 'x' }, { id: 'y' }] } } });

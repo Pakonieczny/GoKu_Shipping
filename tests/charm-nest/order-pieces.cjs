@@ -134,7 +134,7 @@ function partA() {
   assert.equal(off[1].nested, false, 'the live SS page no longer places the piece (taken off): the saved record\'s claim is dropped');
   assert.equal(off[0].nested, true);
   const fresh = Core.resolve({ orderId: A.rid, lines: aLines, pools: poolRows(), sheets: [], sheetsKnown: false, livePlaced: id => (id.endsWith(`_${A.ss}_1`) ? { sheetId: null, metal: 'silver', page: 2 } : null) });
-  assert.deepEqual([fresh[1].state, fresh[1].nested, fresh[1].sheetId, fresh[1].sheetLabel], ['nested', true, null, 'SS Sheet 2'], 'on a page of this sorter that is not saved yet: nested, no sheet id');
+  assert.deepEqual([fresh[1].state, fresh[1].nested, fresh[1].sheetId, fresh[1].sheetLabel], ['nested', true, null, 'SS Draft 2'], 'on a page of this sorter that is not saved yet: nested, no sheet id');
   ok('A7 archived twin and draft never win; a live page is the truth for its sheet; an unsaved page counts as nested');
 
   // 8 · problems

@@ -45,7 +45,7 @@ const states = g => Object.fromEntries(g.sheets.map(x => [x.sheetId, x.state]));
   assert.equal(g.reason, 'GF Sheet 1 · back engravings 1 of 4, and 2 more');
   assert.equal(R.setGate(set(['A', 'B']), [A, B]).reason, 'GF Sheet 1 · back engravings 1 of 4, and 1 more');
   assert.equal(g.blockers[1].why, 'still a draft');
-  assert.equal(R.setGate(set(['B']), [B]).reason, 'GF Sheet 1 · still a draft');
+  assert.equal(R.setGate(set(['B']), [B]).reason, 'GF Draft 1 · still a draft');
 }
 
 // the hard test is the lone button's test: laying out, not in the set, back engravings. Nothing else.
@@ -102,7 +102,7 @@ const states = g => Object.fromEntries(g.sheets.map(x => [x.sheetId, x.state]));
 // the 10K/14K per-sheet Include and Rose Gold keep their rules: an excluded solid sheet blocks, a Rose Gold sheet is judged by its own hard needs only
 {
   const solid = sheet('K', { metal: 'gold14k', solidIncluded: false });
-  const g = R.setGate(set(['A', 'K']), [sheet('A'), solid]); assert.equal(g.ready, false); assert.equal(g.reason, '14K Sheet 1 · not included in a set yet');
+  const g = R.setGate(set(['A', 'K']), [sheet('A'), solid]); assert.equal(g.ready, false); assert.equal(g.reason, '14K Draft 1 · not included in a set yet');
   const rose = sheet('R', { metal: 'rose', roseStockId: 'stock-1' });                              // no green line yet: the Cut Sheet / its own yes, never a grey button
   assert.equal(R.setGate(set(['A', 'R']), [sheet('A'), rose]).ready, true);
   const roseWait = engraving('R', 3, 1, { metal: 'rose', roseStockId: 'stock-1' });
@@ -216,8 +216,8 @@ parts.push(async () => {
     assert.equal(ap.approved, false); assert.deepEqual(ap.confirm.map(c => c.key), ['roseLine'], 'the green line stays a yes the person gives'); assert(!roseCalls.length, 'nothing was calculated'); assert.equal(st.doc(S, 'c-rg').rosePlanHash, undefined); assert(!st.doc(S, 'c-rg').roseCutAt, 'no cut recorded by an approval');
 
     // 7. 10K / 14K: a sheet left out of its set by its own Include switch holds the set, and the server says so
-    r = await post({ op: 'flowState', sheetIds: ['k-gf'], setIds: ['set-5'] }); assert.equal(r.gates['set-5'].reason, '14K Sheet 1 · not included in a set yet');
-    r = await post({ op: 'flowApply', by: 'Paul', steps: [{ type: 'seal', kind: 'sheet', id: 'k-gf' }] }); assert.equal(r.status, 409); assert(/14K Sheet 1 · not included in a set yet/.test(r.error));
+    r = await post({ op: 'flowState', sheetIds: ['k-gf'], setIds: ['set-5'] }); assert.equal(r.gates['set-5'].reason, '14K Draft 1 · not included in a set yet');
+    r = await post({ op: 'flowApply', by: 'Paul', steps: [{ type: 'seal', kind: 'sheet', id: 'k-gf' }] }); assert.equal(r.status, 409); assert(/14K Draft 1 · not included in a set yet/.test(r.error));
     p = await LF.plan({ kind: 'sheet', id: 'k-gf', to: { area: 'laser' } }); assert.equal(p.needs[0].key, 'setGate');
 
     // 8. a set with a cut sheet: the sheets still to approve are the gate

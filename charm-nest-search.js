@@ -161,7 +161,7 @@
   const TYPE_LABEL = t => (W.OrderTimeline && OrderTimeline.TYPES && OrderTimeline.TYPES[t] && OrderTimeline.TYPES[t].label) || (s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())(String(t || "").replace(/([a-z])([A-Z])/g, "$1 $2"));
   const whenTxt = t => { if (!t) return ""; const d = new Date(t), today = new Date(); return d.toDateString() === today.toDateString() ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString([], { month: "short", day: "numeric" }); };
   function nestLabel(page) {
-    if (window.CharmNestSheetName) return CharmNestSheetName.name(page);   // (charm-nest-sheet-name.js)
+    if (window.CharmNestSheetName) { let rec = page; try { const i = pagesOf(page.metal).indexOf(page); if (i >= 0 && +page.page !== i + 1) rec = Object.assign({}, page, { page: i + 1 }); } catch (_) {} return CharmNestSheetName.name(rec); }   // (charm-nest-sheet-name.js: "GF Sheet 3" in a set, "GF Draft 2" outside; a draft's page is its place among the pages)
     try { const i = pagesOf(page.metal).indexOf(page); return `${CODE[page.metal] || ""} Sheet ${i >= 0 ? i + 1 : page.page || "?"}`.trim(); } catch (_) { return `${CODE[page.metal] || ""} Sheet ${page.page || "?"}`.trim(); }
   }
   /** Where the order's pieces are NOW, from the one answer (PiecePlacement: the cloud's sheet records and pool rows, a hold, a cancel, a hand completion), rolled up for the order; null while

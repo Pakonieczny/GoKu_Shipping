@@ -41,17 +41,17 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const plain = C.between([a1, b2], ['b2'], 'new'); assert.equal(plain.length, 1); assert.equal(plain[0].words, '', 'no one told what the pieces are: the plain words stay'); assert.equal(plain[0].kind, '');
     const meta = k => (k === id(MIS, MIS_T, 1) ? { side: 'L', form: 'earrings', bodyIndex: 0 } : k === id(MIS, MIS_T, 2) ? { side: 'R', form: 'earrings', bodyIndex: 1 } : null);
     const told = C.between([a1, b2], ['b2'], 'new', { meta });
-    assert.equal(told[0].kind, 'mismatched'); assert.equal(told[0].words, 'has its left earring on GF Sheet 1 and its right earring on GF Sheet 2');
-    assert.deepEqual(told[0].pieces.map(p => [p.side, p.sideLabel, p.sheetLabel, p.groupKey]), [['L', 'Left', 'GF Sheet 1', `${MIS}:${MIS_T}`], ['R', 'Right', 'GF Sheet 2', `${MIS}:${MIS_T}`]]);
-    assert.equal(C.sentence(told, 'GF Sheet 2'), `Order ${MIS} has its left earring on GF Sheet 1 and its right earring on GF Sheet 2: sheets that share a multi-piece order stay in the same set.`);
+    assert.equal(told[0].kind, 'mismatched'); assert.equal(told[0].words, 'has its left earring on GF Sheet 1 and its right earring on GF Draft 2');
+    assert.deepEqual(told[0].pieces.map(p => [p.side, p.sideLabel, p.sheetLabel, p.groupKey]), [['L', 'Left', 'GF Sheet 1', `${MIS}:${MIS_T}`], ['R', 'Right', 'GF Draft 2', `${MIS}:${MIS_T}`]]);
+    assert.equal(C.sentence(told, 'GF Draft 2'), `Order ${MIS} has its left earring on GF Sheet 1 and its right earring on GF Draft 2: sheets that share a multi-piece order stay in the same set.`);
     // a matching pair (two pieces of one design) and three discs
     const p1 = sh('p1', 'set-1', [id(PAIR, PAIR_T, 1)]), p2 = sh('p2', null, [id(PAIR, PAIR_T, 2)]);
     const pair = C.between([p1, p2], ['p2'], 'new', { meta: () => ({ form: 'earrings', kind: 'pair' }) });
-    assert.equal(pair[0].kind, 'pair'); assert.equal(pair[0].words, 'has its two earrings on GF Sheet 1 and GF Sheet 2', 'an old record (no side on either piece) keeps its words');
+    assert.equal(pair[0].kind, 'pair'); assert.equal(pair[0].words, 'has its two earrings on GF Sheet 1 and GF Draft 2', 'an old record (no side on either piece) keeps its words');
     // a matching pair as the amendment makes it: one Left and one Right piece of the SAME body (a side alone never says "mismatched")
     const sidesOnly = k => ({ side: k === id(PAIR, PAIR_T, 1) ? 'L' : 'R', form: 'earrings', bodyIndex: 0 });
     const lr = C.between([p1, p2], ['p2'], 'new', { meta: sidesOnly });
-    assert.equal(lr[0].kind, 'pair'); assert.equal(lr[0].words, 'has its left earring on GF Sheet 1 and its right earring on GF Sheet 2'); assert.deepEqual(lr[0].pieces.map(x => x.side), ['L', 'R']);
+    assert.equal(lr[0].kind, 'pair'); assert.equal(lr[0].words, 'has its left earring on GF Sheet 1 and its right earring on GF Draft 2'); assert.deepEqual(lr[0].pieces.map(x => x.side), ['L', 'R']);
     assert.equal(lr[0].total, 2, 'both pieces of a matching pair are counted');
     assert.deepEqual(C.groups([p1, p2]).map(g => g.ids.sort()), [['p1', 'p2']], 'a matching pair on two sheets ties them, with or without sides');
     assert.equal(C.between([p1, p2], ['p2'], 'new', { meta: k => ({ side: k === id(PAIR, PAIR_T, 1) ? 'L' : 'R', kind: 'mismatched' }) })[0].kind, 'mismatched', 'the caller\'s own kind wins');
@@ -59,11 +59,11 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const stale = [C.sheetOf({ id: 'z1', metal: 'gold', page: 1, poolIds: [id(PAIR, PAIR_T, 1)], pieceSides: { [id(PAIR, PAIR_T, 1)]: 'L' } }), C.sheetOf({ id: 'z2', metal: 'gold', page: 2, poolIds: [id(PAIR, PAIR_T, 1)] })];
     assert.deepEqual(C.groups(stale), [], 'a stale copy of a piece without its side is the same piece, not a second one');
     const nk = C.between([p1, p2], ['p2'], 'new', { meta: () => ({ kind: 'pair', form: 'necklace' }) });
-    assert.equal(nk[0].kind, 'multi'); assert.equal(nk[0].words, 'has its 2 pieces on GF Sheet 1 and GF Sheet 2', 'two necklaces of one line are two pieces, never two earrings');
+    assert.equal(nk[0].kind, 'multi'); assert.equal(nk[0].words, 'has its 2 pieces on GF Sheet 1 and GF Draft 2', 'two necklaces of one line are two pieces, never two earrings');
     const d1 = sh('d1', 'set-1', [id(DISC, DISC_T, 1)]), d2 = sh('d2', 'set-1', [id(DISC, DISC_T, 2)]), d3 = sh('d3', null, [id(DISC, DISC_T, 3)]);
     assert.deepEqual(C.groups([d1, d2, d3]).map(g => g.ids.sort()), [['d1', 'd2', 'd3']], 'three discs on three sheets: one group of three');
     const discs = C.between([d1, d2, d3], ['d3'], 'new', { meta: () => ({ kind: 'multi', discs: true }) });
-    assert.equal(discs[0].kind, 'multi'); assert.equal(discs[0].words, 'has its 3 discs on GF Sheet 1, GF Sheet 2 and GF Sheet 3'); assert.equal(discs[0].total, 3);
+    assert.equal(discs[0].kind, 'multi'); assert.equal(discs[0].words, 'has its 3 discs on GF Sheet 1, GF Sheet 2 and GF Draft 3'); assert.equal(discs[0].total, 3);
     assert.deepEqual(C.between([d1, d2, d3], ['d1', 'd2', 'd3'], 'new'), [], 'all three moving together split nothing');
     // a mixed sheet: studs, huggies, discs and a single of ONE order across three sheets
     const m1 = sh('m1', 'set-1', [id(MIX, A_T, 1), id(MIX, B_T, 1), id(MIX, C_T, 1), id(MIX, D_T, 1)]), m2 = sh('m2', 'set-1', [id(MIX, A_T, 2), id(MIX, B_T, 2), id(MIX, C_T, 2)]), m3 = sh('m3', null, [id(MIX, C_T, 3)]);
@@ -72,12 +72,12 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const mixed = C.between([m1, m2, m3], ['m3'], 'new'); assert.equal(mixed.length, 1, 'one order, one item'); assert.deepEqual(mixed[0].thereIds.sort(), ['m1', 'm2']);
     const kinds = k => { const g = k.split('_')[1]; return g === A_T || g === B_T ? { form: 'earrings', kind: 'pair' } : g === C_T ? { kind: 'multi', discs: true } : { kind: 'single' }; };
     const mixedTold = C.between([m1, m2, m3], ['m3'], 'new', { meta: kinds })[0];
-    assert.equal(mixedTold.kind, 'multi'); assert.equal(mixedTold.words, 'has 2 pairs of earrings, 3 discs and a piece across GF Sheet 1, GF Sheet 2 and GF Sheet 3', 'a mixed order says what it holds in one short line');
+    assert.equal(mixedTold.kind, 'multi'); assert.equal(mixedTold.words, 'has 2 pairs of earrings, 3 discs and a piece across GF Sheet 1, GF Sheet 2 and GF Draft 3', 'a mixed order says what it holds in one short line');
     // orders with no pair behave exactly as before: two single lines of one order on two sheets
     const s1 = sh('s1', 'set-1', [id(PLAIN, '3100000061', 1)]), s2 = sh('s2', null, [id(PLAIN, '3100000062', 1)]);
     const old = C.between([s1, s2], ['s2'], 'new', { meta: () => ({ kind: 'single', form: 'necklace' }) });
     assert.equal(old.length, 1); assert.equal(old[0].words, '', 'two single lines say nothing about pairs'); assert.equal(old[0].kind, '');
-    assert.equal(SE.sharedWords(old, 'they stay in one set'), `Order ${PLAIN} has pieces on GF Sheet 2 and GF Sheet 1: they stay in one set`);
+    assert.equal(SE.sharedWords(old, 'they stay in one set'), `Order ${PLAIN} has pieces on GF Draft 2 and GF Sheet 1: they stay in one set`);
     assert.deepEqual(C.groups([sh('o1', null, [id(SINGLE, '3100000051', 1)]), sh('o2', null, [id(PLAIN, '3100000061', 1)])]), [], 'a lone single piece ties nothing');
   }
 
@@ -98,7 +98,7 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const sets2 = { 'set-1': sets['set-1'], 'set-2': { doc: { setId: 'set-2', seq: 2, committedAt: now - 5000, status: 'complete', sheetIds: [] }, members: [] } };
     const into = (to, m) => SE.verifyMoves({ moves: [{ id: 'dr', to }], recs: { dr: draft }, sets: sets2, others: [g1, g2, g3, mate, draft], ...(m ? { meta: m } : {}) });
     const m2 = k => (k === id(MIS2, MIS2_T, 1) ? { side: 'L' } : k === id(MIS2, MIS2_T, 2) ? { side: 'R' } : null);
-    assert.equal(SE.sayWhy(into('set-2', m2)), `Order ${MIS2} has its right earring on GF Sheet 1 and its left earring on GF Sheet 1: they go into one set together`.replace('its right earring on GF Sheet 1 and its left earring on GF Sheet 1', 'its left earring on GF Sheet 1 and its right earring on GF Sheet 1'), 'joining another set without the sheet that holds the left earring is refused');
+    assert.equal(SE.sayWhy(into('set-2', m2)), `Order ${MIS2} has its left earring on GF Sheet 1 and its right earring on GF Draft 1: they go into one set together`, 'joining another set without the sheet that holds the left earring is refused');
     assert.equal(into('set-1', m2).ok, true, 'joining the set that already holds the left earring is allowed');
     // rule B stays per sheet: a completed sheet cannot move whatever its pieces are
     const done = rec('dn', 'gold', [id(SINGLE, '3100000051', 1)], { setId: 'set-1', laserDoneAt: now - 100 });

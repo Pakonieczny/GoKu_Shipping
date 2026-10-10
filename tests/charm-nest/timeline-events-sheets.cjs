@@ -93,7 +93,7 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
       await settle();
       const inc = await events('included');
       assert.deepEqual(ids(inc), sheet1, 'included: each order on Sheet 1'); onceEach(inc, e => e.orderId, 'included');
-      assert(inc.every(e => e.by === 'Tester' && e.sheet === '14K Sheet 1' && e.sheetId === 'gold14k-t1' && e.data.metal === 'gold14k' && e.data.pieces === 1 && /^\d+_\d+$/.test(e.lineKey) && e.id), 'with who and where: ' + JSON.stringify(inc[0]));
+      assert(inc.every(e => e.by === 'Tester' && e.sheet === '14K Draft 1' && e.sheetId === 'gold14k-t1' && e.data.metal === 'gold14k' && e.data.pieces === 1 && /^\d+_\d+$/.test(e.lineKey) && e.id), 'with who and where: ' + JSON.stringify(inc[0]));
       await page.click(`dialog.osDlg [data-solid="include"]`);
       await settle();
       const exc = await events('excluded');
@@ -115,7 +115,7 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
       await settle();
       const merged = await events('merged');
       assert.deepEqual(ids(merged), sheet2, 'merged: each order that moved from Sheet 2'); onceEach(merged, e => e.orderId, 'merged');
-      assert(merged.every(e => e.data.kind === 'move' && e.data.from === '14K Sheet 2' && e.data.to === '14K Sheet 1' && e.data.toSheetId === 'gold14k-t1' && e.sheetId === 'gold14k-t2' && e.by === 'Tester' && /Moved from 14K Sheet 2 onto 14K Sheet 1/.test(e.text)), 'from Sheet 2 to Sheet 1: ' + JSON.stringify(merged[0]));
+      assert(merged.every(e => e.data.kind === 'move' && e.data.from === '14K Draft 2' && e.data.to === '14K Draft 1' && e.data.toSheetId === 'gold14k-t1' && e.sheetId === 'gold14k-t2' && e.by === 'Tester' && /Moved from 14K Draft 2 onto 14K Draft 1/.test(e.text)), 'from Sheet 2 to Sheet 1: ' + JSON.stringify(merged[0]));
       assert.equal((await events('renested')).length, 0, 'a merge is recorded as a merge, not as a re-nest as well');
       assert.equal((await events('placed')).length, 0, 'the pieces placed meanwhile: "placed" is the server\'s (poolUpdate), never the page\'s');
       console.log('  ✓ merge: each order that moved, from Sheet 2 onto Sheet 1, once; no placed from the page');
@@ -155,7 +155,7 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
       const re = await events('renested'); assert.deepEqual(ids(re), [...sheet1, ...sheet2], 'a nest by hand from scratch: each order on the sheet, and only once'); onceEach(re, e => e.orderId, 'renested');
       const rose = await events('roseLine');
       assert.deepEqual(ids(rose), ['4170000100', '4170000101', '4170000200'], 'a green line: the orders whose pieces it covers, once');
-      assert(rose.every(e => e.at === 1790000000000 && e.sheet === 'RG Sheet 1' && e.data.line === 1 && e.id === 'rose-t1-L1-1790000000000'));
+      assert(rose.every(e => e.at === 1790000000000 && e.sheet === 'RG Draft 1' && e.data.line === 1 && e.id === 'rose-t1-L1-1790000000000'));
       assert((await events('note')).some(e => e.orderId === '4170000100' && /Set commit undone · Set-1/.test(e.text)), 'an undone commit is a note');
       const rc = await events('recalled'); assert.deepEqual(ids(rc), ['4170000100', '4170000101']); assert(rc.every(e => e.sheet === '14K Sheet 1' && e.by === 'Tester'));
       const held = await events('held'); assert.equal(held.length, 1); assert.equal(held[0].by, 'Tester');

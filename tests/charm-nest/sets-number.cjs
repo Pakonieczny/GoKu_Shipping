@@ -58,6 +58,7 @@ const SET_ONE = { setId: SET1, seq: 1, day: DAY, name: 'Set-1', committedAt: nul
   assert.equal(SN.name(set('a', 2, { setId: null, draft: true, sheetIndex: null, laserDoneAt: 5 })), 'GF Sheet 2'); assert.equal(SN.name({ metal: 'rose', setId: null, draft: true, page: 1, roseCutAt: 7, fileBase: 'RG_Oct.03.26_Set-1_Sheet-1' }), 'RG Sheet 1');
   // a partial read (no setId, no draft: the masked sheet read of the remnants and the timeline) is read by the number it keeps, as it always was
   assert.equal(SN.name({ metal: 'gold', sheetIndex: 3, page: 5 }), 'GF Sheet 3'); assert.equal(SN.name({ metal: 'gold', fileBase: 'GF_Oct.03.26_Set-1_Sheet-2', page: 4 }), 'GF Sheet 2'); assert.equal(SN.name({ metal: 'gold', page: 4 }), 'GF Draft 4');
+  assert.equal(SN.name({ metal: 'gold', setId: null, draft: false, sheetIndex: 1, page: 1 }), 'GF Sheet 1', 'not a draft and numbered, whatever set it names (an older run\'s sheet; the Library row of a numbered sheet): its number'); assert.equal(SN.name({ metal: 'gold', setId: null, draft: true, sheetIndex: 1, page: 3 }), 'GF Draft 3');
   assert.equal(SN.name({ metalLabel: 'GF', setId: null, draft: true, page: 2 }), 'GF Draft 2', 'the metal code of a record that has no metal: its label'); assert.equal(SN.name(null), '');
   // the file name's tag
   assert.deepEqual(SN.fileTag({ fileBase: 'GF_Oct.03.26_Set-12_Sheet-4' }), { code: 'GF', set: 12, no: 4 }); assert.equal(SN.fileTag({ fileBase: 'GF_working_gold-s5-mv1pbxaq' }), null);
@@ -123,7 +124,6 @@ const SET_ONE = { setId: SET1, seq: 1, day: DAY, name: 'Set-1', committedAt: nul
   // GF Sheet 5 leaves: it is a draft again (GF Draft 1 by its page), remembers where it was, and its number is retired
   r = await edit([['dr-gf1', null]]); assert.equal(r.status, 200, JSON.stringify(r)); const out = sheet('dr-gf1');
   assert.equal(out.draft, true); assert.equal(out.sheetIndex, null); assert.equal(nameOf('dr-gf1'), 'GF Draft 1'); assert.equal(SN.was(out), 'GF Sheet 5 of Set 1', 'it remembers: ' + out.fileBase);
-  assert.equal(kept(['gf-1', 'gf-2', 'gf-3']), kept(['gf-1', 'gf-2', 'gf-3']));
   assert.deepEqual(['gf-1', 'gf-2', 'gf-3', 'dr-gf5'].map(nameOf), ['GF Sheet 1', 'GF Sheet 2', 'GF Sheet 3', 'GF Sheet 4'], 'nobody renumbers when a sheet leaves');
   assert.deepEqual(setDoc().sheetNos, { gold: 5, silver: 2 }, 'the highest number stays, so 5 is not given to anyone else');
   // a different draft joins now: GF Sheet 6, not 5 (a printed QR label or laser file may still say 5)
@@ -170,6 +170,7 @@ const SET_ONE = { setId: SET1, seq: 1, day: DAY, name: 'Set-1', committedAt: nul
   assert(/charm-nest-sheet-name\.js/.test(build), 'the Netlify build publishes it');
   for (const f of ['charm-nest-set-edit.js', 'charm-nest-flow.js', 'charm-nest-sheetwin.js', 'charm-nest-search.js', 'charm-nest-library.js', 'charm-nest-bridge.js', 'charm-nest-flow-rose.js', 'charm-nest-laser-act.js', 'netlify/functions/_charmNestPlacement.js', 'netlify/functions/_orderTimeline.js'])
     assert(/CharmNestSheetName|charm-nest-sheet-name/.test(fs.readFileSync(root(f), 'utf8')), f + ' names a sheet with the one file');
+  assert(/uniqueNames/.test(fs.readFileSync(root('charm-nest-bridge.js'), 'utf8')), 'the order window tells apart tabs that would read alike');
   // the modern join writers never use the page as the number
   const set0 = fs.readFileSync(root('charm-nest-set-edit.js'), 'utf8'), idx = set0.slice(set0.indexOf('function indexFor'), set0.indexOf('function indexFor') + 900); assert(!/\.page/.test(idx), 'indexFor does not read the page');
   console.log('sets-number: ok');

@@ -232,12 +232,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     // a sheet with no line yet: both yes keys, the line is added only in the same press
     p = await LF.plan({ kind: 'sheet', id: 'rg-new', to: { set: 'set-3' } });
     assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(c => c.key), ['roseSet', 'roseLine']);
-    assert.equal(p.confirm[0].label, 'Add RG Sheet 1 to Set 3?'); assert(/Rose Gold joins a set the way Cut Sheet does, with its green dash line/.test(p.confirm[0].detail)); assert(/permanent/.test(p.confirm[0].detail));
+    assert.equal(p.confirm[0].label, 'Add RG Draft 1 to Set 3?'); assert(/Rose Gold joins a set the way Cut Sheet does, with its green dash line/.test(p.confirm[0].detail)); assert(/permanent/.test(p.confirm[0].detail));
     assert(/Cut Sheet press/.test(p.auto.find(a => a.key === 'membership').detail), 'the auto line says it is the Cut Sheet press'); assert.equal(joinsRose.length, 0, 'plan writes nothing'); assert.equal(st.doc(S, 'rg-new').draft, true);
     for (const keys of [[], ['roseSet'], ['roseLine']]) { r = await LF.commit(p, { by: 'Paul', confirmed: keys }); assert.equal(r.ok, false, keys.join()); assert(/yes first/.test(r.error)); }
     assert.equal(joinsRose.length, 0); assert.equal(st.doc(S, 'rg-new').draft, true, 'nothing without both yes keys');
     r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet', 'roseLine'] }); assert.equal(r.ok, true, JSON.stringify(r));
-    assert.deepEqual(joinsRose, [{ id: 'rg-new', line: true, full: false, by: 'Paul' }]); assert(r.applied.some(a => a.key === 'membership' && /RG Sheet 1 added to Set 3/.test(a.label)) && r.applied.some(a => a.key === 'roseLine') && r.applied.some(a => a.key === 'roseCut'), JSON.stringify(r.applied));
+    assert.deepEqual(joinsRose, [{ id: 'rg-new', line: true, full: false, by: 'Paul' }]); assert(r.applied.some(a => a.key === 'membership' && /RG Draft 1 added to Set 3/.test(a.label)) && r.applied.some(a => a.key === 'roseLine') && r.applied.some(a => a.key === 'roseCut'), JSON.stringify(r.applied));
     assert.equal(st.doc(S, 'rg-new').draft, false); r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet', 'roseLine'] }); assert.equal(r.noop, true, 'asked again: already in the set'); assert.equal(joinsRose.length, 1);
     // a sheet that already has its line: only roseSet is asked
     p = await LF.plan({ kind: 'sheet', id: 'rg-line', to: { set: 'set-3' } }); assert.deepEqual(p.confirm.map(c => c.key), ['roseSet']); assert(!p.steps.some(x => x.type === 'roseLine'));

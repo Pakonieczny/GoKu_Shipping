@@ -46,16 +46,15 @@
   const isCut = r => !!(r && (+r.laserDoneAt > 0 || +r.roseCutAt > 0));
   /** The number a sheet has in its set (0: none): its record's, else its file name's. Never the page. */
   const numberOf = r => num(r && r.sheetIndex) || (fileTag(r) || {}).no || 0;
-  /** A sheet that has a name in a set: in one, or cut (its file and label already carry the number). A record that says nothing about
-   *  membership (a partial read of the document: no setId, no draft) is read by the number it keeps, as it always was; a record that says
-   *  it is a draft, or says it is in no set, has no number in any set, whatever a stale field still holds. */
+  /** A sheet that has a name in a set: in one, or cut (its file and label already carry the number). A record that is NOT a draft and
+   *  names no set (a partial read of the document, or a sheet an older run numbered without a set) is read by the number it keeps, as it always
+   *  was; a record that says it is a draft has no number in any set, whatever a stale field still holds. */
   function numbered(r) {
     if (!r) return false;
     if (isCut(r)) return true;
     if (r.draft === true || r.solidIncluded === false) return false;
     if (r.setId) return true;
-    if (r.setId === undefined && r.draft === undefined) return numberOf(r) > 0;
-    return false;
+    return numberOf(r) > 0;      // no set named and not a draft (a partial read; an older run's sheet that was numbered without a set): read by the number it keeps
   }
   /** The provisional number of a sheet outside every set: its page in the run. */
   const draftNo = r => num(r && r.page) || 1;

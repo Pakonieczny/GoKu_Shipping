@@ -270,17 +270,19 @@ const rgSpec = (h, own, setId) => paul(h, {}, { sheets: [{ id: GF, metal: 'gold'
 const rgCombos = function* () { for (const own of Object.keys(RG_OWN)) for (const [setName, recorded] of RG_SETS) { const setId = RG_OWN[own] === null ? null : recorded; for (const [pressName, h] of RG_CHAIN) yield { own, setName, recorded, setId, pressName, h, tag: `RG Sheet 1 ${own}, ${RG_OWN[own] === null ? `recorded ${setName}, joined none` : setName}, chain ${pressName}`, released: !!h && h.state !== 'open', same: setId === SET }; } };
 /** What GF Sheet 1 must be held back by, in piece ids: the chain only while it is not released, the MIDDLE RG piece unless RG Sheet 1 is in GF's own set (the set's wait). */
 const rgWant = c => (c.released ? [] : [`${CHAIN}_1`]).concat(c.same ? [] : [`${MID_RG}_1`]);
+// (charm-nest-sheet-name.js) a draft or a sheet left out of the set is "RG Draft 1": it has no number in any set; a sheet that is numbered keeps "RG Sheet 1"
+const rgName = c => (RG_OWN[c.own] === null ? 'RG Draft 1' : 'RG Sheet 1');
 /** The words and flags of the one honest wait (a released chain, RG Sheet 1 not in GF's set): said of the real piece and the real sheet, never of the chain. */
 function rgWords(c, i, tag) {
   eq(i.key, 'otherSheetNotReady', `${tag}: the one wait is for the other sheet`); eq(i.pieceCount, 2, `${tag}: two pieces count (the chain is not one of them)`);
-  eq(i.pieces.map(p => [p.poolId, p.sheetLabel, p.kind]), [[`${MID_RG}_1`, 'RG Sheet 1', 'otherSheetNotReady']], `${tag}: it names the MIDDLE RG piece on RG Sheet 1`);
+  eq(i.pieces.map(p => [p.poolId, p.sheetLabel, p.kind]), [[`${MID_RG}_1`, rgName(c), 'otherSheetNotReady']], `${tag}: it names the MIDDLE RG piece on ${rgName(c)}`);
   if (c.setId === null) {
     ok(i.noSet === true && !i.split && i.pieces[0].noSet === true && !i.pieces[0].split, `${tag}: it says the sheet has no set (flags)`);
-    ok(new RegExp('^Its other piece is on RG Sheet 1, which is in no set' + (RG_OWN[c.own] ? ', and ' + RG_OWN[c.own].source : '$')).test(i.why), `${tag}: it says so in words: ${i.why}`);
+    ok(new RegExp('^Its other piece is on ' + rgName(c) + ', which is in no set' + (RG_OWN[c.own] ? ', and ' + RG_OWN[c.own].source : '$')).test(i.why), `${tag}: it says so in words: ${i.why}`);
     ok(/in no set/.test(i.pieces[0].why), `${tag}: and in the piece's own line: ${i.pieces[0].why}`);
   } else {
     ok(i.split === true && !i.noSet && i.pieces[0].split === true && !i.pieces[0].noSet, `${tag}: another set is a split (flags)`);
-    ok(/^Split between Set 1 and Set 2: its other piece is on RG Sheet 1, and /.test(i.why) && /in another set/.test(i.pieces[0].why), `${tag}: said as the split: ${i.why}`);
+    ok(new RegExp('^Split between Set 1 and Set 2: its other piece is on ' + rgName(c) + ', and ').test(i.why) && /in another set/.test(i.pieces[0].why), `${tag}: said as the split: ${i.why}`);
   }
   ok(!/completed|chain/i.test(i.why + ' ' + i.pieces[0].why) && !JSON.stringify(i).includes(CHAIN), `${tag}: the piece completed by hand is not named or blamed`);
 }
@@ -294,7 +296,7 @@ function rgPageChecks() {
     eq(rep.blocks.map(b => b.lineKey).sort(), (c.released ? [] : [CHAIN]).concat([MID_RG]).sort(), `${tag}: the pieces that hold the order`);
     eq(rep.pieceCount, c.released ? 2 : 3, `${tag}: pieces counted`);
     const mid = rep.blocks.find(b => b.lineKey === MID_RG);
-    eq([mid.key, mid.sheetLabel, mid.setId], ['otherSheetNotReady', 'RG Sheet 1', c.setId], `${tag}: the MIDDLE RG piece waits for RG Sheet 1, whose set is ${c.setId}`);
+    eq([mid.key, mid.sheetLabel, mid.setId], ['otherSheetNotReady', rgName(c), c.setId], `${tag}: the MIDDLE RG piece waits for RG Sheet 1, whose set is ${c.setId}`);
     // GF Sheet 1's '!' panel (rows + every sheet, the page's own reading) and the record the server answers
     const list = R.issues(gf, { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId), answered = R.issues(pre.find(s => s.id === GF), {}).filter(i => i.step === 'orders' && i.orderId);
     for (const l of [list, answered]) {
@@ -475,8 +477,8 @@ async function rgMembershipChecks(srv) {
     const h = hand('button', 'completed', 'stale', ['button']);
     seed(srv.st, S.materialize(imgSpec(h, own, null)), false);
     let a = await post({ op: 'laserStatus', sheetIds: [GF, SS], wantRevs: true }), w = words(a);
-    eq([w.rd.ready, w.rd.blocks.map(b => [b.lineKey, b.key, b.sheetLabel, b.setId])], [false, [[MID_RG, 'otherSheetNotReady', 'RG Sheet 1', null]]], `${name}, not in a set: GF Sheet 1 waits for the MIDDLE RG piece on RG Sheet 1, which has no set`);
-    ok(w.l.length === 1 && w.l[0].noSet === true && /^Its other piece is on RG Sheet 1, which is in no set/.test(w.l[0].why) && w.l[0].pieces.length === 1, `${name}: it is told as a sheet in no set, with its one real piece: ${w.l[0] && w.l[0].why}`);
+    eq([w.rd.ready, w.rd.blocks.map(b => [b.lineKey, b.key, b.sheetLabel, b.setId])], [false, [[MID_RG, 'otherSheetNotReady', own === 'draft' ? 'RG Draft 1' : 'RG Sheet 1', null]]], `${name}, not in a set: GF Sheet 1 waits for the MIDDLE RG piece on RG Sheet 1, which has no set`);
+    ok(w.l.length === 1 && w.l[0].noSet === true && new RegExp('^Its other piece is on ' + (own === 'draft' ? 'RG Draft 1' : 'RG Sheet 1') + ', which is in no set').test(w.l[0].why) && w.l[0].pieces.length === 1, `${name}: it is told as a sheet in no set, with its one real piece: ${w.l[0] && w.l[0].why}`);
     eq(w.gf.laser.ready, false, `${name}: GF Sheet 1 is not laser-ready while that is so`);
     // the sheet's own set record lists it, its own record does not: still no set (the card shows it in none)
     srv.st.put('Charm_Nest_Sets', SET, { sheetIds: [GF, SS, RG] });
