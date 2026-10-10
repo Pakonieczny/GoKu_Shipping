@@ -68,6 +68,7 @@ const RID_DONE = '4173162973', RID_SENT = '4170408845', OLD = 'OLDREC';
     'cn.arrivals.production': { seen: { 4100000001: 1 }, lastCheck: 1, nextCheck: 1, lastAdded: 0, error: null },
     'cn.customRead.production': { '4100000001_1': { hash: 'h', at: Date.now() } }
   };
+  // (Paul, 10 Oct: "ALL other data should be wiped": the readings Claude was paid for and the photo framing are the sandbox's too)
   const keptKeys = { 'cn.customRead.sandbox': { kept_1: { hash: 'paid', at: Date.now() } }, 'cn.listImageFraming.sandbox': [['1', { s: 2, x: 0, y: 0 }]] };
   const sharedLists = {
     'orderTimeline.outbox.v1': [{ orderId: RID_DONE, type: 'qrLabel', id: OLD + '-ev', sandbox: true, mode: 'sorter', at: Date.now() }, { orderId: '4100000001', type: 'scan', id: 'prod-ev', sandbox: false, mode: 'station', at: Date.now() }],
@@ -134,8 +135,8 @@ const RID_DONE = '4173162973', RID_SENT = '4170408845', OLD = 'OLDREC';
   for (const k of Object.keys(sandboxKeys)) assert(ls[k] == null || !ls[k].includes(OLD) && !ls[k].includes(RID_DONE), `the sandbox key ${k} still holds the old records: ${ls[k]}`);
   assert(!/q-old|m-sb|a-sb/.test(JSON.stringify(ls)) && !ls['orderTimeline.outbox.v1']?.includes(OLD), 'no queued sandbox item is left in any list');
   for (const [k, v] of Object.entries(prodKeys)) assert.strictEqual(ls[k], JSON.stringify(v), `the production key ${k} is unchanged`);
-  assert.strictEqual(ls['cn.customRead.sandbox'], JSON.stringify(keptKeys['cn.customRead.sandbox']), 'Claude\'s paid readings are kept');
-  assert(ls['cn.listImageFraming.sandbox'] != null, 'the photo framing (a preference, not a record) is kept (the page itself rewrites it on leaving)');
+  assert(ls['cn.customRead.sandbox'] == null || !ls['cn.customRead.sandbox'].includes('kept_1'), 'the sandbox\'s saved readings of lines are gone too');
+  assert(ls['cn.listImageFraming.sandbox'] == null || !ls['cn.listImageFraming.sandbox'].includes('"s":2'), 'the sandbox\'s photo framing is gone too');
   assert.deepStrictEqual(JSON.parse(ls['orderTimeline.outbox.v1']).map(e => e.id), ['prod-ev'], 'the shared timeline outbox keeps production\'s event only');
   assert.deepStrictEqual(JSON.parse(ls['cn.mail.outbox']).map(e => e.id), ['m-prod'], 'the shared mail outbox keeps production\'s message only');
   assert.deepStrictEqual(JSON.parse(ls['station_activity_q.dev1']).map(e => e.id), ['a-prod'], 'the shared activity queue keeps production\'s event only');

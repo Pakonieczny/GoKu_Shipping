@@ -15,7 +15,7 @@
 //   · the sandbox stays quiet until started: no stream, no check of the orders, no Auto run, nothing written, in Manual and
 //     with Auto on; saving Settings is not Start; a second tab of the browser is quiet too,
 //   · Settings says the page build and what the last reset did, inside the dialog (no pop-up on a pop-up),
-//   · Start (the Orders tab's button) plays the day from step 0 with the seed in Settings: the same orders come back as NEW
+//   · Start (the Orders tab's button) pulls the 250 newest Etsy orders (here: the same four) once and plays the day from step 0 with the seed in Settings: the same orders come back as NEW
 //     orders, with none of the old stamps, pool rows, sheets or decisions on them,
 //   · production's records and keys are byte-identical, and nothing of the old sandbox was written to the cloud again.
 //   node tests/charm-nest/sandbox-reset-e2e.cjs [playwright-core dir]
@@ -43,6 +43,14 @@ const OLD = 'OLDREC';
 (async () => {
   const srv = await start({ receipts: [] });
   const { st, sorterOrigin, stationOrigin } = srv;
+  // the sandbox's orders are the 250 newest Etsy orders, pulled at every Start (op sandboxPullOrders): here the fake Etsy's newest
+  // orders are these same four, so "the same orders come back as new ones" after the reset still reads the same
+  process.env.SHOP_ID = '987654'; process.env.CLIENT_ID = 'test-key'; process.env.CLIENT_SECRET = 'test-secret';
+  const Pull = require(path.join(fnDir, '_charmNestSandboxPull.js')), realPull = Pull.pull, pullReqs = [];
+  const fakeEtsy = async url => { const u = new URL(url), off = +u.searchParams.get('offset'), lim = +u.searchParams.get('limit'); return { ok: true, status: 200, headers: { get: () => null }, text: async () => '', json: async () => ({ results: JSON.parse(JSON.stringify(snapshot.slice(off, off + lim))) }) }; };
+  Pull.pull = (b, ctx) => { pullReqs.push(b.startId); return realPull(b, ctx, { fetch: fakeEtsy, token: async () => 'test-token', meter: { bump: () => ({ fromHttp() {}, failNet() {} }), flushNow: async () => {} } }); };
+  const fdb = st.admin.firestore(); if (!fdb.doc) fdb.doc = p => { const [c, ...rest] = p.split('/'); return fdb.collection(c).doc(rest.join('/')); };
+  st.put('config', 'etsyOauth', { access_token: 'a', refresh_token: 'r', expires_at_ms: Date.now() + 3600e3 });
   // the stations' door and the efficiency console's reader are the real handlers, over the same in-memory Firestore
   const door = require(path.join(fnDir, 'firebaseOrders.js')), effFn = require(path.join(fnDir, 'employeeEfficiency.js'));
   st.fn.firebaseOrders = door.handler; st.fn.employeeEfficiency = effFn.handler;
@@ -91,7 +99,7 @@ const OLD = 'OLDREC';
   // the sandbox's snapshot (the emulated Etsy serves it) and the production side
   const snapPath = 'charmnest/sandbox/orders-e2e.json';
   st.blobs.set(snapPath, { buf: Buffer.from(JSON.stringify({ at: NOW, count: snapshot.length, receipts: snapshot })), generation: 1, meta: { contentType: 'application/json', metadata: {} } });
-  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, at: NOW, takenBy: 'test' });
+  st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, open: snapshot.length, at: NOW, pulledAt: NOW, takenBy: 'test', source: 'etsy-pull', startId: 'sbx-before-the-reset' });
   await seed(false); await seed(true);
   const ownKey = k => k.startsWith('Sandbox_') || k === 'Charm_Sandbox/stream' || k.startsWith('EtsyMail_OrderLinks/olsb_');
   const sandboxDocs = () => [...st.docs.keys()].filter(ownKey);
@@ -124,7 +132,6 @@ const OLD = 'OLDREC';
   /* ── boot: the sandbox, streaming (fast), Manual; the orders of the day arrive over the dirty records ── */
   const page = await open(); await booted(page);
   await settle(page, { sandbox: 'on', sandboxStream: 'on', sandboxSpeed: SPEED, sandboxSeed: SEED });
-  await page.evaluate(() => sessionStorage.setItem('cn.sandboxAutoPull', '1'));
   await page.reload(); await booted(page);
   await page.waitForFunction(() => Sandbox.stream(), null, { timeout: 20000 });
   await page.evaluate(() => CN.setMode('orders'));
@@ -303,7 +310,8 @@ const OLD = 'OLDREC';
   await page.waitForFunction(() => !Sandbox.held() && Sandbox.stream(), null, { timeout: 20000 });
   await page.waitForFunction(ids => ids.every(id => B.orders.rows.some(r => String(r.order.receiptId) === id)), [A, B, C, D], { timeout: 60000 });
   const s1 = st.doc('Charm_Sandbox', 'stream');
-  assert(s1 && s1.seed === SEED && s1.startedAt >= startAt - 1000 && s1.snapshotPath === snapPath, 'a new stream, with the seed in Settings, begun at Start: ' + JSON.stringify(s1));
+  assert(s1 && s1.seed === SEED && s1.startedAt >= startAt - 1000, 'a new stream, with the seed in Settings, begun at Start: ' + JSON.stringify(s1));
+  assert(pullReqs.length === 1 && /^charmnest\/sandbox\/orders-pull\//.test(s1.snapshotPath), 'Start pulled the newest orders once (a fresh set, not the one before the reset): ' + pullReqs.length + ' ' + s1.snapshotPath);
   const replay = await rows(page);
   const replayed = new Set(replay.map(r => r.rid));
   assert([A, B, C, D].every(id => replayed.has(id)), 'the same orders come back');

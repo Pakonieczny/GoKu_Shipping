@@ -220,8 +220,9 @@
     if (to.sheet) return planMembership(state, v, env.dest || combineDest(state, v), plan, { ...env, also: [String(to.sheet)] });
     if (!AREAS.includes(to.area)) { plan.needs.push({ key: 'target', label: 'That is not a place a sheet can go', detail: 'Drop it on In progress, Laser cutting, Completed or a set.', items: [] }); return finish(plan); }
     plan.to = { area: to.area, setId: plan.from.setId, label: AREA[to.area] };
-    // a sheet of a committed set that is not completed, dropped on In progress, is TAKEN OUT of the set (Paul, 7 Oct)
-    if (to.area === 'progress' && v.kind === 'sheet' && v.set && inSet(v.sheet) && committedSet(v.set) && !(+v.set.laserDoneAt > 0)) return planLeave(state, v, plan, env);
+    // a sheet of a committed set that is not completed, dropped on In progress, is TAKEN OUT of the set (Paul, 7 Oct); so is a sheet of a set that is still being
+    // made and waits in In progress (Paul, 10 Oct: "I should be able to move it completely freely"): never "Already in In progress" for a sheet that can leave
+    if (to.area === 'progress' && leavesOnProgress(v)) return planLeave(state, v, plan, env);
     if (from === to.area) { plan.noop = true; plan.notes.push(`${v.label} is already in ${AREA[from]}.`); return finish(plan); }
     const grouped = v.kind === 'sheet' && !!v.set && v.set.sheetIds.length > 1;
     // A set advances as ONE (Paul, 5 Oct, round 7): going forward, a sheet of a set of several is approved and moved WITH its set, so
@@ -378,21 +379,16 @@
     if (T && inSet(s) && T.setId === s.setId) { plan.noop = true; plan.notes.push(`${v.label} is already in ${setName(T)}.`); return finish(plan); }
     if (s.roseCutAt) { need('sheetCut', `${v.label} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); return finish(plan); }
     if (+s.laserDoneAt > 0) { need('sheetCompleted', `${v.label} is completed`, 'It keeps its cut record and set until it is moved back to Laser cutting.'); return finish(plan); }
-    // a committed set takes and gives sheets (Paul, 7 Oct): its own rules, below
-    if ((T && committedSet(T)) || (inSet(s) && committedSet(state.sets[s.setId]))) return committedMembership(state, v, to, plan, env);
+    // a committed set takes and gives sheets (Paul, 7 Oct), and any sheet of a set moves by the rules of set-edit (Paul, 10 Oct): its own plan, below
+    if (T && committedSet(T)) return committedMembership(state, v, to, plan, env);
+    if (inSet(s) && !state.sets[s.setId]) { need('set', `The set of ${v.label} could not be read`, 'Refresh the Library and try again.'); return finish(plan); }
+    if (inSet(s)) return setToOpen(state, v, to, plan, env);
     if (T && +T.laserDoneAt > 0) need('setCompleted', `${setName(T)} is completed`, 'A completed set takes no more sheets.');
-    else if (T && committedSet(T)) need('setCommitted', `${setName(T)} is already committed`, 'The next set takes new sheets.');
     else if (T && /superseded/.test(String(T.status || ''))) need('setClosed', `${setName(T)} was replaced`, 'Drop it on a current set.');
     if (plan.needs.length) return finish(plan);
-    const from = inSet(s) ? state.sets[s.setId] || null : null, fromName = from ? setName(from) : 'its set';
-    if (from && committedSet(from)) {
-      need('leaveCommitted', `${fromName} is committed to the station`, `Moving it out would undo that commit: press Undo set on ${fromName}'s card first.`);
-      return finish(plan);
-    }
     if (run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
-    if (!live) { need('fixedSet', `${from ? fromName : v.label} is closed`, from ? 'Its run is finished, so its sheets stay together.' : 'Its run is finished, so it stays as it is.'); return finish(plan); }
+    if (!live) { need('fixedSet', `${v.label} is closed`, 'Its run is finished, so it stays as it is.'); return finish(plan); }
     const open = live.dispatchSetId || null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
-    if (inSet(s)) { need('runOwned', `Already in ${state.sets[s.setId] ? setName(state.sets[s.setId]) : 'a set'}`, 'A sheet in a set cannot be moved to another one.'); return finish(plan); }
     if (to.set && T.setId !== open) need('notOpenSet', `${setName(T)} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
     else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `Drop the sheet on ${openName}.`);
     else if (live.can && live.can.ok === false) need('include', 'Not ready to join a set', live.can.reason || 'Nest and verify it first.');
@@ -408,6 +404,8 @@
     plan.auto.push({ key: 'qrLabel', label: `QR label made for ${target}`, detail: 'The label names the set and the sheet, and covers every order on it.', stamp: true });
     roseConfirm(plan, [s], env);
     plan.steps.push({ type: 'include', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
+    // a sheet that was taken out of a set (the hold that says so) is put back by this drop: the hold taking it out made is lifted once it is in; a person's own hold stays
+    if (held(s) && /^Taken out of /.test(String(s.laserHold.note || ''))) { plan.auto.push({ key: 'release:' + v.id, label: `${v.label} released from its hold`, detail: 'The hold that taking it out made is lifted: it is in a set again.' }); plan.steps.push({ type: 'release', sheetIds: [v.id], joined: true, key: 'release:' + v.id }); }
     // (the sheets that share an order with this one come with it: withCardinal, below, says so and asks for the one yes; a page
     //  that cannot say who they are still never offers "only this sheet")
     const dropped = new Set(mates.map(c => c.label));       // (a sheet dropped on is named by the drop itself: no yes is asked about it)
@@ -427,14 +425,36 @@
      the sheets it shares an order with, in one yes); a sheet of one committed set dropped on another goes straight over, both ways
      checked, in one step. The rest of the set stays committed with its seals, approvals and place; the sheet put in joins as it is
      (its own approvals and seals are kept, none are added), so the set goes back to In progress until every sheet of it is ready. ── */
+  /* Where a sheet leaves its set from (Paul, 10 Oct: a sheet moves freely unless it breaks the core principle of a Set, splits a multi-piece order, was cut, would
+     empty a set, or breaks a physical-safety rule). The way out depends on who makes the set now:
+       committed  the records (op flowApply setMember) and the set's files, as LS2 built it
+       run        the set the OPEN run on this screen is still making: the server checks the rules and writes the hold, then the run's own assembly (hook `leave`) lets it go
+       server     a set no open run makes (its run is finished): the records, as for a committed set, without the set files
+       elsewhere  the run that makes the set is open on ANOTHER screen: that screen changes it (two screens would undo each other)  */
+  function exitHow(state, v) {
+    const T = v.set, s = v.sheet;
+    if (!T) return { kind: 'none' };
+    if (committedSet(T)) return { kind: 'committed' };
+    const run = (state.runs || {})[s.runId] || (state.runs || {})[T.runId] || null, live = (state.live || {})[v.id] || null;
+    if (run && run.open) return live && live.runHere !== false && live.dispatchSetId && live.dispatchSetId === T.setId ? { kind: 'run', live, runId: s.runId || T.runId } : { kind: 'elsewhere', runId: s.runId || T.runId };
+    return { kind: 'server' };
+  }
+  // a drop on In progress takes the sheet out of its set: always for a committed set, and for a set that waits in In progress (a sheet of a ready set going back is a hold, as before)
+  const leavesOnProgress = v => v.kind === 'sheet' && !!v.set && inSet(v.sheet) && !(+v.set.laserDoneAt > 0) && (committedSet(v.set) || areaOf(v) === 'progress');
+  /* The core principle of a Set (SETFORM, charm-nest-set-rules.js: "at minimum 1 Completed GF Sheet and 1 Completed SS Sheet"): the needs a sheet leaving `from` would cause. */
+  function principleNeeds(v, from, plan) {
+    const SEd = SE(); if (!SEd || typeof SEd.principleReasons !== 'function' || !from) return;
+    for (const r of SEd.principleReasons(new Map([[from.setId, [v.id]]]), new Map(), { [from.setId]: { doc: from, members: v.members } }, { [v.id]: v.sheet })) plan.needs.push({ key: r.key, label: r.label, detail: r.detail, items: [] });
+  }
   function planLeave(state, v, plan, env) {
     const need = (key, label, detail, items) => plan.needs.push({ key, label, detail, items: items || [] });
-    const s = v.sheet, T = v.set, name = v.label, tn = setName(T), items = env.sharedItems || [], SEd = SE();
-    plan.to = { area: 'progress', setId: null, label: AREA.progress }; plan.leave = true; plan.committed = true;
+    const s = v.sheet, T = v.set, name = v.label, tn = setName(T), items = env.sharedItems || [], SEd = SE(), how = exitHow(state, v), committed = how.kind === 'committed';
+    plan.to = { area: 'progress', setId: null, label: AREA.progress }; plan.leave = true; plan.committed = true; plan.exit = how.kind;
     const cut = SEd && SEd.cutReason(s);
     if (cut) { need(cut.key, cut.label, cut.detail); return finish(plan); }
+    if (how.kind === 'elsewhere') { need('runElsewhere', `${tn}'s run is open on another screen`, `Take ${name} out of ${tn} from that screen, so the two do not undo each other.`); return finish(plan); }
     const rest = v.members.filter(m => sid(m) !== v.id);
-    if (!rest.length) { need('lastSheet', `${name} is all that is in ${tn}`, `A set keeps at least one sheet: press Undo set on ${tn}'s card to take it apart.`); return finish(plan); }
+    if (!rest.length) { need('lastSheet', `${name} is all that is in ${tn}`, committed ? `A set keeps at least one sheet: press Undo set on ${tn}'s card to take it apart.` : 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.'); return finish(plan); }
     // (Paul, 10 Oct) taking out the last completed GF or SS sheet a set has would leave it without the sheets a set needs: refused, with the reason
     const RLs = RL(), members = v.members || [];
     if (RLs && members.some(m => Object.prototype.hasOwnProperty.call(m, 'releaseFull'))) {
@@ -447,15 +467,23 @@
       plan.notes.push(`To hold ${tn} back as a whole instead, drop the set on In progress.`);
       return finish(plan);
     }
-    const left = rest.every(m => +m.laserDoneAt > 0);
-    plan.auto.push({ key: 'membership', label: `${name} taken out of ${tn}`, detail: `${tn} stays committed with its other ${count(rest.length, 'sheet')}, keeping its seals, its approvals and its place. This sheet keeps every seal and cut record it has.` });
+    principleNeeds(v, T, plan);
+    if (plan.needs.length) return finish(plan);
+    const left = rest.every(m => +m.laserDoneAt > 0), nlab = count(rest.length, 'sheet');
+    plan.auto.push({ key: 'membership', label: `${name} taken out of ${tn}`, detail: committed ? `${tn} stays committed with its other ${nlab}, keeping its seals, its approvals and its place. This sheet keeps every seal and cut record it has.` : `${tn} goes on with its other ${nlab}. This sheet keeps every seal, approval and cut record it has.` });
     plan.auto.push({ key: 'hold', label: `${name} held back from Laser cutting`, detail: 'It goes back to In progress so the open run does not put it in another set by itself. Drop it on Laser cutting to release it.' });
-    plan.auto.push({ key: 'setFiles', label: `${tn}'s labels PDF and manifest made again without it`, detail: `The QR label of ${name} comes out of the set's files; the other sheets keep theirs.`, stamp: true });
-    plan.confirm.push({ key: 'leaveSet', label: `Take ${name} out of ${tn}?`, detail: `${tn} was committed to the Design Station and stays so. Its orders on ${name} stay marked design-complete there.` });
-    plan.notes.push(left ? `Only completed sheets are left in ${tn}, so it is completed with this one gone.` : `${tn} goes on as one set with its other ${count(rest.length, 'sheet')}.`);
+    if (how.kind !== 'server') plan.auto.push({ key: 'setFiles', label: `${tn}'s labels PDF and manifest made again without it`, detail: committed ? `The QR label of ${name} comes out of the set's files; the other sheets keep theirs.` : `The run makes them again, without ${name}, when it finishes ${tn}.`, stamp: committed });
+    plan.confirm.push({ key: 'leaveSet', label: `Take ${name} out of ${tn}?`, detail: committed ? `${tn} was committed to the Design Station and stays so. Its orders on ${name} stay marked design-complete there.` : `${tn} goes on without it. ${name} waits in In progress, held, until you put it in a set again.` });
+    plan.notes.push(left ? `Only completed sheets are left in ${tn}, so it is completed with this one gone.` : `${tn} goes on as one set with its other ${nlab}.`);
     plan.notes.push('Seals and cut records stay on record; this move adds its own entry to the history.');
-    plan.steps.push({ type: 'setMember', moves: [{ sheetId: v.id, to: null }], expect: { [v.id]: { setId: T.setId } }, key: 'membership' });
-    plan.steps.push({ type: 'setFiles', setId: T.setId, key: 'setFiles' });
+    if (how.kind === 'run') {
+      // the run on this screen makes the set: the server checks the rules and writes the hold (nothing of the set), then the run's own assembly lets the sheet go and makes the set again
+      plan.steps.push({ type: 'setMember', moves: [{ sheetId: v.id, to: null, run: true }], owned: [how.runId].filter(Boolean), expect: { [v.id]: { setId: T.setId } }, key: 'membership' });
+      plan.steps.push({ type: 'runLeave', sheetId: v.id, setId: T.setId, key: 'runLeave', label: `${tn} made again by the run without ${name}` });
+    } else {
+      plan.steps.push({ type: 'setMember', moves: [{ sheetId: v.id, to: null }], expect: { [v.id]: { setId: T.setId } }, key: 'membership' });
+      if (committed) plan.steps.push({ type: 'setFiles', setId: T.setId, key: 'setFiles' });
+    }
     return finish(plan);
   }
   function committedMembership(state, v, to, plan, env) {
@@ -463,15 +491,18 @@
     const s = v.sheet, T = to.set ? state.sets[to.set] : null, from = inSet(s) ? state.sets[s.setId] || null : null, name = v.label, SEd = SE();
     const fromName = from ? setName(from) : 'its set', toName = T ? setName(T) : 'a new set';
     plan.committed = true;
-    if (from && !committedSet(from)) { need('runOwned', `${fromName} is still being made`, `${name} is in ${fromName}, which its run is making: take it out of ${fromName} first, then drop it on ${toName}.`); return finish(plan); }
-    if (!T || !committedSet(T)) { need('leaveCommitted', `${fromName} is committed`, `Take ${name} out of ${fromName} first (drop it on In progress), then drop it on ${T ? toName : 'the open set'}.`); return finish(plan); }
+    if (inSet(s) && !from) { need('set', `The set of ${name} could not be read`, 'Refresh the Library and try again.'); return finish(plan); }
+    const how = from ? exitHow(state, v) : null;
+    if (from && +from.laserDoneAt > 0) need('setCompleted', `${fromName} is completed`, 'A completed set keeps its sheets.');
+    if (how && how.kind === 'elsewhere') need('runElsewhere', `${fromName}'s run is open on another screen`, `Move ${name} from that screen, so the two do not undo each other.`);
+    if (!T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
     if (+T.laserDoneAt > 0) need('setCompleted', `${toName} is completed`, 'A completed set takes no more sheets.');
     else if (/superseded/.test(String(T.status || ''))) need('setClosed', `${toName} was replaced`, 'Drop it on a current set.');
     else if (s.metal === 'rose' && !from) need('roseSet', `${name} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press, so it cannot be added to a committed set from here.');
     if (plan.needs.length) return finish(plan);
     const run = (state.runs || {})[s.runId] || null, live = (state.live || {})[v.id] || null;
     if (!from && run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
-    // the other end: a sheet that leaves a committed set keeps no mate behind (A), the sheets that share an order with it come along (the cardinal rule)
+    // the other end: a sheet that leaves a set keeps no mate behind (A), the sheets that share an order with it come along (the cardinal rule)
     const items = env.sharedItems || [], group = env.group || null, members = group && Array.isArray(group.members) ? group.members : [], by = new Map(members.map(m => [m.id, m]));
     const tied = new Map();
     for (const i of items) (i.thereIds || []).forEach((id, k) => { if (id !== v.id && !tied.has(id)) tied.set(id, { id, label: (i.there || [])[k] || (by.get(id) || {}).label || id, setId: (by.get(id) || {}).setId || null }); });
@@ -489,6 +520,10 @@
       need('sharedOrders', 'Orders shared with another sheet', `${SEd ? SEd.sharedWords(items, 'they go into one set together') : 'Sheets that share an order go into one set.'} ${stuck[0].label} cannot come: ${fixedOf.get(stuck[0].id) || 'it is in another set'}.`, items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })));
       return finish(plan);
     }
+    // a set is never emptied, and a move may not take a set's only completed GF or SS sheet away (Paul, 10 Oct)
+    if (from && v.members.filter(m => sid(m) !== v.id).length === 0) need('lastSheet', `${name} is all that is in ${fromName}`, how && how.kind === 'committed' ? `A set keeps at least one sheet: press Undo set on ${fromName}'s card to take it apart.` : 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.');
+    if (from) principleNeeds(v, from, plan);
+    if (plan.needs.length) return finish(plan);
     // what the set does with it: the sheet joins as it is; the set waits in In progress until every sheet of it is ready (it advances as one)
     const tv = view(state, 'set', T.setId), tArea = tv.error ? null : areaOf(tv), gaps = sheetGaps(s, { ...env, own: new Set([v.id, ...members.map(m => m.id)]) });
     const waits = gaps.needs.filter(n => n.key !== 'membership' && n.key !== 'qrLabel'), personHold = held(s) && !/^Taken out of /.test(String(s.laserHold.note || ''));
@@ -498,7 +533,7 @@
     plan.auto.push({ key: 'membership', label: from ? `${name} moved from ${fromName} to ${toName}` : `${name} added to ${toName}`, detail: `${toName} stays committed, keeping its seals and its place. ${name} joins as it is: its own approvals and seals are kept, none are added.` });
     for (const m of mates) plan.auto.push({ key: 'membership:' + m.id, label: `${m.label} added to ${toName}`, detail: `It shares ${items.length === 1 ? 'an order' : 'orders'} with ${name}, so it joins with it.` });
     plan.auto.push({ key: 'qrLabel', label: `QR label made for ${toName}`, detail: 'The label names the set and the sheet, and covers every order on it.', stamp: true });
-    plan.auto.push({ key: 'setFiles', label: `${toName}'s labels PDF and manifest made again with ${mates.length ? 'them' : 'it'}`, detail: `${from ? `${fromName}'s files are made again without it. ` : ''}The station's copy of the labels follows the set.`, stamp: true });
+    plan.auto.push({ key: 'setFiles', label: `${toName}'s labels PDF and manifest made again with ${mates.length ? 'them' : 'it'}`, detail: `${from && how.kind === 'committed' ? `${fromName}'s files are made again without it. ` : ''}The station's copy of the labels follows the set.`, stamp: true });
     if (mates.length) {
       plan.shared = items; plan.group = [name].concat(mates.map(m => m.label));
       const ml = mates.map(m => m.label), together = name;
@@ -506,13 +541,66 @@
     }
     if (why && tArea === 'laser') plan.confirm.push({ key: 'setWaits', label: `${toName} will wait for ${name}`, detail: `${name} is not ready yet (${why}). ${label} goes back to In progress until every sheet of it is ready, because a set advances as one. Nothing already approved is lost.` });
     else if (why) plan.notes.push(`${name} is not ready yet (${why}): ${label} waits in In progress until it is.`);
-    if (from) plan.notes.push(`${fromName} stays committed with its other sheets.`);
+    if (from) plan.notes.push(how.kind === 'committed' ? `${fromName} stays committed with its other sheets.` : `${fromName} goes on with its other sheets.`);
     plan.notes.push(`The orders on ${name} are not marked design-complete at the Design Station: ${toName} was committed before this sheet joined it.`);
     const moves = [{ sheetId: v.id, to: T.setId }].concat(mates.map(m => ({ sheetId: m.id, to: T.setId, pulled: true })));
-    plan.steps.push({ type: 'setMember', moves, expect: Object.fromEntries(moves.map(m => [m.sheetId, { setId: m.sheetId === v.id ? (from ? from.setId : null) : null }])), key: 'membership' });
+    const fromRun = !!how && how.kind === 'run';
+    if (fromRun) {
+      // out of the set the run on this screen is making first (rules checked by the server, then the run lets the sheet go), then into the committed set
+      plan.steps.push({ type: 'setMember', moves: [{ sheetId: v.id, to: null, run: true }], owned: [how.runId].filter(Boolean), expect: { [v.id]: { setId: from.setId } }, key: 'leave' });
+      plan.steps.push({ type: 'runLeave', sheetId: v.id, setId: from.setId, key: 'runLeave', label: `${fromName} made again by the run without ${name}` });
+    }
+    plan.steps.push({ type: 'setMember', moves, expect: Object.fromEntries(moves.map(m => [m.sheetId, { setId: m.sheetId === v.id && from && !fromRun ? from.setId : null }])), key: 'membership' });
     plan.steps.push({ type: 'relabel', sheetIds: moves.map(m => m.sheetId), setId: T.setId, key: 'qrLabel' });
     plan.steps.push({ type: 'setFiles', setId: T.setId, key: 'setFiles' });
-    if (from) plan.steps.push({ type: 'setFiles', setId: from.setId, key: 'setFiles:' + from.setId });
+    if (from && how.kind === 'committed') plan.steps.push({ type: 'setFiles', setId: from.setId, key: 'setFiles:' + from.setId });
+    return finish(plan);
+  }
+  /* A sheet that is IN a set, dropped on the run's open set or on New set (Paul, 10 Oct: "I should be able to move it completely freely"). It leaves its set by the way
+     exitHow says, then joins as a sheet of the open run does (the sheet window's Include / release, hook `include`); the hold the leaving wrote is lifted after it joins.
+     Refused only for: the core principle of the set it leaves, a multi-piece order split over two sets, a sheet that was cut, a set left empty, a run open on another
+     screen, and a sheet the open run on this screen cannot take. A sheet dropped on the set it is already in, or on New set while its own set is the open one, has nowhere to go: it says so. */
+  function setToOpen(state, v, to, plan, env) {
+    const need = (key, label, detail, items) => plan.needs.push({ key, label, detail, items: items || [] });
+    const s = v.sheet, T = to.set ? state.sets[to.set] : null, from = state.sets[s.setId], name = v.label, fromName = setName(from), SEd = SE(), live = (state.live || {})[v.id] || null;
+    const how = exitHow(state, v), toName = to.newSet ? 'a new set' : setName(T), items = env.sharedItems || [];
+    plan.committed = true; plan.exit = how.kind;
+    if (to.set && !T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
+    if (T && +T.laserDoneAt > 0) need('setCompleted', `${toName} is completed`, 'A completed set takes no more sheets.');
+    else if (T && /superseded/.test(String(T.status || ''))) need('setClosed', `${toName} was replaced`, 'Drop it on a current set.');
+    if (+from.laserDoneAt > 0) need('setCompleted', `${fromName} is completed`, 'A completed set keeps its sheets.');
+    if (how.kind === 'elsewhere') need('runElsewhere', `${fromName}'s run is open on another screen`, `Move ${name} from that screen, so the two do not undo each other.`);
+    if (plan.needs.length) return finish(plan);
+    const open = live ? live.dispatchSetId || null : null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
+    // the set the run is making IS the set it is in: there is no other open set to go to
+    if (how.kind === 'run' && (to.newSet || (T && T.setId === from.setId))) { plan.noop = true; plan.notes.push(`${name} is already in ${fromName}, the set the run is making.`); return finish(plan); }
+    // (the way in first, then what it leaves behind; the cardinal rule's reason, when there is one, is told first)
+    if (!live) need('fixedSet', `Only a sheet of the open run can join a set that is still being made`, `${name} is not on a page of the open run on this screen.`);
+    else if (to.set && T.setId !== open) need('notOpenSet', `${toName} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
+    else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `Drop the sheet on ${openName}.`);
+    else if (!(live.runHere || live.sent)) need('include', 'Not ready to join a set', (live.can && live.can.reason) || 'Nest and verify it first.');
+    else if (live.can && live.can.ok === false && !live.sent) need('include', 'Not ready to join a set', live.can.reason || 'Nest and verify it first.');
+    else if (s.metal === 'rose' || (live && live.rose)) need('roseSet', `${name} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press, so it cannot be moved into a set from here.');
+    else if (env.canJoin === false) need('join', 'Joining a set is not available here', 'Open the sheet and use Include or Make QR label.');
+    // what it leaves behind: a set keeps a sheet, an order stays whole (A), the core principle of the set stands
+    if (v.members.filter(m => sid(m) !== v.id).length === 0) need('lastSheet', `${name} is all that is in ${fromName}`, how.kind === 'committed' ? `A set keeps at least one sheet: press Undo set on ${fromName}'s card to take it apart.` : 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.');
+    if (items.length) {
+      plan.shared = items; plan.group = [name].concat(items.flatMap(i => i.there || []));
+      need('sharedOrders', 'Orders shared with another sheet', SEd ? SEd.sharedWords(items, 'they stay in one set') : 'Sheets that share an order stay in one set.', items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })));
+    }
+    principleNeeds(v, from, plan);
+    if (plan.needs.length) { plan.needs.sort((a, b) => (b.key === 'sharedOrders') - (a.key === 'sharedOrders')); return finish(plan); }
+    const committed = how.kind === 'committed', own = held(s) && !/^Taken out of /.test(String(s.laserHold.note || ''));
+    plan.to = { area: null, setId: T ? T.setId : null, label: toName };
+    plan.auto.push({ key: 'membership', label: `${name} moved from ${fromName} to ${toName}`, detail: `${fromName} goes on with its other ${count(v.members.length - 1, 'sheet')}${committed ? ', still committed' : ''}. ${name} keeps every seal, approval and cut record it has.` });
+    plan.auto.push({ key: 'qrLabel', label: `QR label made for ${toName}`, detail: 'The label names the set and the sheet, and covers every order on it.', stamp: true });
+    if (committed) plan.auto.push({ key: 'setFiles', label: `${fromName}'s labels PDF and manifest made again without it`, detail: `The QR label of ${name} comes out of the set's files; the other sheets keep theirs.`, stamp: true });
+    plan.confirm.push({ key: 'leaveSet', label: `Take ${name} out of ${fromName}?`, detail: committed ? `${fromName} was committed to the Design Station and stays so. ${name} joins ${toName}, the set the run is making.` : `${fromName} goes on without it. ${name} joins ${toName}.` });
+    plan.notes.push('Seals and cut records stay on record; this move adds its own entry to the history.');
+    plan.steps.push({ type: 'setMember', moves: [{ sheetId: v.id, to: null }], expect: { [v.id]: { setId: from.setId } }, key: 'leave' });
+    if (committed) plan.steps.push({ type: 'setFiles', setId: from.setId, key: 'setFiles' });
+    plan.steps.push({ type: 'include', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
+    if (!own) { plan.auto.push({ key: 'release:' + v.id, label: `${name} released from its hold`, detail: 'The hold that taking it out made is lifted: it is in a set again.' }); plan.steps.push({ type: 'release', sheetIds: [v.id], joined: true, key: 'release:' + v.id }); }
     return finish(plan);
   }
   /* The sheets dropped on (Paul, 7 Oct: combine two sheets that are not in Laser cutting). Each must be a sheet of the open run, not cut,
@@ -611,32 +699,64 @@
   }
 
   /* ── where it may be dropped (sync, from the page) ──────────────────────────────────────────────────────────── */
+  /* ONE plain line for a sheet that cannot leave its set (Paul, 10 Oct), from what the page holds, before any plan is asked for ('' when nothing is known to stop it): the same
+     rules the plan and the server use (charm-nest-set-edit.js). A multi-piece order split over two sets is only known from the records: the plan says it. */
+  function exitWhy(it, st, page) {
+    const SEd = SE(); if (!SEd || typeof page.rec !== 'function') return '';
+    let rec = null, members = null; try { rec = page.rec(it.id); members = page.members ? page.members(st.setId) : null; } catch (_) { return ''; }
+    if (!rec) return '';
+    const w = SEd.wordOf(rec), sw = setName(st);
+    if (rec.roseCutAt) return `${w} was already cut, so it stays in ${sw}.`;
+    if (+rec.laserDoneAt > 0) return `${w} is completed (laser cut), so it stays in ${sw}.`;
+    if (!Array.isArray(members) || !members.length) return '';
+    if (!members.some(m => sid(m) !== it.id)) return `${w} is the only sheet of ${sw}: a set is never left empty.`;
+    const pr = SEd.principleReasons ? SEd.principleReasons(new Map([[st.setId, [it.id]]]), new Map(), { [st.setId]: { doc: st, members } }, { [it.id]: rec }) : [];
+    return pr.length ? pr[0].label + '.' : '';
+  }
   function zones(item, page) {
     const it = { kind: item && item.kind === 'set' ? 'set' : 'sheet', id: String(item && item.id || '') };
     const cur = (item && (item.area || item.from)) || (page.area ? page.area(it) : null);
     const own = (item && item.setId) || (page.setOf ? page.setOf(it) : null);
-    const out = AREAS.map(a => ({ area: a, name: AREA[a], ok: a !== cur, reason: a === cur ? `It is already in ${AREA[a]}.` : '' }));
+    const out = AREAS.map(a => ({ area: a, name: AREA[a], ok: a !== cur, reason: a === cur ? `It is already in ${AREA[a]}.` : '' })), zoneOf = a => out.find(x => x.area === a);
+    const all = page.sets ? page.sets() : [];
+    // going forward from In progress: the card's own grey reason (the Approve button's), at the drop place (Paul, 10 Oct: never a vague word)
+    if (cur === 'progress' && typeof page.notReady === 'function') {
+      let why = ''; try { why = String(page.notReady(it) || ''); } catch (_) { why = ''; }
+      if (why) for (const a of ['laser', 'completed']) { const z = zoneOf(a); z.ok = false; z.reason = why; }
+    }
     if (it.kind === 'sheet') {
       const done = cur === 'completed';
-      // a sheet of a committed set that is not completed can be taken out of it: In progress says so (and is open even for a set that waits there)
-      const mine = own && cur !== 'completed' ? (page.sets ? page.sets() : []).find(x => x && x.setId === own) : null;
-      if (mine && committedSet(mine) && !(+mine.laserDoneAt > 0)) { const z = out.find(x => x.area === 'progress'); z.leaveSet = true; z.ok = true; z.reason = ''; z.sub = `out of ${setName(mine)}`; }
-      for (const st of page.sets ? page.sets() : []) {
-        if (!st || !st.setId || st.setId === own) continue;
-        const why = done ? 'Move it back to Laser cutting first.' : +st.laserDoneAt > 0 ? `${setName(st)} is completed.` : /superseded/.test(String(st.status || '')) ? `${setName(st)} was replaced.` : '';
+      // a sheet of a set (committed, or one that waits in In progress) can be taken out of it: In progress says so, and is open even for a set that waits there. It stays dimmed, with the reason, only for
+      // a sheet that must not leave (the core principle of its set, a cut sheet, the last sheet of a set, a run open on another screen)
+      const mine = own ? all.find(x => x && x.setId === own) : null, leaving = !!mine && !(+mine.laserDoneAt > 0);
+      const exit = leaving ? exitWhy(it, mine, page) : '';
+      if (leaving && (committedSet(mine) || cur === 'progress')) { const z = zoneOf('progress'); z.leaveSet = true; z.sub = `out of ${setName(mine)}`; z.ok = !exit; z.reason = exit; }
+      const live = page.live ? page.live(it.id) : null;
+      const joinable = !!live && (live.runHere !== false || !!live.sent);
+      for (const st of all) {
+        if (!st || !st.setId) continue;
+        if (st.setId === own) { out.push({ set: st.setId, name: setName(st), ok: false, reason: `It is already in ${setName(st)}.` }); continue; }
+        let why = done ? 'Move it back to Laser cutting first.' : +st.laserDoneAt > 0 ? `${setName(st)} is completed.` : /superseded/.test(String(st.status || '')) ? `${setName(st)} was replaced.` : '';
+        if (!why && leaving && exit) why = exit;
+        // a set that is still being made takes a sheet only as the open run's one open set: a draft sheet of the open run, or a sheet that left its set to join it
+        if (!why && !committedSet(st) && (leaving || (live && live.draft))) {
+          if (leaving && !live) why = `Only a sheet of the open run can join ${setName(st)}, which is still being made.`;
+          else if (live && st.setId !== live.dispatchSetId) { const open = live.dispatchSetId ? all.find(x => x && x.setId === live.dispatchSetId) : null; why = `${setName(st)} is not the open set. ${live.dispatchSetId ? `Drop it on ${open ? setName(open) : 'the open set'}.` : 'Drop it on New set.'}`; }
+          else if (leaving && live && !joinable) why = (live.can && live.can.reason) || 'It cannot join a set from here.';
+        }
         out.push({ set: st.setId, name: setName(st), ok: !why, reason: why });
       }
-      const live = page.live ? page.live(it.id) : null;
-      // a draft sheet joins the run's ONE open set (or starts it): a set that is open but not that one is dimmed here, in plain words, before any plan is asked for
-      if (live && live.draft && !done) {
-        const all = page.sets ? page.sets() : [], open = live.dispatchSetId ? all.find(x => x && x.setId === live.dispatchSetId) : null;
-        for (const z of out) {
-          const st = z.set && z.ok ? all.find(x => x && x.setId === z.set) : null;
-          if (st && !committedSet(st) && !(+st.laserDoneAt > 0) && !/superseded/.test(String(st.status || '')) && st.setId !== live.dispatchSetId) { z.ok = false; z.reason = `${setName(st)} is not the open set. ${live.dispatchSetId ? `Drop it on ${open ? setName(open) : 'the open set'}.` : 'Drop it on New set.'}`; }
-        }
-      }
-      const blocked = !!(live && live.can && live.can.ok === false);
-      out.push({ newSet: true, name: 'New set', ok: !done && !!(live && live.draft && !live.dispatchSetId) && !blocked, reason: done ? 'Move it back to Laser cutting first.' : !live ? 'Only a sheet of the open run can start a new set.' : !live.draft ? 'It is already in a set.' : live.dispatchSetId ? 'The open set takes it: drop it there.' : blocked ? `Not ready to join a set. ${live.can.reason || 'Nest and verify it first.'}` : '' });
+      const blocked = !!(live && live.can && live.can.ok === false && !live.sent), ownSet = leaving && live && live.dispatchSetId && live.dispatchSetId === own;
+      let nreason = '';
+      if (done) nreason = 'Move it back to Laser cutting first.';
+      else if (leaving && exit) nreason = exit;
+      else if (ownSet) nreason = `It is already in ${setName(mine)}, the set the run is making.`;
+      else if (!live) nreason = 'Only a sheet of the open run can start a new set.';
+      else if (!live.draft && !leaving) nreason = 'It is already in a set.';
+      else if (live.dispatchSetId) nreason = 'The open set takes it: drop it there.';
+      else if (leaving && !joinable) nreason = (live.can && live.can.reason) || 'It cannot join a set from here.';
+      else if (blocked) nreason = `Not ready to join a set. ${live.can.reason || 'Nest and verify it first.'}`;
+      out.push({ newSet: true, name: 'New set', ok: !nreason, reason: nreason });
     }
     return out;
   }
@@ -677,6 +797,10 @@
     relabelSet: null,          // ({sheetIds, setId}, {by}) -> Promise: the QR labels of sheets put in a committed set (charm-nest-set-edit.js)
     setFiles: null,            // ({setId}, {by}) -> Promise: a committed set's labels PDF, manifest and set.json made again, then written (op flowApply setFiles)
     applyMembership: null,     // (membership) -> Promise: the page's own copies follow what the server wrote (a sheet in or out of a committed set)
+    leave: null,               // (sheetId, {setId, by}) -> Promise: the open run on this page lets the sheet go from the set it is making (bridge Gate.leaveSet)
+    rec: null,                 // (sheetId) -> the sheet's record as the page holds it (releaseFull, laserDoneAt, roseCutAt, metal, …), for the dock's reasons
+    members: null,             // (setId) -> the records of the sheets in that set, for the dock's reasons
+    notReady: null,            // ({kind,id}) -> '' | the plain reason the card cannot be approved for Laser cutting now (the Approve button's grey line)
     include: null,             // (sheetId, {setId, newSet, split}) -> Promise: the sheet window's own Include / release
     roseJoin: null,            // (sheetId, {by, line, full, onStep}) -> Promise<{ok, sheets, warnings}>: a Rose Gold sheet's Cut Sheet press
     shared: null,              // a SharedOrders-shaped object ({between, groupOf, enrich}); the page's window.SharedOrders when null
@@ -713,7 +837,7 @@
     const state = await readState(item, dest.set ? [dest.set] : [], joining ? { kind: item.kind, id: item.id, to: dest.set ? { set: dest.set } : { newSet: true }, together } : null, also);
     // a sheet of a committed set dropped on In progress leaves it (Paul, 7 Oct): the orders it shares with the set's other sheets are read from the records too
     let leaving = false;
-    if (item.kind === 'sheet' && to.area === 'progress') { const lv = view(state, 'sheet', item.id); if (!lv.error && lv.set && inSet(lv.sheet) && committedSet(lv.set) && !(+lv.set.laserDoneAt > 0)) { const r = answer(await cloud({ op: 'sharedOrders', kind: 'sheet', id: item.id, to: { leave: true } })); state.shared = r.shared || []; state.group = r.group || null; leaving = true; } }
+    if (item.kind === 'sheet' && to.area === 'progress') { const lv = view(state, 'sheet', item.id); if (!lv.error && leavesOnProgress(lv)) { const r = answer(await cloud({ op: 'sharedOrders', kind: 'sheet', id: item.id, to: { leave: true } })); state.shared = r.shared || []; state.group = r.group || null; leaving = true; } }
     let env = { by: req.by || hooks.employee(), rows: hooks.rows(), canRelabel: typeof hooks.remakeLabel === 'function', canJoin: typeof hooks.include === 'function', canRose: typeof hooks.roseJoin === 'function', together, ...(also.length ? { dest } : {}) };
     if (joining || leaving) env = { ...env, ...sharedEnv(item, leaving ? { leave: true } : dest, state, together) };
     if (also.length) env = alsoEnv(env, also, dest, together);
@@ -770,7 +894,7 @@
       tell(s, label, 'start');
       try {
         if (s.type === 'release') {
-          await flow([{ type: 'release', sheetIds: s.sheetIds }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: true }])) });
+          await flow([{ type: 'release', sheetIds: s.sheetIds, ...(s.joined ? { joined: true } : {}) }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: true }])) });
           undo.push({ key: s.key, fn: () => flow([{ type: 'hold', sheetIds: s.sheetIds, note: 'Hold restored: the move was not completed' }], by) });
         } else if (s.type === 'hold') {
           await flow([{ type: 'hold', sheetIds: s.sheetIds, note: s.note }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: false }])) });
@@ -802,9 +926,16 @@
           if (r && r.error) throw new Error(r.error);
         } else if (s.type === 'setMember') {
           // the server checks both rules again inside its transaction and answers with what it wrote (a refusal says why in plain words)
-          const r = await flow([{ type: 'setMember', moves: s.moves, expect: s.expect }], by);
+          const r = await flow([{ type: 'setMember', moves: s.moves, expect: s.expect, ...(s.owned && s.owned.length ? { owned: s.owned } : {}) }], by);
           if (r && r.membership && typeof hooks.applyMembership === 'function') { try { await hooks.applyMembership(r.membership); } catch (_) { /* the next read draws it */ } }
+          // (a hold this step wrote for a sheet the run lets go is lifted again if the run cannot let it go: the sheet stays where it was, held for nothing)
+          const runMoves = (s.moves || []).filter(m => m && m.run && !m.to).map(m => m.sheetId);
+          if (runMoves.length) undo.push({ key: s.key, fn: () => flow([{ type: 'release', sheetIds: runMoves, restore: true }], by) });
           for (const a of p.auto.filter(x => x.key === 'hold' || /^membership:/.test(x.key))) extra.push(doneLine(a.key, a.label));
+        } else if (s.type === 'runLeave') {
+          // the set is made by the open run on this screen: its own assembly lets the sheet go and makes the set again (hook `leave`, the bridge's Gate.leaveSet)
+          if (typeof hooks.leave !== 'function') throw new Error('The sheet cannot be taken out of a set that is still being made from here: use the In current set switch on its card');
+          await hooks.leave(s.sheetId, { setId: s.setId, by });
         } else if (s.type === 'relabel' || s.type === 'setFiles') {
           // after the membership is saved: a failure here is a warning, never an undo of the saved membership
           const fn = s.type === 'relabel' ? hooks.relabelSet : hooks.setFiles;
@@ -954,7 +1085,7 @@
   function targets(item) { return zones(item, pageAdapter()).filter(z => z.ok).map(keyOfZone); }
   function explainTargets(item) { return zones(item, pageAdapter()); }
   function onSheet(item, otherId, o) { return sheetZone(item, otherId, pageAdapter(), o); }
-  function pageAdapter() { return { area: hooks.areaOf, sets: hooks.sets, setOf: hooks.setOf, live: hooks.live }; }
+  function pageAdapter() { return { area: hooks.areaOf, sets: hooks.sets, setOf: hooks.setOf, live: hooks.live, rec: hooks.rec, members: hooks.members, notReady: hooks.notReady }; }
 
   /* ── the page: how the code that owns each thing is reached. Each falls back to nothing, and a move that needs one
      then says so in `needs` or in its error instead of working around it. ──────────────────────────────────────────── */
@@ -1030,8 +1161,19 @@
     // the sheet window's own paths (charm-nest-sheetwin.js): present once that file offers them
     const sw = () => root.SheetWin || {};
     hooks.remakeLabel = sw().remakeLabel ? id => sw().remakeLabel(id) : null;
-    hooks.include = sw().joinSet ? (id, o) => sw().joinSet(id, o) : null;
+    // a sheet put into the open run's set by a person's drop is wanted there: the "taken out" mark (Gate.basePolicy keeps such a sheet out of every set) is lifted for it, and put back if it could not join
+    hooks.include = sw().joinSet ? async (id, o) => {
+      const pg = ((root.CN && root.CN.allSheets && root.CN.allSheets()) || []).find(p => p.sheetId === id), kept = pg ? pg.leftSet : undefined;
+      if (pg) delete pg.leftSet;
+      try { await sw().joinSet(id, o); } catch (e) { if (pg && kept !== undefined) pg.leftSet = kept; throw e; }
+    } : null;
     hooks.live = id => (sw().joinInfo ? sw().joinInfo(id) : null);
+    // the open run lets a sheet go from the set it is making (Paul, 10 Oct), and what the dock needs to say why a place cannot take a sheet
+    hooks.leave = id => (root.Gate && root.Gate.leaveSet ? root.Gate.leaveSet(id) : Promise.reject(new Error('The run is not loaded on this page')));
+    const sheetsOf = c => (c && c._sheets) || [];
+    hooks.rec = id => { for (const c of cards()) { const r = sheetsOf(c).find(x => x && x.id === id); if (r) return r; } try { return ((typeof S !== 'undefined' && S.library && S.library.rows) || []).find(r => r.id === id) || null; } catch (_) { return null; } };
+    hooks.members = setId => { const c = cards().find(x => x._laserSet && x._laserSet.setId === setId); return c ? sheetsOf(c).filter(x => x && !x.draft && x.solidIncluded !== false && !x.archived) : null; };
+    hooks.notReady = it => (LR() && LR().moveBlock ? LR().moveBlock(it) : '');
     Object.assign(hooks, mine);
   }
   if (typeof document !== 'undefined') { try { wirePage(); document.addEventListener('DOMContentLoaded', () => { try { wirePage(); } catch (_) { /* hooks stay as they were */ } }, { once: true }); } catch (_) { /* a page without these parts */ } }

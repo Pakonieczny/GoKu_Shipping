@@ -12,8 +12,10 @@
 //     messages, staff notes, sign-in sessions, activity with its daily rollups, the design archive, the sorter's
 //     customer messages (EtsyMail_OrderLinks, where a sandbox one is flagged olsb_ / sandbox:true), and files;
 //   · the reset runs in calls that stop on the clock (more:true) until it is done, and leaves not one Sandbox_ record
-//     (but the engraving readings Claude was paid for), no sandbox engagement, no sandbox file but the snapshot and the
-//     master files, and no stream; the snapshot stays;
+//     (the sandbox's own employee-efficiency copies — sessions, activity, daily rollups — are KEPT: Paul, 10 Oct: only the
+//     efficiency and the Charm repo remain), no sandbox engagement, no sandbox file but the master files the shared index
+//     points to, no stream and no snapshot of orders (the sandbox pulls its own); tests/charm-nest/sandbox-wipe-guard.cjs
+//     is the registry-derived guard of the same wipe;
 //   · production, key for key the same, is byte-identical afterwards (the shared line readings keep production's own
 //     decision; only the sandbox's decision beside it goes): its seals, custom orders, cancel records, everything;
 //   · Purge all run history (a wrong passcode refused, an open run named first) clears the sandbox completely too, and
@@ -212,18 +214,19 @@ function bulk(sb, n) {
 /* ── what is where ── */
 const sandboxKeys = () => [...store.keys()].filter(k => k.startsWith('Sandbox_'));
 const families = keys => [...new Set(keys.map(k => k.split('/').filter((_, i) => i % 2 === 0).join('/')))].sort();
-const isOwn = k => k.startsWith('Sandbox_') || k === 'Charm_Sandbox/stream' || k.startsWith('EtsyMail_OrderLinks/olsb_');
+const isOwn = k => k.startsWith('Sandbox_') || k === 'Charm_Sandbox/stream' || k === 'Charm_Sandbox/current' || k.startsWith('EtsyMail_OrderLinks/olsb_');
 // the shared line reading carries the sandbox's decision beside production's: that field (and the time it was written) is the sandbox's
 const shared = k => k.startsWith('Charm_Nest_CustomRead/');
 const productionMap = () => new Map([...store.entries()].filter(([k]) => !isOwn(k)).map(([k, v]) => { const c = clone(v); if (shared(k)) { delete c.decidedSandbox; delete c.updatedAt; } return [k, canon(c)]; }));
-const KEEP_FAMILY = 'Sandbox_Charm_Nest_Agent_Cache';   // the readings Claude was paid for stay
+const KEEP_FAMILY = 'Sandbox_Station_';   // the sandbox's employee-efficiency copies (Station_Sessions, Station_Activity) stay
+const isKept = k => k.startsWith('Sandbox_Station_') || k.startsWith('Sandbox_Efficiency_Daily/');
 const seedAll = async () => {
   store.clear(); blobs.clear(); skew = 0; slow = 0;
   store.set('Charm_Sandbox/current', { path: 'charmnest/sandbox/orders-cur.json', count: 2, at: NOW, takenBy: 'test' });
   store.set('Charm_Sandbox/stream', { on: true, v: 2, seed: 7, speed: 50, stepMs: 600000, tick: 12, snapshotPath: 'charmnest/sandbox/orders-cur.json' });
   for (const f of ['orders-cur.json', 'master/BRITES-master.ai']) blobs.set('charmnest/sandbox/' + f, { buf: Buffer.from('x') });
   for (const f of ['charmnest/sheets/2026-09-29/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/listing/aa.jpg']) blobs.set(f, { buf: Buffer.from('x') });
-  store.set(KEEP_FAMILY + '/paid-1', { text: 'ANNA' });
+  store.set('Sandbox_Charm_Nest_Agent_Cache/paid-1', { text: 'ANNA' });
   // the shared line reading Claude was paid for, (production's customDecide adds its decision, the sandbox's its own beside it)
   store.set(`Charm_Nest_CustomRead/${A}_10010`, { reads: { h1: { kind: 'chainOnly' } }, order: A, updatedAt: new TS(NOW - 9000) });
   // production's own engagement of another order
@@ -252,11 +255,12 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   assert(run.first.more === true && run.calls > 5, 'a reset that runs out of time says so, for the page to call again: ' + JSON.stringify(run.first) + ' · ' + run.calls + ' calls');
   console.log(`reset: ${run.calls} calls removed ${run.deleted} records and ${run.last.files} files from the sandbox`);
   assert(run.last.more === false && !run.last.filesError, 'the calls finish the reset: ' + JSON.stringify(run.last));
-  const left = sandboxKeys().filter(k => !k.startsWith(KEEP_FAMILY + '/'));
+  const left = sandboxKeys().filter(k => !isKept(k));
   assert.deepStrictEqual(families(left), [], 'the sandbox holds nothing: left ' + families(left).join(', ') + ' (' + left.slice(0, 6).join(', ') + ')');
   assert(![...store.keys()].some(k => k.startsWith('EtsyMail_OrderLinks/olsb_')), 'no customer message of the sandbox is left in the inbox collection');
-  assert(!store.has('Charm_Sandbox/stream') && store.has('Charm_Sandbox/current'), 'the stream starts over, the snapshot stays');
-  assert(store.has(KEEP_FAMILY + '/paid-1'), 'the readings Claude was paid for stay');
+  assert(!store.has('Charm_Sandbox/stream') && !store.has('Charm_Sandbox/current'), 'the stream and the set of orders it played go');
+  assert(!store.has('Sandbox_Charm_Nest_Agent_Cache/paid-1'), "the sandbox's saved readings go with it");
+  assert(store.has('Sandbox_Station_Sessions/session-aaaa-0001') && store.has('Sandbox_Station_Activity/activity-evt-0001'), "the sandbox's employee-efficiency records stay");
   const read = store.get(`Charm_Nest_CustomRead/${A}_10010`);
   assert(!('decidedSandbox' in read) && read.decided.kind === 'chainOnly' && read.reads.h1.kind === 'chainOnly', "the sandbox's decision goes, production's and the reading stay");
   const after = productionMap();
@@ -264,9 +268,10 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   for (const [k, v] of before) assert.strictEqual(after.get(k), v, 'production is byte-identical after the reset: ' + k);
   assert(store.get(`Charm_Custom_Orders/${A}_10010`).stamps.length === 2 && store.has(`Charm_Custom_Sheet/card-${require('crypto').createHash('sha256').update(`custom:${B}:CUSTOM-N-001`).digest('hex')}`) && store.has('Charm_Nest_Cancelled/' + C) && [...store.keys()].some(k => k.startsWith('Charm_Nest_Cancelled_History/' + A + '~')), "production's seals, custom sheets and cancel records (and their history) are all there");
   assert(store.has(`Charm_Pool/${A}_10010_1`) && store.has(`EtsyMail_OrderLinks/ol_${A}_o_k1abc`) && store.has(`EtsyMail_OrderLinks/ol_${B}_o_prod9`), "production's pool rows and customer messages stay");
-  const stray = [...blobs.keys()].filter(k => (k.startsWith('charmnest/sandbox/') || k.startsWith('design-archive/sandbox/')) && !['charmnest/sandbox/orders-cur.json', 'charmnest/sandbox/master/BRITES-master.ai'].includes(k));
-  assert.deepStrictEqual(stray, [], 'every sandbox file but the snapshot and the master files went');
-  for (const k of ['charmnest/sheets/2026-09-29/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/listing/aa.jpg', 'charmnest/sandbox/orders-cur.json', 'charmnest/sandbox/master/BRITES-master.ai']) assert(blobs.has(k), 'kept: ' + k);
+  const stray = [...blobs.keys()].filter(k => (k.startsWith('charmnest/sandbox/') || k.startsWith('design-archive/sandbox/')) && !['charmnest/sandbox/master/BRITES-master.ai'].includes(k));
+  assert.deepStrictEqual(stray, [], 'every sandbox file but the master files went (the order set too)');
+  for (const k of ['charmnest/sheets/2026-09-29/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/listing/aa.jpg', 'charmnest/sandbox/master/BRITES-master.ai']) assert(blobs.has(k), 'kept: ' + k);
+  assert(!blobs.has('charmnest/sandbox/orders-cur.json'), 'the file of the order set went');
   // pressed again on an empty sandbox: nothing to do, nothing wrong
   const again = await post({ op: 'sandboxReset', sandbox: true });
   assert(again.status === 200 && again.body.more === false && again.body.deleted === 0, 'a second reset finds nothing: ' + JSON.stringify(again.body));
@@ -276,7 +281,7 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   await must({ op: 'cancelPut', orderId: C, by: 'paul', sandbox: true });
   assert(store.has(`Sandbox_Charm_Custom_Orders/${A}_10010`) && store.has('Sandbox_Charm_Nest_Cancelled/' + C), 'a late write lands');
   const late = await post({ op: 'sandboxReset', sandbox: true });
-  assert(late.body.more === false && families(sandboxKeys().filter(k => !k.startsWith(KEEP_FAMILY + '/'))).length === 0, 'pressed again, the reset clears it');
+  assert(late.body.more === false && families(sandboxKeys().filter(k => !isKept(k))).length === 0, 'pressed again, the reset clears it');
   assert(store.get(`Charm_Custom_Orders/${A}_10010`).stamps.length === 2, 'and production is as it was');
 
   /* ═══ 3 · Purge all run history: production's own behaviour, and the sandbox completely ═══ */
@@ -296,10 +301,10 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   let purges = 1; while (r.body.more && purges < 100) { r = await post({ op: 'purgeHistory', code: '975311', force: true, sandbox: true }); purges++; }
   slow = 0;
   assert(r.status === 200 && r.body.ok && !r.body.more, 'forced, the purge runs (until it says it is done): ' + JSON.stringify(r.body).slice(0, 300));
-  const leftP = sandboxKeys().filter(k => !k.startsWith(KEEP_FAMILY + '/'));
+  const leftP = sandboxKeys().filter(k => !isKept(k));
   assert.deepStrictEqual(families(leftP), [], 'after the purge the sandbox holds nothing: left ' + families(leftP).join(', '));
-  assert(![...store.keys()].some(k => k.startsWith('EtsyMail_OrderLinks/olsb_')) && !store.has('Charm_Sandbox/stream') && store.has('Charm_Sandbox/current'), 'no sandbox customer message, no stream, the snapshot stays');
-  assert(store.has(KEEP_FAMILY + '/paid-1') && blobs.has('charmnest/sandbox/orders-cur.json') && ![...blobs.keys()].some(k => /^charmnest\/sandbox\/(sheets|sets|agent|charms)\//.test(k)), 'the paid readings and the snapshot stay, the sandbox files go');
+  assert(![...store.keys()].some(k => k.startsWith('EtsyMail_OrderLinks/olsb_')) && !store.has('Charm_Sandbox/stream') && !store.has('Charm_Sandbox/current'), 'no sandbox customer message, no stream, no order set');
+  assert(!store.has('Sandbox_Charm_Nest_Agent_Cache/paid-1') && !blobs.has('charmnest/sandbox/orders-cur.json') && ![...blobs.keys()].some(k => /^charmnest\/sandbox\/(sheets|sets|agent|charms)\//.test(k)), 'the saved readings, the order set and the sandbox files go');
   // production: its history families go as before (runs, lines, live parts, sheets, sets, pool, backs, counters, release, bridge log)…
   const GONE = ['Charm_Nest_Runs', 'Charm_Nest_Run_Lines', 'Charm_Nest_Run_Live', 'Charm_Nest_Sheets', 'Charm_Nest_Sets', 'Charm_Pool', 'Charm_Pool_Back', 'Charm_Nest_Counters', 'Charm_Nest_Release', 'Design_Bridge'];
   for (const n of GONE) assert(![...store.keys()].some(k => k.startsWith(n + '/') && !k.slice(n.length + 1).includes('/')), 'production history purged as before: ' + n);
@@ -307,7 +312,7 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   const purged = n => GONE.some(g => n.startsWith(g + '/'));
   let keptDocs = 0;
   for (const [k, v] of prodBefore) { if (purged(k) || k === 'Charm_Sandbox/stream') continue; keptDocs++; const now = store.get(k); assert(now !== undefined, "production's " + k + ' is never purged'); if (!shared(k)) assert.strictEqual(canon(now), v, "production's " + k + ' is unchanged'); }
-  assert(keptDocs > 1000 && store.get(`Charm_Custom_Orders/${A}_10010`).stamps.length === 2 && store.has('Charm_Nest_Cancelled/' + C) && store.has('Charm_Sandbox/current'), "production's seals and cancelled orders are permanent: " + keptDocs + ' documents kept');
+  assert(keptDocs > 1000 && store.get(`Charm_Custom_Orders/${A}_10010`).stamps.length === 2 && store.has('Charm_Nest_Cancelled/' + C), "production's seals and cancelled orders are permanent: " + keptDocs + ' documents kept');
   console.log(`purge: ${purges} call(s) removed the sandbox's ${sandboxBefore} records; production's seals, custom orders and cancel records intact (${keptDocs} documents kept)`);
   console.log('sandbox reset complete OK');
 })().catch(e => { console.error(e); process.exit(1); });

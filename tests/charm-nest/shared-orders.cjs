@@ -120,7 +120,7 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
     p = await LF.plan({ kind: 'sheet', id: 'live-b', to: { set: 'set-3' } }); assert.equal(p.ok, true); assert.equal(p.shared, undefined); assert(!p.needs.some(x => x.key === 'sharedOrders')); assert(p.steps.some(x => x.type === 'include' && !x.with));
     // out of a set: the sheet that stays behind is named, and the base reasons come after the cardinal one
     p = await LF.plan({ kind: 'sheet', id: 'mem-1', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders'); assert.deepEqual(p.needs[0].items.map(i => i.orderId), [M]);
-    assert(/stay in one set/.test(p.needs[0].detail) && JSON.stringify(p.needs[0].items).includes('GF Sheet 2'), JSON.stringify(p.needs[0])); assert(p.needs.length > 1, 'the round-1 reasons are still told');
+    assert(/stay in one set/.test(p.needs[0].detail) && JSON.stringify(p.needs[0].items).includes('GF Sheet 2'), JSON.stringify(p.needs[0])); assert.equal(p.needs.length, 1, 'nothing else stops it (Paul, 10 Oct: a sheet that could otherwise move is not refused for being "in a set")');
     // a mate in a committed set can never join: the exact reason, no way through
     p = await LF.plan({ kind: 'sheet', id: 'cm-d', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders'); assert(/Set 2 was committed to the Design Station/.test(p.needs[0].detail), p.needs[0].detail); assert.deepEqual(p.confirm, []);
     c = await LF.commit(p, { by: 'Paul', confirmed: ['together', 'splitOrders'] }); assert.equal(c.ok, false, 'no yes key lifts it'); assert.equal(sheetsSnapshot(), before);

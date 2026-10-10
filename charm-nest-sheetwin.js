@@ -4871,6 +4871,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* The Library's moves (charm-nest-flow.js; Paul, 3 Oct: drag a sheet to a set, or approve one) reach the Make QR label and
      Include paths above without opening this window. Each throws, having put back what it changed, when it did not do it.
        joinInfo(id)         what the open run can do for the sheet now: { runHere, draft, dispatchSetId, can: { ok, byHand, reason }, split: [{ label, orders }] }
+                            (sent: true on a sheet of a set already sent to the station: not runHere, yet it is one of the open run's pages, and `can` says whether it could
+                            join the open set once the Library has taken it out of its committed set, Paul 10 Oct)
        joinSet(id, o)       the sheet of the open run joins its set with its QR label (Release as it stands, or Include for 10K / 14K);
                             o.split "all": the sheets it shares an order with join with it (the sheets of one order are always one set)
        takeOffOrder(o)      an order's pieces off its sheets with no window drawn (SharedOrders.removeFromSheet)
@@ -4880,15 +4882,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function joinInfo(id) {
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
     if (!sh || !run || !window.Gate) return null;
-    const open = window.Sets && Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), rose = sh.metal === "rose", plan = rose ? null : labelPlanOf({}, id);
-    const runHere = sh.runId === run.runId && !["complete", "abandoned"].includes(run.status) && Gate.modern(run.runId) && !sh.recalled && !sentToStation(sh);
+    const openSet = window.Sets && Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), rose = sh.metal === "rose", plan = rose ? null : labelPlanOf({}, id);
+    const runOpen = sh.runId === run.runId && !["complete", "abandoned"].includes(run.status) && Gate.modern(run.runId) && !sh.recalled, sent = runOpen && sentToStation(sh), runHere = runOpen && !sent;
     // a Rose Gold sheet joins a set by its own Cut Sheet press (the Library asks for its yes first); it is ready for that when its layout is saved and verified
-    const ok = rose ? runHere && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : !!plan && (plan.kind === "release" || plan.kind === "include");
+    // (a sheet of a committed set was sent to the station: it joins the open run's set only after the Library took it out of its set. Then it is as ready as any other sheet that is full and saved: this is that test, ahead of the leaving)
+    const spare = sent && !rose && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && ["gold", "silver", "gold10k", "gold14k"].includes(sh.metal);
+    const ok = rose ? runHere && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : spare || (!!plan && (plan.kind === "release" || plan.kind === "include"));
     const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.roseCutAt || sh.laserDoneAt ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
     const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: window.CharmNestSheetName ? CharmNestSheetName.name(x.sheet) : `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, orders: x.orders })) : [];
     // (a full Rose Gold sheet takes the rest of the metal whole: no Cut Sheet button, no line, no cut)
     const full = ok && rose ? !!(window.RoseStock && RoseStock.full ? RoseStock.full(sh) : sh.rosePlan && sh.rosePlan.full) : false;
-    return { runHere, draft: !!sh.draft, dispatchSetId: open ? open.setId : null, can: { ok, byHand: ok && !!plan && plan.kind === "release", reason: why }, split, ...(rose ? { rose: { full } } : {}) };
+    return { runHere, ...(sent ? { sent: true } : {}), draft: !!sh.draft, dispatchSetId: openSet ? openSet.setId : null, can: { ok, byHand: ok && !!plan && plan.kind === "release", reason: why }, split, ...(rose ? { rose: { full } } : {}) };
   }
   /** " (order 4181…: its Right piece is on GF Sheet 2)": which sheets, which orders and which ears a refused join is about ("" when nothing says). */
   function splitSay(partners) {
