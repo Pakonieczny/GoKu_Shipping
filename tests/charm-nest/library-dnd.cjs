@@ -320,6 +320,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     assert(lit.some(l => /Laser cutting/.test(l[1])), 'the sections show their names');
     // a dimmed place says why while the card is over it
     const dim = await box(page, chipSel('In progress')); await page.mouse.move(dim.x, dim.y, { steps: 6 });
+    // (the fake LibraryFlow here is a plain list of the allowed places, with no answer of its own: the drag layer's own words stand; the real engine answers every place itself, see R)
     assert.match(await page.textContent(`${chipSel('In progress')} .dndChipSub`), /Already in In progress/);
     await shot(page, '01-dragging-dock-illegal-reason');
     await page.mouse.move(hot.x, hot.y, { steps: 6 });

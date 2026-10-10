@@ -9,8 +9,8 @@
 //  · the sandbox archive copies no photo into the production design-archive/ prefix;
 //  · sandbox arrivals older than 45 simulated days go, production keeps its ledger;
 //  · the reset clears every sandbox record (rehearsals, shape guidance, agent jobs, subcollections, messages under
-//    parents never written) and every sandbox file but the snapshot and the master files, in calls that stop on the clock
-//    and say more:true, keeping the paid readings and everything in production.
+//    parents never written) and every sandbox file but the master files, in calls that stop on the clock
+//    and say more:true, keeping everything in production (the paid readings and the order set go too: Paul, 10 Oct).
 //   node tests/charm-nest/sandbox-upkeep.cjs
 'use strict';
 const path = require('path'), assert = require('assert');
@@ -284,8 +284,8 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   for (let i = 0; i < 3000; i++) seed('Sandbox_Charm_Nest_Run_Lines/run~' + String(i).padStart(5, '0'));
   const PROD = ['Charm_Pool/p1', 'Brites_Orders/900001/messages/x', 'Charm_Nest_Shape_Guidance/g1', 'Design_Completed Orders/900001', 'Charm_Nest_Run_Lines/run~1'];
   PROD.forEach(k => seed(k));
-  const keepBlobs = ['charmnest/sandbox/orders-cur.json', 'charmnest/sandbox/master/BRITES-master.ai', 'charmnest/sheets/2026-09-24/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/3521000556/1.jpg'];
-  const dropBlobs = ['charmnest/sandbox/orders-2026-09-01T00-00-00-000Z.json', 'charmnest/sandbox/sheets/2026-10-02/Sheet-1/a.ai', 'charmnest/sandbox/sets/2026-10-02/Set-1/set.json', 'charmnest/sandbox/agent/agent-x.json', 'charmnest/sandbox/sources/x.pdf'];
+  const keepBlobs = ['charmnest/sandbox/master/BRITES-master.ai', 'charmnest/sheets/2026-09-24/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/3521000556/1.jpg'];
+  const dropBlobs = ['charmnest/sandbox/orders-cur.json', 'charmnest/sandbox/orders-2026-09-01T00-00-00-000Z.json', 'charmnest/sandbox/sheets/2026-10-02/Sheet-1/a.ai', 'charmnest/sandbox/sets/2026-10-02/Set-1/set.json', 'charmnest/sandbox/agent/agent-x.json', 'charmnest/sandbox/sources/x.pdf'];
   for (const k of keepBlobs.concat(dropBlobs)) if (!blobs.has(k)) blobs.set(k, { buf: Buffer.from('x') });
   for (let i = 0; i < 1200; i++) blobs.set(`charmnest/sandbox/charms/c${String(i).padStart(4, '0')}.png`, { buf: Buffer.from('x') });
   slow = 1000;   // each commit a second: a reset this size cannot finish in one call
@@ -296,10 +296,10 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   slow = 0;
   console.log(`reset: ${calls} calls, ${removed} records and ${files} files removed`);
   assert(!last.more && !last.filesError, 'the calls finish the reset');
-  const left = [...store.keys()].filter(k => k.startsWith('Sandbox_') && !k.startsWith('Sandbox_Charm_Nest_Agent_Cache/'));
+  const left = [...store.keys()].filter(k => k.startsWith('Sandbox_'));
   assert.deepStrictEqual(left.filter(k => !k.startsWith('Sandbox_Brites_Orders/900009/')), [], 'every sandbox record went, subcollections and messages under unwritten parents included');
-  assert(docsIn('Sandbox_Charm_Nest_Agent_Cache').length >= 2, 'the readings Claude was paid for stay');
-  assert(!store.has('Charm_Sandbox/stream') && store.has('Charm_Sandbox/current'), 'the stream starts over; the snapshot stays');
+  assert(docsIn('Sandbox_Charm_Nest_Agent_Cache').length === 0, "the sandbox's saved readings go with the rest (Paul, 10 Oct: nothing of the sandbox stays)");
+  assert(!store.has('Charm_Sandbox/stream') && !store.has('Charm_Sandbox/current'), 'the stream starts over; the set of orders it played goes (the sandbox pulls its own)');
   for (const k of PROD) assert(store.has(k), 'production untouched: ' + k);
   for (const k of keepBlobs) assert(blobs.has(k), 'kept: ' + k);
   const stray = [...blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/') && !keepBlobs.includes(k));

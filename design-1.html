@@ -8038,6 +8038,9 @@ const Bridge = (() => {
       // and the rest of what the sandbox kept in this browser (its keys all carry the ":sandbox" suffix): the memory of
       // the sorter's commits, the order-detail copy and the listing photos, so a replayed order is read afresh
       [LSK.commits, CACHE_KEY, __imagesKey, LSK.selected, LS.selection, "designStation.chatDrafts.v1" + NS].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
+      // and every other key of this origin that carries the sandbox's mark (the ledger's purge stamp, the Etsy call meter, and
+      // any store added later): "ALL sandbox data goes" (Paul, 10 Oct); production's keys never carry the mark
+      try { const mark = /(^|[:.])sandbox($|[:.])/, ks = []; for (let i = 0; i < localStorage.length; i++) ks.push(localStorage.key(i)); ks.forEach(k => { if (k && mark.test(k)) localStorage.removeItem(k); }); } catch (_) {}
       detailCache.clear(); __imagesCache.clear(); __imagesSaved.clear(); __imagesMiss.clear(); notesCache.clear(); msgCache.clear();
       // the History's copy of the sandbox archive (its own IndexedDB, mirrored from the records the reset deleted)
       try { archiveIndex = []; archiveById = new Map(); archiveDetail.clear(); archiveSyncAt = 0; archiveFloor = 0; archiveOlderDone = false; await Promise.all([idbClear("index"), idbClear("meta"), idbClear("detail")]); } catch (_) {}
