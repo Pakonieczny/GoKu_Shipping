@@ -10307,7 +10307,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.earWords ? `${p.earWords.why}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -10551,6 +10551,26 @@ const Review = window.Review = (() => {
       })();
       c.querySelector("[data-a=same]").onclick = () => keep("ignore", null, "The same design on both ears");
       c.querySelector("[data-a=second]").onclick = () => { const k = String(c.querySelector("[data-f=second]").value || "").trim().toUpperCase(); if (!Master.entryFor(k)) { toast("“" + k + "” is not in any master file", "bad"); return; } keep("design", k, `${k} is the design for the other ear`); };
+    } else if (it.kind === "needsMapping" && p.earWords) {
+      /* A listing whose words may or may not be earrings ("huggie" in a title that also says necklace, "Pair of ... charms", an earring SKU under a necklace title) is not guessed
+         (EARWORDS, 10 Oct 2026: a pair is ALWAYS a Left and a Right, a necklace is never mirrored). One press: a pair of earrings, huggie hoops, or not earrings. The answer is kept for this
+         listing's title under the pseudo option "Earrings in this listing's words" (form = earrings / huggie, ignore = not earrings): nothing about a line already pooled changes. */
+      const lids = [...new Set(group.map(x => String(x.line.listingId || "")).filter(Boolean))];
+      c.innerHTML = head("Earrings?", p.title || r.line.title, orderSub) +
+        `<div class="ev">${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" ") || "—")}${evRow("SKU", esc(r.line.sku || "none"))}</div>` +
+        `<div class="ask">Is this a pair of earrings?</div><div class="why">${esc(p.earWords.why || "")}</div>
+        <div class="fixes pick"><button class="btn gold sm" data-w="earrings" title="a Left and a Right piece for each one bought; the Right is the mirror image of the Left">A pair of earrings</button><button class="btn ghost sm" data-w="huggie" title="the charms for a pair of huggie hoops: a Left and a Right piece for each one bought">Huggie hoops</button><button class="btn ghost sm" data-w="no" title="a necklace, a charm or something else: made as before, one piece for each one bought">Not earrings</button></div>`;
+      const keep = (field, value, words) => saving(c, async () => {
+        const who = by(); if (!who) return;
+        await api("charmNestLibrary", { op: "optionMapPut", listingId: lids.length === 1 ? lids[0] : "*", optionName: p.optionName, optionValue: p.optionValue, map: { field, value }, by: who });
+        answered(it, "decided", words, { option: p.optionName, value: p.optionValue, field, to: String(value || ""), listing: lids.length === 1 ? lids[0] : "*" }, who);
+        await Orders.loadMaps(true);
+        toast(words, "ok");
+        for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
+      })();
+      c.querySelector("[data-w=earrings]").onclick = () => keep("form", "earrings", "A pair of earrings: a Left and a Right piece");
+      c.querySelector("[data-w=huggie]").onclick = () => keep("form", "huggie", "Huggie hoops: a Left and a Right piece");
+      c.querySelector("[data-w=no]").onclick = () => keep("ignore", null, "Not earrings: made as before");
     } else if (it.kind === "needsMapping" && p.count) {
       /* An option that may name how many separate pieces ONE of these makes (letters, initials, "Set of 3", a range), or that the buyer's note
          disagrees with, is not guessed (Paul, 9 Oct 2026): one press says how many, and the answer is kept for this listing and this value
