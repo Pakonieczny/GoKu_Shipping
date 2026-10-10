@@ -6045,7 +6045,7 @@ const Engrave = window.Engrave = (() => {
   const allDiscs = pieces => !!(pieces && pieces.length && ROWS() && pieces.every(j => ROWS().discOf(j)));
   const PSW = () => window.CharmNestPieceSwitch || null;
   /** What a piece is engraved in, by name: { name, asked } (its own record first, then the font the line asked for). One place to read it from. */
-  const pieceFont = job => (PSW() ? PSW().fontOfJob(job) : { name: "", asked: "" });
+  const pieceFont = job => (PSW() ? PSW().list([job], { of: jobsOf(job.row).length })[0].font : { name: "", asked: "" });
   const earLineOf = job => (ROWS() && ROWS().pieceOf(job) ? ROWS().lineKeyOf(job) : null);
   /* the placement of a job as a person last had it in front of them (kept here, never stored: the "Approve both ears" press needs both ears seen) */
   const placementSig = job => (job && job.fit ? JSON.stringify([job.text, job.lines, job.fit.size, job.fit.angle, job.fit.centre, job.fit.weight]) : "");
@@ -6247,7 +6247,7 @@ const Engrave = window.Engrave = (() => {
       row.setAttribute("aria-label",`${busyAny ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}${ears ? (grp.pair ? " · Left and Right ears" : ` · ${grp.jobs.length} discs`) : ""}`);
       const write=(selector,value,from=row)=>{const node=from.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);
-      if(ears)for(const j of grp.jobs){const e=[...row.querySelectorAll('.egEar')].find(n=>n.dataset.ear===j.key);if(!e)continue;write('.egPiece',earTagText(j),e);write('.w',(j.lines || []).join(' / ') || "—",e);if(grp.discs)write('[data-font]',PSW()?PSW().fontText(pieceFont(j)):"",e);write('[data-stage]',ROWS().stageOf(j,isWorking(j)),e);}
+      if(ears)for(const j of grp.jobs){const e=[...row.querySelectorAll('.egEar')].find(n=>n.dataset.ear===j.key);if(!e)continue;write('.egPiece',earTagText(j),e);write('.w',(j.lines || []).join(' / ') || "—",e);if(grp.discs){const f=pieceFont(j);write('[data-font]',PSW()?PSW().fontText(f):"",e);e.querySelector('[data-font]').title=PSW()?PSW().fontNote(f):"";}write('[data-stage]',ROWS().stageOf(j,isWorking(j)),e);}
       else{write('.w',(job.lines || []).join(' / '));}
       if(window.CustomerMail?.slot)CustomerMail.slot(row.querySelector('.mailSlot'),receipt);
       window.TeamMail?.slot(row.querySelector('.teamSlot'),line);
@@ -6549,7 +6549,7 @@ const Engrave = window.Engrave = (() => {
    *  its own card, with its own words, fit and approval. */
   function earSwitchHtml(job, ears) {
     const PS = PSW(); if (!PS || !ROWS()) return "";
-    return PS.html(PS.list(ears, { of: jobsOf(job.row).length, isWorking, fontOf: pieceFont }), job.key, { fonts: allDiscs(ears) });
+    return PS.html(PS.list(ears, { of: jobsOf(job.row).length, isWorking }), job.key, { fonts: allDiscs(ears) });
   }
   /** Why "Approve both ears" / "Approve all discs" is, or is not, offered: see charm-nest-engrave-rows.js approveBoth and approveAll. */
   const bothGate = ears => (allDiscs(ears) ? ROWS().approveAll({ discs: true, jobs: ears }, { busy: isWorking, shown: isShown }) : ROWS().approveBoth({ pair: true, jobs: ears }, { busy: isWorking, shown: isShown }));

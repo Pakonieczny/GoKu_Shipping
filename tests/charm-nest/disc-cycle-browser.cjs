@@ -48,9 +48,9 @@ const root = path.join(__dirname, '../..');
         opts: { minCapMm: 1.6, maxHeightFrac: .4, lineGap: .216, minStrokeMm: 0, minGapMm: 0, tryRotated: true } }, Engrave.fonts, CharmNestGeom);
       const sideRow = (parent, slot, job, ids) => { const row = Object.create(parent); Object.defineProperties(row, { key: { value: parent.key + '#' + slot, enumerable: true, writable: true, configurable: true }, slot: { value: slot, enumerable: true, configurable: true }, side: { value: null, enumerable: true, configurable: true }, parentRow: { value: parent, enumerable: false, configurable: true }, poolIds: { value: ids, enumerable: true, configurable: true }, engrave: { get() { return job.engraveRec; }, set(v) { job.engraveRec = v; }, enumerable: true, configurable: true } }); return row; };
       const disc = make(ring(30, 30, 24), [ring(30, 51, 2)]), state = { jobs: {}, lines: {} };
-      const line = (n, rid, sku, title, opt, words, fonts, kind) => {
+      const line = (n, rid, sku, title, opt, words, fonts, kind, lineFont) => {
         const key = `${rid}_${n}`, parent = { key, state: 'pooled', poolIds: [], order: { receiptId: rid }, line: { sku, title, variations: [{ name: 'Necklace options', value: opt }], transactionId: String(n), quantity: 1 },
-          spec: { designSku: sku, personalization: ['Tag 1: ' + words[0]], form: kind === 'pair' ? 'earring' : 'necklace', size: '', quantity: 1, font: { asked: fonts[0], id: '', name: '' } }, engrave: { state: 'review' } };
+          spec: { designSku: sku, personalization: ['Tag 1: ' + words[0]], form: kind === 'pair' ? 'earring' : 'necklace', size: '', quantity: 1, font: lineFont ? { asked: lineFont, id: '', name: '', source: 'rule:font-asked' } : undefined }, engrave: { state: 'review' } };
         const jobs = words.map((w, i) => {
           const slot = kind === 'pair' ? (i ? 'R' : 'L') : kind === 'single' ? null : 'D' + (i + 1), res = fit(disc, w), pid = 'p-' + key + '-' + (i + 1), jk = slot ? key + '#' + slot : key;
           const job = { key: jk, rowKey: slot ? key : undefined, slot: slot || undefined, groupKey: rid + ':' + n, state: 'review', lines: [w], lineInput: [w], text: w, view: res.view, mask: res.mask, fit: res.fit, editCharm: disc, copies: [pid], confidence: .9, source: 'personalization', questions: [], requests: {}, backs: [],
@@ -64,10 +64,10 @@ const root = path.join(__dirname, '../..');
       window.__fx = { line, state, ring, fit, disc };
       Engrave.items().clear();
       for (const j of [].concat(
-        line(1, '4175370240', 'INITIAL_DISC_4571', 'Initial Disc Necklace Gold Disc Personalized', 'ROSEGOLD - 2 Disc', ['J', 'Q'], ['Typewriter', 'Stylish'], 'discs'),
-        line(2, '4172791262', 'INITIAL_8391', 'Initial Disc Necklace 3 discs', 'GOLD - 3 Disc', ['Mom', 'Dad', 'Sis'], ['Stylish', 'Stylish', 'Comic'], 'discs'),
-        line(3, '4171852053', 'DUCK_HUGGIE', 'Huggie Hoops Rubber Duck', 'GOLD', ['Mom', 'Mom'], ['', ''], 'pair'),
-        line(4, '4174322410', 'ONE-PENDANT', 'Tiny Initial Pendant', 'GOLD', ['Ana'], [''], 'single'))) Engrave.items().set(j.key, j);
+        line(1, '4175370240', 'INITIAL_DISC_4571', 'Initial Disc Necklace Gold Disc Personalized', 'ROSEGOLD - 2 Disc', ['J', 'Q'], ['', ''], 'discs', 'Typewriter'),
+        line(2, '4172791262', 'INITIAL_8391', 'Initial Disc Necklace 3 discs', 'GOLD - 3 Disc', ['Mom', 'Dad', 'Sis'], ['Stylish', 'Stylish', 'Comic'], 'discs', 'Stylish'),
+        line(3, '4171852053', 'DUCK_HUGGIE', 'Huggie Hoops Rubber Duck', 'GOLD', ['Mom', 'Mom'], ['', ''], 'pair', ''),
+        line(4, '4174322410', 'ONE-PENDANT', 'Tiny Initial Pendant', 'GOLD', ['Ana'], [''], 'single', ''))) Engrave.items().set(j.key, j);
       for (const j of Engrave.items().values()) j.row.engrave = Object.assign({ needed: true, approved: false }, { state: j.state });
       CN.setMode('engrave');
     });
@@ -92,7 +92,7 @@ const root = path.join(__dirname, '../..');
     const list = await page.evaluate(() => [...document.querySelectorAll('.egPlacementList .placementRow')].map(r => ({ rid: r.dataset.rid, pair: r.classList.contains('earPairRow'), ears: [...r.querySelectorAll('.egEar')].map(e => ({ chip: e.querySelector('.egPiece').textContent, w: e.querySelector('.w').textContent, font: (e.querySelector('[data-font]') || {}).textContent || '', stage: e.querySelector('[data-stage]').textContent })), open: r.dataset.open, w: r.getBoundingClientRect().width })));
     check(list.length === 4, `the list has 4 rows (two necklaces, a pair, a pendant), not 8: ${list.length}`);
     const two = list.find(r => r.rid === '4175370240'), three = list.find(r => r.rid === '4172791262');
-    check(two && JSON.stringify(two.ears.map(e => [e.chip, e.w, e.font, e.stage])) === JSON.stringify([['DISC 1 of 2', 'J', 'Typewriter', 'Placement to check'], ['DISC 2 of 2', 'Q', 'Stylish', 'Placement to check']]), `the 2-disc row tells its discs: ${JSON.stringify(two && two.ears)}`);
+    check(two && JSON.stringify(two.ears.map(e => [e.chip, e.w, e.font, e.stage])) === JSON.stringify([['DISC 1 of 2', 'J', 'Typewriter (asked)', 'Placement to check'], ['DISC 2 of 2', 'Q', 'Typewriter (asked)', 'Placement to check']]), `the 2-disc row tells its discs: ${JSON.stringify(two && two.ears)}`);
     check(three && JSON.stringify(three.ears.map(e => [e.chip, e.w, e.font])) === JSON.stringify([['DISC 1 of 3', 'Mom', 'Stylish'], ['DISC 2 of 3', 'Dad', 'Stylish'], ['DISC 3 of 3', 'Sis', 'Comic']]), `the 3-disc row tells its discs: ${JSON.stringify(three && three.ears)}`);
     check(two && two.open === keyOf('4175370240', 'D1'), 'a click on the row opens Disc 1');
     check(JSON.stringify(list.find(r => r.rid === '4171852053').ears.map(e => e.chip)) === '["LEFT EAR","RIGHT EAR"]', 'the pair row is as it was (Left, Right)');
@@ -132,7 +132,7 @@ const root = path.join(__dirname, '../..');
     c = await press('[data-a="prev"]'); check(c.key === keyOf('4172791262', 'D2') && c.kind === '1 of 4 · 0 done', `and goes on to Disc 2 of the same order: ${c.key}`);
     // ── 3 · the 2-disc order: J and Q, each with its own font ──
     await view({ list: false, focus: keyOf('4175370240', 'D1') }); await settle(); c = await cardInfo();
-    check(c.tabs.length === 2 && c.tabs.map(t => [t.chip, t.words, t.font].join(' ')).join('|') === 'DISC 1 of 2 J Typewriter|DISC 2 of 2 Q Stylish', `the 2-disc switch: ${JSON.stringify(c.tabs.map(t => [t.chip, t.words, t.font]))}`);
+    check(c.tabs.length === 2 && c.tabs.map(t => [t.chip, t.words, t.font].join(' ')).join('|') === 'DISC 1 of 2 J Typewriter (asked)|DISC 2 of 2 Q Typewriter (asked)', `the 2-disc switch: ${JSON.stringify(c.tabs.map(t => [t.chip, t.words, t.font]))}`);
     check(c.words === 'J' && c.both === null, 'Disc 1: J, no "all discs" press (the words differ)');
     await shot('DISCCYCLE-5-two-discs-disc1.png');
     c = await press('.egEarTab:nth-child(2)'); check(c.words === 'Q' && c.key === keyOf('4175370240', 'D2'), 'Disc 2: Q');
