@@ -2430,6 +2430,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .doneRow .rowFacts{line-height:1.6}.doneRow .rowExcerpt{line-height:1.6;-webkit-line-clamp:3}.doneRow .engravingIdentity .w{white-space:pre-wrap;line-height:1.6;font-size:13px;max-width:100%}
 .doneRow .reviewDetails,.doneRow>.doneDetail{grid-column:1/-1;grid-row:2}
 .comparePair figcaption{position:relative;display:flex;justify-content:center;align-items:center;gap:3px;min-height:18px;white-space:nowrap}
+/* the Vector design caption of an earring pair line says "Vector design · Left + Right" (Paul, 10 Oct 2026): longer than the 88px box, so it wraps under its picture instead of running into the Etsy listing's caption */
+.comparePair figure:first-child figcaption{white-space:normal;text-align:center;line-height:1.2;text-wrap:balance}
 .comparePair .placementThumb{overflow:hidden;display:block;isolation:isolate;text-align:center}.comparePair .placementThumb:not(.zoomReady){display:grid;place-items:center}
 .comparePair .placementThumb img,.comparePair .placementThumb canvas{display:block;width:100%;height:100%;object-fit:contain;transform-origin:center center;transition:transform .3s ease;user-select:none;-webkit-user-drag:none;max-width:none}
 .comparePair .zoomReady{cursor:grab;touch-action:none;user-select:none}.comparePair .zoomReady:active{cursor:grabbing}
