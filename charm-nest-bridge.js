@@ -11946,7 +11946,7 @@ const TeamMail = window.TeamMail = (() => {
 
   // ── what is new: messages from someone else, since this browser last had the order's Team tab open ──
   let seen = get(LS_S, null);
-  if (!seen || !seen.since) { seen = { since: Date.now(), by: {} }; put(LS_S, seen); }   // messages from before this browser kept track are not "new"
+  if (!seen || !seen.since) { seen = { since: Date.now(), by: {} }; if (!(WORKSPACE_SANDBOX && window.Sandbox?.held?.())) put(LS_S, seen); }   // messages from before this browser kept track are not "new" (a clean sandbox that waits for Start writes nothing: its wipe leaves no key behind)
   const auto = m => /^DESIGNED :\)$/.test(String(m.text || "").trim());   // the Design Station's own completion line
   function newest(msgs) {
     const me = String(employeeName() || "").toLowerCase();
