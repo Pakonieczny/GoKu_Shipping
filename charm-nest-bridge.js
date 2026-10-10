@@ -11883,6 +11883,7 @@ const Sandbox = window.Sandbox = (() => {
       try { if (window.Session && Session.bumpEpoch) Session.bumpEpoch("sandbox"); } catch (_) {}
       const stationOk = own ? await forgetCompletions() : null;   // (the station's own list of finished orders is the sandbox page's to clear)
       const gone = await wipeBrowser(own);
+      try { await readBrowser(); paintLines(); } catch (_) {}   // (the line now counts this browser's side too, after its clean-up)
       const bad = !!filesError || stationOk === false;
       noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, kinds: left === null ? 0 : kinds, station: stationOk, browser: gone });
       const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}.${how.next ? " " + how.next : own ? " The sandbox now waits, empty, until you press Start." : " The sandbox is empty."}`;
@@ -11935,6 +11936,10 @@ const Sandbox = window.Sandbox = (() => {
     const b = l.browser ? `this browser's saved copy cleared (${nf(l.browser.workspace)} saved workspace part(s), ${nf(l.browser.keys)} stored key(s))` : "this browser's saved copy cleared";
     return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" + (l.kinds ? ` (all ${nf(l.kinds)} kinds counted at 0)` : "") : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
   }
+  /** The browser's own stores, counted by browserLeft() (async, read only, nothing leaves this browser): the last answer, rows
+      this page can count only (a store of another origin answers null and is left out). */
+  let browserRows = [];
+  async function readBrowser() { try { const b = await browserLeft(); browserRows = Array.isArray(b) ? b.filter(x => x && x.n != null) : []; } catch (_) { browserRows = []; } return browserRows; }
   /** "In the sandbox now": EVERY family the wipe knows with its count, those that still hold something first and the rest at
       0 (Paul, 10 Oct: show that each one is empty, not only the few that were). Read from the status answer, one read, no write. */
   function nowText() {
@@ -11944,11 +11949,12 @@ const Sandbox = window.Sandbox = (() => {
     const keys = fam.map(f => f.key).concat(Object.keys(rec).filter(k => !fam.some(f => f.key === k)));   // (a family the page does not know yet is still listed)
     const rows = keys.filter(k => rec[k] != null).map(k => ({ n: +rec[k] || 0, text: `${nf(rec[k])}${capped[k] ? "+" : ""} ${famLabel(k)}` }));
     // what this browser still holds of the sandbox (the stored side), when the browser's own registry can count it
-    try { const b = typeof window.Sandbox?.browserLeft === "function" ? Sandbox.browserLeft() : null; if (Array.isArray(b)) for (const x of b) rows.push({ n: +x.n || 0, text: `${nf(x.n)} ${x.label || x.key} (this browser)` }); } catch (_) {}
+    for (const x of browserRows) rows.push({ n: +x.n || 0, text: `${nf(x.n)} ${x.label || x.key} (this browser)` });
     const unknown = fam.filter(f => rec[f.key] == null).map(f => f.label);
     const list = rows.filter(r => r.n > 0).concat(rows.filter(r => !r.n)).map(r => r.text).join(", ");
     const tail = unknown.length ? ` Not counted by this server yet: ${unknown.join(", ")}.` : "";
-    return rows.length ? `In the sandbox now: ${rows.some(r => r.n > 0) ? "" : "nothing — "}${list}.${tail}` : unknown.length ? "In the sandbox now: the server gave no counts." : "In the sandbox now: nothing.";
+    // ("nothing" only when every family was counted and every count reads 0)
+    return rows.length ? `In the sandbox now: ${rows.some(r => r.n > 0) || unknown.length ? "" : "nothing — "}${list}.${tail}` : unknown.length ? "In the sandbox now: the server gave no counts." : "In the sandbox now: nothing.";
   }
   /** What the wipe never touches, with its own counts (read-only, from the same status answer). */
   function keptText() {
@@ -11964,6 +11970,7 @@ const Sandbox = window.Sandbox = (() => {
     const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
     const set = (n, text) => { n.textContent = text; };
     set(line("now"), nowText()); set(line("kept"), keptText());
+    readBrowser().then(() => set(line("now"), nowText())).catch(() => {});   // (the browser's own counts follow: IndexedDB and the cache answer later)
   }
   const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }), m = /charm-nest-bridge\.js\?v=([\w.-]+)/.exec(await r.text()); return m ? m[1] : ""; } catch (_) { return ""; } };
   async function paintInfo(host) {
@@ -11973,7 +11980,7 @@ const Sandbox = window.Sandbox = (() => {
     const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), p = pageBuild(), stale = !!p && p !== BUILD;
     set(b, stale ? `Page build ${p}, but this script is build ${BUILD}: the page file is out of date — reload with Ctrl+Shift+R` : `Page build ${BUILD}`, stale);
     set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText()); set(kp, keptText());
-    refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); }).catch(() => {});   // (a production page's first read is the light one: Settings wants the counts)
+    refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); return readBrowser(); }).then(() => set(n, nowText())).catch(() => {});   // (a production page's first read is the light one: Settings wants the counts)
     const latest = await latestBuild();
     if (latest && latest !== BUILD) set(b, `Page build ${BUILD} — a newer build (${latest}) is live: reload this page with Ctrl+Shift+R to run it`, true);
     else if (latest && !stale) set(b, `Page build ${BUILD} (the latest on the server)`);
