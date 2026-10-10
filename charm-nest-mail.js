@@ -62,7 +62,8 @@
     key: get(LS.key, null), who: get(LS.who, null), pair: null,
     n: -1, since: 0, needFull: true, fullAt: 0, first: true,
     store: new Map(), link: "off", lastOkAt: 0, fails: 0,
-    panes: new Set(), lines: new Map()
+    panes: new Set(), lines: new Map(),
+    q: { n: null, items: new Map(), off: 0, gapMs: 0 }       // the inbox's send queue, as far as our messages go (position, wait, reason)
   };
   try { M.pair = JSON.parse(sessionStorage.getItem(PAIR) || "null"); } catch (_) { M.pair = null; }
 
@@ -164,14 +165,16 @@
   /* The pace follows what the person is looking at: a conversation on screen or a message on its way is watched every
      few seconds; open questions without a window on them every quarter minute; nothing open, every minute or two. A tab
      in the background slows down, and a poll another tab already made is not made again. */
+  /** A message of ours is on its way (in this browser's outbox or in the inbox's queue). */
+  function moving() { return !!(pendingOut().length || [...M.store.values()].some(s => s.pending > 0)); }
   function pace() {
     if (!M.key) return 0;
     const shown = [...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => L.node.isConnected);
-    const moving = pendingOut().length || [...M.store.values()].some(s => s.pending > 0);
+    const mv = moving();
     const open = [...M.store.values()].some(s => s.status === "open");
     const idle = Date.now() - lastTouch > 10 * 60000;
-    let ms = shown || moving ? 4000 : open ? 15000 : 90000;
-    if (document.hidden) ms = Math.max(ms * 3, moving ? 15000 : 45000);
+    let ms = shown || mv ? 4000 : open ? 15000 : 90000;
+    if (document.hidden) ms = Math.max(ms * 3, mv ? 15000 : 45000);
     else if (idle) ms = Math.max(ms, 30000);
     return ms;
   }
@@ -181,7 +184,7 @@
     syncing = true;
     try {
       if (Date.now() - M.fullAt > 15 * 60000) M.needFull = true;
-      const res = await call("sync", { n: M.n, since: M.since, sandbox: SANDBOX, full: M.needFull }, { timeout: 20000 });
+      const res = await call("sync", { n: M.n, since: M.since, sandbox: SANDBOX, full: M.needFull, qn: M.q.n, qo: !SANDBOX && moving() }, { timeout: 20000 });
       M.fails = 0; M.lastOkAt = Date.now(); setLink("ok");
       apply(res, true);
       if (bc) try { bc.postMessage({ t: "sync", from: TAB, sandbox: SANDBOX, res }); } catch (_) {}
@@ -379,6 +382,7 @@
     if (!res || typeof res !== "object") return;
     noteLink(res);
     const changed = new Set();
+    applyQueue(res.queue, changed);
     if (res.full) {
       const keep = new Set((res.changes || []).map(s => s.id));
       for (const id of [...M.store.keys()]) if (!keep.has(id)) { M.store.delete(id); changed.add(id); }
@@ -390,6 +394,23 @@
     const first = M.first; M.first = false;
     if (changed.size) { announce([...changed], mine, first); paintSoon([...changed]); }
     else if (first) paintSoon([]);
+  }
+  /** The inbox's queue view of our messages (sent with a sync while one is on its way): kept by message id, repainted when it moved. */
+  function applyQueue(q, changed) {
+    if (!q || typeof q !== "object") return;
+    const moved = typeof q.n === "number" && q.n !== M.q.n;
+    if (typeof q.n === "number") M.q.n = q.n;
+    if (typeof q.now === "number") M.q.off = Date.now() - q.now;
+    if (q.unchanged || !moved) return;
+    const items = new Map();
+    for (const v of q.recent || []) if (v && v.ol) items.set(v.ol, v);
+    for (const v of q.items || []) if (v && v.ol) items.set(v.ol, v);
+    const was = M.q.items;
+    M.q.items = items;
+    if (q.gapMs) M.q.gapMs = q.gapMs;
+    // the conversations whose message changed place or state are repainted
+    for (const [k, v] of items) { const o = was.get(k); if (!o || o.st !== v.st || o.pos !== v.pos || o.wait !== v.wait || o.nb !== v.nb) { if (v.oe) changed.add(v.oe); } }
+    for (const [k, o] of was) if (!items.has(k) && o.oe) changed.add(o.oe);
   }
   /** One summary into the store; true when it is news. */
   function merge(s) {
@@ -464,7 +485,7 @@
       host.insertBefore(b, host.firstChild);
     }
     const open = [...M.store.values()].filter(s => s.status === "open");
-    const unread = open.filter(s => s.unread > 0), stuck = open.filter(s => s.failed > 0 || s.manual > 0);
+    const unread = open.filter(s => s.unread > 0), stuck = open.filter(s => s.failed > 0 || s.manual > 0 || s.attention > 0);
     const n = unread.length || stuck.length, lp = linkProblem();
     // the envelope is also the email link's light: amber or red whenever a part of the line is not working, whatever else is waiting
     const bad = (lp ? lp.tone === "down" : false) || (!lp && !unread.length && !!stuck.length);
@@ -473,7 +494,7 @@
     b.classList.toggle("warn", !!lp && !bad);
     const html0 = ICON.mail + `<b>${n || "!"}</b>`;
     if (b.dataset.v !== html0) { b.dataset.v = html0; b.innerHTML = html0; }
-    b.title = [lp ? `Email link: ${lp.word}. ${lp.text}` : "", unread.length ? `${unread.length} customer ${unread.length === 1 ? "conversation has" : "conversations have"} a new reply` : stuck.length ? `${stuck.length} message${stuck.length === 1 ? "" : "s"} to customers did not go` : ""].filter(Boolean).join(" · ");
+    b.title = [lp ? `Email link: ${lp.word}. ${lp.text}` : "", unread.length ? `${unread.length} customer ${unread.length === 1 ? "conversation has" : "conversations have"} a new reply` : stuck.length ? (stuck.every(x => !(x.failed > 0 || x.manual > 0)) ? `${stuck.length} message${stuck.length === 1 ? "" : "s"} to customers may or may not have gone: check Etsy` : `${stuck.length} message${stuck.length === 1 ? "" : "s"} to customers did not go`) : ""].filter(Boolean).join(" · ");
     if (pillMenu && pillMenu.isConnected) fillPillMenu();
   }
   function togglePillMenu() {
@@ -488,12 +509,12 @@
     setTimeout(() => document.addEventListener("pointerdown", function off(e) { if (pillMenu && !pillMenu.contains(e.target) && e.target !== b && !b.contains(e.target)) { pillMenu.remove(); pillMenu = null; document.removeEventListener("pointerdown", off, true); } }, true), 0);
   }
   function fillPillMenu() {
-    const open = [...M.store.values()].filter(s => s.status === "open" && (s.unread > 0 || s.failed > 0 || s.manual > 0))
+    const open = [...M.store.values()].filter(s => s.status === "open" && (s.unread > 0 || s.failed > 0 || s.manual > 0 || s.attention > 0))
       .sort((a, b) => (b.unread > 0) - (a.unread > 0) || (b.lastInboundAtMs || b.updatedAtMs || 0) - (a.lastInboundAtMs || a.updatedAtMs || 0));
     const lp = linkProblem();
     pillMenu.innerHTML = (lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy ? " disabled" : ""}>Check now</button></div>` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
-      const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : "Waiting to be sent by hand on Etsy";
+      const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : s.attention > 0 ? "A message may or may not have gone — open it and check Etsy" : "Waiting to be sent by hand on Etsy";
       return `<button type="button" class="mmRow${s.unread > 0 ? " new" : " bad"}" data-id="${E(s.id)}"><span class="mmTop"><b>${E(who)}</b><span class="mono">${String(s.receiptId) === TEST ? "email link test" : E(s.receiptId)}${s.scope === "engraving" ? " · engraving" : ""}</span><span class="mmWhen">${E(when(s.lastInboundAtMs || s.updatedAtMs))}</span></span><span class="mmLine">${line}</span></button>`;
     }).join("") : `<div class="mmEmpty">Nothing waiting.</div>`);
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
@@ -550,10 +571,11 @@
     const list = forReceipt(rid).filter(s => s.status === "open");
     if (!list.length) return null;
     const unread = list.reduce((n, s) => n + (s.unread || 0), 0);
-    const bad = list.some(s => s.failed > 0 || s.manual > 0);
+    const bad = list.some(s => s.failed > 0 || s.manual > 0 || s.attention > 0);
+    const check = bad && !list.some(s => s.failed > 0 || s.manual > 0);
     const pending = list.some(s => s.pending > 0);
     const wait = Math.max(0, ...list.filter(repliedTo).map(s => s.lastInboundAtMs));
-    return { unread, bad, pending, n: list.length, wait };
+    return { unread, bad, check, pending, n: list.length, wait };
   }
   /** The mark on a list row: a click opens the order's Customer tab. */
   function badge(rid) {
@@ -561,7 +583,7 @@
     const tag = (cls, title, words) => `<span class="mailTag${cls}" role="button" tabindex="0" data-mail-open="${E(String(rid))}" title="${E(title)} Click to open the conversation.">${ICON.mail}${words}</span>`;
     if (b.unread) return tag(" new", `${b.unread} new ${b.unread === 1 ? "reply" : "replies"} from the customer.`, `${b.unread} new ${b.unread === 1 ? "reply" : "replies"}`);
     if (b.wait) return tag(" wait", `The buyer answered your question ${when(b.wait)} and has no reply yet.`, "Buyer waiting");
-    if (b.bad) return tag(" bad", "A message to this customer did not go.", "Not sent");
+    if (b.bad) return tag(" bad", b.check ? "A message to this customer may or may not have gone." : "A message to this customer did not go.", b.check ? "Check Etsy" : "Not sent");
     return tag("", b.pending ? "A message to the customer is on its way." : "A question to the customer is open.", b.pending ? "Sending" : "Asked");
   }
   const badgeStamp = rid => JSON.stringify(badgeState(rid));
@@ -970,8 +992,24 @@
   }
   const STATUS = {
     local: "Sending…", new: "Sending…", queued: "With the Etsy helper…", sending: "Sending on Etsy…",
-    waiting: "Waits for the inbox to finish a send", manual: "Not sent yet", failed: "Not sent", local_failed: "Not sent", sent: "Sent"
+    waiting: "Waits for the inbox to finish a send", manual: "Not sent yet", failed: "Not sent", local_failed: "Not sent", sent: "Sent",
+    attention: "Check Etsy: it may have gone"
   };
+  const ordinal = n => { const t = ["th", "st", "nd", "rd"], v = n % 100; return n + (t[(v - 20) % 10] || t[v] || t[0]); };
+  const inWords = ms => ms < 45000 ? "under a minute" : ms < 90 * 60000 ? Math.max(1, Math.round(ms / 60000)) + " min" : Math.round(ms / 3600000) + " h";
+  /** What the inbox's send queue says about one of our messages that is on its way: the word, and whether it is a wait (spinner). */
+  function queueWord(m) {
+    const v = M.q.items.get(m.itemId);
+    if (!v || (v.st !== "queued" && v.st !== "claimed" && v.st !== "sending")) return null;
+    if (v.st === "sending") return { word: "Sending…", spin: true, tip: "The Etsy helper is sending this message now." };
+    if (v.st === "claimed") return v.wait === "helper" ? { word: "Waiting for the Etsy helper", spin: true, tip: "The inbox's Etsy helper (the Chrome extension) has not picked it up yet. It keeps trying." }
+      : { word: "Sending next…", spin: true, tip: "It is this message's turn; there is a short pause between messages." };
+    const place = v.pos ? "Queued (" + ordinal(v.pos) + ")" : "Queued";
+    if (v.wait === "retry" && v.nb) return { word: "Trying again in " + inWords(Math.max(0, v.nb - (Date.now() - M.q.off))), spin: true, tip: "The last try did not work. It tries again by itself, a few times." };
+    if (v.wait === "helper") return { word: "Waiting for the Etsy helper", spin: true, tip: "The inbox's Etsy helper (the Chrome extension) is not picking messages up yet. It stays queued and nothing is lost." };
+    if (v.wait === "pace") return { word: place, spin: true, tip: "Messages go one at a time with a short pause between them, so Etsy is never hit with a burst." };
+    return { word: place, spin: false, tip: "Messages go to Etsy one at a time, in the order they were written. This one is " + ordinal(v.pos || 1) + " in line." };
+  }
   function msgHtml(P, m) {
     const side = m.side === "customer" ? "cust" : m.side === "shop" ? "shop" : "us";
     const text = plain(m.text || "");
@@ -983,12 +1021,16 @@
       const st = m.status || "sent";
       // solid slate is what reached the customer; on its way is paler, what did not go is outlined
       tone = st === "failed" || st === "local_failed" ? " fail" : st === "manual" ? " hold" : st === "sent" ? "" : " pend";
-      let word = STATUS[st] || "";
+      let word = STATUS[st] || "", spin = false, tip = "";
       if (st === "waiting" && m.waitReason === "paused") word = "Waits: sending is paused in the inbox";
       if (st === "waiting" && m.waitReason === "retry") word = "Trying again…";
-      if (st === "sent") word = m.manualSent ? "Sent by hand" : m.unverified ? "Sent — Etsy did not confirm" : m.delivered ? "Sent · on Etsy" : "Sent";
-      status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" ? "warn" : "go"}">${E(word)}</span>`;
-      if (st === "failed" || st === "local_failed") acts = `<div class="cmErr">${E(m.error || "It did not go.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="${st === "local_failed" ? "edit" : "retry"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">${st === "local_failed" ? "Edit and send again" : "Try again"}</button><button type="button" class="lnk soft" data-cm-do="${st === "local_failed" ? "discard" : "cancel"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">Discard</button></div>`;
+      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; } }
+      if (st === "sent") word = m.manualSent ? "Sent by hand" : m.unverified ? "Sent — Etsy did not confirm" : m.delivered ? "Delivered" : "Sent";
+      if (st === "attention") tone = " hold";
+      status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" || st === "attention" ? "warn" : "go"}"${tip ? ` title="${E(tip)}"` : ""}>${spin ? `<i class="cmSpin" aria-hidden="true"></i>` : ""}${E(word)}</span>`;
+      const copyBtn = `<button type="button" class="lnk" data-cm-do="copytext" data-item="${E(m.itemId || "")}">Copy the message</button>`;
+      if (st === "attention") acts = `<div class="cmErr">${E(m.error || "The helper clicked Send but Etsy did not confirm it. It may have gone.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="sentByHand" data-item="${E(m.itemId || "")}">It was sent</button><button type="button" class="lnk" data-cm-do="retry" data-maybe="1" data-item="${E(m.itemId || "")}">Send again</button>${copyBtn}<button type="button" class="lnk soft" data-cm-do="cancel" data-item="${E(m.itemId || "")}">Discard</button></div><div class="cmFine">Open the conversation on Etsy first: only send again if the customer did not get it.</div>`;
+      else if (st === "failed" || st === "local_failed") acts = `<div class="cmErr">${E(m.error || "It did not go.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="${st === "local_failed" ? "edit" : "retry"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">${st === "local_failed" ? "Edit and send again" : "Try again"}</button>${st === "failed" ? copyBtn : ""}<button type="button" class="lnk soft" data-cm-do="${st === "local_failed" ? "discard" : "cancel"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">Discard</button></div>`;
       else if (st === "manual") acts = `<div class="cmActs"><button type="button" class="lnk" data-cm-do="copy" data-item="${E(m.itemId)}">Copy and open the order on Etsy</button><button type="button" class="lnk" data-cm-do="sentByHand" data-item="${E(m.itemId)}">I sent it</button><button type="button" class="lnk soft" data-cm-do="cancel" data-item="${E(m.itemId)}">Discard</button></div>${m.copied ? "" : `<div class="cmFine">It goes by itself if the customer writes to the shop first.</div>`}`;
       else if (st === "new" || st === "queued" || (st === "waiting")) acts = `<div class="cmActs"><button type="button" class="lnk soft" data-cm-do="cancel" data-item="${E(m.itemId || "")}">Cancel</button></div>`;
       else if (st === "failed") acts = "";
@@ -1072,7 +1114,26 @@
       case "new": P.fresh = true; P.eng = null; P.earlier = null; P.stick = true; input0(P); paintPane(P); P.el.input.focus(); break;
       case "resolve": if (s) await act("resolve", { engagementId: s.id }); break;
       case "reopen": if (s) await act("reopen", { engagementId: s.id }); break;
-      case "retry": if (s) await act("retry", { engagementId: s.id, itemId: item }); break;
+      case "retry": if (s) {
+        // a message that may already have gone out is sent again only when the person says the customer did not get it
+        const maybe = b.dataset.maybe === "1";
+        if (maybe && !confirm("Send it again only if the customer did NOT get it. Check the conversation on Etsy first. Send it again?")) break;
+        b.disabled = true;
+        try {
+          let d;
+          try { d = await call("retry", { engagementId: s.id, itemId: item, confirmMaybeSent: maybe || undefined }); }
+          catch (err) {
+            if (err && err.code === "MAYBE_SENT" && confirm(err.message + "\n\nSend it again?")) d = await call("retry", { engagementId: s.id, itemId: item, confirmMaybeSent: true });
+            else throw err;
+          }
+          if (d && d.id) received(d);
+        } catch (err) { if (!authLost(err)) say(err.message, "bad"); } finally { b.disabled = false; }
+      } break;
+      case "copytext": {
+        const m = s && (s.messages || []).find(x => x.itemId === item);
+        if (m) { try { await navigator.clipboard.writeText(plain(m.text)); say("Copied: paste it into the Etsy conversation by hand", "ok", 4000); } catch (_) { say("Could not copy: select the text and copy it yourself", "bad"); } }
+        break;
+      }
       case "cancel": if (s) await act("cancel", { engagementId: s.id, itemId: item }); break;
       case "sentByHand": if (s) await act("sent", { engagementId: s.id, itemId: item }); break;
       case "copy": {
@@ -1462,6 +1523,7 @@
     const local = shownOut().find(x => String(x.body.receiptId) === L.rid && x.body.scope === "engraving" && String(x.body.lineId || "") === String(lineIdOf(L.row) || ""));
     const note = local ? (local.error ? `<span class="bad">Not sent: ${E(local.error)}</span>` : "Sending…")
       : out && out.status === "failed" ? `<span class="bad">The last message did not go.</span> Open the conversation to try again.`
+      : out && out.status === "attention" ? `<span class="warn">Check Etsy:</span> the last message may or may not have gone. Open the conversation to see.`
       : out && out.status === "manual" ? `<span class="warn">No Etsy conversation with this buyer yet:</span> open the conversation to send it by hand.`
       : out && (out.status === "new" || out.status === "queued" || out.status === "sending" || out.status === "waiting") ? "On its way to the customer…"
       : out && out.status === "sent" && !s.lastInboundAtMs ? "Sent " + when(out.sentAtMs || out.atMs) + " · waiting for the answer" : "";
