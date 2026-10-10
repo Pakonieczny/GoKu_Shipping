@@ -211,11 +211,12 @@ function rules(tables) {
   }
   ok('an option Etsy keeps no SKU for waits, and says "Etsy has no SKU on this option" (Zodiac REVAMP and Birth Flower earrings each have one such value)');
 
-  // one SKU for every choice of the listing (the disc and the tennis listings): the option itself is mapped once, and the row says so
-  for (const [rid, val, re] of [['4175370240', '16"/ Typewriter', /one SKU \(NITIAL_DISC_4571\) for every choice/], ['4172791262', 'Stylish', /one SKU \(INITIAL_8391\) for every choice/]]) {
-    sp = read(find(rid, val), { listingSkus: T0 }); const q = open(sp).find(p => p.optionValue === val); assert(q, rid); assert.match(q.why, re); assert(!(q.picks || []).length, 'Etsy\'s listing-wide SKU is nobody\'s option');
+  // one SKU for every choice of the listing (the disc listing): a FONT option (Fonts: 16"/ Typewriter, Font: Stylish) has no SKU and picks no charm, so it is no question
+  // any more (OPTFONT, charm-nest-orders.js fontRead): it is read as the font asked for and shown at engraving, whatever Etsy keeps for the listing
+  for (const [rid, val, font] of [['4175370240', '16"/ Typewriter', 'Typewriter'], ['4172791262', 'Stylish', 'Stylish']]) {
+    sp = read(find(rid, val), { listingSkus: T0 }); assert.equal(open(sp).length, 0, rid + ': a font option asks nothing: ' + JSON.stringify(sp.problems)); assert.equal(sp.font && sp.font.asked, font, rid);
   }
-  ok('a listing with one SKU for every choice says so on the row, and offers no SKU for a font or a disc count');
+  ok('a font option is read as the font asked for and waits for nothing: no SKU is looked for it, none is offered');
 }
 
 /* ── 5 · the Review Options list ── */

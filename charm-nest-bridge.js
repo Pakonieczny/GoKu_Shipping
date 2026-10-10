@@ -194,9 +194,9 @@ const ListMedia = (() => {
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
-  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)); } catch (_) { return false; } };
+  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${pairRow(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${pairRow(row) ? " · Left + Right" : earDesign(row, "L") ? " · Left ear" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false,zoomKey=key) {
@@ -259,18 +259,24 @@ const ListMedia = (() => {
   // (an earring's direction, Paul 9 Oct 18:47: the Right is the Left turned over about the vertical axis. A picture asked for ONE piece of a matching pair (opts.side "L" | "R", opts.mirror: true for the
   //  piece that is the mirror image of the drawing) is the design as drawn, turned over by the renderers' own `mirror` option for the mirror piece (a charm already held mirrored is not turned twice);
   //  a mismatched pair's piece is the pair picture with the other body washed out (opts.highlight), each body already facing its own side)
+  // (a line of TWO separate designs (a Left Tennis Ball, a Right Tennis Racket): the design of the ear a picture is asked for; '' for every other line)
+  const earDesign=(row,side)=>{const pr=row?.spec?.pair,m=(side==='L' || side==='R') && pr && pr.mismatched && !pr.glued && !pr.legacy && Array.isArray(pr.members)?pr.members:null;const a=m&&m.find(x=>x && x.side===side),b=m&&m.find(x=>x && x.side && x.side!==side);return a && b && a.sku && b.sku && String(a.sku)!==String(b.sku)?String(a.sku):'';};
+  // (is that ear's own drawing cut turned over: the word charm-nest-pair.js gives a matching pair of this design, the Right turned over unless the drawing faces the other way)
+  const earTurn=(row,side,entry)=>{try{const CP=window.CharmNestPair;if(!CP || !CP.piecesFor)return false;const sp=row.spec||{},line=Object.assign({},row.line,{receiptId:row.order?.receiptId,quantity:1,form:sp.form,spec:{quantity:1,form:sp.form,pieceCount:2,pair:{earring:true,mismatched:false,glued:false,perUnit:2,sides:['L','R']}}}),mine=CP.piecesFor(line,entry).find(x=>x.side===side);return !!(mine && mine.mirror);}catch(_){return false;}};
   async function vector(row,px,opts) {
     if(!row || row.spec?.noDesign)return null;
     // (a mismatched pair line is drawn from its master design, whole: its pool pieces may each hold ONE body, and the picture of the line is the pair; a piece of a matching pair is drawn from the master design too, as drawn)
     const sideOne=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && !!Master.entryFor(row.spec?.designSku || row.line?.sku || '');
-    const charm=(pairRow(row) || sideOne)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    const own=opts?earDesign(row,opts.side):'';
+    const charm=(pairRow(row) || sideOne || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
     const ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
     if(charm)return P.frontPreview ? (ro ? P.frontPreview(charm,px || 220,ro) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
-    const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
+    const sku=own || row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
+    if(own){const turnOwn=earTurn(row,opts.side,entry)?{mirror:true}:null;return turnOwn?(px?Pool.masterFront(entry,row.spec?.size,px,turnOwn):Pool.masterPreview(entry,row.spec?.size,true,turnOwn)):(px?Pool.masterFront(entry,row.spec?.size,px):Pool.masterPreview(entry,row.spec?.size,true));}
     if(ro)return px ? Pool.masterFront(entry,row.spec?.size,px,ro) : Pool.masterPreview(entry,row.spec?.size,true,ro);
     return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
   }
@@ -289,7 +295,7 @@ const ListMedia = (() => {
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
   function vectorKey(row,opts) {
     if(!row || row.spec?.noDesign)return '';
-    const sku=String(row.spec?.designSku || row.line?.sku || '').toUpperCase();
+    const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
@@ -621,7 +627,7 @@ const livePairOf = (r, rid) => {
     const e = M && typeof M.entryFor === "function" ? M.entryFor(String((r.spec && r.spec.designSku) || r.line.sku || "")) : null;
     const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
     if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
-    if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+    if (e && P.isMismatched(e) && !(P.plainLine && P.plainLine(r))) return list.map(() => ({ both: true, grp }));   // (a necklace, pendant or charm of a two-body design is no Left + Right: Paul, 10 Oct)
     // a line the count rules make into several separate pieces (a 3-disc necklace) is one group of n pieces with no side, as the stations tell it (ADVCOUNT); a plain quantity-2 line is told as before
     const q = Math.max(1, Math.round(+(r.spec && r.spec.quantity) || +r.line.quantity || 1));
     if (list.length >= 2 && list.length > q) return list.map((p, i) => ({ grp, of: list.length, n: i + 1 }));
@@ -2946,6 +2952,21 @@ const Pool = window.Pool = (() => {
     if (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size])) { row.state = "held"; row.reason = `no design for size ${sp.size || "(none)"}`; row.problems.push({ kind: "missingSize", sku: sp.designSku, size: sp.size, available: Object.keys(entry.sizes) }); return null; }
     const src = await masterCharm(entry, sp.size);
     const base = src.charms[0];
+    /* A mismatched pair named by TWO master designs (Paul, 10 Oct 2026: a SKU or title that names a Tennis Ball and a Tennis Racket, Left and Right options, a 2-symbols line's two signs;
+       spec.pair.members): the Left ear is cut from the first design and the Right ear from the second, each facing its own side. Without this the second design was never cut and the
+       line fell to the one glued piece of the first. A line whose second design cannot be had is held, never made as the first alone. */
+    const two = memberSkus(sp); let ear2 = null;
+    if (two && two.L === sp.designSku) {
+      const entry2 = Master.entryFor(two.R) || await Master.fetchEntry(two.R);
+      const hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: ${why}`); return null; };
+      if (!entry2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: two.R, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: not in any master file`); return null; }
+      if (entry2.blocked) return hold(`SKU blocked: ${entry2.blocked}`, { kind: "blockedSku", reason: entry2.blocked, sku: two.R });
+      if (entry2.sizes && Object.keys(entry2.sizes).length && !(sp.size && entry2.sizes[sp.size])) return hold(`no design for size ${sp.size || "(none)"}`, { kind: "missingSize", sku: two.R, size: sp.size, available: Object.keys(entry2.sizes) });
+      const src2 = await masterCharm(entry2, sp.size);
+      if (src.bodies || src2.bodies) return hold(`${src.bodies ? two.L : two.R} draws two bodies: it cannot be one ear of a pair of two designs`);
+      ear2 = { entry: entry2, src: src2, sku: two.R };
+    }
+    const earOf = p => (ear2 && p && p.side === "R" ? ear2 : { entry, src, sku: sp.designSku });
     /* An earring pair (Paul, 9 Oct 2026, amendment 2: stud, hoop or huggie; matching or mismatched) makes a LEFT and a RIGHT piece per unit, copies
        alternating L, R, all of one group (the line). Each piece carries its side and `mirror` (the Right is the mirror image of the Left, so each
        ear faces its own side); a mismatched pair's two pieces are also cut from two different bodies of the design, each its own charm with its own
@@ -2958,7 +2979,8 @@ const Pool = window.Pool = (() => {
     if (sp.pieceNote) agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote}`);
     const Pair = window.CharmNestPair, wanted = Pair && Pair.piecesFor && PoolPieces && !gluedLine(row) ? Pair.piecesFor(pairLine(row), base) : null;
     // (a plan is the pieces of an earring pair, or ONE piece with its side: a single earring whose line names its ear is cut as that ear, the Right the mirror image by the same facing rule; a single that names no ear has no side and is cut as drawn)
-    const plan = wanted && wanted.length >= 1 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && wholeBody(src, +p.bodyIndex)) ? wanted : null;
+    // (a pair of two designs: each piece is body 0 of ITS OWN design, the Right marked body 1 of the pair, and its direction is that design's own: the Right earring is turned over unless its drawing already faces right)
+    const plan = wanted && wanted.length >= 1 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && (ear2 ? true : wholeBody(src, +p.bodyIndex))) ? (ear2 ? wanted.map(p => Object.assign({}, p, { bodyIndex: p.side === "R" ? 1 : 0, mirror: earMirror(p, earOf(p), row) })) : wanted) : null;
     if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
@@ -2967,25 +2989,39 @@ const Pool = window.Pool = (() => {
     const grouped = !!(Pair && Pair.isGroupLine && Pair.isGroupLine(pairLine(row), base)), loose = grouped && !plan && count >= 2 && count <= PoolPieces.MAX_PIECES;
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
-    for (const b of plan ? [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i)) : [base]) {
+    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : [base]) {
       if (b.areaPt2 > usable || Math.min(b.widthPt, b.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(b.widthPt * MM).toFixed(1)} × ${(b.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: b.widthPt * MM, heightMm: b.heightPt * MM, material: sp.material }); return null; }
     }
     // a Right piece is drawn the other way round (its mirror image); a line whose mirrored charm cannot be made is held, never drawn the wrong way
-    if (plan) { try { for (const pp of plan) await ensureBase(src, pp); } catch (e) { row.state = "held"; row.reason = `its right-hand earring could not be mirrored: ${e.message}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${row.reason}`); return null; } }
+    if (plan) { try { for (const pp of plan) await ensureBase(earOf(pp).src, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp); } catch (e) { row.state = "held"; row.reason = `its right-hand earring could not be mirrored: ${e.message}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${row.reason}`); return null; } }
     const pools = [], charms = [];
     for (let copy = 1; copy <= count; copy++) {
       const poolId = O.poolId(row.order, row.line, copy), pp = plan ? plan[copy - 1] : null;
       // (an ear piece of a line that is not a group, a single earring that names its ear: a group of ONE, however many are bought; discs, letters, charms of a counted necklace: group fields, no ear)
       const mine = pp ? PoolPieces.fieldsOf(grouped ? pp : Object.assign({}, pp, { groupSize: 1 })) : loose ? PoolPieces.cleanGroupFields({ poolId, groupSize: count }) : null;
-      const charm = pp ? cloneCharm(baseFor(src, pp), `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
-      charm.name = `${row.order.receiptId} · ${sp.designSku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
-      charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: count, form: sp.form, size: sp.size };
+      const ear = earOf(pp), cut = ear.src;   // (the ear's own design: the line's one design for every piece but the Right of a pair of two designs)
+      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
+      charm.name = `${row.order.receiptId} · ${ear.sku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
+      charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
       if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them (a counted necklace's pieces: groupKey and groupSize)
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: count, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}) });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: ear.sku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: count, charmHash: charm.hash, masterHash: ear.entry.masterHash || null, aiPath: sizeEntry(ear.entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}) });
       charms.push(charm);
     }
     return { sp, pools, charms };
+  }
+  /** The two master designs of a mismatched pair named by two SKUs ({ L, R }), or null: a line made of one design, a mismatched design of two bodies, a glued or an old line. */
+  function memberSkus(sp) {
+    const pr = sp && sp.pair, m = pr && pr.mismatched && !pr.glued && !pr.legacy && Array.isArray(pr.members) ? pr.members : null;
+    const l = m && m.find(x => x && x.side === "L"), r = m && m.find(x => x && x.side === "R");
+    return l && r && l.sku && r.sku && String(l.sku) !== String(r.sku) ? { L: String(l.sku), R: String(r.sku) } : null;
+  }
+  /** Is this ear (its own design) cut turned over? The same word charm-nest-pair.js gives a matching pair of that design: the Left as drawn and the Right turned over, unless the drawing faces the other way (a person's facing) or reads one way. */
+  function earMirror(piece, ear, row) {
+    const Pair = window.CharmNestPair, c = ear.src.charms[0];
+    const line = Object.assign({}, row.line, { receiptId: row.order.receiptId, transactionId: row.line.transactionId, quantity: 1, form: row.spec.form, spec: { quantity: 1, form: row.spec.form, pieceCount: 2, pair: { earring: true, mismatched: false, glued: false, perUnit: 2, sides: ["L", "R"] } } });
+    const mine = Pair.piecesFor(line, c).find(x => x.side === piece.side);
+    return !!(mine && mine.mirror);
   }
   /** The order line as charm-nest-pair.js reads it (receipt, transaction, quantity, form, the listing's own fields and the spec). */
   const pairLine = row => Object.assign({}, row.line, { receiptId: row.order.receiptId, transactionId: row.line.transactionId, quantity: row.spec.quantity, form: row.spec.form, spec: row.spec });
@@ -4759,7 +4795,16 @@ const Engrave = window.Engrave = (() => {
     return F_.loading;
   }
   const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
-  const fitOpts = job => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
+  /* Settings "Max height (fraction)" is the taste of the AUTOMATIC first placement. It was also the ceiling of every size
+     the person set by hand (the corner handles), measured on the back view's HEIGHT: a flat bar, whose height is its short
+     side, could not be enlarged past about a quarter of that height (cap 1.57 mm, "SMALL", on a bar that takes 3.8 mm;
+     Paul, 10 Oct). By hand (fitOpts(job, true)) the lettering goes as large as it verifies on the eroded mask: no ink
+     outside the metal it may use, none on a cut-out, a keep-out or inside the margin of a cut line (G.verifyInk, the
+     check every placement and every approval passes). The searches then start from four times the back's longer side, a
+     size no text reaches (maxHeightFrac x height = that size). */
+  const fitOpts = (job, byHand) => { const o = { minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" };
+    if (byHand && job?.mask) { const h = job.mask.hPt || job.mask.h / job.mask.res, w = job.mask.wPt || job.mask.w / job.mask.res; o.maxHeightFrac = 4 * Math.max(w, h) / h; }
+    return o; };
   const items = () => B.engrave.items;
   /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
   const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
@@ -4802,7 +4847,7 @@ const Engrave = window.Engrave = (() => {
       const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
-        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(job),{centre:layout.centre,angle:layout.angle});
+        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(job,true),{centre:layout.centre,angle:layout.angle});
         job.fit={ok:true,size:saved.sizePt,fittedMax:Math.max(saved.sizePt,ceiling.ok?ceiling.size:0),weight:saved.weight || "Regular",centre:layout.centre,angle:layout.angle,layout,glyphs:layout.glyphs,cmds:layout.cmds,capMm:saved.capMm || saved.sizePt*G.capPerEm(font)*MM,metrics:saved.metrics,small:!!saved.small,thin:!!saved.thin};
         job.verify={geometry:check,at:Date.now()};
       }
@@ -5254,10 +5299,13 @@ const Engrave = window.Engrave = (() => {
   /* One fitting policy for dragging, rotation and manual size: change the
      wrapping before reducing the requested size, and restore it when room
      returns. The original words remain separate from generated line breaks. */
+  /** The cap-height readout beside the controls: the number, and when the room (not the request) set it, the reason it stops. */
+  const capText = f => f.capMm.toFixed(2) + " mm" + (f.atLimit ? " · largest that fits" : "");
   function refit(job, place) {
     const font=fontFor(job.fit.weight),want=place.size ?? job.wantSize ?? job.fit.size;
-    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
+    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job,true),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
     if(!f.ok)return false;
+    f.atLimit=f.size<want-.005;      // the metal, not the request, set this size
     f.fittedMax=Math.max(f.size,job.fit.fittedMax || 0);f.weight=job.fit.weight;f.rect=job.fit.rect;
     job.wantSize=want;job.lines=f.lines.slice();job.text=job.lines.join("\n");
     job.fit=f;job.verify={geometry:G.verifyInk(f.cmds,job.mask),at:Date.now()};job.nudged=true;job.claude=null;
@@ -5296,8 +5344,10 @@ const Engrave = window.Engrave = (() => {
   }
   function resize(job, size) {
     if(!job.fit || !Number.isFinite(size))return;
-    size=Math.min(fitOpts(job).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
+    size=Math.min(fitOpts(job,true).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
     if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,size})){toast("No room at that size","bad");return;}
+    // asked for more than the metal allows: the words stand at the largest that verifies, and the person is told so
+    if(job.fit.atLimit){job.wantSize=job.fit.size;toast(`That is as large as these words fit on this charm · cap ${job.fit.capMm.toFixed(2)} mm`,"",5000);}
     reRead(job);refresh(job);
   }
   function setLineSpacing(job, percent, measure = true) {
@@ -6064,7 +6114,7 @@ const Engrave = window.Engrave = (() => {
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
-    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm";
+    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = capText(f);
     const an = c.querySelector('input[data-a="angle"]'); if (an && document.activeElement !== an) an.value = String(Math.round(f.angle || 0));
     const sl = c.querySelector('input[data-a="resize"]');
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
@@ -6321,13 +6371,15 @@ const Engrave = window.Engrave = (() => {
     const wants = [];
     if (requests.side && !["back", "unspecified"].includes(requests.side)) wants.push(`Requested side: ${requests.side}`);
     if (requests.font) wants.push(`Requested font: ${requests.font}`);
+    // a font the buyer chose in a drop-down (Font: Typewriter) that the app does not have (spec.font, charm-nest-orders.js fontRead): the shop decides, so it is said here, beside the words
+    if (sp.font && sp.font.asked && !sp.font.id && String(sp.font.asked).toLowerCase() !== String(requests.font || "").toLowerCase()) wants.push(`Requested font: ${sp.font.asked} (the app engraves in ${O.ENGRAVING_FONTS.map(f => f.name).join(", ")})`);
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
     const fromOrder = `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, jobsOf(job.row).length))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the back file">Approved</button></span>` : ""}</div><div class="backHost"></div></div>
-        <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
+        <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
           <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
         <div class="pvSide">
           <section class="pvSec pvRef"><h4 class="pvH">Front · reference</h4><div class="frontHost"></div></section>
@@ -6410,8 +6462,8 @@ const Engrave = window.Engrave = (() => {
       const paintFlow = () => {
         flowFrame=0;if(!drag)return;
         const centre=drag.pending || drag.c,angle=drag.pendingAngle ?? drag.angle,size=drag.pendingSize ?? drag.want;
-        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(job),measure:false},{centre,angle,size},job.lineMode || "auto");
-        if(f.ok){bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=f.capMm.toFixed(2)+" mm";}
+        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(job,true),measure:false},{centre,angle,size},job.lineMode || "auto");
+        if(f.ok){f.atLimit=f.size<size-.005;bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=capText(f);}
         else bc._paint();
       };
       const queueFlow = () => {if(!flowFrame)flowFrame=requestAnimationFrame(paintFlow);};
@@ -6436,7 +6488,7 @@ const Engrave = window.Engrave = (() => {
         if (drag.mode === "resize") {
           // a corner pulled away from the centre grows the text, pulled in shrinks it: the size follows the distance
           const r = Math.hypot(p[0] - drag.cpx[0], p[1] - drag.cpx[1]);
-          drag.pendingSize = Math.min(fitOpts(job).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
+          drag.pendingSize = Math.min(fitOpts(job,true).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
           queueFlow();
         } else if (drag.mode === "rotate") {
           const a = Math.atan2(p[1] - drag.cpx[1], p[0] - drag.cpx[0]);
@@ -10307,7 +10359,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -10583,7 +10635,7 @@ const Review = window.Review = (() => {
       // SKUs named by the value are offered, and the answer is kept for this listing and value
       const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
-        `<div class="ask">What does this option decide?</div>
+        `${p.note ? `<div class="why">${esc(p.note)}</div>` : ""}<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
         <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
