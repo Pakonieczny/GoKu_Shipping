@@ -140,6 +140,15 @@
     }
     .em-scrape-alarm[hidden] { display: none; }
     .em-scrape-alarm .em-scrape-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
+    /* Customer-mail link (EtsyMail_Config/linkHealth): red when a stage is down, amber when it needs attention or cannot be confirmed. */
+    .em-link-alarm { cursor: pointer; }
+    .em-link-alarm.warn { background: #3a2f17; border-color: #8a6a1f; color: #ffe6b0; }
+    .em-link-alarm.warn .em-scrape-dot { background: #e0a526; }
+    .em-topbar-floating-toggle.em-alarm-link::after {
+      content: ""; position: absolute; top: 3px; right: 3px;
+      width: 7px; height: 7px; border-radius: 50%; background: #e74c3c;
+    }
+    .em-topbar-floating-toggle.em-alarm-link.warn::after { background: #e0a526; }
     .em-topbar-floating-toggle.em-alarm::after {
       content: ""; position: absolute; top: 3px; right: 3px;
       width: 7px; height: 7px; border-radius: 50%; background: #e74c3c;
@@ -6427,6 +6436,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       <span class="em-scrape-alarm" id="emScrapeAlarm" hidden>
         <span class="em-scrape-dot"></span><span id="emScrapeAlarmLabel">Etsy page not read</span>
       </span>
+      <span class="em-scrape-alarm em-link-alarm" id="emLinkAlarm" role="status" hidden>
+        <span class="em-scrape-dot"></span><span id="emLinkAlarmLabel">Email link</span>
+      </span>
       <span id="emBackendStatus" title="Backend connection">
         <span class="em-status-dot" id="emBackendDot"></span>
         <span id="emBackendLabel" style="font-size:12px;margin-left:4px;">Backend: checking…</span>
@@ -12224,6 +12236,78 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       visibleInterval(poll, POLL_MS);
     })();
 
+    /* ─── Customer-mail link alarm ───────────────────────────────────
+       The server's link monitor (etsyMailLinkWatchdog, every 5 minutes) judges the whole line a message travels (the Etsy
+       helper's check-ins, sending, noticing and reading answers, the catch-up, Etsy's order data) and writes one small
+       document, EtsyMail_Config/linkHealth. This reads it once a minute per computer (emShared), the same way as the
+       scrape alarm above, and never says "fine" when it does not know: a judgement older than 12 minutes ("the monitor
+       stopped"), a missing document or a read that fails twice is amber. Red or amber shows in the top bar (and as a dot
+       on the top-bar toggle), at the top of the conversation list (phone too) and as a mark in the tab title; trouble that
+       lasts 5 minutes raises one toast per incident (remembered across reloads). No Etsy calls; one Firestore read a minute. */
+    (function initLinkAlarm() {
+      const POLL_MS = 60000, STALE_MS = 12 * 60000, ALERT_AFTER_MS = 5 * 60000, TOLD = "etsymail_link_told";
+      const BASE_TITLE = document.title;
+      let misses = 0, cur = null, sig = "";
+      function judge(doc) {
+        const now = Date.now();
+        if (!doc) return { tone: "warn", word: "monitor not running", text: "The inbox's link monitor has not reported, so nothing is confirming that customer messages are flowing." };
+        const age = now - (doc.atMs || 0);
+        if (!doc.atMs || age > STALE_MS) return { tone: "warn", word: "monitor stopped", text: "Nothing has confirmed the customer-mail link for " + Math.max(12, Math.round(age / 60000)) + " minutes: the inbox's link monitor has stopped reporting. Messages may still be going, but that cannot be confirmed." };
+        if (doc.level === "warn" || doc.level === "down") {
+          const bad = (doc.checks || []).filter(c => c && c.level !== "ok").map(c => c.label + ": " + c.text);
+          return { tone: doc.level, word: doc.short || "problem", text: (doc.problem || "The customer-mail link has a problem.") + (bad.length > 1 ? " (" + bad.join("; ") + ")" : ""), doc };
+        }
+        return null;
+      }
+      function told(v) { try { if (v === undefined) return JSON.parse(localStorage.getItem(TOLD) || "null") || {}; localStorage.setItem(TOLD, JSON.stringify(v)); } catch (_) { return {}; } }
+      function alertOnce(st, doc) {
+        const t = told() || {}, now = Date.now();
+        if (st && doc && doc.incidentId && doc.downSinceMs && now - doc.downSinceMs >= ALERT_AFTER_MS) {
+          if (t.id === doc.incidentId && (t.level === "down" || doc.level !== "down")) return;
+          told({ id: doc.incidentId, level: doc.level, at: now });
+          toast((doc.level === "down" ? "The email link is down: " : "The email link needs attention: ") + (doc.problem || st.text), 15000);
+        } else if (!st && t.id && !t.cleared) {
+          told(Object.assign({}, t, { cleared: now }));
+          if (now - (t.at || 0) < 3 * 3600000) toast("The email link is working again.", 6000);
+        }
+      }
+      function show(st) {
+        const el = document.getElementById("emLinkAlarm"), label = document.getElementById("emLinkAlarmLabel"), toggle = document.getElementById("emTopbarToggleBtn");
+        const next = st ? st.tone + "|" + st.word + "|" + st.text : "";
+        cur = st; window.__emLinkProblem = st;
+        if (el && label) {
+          el.hidden = !st;
+          el.classList.toggle("warn", !!st && st.tone === "warn");
+          if (st) { label.textContent = "Email link: " + st.word; el.title = st.text; }
+        }
+        if (toggle) { toggle.classList.toggle("em-alarm-link", !!st); toggle.classList.toggle("warn", !!st && st.tone === "warn"); }
+        document.title = st ? "\u26a0 " + BASE_TITLE : BASE_TITLE;
+        if (next !== sig) { sig = next; if (typeof smartScheduleRender === "function") smartScheduleRender(); }
+      }
+      async function poll(force) {
+        try {
+          const res = await emShared("linkHealth", 50000, () => api("firestoreProxy", {
+            method: "GET",
+            query : { op: "get", coll: "EtsyMail_Config", id: "linkHealth" }
+          }), force === true);
+          misses = 0;
+          const doc = res && res.exists ? res.doc : null;
+          const st = judge(doc);
+          show(st);
+          alertOnce(st, doc);
+        } catch (e) {
+          misses++;
+          // one missed read keeps what was shown; a second is itself the news
+          if (misses >= 2) show({ tone: "warn", word: "can't check", text: "Can't check the email link: " + ((e && e.message) || "no answer") + " - retrying." });
+        }
+      }
+      const chip = document.getElementById("emLinkAlarm");
+      if (chip) chip.addEventListener("click", () => { if (cur) toast(cur.text, 15000); poll(true); });
+      if (typeof onTabBecameVisible === "function") onTabBecameVisible(() => { if (isSignedInShown()) poll(); });
+      setTimeout(poll, 5000);
+      visibleInterval(poll, POLL_MS);
+    })();
+
     /* ─── API meter (live Etsy API call counter) ─────────────────────
        Polls EtsyMail_Config/etsyApiCounters every 3 seconds via
        firestoreProxy. Renders one row per backend site ID into the
@@ -13161,6 +13245,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     const SMART_HIDDEN_REFRESH_MS = 30 * 60e3;
     const SMART_KEY_COUNTS_MS = 15 * 60e3;
 
+    const smartErrAt = {};                  // loader name → when its last load failed
+    const smartRetryT = { t: 0, n: 0, last: 0 };     // the automatic retry of a failed load (smartRetryAuto)
     const smartS = {
       gen            : 0,       // bumped on layout switch and sign-out; older async results are dropped
       booted         : false,
@@ -13437,7 +13523,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         } catch (e) {
           if (gen === smartS.gen) {
             smartS.loadErrors[name] = (e && e.message) || "unknown error";
+            smartErrAt[name] = Date.now();
             console.warn("[smart inbox] " + name + " failed:", smartS.loadErrors[name]);
+            smartRetryAuto();
           }
           if (opts.rethrow) throw e;
         } finally {
@@ -13459,7 +13547,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     function smartEnsureLoaded(fid) {
       if (!smartS.booted) return;
       const name = smartLoaderFor(fid);
-      if (!name || smartS.loaded[name] || smartS.loading[name] || smartS.loadErrors[name]) return;
+      // a folder whose last load failed is asked again once the failure is half a minute old (it used to stay failed for good)
+      if (!name || smartS.loaded[name] || smartS.loading[name] || (smartS.loadErrors[name] && Date.now() - (smartErrAt[name] || 0) < 30000)) return;
       smartRunLoader(name);
     }
     function smartBoot() {
@@ -13479,6 +13568,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (gen !== smartS.gen) return;
         smartS.bootError = (e && e.message) || "unknown error";
         console.warn("[smart inbox] load failed:", smartS.bootError);
+        smartRetryAuto();
         setBackendOk(false, "Backend: error");
         // With the newest conversations in hand the page can work; the
         // missing part is retried by the next poll.
@@ -13847,6 +13937,30 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const f = mainFolderOf(t, now);
       return `<span class="em-sc em-sc-folder" title="In ${esc(SMART_FOLDER_SHORT[f])}">${esc(SMART_FOLDER_SHORT[f])}</span>`;
     }
+    // Why this folder could not be loaded, or "" (what the status line and the empty state both go by).
+    function smartViewError(view) {
+      const loaderName = smartLoaderFor(view.fid);
+      return (!smartS.booted && !smartS.loading.boot && smartS.bootError)
+        ? smartS.bootError
+        : (smartS.loadErrors.attention && !smartS.loading.attention && (view.fid === "x_inbox" || view.fid === "x_starred"))
+          ? smartS.loadErrors.attention
+          : (loaderName && smartS.loadErrors[loaderName]) || "";
+    }
+    // A failed load asks again by itself: after 15 s, 30 s, then every minute, while the tab is shown (the Retry button asks at once).
+    function smartRetryAuto() {
+      if (smartRetryT.t) return;
+      if (!smartS.bootError && !Object.keys(smartS.loadErrors).length) { smartRetryT.n = 0; return; }
+      if (Date.now() - smartRetryT.last > 5 * 60000) smartRetryT.n = 0;   // a new run of trouble starts again at 15 s
+      smartRetryT.last = Date.now();
+      const wait = [15000, 30000, 60000][Math.min(smartRetryT.n, 2)];
+      smartRetryT.t = setTimeout(() => {
+        smartRetryT.t = 0;
+        if (!smartS.bootError && !Object.keys(smartS.loadErrors).length) { smartRetryT.n = 0; return; }
+        if (!isTabVisible() || !isSignedInShown()) { smartRetryAuto(); return; }
+        smartRetryT.n++;
+        smartRetry();
+      }, wait);
+    }
     // Status lines at the top of the list: loading, errors, search.
     function smartStatusLines(view, mobile) {
       const cls = mobile ? "m-smart-line" : "em-smart-line";
@@ -13859,14 +13973,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
       if (view.searching && smartS.searchPending) texts.push("Searching all mail…");
       for (const tx of texts) lines.push(`<div class="${cls}" role="status">${spin}<span>${esc(tx)}</span></div>`);
-      const loaderName = smartLoaderFor(view.fid);
-      const err = (!smartS.booted && !smartS.loading.boot && smartS.bootError)
-        ? smartS.bootError
-        : (smartS.loadErrors.attention && !smartS.loading.attention && (view.fid === "x_inbox" || view.fid === "x_starred"))
-          ? smartS.loadErrors.attention
-          : (loaderName && smartS.loadErrors[loaderName]) || "";
+      const err = smartViewError(view);
+      const link = window.__emLinkProblem;
+      if (link) lines.push(`<div class="${cls} is-error" role="alert"><span>Email link: ${esc(link.word)}. ${esc(link.text)}</span></div>`);
       if (err) {
-        lines.push(`<div class="${cls} is-error" role="alert"><span>Couldn't load this folder (${esc(err)}).</span>` +
+        lines.push(`<div class="${cls} is-error" role="alert"><span>Can't reach the inbox: ${esc(err)} - retrying.</span>` +
                    `<button type="button" data-smart-retry="1">Retry</button></div>`);
       }
       if (view.searching && !smartS.searchPending && smartS.searchInfo && smartS.searchInfo.error && smartS.searchInfo.q.toLowerCase() === view.q) {
@@ -13879,6 +13990,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const name = smartLoaderFor(state.activeFilterId);
       if (smartS.loadErrors.attention) { delete smartS.loadErrors.attention; smartRunLoader("attention"); }
       if (name && smartS.loadErrors[name]) { delete smartS.loadErrors[name]; smartRunLoader(name); }
+      // any other folder's old failure is forgotten: it is asked again when that folder is shown
+      for (const k of Object.keys(smartS.loadErrors)) if (k !== name) delete smartS.loadErrors[k];
       smartScheduleRender();
     }
     function smartEmptyText(view) {
@@ -13941,7 +14054,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (!view.rows.length) {
         const busy = !!(smartS.loading.boot || smartS.loading[smartLoaderFor(view.fid)] || (view.searching && smartS.searchPending));
         const clear = view.filterId ? '<br><a href="#" data-smart-clear-filter="1">Show everything in this folder</a>' : "";
-        host.innerHTML = lines + banner + (busy ? "" : `<div class="em-list-empty">${smartEmptyText(view)}${clear}</div>`) + smartMoreHtml(view, false);
+        // (a list that could not be loaded is not an empty list: the error line above says so, and nothing says "Nothing waiting")
+        host.innerHTML = lines + banner + (busy || smartViewError(view) ? "" : `<div class="em-list-empty">${smartEmptyText(view)}${clear}</div>`) + smartMoreHtml(view, false);
         smartWireListExtras(host);
         renderPagination(0);
         updateSelectionBar();
@@ -14168,7 +14282,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
       if (!view.rows.length) {
         const busy = !!(smartS.loading.boot || smartS.loading[smartLoaderFor(view.fid)] || (view.searching && smartS.searchPending));
-        list.innerHTML = lines + pill + (busy ? "" : `
+        list.innerHTML = lines + pill + (busy || smartViewError(view) ? "" : `
           <div style="padding: 60px 32px; text-align: center; color: var(--m-c-text-muted);">
             <i class="material-icons" style="font-size:48px; color: var(--m-c-border-strong);">${view.searching ? "search_off" : "inbox"}</i>
             <p style="margin-top: 12px; font-size: 15px;">${smartEmptyText(view)}</p>
@@ -16194,6 +16308,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           if (ms > maxMs) maxMs = ms;
         }
         state.msgCursorMs = maxMs;
+        state.msgError = null;
 
         renderThreadMessages();
         // v5.0 — Mobile conversation re-render hook
@@ -16213,6 +16328,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         salesCardPoll(threadId, _cardNews);
       } catch (e) {
         console.warn("messages fetch failed:", e.message);
+        // a thread whose messages could not be read is not an empty thread: say why (the poll asks again by itself)
+        if (seq === state.msgFetchSeq && state.selectedId === threadId) {
+          state.msgError = { threadId, text: (e && e.message) || "no answer" };
+          if (!state.messages || !state.messages.length || state.msgCursorThreadId !== threadId) {
+            try { renderThreadMessages(); if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged(); } catch (_) {}
+          }
+        }
       } finally {
         state.inFlightMsgs = false;
       }
@@ -22400,7 +22522,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // local sends are both applied by threadMessagesForRender.
       const msgs = threadMessagesForRender(state.selectedId);
       if (!msgs.length) {
-        box.innerHTML = `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
+        const er = state.msgError && state.msgError.threadId === state.selectedId ? state.msgError.text : "";
+        box.innerHTML = er
+          ? `<div class="em-muted" style="font-size:12px;">Can't reach the inbox: ${esc(er)} - retrying.</div>`
+          : `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
         return;
       }
       // The reply box stays still when messages arrive above it: new ones
@@ -26188,7 +26313,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       });
 
       if (!items.length) {
-        list.innerHTML = `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">No messages yet.</div>`;
+        const er = state.msgError && state.msgError.threadId === state.selectedId ? state.msgError.text : "";
+        list.innerHTML = `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">${er ? "Can't reach the inbox: " + mEsc(er) + " - retrying." : "No messages yet."}</div>`;
         return;
       }
       patchMessageList(list, items);
