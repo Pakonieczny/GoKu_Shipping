@@ -15,6 +15,10 @@
  *    resolve, reopen, lang, link_url, simulate, translate, health,
  *    history_info { receiptId, engagementId }    → { threads: [{ threadId, count, lastAtMs }], total }
  *    history { receiptId, threadId, after }      → { messages, next }  (the buyer's whole history, a page at a time)
+ *    simulate { engagementId, text, delayMs }    (sandbox only) the customer's side: a reply now, or after delayMs (up to two minutes,
+ *                                                  settled by whoever asks next, so it survives a reload and arrives through sync)
+ *    In the sandbox, ask / retry / cancel / sync / order / thread play a simulated send (Queued, Sending, Sent) on the sandbox's own
+ *    queue (the bell's sbFlight list): never EtsyMail_SendQueue*, the shared reply box, the Chrome extension, Etsy or a customer.
  *    test_info, test_start, test_cancel          → { ready, customer, pending: { code, expiresAtMs } }  (the test account;
  *                                                  a question with receiptId "test" goes only to it)
  */

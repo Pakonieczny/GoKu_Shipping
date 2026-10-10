@@ -424,13 +424,8 @@ function friendlyFailure(code, error) {
 
 /** Put each unsent message of an engagement on its way: through the inbox for a conversation,
  *  straight to "sent" in the sandbox, to the person's hands when there is no conversation yet. */
-async function sendPending(e) {
-  if (e.sandbox) {
-    return mutate(e.id, cur => {
-      if (!(cur.outbox || []).some(x => UNSENT.has(x.status))) return null;
-      return { outbox: cur.outbox.map(x => UNSENT.has(x.status) ? Object.assign({}, x, { status: "sent", sentAtMs: Date.now(), sandbox: true }) : x) };
-    });
-  }
+async function sendPending(e, out) {
+  if (e.sandbox) return sbSend(e, out);
   if (!e.threadId) {
     return mutate(e.id, cur => {
       if (!(cur.outbox || []).some(x => UNSENT.has(x.status))) return null;
@@ -440,6 +435,123 @@ async function sendPending(e) {
   await dispatchNext(e.threadId);
   const s = await engRef(e.id).get();
   return s.exists ? s.data() : e;
+}
+
+// ─── the sandbox's simulated send ────────────────────────────────────────────
+
+/* A rehearsal question goes nowhere: it stays in the sorter (standing rule: a test never reaches a customer). But the person
+   rehearsing sees what the real side shows, so the message walks the same visible states (Queued (nth), Sending…, Sent) on a
+   short clock of its own. (As on the real side the message's own status stays "queued" until it is sent; whether it is waiting its
+   turn or being sent is the queue view's word, which the sorter reads from its sync answer.) Nothing here touches the real queue (EtsyMail_SendQueue*), the shared reply box, the Chrome extension,
+   Etsy or any real conversation: the only places written are the sandbox's own engagement (olsb_…) and the bell's sbFlight list,
+   which a real sorter never reads. The states are played lazily: whoever asks next (a sandbox sync, the pane, the question
+   itself) settles whatever the clock has passed, so no timer runs on the server and a reload loses nothing. A customer reply
+   played "for later" (simulate with delayMs) is delivered the same way, so a person can leave the window and watch the marks
+   arrive. Each in-flight item is one small map in the bell: { k: "m"|"r", e: engagement, i: item, s: start, f: end or due }. */
+const SB = { queuedMs: 2500, sendingMs: 4500, gapMs: 800, replyMaxMs: 120000 };   // (a state lasts longer than the sorter's 4-second poll, so each one is seen)
+const SB_LIVE = new Set(["queued"]);
+const sbValid = x => !!x && typeof x === "object" && !!x.e && !!x.i && Number.isFinite(Number(x.f));
+/** When a new message would start and end: after its own short wait, and after the one before it has finished (one at a time). */
+function sbSlot(entries, now) {
+  const free = Math.max(0, ...entries.filter(x => x.k === "m").map(x => Number(x.f) || 0));
+  const s = Math.max(now + SB.queuedMs, free ? free + SB.gapMs : 0);
+  return { s, f: s + SB.sendingMs };
+}
+/** The sandbox engagement has something the clock has now moved: a message whose time is up, or a reply played for later that is due. */
+const sbDue = (e, now) => !!e && !!e.sandbox && ((e.outbox || []).some(x => SB_LIVE.has(x.status) && x.sbEndMs && now >= x.sbEndMs) || (e.simDue || []).some(d => d && d.dueMs <= now));
+/** What the clock has done to one engagement since it was last looked at: the patch (or null), and the bell keys that are over. A
+ *  message whose time is up is sent; a reply played for later whose time has come arrives. */
+function sbPatch(cur, now) {
+  const patch = {}, done = [];
+  let outbox = null;
+  (cur.outbox || []).forEach((x, n) => {
+    if (!SB_LIVE.has(x.status) || !x.sbEndMs || now < x.sbEndMs) return;
+    outbox = outbox || cur.outbox.slice();
+    outbox[n] = Object.assign({}, x, { status: "sent", sentAtMs: x.sbEndMs, sandbox: true });
+    done.push(flightKey(cur.id, x.id));
+  });
+  if (outbox) patch.outbox = outbox;
+  const due = (cur.simDue || []).filter(d => d && d.dueMs <= now).sort((a, b) => a.dueMs - b.dueMs);
+  if (due.length) {
+    const sim = (cur.sim || []).slice();
+    for (const d of due) { sim.push({ id: d.id, text: d.text, atMs: d.dueMs }); done.push(flightKey(cur.id, d.id)); }
+    const last = due[due.length - 1];
+    Object.assign(patch, {
+      sim: sim.slice(-40), simDue: (cur.simDue || []).filter(d => d && d.dueMs > now), unread: (cur.unread || 0) + due.length, inboundCount: (cur.inboundCount || 0) + due.length,
+      lastInboundAtMs: last.dueMs, lastInboundPreview: preview(last.text), lastInboundBy: (cur.customer && cur.customer.name) || "Customer"
+    });
+  }
+  return Object.keys(patch).length ? { patch, done } : null;
+}
+/** Settle one sandbox engagement against the clock. Resolves to { e: the engagement as it stands now, changed }. */
+async function sbSettle(e) {
+  if (!sbDue(e, Date.now())) return { e, changed: false };
+  let done = [];
+  const r = await change(e.id, cur => { const p = sbPatch(cur, Date.now()); done = p ? p.done : []; return p ? p.patch : null; });
+  if (r.changed) for (const k of done) note({ sbFlight: { [k]: FV.delete() } });
+  return { e: r.e || e, changed: r.changed };
+}
+const settleSandbox = async e => (await sbSettle(e)).e;
+/** The messages of the sandbox's own queue, as the real queue's view shows them to the sorter (the same fields): the one sending
+ *  counts as first in line, so the next is "Queued (2nd)". n changes whenever anything in the view does. */
+function sbQueueView(entries, now) {
+  const live = entries.filter(x => sbValid(x) && x.k === "m" && Number(x.f) > now).sort((a, b) => a.s - b.s);
+  const items = live.map((x, n) => {
+    const sending = x.s <= now, v = { id: "sb~" + x.i, t: null, st: sending ? "sending" : "queued", src: "sandbox", ol: x.i, oe: x.e };
+    if (!sending) v.pos = n + 1;
+    return v;
+  });
+  let h = 2166136261;
+  for (const ch of JSON.stringify(items.map(v => [v.oe, v.ol, v.st, v.pos || 0]))) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return { n: h, now, gapMs: SB.gapMs, items, recent: [] };
+}
+/** The sandbox's "send": every unsent message of the engagement joins the sandbox's own queue, oldest first. out.flights gets
+ *  the whole list of what is on its way (for the answer's queue view). */
+async function sbSend(e, out) {
+  const bs = await bellRef().get();
+  const flights = Object.values((bs.exists && bs.data().sbFlight) || {}).filter(sbValid);
+  const now = Date.now(), plan = new Map(), all = flights.slice();
+  for (const x of (e.outbox || []).filter(y => UNSENT.has(y.status)).sort((a, b) => (a.atMs || 0) - (b.atMs || 0))) {
+    const w = sbSlot(all, now);
+    plan.set(x.id, w); all.push({ k: "m", e: e.id, i: x.id, s: w.s, f: w.f });
+  }
+  if (out) out.flights = all;
+  if (!plan.size) return e;
+  const r = await change(e.id, cur => {
+    const outbox = (cur.outbox || []).map(x => {
+      const w = UNSENT.has(x.status) && plan.get(x.id);
+      return w ? Object.assign({}, x, { status: "queued", queuedAtMs: now, sbStartMs: w.s, sbEndMs: w.f, sandbox: true, waitReason: null, error: null, errorCode: null }) : x;
+    });
+    return outbox.some((x, n) => x !== cur.outbox[n]) ? { outbox } : null;
+  });
+  for (const x of (r.e && r.e.outbox) || []) {
+    const w = plan.get(x.id);
+    if (w && x.status === "queued" && x.sbStartMs === w.s) note({ sbFlight: { [flightKey(e.id, x.id)]: { k: "m", e: e.id, i: x.id, s: w.s, f: w.f } } });
+  }
+  return r.e || e;
+}
+/** A sandbox sync: settle what the clock has passed in every engagement on the bell's list, and say what is still on its way.
+ *  Resolves to { moved, live }: the number of engagements that changed and the entries still in flight. */
+async function sbAdvance(flightMap, now) {
+  const entries = Object.entries(flightMap || {}).filter(([, x]) => sbValid(x)).slice(0, 40);
+  const gone = Object.keys(flightMap || {}).filter(k => !sbValid(flightMap[k]));
+  for (const k of gone) note({ sbFlight: { [k]: FV.delete() } });
+  let moved = 0;
+  const live = [];
+  const ids = [...new Set(entries.map(([, x]) => x.e))];
+  const snaps = ids.length ? await db.getAll(...ids.map(engRef)) : [];
+  const docs = new Map(snaps.map(s => [s.id, s.exists ? s.data() : null]));
+  for (const id of ids) {
+    const was = docs.get(id);
+    const settled = was ? await sbSettle(was) : null, e = settled && settled.e;
+    if (settled && settled.changed) moved++;
+    for (const [k, x] of entries) {
+      if (x.e !== id) continue;
+      const item = e && (x.k === "r" ? (e.simDue || []).find(d => d.id === x.i) : (e.outbox || []).find(y => y.id === x.i && SB_LIVE.has(y.status)));
+      if (item) live.push(x); else note({ sbFlight: { [k]: FV.delete() } });   // finished, cancelled, or its engagement is gone (a wipe)
+    }
+  }
+  return { moved, live };
 }
 
 /** Every unsent sorter message of this conversation joins the dispatcher's queue, oldest first. The queue sends one
@@ -892,7 +1004,7 @@ const _histThreads = new Map();
 async function historyThreads(receiptId, engagementId, sandbox) {
   const key = (sandbox ? "sb:" : "") + receiptId + "|" + (engagementId || "");
   const hit = receiptId === TEST_RID ? null : _histThreads.get(key);   // the test account can change at any moment
-  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : 2 * MIN)) return { list: hit.list, failed: hit.failed, buyerKnown: hit.buyerKnown };
+  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : hit.buyerKnown ? 2 * MIN : 20 * 1000)) return { list: hit.list, failed: hit.failed, buyerKnown: hit.buyerKnown };
   const found = new Map();
   const take = docs => { for (const d of docs) if (d.exists !== false && isThreadId(d.id)) found.set(d.id, Object.assign({ id: d.id }, d.data())); };
   let buyer = null, failed = null;
@@ -941,7 +1053,7 @@ const _sbBuyers = new Map();
 /** The buyer of a sandbox order, from the sandbox's own copy of it (never from Etsy). Resolves to { buyer, failed }. */
 async function sandboxBuyer(receiptId) {
   const hit = _sbBuyers.get(receiptId);
-  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : hit.buyer ? 30 * MIN : 2 * MIN)) return { buyer: hit.buyer, failed: hit.failed };
+  if (hit && Date.now() - hit.at < (hit.failed ? 15 * 1000 : hit.buyer ? 30 * MIN : 20 * 1000)) return { buyer: hit.buyer, failed: hit.failed };
   let buyer = null, failed = null;
   try {
     const r = await require("./etsySandbox").serve({ httpMethod: "GET", queryStringParameters: { fn: "etsyOrderProxy", orderId: receiptId } });
@@ -1114,10 +1226,11 @@ async function sync(body) {
   const bs = await bellRef().get();
   const bell = bs.exists ? bs.data() : {};
   const now = Date.now();
-  // the sorters' polls also keep sends moving when a hook in the inbox was missed
+  // the real sorters' polls also keep real sends moving when a hook in the inbox was missed (a sandbox page never reads, nor moves,
+  // anything of the real queue: the five-minute upkeep and the real pages do that)
   let moved = 0;
-  if (bell.inflight && Object.keys(bell.inflight).length && now - (bell.inflightCheckedAtMs || 0) > 8000) moved += await checkInflight(bell.inflight).catch(e => { console.warn("orderLink inflight:", e.message); return 0; });
-  if (bell.waiting && Object.keys(bell.waiting).length && now - (bell.waitingCheckedAtMs || 0) > 15000) moved += await checkWaiting(bell.waiting).catch(e => { console.warn("orderLink waiting:", e.message); return 0; });
+  if (!sandbox && bell.inflight && Object.keys(bell.inflight).length && now - (bell.inflightCheckedAtMs || 0) > 8000) moved += await checkInflight(bell.inflight).catch(e => { console.warn("orderLink inflight:", e.message); return 0; });
+  if (!sandbox && bell.waiting && Object.keys(bell.waiting).length && now - (bell.waitingCheckedAtMs || 0) > 15000) moved += await checkWaiting(bell.waiting).catch(e => { console.warn("orderLink waiting:", e.message); return 0; });
   const n = Number(bell.n) || 0;
   let full = !since || body.full === true;
   const link = bell.link || null;   // the link monitor's judgement (etsyMailLinkWatchdog): every sorter shows it, at no extra read
@@ -1125,7 +1238,13 @@ async function sync(body) {
   // Asked for only while a message is on its way; one document read when nothing moved since qn.
   let queue = null;
   const flights = bell.inflight ? Object.keys(bell.inflight).length : 0;
-  if (!sandbox && (flights || body.qo === true || body.qo === 1)) {   // a sandbox page never sees the real queue
+  if (sandbox) {
+    // a sandbox page sees only its own world's queue: the rehearsal's messages on their short clock (see sbSend), never the real one
+    if (bell.sbFlight && Object.keys(bell.sbFlight).length) {
+      const a = await sbAdvance(bell.sbFlight, now).catch(e => { console.warn("orderLink sandbox clock:", e.message); return null; });
+      if (a) { moved += a.moved; queue = sbQueueView(a.live, now); }
+    }
+  } else if (flights || body.qo === true || body.qo === 1) {   // a real page sees the real queue, a sandbox page never does
     try {
       const qv = await Q.stateView({ n: Number.isFinite(Number(body.qn)) ? Number(body.qn) : null, hasOpen: flights > 0, withText: false });
       queue = qv.unchanged ? { n: qv.n, unchanged: true, now: qv.now } : {
@@ -1163,6 +1282,7 @@ async function order(body) {
   if (!receiptId) throw httpError(400, "Which order?");
   const sandbox = body.sandbox === true;
   const list = await engagementsForReceipt(receiptId, sandbox);
+  if (sandbox) for (let i = 0; i < list.length; i++) list[i] = await settleSandbox(list[i]);
   let conv = null, lookupFailed = null;
   if (!sandbox && receiptId === TEST_RID) {
     const t = await testDoc({ fresh: true });
@@ -1197,14 +1317,14 @@ async function thread(body) {
   const id = cleanId(body.engagementId);
   const s = id ? await engRef(id).get() : null;
   if (!s || !s.exists) throw httpError(404, "That conversation is gone");
-  const e = s.data();
+  const e = await settleSandbox(s.data());
   if (!!e.sandbox !== (body.sandbox === true)) throw httpError(404, "That conversation is gone");
   return Object.assign(summary(e), await conversation(e, { earlier: body.earlier === true }));
 }
 async function fresh(id) {
   const s = await engRef(id).get();
   if (!s.exists) throw httpError(404, "That conversation is gone");
-  const e = s.data();
+  const e = await settleSandbox(s.data());
   return Object.assign(summary(e), await conversation(e));
 }
 
@@ -1246,8 +1366,11 @@ async function ask(station, body) {
   e = r.e;
   if (!wasOpen && e.threadId) await syncThreadFlags(e.threadId);
   if (!wasOpen && !e.threadId && !e.sandbox) await addWaiting(e);
-  e = await sendPending(e);
-  return Object.assign(summary(e), await conversation(e));
+  const out = {};
+  e = await sendPending(e, out);
+  const res = Object.assign(summary(e), await conversation(e));
+  if (e.sandbox && out.flights) res.queue = sbQueueView(out.flights, Date.now());   // the first paint already says "Queued (1st)"
+  return res;
 }
 
 async function retry(body, station) {
@@ -1267,8 +1390,11 @@ async function retry(body, station) {
   }
   const r = await patchItem(id, itemId, { status: "new", error: null, errorCode: null, waitReason: null, faults: null, copiedAtMs: null, retriedAtMs: Date.now() }, new Set(["failed", "waiting", "manual"]));
   if (!r.e) throw httpError(404, "That message is gone");
-  const after = await sendPending(r.e);
-  return Object.assign(summary(after), await conversation(after));
+  const out = {};
+  const after = await sendPending(r.e, out);
+  const res = Object.assign(summary(after), await conversation(after));
+  if (after.sandbox && out.flights) res.queue = sbQueueView(out.flights, Date.now());
+  return res;
 }
 
 async function cancel(body) {
@@ -1278,6 +1404,16 @@ async function cancel(body) {
   const e = s.data();
   const item = (e.outbox || []).find(x => x.id === itemId);
   if (!item) throw httpError(404, "That message is gone");
+  if (e.sandbox && SB_LIVE.has(item.status)) {
+    // the rehearsal's own queue: still waiting for its turn it can be taken back; once it is being sent it is too late, as on the real side
+    const settled = await settleSandbox(e), cur = (settled.outbox || []).find(x => x.id === itemId);
+    if (!cur || cur.status !== "queued") throw httpError(409, "Too late: it has already gone");
+    if (Date.now() >= (cur.sbStartMs || 0)) throw httpError(409, "Too late: the inbox's Etsy helper has already picked it up");
+    const r = await patchItem(id, itemId, { status: "cancelled", cancelledAtMs: Date.now() }, new Set(["queued"]));
+    if (!r.changed) throw httpError(409, "Too late: the inbox's Etsy helper has already picked it up");
+    note({ sbFlight: { [flightKey(id, itemId)]: FV.delete() } });
+    return fresh(id);
+  }
   if (item.status === "queued" && e.threadId) {
     // still waiting for its turn or for the Etsy helper: take it back out of the queue (the inbox gets its reply box back)
     if (item.qid) {
@@ -1358,7 +1494,8 @@ async function setStatus(station, body, status) {
     else if (!r.e.sandbox) { if (status === "resolved") await removeWaiting(r.e); else await addWaiting(r.e); }
     if (status === "open" && r.e.threadId) await dispatchNext(r.e.threadId);
   }
-  return Object.assign(summary(r.e), await conversation(r.e));
+  const now = await settleSandbox(r.e);
+  return Object.assign(summary(now), await conversation(now));
 }
 
 async function setLang(body) {
@@ -1394,16 +1531,22 @@ async function linkUrl(body) {
 async function simulateReply(body) {
   const id = cleanId(body.engagementId);
   const text = cleanText(body.text, 1000) || "Thanks! Yes, that works for me.";
+  // delayMs: the customer answers later (up to two minutes), so the person can leave the window and watch the marks arrive
+  const delay = Math.min(SB.replyMaxMs, Math.max(0, Math.round(Number(body.delayMs) || 0)));
+  const now = Date.now(), later = delay >= 1000;
+  const msg = { id: "sim_" + now.toString(36) + crypto.randomBytes(2).toString("hex"), text, atMs: now + (later ? delay : 0) };
   const r = await change(id, cur => {
     if (!cur.sandbox) return null;
-    const msg = { id: "sim_" + Date.now().toString(36), text, atMs: Date.now() };
+    if (later) return { simDue: (cur.simDue || []).concat({ id: msg.id, text, dueMs: msg.atMs }).slice(-10) };
     return {
       sim: (cur.sim || []).concat(msg).slice(-40), unread: (cur.unread || 0) + 1, inboundCount: (cur.inboundCount || 0) + 1,
       lastInboundAtMs: msg.atMs, lastInboundPreview: preview(text), lastInboundBy: (cur.customer && cur.customer.name) || "Customer"
     };
   });
   if (!r.e || !r.e.sandbox) throw httpError(400, "Only a sandbox conversation can be simulated");
-  return Object.assign(summary(r.e), await conversation(r.e));
+  if (later) note({ sbFlight: { [flightKey(id, msg.id)]: { k: "r", e: id, i: msg.id, f: msg.atMs } } });
+  const settled = await settleSandbox(r.e);
+  return Object.assign(summary(settled), await conversation(settled));
 }
 
 // ─── is the line working? the sorter's Active light ──────────────────────
@@ -1752,6 +1895,8 @@ async function prune() {
     const staleWaits = Object.entries(bell.waiting || {}).filter(([, at]) => now - (Number(at) || 0) > 2 * DAY).map(([k]) => k);
     if (staleFlights.length) note({ inflight: Object.fromEntries(staleFlights.map(k => [k, FV.delete()])) });
     if (staleWaits.length) note({ waiting: Object.fromEntries(staleWaits.map(k => [k, FV.delete()])) });
+    const staleSb = Object.entries(bell.sbFlight || {}).filter(([, x]) => !sbValid(x) || now - Number(x.f) > DAY).map(([k]) => k);
+    if (staleSb.length) note({ sbFlight: Object.fromEntries(staleSb.map(k => [k, FV.delete()])) });
   } catch (e) { console.warn("orderLink prune:", e.message); }
   return n;
 }
@@ -1762,12 +1907,12 @@ module.exports = {
   parkedCopy, onDraftSettled: withFlush(onDraftSettled), onThreadMessages, reconcile,
   // the sorter endpoint
   requireStation, pairStart, pairInfo, pairAnswer, pairClaim, disconnect: withFlush(disconnect),
-  sync: withFlush(sync), order: withFlush(order), thread, ask: withFlush(ask), retry: withFlush(retry),
+  sync: withFlush(sync), order: withFlush(order), thread: withFlush(thread), ask: withFlush(ask), retry: withFlush(retry),
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
   simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
-  _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete }
+  _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView }
 };

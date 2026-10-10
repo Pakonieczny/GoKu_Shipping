@@ -178,6 +178,8 @@ function createFake(opts = {}) {
       orderBy: (f, d) => derive({ order: spec.order.concat([[f, d || "asc"]]) }),
       limit: n => derive({ limit: n }),
       select: () => q, offset: () => q,
+      // an aggregation query: how many documents the query matches (one billed read, as on the live database)
+      count: () => ({ get: async () => { await tick(); stats.queries++; stats.reads++; return { data: () => ({ count: q._run().length }) }; } }),
       _run: () => {
         let list = [];
         for (const [p, d] of docs) if (p.startsWith(path + "/") && !p.slice(path.length + 1).includes("/")) {

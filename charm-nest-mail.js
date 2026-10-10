@@ -331,7 +331,9 @@
   function healthRows() {
     const h = M.health && M.health.res;
     const row = (level, label, text) => `<li class="${E(level)}"><i></i><b>${E(label)}</b><span>${E(text)}</span></li>`;
-    const rows = [row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : ""))];
+    const rows = [];
+    if (SANDBOX) rows.push(row("wait", "Sandbox", "What you write here stays in the sorter and never uses this link. The checks below are the real email link's."));
+    rows.push(row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : "")));
     if (h) for (const c of h.checks) rows.push(row(c.level, c.label, c.text));
     else {
       const mon = monitorState();
@@ -689,6 +691,8 @@
   /** A full engagement came back from the server: every pane showing it takes it. */
   function received(res, sentBody) {
     if (!res || !res.id) return;
+    // the sandbox's own queue view comes with the answer to a send, so the first paint already says where the message stands
+    if (res.queue) { applyQueue(res.queue, new Set()); delete res.queue; }
     merge(Object.assign({}, res, { messages: undefined, earlier: undefined }));
     for (const P of M.panes) {
       if (String(P.rid) !== String(res.receiptId)) continue;
@@ -744,7 +748,7 @@
   function Pane(host, opts = {}) {
     const P = {
       host, opts, rid: null, ctx: {}, eng: null, engId: null, data: null, fresh: false, loading: false, err: null, seq: 0,
-      earlier: null, lang: null, trOpen: new Map(), undo: null, waitingFor: null, stick: true, hist: null, view: "question", hseq: 0, pullOnLoad: false,
+      earlier: null, lang: null, trOpen: new Map(), undo: null, waitingFor: null, stick: true, hist: null, view: "question", hseq: 0, pullOnLoad: false, simOpen: false,
       visible: () => host.isConnected && !host.closest("[hidden]") && !!(host.offsetWidth || host.offsetHeight) && !document.hidden && (!opts.visible || opts.visible())
     };
     host.classList.add("cm");
@@ -765,16 +769,23 @@
         <div class="cmHBox" data-cm="hbox" role="dialog" aria-label="Email link" hidden></div>
         <div class="cmWarn" data-cm="warn" hidden></div>
         <div class="cmUndo" data-cm="undo" hidden></div>
+        <div class="cmSim" data-cm="sim" hidden><span>Customer says</span><input type="text" data-cm="simText" maxlength="500" placeholder="Yes, that's right — thank you!" aria-label="What the customer answers (sandbox only)"><button type="button" class="lnk" data-cm-do="simnow">Play now</button><button type="button" class="lnk" data-cm-do="simlater" title="The customer answers in 10 seconds: leave this window and watch the new-reply marks arrive">In 10 s</button><button type="button" class="lnk soft" data-cm-do="simno">Cancel</button></div>
         <div class="cmLine"><textarea data-cm="input" rows="1" placeholder="Write to the customer…" aria-label="Message to the customer"></textarea><button type="button" class="cmSend" data-cm="send" title="Send to the customer (Enter)" aria-label="Send to the customer" disabled>${ICON.send}</button></div>
         <div class="cmHint"><span class="cmLive" data-cm="live"></span><span class="cmHintT" data-cm="hint">Goes to the customer on Etsy, through the inbox</span><span class="cmTrIn">Translate mine <button type="button" data-cm="trIn" data-l="en" title="Translate what you wrote into English">EN</button><button type="button" data-cm="trIn" data-l="uk" title="Translate what you wrote into Ukrainian">УКР</button></span></div>
       </div>`;
     const $ = n => host.querySelector(`[data-cm="${n}"]`);
-    P.el = { back: host.querySelector(".cmBack"), mark: host.querySelector(".cmMark"), name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox"), hist: $("hist") };
+    P.el = { back: host.querySelector(".cmBack"), mark: host.querySelector(".cmMark"), name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox"), hist: $("hist"), sim: $("sim"), simText: $("simText") };
     const input = P.el.input;
     const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(160, hh + 2) + "px" : ""; P.el.send.disabled = !input.value.trim(); };
     input.addEventListener("input", () => { grow(); setDraft(draftKey(P), input.value); if (P.undo && input.value !== P.undo.to) { P.undo = null; paintUndo(P); } });
     input.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(P); } });
     P.el.send.onclick = () => send(P);
+    // (sandbox only) what the customer answers: Enter plays it now, Esc puts the strip away without closing the window
+    P.el.simText.addEventListener("keydown", e => {
+      e.stopPropagation();
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); if (P.eng) playReply(P, P.eng, 0); }
+      else if (e.key === "Escape") { e.preventDefault(); P.simOpen = false; paintSim(P); }
+    });
     P.grow = grow;
     P.el.thread.addEventListener("scroll", () => { const t = P.el.thread; P.stick = t.scrollHeight - t.scrollTop - t.clientHeight < 40; }, { passive: true });
     host.addEventListener("click", e => onPaneClick(P, e));
@@ -790,7 +801,7 @@
     P.ctx = ctx;
     if (!same) { P.rid = rid; P.eng = null; P.engId = engagementId; P.data = null; P.fresh = false; P.err = null; P.earlier = null; P.trOpen = new Map(); P.stick = true; P.undo = null; P.hist = null; P.view = "question"; P.hseq++; }
     else if (engagementId && engagementId !== P.engId) { P.engId = engagementId; P.eng = null; P.fresh = false; P.earlier = null; P.stick = true; }
-    if (!same || engagementId || !P.eng) { input0(P); load(P); } else paintPane(P);
+    if (!same || engagementId || !P.eng) { input0(P); load(P); } else { paintPane(P); markRead(P); }   // (a window opened again on a reply that came while it was shut reads it)
     healthSoon();
   }
   function input0(P) {
@@ -904,13 +915,35 @@
       s && s.status === "resolved" ? `<button type="button" data-cm-do="reopen">Reopen</button>` : "",
       s && !P.fresh ? `<button type="button" data-cm-do="new">Ask a new question</button>` : "",
       s && s.link === "waiting" && !sb ? `<button type="button" data-cm-do="link">Link an Etsy conversation…</button>` : "",
-      sb && s ? `<button type="button" data-cm-do="simulate">Play a customer reply</button>` : "",
+      sb && s && s.status === "open" ? `<button type="button" data-cm-do="simulate" title="Sandbox only: the customer's side of the conversation, so the whole loop can be tried">Play a customer reply</button>` : "",
       `<button type="button" data-cm-do="disconnect" class="soft">Disconnect this sorter</button>`
     ].filter(Boolean).join("");
     paintHist(P);
     paintThread(P, s);
     paintUndo(P);
+    paintSim(P, s);
     paintLight(P.el, P.host, "cmWarn");
+  }
+  /** The sandbox's "customer says" strip: shown only after "Play a customer reply", only for an open sandbox question. */
+  function paintSim(P, s) {
+    s = s || P.eng;
+    const on = P.simOpen && sbOf(P.rid) && !!s && s.status === "open";
+    if (!on) P.simOpen = false;
+    P.el.sim.hidden = !on;
+  }
+  /** (sandbox only) The customer answers, now or in ten seconds. The reply is not taken from this answer: it reaches the sorter the
+   *  way a real one does, in the next sync (toast, ding, marks, unread), so what is watched here is what the real side does. */
+  async function playReply(P, s, delayMs) {
+    const text = P.el.simText.value.trim() || "Yes, that's right — thank you!";
+    const btns = [...P.el.sim.querySelectorAll("button")];
+    btns.forEach(b => b.disabled = true);
+    try {
+      await call("simulate", { engagementId: s.id, text, delayMs: delayMs || undefined, sandbox: true });
+      P.simOpen = false; P.el.simText.value = "";
+      if (delayMs) say("Sandbox: the customer answers in " + Math.round(delayMs / 1000) + " seconds", "", 5000);
+      kick(150);
+    } catch (err) { if (!authLost(err)) say(err.message, "bad"); }
+    finally { btns.forEach(b => b.disabled = false); paintSim(P); }
   }
   function host0(P) { P.host.dataset.state = !M.key ? "off" : P.fresh ? "new" : P.eng ? (P.eng.status || "open") : "empty"; }
   const qLabel = x => x.scope === "engraving" ? "Engraving" + (x.lineLabel ? " · " + x.lineLabel : "") : x.title ? x.title.slice(0, 36) : "Order question";
@@ -995,6 +1028,7 @@
     waiting: "Waits for the inbox to finish a send", manual: "Not sent yet", failed: "Not sent", local_failed: "Not sent", sent: "Sent",
     attention: "Check Etsy: it may have gone"
   };
+  const SB_TIP = "Sandbox: not sent to the customer. The states are played in the sorter only.";
   const ordinal = n => { const t = ["th", "st", "nd", "rd"], v = n % 100; return n + (t[(v - 20) % 10] || t[v] || t[0]); };
   const inWords = ms => ms < 45000 ? "under a minute" : ms < 90 * 60000 ? Math.max(1, Math.round(ms / 60000)) + " min" : Math.round(ms / 3600000) + " h";
   /** What the inbox's send queue says about one of our messages that is on its way: the word, and whether it is a wait (spinner). */
@@ -1024,9 +1058,10 @@
       let word = STATUS[st] || "", spin = false, tip = "";
       if (st === "waiting" && m.waitReason === "paused") word = "Waits: sending is paused in the inbox";
       if (st === "waiting" && m.waitReason === "retry") word = "Trying again…";
-      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; } }
+      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; } else if (sbOf(P.rid)) word = "Queued"; }
       if (st === "sent") word = m.manualSent ? "Sent by hand" : m.unverified ? "Sent — Etsy did not confirm" : m.delivered ? "Delivered" : "Sent";
       if (st === "attention") tone = " hold";
+      if (sbOf(P.rid) && (st === "queued" || st === "sent")) tip = SB_TIP;   // the same words as the real side, with the plain reminder
       status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" || st === "attention" ? "warn" : "go"}"${tip ? ` title="${E(tip)}"` : ""}>${spin ? `<i class="cmSpin" aria-hidden="true"></i>` : ""}${E(word)}</span>`;
       const copyBtn = `<button type="button" class="lnk" data-cm-do="copytext" data-item="${E(m.itemId || "")}">Copy the message</button>`;
       if (st === "attention") acts = `<div class="cmErr">${E(m.error || "The helper clicked Send but Etsy did not confirm it. It may have gone.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="sentByHand" data-item="${E(m.itemId || "")}">It was sent</button><button type="button" class="lnk" data-cm-do="retry" data-maybe="1" data-item="${E(m.itemId || "")}">Send again</button>${copyBtn}<button type="button" class="lnk soft" data-cm-do="cancel" data-item="${E(m.itemId || "")}">Discard</button></div><div class="cmFine">Open the conversation on Etsy first: only send again if the customer did not get it.</div>`;
@@ -1154,11 +1189,9 @@
         if (url && s) await act("link_url", { engagementId: s.id, url });
         break;
       }
-      case "simulate": {
-        const text = prompt("What does the customer answer? (sandbox only)", "Yes, that's right — thank you!");
-        if (text && s) await act("simulate", { engagementId: s.id, text });
-        break;
-      }
+      case "simulate": if (s) { P.simOpen = true; paintSim(P, s); P.el.simText.focus(); } break;
+      case "simno": P.simOpen = false; paintSim(P); break;
+      case "simnow": case "simlater": if (s) await playReply(P, s, a === "simlater" ? 10000 : 0); break;
       case "disconnect": disconnect(); break;
     }
   }
