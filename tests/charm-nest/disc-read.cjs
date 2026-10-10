@@ -162,6 +162,6 @@ const realLine = (rid, metalKey, personalization) => {
   ok(/if \(O\.questionGone && O\.questionGone\(row, prev\)\) \{ row\.state = "pulled"; row\.reason = null; delete row\.poolTry; \}/.test(b), 'interpretAll releases a line held for a question that is gone');
   ok(/O\.staleQuestionHold && O\.staleQuestionHold\(row\)/.test(b), "the order window's record row does too");
   const h = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-  for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1"').test(h), `${f}: cache token ends -dr1`); }
+  for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr1 (other workers add theirs after it)`); }
 
 console.log(`disc-read: ${n} checks passed`);
