@@ -3499,6 +3499,7 @@ const Gate = window.Gate = (() => {
      so an order taken off, a piece nested somewhere else or a sheet finishing moves the sets at once. */
   function policy(sh, seq, choices = selected()) {
     const r = basePolicy(sh, seq, choices);
+    if (sh.setWait && r.include) return Object.assign({}, r, { include: false, reason: sh.setWait });   // (a set needs a completed GF and a completed SS sheet: Gate.assembleNow, SetRules.settle)
     if (sh.cardinalHold && r.include) return Object.assign({}, r, { include: false, reason: sh.cardinalHold });
     if (sh.cardinalPull && !r.include) return Object.assign({}, r, { include: true, reason: sh.cardinalPull });
     return r;
@@ -3628,6 +3629,17 @@ const Gate = window.Gate = (() => {
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
     cardinalApply(run, pages, set, choices);   // (sheets that share a multi-piece order come in together, or wait together)
+    /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet."
+       (charm-nest-set-rules.js, the one definition; the server and the Library read the same). The sheets that want in now (full sheets, rose
+       by its rule, and the partners the cardinal rule pulls with them) join only when the set would then be valid: a set that does not exist is
+       not made for them, and a set that exists but still lacks a class takes only a batch that completes it. The others wait outside any set,
+       each with the reason on its card (p.setWait: derived, never saved, like the cardinal marks); a partial sheet never makes a set on its own. */
+    for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
+    if (window.CharmNestSetRules) {
+      const inOpen = p => !!set && p.setId === set.setId && !p.draft, wanting = pages.filter(p => !inOpen(p) && release(p, set ? set.seq : 2).include);
+      const settled = window.CharmNestSetRules.settle(allSheets().filter(p => p.runId === run.runId && inOpen(p)), wanting);
+      for (const w of settled.wait) w.sheet.setWait = w.why;
+    }
     const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
     const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
     if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
@@ -3965,7 +3977,7 @@ const Gate = window.Gate = (() => {
     const spin=inc.querySelector('[data-solid="busy"]');if(spin){spin.hidden=!working;const t=spin.querySelector('[data-solid="busy-text"]');if(t&&t.textContent!==working)t.textContent=working;}
     // (the line read aloud by a screen reader; the line a person sees is [data-solid="say"], drawn only by a refused press)
     const sr=inc.querySelector('[data-solid="status"]'),lineUp=inc.querySelector('[data-solid="say"]');
-    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
+    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
@@ -7503,6 +7515,9 @@ const Sets = window.Sets = (() => {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
+    // Paul, 10 Oct: a set goes to the laser only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; a set committed before is never blocked)
+    const principle = window.CharmNestSetRules && window.CharmNestSetRules.gate(set, sheets);
+    if (principle && principle.applies && !principle.ok) throw pendingRelease(`${set.name || "This set"} ${principle.short}: a set needs at least 1 completed GF sheet and 1 completed SS sheet`);
     // the cardinal rule: every sheet that shares a multi-piece order with a sheet of this set is in it
     const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
     if (split.length) {

@@ -22,6 +22,8 @@
   'use strict';
   let SRnode = null; try { SRnode = require('./charm-nest-shared-orders.js').core; } catch (_) { SRnode = null; }
   const SR = () => root.CharmNestSharedOrders || SRnode;
+  let RLnode = null; try { RLnode = require('./charm-nest-set-rules.js'); } catch (_) { RLnode = null; }
+  const RL = () => root.CharmNestSetRules || RLnode;   // the one definition of a Completed sheet and of a valid set (Paul, 10 Oct)
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
   const str = v => String(v == null ? '' : v);
   const idOf = r => str(r && (r.id || r.sheetId));
@@ -111,6 +113,15 @@
       const F = sets[setId]; if (!F || !F.doc) continue;
       const stay = (F.members || []).filter(x => !ids.includes(idOf(x)) && !(joining.get(setId) || []).includes(idOf(x)));
       if (!stay.length && !(joining.get(setId) || []).length) add('lastSheet', `${ids.length === 1 ? wordOf(recs[ids[0]]) : 'These sheets'} ${ids.length === 1 ? 'is' : 'are'} all that is in ${setWord(F.doc)}`, `A set keeps at least one sheet: press Undo set on ${setWord(F.doc)} to take it apart.`, { sheetId: ids[0] });
+    }
+    // Paul, 10 Oct: a set needs at least 1 completed GF sheet and 1 completed SS sheet. A move never takes away the last one a set has (a set that is already
+    // short of one is flagged elsewhere, not blocked here: it can only get better by a sheet that comes in)
+    const rules = RL();
+    if (rules) for (const [setId, ids] of leaving) {
+      const F = sets[setId]; if (!F || !F.doc) continue;
+      const members = (F.members || []).filter(Boolean); if (!members.some(m => Object.prototype.hasOwnProperty.call(m, 'releaseFull'))) continue;
+      const before = rules.validSet(members), after = rules.wouldStayValid(members, ids, (joining.get(setId) || []).map(id => recs[id]).filter(Boolean));
+      if (before.ok && !after.ok) add('setPrinciple', `${setWord(F.doc)} would have no completed ${after.missing.join(' or ')} sheet`, after.reason, { sheetId: ids[0], missing: after.missing });
     }
     if (reasons.length || !real.length) return { ok: reasons.length === 0, reasons, shared: [], noop: !real.length && !reasons.length };
     // the cardinal rule over where every sheet ends up

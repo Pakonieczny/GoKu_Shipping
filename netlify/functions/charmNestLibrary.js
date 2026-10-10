@@ -2052,6 +2052,10 @@ async function op_setUpdate(b) {
       // (a person's hold back from Laser cutting is about the laser, not about whether this set may be recorded complete)
       const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id,laserHold:null}));
       await productionReadiness(records,{tx});
+      // Paul, 10 Oct: a set is completed (committed) only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; read from the records just read, no extra read);
+      // a set already committed or completed is never refused afterwards
+      const principle=Readiness.setRules(old.exists?old.data():{},records.filter(s=>s.setId===id));   // (the stored set: one already committed or completed is exempt)
+      if(principle.applies && !principle.ok)throw new Error(`Set cannot be completed: ${next.name || 'the set'} ${principle.short}. A set needs at least 1 completed GF sheet and 1 completed SS sheet.`);
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
       // the cardinal rule (charm-nest-shared-orders.js): a set is completed only with every sheet that shares a multi-piece
       // order with one of its own, unless that sheet can no longer join (cut, or in a set already sent to the station)
@@ -3550,7 +3554,7 @@ async function op_flowState(b) {
    hold pieces of the moving sheets' orders (one query by order for each step outwards, a few steps at most), their sets for
    the reasons a sheet cannot change set (cut, completed, set committed), and the core's answer. `to` is {set} or {newSet}. ── */
 const SharedRule = require("../../charm-nest-shared-orders.js").core;
-const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase", "pieceSides"];   // (pieceSides: a record that says which side each piece is, when two bodies of a mismatched pair share an id)
+const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase", "pieceSides", "releaseFull", "placedCount"];   // (pieceSides: a record that says which side each piece is, when two bodies of a mismatched pair share an id)
 const sharedOrdersOf = d => [...new Set((Array.isArray(d.orders) ? d.orders.map(String) : []).concat((Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey)).filter(x => /^\d{1,30}$/.test(x)))];
 /** The sheets that share orders with `seedIds`, outwards (a sheet that shares with a sheet that shares): { sheets: [core sheets], more: true when a cap cut it short }. */
 async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {
