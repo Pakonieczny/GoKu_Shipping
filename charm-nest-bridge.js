@@ -1980,10 +1980,12 @@ const Orders = window.Orders = (() => {
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
     const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
-    if (!rowsOf().length && window.Sandbox?.held?.()) {
+    if (!rowsOf().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
       const sb = n.querySelector(".sbWait"), t = Sandbox.heldText(); if (sb.textContent !== t) sb.textContent = t;
+      // the pull of the 250 newest orders (or the clean-up before it) is a wait: the button says so, with a spinner
+      { const go = n.querySelector("[data-sb-start]"), busy = Sandbox.pulling() || ""; if ((go.dataset.busy || "") !== busy) { go.dataset.busy = busy; go.disabled = !!busy; if (busy) { const sp = el("span", "spin"); sp.setAttribute("aria-hidden", "true"); go.setAttribute("aria-busy", "true"); go.replaceChildren(sp, document.createTextNode(busy === "pull" ? "Pulling the 250 newest orders…" : "Starting…")); } else { go.removeAttribute("aria-busy"); go.replaceChildren(document.createTextNode("Start")); } } }
       wanted.push(n);
     }
     else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
@@ -11275,29 +11277,110 @@ const Sandbox = window.Sandbox = (() => {
   const HOLD = "cn.sandboxHold", LAST = "cn.sandboxLastReset";
   const held = () => { try { return on() && localStorage.getItem(HOLD) != null; } catch (_) { return false; } };
   const lsJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (_) { return null; } };
-  function hold() { try { localStorage.setItem(HOLD, JSON.stringify({ at: Date.now() })); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  /** The waiting sandbox's record: `dirty` (it may still hold an earlier run's orders: a start clears them first),
+      `failed` (the pull of the 250 newest orders did not work: the plain line the cloud gave, and the Etsy calls it used). */
+  const holdInfo = () => lsJSON(HOLD) || {};
+  function hold(info) { try { localStorage.setItem(HOLD, JSON.stringify(Object.assign({ at: Date.now() }, info || {}))); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  /* ── the sandbox's orders are the 250 newest Etsy orders, pulled once each time a sandbox run starts (Paul, 10 Oct:
+     "when in the Sandbox mode always pull the 250 newest orders from etsy. Never retain previous or old orders from prior
+     Sandbox runs/testing"). A run starts when the sandbox is switched on from the real orders, and when Start (or Auto,
+     or Pull orders) is pressed after a clean-up. The previous sandbox is cleared first (Sandbox.wipe, the one complete
+     clean-up), then the cloud's sandboxPullOrders op asks Etsy for them (about 3 calls, a daily cap of its own) and starts
+     the stream on them. A page reload with the sandbox on does none of this: the stored set plays on. If the pull does
+     not work the sandbox stays empty with the cloud's one-line reason (it never plays the old orders), and only the
+     next Start asks again: nothing here retries by itself, and one start is one startId, so a repeat of that very
+     request (a slow answer) is answered with the stored set and costs Etsy nothing. ── */
+  const PULL_NEXT = "cn.sandboxPullNext";   // (sessionStorage, this tab) the page that opens next starts the sandbox by itself: switched on, or cleared first
+  const PULL_LABEL = "Pulling the 250 newest orders";
+  let pullTask = null, pulled = null, setCheck = null;
+  const nextFlag = () => { try { return sessionStorage.getItem(PULL_NEXT) || ""; } catch (_) { return ""; } };
+  const setNext = v => { try { if (v) sessionStorage.setItem(PULL_NEXT, v); else sessionStorage.removeItem(PULL_NEXT); } catch (_) {} };
+  /** The pull is out, or this page is opening to start by itself: Settings, the pill and the Orders tab say so. */
+  const pulling = () => pullTask ? "pull" : held() && nextFlag() === "start" ? "start" : "";
+  const calls = n => `${n} Etsy call${n === 1 ? "" : "s"}`;
   /** What the calm line says (also the Orders tab's empty state while the sandbox waits). */
   function heldText() {
-    const at = status && status.snapshot && status.snapshot.at, day = at ? new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
-    const auto = S.settings.runMode === "auto";
-    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to replay the ${day ? day + " " : ""}orders.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+    if (pulling()) return pullTask ? "Asking Etsy for the shop's 250 newest orders, a few seconds…" : "Starting the sandbox: clearing the old orders, then pulling the 250 newest…";
+    const h = holdInfo(), auto = S.settings.runMode === "auto";
+    if (h.failed) return `Sandbox is empty. ${h.failed}${h.reason === "cap" || /press start/i.test(h.failed) ? "" : " Press Start to try again."}${h.calls ? ` (${calls(h.calls)} used)` : ""}`;
+    if (h.dirty) return `Sandbox is empty: it held orders from an earlier run, which are cleared first. Press Start to pull the 250 newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to pull the 250 newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
   }
-  /** Start was pressed, Auto turned on, or orders were pulled: from here the sandbox plays as it always did. */
+  /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the 250 newest orders
+      begins (a start asks for it exactly once; the stream and every check wait for it). false: nothing started (it was not
+      waiting, or it holds an earlier run's orders, which are cleared first: the page reloads and starts by itself). */
   function release() {
     if (!held()) return false;
+    if (holdInfo().dirty) { clearThenStart().catch(e => toast(e.message, "bad", 9000)); return false; }
     try { localStorage.removeItem(HOLD); } catch (_) {}
-    agent({ bridge: true }, "DS", "Sandbox started: the replay begins");
-    try { if (window.Arrivals && Arrivals.start) Arrivals.start(); } catch (_) {}   // the checks begin now: the first at once in Auto, else after one step's wait, as on a fresh load
+    setNext("");
+    agent({ bridge: true }, "DS", "Sandbox started: pulling the 250 newest Etsy orders");
+    pullTask = pullNewest(); pullTask.catch(() => {});
+    try { if (window.Arrivals && Arrivals.start) Arrivals.start(); } catch (_) {}   // the checks begin now: the first at once in Auto, else after one step's wait, as on a fresh load (each waits for the pull)
     try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
     return true;
   }
-  /** The Start button: the stream begins (at step 0, with the seed in Settings) or, with the whole snapshot at once, the
-      orders are pulled; Auto then starts its run as it does on a fresh load. */
-  async function start() {
+  const newStartId = () => { let r = ""; try { r = Array.from(crypto.getRandomValues(new Uint8Array(9)), b => b.toString(36).padStart(2, "0")).join(""); } catch (_) { r = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); } return `sbx-${Date.now().toString(36)}-${r}`.slice(0, 80); };
+  const pause = ms => new Promise(res => setTimeout(res, ms));
+  /** One pull: one startId, one request. Only the very same request is asked again, never a new pull: while the cloud is
+      still working on it (busy), and once after an answer that never came (it is then returned as it stands, or worked
+      on, or begun: still one pull). Every answer that says why it failed is final. */
+  async function askPull(startId) {
+    const body = { op: "sandboxPullOrders", sandbox: true, startId, seed: +S.settings.sandboxSeed || 0, speed: speed(), stream: streaming() };
+    for (let n = 0; ; n++) {
+      try { return await api("charmNestLibrary", body, { quiet: true, timeoutMs: 120000 }); }
+      catch (e) {
+        const d = (e && e.data) || {};
+        if (d.reason === "busy" && n < 8) { await pause(4000); continue; }
+        if (!d.reason && e.transient && n < 1) { await pause(3000); continue; }
+        throw Object.assign(new Error(String(d.error || e.message || "no answer").slice(0, 300)), { reason: d.reason || "", data: d });
+      }
+    }
+  }
+  /** The cloud's answer, kept for the Settings line: when, how many, how many open, the Etsy calls it used. */
+  function remember(r) {
+    pulled = { count: r.count, open: r.open, closed: r.closed, pulledAt: r.pulledAt, calls: r.already ? null : r.calls, tokenRefreshes: r.tokenRefreshes, label: r.label, startId: r.startId, already: !!r.already, callsToday: r.callsToday, pullsToday: r.pullsToday, cap: r.cap, capLeft: r.capLeft, callsCap: r.callsCap };
+    return pulled;
+  }
+  async function pullNewest() {
+    const bar = window.CNProgress ? CNProgress.start(PULL_LABEL) : null;
+    try {
+      render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
+      const r = await askPull(newStartId());
+      if (!r || r.ok === false) throw new Error((r && r.error) || "Etsy gave no orders, so the sandbox is empty.");
+      remember(r); setCheck = Promise.resolve(true);
+      adopt(r.stream && r.stream.on ? r.stream : null);
+      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} of ${r.callsCap || 20} today` : ""}`);
+      toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} of ${r.callsCap || 20} today, ${r.capLeft} pull${r.capLeft === 1 ? "" : "s"} left)` : ""}`, "ok", 9000);
+      return r;
+    } catch (e) {
+      // the sandbox stays empty and waits (the cloud holds no orders after a failed pull, and none are played from before)
+      const d = e.data || {}; stream = null; pulled = null; setCheck = null; SimClock.set(null);
+      hold({ failed: e.message, reason: e.reason || "", calls: d.calls || 0 });
+      agent({ bridge: true }, "warn", `Sandbox: the 250 newest orders could not be pulled — ${e.message}`);
+      throw e;
+    } finally { if (bar) bar.end(); pullTask = null; render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  }
+  /** The previous sandbox is cleared (the complete clean-up, which reloads the page and leaves it waiting), and the page
+      that opens then starts by itself (PULL_NEXT). If the clean-up stops, the sandbox stays waiting and says why. */
+  let clearing = null, starting = null;
+  const clearThenStart = () => clearing ||= (async () => {
+    setNext("start");
+    const r = await wipe({}, { verb: "Resetting" });
+    if (!r || !r.ok) { setNext(""); const text = (r && r.text) || "the old sandbox orders could not be cleared"; hold({ dirty: true, failed: text }); throw new Error(text); }
+    return r;
+  })().finally(() => { clearing = null; });
+  /** The Start button: the sandbox clears an earlier run's orders first if it holds any, then pulls the 250 newest Etsy
+      orders and plays them (the stream, at step 0 with the seed in Settings; or, with the whole set at once, a pull of
+      the orders); Auto then starts its run as it does on a fresh load. */
+  const start = () => held() ? (starting ||= startOnce().finally(() => { starting = null; })) : Promise.resolve(false);   // (a second press, or the page's own start, while one is out is the same start)
+  async function startOnce() {
     if (!held()) return false;
+    if (holdInfo().dirty) { await clearThenStart(); return true; }
     release();
     const auto = S.settings.runMode === "auto";
-    if (streaming()) { await ready(true); toast(`Sandbox started — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000); }
+    try { await pullTask; } catch (e) { throw new Error(e.message); }   // (the pull's own plain words; the sandbox is waiting again)
+    if (streaming()) toast(`Sandbox started — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000);
     else { try { setMode("orders"); } catch (_) {} if (!auto) await Orders.pull(null); }
     if (auto) setTimeout(() => { if (!(B.openRuns && B.openRuns.length) && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500);
     return true;
@@ -11307,19 +11390,33 @@ const Sandbox = window.Sandbox = (() => {
      charmNestLibrary sandboxStream keeps the seed and the clock). Each arrivals check moves the clock one step; SimClock
      plays the time between steps at the chosen speed. Each order comes once: when all have come, the clock stops (done). ── */
   const streaming = () => on() && S.settings.sandboxStream === "on";
-  /** Every order of the snapshot has come: nothing more arrives (a new snapshot brings more). */
+  /** Every order of the pulled set has come: nothing more arrives until the sandbox is started again. */
   const done = () => !!(stream && stream.done && streaming());
   const speed = () => Math.max(1, Math.min(1000, Math.round(+S.settings.sandboxSpeed || 50)));
   let stream = null, readyTask = null;
   const streamApi = (action, extra) => api("charmNestLibrary", Object.assign({ op: "sandboxStream", action, seed: +S.settings.sandboxSeed || 0, speed: speed() }, extra || {}), { quiet: true });
-  function adopt(s) { stream = s && s.on ? s : null; SimClock.set(stream && streaming() ? { base: stream.simNow, stepMs: stream.stepMs, speed: speed() } : null); render(); return stream; }
-  /** The stream exists before the station's first sweep in the sandbox, or the emulator would list the whole snapshot.
-      `strict` (a sweep about to go ahead): a stream that cannot start is an error, not a warning. */
+  function adopt(s) { stream = s && s.on ? s : null; SimClock.set(stream && streaming() ? { base: stream.simNow, stepMs: stream.stepMs, speed: speed() } : null); render(); paintLine(); return stream; }
+  /** Does the cloud hold a pulled set? One light read, once per page: a reload plays what is stored (no pull, no wipe). A sandbox
+      with no pulled set (an earlier run's snapshot from before the pull, or a set another computer cleared) is empty and waits
+      for Start, whose first step clears whatever is left of it. A cloud that cannot say lets the page carry on as before. */
+  function checkSet() {
+    return setCheck ||= api("charmNestLibrary", { op: "sandboxStatus", light: true }, { quiet: true }).then(st => {
+      if (st && st.ok && !st.error) status = st;
+      if (st && st.ok && !st.snapshot) { hold({ dirty: true }); toast("The sandbox holds no pulled orders. Press Start on the Orders tab: it clears what is left and pulls the 250 newest Etsy orders.", "", 9000); return false; }
+      return true;
+    }).catch(() => true);
+  }
+  /** The stream exists before the station's first sweep in the sandbox, or the emulator would list the whole set. A sandbox
+      that is starting has its one pull out first: the stream is the one that pull began. `strict` (a sweep about to go ahead):
+      a stream that cannot start is an error, not a warning. */
   function ready(strict) {
-    if (strict && held()) release();   // a pull or a run asked for orders: that is Start
-    if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
-    const task = stream ? Promise.resolve(stream) : (readyTask ||= streamApi("ensure").then(r => adopt(r.stream)).finally(() => { readyTask = null; }));
-    return task.then(s => { if (!s) throw new Error("it is off"); return s; }).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });
+    if (strict && held() && !release()) return Promise.reject(new Error("The sandbox order stream could not start: the sandbox still holds an earlier run's orders, so it is clearing them first and then pulls the 250 newest"));   // a pull or a run asked for orders: that is Start
+    const go = () => {
+      if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
+      const task = stream ? Promise.resolve(stream) : (readyTask ||= checkSet().then(ok => { if (!ok) throw new Error("the sandbox holds no pulled orders: press Start"); return streamApi("ensure"); }).then(r => adopt(r.stream)).finally(() => { readyTask = null; }));
+      return task.then(s => { if (!s) throw new Error("it is off"); return s; });
+    };
+    return (pullTask ? pullTask.then(go) : go()).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });
   }
   /** One simulated step: the next ten minutes of orders become listable. The arrivals check calls it before it sweeps. */
   async function advance() {
@@ -11338,70 +11435,53 @@ const Sandbox = window.Sandbox = (() => {
   }
   const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
-  function label() { return !on() ? "" : held() ? "Sandbox · paused" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
-  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
+  function label() { return !on() ? "" : held() ? (pulling() ? "Sandbox · starting" : "Sandbox · paused") : pullTask ? "Sandbox · pulling orders" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
+  /** Where the orders come from, as the Settings line says it: the pulled set, when, how many were open, the Etsy calls it cost. */
+  const pulledNow = () => pulled || (status && status.snapshot && status.snapshot.source === "etsy-pull" ? status.snapshot : null);
+  function sourceText() {
+    const p = pulledNow(); if (!p) return "";
+    const n = p.count != null ? p.count : 250, at = p.pulledAt || p.at;
+    return `${n} newest Etsy orders, pulled ${at ? when(at) : "just now"}${p.open != null && p.open < n ? ` (${p.open} open)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
+  }
+  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: ${sourceText() ? sourceText() + " · " : ""}seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? `Orders: ${sourceText() || "the 250 newest Etsy orders"}, all at once` : ""; }
+  /** Settings' line beside the buttons says it again when the pull, the stream or the stored set changes (it is read when the dialog opens). */
+  function paintLine() { try { const el = document.getElementById("stSbStatus"); if (el) { const t = streamText(); if (el.textContent !== t) el.textContent = t; } } catch (_) {} }
   async function refresh(light) {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
-    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
+    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();paintLine();return status;})();
     try{return await refreshTask;}finally{refreshTask=null;}
   }
-  /** One real read of the open orders through the station (production mode), stored as JSON under charmnest/sandbox/. */
-  async function snapshot() {
-    if (on()) throw new Error("switch the sandbox OFF first: the snapshot is taken from the real Etsy through the station");
-    if (!S.cloud.ok) throw new Error("cloud offline");
-    await DesignLink.ensure();
-    if (!DesignLink.etsyBudgetOk("the sandbox snapshot")) throw new Error("Etsy call budget reached");
-    const r = await DesignLink.call("orders.raw", { refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (p.text) agent({ bridge: true }, "DS", `Snapshot: ${p.text}`); } });
-    DesignLink.meter(r, "the sandbox snapshot");
-    const at = Date.now(); const path = `charmnest/sandbox/orders-${new Date(at).toISOString().replace(/[:.]/g, "-")}.json`;
-    const bytes = new TextEncoder().encode(JSON.stringify({ at, count: r.count, receipts: r.receipts }));
-    const up = await uploadBytes(path, bytes, "application/json", "Saving the sandbox snapshot");
-    const put = await api("charmNestLibrary", { op: "sandboxPut", path: up.path, count: r.count, at, takenBy: employeeName() || "operator" });
-    agent({ bridge: true }, "ok", `Sandbox snapshot: ${r.count} open order(s) copied to ${up.path} (${(bytes.length / 1024).toFixed(0)} KB)`);
-    toast(`Snapshot taken: ${r.count} orders — switch the sandbox ON in Settings to run against it`, "ok", 8000);
-    await refresh(); return put.snapshot;
-  }
-  const waitFor = (fn, ms, why) => new Promise((res, rej) => { const t0 = Date.now(); (function tick() { if (fn()) return res(true); if (Date.now() - t0 > ms) return rej(new Error(why)); setTimeout(tick, 500); })(); });
-  /** The whole chain from one press: the station signed in (its own window if needed), the snapshot taken, the sandbox
-      switched on, the sorter reloaded, and the orders pulled from the copy (a run starts by itself in Auto mode). */
+  /** "Rehearse a run in the sandbox": a start from the real orders. The sandbox is switched on and the sorter reloads with the
+      sandbox waiting (nothing plays, nothing is checked); that page clears the previous sandbox (the complete clean-up),
+      reloads once more, and then pulls the 250 newest Etsy orders by itself (afterReload, the stream plays them). Nothing
+      real is touched: the real side's records and browser state are never matched by the clean-up. */
   async function enable() {
     if (on()) return;
-    if (!(status && status.snapshot)) {
-      toast("No snapshot yet — taking one from Etsy first", "", 5000);
-      await DesignLink.ensure();
-      if (!(DesignLink.state() && DesignLink.state().etsy.signedIn)) {
-        toast("The station is not signed in — Connect Etsy opens in its own window", "", 6000);
-        await DesignLink.connectEtsy();
-        await waitFor(() => DesignLink.state() && DesignLink.state().etsy.signedIn, 4 * 60 * 1000, "the Etsy sign-in did not complete within 4 minutes");
-      }
-      await snapshot();
-    }
+    if (S.cloud.ok === false) throw new Error("the cloud is offline: the sandbox needs it to clear the old orders and pull the new ones");
     S.settings.sandbox = "on"; saveSettings();
-    try { localStorage.removeItem(HOLD); } catch (_) {}   // "Rehearse a run" is a start: a sandbox that was waiting plays
-    try { sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
-    toast(S.settings.sandboxStream === "on" ? "Sandbox ON — reloading; the orders then arrive a few at a time" : "Sandbox ON — reloading, then pulling the orders from the copy", "ok", 4000);
+    hold({ dirty: true }); setNext("start");
+    toast("Sandbox ON — reloading; it clears the previous sandbox, then pulls the 250 newest Etsy orders", "ok", 5000);
     setTimeout(() => location.reload(), 700);
   }
-  /** After the reload that switched the sandbox on: straight to the Orders tab and a pull (Auto mode starts its run instead).
-      With the stream the orders come by themselves, one simulated ten minutes per check. */
+  /** After a reload in the sandbox. A sandbox that is waiting (switched on just now, or cleaned) starts by itself when the page
+      opened for that (PULL_NEXT: the clean-up, if the sandbox held an earlier run, and then the one pull of the 250 newest
+      orders), else it waits for Start. A sandbox that is not waiting plays what is stored: no pull, no clean-up. */
   function afterReload() {
-    // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen)
+    // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen);
+    // a clean-up that is the first step of a start says nothing here: the start says what it did
+    const next = on() ? nextFlag() : "";
     let said = false;
-    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text) { said = true; setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } } catch (_) {}
-    let want = false; try { want = sessionStorage.getItem("cn.sandboxAutoPull") === "1"; sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
-    // a sandbox that was cleaned waits for Start: no stream, no pull, no Auto run (the Orders tab says so, with its Start)
+    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text && !(next === "start" && !n.bad)) { said = true; setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } } catch (_) {}
     if (held()) {
-      if (on()) { refresh().catch(() => {}); if (said) setTimeout(() => { try { setMode("orders"); } catch (_) {} }, 900); }   // (the page that follows a reset opens on Orders, where Start is)
+      if (on()) {
+        if (next === "start") setTimeout(() => { try { setMode("orders"); } catch (_) {} start().catch(e => toast(e.message, "bad", 9000)); }, 900);
+        else { refresh().catch(() => {}); if (said) setTimeout(() => { try { setMode("orders"); } catch (_) {} }, 900); }   // (the page that follows a reset opens on Orders, where Start is)
+      }
       return;
     }
-    if (streaming()) ready(); else if (on()) streamApi("off").catch(() => {});   // this sorter asks for the whole snapshot: a stream left playing would hide it
-    if (!want || !on()) return;
-    setTimeout(async () => {
-      setMode("orders");
-      if (S.settings.runMode === "auto") { agent({ bridge: true }, "DS", "Sandbox on — Auto mode starts the run"); return; }
-      if (streaming()) { toast(`Sandbox on — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000); return; }
-      try { await Orders.pull(null); } catch (e) { toast(e.message, "bad", 8000); }
-    }, 900);
+    setNext("");
+    if (!on()) return;
+    if (streaming()) ready(); else checkSet().then(ok => { if (ok) streamApi("off").catch(() => {}); });   // (this sorter asks for the whole set: a stream left playing would hide it)
   }
   /** The station keeps the orders it finished in a browser ledger of its own, which the records' reset cannot reach: an
       order replayed under the same number would stay hidden there as finished. (A station without the command keeps it.)
@@ -11573,7 +11653,7 @@ const Sandbox = window.Sandbox = (() => {
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
      and Reset and the switch live in Settings. */
   function mountPanel(v) { void v; const old = document.getElementById("sandboxBar"); if (old) old.remove(); const pill = document.getElementById("sandboxPill"); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => { if (window.CN && CN.openSettings) CN.openSettings(); else { const b = document.getElementById("btnSettings"); if (b) b.click(); } }; } if (!status) refresh(!on()); }   // (a production page only needs to know whether a snapshot was taken: it does not count the sandbox's records)
-  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
+  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn && sn.source === "etsy-pull" ? `${sn.count} newest Etsy orders, pulled ${new Date(sn.pulledAt || sn.at).toLocaleString()}${sn.calls ? ` with ${calls(sn.calls)}` : ""}` : "no orders pulled yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
   function render() {
     const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title;
     // the speed and the word "sim" are their own spans, so a narrow top bar can leave them out (the pill took the room of
@@ -11618,7 +11698,7 @@ const Sandbox = window.Sandbox = (() => {
     if (latest && latest !== BUILD) set(b, `Page build ${BUILD} — a newer build (${latest}) is live: reload this page with Ctrl+Shift+R to run it`, true);
     else if (latest && !stale) set(b, `Page build ${BUILD} (the latest on the server)`);
   }
-  return { on, refresh, snapshot, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, paintInfo, build: () => BUILD, pageBuild, lastText, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: () => BUILD, pageBuild, lastText, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
