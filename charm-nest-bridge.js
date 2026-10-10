@@ -194,7 +194,7 @@ const ListMedia = (() => {
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
-  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)); } catch (_) { return false; } };
+  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
   function pair(row) {
     return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${pairRow(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
@@ -621,7 +621,7 @@ const livePairOf = (r, rid) => {
     const e = M && typeof M.entryFor === "function" ? M.entryFor(String((r.spec && r.spec.designSku) || r.line.sku || "")) : null;
     const list = P.piecesFor(r, e) || [], grp = rid + ":" + (String(r.line.transactionId || "").replace(/\D/g, "").slice(0, 20));
     if (list.some(p => p && (p.side === "L" || p.side === "R"))) return list.map((p, i) => ({ side: p.side === "L" || p.side === "R" ? p.side : undefined, grp, of: list.length, n: i + 1 }));
-    if (e && P.isMismatched(e)) return list.map(() => ({ both: true, grp }));
+    if (e && P.isMismatched(e) && !(P.plainLine && P.plainLine(r))) return list.map(() => ({ both: true, grp }));   // (a necklace, pendant or charm of a two-body design is no Left + Right: Paul, 10 Oct)
     // a line the count rules make into several separate pieces (a 3-disc necklace) is one group of n pieces with no side, as the stations tell it (ADVCOUNT); a plain quantity-2 line is told as before
     const q = Math.max(1, Math.round(+(r.spec && r.spec.quantity) || +r.line.quantity || 1));
     if (list.length >= 2 && list.length > q) return list.map((p, i) => ({ grp, of: list.length, n: i + 1 }));

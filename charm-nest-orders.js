@@ -382,7 +382,9 @@
        an option that may name a count but does not say what is counted (letters, initials, "Set of 3", a range) or that disagrees
          with the buyer's note: NOT guessed. The line waits for a person with a one-line question (a needsMapping problem with
          `count`), whose answer is kept for that listing and value like every other option answer ({ field: "count", value: "3" });
-       a mismatched DESIGN (two bodies under one label) is 2 per unit, L and R, each cut from its own body (the pool's per-body pieces, PAIRPOOL);
+       a mismatched DESIGN (two bodies under one label) sold as EARRINGS is 2 per unit, L and R, each cut from its own body (the pool's per-body pieces, PAIRPOOL);
+         sold as anything else (a necklace, pendant, bracelet, key ring, charm only: Paul, 10 Oct, "only earring pairs are Left and Right") it is no pair at all: 1 per unit,
+         the whole file as the app always read it, no side, never mirrored (spec.pair.twoBodies says so);
          when the pool cannot tell its two bodies apart it is made as the one glued copy per unit the app always made (glue(), spec.pair.glued),
          and PIECE_RULES.mismatchedMakesTwo = false brings that back for every mismatched design at once.
      Old records: a line already pooled keeps the pieces it has (Orders pins spec.pieceCount to its pool ids and notes the shortfall in
@@ -565,7 +567,7 @@
     const soldBy = optSingle || optPair ? "option" : TITLE_SINGLE(title) ? "title" : EAR.test(text) ? "words" : null;
     const soldAs = optSingle ? "single" : optPair ? "pair" : TITLE_SINGLE(title) ? "single" : EAR.test(text) ? "pair" : null;
     const side = singleSideOf(line), sideBy = side ? (singleSideOf(Object.assign({}, line, { personalization: [], buyerMessage: null, message_from_buyer: null, variations: (line.variations || []).filter(v => !isPersonalisation(lvName(v))) })) === side ? "listing" : "note") : null;   // (listing: the title or an option names the ear, so it is every unit's; note: the buyer's words)
-    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line) };
+    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), other: OTHER_PRODUCT.test(title) };
   }
   /** Which ear a SINGLE earring is for, when the line names it: an option value ("Single - Left", "Right ear") or the buyer's note ("left ear
    *  only", "for my right ear"). Both ears named, or neither: null (unspecified: flagged, never guessed). */
@@ -630,7 +632,16 @@
     if (dp && +dp.bodies > 1 && dp.mismatched) { info.mismatched = true; info.source = "design"; }
     else if (!dp && e && MISMATCH_NAME.test(upSku(o.sku))) { info.mismatched = true; info.source = "name"; }   // until the catalogue carries `pair`: MISMATCHED, MISMATCHED_6849, MISMATCHED_7134
     else if (o.members) { info.mismatched = true; info.source = o.members.source; info.members = o.members.members; }
-    info.earring = soldAs === "pair" || (info.mismatched && soldAs !== "single");
+    /* A design (or two named designs) that draws two bodies is a Left and a Right ONLY on a line sold as earrings (Paul, 10 Oct 2026: only earring pairs are Left and Right,
+       the Right the exact mirror of the Left; necklaces, pendants, bracelets, key rings, charm-only lines and singles are never split into ears or mirrored). The line's own
+       words or form say earrings (soldAs "pair": earrings, studs, huggies, hoops, a Pair option, form earrings or huggie); a SKU the shop itself names MISMATCHED says it too,
+       unless the line chose another form or names another product. Anything else is NOT a pair: one piece per unit cut from the design's file exactly as the app always read it
+       (the whole drawing, both bodies together, no side, no mirror) and a plain note says so. A line sold as Single is unchanged (one ear, its side only when it names one). */
+    info.earring = soldAs === "pair" || (info.mismatched && info.source === "name" && soldAs == null && !form && !sig.other);
+    if (info.mismatched && !info.earring && soldAs !== "single") {
+      const named = info.source !== "design" && info.source !== "name";   // (two designs the line names, not one design file that draws two bodies)
+      info.mismatched = false; info.source = null; info.members = null; if (named) info.twoNamed = true; else info.twoBodies = true;
+    }
     // a line that says two different designs but names ONE waits for a person (never guessed): the second design, or "the same on both ears" (the answer under SECOND_OPT)
     if (sig.says && !info.mismatched && info.earring) {
       const ans = o.lineId ? optionLookup(o.optionMaps, line.listingId, SECOND_OPT, o.lineId) : null, same = !!ans && ans.field === "ignore";
@@ -655,6 +666,8 @@
     else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
     if (info.second) info.notes.push(info.second.answered === "same" ? "the line says two different designs: a person said the same design on both ears" : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
+    if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
+    else if (info.twoNamed) info.notes.push("the line names two designs but is not an earring pair: made as one piece of the first design, no Left or Right");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
     return info;
   }
