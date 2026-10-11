@@ -35,23 +35,40 @@
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
       // The page reads that from the row's reading, the server from the run's line record.
       const candidate=row.spec ? row.spec.engraveCandidate : row.engraveCandidate;
-      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
+      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved,...(e.faces?{faces:e.faces}:{})} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
     }
     return out;
   }
   const orderIds=s=>[...new Set([...(Array.isArray(s.orders)?s.orders:[]),...idsOf(s).map(id=>String(id).split('_')[0]).filter(id=>/^\d+$/.test(id))].map(String))];
   /** The set a sheet is really in: its setId, unless it is a draft or left out of it (Include off), which are in no set. */
   const setOf=s=>s && s.setId && !s.draft && s.solidIncluded!==false?String(s.setId):null;
+  /* FACES (plans/front-back-1011): a piece may have a FRONT engraving beside its back. Its record sits in the same list with `face:'front'` (absent = back); its decision,
+     `engraving[id]`, keeps the three fields it always had (the COMBINED decision: approved only when every face is) and, only when a front job exists, `faces:{front,back}`.
+     A piece is approved when every face it expects is, and its files are saved when every expected face's file is. A piece with no front is read exactly as before. */
+  const recordsOf=(s,sid)=>{
+    const backs=new Map(),fronts=new Map();
+    for(const b of (s.backPool || s.backs || []))if(b && !b.invalidated && (!b.sheetId || b.sheetId===sid))(b.face==='front'?fronts:backs).set(b.poolId,b);
+    return {backs,fronts};
+  };
+  const faceAccepts=(r,x)=>!!(r?.approvedAt && r.approvedBy) || !!(x?.approved && ['approved','written'].includes(x.state));
+  const fileSaved=b=>!!(b?.approvedAt && b.approvedBy && b.verified?.geometry?.ok && b.verified?.file?.ok && b.outputs?.ai?.path && url(b.outputs.ai));
+  /** What a piece expects and where each face stands: { b, fr, expB, expF, accepted, saved }. */
+  function pieceFaces(d,b,fr){
+    const fc=d && d.faces;
+    const expF=!!(fc && fc.front && fc.front.needed!==false) || !!fr, expB=fc ? !!(fc.back && fc.back.needed!==false) || !!b : true;
+    const accepted=(!expB || faceAccepts(b,fc ? fc.back : d)) && (!expF || faceAccepts(fr,fc?.front));
+    return {b,fr,expB,expF,accepted,saved:(!expB || fileSaved(b)) && (!expF || fileSaved(fr))};
+  }
   function sheet(s,options={}){
-    const ids=idsOf(s), sid=s.id || s.sheetId, backs=new Map((s.backPool || s.backs || []).filter(b=>!b.invalidated && (!b.sheetId || b.sheetId===sid)).map(b=>[b.poolId,b]));
+    const ids=idsOf(s), sid=s.id || s.sheetId, {backs,fronts}=recordsOf(s,sid);
     let approved=0,waiting=0,saved=0,plain=0;
     for(const id of ids){
-      const d=s.engraving?.[id],b=backs.get(id);
+      const d=s.engraving?.[id],b=backs.get(id),fr=fronts.get(id);
       const noBack=d && d.needed===false && d.approved===true && ['none','skipped'].includes(d.state);
-      if(noBack && !b){plain++;continue;}
-      const accepted=!!(b?.approvedAt && b.approvedBy) || !!(d?.approved && ['approved','written'].includes(d.state));
-      if(accepted)approved++;else waiting++;
-      if(b?.approvedAt && b.approvedBy && b.verified?.geometry?.ok && b.verified?.file?.ok && b.outputs?.ai?.path && url(b.outputs.ai))saved++;
+      if(noBack && !b && !fr){plain++;continue;}
+      const f=pieceFaces(d,b,fr);
+      if(f.accepted)approved++;else waiting++;
+      if(f.saved && (b || fr))saved++;
     }
     // Missing identities are unresolved, never interpreted as plain charms.
     const unidentified=Math.max(0,(+s.placedCount || s.placements?.length || 0)-ids.length);waiting+=unidentified;
@@ -305,8 +322,11 @@
     let at=0,by='';
     for(const c of copies(s)){
       if(c.plain)continue;
-      const b=c.back;if(!(b && msOf(b.approvedAt)>=REAL_FROM && b.approvedBy))return null;
-      if(msOf(b.approvedAt)>=at){at=msOf(b.approvedAt);by=person(b.approvedBy);}
+      for(const b of c.faces ? [c.expB && c.back,c.expF && c.front] : [c.back]){
+        if(b===false || (c.faces && !b && !(c.expB || c.expF)))continue;   // (a face the piece does not expect asks for nothing)
+        if(!(b && msOf(b.approvedAt)>=REAL_FROM && b.approvedBy))return null;
+        if(msOf(b.approvedAt)>=at){at=msOf(b.approvedAt);by=person(b.approvedBy);}
+      }
     }
     return at>0?{at,by}:null;
   }
@@ -400,13 +420,14 @@
   }
   // the same per-copy reading sheet() makes, kept with each copy's id so a checklist can name it
   function copies(s){
-    const sid=s.id || s.sheetId,backs=new Map((s.backPool || s.backs || []).filter(b=>!b.invalidated && (!b.sheetId || b.sheetId===sid)).map(b=>[b.poolId,b]));
+    const sid=s.id || s.sheetId,{backs,fronts}=recordsOf(s,sid);
     return idsOf(s).map(id=>{
-      const d=s.engraving?.[id],b=backs.get(id) || null;
-      if(d && d.needed===false && d.approved===true && ['none','skipped'].includes(d.state) && !b)return {id,plain:true};
-      const accepted=!!(b?.approvedAt && b.approvedBy) || !!(d?.approved && ['approved','written'].includes(d.state));
-      const saved=!!(b?.approvedAt && b.approvedBy && b.verified?.geometry?.ok && b.verified?.file?.ok && b.outputs?.ai?.path && url(b.outputs.ai));
-      return {id,accepted,saved,back:b,state:d?.state || 'unknown'};
+      const d=s.engraving?.[id],b=backs.get(id) || null,fr=fronts.get(id) || null;
+      if(d && d.needed===false && d.approved===true && ['none','skipped'].includes(d.state) && !b && !fr)return {id,plain:true};
+      const f=pieceFaces(d,b,fr);
+      const out={id,accepted:f.accepted,saved:f.saved && !!(b || fr),back:b,state:d?.state || 'unknown'};
+      if(fr || d?.faces)Object.assign(out,{front:fr,faces:true,expB:f.expB,expF:f.expF});   // (only a piece with a front says more: every other copy reads as it always did)
+      return out;
     });
   }
   // one sheet's own three gated steps: ok[k] (the gate's stage), hard[k] (a problem, not only waiting), items[k], detail[k], short[k]
@@ -440,13 +461,14 @@
     // Engraving: every back approved (or the piece needs none) AND every approved back saved as a verified file (the stage `backs`: it was the
     // Back files step until round 13 and gates exactly as before; saving normally takes seconds, so it shows as Engraving in progress)
     const pending=cs.filter(c=>!c.plain && !c.accepted),unknown=Math.max(0,(+s.placedCount || s.placements?.length || 0)-idsOf(s).length);
-    for(const c of pending.slice(0,LISTED)){items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),why:ENGRAVE_WAIT[c.state] || 'Its back engraving is not approved yet'});if(c.state==='blocked')hard.engraving=true;}
+    for(const c of pending.slice(0,LISTED)){items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),why:(ENGRAVE_WAIT[c.state] || 'Its back engraving is not approved yet').replace(c.faces?'back engraving':'\u0000','engraving')});if(c.state==='blocked')hard.engraving=true;}
     if(pending.length>LISTED)items.engraving.push({kind:'sheet',id,label,why:`${count(pending.length-LISTED,'more piece')} also wait for approval`});
     if(unknown)items.engraving.push({kind:'sheet',id,label,why:`${count(unknown,'placed piece')} cannot be matched to an order, so ${unknown===1?'its':'their'} engraving cannot be checked`});
     const unsaved=cs.filter(c=>!c.plain && c.accepted && !c.saved);let failedFile=false;
     for(const c of unsaved.slice(0,LISTED)){
-      const failed=!!c.back && (c.back.verified?.file?.ok===false || c.back.verified?.geometry?.ok===false);
-      items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),part:'files',why:failed?'Its saved back file failed its check: approve the back again':c.back?.approvedAt?'Approved, and its back file is still being saved':'Approved, but its back file is not saved yet'});
+      const bad=r=>!!r && (r.verified?.file?.ok===false || r.verified?.geometry?.ok===false);
+      const failed=bad(c.back) || bad(c.front), face=bad(c.back) || !bad(c.front) ? 'back' : 'front', rec=face==='front' ? c.front : c.back;
+      items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),part:'files',why:failed?`Its saved ${face} file failed its check: approve the ${face} again`:rec?.approvedAt?`Approved, and its ${face} file is still being saved`:`Approved, but its ${face} file is not saved yet`});
       if(failed){hard.engraving=true;failedFile=true;}
     }
     if(unsaved.length>LISTED)items.engraving.push({kind:'sheet',id,label,part:'files',why:`${count(unsaved.length-LISTED,'more back file')} also wait to be saved`});
