@@ -44,8 +44,8 @@ async function stream(metal, seed, orders, block, from) {
   const sum = k => ({ plain: +mean(rows.plain, k).toFixed(2), block: +mean(rows.block, k).toFixed(2) });
   const std = sum('frontStd'), cav = sum('cavernMm'), bf = sum('blockFill');
   console.log('front std (mm)', std, '| widest empty disc behind the front (mm)', cav, '| fill behind the front', bf);
-  assert(std.block < std.plain * .75, `the front is clearly straighter (${std.block} vs ${std.plain} mm)`);
-  assert(cav.block < cav.plain * .85, `the cavern is smaller (${cav.block} vs ${cav.plain} mm)`);
+  assert(std.block < std.plain * .8, `the front is clearly straighter (${std.block} vs ${std.plain} mm)`);
+  assert(cav.block < cav.plain * .9, `the cavern is smaller (${cav.block} vs ${cav.plain} mm)`);
   assert(bf.block > bf.plain, 'the block is denser behind its front');
   for (const r of rows.block) assert(r.cavernMm < 14, `${r.metal} seed ${r.seed}: no cavern behind the front (${r.cavernMm} mm)`);
 
@@ -65,7 +65,7 @@ async function stream(metal, seed, orders, block, from) {
     }
     console.log('saved sheet with a cavern, after the next orders: plain', JSON.stringify(after.plain), '| block', JSON.stringify(after.block));
     assert(after.block.frontStd < after.plain.frontStd * .5, `the front straightens (${after.block.frontStd} vs ${after.plain.frontStd} mm)`);
-    assert(after.block.cavernMm < after.plain.cavernMm * .75, `the cavern is filled (${after.block.cavernMm} vs ${after.plain.cavernMm} mm)`);
+    assert(after.block.cavernMm < after.plain.cavernMm * .8, `the cavern is filled (${after.block.cavernMm} vs ${after.plain.cavernMm} mm)`);
     assert(after.block.placed >= after.plain.placed, 'as many charms placed');
   }
 

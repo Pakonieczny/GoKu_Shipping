@@ -50,6 +50,7 @@ const CUT = ['rose', 'gold10k', 'gold14k'], PLAIN = ['gold', 'silver'];
       assert.equal(job.block, true, metal + ': the block weights');
       assert.equal(job.nearFullContact, false, metal + ': built from the left, not from the contacts');
       assert.equal(job.careful, true, metal + ': one charm at a time');
+      assert.equal(job.blockEase, undefined, metal + ': the full price, as always');
       assert.equal(job.angles.length, 180, metal + ': at 2° steps');
     }
     // Gold-filled and Sterling Silver are blocks too since 11 Oct (Paul: "nest the pieces in a somewhat straight vertical line front exactly like we
@@ -57,6 +58,7 @@ const CUT = ['rose', 'gold10k', 'gold14k'], PLAIN = ['gold', 'silver'];
     for (const metal of PLAIN) {
       const job = jc.buildJob({ metal, runId: 'run-1', charms: [{ id: 'a', order: 'o', orderDate: 1 }], placements: [] });
       assert.equal(job.block, true, metal + ': the same block weights as Rose Gold');
+      assert.equal(JSON.stringify(job.blockEase), JSON.stringify(L.BLOCK_EASE), metal + ': the block\'s price for growing the front eases over the second half of the sheet (nothing is cut from it); the stand-in intake of the benchmarks asks the same');
       assert.equal(job.nearFullContact, true, metal + ': near full the contact builds are still used');
       assert.equal(jc.buildJob({ metal, runId: 'run-1', nestFlow: 'learned', charms: [{ id: 'a', order: 'o', orderDate: 1 }], placements: [] }).block, false, metal + ': the learned flow is not a block');
     }
