@@ -88,7 +88,11 @@ async function functions(st, name, req, res, base) {
   }
   if (name === 'charmNestLibrary' || name === 'charmNestOutput' || name === 'charmNestCheck' || name === 'etsySandbox' || name === 'charmNestAgent-background' || name === 'charmEngrave-background' || name === 'charmMaster-background') {
     const h = st.handlers[name]; if (!h) return json(res, 404, { error: 'no handler' });
-    const out = await h.handler({ httpMethod: req.method, headers: Object.fromEntries(Object.entries(req.headers)), body: bodyBuf ? bodyBuf.toString('utf8') : '', queryStringParameters: q });
+    // the Charm Repo's password door (plans/repo-protect-1011): unless a test sets st.repoStrict, a call to a protected op carries a token the door issued on this
+    // same in-memory Firestore, as if the master admin had unlocked (a body that brings its own repoToken is left alone; REPO_TEST says how to unlock for real)
+    let bodyText = bodyBuf ? bodyBuf.toString('utf8') : '';
+    if (!st.repoStrict && bodyText && (name === 'charmNestLibrary' || name === 'charmNestOutput')) { try { const b = JSON.parse(bodyText), s2 = await require('./_repoToken.cjs')(name, b, st.db); if (s2 !== b) bodyText = JSON.stringify(s2); } catch (_) {} }
+    const out = await h.handler({ httpMethod: req.method, headers: Object.fromEntries(Object.entries(req.headers)), body: bodyText, queryStringParameters: q });
     res.writeHead(out.statusCode || 200, Object.assign({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, out.headers || {})); return res.end(out.body || '');
   }
   return json(res, 404, { error: 'no functions in the test server: ' + name });
@@ -227,7 +231,9 @@ async function start(opts = {}) {
   const anthro = require(path.join(fnDir, '_etsyMailAnthropic.js'));
   anthro.callClaudeRaw = async (o) => { const sys = (o.system && o.system[0] && o.system[0].text) || ''; const mode = /Grade EVERY numbered charm/.test(sys) ? 'packing' : /engraver and decide/.test(sys) ? 'engraveIntent' : /rendered BACK/.test(sys) ? 'engraveReview' : /strip directly BELOW/.test(sys) ? 'labelRead' : /quality reviewer/.test(sys) ? 'grouping' : /final inspector/.test(sys) ? 'layout' : 'name'; const fn = st.agentResults[mode]; const text = JSON.stringify(typeof fn === 'function' ? fn(o) : (fn || defaultAgent(mode, o))); return { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text }] }; };
   process.env.ANTHROPIC_API_KEY = 'test';
-  st.handlers = handlers; st.admin = admin; st.db = admin.firestore();   // (a test may read through the real functions' own db: the order timeline's derivation)
+  st.handlers = handlers; st.admin = admin; st.db = admin.firestore();
+  // Paul's login for the repo door, throwaway and only in this in-memory state: operator `paul`, password REPO_TEST.password
+  { const salt = crypto.randomBytes(32), hash = crypto.pbkdf2Sync(REPO_TEST.password, salt, 2000, 64, 'sha512'); st.put('EtsyMail_Operators', 'paul', { username: 'paul', displayName: 'Paul K', role: 'owner', passwordHash: hash.toString('hex'), salt: salt.toString('hex'), iterations: 2000, digest: 'sha512' }, false); }   // (a test may read through the real functions' own db: the order timeline's derivation)
   return { st, sorterOrigin, stationOrigin, close: () => { servers.forEach(s => s.close()); Module._load = realLoad; }, blobUrl: p => tokenUrl(stationOrigin, p) };
 }
 function defaultAgent(mode, o) {
@@ -240,5 +246,6 @@ function defaultAgent(mode, o) {
   if (mode === 'layout') return { ok: true, issues: [], summary: 'fine' };
   return { charms: [] };
 }
-module.exports = { start, makeState, Timestamp, fakeAdmin };
+const REPO_TEST = { password: 'test-' + crypto.randomBytes(8).toString('hex') };   // (the stand-in's operator `paul`: made fresh at every start, offline only, never a real login)
+module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST };
 if (require.main === module) start().then(s => console.log('sorter', s.sorterOrigin, 'station', s.stationOrigin));
