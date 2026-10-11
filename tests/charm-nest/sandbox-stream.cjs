@@ -92,6 +92,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const orphan = await lib({ op: 'sandboxStream', action: 'tick', sandbox: true, expect: op.body.stream.simNow });
   assert(orphan.status === 200 && !orphan.body.stream && !orphan.body.advanced && !st.doc('Charm_Sandbox', 'stream'), 'a step asked of a deleted stream (a check still out at a reset) starts none');
   await new Promise(r => setTimeout(r, 1500));
+  await require('./_repoToken.cjs').prime(st.db);   // (the page's standing unlock exists before the snapshot, it is not a record the run wrote)
   const before = new Map([...st.docs.entries()].map(([k, v]) => [k, JSON.stringify(v)])), blobsBefore = new Set(st.blobs.keys()), callsBefore = st.calls.length;
   const prodBefore = Object.fromEntries(PROD.map(c => [c, st.list(c).length]));
 

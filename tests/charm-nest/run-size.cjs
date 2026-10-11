@@ -84,7 +84,8 @@ delete process.env.EDIT_PASSCODE;
 const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
 const serverWarnings = [], realWarn = console.warn;
 console.warn = (...a) => { const t = a.join(' '); if (/charmNestLibrary\] run /.test(t)) serverWarnings.push(t); else realWarn(...a); };
-const post = async body => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body) }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = async body => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', body)) }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };
 const docs = prefix => [...store.keys()].filter(k => k.startsWith(prefix + '/'));
 const bytesOf = v => Buffer.byteLength(JSON.stringify(v));
 const runDoc = id => store.get('Charm_Nest_Runs/' + id);

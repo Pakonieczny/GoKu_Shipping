@@ -67,7 +67,8 @@ delete process.env.EDIT_PASSCODE;
 const lib = require(path.join(fnDir, "charmNestLibrary.js"));
 const orders = require(path.join(fnDir, "firebaseOrders.js"));
 const OrderCancel = require(path.join(fnDir, "_orderCancel.js"));
-const post = async body => { const r = await lib.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(body) }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = async body => { const r = await lib.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', body)) }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
 const station = async (method, qs, body) => { const r = await orders.handler({ httpMethod: method, headers: {}, queryStringParameters: qs, body: body ? JSON.stringify(body) : undefined }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
 const realWarn = console.warn, realLog = console.log; console.warn = () => {}; console.log = () => {};
 
@@ -91,6 +92,7 @@ store.set(`EtsyMail_Receipts/${RID}`, { receipt_id: RID, status: "Paid", is_ship
 store.set(`Order_Timeline/${RID}~placed~p1`, { orderId: RID, type: "placed", at: NOW - 3600000, by: "System", source: "sorter", station: "sorter", sheetId: "gold-real", sheet: "GF Sheet 1", text: "", milestone: true });
 
 (async () => {
+  await repoStamp.prime();   // (the standing unlock of the Settings buttons is made before the first write is counted)
   // ALLOWED production reads in the sandbox, each by design: the inbox's Etsy mirror (sandboxCancel copies what was
   // ordered from it) and the custom readings (shared, the decision kept per workspace)
   const SHARED_READS = new Set(["EtsyMail_Receipts", "Charm_Nest_CustomRead"]);

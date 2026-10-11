@@ -33,8 +33,9 @@ const lib = require(path.join(fnDir, 'charmNestLibrary.js')), stations = require
 /* ── a request, each on its own tick of the clock (instant in-memory calls must not collide on a timeline key) ── */
 let last = 0;
 async function tick(fn) { const base = Date.now, t = (last = Math.max(base(), last + 1)); Date.now = () => t; try { return await fn(); } finally { Date.now = base; } }
-const post = b => tick(async () => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; });
-const live = async b => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };   // (the clock moves inside the call: a wipe works against it)
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = b => tick(async () => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; });
+const live = async b => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };   // (the clock moves inside the call: a wipe works against it)
 const driven = new Set();   // ops of lib.ops the sandbox session called and the library answered 200
 const issues = [];          // what the session could not do (named in the output: nothing is hidden)
 async function must(b, sb) {
@@ -260,6 +261,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   await session(false); bulk(false, 500);
   const mailBefore = [...store.keys()].filter(k => k.startsWith('EtsyMail_OrderLinks/ol_')).length;
   assert(mailBefore >= 1, 'production holds its own customer message (ol_…)');
+  await repoStamp.prime();   // (the standing unlock the Settings buttons need is made now, so it is part of "before": using it writes nothing)
   const prodDocs = dbState(), prodFiles = fileState();
   assert(prodDocs.size > 80, 'production holds a real session: ' + prodDocs.size + ' documents');
 

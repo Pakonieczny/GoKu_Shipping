@@ -216,7 +216,8 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
 
   /* ═══ Claude's engraving readings in the sandbox ═══ */
   const lib = require(path.join(fnDir, 'charmNestLibrary.js')), engrave = require(path.join(fnDir, 'charmEngrave-background.js'));
-  const post = b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+  const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+  const post = async b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
   const words = (order, pers = ['ANNA']) => ({ order, sku: 'BR-TST-01', title: 'Heart charm', form: 'charm', quantity: 1, engravable: true, personalization: pers, buyerMessage: '', staffNote: '', messages: [] });
   const runKick = k => engrave.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(k.body) });
   kicks.length = 0;

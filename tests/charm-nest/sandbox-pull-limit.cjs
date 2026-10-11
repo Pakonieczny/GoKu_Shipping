@@ -51,7 +51,8 @@ const lib = require(path.join(fnDir, 'charmNestLibrary.js')), Pull = require(pat
 
 const call = (method, b, qs) => lib.handler({ httpMethod: method, headers: {}, body: method === 'POST' ? JSON.stringify(b) : undefined, queryStringParameters: method === 'GET' ? Object.assign({}, b) : (qs || {}) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
 const post = b => call('POST', b);
-const pullOp = (startId, extra) => post(Object.assign({ op: 'sandboxPullOrders', sandbox: true, startId, by: 'tester' }, extra || {}));
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops, pull and reset, carry the standing unlock the door issues on the same in-memory Firestore)
+const pullOp = async (startId, extra) => post(await repoStamp('charmNestLibrary', Object.assign({ op: 'sandboxPullOrders', sandbox: true, startId, by: 'tester' }, extra || {})));
 const tokenFor = async action => (await RA.issue(db, { action, by: 'tester' })).token;   // what repoUnlock hands out after the right password (the password itself is the door's own test)
 const setOp = async (limit, action = 'modify') => post({ op: 'sandboxPullLimitSet', limit, by: 'Paul', repoToken: await tokenFor(action) });
 const CFG = 'config/charmNestSandboxPull';
@@ -173,7 +174,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   assert(store.has('Charm_Sandbox/current') && store.has('Charm_Sandbox/stream') && [...blobs.keys()].some(k => k.startsWith('charmnest/sandbox/orders-pull/')), 'the sandbox holds a pulled set and its stream');
   assert(Families.isProtected('firestore', CFG) && !Families.server().some(f => f.store === 'doc' && f.collection === 'config' && (f.docs || []).includes('charmNestSandboxPull')), 'the registry keeps the number and clears no config document of that name');
   const callsBefore = etsy.calls.length, wr = writes.length;
-  let w = await post({ op: 'sandboxReset', sandbox: true }), n = 1; while (w.body.more && n < 50) { w = await post({ op: 'sandboxReset', sandbox: true }); n++; }
+  let w = await post(await repoStamp('charmNestLibrary', { op: 'sandboxReset', sandbox: true })), n = 1; while (w.body.more && n < 50) { w = await post(await repoStamp('charmNestLibrary', { op: 'sandboxReset', sandbox: true })); n++; }
   assert(w.status === 200 && w.body.ok && w.body.more === false, 'the wipe ran to its end: ' + JSON.stringify(w.body));
   assert(empty() && ![...store.keys()].some(k => k.startsWith('Sandbox_')), 'nothing of the sandbox is left');
   assert(store.has(CFG) && Fk.canon(store.get(CFG)) === cfgBefore, "the wipe left Paul's number byte-identical");

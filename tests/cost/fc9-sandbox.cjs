@@ -19,7 +19,8 @@ const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
 const fo = require(path.join(fnDir, 'firebaseOrders.js'));
 const etsy = require(path.join(fnDir, 'etsySandbox.js'));
 const call = async (h, ev) => { const r = await h(ev); const body = r.body ? JSON.parse(r.body) : null; if (r.statusCode >= 400) throw new Error(h.name + ' ' + r.statusCode + ' ' + r.body.slice(0, 200)); return body; };
-const L = (op, b) => call(lib.handler, { httpMethod: 'POST', headers: {}, body: JSON.stringify(Object.assign({ op, sandbox: true }, b)) });
+const repoStamp = require('../charm-nest/_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const L = async (op, b) => call(lib.handler, { httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', Object.assign({ op, sandbox: true }, b))) });
 const FO = q => call(fo.handler, { httpMethod: 'GET', headers: {}, queryStringParameters: Object.assign({ sandbox: '1' }, q) });
 const E = q => call(etsy.handler, { httpMethod: 'GET', headers: {}, queryStringParameters: q });
 const fmt = n => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');

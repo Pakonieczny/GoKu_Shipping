@@ -425,6 +425,7 @@ dialog.wide{width:min(980px,95vw)}
 .dlgBody{padding:16px 18px;overflow:auto}
 .dlgFoot{padding:11px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:var(--card2);flex:0 0 auto;align-items:center}
 .dlgFoot .left{margin-right:auto;display:flex;gap:8px;align-items:center}
+.stLockLine{font-size:11.5px;color:var(--ink45);white-space:nowrap}.stLockLine[hidden]{display:none}.stLockNow{background:none;border:0;padding:0;font:inherit;color:var(--ink70);text-decoration:underline;text-underline-offset:2px;cursor:pointer}.stLockNow:hover{color:var(--ink)}
 dialog.splitDlg{width:min(470px,94vw)}
 .splitDlg .dlgBody p{margin:0 0 12px;line-height:1.5;color:var(--ink70)}
 .splitList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
@@ -3237,7 +3238,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
     <div class="fieldRow"><div class="field"><label>Desktop notification when a sheet finishes</label><select id="stNotify"><option value="on">On (when tab hidden)</option><option value="off">Off</option></select></div>
     <div class="field"><label>Sound on completion</label><select id="stSound"><option value="on">On</option><option value="off">Off</option></select></div></div>
   </div>
-  <div class="dlgFoot"><div class="left"><span class="pill neutral" id="stSaved">saved locally</span></div><button class="btn ghost" value="cancel" formnovalidate>Close</button><button class="btn gold" id="btnSaveSettings" value="save">Save</button></div>
+  <div class="dlgFoot"><div class="left"><span class="pill neutral" id="stSaved">saved locally</span><span class="stLockLine" id="stLockLine" role="status"><span id="stLockText"></span><span aria-hidden="true"> · </span><button type="button" class="stLockNow" id="stLockNow" title="Lock Settings and the charm repo on this computer now">Lock now</button></span></div><button class="btn ghost" value="cancel" formnovalidate>Close</button><button class="btn gold" id="btnSaveSettings" value="save">Save</button></div>
 </form></dialog>
 
 <!-- ═══ Sheet report / contact sheet ═══ -->
@@ -3521,9 +3522,18 @@ const PLACEMENT_WRITE = /^(pool|putSheet|deleteSheet|restoreSheet|archiveEmptySh
 // the writes that change where a sheet or a set stands in the Library, or what it still waits for (its backs, label, set, green
 // line, cut mark, hold and seals, and the orders' own answers): the Library's cards read the cloud again at once after any of them
 const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|partialClaim|partialRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
+const SETTINGS_LOCKED_OPS = { purgeHistory: "Purging the real run history.", sandboxReset: "Clearing the sandbox.", sandboxPullOrders: "Pulling the newest Etsy orders for the sandbox.", sandboxPullLimitSet: "Changing how many newest orders the sandbox pulls." };
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
+  /* The Settings menu's buttons that change shared state (purge the run history, clear the sandbox, pull its orders) need the same unlock as the menu itself: the
+     server refuses them without a repoToken (_charmNestRepoAuth.js SETTINGS_OPS). The standing unlock goes along; with none, the one password dialog asks (never on top of the open menu). */
+  if (fn === "charmNestLibrary" && body && !body.repoToken && Object.prototype.hasOwnProperty.call(SETTINGS_LOCKED_OPS, body.op)) {
+    const L = window.CharmNestRepoLock;
+    if (!L) throw Object.assign(new Error("The Settings lock did not load: reload the page"), { locked: true });
+    if (!L.unlocked("settings")) { const d = document.getElementById("dlgSettings"); if (d && d.open) closeDlg(d); }
+    return L.call("settings", { what: SETTINGS_LOCKED_OPS[body.op], target: body.op }, token => api(fn, Object.assign({}, body, { repoToken: token }), opts));
+  }
   const headers = { "Content-Type": "application/json" };
   if (S.passcode) headers["X-Edit-Passcode"] = S.passcode;
   const bar = (opts.quiet || opts.silent || !window.CNProgress) ? null : CNProgress.start(opts.label || "Talking to the cloud", { quiet: !!opts.background });
@@ -7087,7 +7097,43 @@ function guardBench() {
 }
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
+/* The Settings menu is locked (Paul, 11 Oct 2026: "password protect the settings menu using my login password. If I'm logged into and working from my account
+   then do not prompt me"): it opens at once while this computer holds the standing unlock, and otherwise asks the ONE charm-repo password dialog first
+   (charm-nest-repo-lock.js, action "settings"). The sorter cannot show the server the email app's operator session, so one right password stands in for it
+   until the server's end of day (see the lock's header). When the lock script is missing the menu stays shut. */
+let settingsAsk = null, settingsWatch = false;
+function paintSettingsLock() {
+  const L = window.CharmNestRepoLock, line = $("#stLockLine"), txt = $("#stLockText"); if (!line || !txt) return;
+  const st = L && L.status ? L.status() : { open: false };
+  line.hidden = !st.open; txt.textContent = st.open ? "Unlocked until " + L.untilText(st.until) : "";
+}
+function askSettings() {
+  const L = window.CharmNestRepoLock;
+  if (!L) { toast("The Settings lock did not load: reload the page", "bad", 7000); return Promise.resolve(false); }   // (fails closed)
+  return settingsAsk ||= L.ensure("settings", { what: "The Settings menu is locked. Enter your login password to open it.", target: "settings" })
+    .then(info => { if (info) openSettingsNow(); return !!info; }, () => false)
+    .finally(() => { settingsAsk = null; });
+}
 function openSettings() {
+  const L = window.CharmNestRepoLock;
+  if (!(L && L.unlocked("settings"))) return askSettings();
+  openSettingsNow();
+  // one quiet look at the server: a session it ended (a changed password, a Lock now elsewhere) closes the menu and asks again; no answer changes nothing
+  if (L.verify) L.verify().then(ok => { if (ok === false) askSettings(); }, () => {});
+  return Promise.resolve(true);
+}
+function openSettingsNow() {
+  const L = window.CharmNestRepoLock;
+  if (L && L.onChange && !settingsWatch) {
+    settingsWatch = true;
+    L.onChange(() => {
+      const d = $("#dlgSettings");
+      if (d && d.open && !L.unlocked("settings")) { closeDlg(d); toast("Settings are locked", "", 4000); }   // (nothing may ask a password on top of the open menu)
+      else if (d && d.open) paintSettingsLock();
+    });
+    const now = $("#stLockNow"); if (now) now.onclick = () => { L.lockNow().then(r => { if (r && r.server === false) toast("Locked on this computer. The server could not be reached; it ends the unlock there by itself.", "bad", 8000); }); };
+  }
+  paintSettingsLock();
   const s = S.settings;
   $("#stLearnedKey").value = localStorage.getItem("cn.learnedKey") || "";
   $("#stLearnedBudget").value = s.learnedBudgetS || 600; $("#stLearnedStall").value = s.learnedStallS || 300;
@@ -7253,7 +7299,7 @@ async function boot() {
   $("#btnResetSettings").onclick = () => {
     // the sandbox switch is not a default to restore: shown as "off", Save would move a sandbox session to production and reload
     const mine = S.settings; S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)), sandbox: mine.sandbox });
-    try { openSettings(); } finally { S.settings = mine; }
+    try { openSettingsNow(); } finally { S.settings = mine; }
     for (const id of geomFields()) delete $("#" + id).dataset.shown;
     $("#stSaved").textContent = "defaults shown · Save applies them";
   };
@@ -7321,7 +7367,7 @@ boot();
 <script src="charm-nest-master-admin.js?v=20261011-ma1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1"></script>
-<script src="charm-nest-repo-lock.js?v=20261011-rpu1-sv1"></script>
+<script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1"></script>
 <!-- save a custom design to the charm repository and link its listing (Paul, 11 Oct 2026): the SKU rule (charm-nest-sku.js) and the save engine (charm-nest-keep.js), which the designs window's save strip drives (charm-nest-bridge.js, CustomSheet) -->
 <script src="charm-nest-sku.js?v=20261011-sv1"></script>
 <script src="charm-nest-keep.js?v=20261011-sv1"></script>
