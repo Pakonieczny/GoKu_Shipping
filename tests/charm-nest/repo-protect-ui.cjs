@@ -72,6 +72,8 @@ const FILES = [
       if (why) return json(401, { error: 'repo-locked', need, once: need === 'delete', why });
       if (fn === 'charmNestLibrary' && b.op === 'masterDownload') return json(200, { ok: true, url: srv.blobUrl(`charmnest/master/${b.sku}.ai`), path: `charmnest/master/${b.sku}.ai`, name: `${b.sku}.ai` });
     }
+    // (this mock has already checked the token; the stand-in server behind it takes the call without one and stamps it with a token of its own door)
+    if (need && b.repoToken) { const rest = Object.assign({}, b); delete rest.repoToken; return route.fallback({ postData: JSON.stringify(rest) }); }
     return route.fallback();
   });
   // the page: signed in as a plain employee; no native confirm may be used (a pop-up on a pop-up); every unlock attempt is heard
