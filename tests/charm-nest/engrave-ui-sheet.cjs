@@ -245,7 +245,7 @@ async function browser() {
     await page.evaluate(([e, nk, pl, o4]) => {
       const pid = (rid, tx, copy) => `${rid}_${5000000000 + tx}_${copy}`;
       const row = (rid, tx, n) => ({ key: `${rid}_${5000000000 + tx}`, order: { receiptId: rid, orderNumber: rid, createTs: 1790000000, updateTs: 1790000000, shipBy: 1790500000, buyer: { name: 'Buyer' }, lines: [], messages: [] },
-        line: { transactionId: String(5000000000 + tx), listingId: '', sku: 'TEST-' + tx, title: 'Test ' + tx, quantity: 1, variations: [], personalization: [] }, spec: { designSku: 'TEST-' + tx, quantity: 1, material: 'gold', problems: [] },
+        line: { transactionId: String(5000000000 + tx), listingId: '', sku: 'TEST-' + tx, title: 'Test ' + tx, quantity: 1, variations: [], personalization: [] }, spec: { designSku: 'TEST-' + tx, quantity: 1, material: 'gold', problems: [], ...(rid === '4195966039' ? { engraveCandidate: true, engraving: { v: 1, mode: 'both', front: { text: 'W' }, back: { text: '1. 27. 24' }, source: 'labelled', confidence: 1 } } : {}) },
         problems: [], state: 'written', reason: null, poolIds: Array.from({ length: n }, (_, i) => pid(rid, tx, i + 1)), engrave: null, material: 'gold', arrivedAt: Date.now() - 7200000 });
       window.B.orders.rows = [row(e, 1, 2), row(nk, 2, 1), row(pl, 3, 1), row(o4, 4, 1)]; window.B.orders.byKey = new Map(window.B.orders.rows.map(r => [r.key, r]));
     }, [EARS, NECK, PLAIN, '4300000104']);
@@ -265,7 +265,10 @@ async function browser() {
     assert.match(card, /W/, 'the card shows the front words first: ' + card);
     await page.evaluate(() => { const b = [...document.querySelectorAll('[data-r2=eng] .egEarTab')].find(x => /back/i.test(x.innerText)); b.click(); });
     await until(() => page.evaluate(() => /1\. 27\. 24/.test((document.querySelector('[data-r2=eng]') || {}).innerText || '')), 10000, 'the back words after pressing Back');
-    console.log('ok   piece card: Front | Back switch; Front shows W, Back shows 1. 27. 24');
+    const setup = await page.evaluate(() => { const e = document.querySelector('[data-r2=eng] .swEngSetup'); return e ? e.innerText.replace(/\s+/g, ' ').trim() : null; });
+    assert(setup !== null, 'the line\'s Engraves editor (ENGSETUP\'s one component) is mounted under the card');
+    if (setup) assert.match(setup, /Front \+ back/i, 'it says Front + back for 4195966039: ' + setup);
+    console.log('ok   piece card: Front | Back switch; Front shows W, Back shows 1. 27. 24; the line\'s Engraves editor is mounted under it');
     // the plate turned over: every engraved charm's back, no page error
     await page.evaluate(() => document.querySelector('[data-r2=face]').click());
     await until(async () => /Back side, mirrored/.test(await strip()), 15000, 'the plate on its back');
