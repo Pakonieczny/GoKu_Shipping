@@ -1,0 +1,1008 @@
+{
+ "mismatched pair of two keys, unequal": {
+  "pools": [
+   {
+    "poolId": "4196000001_5000000001_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000001",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000001",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 2,
+    "charmHash": "c4b7c970",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000001_5000000001",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000001:5000000001",
+    "groupSize": 2
+   },
+   {
+    "poolId": "4196000001_5000000001_2",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000001",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000001",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 2,
+    "quantity": 2,
+    "charmHash": "c5b7cb03",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000001_5000000001",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000001:5000000001",
+    "groupSize": 2
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000001_5000000001_1",
+   "4196000001_5000000001_2"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": true,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000001_5000000001_1",
+    "name": "4196000001 · KEYS_UNEQUAL · 1/2",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000001:5000000001",
+    "groupSize": 2,
+    "members": 2,
+    "bbox": [
+     0,
+     0,
+     20,
+     36
+    ],
+    "hash": "c4b7c970",
+    "mirrored": false,
+    "topIndices": [
+     0
+    ]
+   },
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000001_5000000001_2",
+    "name": "4196000001 · KEYS_UNEQUAL · 2/2",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000001:5000000001",
+    "groupSize": 2,
+    "members": 3,
+    "bbox": [
+     30,
+     0,
+     50,
+     36
+    ],
+    "hash": "c5b7cb03",
+    "mirrored": true,
+    "topIndices": [
+     1
+    ]
+   }
+  ],
+  "logs": [
+   "POOL 4196000001 · KEYS_UNEQUAL → gold (plain)"
+  ]
+ },
+ "mismatched pair of two keys x2": {
+  "pools": [
+   {
+    "poolId": "4196000002_5000000002_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000002",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000002",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 4,
+    "charmHash": "c4b7c970",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000002_5000000002",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4
+   },
+   {
+    "poolId": "4196000002_5000000002_2",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000002",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000002",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 2,
+    "quantity": 4,
+    "charmHash": "c5b7cb03",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000002_5000000002",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4
+   },
+   {
+    "poolId": "4196000002_5000000002_3",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000002",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000002",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 3,
+    "quantity": 4,
+    "charmHash": "c4b7c970",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000002_5000000002",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4
+   },
+   {
+    "poolId": "4196000002_5000000002_4",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000002",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000002",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 4,
+    "quantity": 4,
+    "charmHash": "c5b7cb03",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000002_5000000002",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000002_5000000002_1",
+   "4196000002_5000000002_2",
+   "4196000002_5000000002_3",
+   "4196000002_5000000002_4"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": true,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000002_5000000002_1",
+    "name": "4196000002 · KEYS_UNEQUAL · 1/4",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4,
+    "members": 2,
+    "bbox": [
+     0,
+     0,
+     20,
+     36
+    ],
+    "hash": "c4b7c970",
+    "mirrored": false,
+    "topIndices": [
+     0
+    ]
+   },
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000002_5000000002_2",
+    "name": "4196000002 · KEYS_UNEQUAL · 2/4",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4,
+    "members": 3,
+    "bbox": [
+     30,
+     0,
+     50,
+     36
+    ],
+    "hash": "c5b7cb03",
+    "mirrored": true,
+    "topIndices": [
+     1
+    ]
+   },
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000002_5000000002_3",
+    "name": "4196000002 · KEYS_UNEQUAL · 3/4",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4,
+    "members": 2,
+    "bbox": [
+     0,
+     0,
+     20,
+     36
+    ],
+    "hash": "c4b7c970",
+    "mirrored": false,
+    "topIndices": [
+     0
+    ]
+   },
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000002_5000000002_4",
+    "name": "4196000002 · KEYS_UNEQUAL · 4/4",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000002:5000000002",
+    "groupSize": 4,
+    "members": 3,
+    "bbox": [
+     30,
+     0,
+     50,
+     36
+    ],
+    "hash": "c5b7cb03",
+    "mirrored": true,
+    "topIndices": [
+     1
+    ]
+   }
+  ],
+  "logs": [
+   "POOL 4196000002 · KEYS_UNEQUAL ×2 → gold (plain)"
+  ]
+ },
+ "mismatched pair, two keys of one shape": {
+  "pools": [
+   {
+    "poolId": "4196000003_5000000003_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000003",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000003",
+    "sku": "KEY_5598",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 1,
+    "charmHash": "206cbf01",
+    "masterHash": "mh-KEY_5598",
+    "aiPath": "charmnest/master/sku/KEY_5598.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000003_5000000003",
+    "updateTs": 1791500001
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000003_5000000003_1"
+  ],
+  "notes": [
+   "made as one glued piece for each unit (the pool could not cut its two bodies apart)"
+  ],
+  "glued": true,
+  "mismatched": true,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_KEY_5598_ai:0",
+    "name": "4196000003 · KEY_5598",
+    "members": 4,
+    "bbox": [
+     0,
+     0,
+     50,
+     36
+    ],
+    "hash": "206cbf01",
+    "mirrored": false,
+    "topIndices": null
+   }
+  ],
+  "logs": [
+   "warn KEY_5598: its two bodies could not be told apart (both bodies trace to one shape) — kept as one piece",
+   "POOL 4196000003 · KEY_5598 → gold (plain)"
+  ]
+ },
+ "mismatched pair, a ball and a racket": {
+  "pools": [
+   {
+    "poolId": "4196000004_5000000004_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000004",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000004",
+    "sku": "TENNIS_MIS",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 2,
+    "charmHash": "2b0bd391",
+    "masterHash": "mh-TENNIS_MIS",
+    "aiPath": "charmnest/master/sku/TENNIS_MIS.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000004_5000000004",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000004:5000000004",
+    "groupSize": 2
+   },
+   {
+    "poolId": "4196000004_5000000004_2",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000004",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000004",
+    "sku": "TENNIS_MIS",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 2,
+    "quantity": 2,
+    "charmHash": "fa1cb91d",
+    "masterHash": "mh-TENNIS_MIS",
+    "aiPath": "charmnest/master/sku/TENNIS_MIS.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000004_5000000004",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000004:5000000004",
+    "groupSize": 2
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000004_5000000004_1",
+   "4196000004_5000000004_2"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": true,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_TENNIS_MIS_ai:4196000004_5000000004_1",
+    "name": "4196000004 · TENNIS_MIS · 1/2",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000004:5000000004",
+    "groupSize": 2,
+    "members": 2,
+    "bbox": [
+     0,
+     0,
+     20,
+     20
+    ],
+    "hash": "2b0bd391",
+    "mirrored": false,
+    "topIndices": []
+   },
+   {
+    "id": "pool:charmnest_master_sku_TENNIS_MIS_ai:4196000004_5000000004_2",
+    "name": "4196000004 · TENNIS_MIS · 2/2",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000004:5000000004",
+    "groupSize": 2,
+    "members": 2,
+    "bbox": [
+     28,
+     0,
+     34,
+     36
+    ],
+    "hash": "fa1cb91d",
+    "mirrored": true,
+    "topIndices": []
+   }
+  ],
+  "logs": [
+   "POOL 4196000004 · TENNIS_MIS → gold (plain)"
+  ]
+ },
+ "single earring naming the Right ear": {
+  "pools": [
+   {
+    "poolId": "4196000005_5000000005_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000005",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000005",
+    "sku": "KEYS_UNEQUAL",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 1,
+    "charmHash": "c5b7cb03",
+    "masterHash": "mh-KEYS_UNEQUAL",
+    "aiPath": "charmnest/master/sku/KEYS_UNEQUAL.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000005_5000000005",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000005:5000000005",
+    "groupSize": 1
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000005_5000000005_1"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": true,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_KEYS_UNEQUAL_ai:4196000005_5000000005_1",
+    "name": "4196000005 · KEYS_UNEQUAL",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 1,
+    "groupKey": "4196000005:5000000005",
+    "groupSize": 1,
+    "members": 3,
+    "bbox": [
+     30,
+     0,
+     50,
+     36
+    ],
+    "hash": "c5b7cb03",
+    "mirrored": true,
+    "topIndices": [
+     1
+    ]
+   }
+  ],
+  "logs": [
+   "POOL 4196000005 · KEYS_UNEQUAL → gold (plain)"
+  ]
+ },
+ "matching stud pair": {
+  "pools": [
+   {
+    "poolId": "4196000006_5000000006_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000006",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000006",
+    "sku": "PAIR_STUD",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 2,
+    "charmHash": "feb3db9e",
+    "masterHash": "mh-PAIR_STUD",
+    "aiPath": "charmnest/master/sku/PAIR_STUD.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000006_5000000006",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000006:5000000006",
+    "groupSize": 2
+   },
+   {
+    "poolId": "4196000006_5000000006_2",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000006",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000006",
+    "sku": "PAIR_STUD",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 2,
+    "quantity": 2,
+    "charmHash": "feb3db9e",
+    "masterHash": "mh-PAIR_STUD",
+    "aiPath": "charmnest/master/sku/PAIR_STUD.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000006_5000000006",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 0,
+    "groupKey": "4196000006:5000000006",
+    "groupSize": 2
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000006_5000000006_1",
+   "4196000006_5000000006_2"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": false,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_PAIR_STUD_ai:4196000006_5000000006_1",
+    "name": "4196000006 · PAIR_STUD · 1/2",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000006:5000000006",
+    "groupSize": 2,
+    "members": 2,
+    "bbox": [
+     1,
+     1,
+     19,
+     23
+    ],
+    "hash": "feb3db9e",
+    "mirrored": false,
+    "topIndices": null
+   },
+   {
+    "id": "pool:charmnest_master_sku_PAIR_STUD_ai:4196000006_5000000006_2",
+    "name": "4196000006 · PAIR_STUD · 2/2",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 0,
+    "groupKey": "4196000006:5000000006",
+    "groupSize": 2,
+    "members": 2,
+    "bbox": [
+     1,
+     1,
+     19,
+     23
+    ],
+    "hash": "feb3db9e",
+    "mirrored": true,
+    "topIndices": null
+   }
+  ],
+  "logs": [
+   "POOL 4196000006 · PAIR_STUD → gold (plain)"
+  ]
+ },
+ "matching hoop pair x2": {
+  "pools": [
+   {
+    "poolId": "4196000007_5000000007_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000007",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000007",
+    "sku": "PAIR_HOOP",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 1,
+    "quantity": 4,
+    "charmHash": "09cafdf0",
+    "masterHash": "mh-PAIR_HOOP",
+    "aiPath": "charmnest/master/sku/PAIR_HOOP.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000007_5000000007",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4
+   },
+   {
+    "poolId": "4196000007_5000000007_2",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000007",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000007",
+    "sku": "PAIR_HOOP",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 2,
+    "quantity": 4,
+    "charmHash": "09cafdf0",
+    "masterHash": "mh-PAIR_HOOP",
+    "aiPath": "charmnest/master/sku/PAIR_HOOP.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000007_5000000007",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4
+   },
+   {
+    "poolId": "4196000007_5000000007_3",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000007",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000007",
+    "sku": "PAIR_HOOP",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 3,
+    "quantity": 4,
+    "charmHash": "09cafdf0",
+    "masterHash": "mh-PAIR_HOOP",
+    "aiPath": "charmnest/master/sku/PAIR_HOOP.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000007_5000000007",
+    "updateTs": 1791500001,
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4
+   },
+   {
+    "poolId": "4196000007_5000000007_4",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000007",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000007",
+    "sku": "PAIR_HOOP",
+    "material": "gold",
+    "size": null,
+    "form": "earrings",
+    "chain": null,
+    "copy": 4,
+    "quantity": 4,
+    "charmHash": "09cafdf0",
+    "masterHash": "mh-PAIR_HOOP",
+    "aiPath": "charmnest/master/sku/PAIR_HOOP.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000007_5000000007",
+    "updateTs": 1791500001,
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000007_5000000007_1",
+   "4196000007_5000000007_2",
+   "4196000007_5000000007_3",
+   "4196000007_5000000007_4"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": false,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_PAIR_HOOP_ai:4196000007_5000000007_1",
+    "name": "4196000007 · PAIR_HOOP · 1/4",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4,
+    "members": 3,
+    "bbox": [
+     0,
+     0,
+     20,
+     30
+    ],
+    "hash": "09cafdf0",
+    "mirrored": false,
+    "topIndices": null
+   },
+   {
+    "id": "pool:charmnest_master_sku_PAIR_HOOP_ai:4196000007_5000000007_2",
+    "name": "4196000007 · PAIR_HOOP · 2/4",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4,
+    "members": 3,
+    "bbox": [
+     0,
+     0,
+     20,
+     30
+    ],
+    "hash": "09cafdf0",
+    "mirrored": true,
+    "topIndices": null
+   },
+   {
+    "id": "pool:charmnest_master_sku_PAIR_HOOP_ai:4196000007_5000000007_3",
+    "name": "4196000007 · PAIR_HOOP · 3/4",
+    "side": "L",
+    "mirror": false,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4,
+    "members": 3,
+    "bbox": [
+     0,
+     0,
+     20,
+     30
+    ],
+    "hash": "09cafdf0",
+    "mirrored": false,
+    "topIndices": null
+   },
+   {
+    "id": "pool:charmnest_master_sku_PAIR_HOOP_ai:4196000007_5000000007_4",
+    "name": "4196000007 · PAIR_HOOP · 4/4",
+    "side": "R",
+    "mirror": true,
+    "bodyIndex": 0,
+    "groupKey": "4196000007:5000000007",
+    "groupSize": 4,
+    "members": 3,
+    "bbox": [
+     0,
+     0,
+     20,
+     30
+    ],
+    "hash": "09cafdf0",
+    "mirrored": true,
+    "topIndices": null
+   }
+  ],
+  "logs": [
+   "POOL 4196000007 · PAIR_HOOP ×2 → gold (plain)"
+  ]
+ },
+ "necklace of a one-body design": {
+  "pools": [
+   {
+    "poolId": "4196000008_5000000008_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000008",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000008",
+    "sku": "ONE_PENDANT",
+    "material": "gold",
+    "size": null,
+    "form": "necklace",
+    "chain": null,
+    "copy": 1,
+    "quantity": 1,
+    "charmHash": "81823ef6",
+    "masterHash": "mh-ONE_PENDANT",
+    "aiPath": "charmnest/master/sku/ONE_PENDANT.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000008_5000000008",
+    "updateTs": 1791500001
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000008_5000000008_1"
+  ],
+  "notes": [],
+  "glued": false,
+  "mismatched": false,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_ONE_PENDANT_ai:0",
+    "name": "4196000008 · ONE_PENDANT",
+    "members": 2,
+    "bbox": [
+     1,
+     1,
+     23,
+     27
+    ],
+    "hash": "81823ef6",
+    "mirrored": false,
+    "topIndices": null
+   }
+  ],
+  "logs": [
+   "POOL 4196000008 · ONE_PENDANT → gold (plain)"
+  ]
+ },
+ "necklace of a ball and a racket": {
+  "pools": [
+   {
+    "poolId": "4196000009_5000000009_1",
+    "runId": null,
+    "setId": null,
+    "sheetId": null,
+    "orderId": "4196000009",
+    "orderDate": 1791500000,
+    "arrivedAt": 0,
+    "transactionId": "5000000009",
+    "sku": "TENNIS_MIS",
+    "material": "gold",
+    "size": null,
+    "form": "necklace",
+    "chain": null,
+    "copy": 1,
+    "quantity": 1,
+    "charmHash": "49cbf750",
+    "masterHash": "mh-TENNIS_MIS",
+    "aiPath": "charmnest/master/sku/TENNIS_MIS.ai",
+    "engrave": false,
+    "state": "ready",
+    "lineKey": "4196000009_5000000009",
+    "updateTs": 1791500001
+   }
+  ],
+  "state": "pooled",
+  "poolIds": [
+   "4196000009_5000000009_1"
+  ],
+  "notes": [
+   "the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored"
+  ],
+  "glued": false,
+  "mismatched": false,
+  "charms": [
+   {
+    "id": "pool:charmnest_master_sku_TENNIS_MIS_ai:0",
+    "name": "4196000009 · TENNIS_MIS",
+    "members": 4,
+    "bbox": [
+     0,
+     0,
+     34,
+     36
+    ],
+    "hash": "49cbf750",
+    "mirrored": false,
+    "topIndices": null
+   }
+  ],
+  "logs": [
+   "POOL 4196000009 · TENNIS_MIS → gold (plain)"
+  ]
+ }
+}
