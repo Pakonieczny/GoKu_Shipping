@@ -2942,12 +2942,13 @@ async function mapSig(name) {
   const own = await collSig(PREFIX + name, MAP_STAMP[name]); return own ? `${shared}~${own}` : null;
 }
 /* The SKU table of each listing a line waits on (the SKU Etsy keeps for each product: charm-nest-orders.js inventorySku). One
-   stored table per listing, kept 7 days; Etsy is asked at most once per listing then, 6 listings a request and 60 a day, never
-   by the sandbox (it reads what production stored). See _charmNestListingSkus.js for the cost. */
+   stored table per listing, kept 7 days; Etsy is asked at most once per listing then, 6 listings a request and 60 a day for the
+   whole shop, the sandbox included (at most 30 of the 60, and the table it stores is the shop's table: the cache is shared, not
+   prefixed). Only a request that says cacheOnly asks Etsy nothing. See _charmNestListingSkus.js for the cost. */
 async function op_listingSkus(b = {}) {
   const ids = Array.isArray(b.listingIds) ? b.listingIds : String(b.listingIds || b.listingId || "").split(",");
-  const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once; never in the sandbox)
-  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, cacheOnly: !!PREFIX || b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
+  const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once)
+  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, sandbox: !!PREFIX, cacheOnly: b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
 }
 async function op_aliasGet(b = {}) {
   const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };

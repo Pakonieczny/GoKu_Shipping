@@ -1476,9 +1476,13 @@ const Orders = window.Orders = (() => {
      listingSkus, _charmNestListingSkus.js) is asked for only the listings with a line that still waits on its SKU (no SKU, a
      SKU no master file holds, or an option nothing has answered) and whose ids the station gave (a line restored from a record
      has none). The page keeps what it was told for the same 7 days, so a reload asks for nothing it already knows; a listing
-     the cloud could not ask Etsy about yet is asked again after 10 minutes, then 30, then 90… (6 hours at most). */
-  const TABLES_LS = "cn.listingSkus.v1", TABLES_ASK_MS = 7 * 86400000, TABLES_KEEP_MS = 14 * 86400000, tableTry = new Map();   // (listing id → { until, n }: not asked again before `until`)
-  let tableTimer = 0, tableBusy = false, tablesRead = false;
+     the cloud could not ask Etsy about yet is asked again after 10 minutes, then 30, then 90… (6 hours at most).
+     The sandbox asks the same way (FLAGLOAD, 11 Oct 2026): it used to get the cache only, which nothing but a production page ever
+     filled, so a listing only the sandbox's own orders carried read "not loaded yet" for good. The listings go six to a request, the
+     wanted ones first (a line that asks about an option before one that only lacks its SKU, then the oldest order first), each
+     answer is read at once, and the Review row says what is happening: a spinner while it is asked, one plain line when it could not be. */
+  const TABLES_LS = "cn.listingSkus.v1", TABLES_ASK_MS = 7 * 86400000, TABLES_KEEP_MS = 14 * 86400000, TABLES_CHUNK = 6, tableTry = new Map(), tableNote = new Map();   // (listing id → { until, n }: not asked again before `until`; → { busy } while asked, { why } when it could not be)
+  let tableTimer = 0, tableBusy = false, tablesRead = false, tableRetryTimer = 0;
   function tablesLoad() {
     if (tablesRead) return; tablesRead = true;
     try {
@@ -1508,32 +1512,80 @@ const Orders = window.Orders = (() => {
     if (tableTimer || tableBusy || !S.cloud.ok) return;
     tableTimer = setTimeout(() => { tableTimer = 0; askTables().catch(e => console.warn("SKU tables", e)); }, 800);
   }
+  /** What a waiting line asks of its listing's table, most wanted first: a line that asks about an option (one look at the table can clear it)
+   *  before one that only lacks its SKU, a font / count question (the table cannot answer those) last; then the oldest order. */
+  function tableRank(r) {
+    const ps = r.problems || [], plain = ps.some(p => p.kind === "needsMapping" && !p.font && !p.count && !p.earWords && !p.pairSecond);
+    return plain ? 0 : ps.some(p => p.kind === "unmatchedSku" || (p.kind === "needsMapping" && p.pairSecond)) ? 1 : 2;
+  }
+  const nextUtcDay = now => Date.parse(new Date(now).toISOString().slice(0, 10) + "T00:00:00Z") + 86400000;
+  const clockOf = ms => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  /** One plain line on why a listing's table could not be loaded now, and when it is asked for again. */
+  function tableFail(why, until, cap) {
+    if (why === "day") return "Not loaded: today's Etsy budget for listing look-ups (" + (cap && cap.max || 60) + " a day) is used up. It is asked again after midnight UTC";
+    if (why === "sandbox") return "Not loaded: the sandbox's share of today's Etsy look-ups (" + (cap && cap.max || 30) + " of " + 60 + ") is used up. It is asked again after midnight UTC";
+    if (why === "error") return "Not loaded: Etsy did not answer for this listing. It is asked again at " + clockOf(until);
+    if (why === "cache") return "Not loaded: nothing is stored for it yet and this request did not ask Etsy. It is asked again at " + clockOf(until);
+    if (why === "batch") return "Not loaded yet: waiting for its turn (six listings at a time). It is asked again at " + clockOf(until);
+    return "Not loaded: the cloud did not answer. It is asked again at " + clockOf(until);
+  }
   async function askTables() {
     if (tableBusy || !S.cloud.ok) return;
-    const now = Date.now(), ids = [], nameIds = [];
+    const now = Date.now(), want = new Map();
     for (const r of rowsOf()) {
       if (!needsTable(r)) continue;
-      // (a table the page already holds is asked for again, once, only when a line needs Etsy's value names and the table has none: the cloud answers from its cache in the sandbox, from Etsy in production)
+      // (a table the page already holds is asked for again, once, only when a line needs Etsy's value names and the table has none: the cloud answers from its cache or from Etsy, within the day's caps)
       const id = String(r.line.listingId), have = B.maps.listingSkus[id], t = tableTry.get(id), names = needsNames(r) && !!have && Array.isArray(have.products) && !have.names;
-      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names) || (t && now < t.until) || ids.includes(id)) continue;
-      ids.push(id); if (names) nameIds.push(id);
+      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names) || (t && now < t.until)) continue;
+      const age = +(r.order && r.order.createTs) || (+r.arrivedAt ? r.arrivedAt / 1000 : 9e12), w = want.get(id) || { id, rank: 9, age: 9e13, names: false };
+      want.set(id, { id, rank: Math.min(w.rank, tableRank(r)), age: Math.min(w.age, age), names: w.names || names });
     }
-    if (!ids.length) return;
+    const list = [...want.values()].sort((a, b) => a.rank - b.rank || a.age - b.age || (a.id < b.id ? -1 : 1));
+    if (!list.length) return;
     tableBusy = true;
+    for (const w of list) tableNote.set(w.id, { busy: true });
+    paintTableNotes();
+    let stop = null;   // the cloud's answer that ends the round: the day's (or the sandbox's) calls used, Etsy failing, or no answer at all
     try {
-      for (let i = 0; i < ids.length; i += 25) {
-        const part = ids.slice(i, i + 25), r = await api("charmNestLibrary", { op: "listingSkus", listingIds: part, ...(nameIds.length ? { nameIds: part.filter(id => nameIds.includes(id)) } : {}) }, { quiet: true }).catch(() => null);
-        const pending = new Set((r && r.pending || []).map(String));
-        for (const id of part) {
-          const t = tableTry.get(id), n = t ? t.n : 0, back = r && r.tables && r.tables[id], noNames = nameIds.includes(id) && !!back && Array.isArray(back.products) && !back.names;   // (asked for names and still none: not again before the backoff)
-          if (back && !pending.has(id) && !noNames) tableTry.delete(id);
-          else if (r && r.why === "batch") tableTry.set(id, { until: Date.now() + 90000, n });   // (the cloud's six for this request were used: the rest come in the next)
-          else tableTry.set(id, { until: Date.now() + Math.min(6 * 3600000, 600000 * 3 ** n), n: Math.min(5, n + 1) });
+      for (let i = 0; i < list.length; i += TABLES_CHUNK) {
+        const part = list.slice(i, i + TABLES_CHUNK), ids = part.map(w => w.id), nm = part.filter(w => w.names).map(w => w.id);
+        const r = stop ? null : await api("charmNestLibrary", { op: "listingSkus", listingIds: ids, ...(nm.length ? { nameIds: nm } : {}) }, { quiet: true }).catch(() => null);
+        const pending = new Set((r && r.pending || []).map(String)), why = stop ? stop.why : r ? r.why : "net";
+        for (const id of ids) {
+          const t = tableTry.get(id), n = t ? t.n : 0, back = r && r.tables && r.tables[id], noNames = nm.includes(id) && !!back && Array.isArray(back.products) && !back.names;   // (asked for names and still none: not again before the backoff)
+          if (back && !pending.has(id) && !noNames) { tableTry.delete(id); tableNote.delete(id); continue; }
+          const until = why === "batch" ? Date.now() + 90000 : why === "day" || why === "sandbox" ? nextUtcDay(Date.now()) + 60000 : Date.now() + Math.min(6 * 3600000, 600000 * 3 ** n);   // (the cloud's six for this request were used: the rest come in the next; a day's calls come back at midnight UTC)
+          tableTry.set(id, { until, n: why === "batch" || why === "day" || why === "sandbox" ? n : Math.min(5, n + 1) });
+          tableNote.set(id, { why: tableFail(why, until, why === "sandbox" ? r && r.sandboxCap || (stop && stop.cap) : r && r.cap || (stop && stop.cap)) });
         }
         if (r && r.tables) await takeTables(r.tables);
+        // a day's calls used, or Etsy not answering: the rest of the round is not asked (nothing is retried in a loop; every listing waits for its own time above)
+        if (!stop && (!r || ["day", "sandbox", "error", "cache"].includes(r.why))) stop = { why, cap: r && (r.why === "sandbox" ? r.sandboxCap : r.cap) };
       }
-    } finally { tableBusy = false; }
+    } finally {
+      tableBusy = false; for (const [id, n] of tableNote) if (n.busy) tableNote.delete(id); paintTableNotes();   // (a round cut short leaves no spinner behind)
+      // one look at the earliest time a listing may be asked again (never a poll: nothing is waiting once every table is here)
+      clearTimeout(tableRetryTimer); tableRetryTimer = 0;
+      const soon = Math.min(...[...tableTry.values()].map(t => t.until));
+      if (Number.isFinite(soon)) tableRetryTimer = setTimeout(() => { tableRetryTimer = 0; wantTables(); }, Math.min(2 ** 30, Math.max(5000, soon - Date.now() + 500)));
+      wantTables();   // (a line that came while the round ran)
+    }
   }
+  /** What the Review row says while the table of a waiting line's listing is on its way, or could not come: a labelled spinner, or one plain line. */
+  function tableNoteInner(id) {
+    const n = tableNote.get(String(id));
+    if (n && n.busy) return `<span class="cuStat" role="status"><span class="spin" aria-hidden="true"></span>Loading Etsy's SKU list for listing ${esc(id)}…</span>`;
+    return n && n.why ? `<span class="tblFail" role="status">${esc(n.why)}</span>` : "";
+  }
+  function tableNoteHtml(rows) {
+    for (const r of rows || []) {
+      if (!r || !r.line || !r.line.listingId || !needsTable(r)) continue;
+      const id = String(r.line.listingId); if (B.maps.listingSkus[id]) continue;
+      return `<span class="tblSlot" data-tbl="${esc(id)}">${tableNoteInner(id)}</span>`;
+    }
+    return "";
+  }
+  function paintTableNotes(root) { try { for (const el of (root || document).querySelectorAll("[data-tbl]")) { const h = tableNoteInner(el.dataset.tbl); if (el.innerHTML !== h) el.innerHTML = h; } } catch (_) {} }
   /** Tables the cloud sent: the lines of those listings are read again, and a line held for its SKU or its option that now reads clean is made up again. */
   async function takeTables(fresh) {
     const next = Object.assign({}, B.maps.listingSkus); let changed = false;
@@ -1541,6 +1593,7 @@ const Orders = window.Orders = (() => {
     if (!changed) return;
     const waiting = new Set(rowsOf().filter(needsTable).map(r => r.key));
     B.maps.listingSkus = next; tablesSave();
+    for (const id of Object.keys(fresh || {})) if (next[id]) tableNote.delete(String(id));
     interpretAll();
     for (const r of rowsOf()) {
       if (!waiting.has(r.key) || !fresh[String(r.line.listingId)] || (r.problems || []).some(p => p.kind === "unmatchedSku" || p.kind === "needsMapping")) continue;
@@ -2214,7 +2267,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -11313,7 +11366,7 @@ const Review = window.Review = (() => {
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
     const stamp=stampOf(it);
-    const cached=reviewRows.get(it.key);if(cached?.stamp===stamp)return cached.node;
+    const cached=reviewRows.get(it.key);if(cached?.stamp===stamp){Orders.paintTableNotes?.(cached.node);return cached.node;}
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null);
     // any other card: the custom card's buttons, for the order it shows (actOf); cx is what those buttons act on
     const ax=cu?null:actOf(it),cx=cu?it:ax,busy=cx?CustomPrint.statusHtml(cx,'sm'):'';
@@ -11362,7 +11415,7 @@ const Review = window.Review = (() => {
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
