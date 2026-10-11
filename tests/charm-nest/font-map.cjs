@@ -132,8 +132,9 @@ const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
   const withIds = c => O.interpretLine({ receiptId: x.rid, updateTs: 0 }, Object.assign(lineOf(x), { productId: '31726160304', variations: lineOf(x).variations.map(v => v.name === 'Charm Type' ? Object.assign(v, { property_id: 513, value_id: 1481636059101 }) : v) }), c);
   const sp = withIds(ctx({ listingSkus: table })), q = asks(sp);
   eq(q.map(p => [p.optionName, p.optionValue]), [['Charm Type', 'Tag1 (front engrave)']], 'the Tag1 option still waits for a person (and only it)');
-  ok(/one SKU \(MINI_0445\) for every choice of this listing/.test(q[0].why), 'with the plain reason: ' + q[0].why);
-  ok(sp.designSku === 'MINI_0445' && sp.designSku !== 'TINY INITIAL TAG 1', 'the only SKU Etsy gives is MINI_0445; TINY INITIAL TAG 1 (a look-alike by name) is never picked');
+  // (TAGSKU 1 of 11 Oct: the Tag number is now read as the tag SHAPE, so the plain reason names the shape, not the shared SKU; the option still waits, and never picks a look-alike by name)
+  ok(/no design for the Tag1 shape/.test(q[0].why), 'with the plain reason: ' + q[0].why);
+  ok(sp.designSku !== 'TINY INITIAL TAG 1', 'TINY INITIAL TAG 1 (a look-alike by name) is never picked');
   // a person's saved answer for the option settles it (not written here)
   const saved = { 4458930445: { 'charm type': { 'tag1 (front engrave)': { field: 'design', value: 'TINY INITIAL TAG 1', by: 'Paul', at: 1 } } } };
   const sp2 = withIds(ctx({ listingSkus: table, optionMaps: saved }));

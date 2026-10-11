@@ -324,9 +324,10 @@
     // (a listing's usual font that stands in for a word the shop does not offer is still a request to look at: not "mapped")
     return { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
   }
-  /** The font word a face of a front + back line names for itself (spec.engraving[face].fontWord), "" when it names none (the line's font then serves both faces). */
+  /** The font word a face of a front + back line names for itself (spec.engraving[face].fontWord), "" when it names none (the line's font then serves both faces).
+   *  No face means the back, as everywhere else (CONTRACT: an absent face is "back"). */
   function faceFontWord(spec, face) {
-    const e = spec && face && spec.engraving && spec.engraving[face];
+    const e = spec && spec.engraving && spec.engraving[face === "front" ? "front" : "back"];
     return e && typeof e.fontWord === "string" ? e.fontWord.trim() : "";
   }
   /** Fonts that have no lowercase (Ace): the text of a piece in one is engraved in capitals ("w" -> "W"). Any other font keeps the text exactly as it is. */
