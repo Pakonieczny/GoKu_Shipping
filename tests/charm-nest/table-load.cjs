@@ -9,6 +9,10 @@
 //   · so the row stayed "not loaded yet" for good (the page backed off 10 min, 30 min, 90 min … 6 h and asked the same empty cache again).
 //     Not the 60-a-day cap, not an Etsy error, not a stale page state: the sandbox never reached Etsy.
 //
+//  FLAGWHY (same hour) settles the lines whose transaction already carries the option's own master SKU (ZODIAC_CONSTE_GEM-7 …) without any table, so those three rows
+//  clear on their own and ask nothing (tests/charm-nest/option-own-sku.cjs). This file is the other half: a line whose transaction carries only the listing's UMBRELLA SKU (the
+//  OPTLINK lines: "Zodiac REVAMP", "Birth_6106") or none can be read only through the listing's table, and that table now loads in the sandbox too.
+//
 //  the fix this test pins: the sandbox asks Etsy for what its waiting lines need, inside the SAME caps (6 a request, 60 a day for the shop, one GET per
 //  listing per 7 days, the sandbox at most 30 of the 60), stores the shop's table (production finds it), the page asks six listings a request, the wanted
 //  ones first (an option question before a missing SKU before a font/count question; the oldest order first), reads each answer at once (the rows clear
@@ -28,16 +32,17 @@ const SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', '
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 const PAUL = ['1160815385', '856808566', '883649717'], EXTRA = {};
 const LISTINGS = {
-  '1160815385': { title: 'Zodiac Gem Necklace', metalName: 'Metal Colour', metals: ['Silver', 'Gold'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'Zodiac_Conste_Gem-' + i, picked: 'Scorpio', receipt: '4197589560', createTs: 3000 },
-  '856808566': { title: 'Zodiac Stud Earrings', metalName: 'Metal Choice :', metals: ['Gold - Pair', 'Silver - Pair'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'Zodiac_Earrings-' + i, picked: 'Cancer', receipt: '4195168363', createTs: 1000 },
-  '883649717': { title: 'Letter Stud Earrings', metalName: 'Color', metals: ['Sterling Silver', 'Gold'], optName: 'Letter', values: LETTERS, sku: i => 'Letter_Earring-' + i, picked: 'T', receipt: '4194545985', createTs: 2000 }
+  '1160815385': { title: 'Zodiac Gem Necklace', metalName: 'Metal Colour', metals: ['Silver', 'Gold'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'Zodiac_Conste_Gem-' + i, umbrella: 'Zodiac Gem Necklace', picked: 'Scorpio', receipt: '4197589560', createTs: 3000 },
+  '856808566': { title: 'Zodiac Stud Earrings', metalName: 'Metal Choice :', metals: ['Gold - Pair', 'Silver - Pair'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'Zodiac_Earrings-' + i, umbrella: 'Zodiac REVAMP', picked: 'Cancer', receipt: '4195168363', createTs: 1000 },
+  '883649717': { title: 'Letter Stud Earrings', metalName: 'Color', metals: ['Sterling Silver', 'Gold'], optName: 'Letter', values: LETTERS, sku: i => 'Letter_Earring-' + i, umbrella: 'Letter Stud', picked: 'T', receipt: '4194545985', createTs: 2000 }
 };
 const specOf = id => LISTINGS[id] || EXTRA[id];
 const inventoryOf = (id, spec = specOf(id)) => ({ products: spec.values.flatMap((v, i) => spec.metals.map((m, k) => ({ product_id: +id * 100 + i * 10 + k, sku: spec.sku(i), is_deleted: false, property_values: [
   { property_id: 100, property_name: spec.metalName, value_ids: [200 + k], values: [m] }, { property_id: 101, property_name: spec.optName, value_ids: [300 + i], values: [v] }] }))) });
-const lineOf = (id, spec = specOf(id), value = spec.picked) => {
+// sku: what the transaction carries: the listing's umbrella SKU (shared by every choice, in no master) unless the test says otherwise
+const lineOf = (id, spec = specOf(id), value = spec.picked, sku = spec.umbrella || 'UMBRELLA ' + id) => {
   const i = spec.values.indexOf(value), k = 0, productId = String(+id * 100 + i * 10 + k);
-  return { transactionId: id + '1', listingId: id, productId, sku: spec.sku(i).toUpperCase(), title: spec.title, quantity: 1, metalKey: /silver/i.test(spec.metals[k]) ? 'silver' : 'gold', metalLabel: '', personalization: [], buyerMessage: '',
+  return { transactionId: id + '1', listingId: id, productId, sku, title: spec.title, quantity: 1, metalKey: /silver/i.test(spec.metals[k]) ? 'silver' : 'gold', metalLabel: '', personalization: [], buyerMessage: '',
     variations: [{ name: spec.metalName, value: spec.metals[k], propertyId: '100', valueId: String(200 + k) }, { name: spec.optName, value, propertyId: '101', valueId: String(300 + i) }] };
 };
 const master = new Map(); for (const id of PAUL) LISTINGS[id].values.forEach((v, i) => master.set(LISTINGS[id].sku(i).toUpperCase(), {}));
@@ -46,17 +51,18 @@ const ctx = extra => Object.assign({ optionMaps: {}, aliases: {}, noDesign: { pa
 const orderOf = (rid, createTs = 1) => ({ receiptId: rid, updateTs: 1, createTs, staffNote: '', buyerMessage: '' });
 const open = sp => sp.problems.filter(p => p.kind === 'needsMapping');
 
-/* ── 0 · the three rows as Paul saw them, and as they read with the table ── */
+/* ── 0 · the three listings: with the umbrella SKU on the transaction the row waits ("not loaded yet"); with the table it is answered by the SKU Etsy ties to the option ── */
 function rows() {
   for (const id of PAUL) {
-    const spec = LISTINGS[id], line = lineOf(id), sp = O.interpretLine(orderOf(spec.receipt), line, ctx({ listingSkus: {} })), q = open(sp)[0];
-    assert(q, id + ': without a table the option waits'); assert.equal(q.optionValue, spec.picked);
+    const spec = LISTINGS[id], line = lineOf(id), sp = O.interpretLine(orderOf(spec.receipt), line, ctx({ listingSkus: {} })), q = open(sp)[0], i = spec.values.indexOf(spec.picked);
+    assert(q, id + ': without a table the option waits: ' + JSON.stringify(sp.problems)); assert.equal(q.optionValue, spec.picked);
     assert.match(O.inventoryWhy(line, undefined, true), new RegExp('SKU list for listing ' + id + ' is not loaded yet'));
+    assert.match(q.why, new RegExp('SKU list for listing ' + id + ' is not loaded yet'), 'the Review row says so');
     const table = T.fromStored(T.toStored(T.compact(inventoryOf(id), 1))), sp2 = O.interpretLine(orderOf(spec.receipt), line, ctx({ listingSkus: { [id]: table } }));
     assert.equal(open(sp2).length, 0, id + ': with the table the option is answered by the SKU Etsy ties to it: ' + JSON.stringify(sp2.problems));
-    assert.equal(sp2.designSku, line.sku); assert.equal(sp2.problems.length, 0);
+    assert.equal(sp2.designSku, spec.sku(i).toUpperCase()); assert.equal(sp2.problems.length, 0); assert.equal(sp2.skuSource, 'inventory');
   }
-  ok('the three rows: "not loaded yet" without the table; with it each option is answered by its own SKU and nothing else waits (Scorpio, Cancer, T)');
+  ok('the three listings (umbrella SKU on the transaction): "not loaded yet" without the table; with it the option is answered by its own SKU and nothing else waits (Scorpio, Cancer, T)');
 }
 
 /* ── the cloud: in-memory Firestore (refuses an array in an array), a fake Etsy, the real charmNestLibrary handler (loaded once, over a delegating fake) ── */
@@ -168,6 +174,9 @@ async function page() {
     for (const [id, ts] of MORE) { const spec = EXTRA[id] = { title: 'Zodiac X ' + id, metalName: 'Metal', metals: ['Gold'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'ZX' + id + '-' + i, picked: 'Leo' }; SIGNS.forEach((v, i) => master.set(spec.sku(i).toUpperCase(), {})); addRow(lineOf(id, spec), '41' + id, ts); }
     EXTRA['7100005'] = { title: 'NoSku', metalName: 'Metal', metals: ['Gold'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'NS-' + i };
     addRow(Object.assign(lineOf('7100001', EXTRA['7100001'], 'Aries'), { listingId: '7100005', sku: '', variations: [{ name: 'Metal', value: 'Gold', propertyId: '100', valueId: '200' }], productId: '71000050' }), '4171000050', 50);
+    // a line whose transaction carries the option's own master SKU of a numbered family (FLAGWHY settles it with no table): it must ask for nothing
+    const own = EXTRA['7100007'] = { title: 'Zodiac Y', metalName: 'Metal', metals: ['Gold'], optName: 'Zodiac Sign', values: SIGNS, sku: i => 'ZY7100007-' + i, picked: 'Leo' }; SIGNS.forEach((v, i) => master.set(own.sku(i).toUpperCase(), {}));
+    addRow(lineOf('7100007', own, 'Leo', own.sku(4).toUpperCase()), '4171000070', 20);
     const interpretAll = () => { for (const r of B.orders.rows) { r.spec = O.interpretLine(r.order, r.line, ctx({ listingSkus: B.maps.listingSkus, optionMaps: B.maps.optionMaps })); r.problems = r.spec.problems.slice(); } };
     interpretAll();
     const Review = { repool: async r => { repooled.push(r.key); r.state = 'pulled'; r.reason = null; } };
@@ -193,8 +202,8 @@ async function page() {
 
   // (1) the whole round: priority order, six a request, spinner while asking, rows clear with nothing saved, no second ask
   let s = await mk({});
-  assert.equal(s.B.orders.rows.filter(r => s.block.needsTable(r)).length, 8, 'eight listings wait: ' + s.B.orders.rows.map(r => r.line.listingId + ':' + r.problems.map(p => p.kind)).join(' '));
-  assert.deepEqual(s.B.orders.rows.map(r => s.block.tableRank(r)), [0, 0, 0, 0, 0, 0, 0, 1], 'seven option questions, then a missing SKU');
+  assert.equal(s.B.orders.rows.filter(r => s.block.needsTable(r)).length, 8, 'eight listings wait (the line with the option\'s own SKU does not): ' + s.B.orders.rows.map(r => r.line.listingId + ':' + r.problems.map(p => p.kind)).join(' '));
+  assert.deepEqual(s.B.orders.rows.slice(0, 8).map(r => s.block.tableRank(r)), [0, 0, 0, 0, 0, 0, 0, 1], 'seven option questions, then a missing SKU'); assert(!s.block.needsTable(s.B.orders.rows[8]) && s.B.orders.rows[8].problems.length === 0, 'the line with the option\'s own SKU is settled with no table: it asks for none');
   const before = clone(s.B.maps.optionMaps);
   await s.block.askTables();
   assert.deepEqual(s.w.asked, ['7100001', '856808566', '883649717', '1160815385', '7100002', '7100003', '7100004', '7100005'], 'option questions first, the oldest order first; the line that only lacks its SKU after them');
@@ -205,6 +214,7 @@ async function page() {
   assert.deepEqual(s.repooled.slice().sort(), s.B.orders.rows.slice(0, 7).map(r => r.key).sort(), 'every held line that now reads clean is made up again, with nothing re-saved by a person');
   assert.deepEqual(s.B.maps.optionMaps, before, 'no option map was written for them');
   assert.equal(s.B.orders.rows[SCORPIO].spec.designSku, 'ZODIAC_CONSTE_GEM-7'); assert.equal(s.B.orders.rows[CANCER].spec.designSku, 'ZODIAC_EARRINGS-3'); assert.equal(s.B.orders.rows[T_ROW].spec.designSku, 'LETTER_EARRING-19');
+  assert(!s.w.asked.includes('7100007'), 'and no Etsy call was made for it');
   const n0 = s.w.asked.length, req0 = s.seen.length; await s.block.askTables(); assert.equal(s.seen.length, req0, 'nothing more is asked once every table is here'); assert.equal(s.w.asked.length, n0);
   assert.deepEqual({ n: s.w.budget().n, sb: s.w.budget().sb }, { n: 8, sb: 8 });
   ok('page: eight waiting listings go six a request, option questions first and the oldest order first; a spinner while asking; Scorpio, Cancer and T clear and are made up again with nothing re-saved; no second ask');
