@@ -2226,6 +2226,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     host.innerHTML = CNEngravingSeals.panel(shown);
     CNEngravingSeals.wirePanel(host,shown,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
+    // the line's engraving setup (None / Front only / Back only / Front + back, each face's words and font): one control for every card, charm-nest-engrave-setup.js
+    if (window.CharmNestEngraveSetup && (e.job || rowOf(x))) { const su = document.createElement('div'); su.className = 'swEngSetup'; host.appendChild(su); tryDo(() => CharmNestEngraveSetup.mount(su, e.job ? e.job.row : rowOf(x), { compact: true })); }
   }
 
   /** A press on a disc of the switch, or Back / Next: that disc's charm, on this sheet (selectPiece) or on the other sheet it is on (switchSheet, as its row of "This order" does). */
