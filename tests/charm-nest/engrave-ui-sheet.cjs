@@ -192,6 +192,7 @@ const rec = (copy, face, text) => Object.assign({ poolId: P(copy), sheetId: 's1'
   console.log(`\n${n} pure checks passed`);
   if (process.argv.includes('--pure') || process.exitCode) return;
   await browser();
+  await nestCard();
 })();
 
 /* ── the real sheet window (headless Chromium over the fake site: bridge-server.cjs, the real charmNestLibrary ops over an in-memory store, nothing live) ── */
@@ -274,5 +275,61 @@ async function browser() {
     console.log('ok   back-only sheet: "1 back approved", no front wording');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
     console.log('\nbrowser checks passed');
+  } finally { await browser.close(); srv.close(); }
+}
+
+
+/* ── a Nest sheet card with a front + back piece: the plate's Front shows the FRONT words unmirrored, its Back the back words mirrored, the shelf names the faces, the pill says "Engravings" ── */
+async function nestCard() {
+  const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
+  let chromium; try { ({ chromium } = require(path.join(pwDir || '', 'playwright-core'))); } catch (_) { return; }
+  const { start } = require('./bridge-server.cjs');
+  const SH = 'sheet-nest-card-front', PA = '4195966039_41959660391_1', PB = '4173711093_41737110931_1';
+  const base = { sheetId: SH, order: '4195966039', sku: 'TINY_TAG', copy: 1, sizePt: 8, capMm: 2, weight: 'Regular', lineGap: .216, centre: [17, 17], angle: 0, upAngle: 90, approvedAt: Date.now() - 4000, approvedBy: 'Test Operator' };
+  const BACK = Object.assign({ poolId: PA, text: '1. 27. 24', lines: ['1. 27. 24'] }, base), FRONT = Object.assign({ poolId: PA, face: 'front', text: 'W', lines: ['W'] }, base, { centre: [17, 17] });
+  const srv = await start({ receipts: [] });
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.googleapis|fonts\.gstatic/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
+    await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.confirm = () => true; });
+    const page = await context.newPage(), errors = [];
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
+    await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
+    await page.waitForFunction(() => window.CN && window.SheetWin && SheetWin.cardBack && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    await page.evaluate(({ SH, PA, PB, BACK, FRONT }) => {
+      CN.setMode('nest');
+      const sq = { kind: 'path', subpaths: [[['m', [0, 0]], ['l', [34, 0]], ['l', [34, 34]], ['l', [0, 34]], ['h']]], stroke: true, strokeRGB: [0, 0, 0], lwPt: .25, bbox: [0, 0, 34, 34] };
+      const charm = (id, poolId) => ({ id, name: poolId.split('_')[0] + ' · TAG', poolId, order: poolId.split('_')[0], metal: 'gold', centerPt: [17, 17], widthPt: 34, heightPt: 34, areaPt2: 34 * 34, outline: sq, members: [sq], thumb: '' });
+      Object.assign(S.sheets.gold, { sheetId: SH, status: 'complete', charms: [charm('n1', PA), charm('n2', PB)], backPool: [BACK, FRONT],
+        placements: [{ id: 'n1', cxPt: 60, cyPt: 60, angle: 0, wPt: 34, hPt: 34 }, { id: 'n2', cxPt: 150, cyPt: 60, angle: 0, wPt: 34, hPt: 34 }] });
+      CN.showPage('gold', 0);
+    }, { SH, PA, PB, BACK, FRONT });
+    const card = '.sheetCard[data-m="gold"]';
+    await page.waitForFunction(c => { const s = document.querySelector(c + ' [data-r="face"]'); return s && !s.hidden; }, card);
+    const inkAt = () => page.evaluate(c => {
+      const cv = document.querySelector(c + ' [data-r="canvas"]'), sh = S.sheets.gold, v = sh._view, ctx = cv.getContext('2d');
+      const W = cv._face === 'back', sheetW = stockFor('gold', sh).wPt;
+      const at = p => { const x = v.R + (W ? sheetW - p.cxPt : p.cxPt) * v.k, y = v.R + p.cyPt * v.k, h = Math.round(9 * v.k);
+        const d = ctx.getImageData(Math.round(x) - h, Math.round(y) - h, 2 * h + 1, 2 * h + 1).data; let n = 0; for (let j = 0; j < d.length; j += 4) if (d[j] + d[j + 1] + d[j + 2] < 330) n++; return n; };
+      return { face: cv._face || 'front', a: at(sh.placements[0]), b: at(sh.placements[1]) };
+    }, card);
+    // the plate's FRONT carries the front words ("W") in ink once the font is in; the plain charm stays plain
+    const until = async (fn, ms, what) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 150)); } };
+    const f = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 30000, 'front words in ink on the Front of the plate');
+    assert.equal(f.b, 0, 'the plain charm stays plain from the front: ' + f.b);
+    // the shelf and the pill
+    const shelf = await page.evaluate(c => ({ faces: [...document.querySelectorAll(c + ' .backFace')].map(e => e.textContent), figures: document.querySelectorAll(c + ' .backPieces figure').length, label: (document.querySelector(c + ' [data-r="eng"] button') || document.body).getAttribute('aria-label') }), card);
+    assert.deepEqual(shelf.faces.sort(), ['Back', 'Front'], 'the shelf names each picture\'s face: ' + JSON.stringify(shelf)); assert.equal(shelf.figures, 2);
+    assert.equal(shelf.label, 'Engravings, 2 engravings', 'the pill counts engravings: ' + JSON.stringify(shelf));
+    // and turned over: the back words, mirrored, in the same place of the same charm
+    await page.click(`${card} [data-r="face"] [data-face="back"]`);
+    await page.waitForFunction(c => { const cv = document.querySelector(c + ' [data-r="canvas"]'), seg = document.querySelector(c + ' [data-r="face"]');
+      return cv._face === 'back' && !cv._turning && seg.querySelector('.spin').hidden && window.Engrave && Engrave.fonts && Engrave.fonts.ok; }, card, { timeout: 30000 });
+    const b = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 20000, 'back words in ink on the Back of the plate');
+    assert.equal(b.b, 0, 'the plain charm stays plain from behind: ' + b.b);
+    assert.deepEqual(errors, [], 'no page errors');
+    console.log('ok   Nest card: Front of the plate shows the front words, Back the back words; shelf names Front/Back; pill "Engravings, 2 engravings"');
   } finally { await browser.close(); srv.close(); }
 }
