@@ -2,6 +2,13 @@
  * DXF R2004: true colour (420), indexed fallback (62), named layers and closed
  * outline polylines. Filled PDF artwork stays filled using solid HATCH entities.
  * Curves are adaptively flattened to <= 0.002 mm, never resized to fit a page.
+ *
+ * FRONT + BACK ENGRAVING (11 Oct 2026, plans/front-back-1011/CONTRACT.md sections 9-11). A back file is laid ABOVE the cut sheet (layer "BACK <poolId>[ Left|Right] / ...").
+ * A front file (CharmNestPDF.buildBackFile({ face: "front" }), unmirrored) is put ON its charm in the sheet: compose(front, sheet, backs, fronts) reads the matrix the file
+ * says it was drawn with (Info entry BritesFrontFrame), takes the charm's own placement from the cut sheet, and writes the engraving paths under that placement in the layer
+ * "FRONT <poolId>[ Left|Right] / ENGRAVE" (the Right ear's mirror is already in its view: nothing is flipped here). A front file that cannot be put on its charm is laid above the
+ * sheet like a back (layers "FRONT <poolId> / CUT OUTLINE (reference)" and "... / ENGRAVE"), and the layout says so (frontLayout[].placed = false, .reason) for IMPORT.txt.
+ * A sheet with no front record composes, exports and indexes exactly as it did before: every front step below is behind `fronts.length`.
  */
 (function(root) {
   'use strict';
@@ -35,7 +42,7 @@
     return out;
   }
   function productionPaths(parsed) {
-    const paths=leaves(parsed),front=paths.filter(p=>!/^BACK(?: |$)|CUT OUTLINE|^SHEET(?: |$)|^ROSE SEPARATION CUT$/i.test(p.layer||''));
+    const paths=leaves(parsed),front=paths.filter(p=>!/^BACK(?: |$)|CUT OUTLINE|^SHEET(?: |$)|^ROSE SEPARATION CUT$/i.test(p.layer||'')&&!FRONT_LAYER.test(p.layer||''));
     const groups=pdf().groupCharms({...parsed,segments:front,nested:[]});
     const drop=new Set(),extra=[];
     for(const charm of groups.charms) {
@@ -48,40 +55,122 @@
     }
     return paths.filter(p=>!drop.has(p)).concat(extra);
   }
-  function parentScale(front, sheet, back) {
+  /** The placed charm a record belongs to, found in the parsed cut sheet: { form (its xobj, with the matrix the sheet draws it under), placement, scale }.
+   *  `what` names the record in the messages ("Back" for a back, as it always was; "Front engraving" for a front). */
+  function parentForm(front, sheet, back, what) {
+    what = what || 'Back';
     const charm = (sheet.charms || []).find(c => c.poolId === back.poolId);
     const placement = (sheet.placements || []).find(p => p.id === charm?.id || p.poolId === back.poolId);
-    if (!placement) throw new Error(`Back ${back.poolId}: no matching placed front charm.`);
+    if (!placement) throw new Error(`${what} ${back.poolId}: no matching placed front charm.`);
     const forms = front.segments.filter(s => s.kind === 'xobj');
     const layer = placement.layer || placement.layerName;
     const candidates = layer ? forms.filter(s => s.layer === layer) : [];
     const form = candidates.length === 1 ? candidates[0] : forms.length === sheet.placements.length ? forms[(placement.n || sheet.placements.indexOf(placement)+1)-1] : null;
-    if (!form?.matrix) throw new Error(`Back ${back.poolId}: cannot verify its parent scale.`);
+    if (!form?.matrix) throw new Error(`${what} ${back.poolId}: cannot verify its parent scale.`);
     const [a,b,c,d] = form.matrix, sx = Math.hypot(a,b), sy = Math.hypot(c,d);
     if (!(sx > 0) || Math.abs(sx-sy) > 1e-5 || Math.abs(a*c+b*d)>1e-5) throw new Error('Nonuniform parent scaling cannot be exported safely.');
     if (placement.scale && Math.abs(placement.scale-sx)>1e-5) throw new Error('Saved placement scale disagrees with the actual front artwork.');
-    return sx;
+    return {form, placement, scale: sx};
+  }
+  function parentScale(front, sheet, back) { return parentForm(front, sheet, back, 'Back').scale; }
+  /* ── the FRONT face ── */
+  const isFront = r => !!r && r.face === 'front';
+  /** Layer names of the sheet document for one piece's record: "BACK 4171_9001_1 Left / ", "FRONT 4171_9001_1 / " (the file's own layer name follows). */
+  const layerPrefix = (face, poolId, side) => (face === 'front' ? 'FRONT ' : 'BACK ') + poolId + (side ? ' ' + (side === 'L' ? 'Left' : 'Right') : '') + ' / ';
+  /** A layer the front engravings made in the sheet document ("FRONT <poolId>[ Left|Right] / ENGRAVE", or the reference outline of one laid above the sheet): never charm art, never a cut. */
+  const FRONT_LAYER = /^FRONT \S+(?: (?:Left|Right))? \/ /;
+  /** a 2D matrix inverse and product in the PDF convention (x' = a x + c y + e, y' = b x + d y + f; mul(m, k) applies m first) */
+  const inv = m => {const det=m[0]*m[3]-m[1]*m[2];if(!(Math.abs(det)>1e-12))return null;return [m[3]/det,-m[1]/det,-m[2]/det,m[0]/det,(m[2]*m[5]-m[3]*m[4])/det,(m[1]*m[4]-m[0]*m[5])/det];};
+  const mulM = (m, k) => [m[0]*k[0]+m[1]*k[2], m[0]*k[1]+m[1]*k[3], m[2]*k[0]+m[3]*k[2], m[2]*k[1]+m[3]*k[3], m[4]*k[0]+m[5]*k[2]+k[4], m[4]*k[1]+m[5]*k[3]+k[5]];
+  const apM = (m, x, y) => [m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]];
+  /** The matrix a front file says took the charm's source points onto its page (Info entry BritesFrontFrame, written by buildBackFile), or null (a file without it is laid above the sheet). */
+  function frontFrame(parsed) {
+    try {
+      const L = lib(), info = parsed.doc.getInfoDict(), v = info && info.get(L.PDFName.of('BritesFrontFrame'));
+      const text = v && v.decodeText ? v.decodeText() : null; if (!text) return null;
+      const o = JSON.parse(text);
+      return o && o.face === 'front' && Array.isArray(o.matrix) && o.matrix.length === 6 && o.matrix.every(Number.isFinite) && inv(o.matrix) ? o.matrix : null;
+    } catch (_) { return null; }
   }
   /** The ear a back engraving is for ("L" | "R"), from the back's own record, else from the sheet's charm of that pool id; null for any other piece (pairs, 9 Oct). */
   const sideOfBack = (sheet, b) => { const s = b.side || ((sheet.charms || []).find(c => c.poolId === b.poolId) || {}).side; return s === 'L' || s === 'R' ? s : null; };
   const groupOfBack = b => { if (b.groupKey) return String(b.groupKey); const m = /^(\d{4,20})_([^_]*)_\d{1,3}$/.exec(String(b.poolId || '')); return m ? m[1] + ':' + m[2] : ''; };
-  async function compose(frontBytes, sheet, backs) {
+  /** The front engravings of a sheet, each on its charm or (when that cannot be done) set aside to be laid above the sheet. `fronts`: records with their file bytes.
+   *  A front is put on its charm only when its file says how it sits on the charm (BritesFrontFrame), the sheet gives the charm's own placement, and the engraving lands
+   *  inside that charm once placed; anything less and it goes above the sheet like a back, and the entry says why. */
+  async function planFronts(front, sheet, fronts) {
+    const P = pdf(), onCharm = [], above = [], entries = [];
+    for (const f of fronts) {
+      const parsed = await P.parseSource(f.bytes, 'Front engraving '+f.poolId), paths = leaves(parsed);
+      // (the engraving is what the file's ENGRAVE layer holds; the lines of its cut reference may carry the master's own layer name, so they are told apart by NOT being on ENGRAVE)
+      const ink = paths.filter(p => /^ENGRAVE$/i.test(p.layer || ''));
+      if (!ink.length) throw new Error('Front engraving contains no engraving paths.');
+      const side = sideOfBack(sheet, f), parent = parentForm(front, sheet, f, 'Front engraving');
+      const entry = {poolId:f.poolId, face:'front', ...(side?{side,groupKey:groupOfBack(f)}:{}), scale:parent.scale, parentSheetId:sheet.id || sheet.sheetId};
+      entries.push(entry);
+      const frame = frontFrame(parsed), back = frame && inv(frame);
+      let why = frame ? null : 'its file does not say how it sits on its charm', X = null, box = null;
+      if (!why) {
+        X = mulM(back, parent.form.matrix);
+        for (const p of ink) for (const sub of p.subpaths || []) for (const o of sub) for (let i = 1; i < o.length; i++) {
+          const q = apM(X, o[i][0], o[i][1]); box = union(box, [q[0], q[1], q[0], q[1]]);
+        }
+        const fb = parent.form.bbox, tol = 2;
+        if (!box || !fb || box[0] < fb[0]-tol || box[1] < fb[1]-tol || box[2] > fb[2]+tol || box[3] > fb[3]+tol) why = 'its engraving does not fall on its charm once placed';
+      }
+      if (why) { entry.placed = false; entry.reason = why; above.push({rec:f, parsed, scale:parent.scale, entry}); }
+      else { entry.placed = true; entry.layer = layerPrefix('front', f.poolId, side) + 'ENGRAVE'; entry.boundsPt = box; onCharm.push({rec:f, ink, X, entry}); }
+    }
+    return {onCharm, above, entries};
+  }
+  /** Write one front's engraving paths into the sheet page under its charm's placement, in a layer of its own. */
+  function writeFront(out, page, item, tag) {
+    const L = lib(), res = page.node.Resources();
+    const ref = out.context.register(out.context.obj({Type:'OCG',Name:L.PDFString.of(item.entry.layer)}));
+    let props = res.lookup(L.PDFName.of('Properties'));
+    if (!(props instanceof L.PDFDict)) { props = out.context.obj({}); res.set(L.PDFName.of('Properties'), props); }
+    props.set(L.PDFName.of(tag), ref);
+    page.pushOperators(L.PDFOperator.of('BDC',[L.PDFName.of('OC'),L.PDFName.of(tag)]), L.pushGraphicsState(), L.concatTransformationMatrix(...item.X));
+    for (const p of item.ink) {
+      const ops = [], even = /\*/.test(p.paintOp || '');
+      for (const sub of p.subpaths || []) for (const o of sub) {
+        if (o[0] === 'm') ops.push(L.moveTo(o[1][0], o[1][1]));
+        else if (o[0] === 'l') ops.push(L.lineTo(o[1][0], o[1][1]));
+        else if (o[0] === 'c') ops.push(L.appendBezierCurve(o[1][0], o[1][1], o[2][0], o[2][1], o[3][0], o[3][1]));
+        else if (o[0] === 'h') ops.push(L.closePath());
+        else throw new Error('Front engraving uses a path operator the export cannot place.');
+      }
+      if (!ops.length) continue;
+      const fillRGB = p.fillRGB || [0,0,0], strokeRGB = p.strokeRGB || [0,0,0];
+      if (p.fill) page.pushOperators(L.setFillingRgbColor(fillRGB[0], fillRGB[1], fillRGB[2]));
+      if (p.stroke) page.pushOperators(L.setStrokingRgbColor(strokeRGB[0], strokeRGB[1], strokeRGB[2]), L.setLineWidth(p.lwPt || 0.5));
+      page.pushOperators(...ops, L.PDFOperator.of(p.fill && p.stroke ? (even ? 'B*' : 'B') : p.fill ? (even ? 'f*' : 'f') : 'S'));
+    }
+    page.pushOperators(L.popGraphicsState(), L.PDFOperator.of('EMC',[]));
+  }
+  async function compose(frontBytes, sheet, backs, fronts) {
     const P = pdf(), L = lib();
+    fronts = fronts || [];
     const front = await P.parseSource(frontBytes, 'Front sheet');
+    const plan = fronts.length ? await planFronts(front, sheet, fronts) : null;
     const inputs = [], layout = []; let x = SPACE, y = front.pageH + GAP, rowH = 0;
-    for (const b of backs) {
-      const parsed = await P.parseSource(b.bytes, 'Back '+b.poolId), paths = leaves(parsed);
+    // the backs, then any front engraving that could not be put on its charm, are laid in rows above the cut sheet
+    const laid = backs.map(b => ({b})).concat(plan ? plan.above.map(a => ({b:a.rec, parsed:a.parsed, scale:a.scale, entry:a.entry})) : []);
+    for (const it of laid) {
+      const b = it.b, isF = !!it.entry, what = isF ? 'Front' : 'Back';
+      const parsed = it.parsed || await P.parseSource(b.bytes, 'Back '+b.poolId), paths = leaves(parsed);
       const bounds = paths.reduce((a,s)=>union(a,s.bbox),null);
-      if (!bounds) throw new Error('Back engraving contains no vector paths.');
-      const scale = parentScale(front,sheet,b);
+      if (!bounds) throw new Error(what+' engraving contains no vector paths.');
+      const scale = isF ? it.scale : parentScale(front,sheet,b);
       const w = (bounds[2]-bounds[0])*scale, h = (bounds[3]-bounds[1])*scale;
-      if (w > front.pageW+1e-5) throw new Error('Back engraving is wider than its sheet; export would require resizing.');
+      if (w > front.pageW+1e-5) throw new Error(what+' engraving is wider than its sheet; export would require resizing.');
       if (x>SPACE && x+w > front.pageW-SPACE) {x=SPACE;y+=rowH+SPACE;rowH=0;}
       if (x===SPACE && x+w > front.pageW) x=Math.max(0,(front.pageW-w)/2);
       const tx=x-bounds[0]*scale, ty=y-bounds[1]*scale;
-      inputs.push({parsed, scale, x:tx, y:ty, back:b});
+      inputs.push({parsed, scale, x:tx, y:ty, back:b, face:isF?'front':'back'});
       const side=sideOfBack(sheet,b);
-      layout.push({poolId:b.poolId, ...(side?{side,groupKey:groupOfBack(b)}:{}), scale, boundsPt:[x,y,x+w,y+h], parentSheetId:sheet.id || sheet.sheetId});
+      if (isF) it.entry.boundsPt=[x,y,x+w,y+h];
+      else layout.push({poolId:b.poolId, ...(side?{side,groupKey:groupOfBack(b)}:{}), scale, boundsPt:[x,y,x+w,y+h], parentSheetId:sheet.id || sheet.sheetId});
       x+=w+SPACE;rowH=Math.max(rowH,h);
     }
     const out = await L.PDFDocument.create();
@@ -111,8 +200,10 @@
       page.drawPage(embedded,{x,y,width:parsed.pageW*scale,height:parsed.pageH*scale});
     }
     await place(front,0,0,1,'');
+    // front engravings ON their charm, in the layer "FRONT <poolId>[ Left|Right] / ENGRAVE", over the cut sheet (they are engraved in the cut run)
+    if (plan) plan.onCharm.forEach((item,i) => writeFront(out, page, item, 'ocFront'+i));
     // (a back for one ear of a mismatched pair says so on its layer: "BACK 4171450075_9001_1 Left / ...")
-    for(const item of inputs){const side=sideOfBack(sheet,item.back);await place(item.parsed,item.x,item.y,item.scale,'BACK '+item.back.poolId+(side?' '+(side==='L'?'Left':'Right'):'')+' / ');}
+    for(const item of inputs){const side=sideOfBack(sheet,item.back);await place(item.parsed,item.x,item.y,item.scale,layerPrefix(item.face,item.back.poolId,side));}
     // History never enters production artwork. Only this layout's new contour
     // is cut, at 1:1 scale, on its own named laser layer.
     const rosePlan=sheet.rosePlanJson ? JSON.parse(sheet.rosePlanJson) : sheet.rosePlan;
@@ -122,7 +213,8 @@
     if(rosePlan){
       root.CharmNestRose.validate(rosePlan.profile,front.pageW,front.pageH);
       const ref=out.context.register(out.context.obj({Type:'OCG',Name:L.PDFString.of('ROSE SEPARATION CUT')}));
-      const resources=page.node.Resources();resources.set(L.PDFName.of('Properties'),out.context.obj({RoseCut:ref}));
+      const resources=page.node.Resources(),known=resources.lookup(L.PDFName.of('Properties'));   // (a sheet with front engravings on its charms already has its layer list here)
+      if(known instanceof L.PDFDict)known.set(L.PDFName.of('RoseCut'),ref);else resources.set(L.PDFName.of('Properties'),out.context.obj({RoseCut:ref}));
       page.pushOperators(L.PDFOperator.of('BDC',[L.PDFName.of('OC'),L.PDFName.of('RoseCut')]),L.pushGraphicsState(),L.setStrokingRgbColor(0,.54,.45),L.setLineWidth(.1));
       for(const path of rosePlan.lines){
         page.pushOperators(...path.map(([x,y],i)=>i?L.lineTo(x,front.pageH-y):L.moveTo(x,front.pageH-y)),L.stroke());
@@ -132,7 +224,7 @@
     const refs=out.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict && o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([r])=>r);
     if(refs.length) out.catalog.set(L.PDFName.of('OCProperties'),out.context.obj({OCGs:refs,D:{Order:refs,ON:refs}}));
     const ai=await out.save({useObjectStreams:false});
-    return {ai,layout,widthPt:front.pageW,heightPt:page.getHeight(),cutHeightPt:front.pageH};
+    return {ai,layout,...(plan?{frontLayout:plan.entries}:{}),widthPt:front.pageW,heightPt:page.getHeight(),cutHeightPt:front.pageH};
   }
   const vector = () => root.CharmNestVector || (typeof require==='function' ? require('./charm-nest-vector.js') : null);
   const flatten = (...args) => vector().flatten(...args);
@@ -205,13 +297,14 @@
     const L=lib();return [...new Set(parsed.doc.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict&&o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([,o])=>o.get(L.PDFName.of('Name'))?.decodeText?.()).filter(Boolean))];
   }
   /** back/back-index.pdf: six engraved backs a page, each with its picture (PNG bytes, or null) and its lines of text.
-   *  Drawn in the background worker; the page used to draw it on its own thread after every approval. */
-  async function backIndexPdf({title, backs}) {
+   *  Drawn in the background worker; the page used to draw it on its own thread after every approval.
+   *  face: "front" draws front/front-index.pdf the same way ("engraved fronts"); absent = the back index, byte for byte as before. */
+  async function backIndexPdf({title, backs, face}) {
     const {PDFDocument, StandardFonts, rgb} = lib();
     const doc = await PDFDocument.create(), font = await doc.embedFont(StandardFonts.Helvetica), charset = new Set(font.getCharacterSet());
     const per = 6;
     for (let i = 0; i < backs.length; i += per) {
-      const page = doc.addPage([612, 792]); page.drawText(`${title} · engraved backs ${i + 1}–${Math.min(backs.length, i + per)} of ${backs.length}`, {x: 36, y: 756, size: 12, font});
+      const page = doc.addPage([612, 792]); page.drawText(`${title} · engraved ${face === 'front' ? 'fronts' : 'backs'} ${i + 1}–${Math.min(backs.length, i + per)} of ${backs.length}`, {x: 36, y: 756, size: 12, font});
       for (let j = 0; j < per && i + j < backs.length; j++) {
         const b = backs[i + j], col = j % 2, row = Math.floor(j / 2), x = 36 + col * 280, y = 720 - row * 230;
         try { if (b.png) { const img = await doc.embedPng(b.png), s = Math.min(150 / img.width, 150 / img.height); page.drawImage(img, {x, y: y - 150, width: img.width * s, height: img.height * s}); } } catch (_) { /* thumbnail optional */ }
@@ -220,7 +313,37 @@
     }
     return doc.save({useObjectStreams: false});
   }
-  const api={compose,parentScale,leaves,productionPaths,flatten,dxf,layerNames,backIndexPdf,MM};
+  /* ── the records of the two faces: file names, the index and the report (front-index.pdf, front-report.json) ── */
+  /** Where a face's two files go: <folder>/back/<fileBase>_back_<poolId>_<approvedAt>.ai|.png (as ever) and <folder>/front/<fileBase>_front_<poolId>_<approvedAt>.ai|.png. */
+  function faceFiles({folderPath, fileBase, poolId, approvedAt, face}) {
+    const f = face === 'front' ? 'front' : 'back', name = `${fileBase}_${f}_${poolId}_${approvedAt}`;
+    return {face: f, dir: `${folderPath}/${f}`, name, ai: `${folderPath}/${f}/${name}.ai`, png: `${folderPath}/${f}/${name}.png`, index: `${folderPath}/${f}/${f}-index.pdf`, report: `${folderPath}/${f}/${f}-report.json`};
+  }
+  /** The records of one face of a sheet's flat list (a record without `face` is a back). */
+  const ofFace = (records, face) => (records || []).filter(r => r && (face === 'front' ? r.face === 'front' : r.face !== 'front'));
+  /** One row of <face>-report.json: today's row for a back (no `face` key), the same row plus face:"front" for a front. */
+  function reportRow(b, face) {
+    return {poolId: b.poolId, ...(face === 'front' ? {face: 'front'} : {}), order: b.order, sku: b.sku, copy: b.copy, ...(b.side === 'L' || b.side === 'R' ? {side: b.side, groupKey: b.groupKey || undefined} : {}), ...(b.slot ? {slot: b.slot} : {}), text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path};
+  }
+  /** The four lines under a picture of the index. `x.pairWord(b)`: " · Left ear" style text the page already builds for pairs; `x.earWord(b)`: the ear/disc word of a slot. */
+  function indexLines(b, face, x) {
+    x = x || {}; const when = at => at ? new Date(at).toLocaleString() : '';
+    return [`${b.order} · ${b.sku} · copy ${b.copy}${x.pairWord ? x.pairWord(b) : ''}${b.slot && !b.side && x.earWord ? ' · ' + x.earWord(b.slot) : ''}${face === 'front' ? ' · FRONT' : ''}`, `"${String(b.text).replace(/\n/g, ' / ')}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ''}${b.small ? ' · SMALL' : ''}`, `approved by ${b.approvedBy || '—'} ${when(b.approvedAt)}`];
+  }
+  /** front/front-index.pdf and front/front-report.json of a sheet: the same summary the back outputs are, for the front records of its flat backPool list.
+   *  sh: { folderPath, fileBase, backPool }; deps: { assetBytes(url) -> bytes, upload(path, bytes, type, label) -> {path, url}, pairWord?, earWord? } (the page passes its own).
+   *  Returns { index: {path, url}, report: {path, url}, count } (what the page keeps as sh.frontOutputs), or null when the sheet has no front record. */
+  async function faceOutputs(sh, face, deps) {
+    const records = ofFace(sh.backPool, face);
+    if (!records.length || !sh.folderPath) return null;
+    const names = faceFiles({folderPath: sh.folderPath, fileBase: sh.fileBase, poolId: '', approvedAt: '', face});
+    const items = await Promise.all(records.map(async b => ({png: b.outputs && b.outputs.png && b.outputs.png.url ? await deps.assetBytes(b.outputs.png.url).catch(() => null) : null, lines: indexLines(b, face, deps)})));
+    const pdfBytes = await backIndexPdf({title: sh.fileBase, backs: items, face});
+    const report = records.map(b => reportRow(b, face));
+    const [idx, rep] = await Promise.all([deps.upload(names.index, pdfBytes, 'application/pdf', face === 'front' ? 'Saving front index' : 'Saving back index'), deps.upload(names.report, new TextEncoder().encode(JSON.stringify(report, null, 1)), 'application/json')]);
+    return {index: {path: idx.path, url: idx.url}, report: {path: rep.path, url: rep.url}, count: records.length};
+  }
+  const api={compose,parentScale,parentForm,leaves,productionPaths,flatten,dxf,layerNames,backIndexPdf,faceFiles,ofFace,reportRow,indexLines,faceOutputs,layerPrefix,frontFrame,isFront,FRONT_LAYER,MM};
   root.CharmNestExport=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);
