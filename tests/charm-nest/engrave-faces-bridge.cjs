@@ -60,6 +60,7 @@ function harness(rows, o = {}) {
     Review: { add() {}, remove() {}, render() {} }, RunCtl: { poke() {}, save: async () => {} }, Session: { schedule() {} }, Orders: { render() {}, rows: () => rows, lineRecord: r => [r.key, { key: r.key }] },
     TL: { line: (row, type, d) => { if (d && d.once && events.some(e => e.type === type && e.id === d.id)) return; events.push({ row, type, id: d && d.id, text: d && d.text, data: d && d.data }); }, hash: s => String(s).length },
     sheets: o.sheets || [], allSheets: () => (o.sheets || []), refreshBacks() {}, backQueue: Promise.resolve(), toast() {}, api: async (fn, body) => { apiCalls.push(body); return {}; }, goes() {}, EG_TAB: x => x, showDecided() {}, CNListActivity: { touch() {} }, humanAct: (kind, d) => acts.push(Object.assign({ kind }, d)), syncEditedBack: async () => {},
+    faceWord: j => (j && j.face === 'front' ? 'front' : 'back'),
     employeeName: () => 'Paul', needEmployee: async () => 'Paul', charmFor: () => null,
     setReady(job) { job.state = 'ready'; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'ready', text: job.text, approved: false }); return job; },
     toWords(job, why) { job.state = 'words'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'words', text: job.text, approved: false, reason: why }); return job; },

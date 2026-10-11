@@ -5965,7 +5965,7 @@ const Engrave = window.Engrave = (() => {
   async function skip(job, by) { by = by || employeeName() || await needEmployee("Kept with this decision."); if (!by) return;
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
-    revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
+    revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No ${facedJob(job) ? faceWord(job) + " " : ""}engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
@@ -6661,8 +6661,8 @@ const Engrave = window.Engrave = (() => {
     }
   }
   const waitingReason = job => ["ready", "fitting"].includes(job.state)
-    ? (canFit(job) ? "Preparing this engraving preview…" : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
-    : job.state === "classify" ? "Processing stopped before these words were read. Confirm the inscription below or resume the run." : "the words need a decision";
+    ? (canFit(job) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…` : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
+    : job.state === "classify" ? "Processing stopped before these words were read. Confirm the inscription below or resume the run." : `the ${facedJob(job) ? faceWord(job) + " " : ""}words need a decision`;
   const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().earOf(j.slot) : ""].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
