@@ -2689,6 +2689,95 @@ const Master = window.Master = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 8000);
     toast("report saved", "ok");
   }
+  /* ── a custom design saved to the repository (REPOSAVE, 11 Oct 2026; plans/save-to-repo-1011/CONTRACT.md sections 4 and 8) ──
+     The Designs window of a custom order can keep its one design: this builds the per-SKU .ai and picture exactly as the master indexer does
+     (writeIndex), uploads them under charmnest/master/custom/ with the UPLOAD token the page already holds, and asks the server (customSaveCommit)
+     to write the records in one create-only transaction. It never opens a dialog: it uses L.find("upload") only, never L.ensure / L.call / guard, and
+     when there is no token (or the server refuses the one it has) it asks hooks.needPassword(), which answers a token or null; null ends the call
+     with reason "locked" and the person unlocks in the window's own strip.
+     spec = { rid, listingId, sku, oldSku, productId, optionPairs, group:{mode,productIds}, title, by, F:{name,kind,hash,bytes}, charm, parsed,
+              reuse: false | "EXISTING_SKU", rehearsal: bool, built: null | {ai,png}, uploaded: {ai,png}  (what an earlier try already made, so a retry builds and uploads nothing twice) }
+     hooks = { needPassword(): Promise<{token,action,expiresAt}|null>, say(text), built({ai,png}), uploaded(which, {path,url,bytes}) }
+     -> { ok:true, sku, created, entry, alias, rehearsed? }  or  { ok:false, reason, text, ... }  reason: locked | offline | geometry | sku-taken | already-saved | not-uploaded | bad-file | reserved | sandbox | unavailable | error
+     A rehearsal (the sandbox) builds the file to prove it can be made and uploads and writes nothing. */
+  async function saveCustom(spec, hooks) {
+    hooks = hooks || {}; spec = spec || {};
+    const say = t => { try { if (hooks.say) hooks.say(t); } catch (_) { /* a label only */ } };
+    const fail = (reason, text, extra) => Object.assign({ ok: false, reason, text }, extra || {});
+    const sku = String(spec.reuse || spec.sku || "").trim().toUpperCase(), c = spec.charm, F = spec.F || {};
+    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku)) return fail("bad-sku", "that SKU cannot be used");
+    if (!c || !spec.parsed) return fail("error", "the design is no longer read: open the order again");
+    const L = RLOCK();
+    try {
+      // 1 · the geometry, by the very lines the indexer uses (writeIndex): any reason in it and nothing is saved
+      const reasons = []; if (c.open) reasons.push("open outline");
+      let engravable = true, upAngle = null, upSource = "drawn";
+      if (!spec.reuse) {
+        try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry', { charm: { outline: c.outline, members: c.members, bbox: c.bbox, widthPt: c.widthPt, heightPt: c.heightPt } }) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if (!window.CharmNestBackground) G.backView(c, { res: 6, upAngle }); }
+        catch (e) { reasons.push(e.message); }
+        if (reasons.length) return fail("geometry", `the design cannot be kept as a charm (${reasons.join("; ")})`);
+      }
+      // 2 · the files (built once; a retry brings them back in spec.built)
+      let built = spec.built || null;
+      if (!spec.reuse && !built) {
+        say(`Building ${sku}.ai…`);
+        const named = Object.assign({}, c, { name: sku });   // (a copy: the page's own charm keeps its name)
+        const ai = await P.buildSingleCharm(named, spec.parsed);
+        if (!c.thumb) return fail("error", "the design's picture could not be made");
+        built = { ai, png: dataUrlToBytes(c.thumb) };
+        try { if (hooks.built) hooks.built(built); } catch (_) { /* the engine keeps them for a retry; not needed to go on */ }
+      }
+      if (spec.rehearsal) return { ok: true, rehearsed: true, sku, created: !spec.reuse, bytes: built ? built.ai.length : 0 };
+      if (!S.cloud.ok) return fail("offline", "you are offline");
+      if (!L) return fail("unavailable", "the charm repo lock did not load: reload the page");
+      // 3 · the token: the one held, else the hook's answer (a person types it into the strip); never a dialog here
+      let tok = L.find("upload");
+      const need = async () => { let t = null; try { t = hooks.needPassword ? await hooks.needPassword() : null; } catch (_) { t = null; } return t && t.token ? t : (L.find("upload") || null); };
+      if (!tok) tok = await need();
+      if (!tok) return fail("locked", "needs the repository password");
+      // 4 · the uploads, each once (a token that ran out between them is asked for again, once)
+      const up = Object.assign({}, spec.uploaded || {});
+      const once = async (which, path, bytes, type) => {
+        if (up[which]) return;
+        say(`Saving ${sku}.${which === "ai" ? "ai" : "png"}…`);
+        for (let again = false; ; again = true) {
+          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
+          catch (e) { if (!again && L.isRepoLocked(e)) { L.forget(tok.action || "upload"); tok = await need(); if (!tok) throw Object.assign(new Error("locked"), { keepLocked: true }); continue; } throw e; }
+        }
+      };
+      if (!spec.reuse) {
+        try { await once("ai", `charmnest/master/custom/${sku}.ai`, built.ai, "application/illustrator"); await once("png", `charmnest/master/custom/${sku}.png`, built.png, "image/png"); }
+        catch (e) { if (e && e.keepLocked) return fail("locked", "needs the repository password"); throw e; }
+      }
+      // 5 · the records, in one go on the server
+      say(spec.reuse ? `Linking ${sku}…` : `Writing ${sku} to the repository…`);
+      const body = () => ({ op: "customSaveCommit", repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ""), productId: String(spec.productId || ""), optionPairs: spec.optionPairs || [], group: spec.group || { mode: "unknown", productIds: [] }, title: String(spec.title || ""), by: String(spec.by || ""),
+        design: { name: F.name, kind: F.kind === "dxf" ? "dxf" : "ai", hash: F.hash, bytes: F.bytes ? F.bytes.length : 0 }, reuse: !!spec.reuse,
+        entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: { masterHash: F.hash, name: F.name } });
+      let r;
+      for (let again = false; ; again = true) {
+        try { r = await api("charmNestLibrary", body(), { label: `Saving ${sku}`, quiet: true }); break; }
+        catch (e) { if (!again && L.isRepoLocked(e)) { L.forget(tok.action || "upload"); tok = await need(); if (!tok) return fail("locked", "needs the repository password"); continue; } throw e; }
+      }
+      if (!r || r.ok !== true) {
+        const why = r && r.error || "error";
+        const words = { "sku-taken": "that SKU was just taken", "already-saved": `this order is already saved as ${(r && r.sku) || "another SKU"}`, "not-uploaded": "the file did not reach the repository", "bad-file": "the saved file looks wrong", reserved: "that SKU is reserved", sandbox: "this is the sandbox", "reuse-missing": "the design to reuse is no longer in the repository", "reuse-blocked": "the design to reuse is blocked", "reuse-mismatch": "the design to reuse is not the same drawing" };
+        return fail(why in words ? why : "error", words[why] || (r && r.error) || "the repository did not answer", { sku: r && r.sku });
+      }
+      // 6 · the entry joins the page's library at once; the signature moved, so the next scheduled check reads the index (no forced load)
+      if (r.entry && r.entry.sku) B.master.entries.set(r.entry.sku, r.entry);
+      return { ok: true, sku: r.sku || sku, created: r.created !== false, entry: r.entry || null, alias: r.alias || "", rehearsed: false };
+    } catch (e) {
+      const net = !!e && (e.transient === true || /cloud offline|timed out|no answer/i.test(String(e.message || "")));   // (a passing network trouble; anything else is an error to be read)
+      return fail(net ? "offline" : "error", net ? "you could not reach the cloud" : String((e && e.message) || e).slice(0, 160), { transient: !!(e && e.transient) });
+    }
+  }
+  /** The SKU of a non-blocked entry that is the very same drawing (exact charm hash), "" when the library holds none: the design a custom order brings may already be there (D8). */
+  function sameDesign(charmHash) {
+    const h = String(charmHash || ""); if (!h) return "";
+    let best = ""; for (const e of B.master.entries.values()) if (e && e.charmHash === h && e.aiPath && !e.blocked && e.sku && (!best || e.sku < best)) best = e.sku;
+    return best;
+  }
   /** A change to a charm in the repo: asks for the password when none is held (modify; an upload unlock serves too), then writes. */
   const patchAsk = (skus, p) => ({ what: `Changing ${skus.length > 1 ? skus.length + " SKUs" : skus[0]} in the charm repo (${p.upAngle != null ? "up angle" : "facing" in p || "facings" in p ? "facing" : "blocked" in p ? "unblock" : "settings"}).`, target: skus.join(", "), go: "Save" });
   async function patchMany(skus, p) { await guard("modify", patchAsk(skus, p), async tok => { for (const s of skus) await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p, repoToken: tok }); }); for (const s of skus) { const e = entryFor(s); if (e) Object.assign(e, p, p.upAngle != null ? { upSource: "operator" } : {}); } render(); }
@@ -2914,7 +3003,7 @@ const Master = window.Master = (() => {
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
   }
-  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */

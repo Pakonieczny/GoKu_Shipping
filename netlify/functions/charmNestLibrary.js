@@ -1167,6 +1167,11 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
+/* A custom design saved to the repository (plans/save-to-repo-1011, _charmNestCustomSave.js): customSaveGet reads the order's save record; customSaveCommit (behind the repo upload
+   token, refused in the sandbox) writes the SKU's index entry (create-only), its file record, the listing's alias and the save record in one transaction. No Etsy call here. */
+const CustomSave = require("./_charmNestCustomSave");
+async function op_customSaveGet(b) { return CustomSave.get({ db }, b); }
+async function op_customSaveCommit(b) { return CustomSave.commit({ db, FV, tokenUrl, bucket: admin.storage().bucket() }, b); }
 /** What changes whenever the index does: how many entries it holds, and when one was last indexed (masterPutIndex: every write of an
     entry stamps indexedAt) and last edited (masterPatch: pair, facing, angle, engravable ... all stamp updatedAt; a removal changes the
     count), and the shape the entries are sent in (Master.SHAPE: the code that makes them). A background reload of the library, or a page
@@ -1596,6 +1601,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
+["customSaveGet", "customSaveCommit"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -3970,6 +3976,8 @@ OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
 OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
+OPS.customSaveGet = op_customSaveGet;   // a custom design saved to the repository: the order's save record; read only
+OPS.customSaveCommit = op_customSaveCommit;   // ... and its write (repo upload token; refused in the sandbox)
 OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
 OPS.customEtsySkuWrite = require("./_charmNestEtsySku").ops.customEtsySkuWrite; NO_GEN_BUMP.add("customEtsySkuWrite");   // ETSYSKU: {rid} the last step of saving a custom design (CONTRACT section 5): the SKU on Etsy. Never in the sandbox, no token (the saved record decides). It writes Etsy and its own records, nothing a placement answer is made from, so it does not raise the placement counter
 

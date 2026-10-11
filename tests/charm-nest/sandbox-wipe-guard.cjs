@@ -252,10 +252,11 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
     'Charm_Sandbox/pulls': { day: '2026-10-09', pulls: 2, calls: 6, starts: ['s1', 's2'] },
     'Charm_Nest_Jobs/job-prod-1': { id: 'job-prod-1', sheetId: 'prod-sheet', status: 'done' }, [`Charm_Nest_CustomRead/${A}_10010`]: { reads: { h1: { kind: 'chainOnly' } }, latest: 'h1', order: A, updatedAt: new TS(NOW - 9000) },
     'Charm_Nest_Library/c0001': { id: 'c0001', name: 'Compass' }, 'Charm_Nest_Calibration/cal-1': { sheetId: 'old', density: 0.7 },
-    'Brites_Orders/9999999999': { 'Staff Note': 'production note' }, 'Charm_Sku_NoDesign/prod-1': { pattern: '^PROD_' }
+    'Brites_Orders/9999999999': { 'Staff Note': 'production note' }, 'Charm_Sku_NoDesign/prod-1': { pattern: '^PROD_' },
+    'Charm_Custom_Saves/4170000001': { rid: '4170000001', listingId: '1718000', sku: 'LEAF_4821', phase: 'repo', etsy: { state: 'pending' }, rehearsal: false, at: NOW - 7200000 }   // (REPOSAVE: a custom design saved to the Charm repo; the wipe must leave it whole)
   };
   for (const [k, v] of Object.entries(seedProd)) store.set(k, v);
-  for (const f of ['charmnest/master/BR-TST-01/a.ai', 'charmnest/sandbox/master/BR-TST-02/b.ai', 'charmnest/sheets/2026-09-29/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/listing/aa.jpg', 'charmnest/custom/4170000001/original.pdf']) blobs.set(f, { buf: Buffer.from('prod:' + f) });
+  for (const f of ['charmnest/master/BR-TST-01/a.ai', 'charmnest/sandbox/master/BR-TST-02/b.ai', 'charmnest/sheets/2026-09-29/prod.ai', 'charmnest/agent/agent-y.json', 'design-archive/listing/aa.jpg', 'charmnest/custom/4170000001/original.pdf', 'charmnest/master/custom/LEAF_4821.ai']) blobs.set(f, { buf: Buffer.from('prod:' + f) });
   await session(false); bulk(false, 500);
   const mailBefore = [...store.keys()].filter(k => k.startsWith('EtsyMail_OrderLinks/ol_')).length;
   assert(mailBefore >= 1, 'production holds its own customer message (ol_…)');
@@ -284,6 +285,8 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   READ_ONLY.add('customSkuCheck');   // SKUGEN: reads the master by id, the listing's alias and cached table; writes nothing and asks Etsy nothing (tests/charm-nest/save-sku.cjs drives it)
   const REPO = { sandboxPullLimitSet: 'a setting (config/charmNestSandboxPull), behind the repo-token door; tests/charm-nest/sandbox-pull-limit.cjs drives it and proves the wipe leaves it', masterPutIndex: 'the Charm repo (shared by design, never wiped)', masterPatch: 'the Charm repo', masterPutFile: 'the Charm repo', masterRemoveFile: 'the Charm repo', masterRemoveSku: 'the Charm repo', startMaster: 'the Charm repo indexing job' };
   const NOT_SANDBOX = { putCharms: 'skipped in the sandbox (shared library)', renameCharm: 'skipped in the sandbox', putCalibration: 'skipped in the sandbox', cancelSweep: 'refused in the sandbox (sandboxCancel is its twin)', sandboxPut: 'retired (410)', sandboxPullOrders: 'ETSYPULL: its own test (tests/charm-nest/sandbox-pull.cjs) drives it against a fake Etsy; it writes Charm_Sandbox/current, stream, pulls and orders-pull/*', sandboxReset: 'the wipe itself', purgeHistory: 'ends in the wipe (phase 5)', restoreSheet: 'rebuilds a record from the files of a run (needs a nest report)' };
+  READ_ONLY.add('customSaveGet');   // REPOSAVE: reads one save record (Charm_Custom_Saves/{rid}); a sandbox call answers null without a read; tests/charm-nest/save-repo.cjs drives it
+  REPO.customSaveCommit = 'the Charm repo (a custom design saved to it: index entry, file record, listing alias, save record; shared by design, never wiped): behind the repo upload token and refuses sandbox:true; tests/charm-nest/save-repo.cjs drives it';
   NOT_SANDBOX.customEtsySkuWrite = 'ETSYSKU: sets the SKU on Etsy and notes it on its own Charm_Custom_Saves record; the sandbox is refused (checked on the next lines); tests/charm-nest/save-etsy.cjs drives it';
   { const w0 = writes.length, f0 = fileWrites.length, no = await live({ op: 'customEtsySkuWrite', sandbox: true, rid: 'R1' });   // ETSYSKU: a writing op, refused in the sandbox with an empty write log
     assert(no.status === 200 && no.body.ok === false && no.body.reason === 'sandbox' && writes.length === w0 && fileWrites.length === f0, 'customEtsySkuWrite refuses sandbox:true and writes nothing: ' + JSON.stringify(no.body)); }
@@ -359,7 +362,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   for (const [k, v] of fullDbBefore) { const o = own('firestore', k); if (o && o.kind === 'protected') assert.strictEqual(after.get(k), v, 'the wipe left protected ' + k + ' as it was'); }
   for (const k of ['Charm_Sku_Aliases/1718000', 'Charm_Sku_Aliases/1718001']) assert.strictEqual(after.get(k), fullDbBefore.get(k), 'the wipe left production\'s alias document ' + k + ' (with its listing word) byte-identical');
   assert(after.has('Charm_Sku_Aliases/1718000') && ![...after.keys()].some(k => k.startsWith('Sandbox_Charm_Sku_Aliases/')), 'production\'s listing word is still there, the sandbox\'s own copies are gone');
-  for (const k of ['Sandbox_Station_Activity/activity-guard-0001', 'Sandbox_Efficiency_Daily', 'Sandbox_Station_Sessions/session-guard-0001', 'Charm_Sandbox/pulls', 'Charm_Master_Index/BR-TST-01', 'config/charmNestSandboxPull']) assert([...after.keys()].some(x => x.startsWith(k)), 'kept: ' + k);
+  for (const k of ['Sandbox_Station_Activity/activity-guard-0001', 'Sandbox_Efficiency_Daily', 'Sandbox_Station_Sessions/session-guard-0001', 'Charm_Sandbox/pulls', 'Charm_Master_Index/BR-TST-01', 'Charm_Custom_Saves/4170000001', 'config/charmNestSandboxPull']) assert([...after.keys()].some(x => x.startsWith(k)), 'kept: ' + k);
   assert.strictEqual(after.get('config/charmNestSandboxPull'), prodDocs.get('config/charmNestSandboxPull'), "the wipe left Paul's pull number byte-identical");
   const after2 = fileState(), fileProblems = [];
   for (const [k, v] of prodFiles) if (after2.get(k) !== v) fileProblems.push('a file of production/the repo changed or went: ' + k);
@@ -405,7 +408,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const leftP = [...store].filter(([k, v]) => isFamily('firestore', k) && sandboxDoc(k, v)).map(([k]) => k);
   assert.deepStrictEqual(leftP.slice(0, 8), [], 'after the purge the sandbox holds nothing');
   assert.deepStrictEqual([...blobs.keys()].filter(k => isFamily('storage', k)), [], 'and no sandbox file');
-  for (const k of ['Charm_Sandbox/pulls', 'Charm_Master_Index/BR-TST-01', 'Station_Activity/activity-prod-1', 'Efficiency_Daily/2026-10-08__Paul', 'config/charmNestSandboxPull']) assert(store.has(k), 'the purge kept ' + k);
+  for (const k of ['Charm_Sandbox/pulls', 'Charm_Master_Index/BR-TST-01', 'Charm_Custom_Saves/4170000001', 'Station_Activity/activity-prod-1', 'Efficiency_Daily/2026-10-08__Paul', 'config/charmNestSandboxPull']) assert(store.has(k), 'the purge kept ' + k);
   assert(store.has(`Charm_Custom_Orders/${A}_10010`) && store.has('Charm_Nest_Cancelled/' + C), "production's seals, custom orders and cancel records are permanent");
 
   const nested = warnings.filter(w => /Nested arrays/.test(w));
