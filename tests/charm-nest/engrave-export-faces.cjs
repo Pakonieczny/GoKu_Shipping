@@ -84,7 +84,9 @@ async function sheetOf(base, id, pieces, extra) {
  *  opts.real: the cut bytes are copied from the master the way the page does for a piece that is not mirrored; otherwise the cut is redrawn from the geometry (the Right ear) */
 async function faceFile(charm, o, face, opts) {
   opts = opts || {};
-  const view = G.backView(charm, { upAngle: o.upAngle == null ? 90 : o.upAngle });
+  // (a front is made from the front view: the geometry's own backView(charm, { face: "front" }), with nothing turned over)
+  const view = G.backView(charm, { upAngle: o.upAngle == null ? 90 : o.upAngle, ...(face === 'front' ? { face: 'front' } : {}) });
+  if (face === 'front') assert.ok(view.face === 'front' && view.M.join() === '1,0,0,1,0,0', 'the geometry makes a front view without a mirror');
   reseed();
   const built = await P.buildBackFile({ charm, mirrored: !!charm.mirrored, parsed: opts.real ? opts.real : { doc: null, segments: [] }, cutMembers: opts.real ? view.cutMembers : view.cutMembers.map(m => ({ ...m, synthetic: true })), cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 / (25.4 / 72), glyphs: glyphOf(o.gx || 0, o.gy || 0),
     ...(face === 'front' ? { face: 'front' } : {}), view: opts.view || 'asSeenFromBack', title: opts.title, meta: opts.meta });
@@ -133,6 +135,20 @@ function sheetPointOf(view, pl, sheetH, g) {
   return apply(placementMatrix(pl, sheetH), src[0], src[1]);
 }
 const pointsOf = path => path.subpaths.flatMap(sp => sp.filter(o => o[0] !== 'h').map(o => o[o.length - 1]));
+const mulM = (m, k) => [m[0] * k[0] + m[1] * k[2], m[0] * k[1] + m[1] * k[3], m[2] * k[0] + m[3] * k[2], m[2] * k[1] + m[3] * k[3], m[4] * k[0] + m[5] * k[2] + k[4], m[4] * k[1] + m[5] * k[3] + k[5]];
+const invM = m => { const det = m[0] * m[3] - m[1] * m[2]; return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det]; };
+/** END-TO-END PROOF that a front file belongs on its charm: take the file's own cut reference outline (the charm as that file drew it) through the placement compose uses
+ *  (the file's recorded frame, undone, then the charm's matrix read from the cut sheet) and it must lie exactly on the cut lines the sheet draws for that charm. */
+async function proofOnCharm(s, poolId) {
+  const rec = s.rec.backPool.find(r => r.poolId === poolId && r.face === 'front');
+  const fileParsed = await P.parseSource(s.files['front:' + poolId], 'f'), frame = E.frontFrame(fileParsed);
+  const sheetParsed = await P.parseSource(s.bytes, 's'), parent = E.parentForm(sheetParsed, s.rec, rec, 'Front engraving');
+  const X = mulM(invM(frame), parent.form.matrix);
+  const refPts = E.leaves(fileParsed).filter(p => p.layer !== 'ENGRAVE').flatMap(pointsOf).map(q => apply(X, q[0], q[1]));
+  const cutPts = (parent.form.children || []).flatMap(c => c.kind === 'path' ? pointsOf(c) : []);
+  const miss = refPts.filter(q => !cutPts.some(c => Math.hypot(c[0] - q[0], c[1] - q[1]) < 1e-4)).length, miss2 = cutPts.filter(c => !refPts.some(q => Math.hypot(c[0] - q[0], c[1] - q[1]) < 1e-4)).length;
+  return { refN: refPts.length, cutN: cutPts.length, miss, miss2 };
+}
 
 /* ═════════════════════════ A · the golden digests ═════════════════════════ */
 async function goldenCapture() {
@@ -269,11 +285,12 @@ async function rest() {
   const bnames = [...new Set(bl.map(p => p.layer))];
   ok(bnames.length >= 2 && bnames.every(x => x.startsWith(`BACK ${pieces[0].poolId} / `)) && bnames.includes(`BACK ${pieces[0].poolId} / ENGRAVE`), 'C2 the back is above the sheet in its own BACK layers, as ever: ' + bnames.join(' | '));
   const pl1 = one.placements[0], ink1 = fl[0];
-  if (process.env.DBG) { const vv = one.views['front:' + pieces[0].poolId]; console.log('frame', JSON.stringify(vv.built.frame), 'view', vv.view.cx, vv.view.cy, vv.view.angleDeg, 'place', JSON.stringify(placementMatrix(pl1, SHEET_H)), 'inkpts', JSON.stringify(pointsOf(ink1).slice(0,2)), 'info', (await info(one.files['front:' + pieces[0].poolId])).frame); }
+  if (false) { const vv = one.views['front:' + pieces[0].poolId]; console.log('frame', JSON.stringify(vv.built.frame), 'view', vv.view.cx, vv.view.cy, vv.view.angleDeg, 'place', JSON.stringify(placementMatrix(pl1, SHEET_H)), 'inkpts', JSON.stringify(pointsOf(ink1).slice(0,2)), 'info', (await info(one.files['front:' + pieces[0].poolId])).frame); }
   const wantSheet = F_GLYPH.map(g => sheetPointOf(one.views['front:' + pieces[0].poolId].view, pl1, SHEET_H, g));
   ok(same(pointsOf(ink1), wantSheet, 1e-5), 'C3 the F lands exactly where the charm\'s own placement (37 degrees, shrunk to .93) puts that point of the charm: ' + JSON.stringify(pointsOf(ink1)[0]) + ' vs ' + JSON.stringify(wantSheet[0]));
   const formM = (await P.parseSource(one.bytes, 's')).segments.find(s => s.kind === 'xobj').matrix, pm = placementMatrix(pl1, SHEET_H);
   ok(formM.every((v, i) => Math.abs(v - pm[i]) < 1e-9), 'C4 the matrix the test derives is the one the sheet file carries');
+  { const pr = await proofOnCharm(one, pieces[0].poolId); ok(pr.refN > 4 && pr.miss === 0 && pr.miss2 === 0, 'C4b the front file\'s own cut outline, taken through the placement, lies exactly on the charm\'s cut lines in the sheet (angle 37, shrunk .93): ' + JSON.stringify(pr)); }
   ok(Math.abs(madeOne.heightPt - (SHEET_H + (madeOne.heightPt - madeOne.cutHeightPt))) < 1e-9 && madeOne.heightPt > madeOne.cutHeightPt, 'C5 the back still adds its strip above the sheet');
   // reading direction: the F is turned with the charm, never mirrored: the cross product of two edges keeps its sign
   const turn = pts => { const a = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]], b = [pts[2][0] - pts[1][0], pts[2][1] - pts[1][1]]; return Math.sign(a[0] * b[1] - a[1] * b[0]); };
@@ -295,7 +312,7 @@ async function rest() {
   // E2/E3 done above (front only / front and back on one piece). E4 the earring pair with both faces on both ears
   const ears = [
     { id: 'e1', poolId: POOL(4195966044, 3961234567, 1), side: 'L', x: 90, y: 100, angle: 20, upAngle: 90 },
-    { id: 'e2', poolId: POOL(4195966044, 3961234567, 2), side: 'R', mirror: true, x: 210, y: 100, angle: 200, upAngle: 90 }
+    { id: 'e2', poolId: POOL(4195966044, 3961234567, 2), side: 'R', mirror: true, x: 210, y: 100, angle: 200, scale: .95, upAngle: 90 }
   ];
   const pair = await fixture(MITTEN, 'pair-both', ears, [['front', 'back'], ['front', 'back']]);
   const madeP = await composeSheet(pair), layP = await layersOf(madeP.ai);
@@ -310,6 +327,7 @@ async function rest() {
     eq(turn(pointsOf(ink[0])), turn(F_GLYPH), `E4e the ${i ? 'Right' : 'Left'} ear's engraving is not mirrored`);
   }
   ok(pair.charms[1].mirrored === true, 'E4f the Right ear is the mirrored charm');
+  for (const e of ears) { const pr = await proofOnCharm(pair, e.poolId); ok(pr.refN > 4 && pr.miss === 0 && pr.miss2 === 0, `E4i the ${e.side === 'L' ? 'Left' : 'Right (mirrored)'} ear's front file lies exactly on its own charm in the sheet: ` + JSON.stringify(pr)); }
   eq(madeP.frontLayout.map(f => [f.side, f.placed]), [['L', true], ['R', true]], 'E4g layout: both ears placed');
   ok(madeP.frontLayout.every(f => f.groupKey === '4195966044:3961234567'), 'E4h the pair\'s group key travels with its fronts');
   // E5 a counted-disc necklace: three discs, a front and a back on each
@@ -321,6 +339,7 @@ async function rest() {
     const ink = layN.paths.find(p => p.layer === `FRONT ${d.poolId} / ENGRAVE`);
     ok(same(pointsOf(ink), F_GLYPH.map(g => sheetPointOf(neck.views['front:' + d.poolId].view, neck.placements[i], SHEET_H, g)), 1e-5), `E5b disc ${i + 1}: the front engraving is on its own disc (angle ${d.angle}, scale ${d.scale})`);
   });
+  for (const d of discs) { const pr = await proofOnCharm(neck, d.poolId); ok(pr.refN > 4 && pr.miss === 0 && pr.miss2 === 0, `E5f disc ${d.slot}'s front file lies exactly on its disc: ` + JSON.stringify(pr)); }
   eq(madeN.layout.length, 3, 'E5c three backs above the sheet'); eq(madeN.frontLayout.length, 3, 'E5d three fronts, all placed'); ok(madeN.frontLayout.every(f => f.placed), 'E5e');
 
   /* ═════════════════════════ D · the fallback ═════════════════════════ */
@@ -345,8 +364,6 @@ async function rest() {
     const e = await L.PDFDocument.load(s.files['front:' + s.pieces[0].poolId]); e.getInfoDict().set(L.PDFName.of('BritesFrontFrame'), L.PDFString.of(JSON.stringify({ v: 1, face: 'front', matrix: [1, 0, 0, 1, -400, 0] })));
     const wrong = await E.compose(s.bytes, s.rec, [], [{ ...s.rec.backPool[0], bytes: await e.save({ useObjectStreams: false }) }]);
     eq(wrong.frontLayout.map(f => f.placed), [false], 'D7 a frame that lands the engraving off its charm is not used'); ok(/does not fall on its charm/.test(wrong.frontLayout[0].reason), 'D8');
-    // a file with no engraving paths cannot be exported silently
-    const emptyFront = await faceFile(charmFor(MITTEN, { id: 'c1', poolId: 'x_y_1' }), { upAngle: 90 }, 'front'); void emptyFront;
   }
 
   /* ═════════════════════════ F · DXF, IMPORT.txt, manifest, the download ═════════════════════════ */
@@ -357,12 +374,12 @@ async function rest() {
     ok(dxfLayers.includes(`BACK ${ears[0].poolId} Left _ ENGRAVE`), 'F2 and still the BACK ones');
     const hatches = (dxf.text.match(/AcDbHatch/g) || []).length;
     ok(hatches >= 4, 'F3 the front engraving is a solid hatch on its layer, one per ear and one per back: ' + hatches);
+    const fh = [...dxf.text.matchAll(/0\r\nHATCH\r\n5\r\n[0-9A-F]+\r\n330\r\n17\r\n100\r\nAcDbEntity\r\n8\r\n(FRONT [^\r]*)\r\n62\r\n(\d+)\r\n420\r\n(\d+)/g)];
+    ok(fh.length === 2 && fh.every(m => +m[3] === 0), 'F3b each front engraving is a solid BLACK hatch on its FRONT layer (engraving ink, as the back\'s): ' + fh.map(m => m[1] + '=' + m[3]).join(', '));
     // the front art never becomes charm art: grouping the same sheet with and without the FRONT layers gives the same charms
-    const stripped = layP.paths.filter(p => !E.FRONT_LAYER.test(p.layer)), all = E.productionPaths(layP.parsed);
-    const layersAfter = new Set(all.map(p => p.layer));
+    const all = E.productionPaths(layP.parsed);
     ok(all.length === E.productionPaths({ ...layP.parsed, segments: layP.parsed.segments.filter(s => !(s.layer && E.FRONT_LAYER.test(s.layer))) }).length + layP.paths.filter(p => E.FRONT_LAYER.test(p.layer)).length, 'F4 FRONT layers pass through productionPaths untouched and take no part in the charm grouping');
     ok(E.FRONT_LAYER.test('FRONT 4195966044_3961234567_1 Left / ENGRAVE') && E.FRONT_LAYER.test('FRONT 4195966044_3961234567_1 / CUT OUTLINE (reference)') && !E.FRONT_LAYER.test('FRONT KEEP-OUT') && !E.FRONT_LAYER.test('FRONT detail') && !E.FRONT_LAYER.test('BACK 1_2_3 / ENGRAVE'), 'F5 the layer test does not catch a master\'s own "FRONT ..." layers');
-    void stripped; void layersAfter;
   }
   {
     // the download flow with all five sheets (the back-only one with them)
@@ -386,9 +403,7 @@ async function rest() {
     ok(!lb.names.some(x => x.startsWith('FRONT ')), 'F16 the back-only sheet has none');
     eq(d._notices.filter(x => /above the sheet, not on/.test(x[0])).length, 0, 'F17 no warning when every front is on its charm');
     // the same five by DXF: the zip's manifest lists the FRONT layers of every sheet that has them
-    const dd = await downloads([backOnly, pair, neck]);
-    // (downloads() ran 'ai' for the zip; run the DXF zip by hand)
-    delete global.__x; void dd;
+    // (the DXF zip by hand)
     const got = [], notices = [];
     global.CN = { toast: (t, k) => notices.push([t, k]), download: (data, name, type) => got.push({ data, name, type }), api: async (fn, b) => ({ sheet: structuredClone({ 'back-only': backOnly.rec, 'pair-both': pair.rec, 'discs-both': neck.rec }[b.id]) }) };
     await window.ProductionExports.run(['back-only', 'pair-both', 'discs-both'], 'dxf');
@@ -414,6 +429,18 @@ async function rest() {
     await window.ProductionExports.run(['fb-sheet'], 'ai'); ok(one1.length === 1 && /above the sheet/.test(notes.map(x => x[0]).join('|')), 'F25 a single-file download says it by toast');
   }
 
+  {
+    // a Rose Gold sheet keeps its separation contour in its own layer beside the FRONT layers (both write to the page's layer list)
+    const R = rq('charm-nest-rose.js'); global.CharmNestRose = R;
+    const plan = R.plan([{ id: 'a', paths: [[[20, 20], [60, 20], [60, 50], [20, 50]]] }], 300, 200, null, .2);
+    try {
+      const made = await E.compose(pair.bytes, { ...pair.rec, metal: 'rose', roseStockId: 'stock-test', rosePlanJson: JSON.stringify(plan) }, withBytes(pair, recordsOf(pair, 'back')), withBytes(pair, recordsOf(pair, 'front')));
+      const lay = await layersOf(made.ai);
+      ok(lay.names.includes('ROSE SEPARATION CUT') && lay.names.includes(`FRONT ${ears[0].poolId} Left / ENGRAVE`) && lay.names.includes(`FRONT ${ears[1].poolId} Right / ENGRAVE`), 'F26 a Rose Gold sheet has its separation layer and its FRONT layers: ' + lay.names.filter(x => !/^(BACK|FRONT) .*(Artwork|CUT OUTLINE)/.test(x)).join(' | '));
+      ok(lay.paths.filter(p => p.layer === 'ROSE SEPARATION CUT').length > 0 && lay.paths.filter(p => p.layer.startsWith('FRONT ')).length === 2, 'F27 and both are drawn');
+    } finally { delete global.CharmNestRose; }
+  }
+
   /* ═════════════════════════ G · index, report, file names ═════════════════════════ */
   {
     const names = E.faceFiles({ folderPath: 'charmnest/sheets/SS-1', fileBase: 'SS Sheet 1', poolId: '4195966039_3961234567_1', approvedAt: 1760190000000, face: 'front' });
@@ -428,10 +455,11 @@ async function rest() {
     const frow = E.reportRow(rf, 'front'); ok(frow.face === 'front' && Object.keys(frow)[1] === 'face' && frow.side === 'R' && frow.file === rf.outputs.ai.path, 'G5 a front\'s row says face:"front" and its own file');
     // the index pdf: the back heading is unchanged; the front heading says fronts
     const textOf = async bytes => { const d = await L.PDFDocument.load(bytes); return d.getPageCount(); };
+    // the words the page prints (the page's content stream is deflated: decode it, then read the hex strings of its Tj operators)
+    const printed = async bytes => { const d = await L.PDFDocument.load(bytes), out = []; for (const page of d.getPages()) { const c = page.node.Contents(), arr = c instanceof L.PDFArray ? c.asArray() : [c]; for (const r of arr) out.push(Buffer.from(L.decodePDFRawStream(d.context.lookup(r)).decode()).toString('latin1')); } return [...out.join('\n').matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)].map(x => Buffer.from(x[1], 'hex').toString('latin1')); };
     reseed(); const bi = await E.backIndexPdf({ title: 'T', backs: [{ png: null, lines: ['a'] }] }); reseed(); const bi2 = await E.backIndexPdf({ title: 'T', backs: [{ png: null, lines: ['a'] }], face: 'back' }); reseed(); const fi = await E.backIndexPdf({ title: 'T', backs: [{ png: null, lines: ['a'] }], face: 'front' });
-    ok(sha(bi) === sha(bi2) && sha(bi) !== sha(fi) && (await textOf(fi)) === 1, 'G6 face:"back" and no face draw the same index; face:"front" draws "engraved fronts"');
-    const heading = bytes => Buffer.from(bytes).toString('latin1');
-    ok(/engraved backs 1/.test(Buffer.from(await (async () => { const d = await L.PDFDocument.load(bi, { updateMetadata: false }); return d.save({ useObjectStreams: false }); })()).toString('latin1')) || true, 'G6b');
+    ok(sha(bi) === sha(bi2) && sha(bi) !== sha(fi) && (await textOf(fi)) === 1, 'G6 face:"back" and no face draw the same index; face:"front" draws a different one');
+    ok((await printed(bi))[0].startsWith('T · engraved backs 1') && (await printed(fi))[0].startsWith('T · engraved fronts 1'), 'G6b the headings say "engraved backs" and "engraved fronts"');
     // faceOutputs over a fake store
     const uploads = [];
     const deps = { assetBytes: async () => null, upload: async (p, bytes, type, label) => { uploads.push([p, type, label, bytes.length]); return { path: p, url: 'https://x/' + encodeURIComponent(p) }; }, pairWord: b => (b.side === 'L' ? ' · Left' : b.side === 'R' ? ' · Right' : ''), earWord: s => 'Disc ' + s.slice(1) };
@@ -443,6 +471,10 @@ async function rest() {
     const reportBytes = uploads.find(u => /report/.test(u[0])); ok(reportBytes[3] > 50, 'G10');
     const lines = E.indexLines(rf, 'front', deps); ok(/ · Right · FRONT$/.test(lines[0]) && lines[1] === '"F"' && /^approved by Ana_M /.test(lines[3]), 'G11 the index lines: ' + lines[0]);
     const backLines = E.indexLines(rb, 'back', deps); ok(!/FRONT/.test(backLines[0]) && /copy 2 · Right$/.test(backLines[0]), 'G12 and a back\'s are as before: ' + backLines[0]);
+    // on the page the background worker takes backIndexPdf over: faceOutputs must go through the exported name, face and all
+    const realIndex = E.backIndexPdf, spy = []; E.backIndexPdf = async spec => { spy.push(spec); return new Uint8Array([37, 80, 68, 70]); };
+    try { await E.faceOutputs(sh, 'front', deps); } finally { E.backIndexPdf = realIndex; }
+    ok(spy.length === 1 && spy[0].face === 'front' && spy[0].title === 'SS 9' && spy[0].backs.length === 2, 'G13 the front index is drawn through the exported (worker) backIndexPdf with face:"front"');
     eq(E.ofFace(pair.rec.backPool, 'front').length, 2); eq(E.ofFace(pair.rec.backPool, 'back').length, 2); eq(E.ofFace([{ poolId: 'x' }], 'back').length, 1);
   }
 

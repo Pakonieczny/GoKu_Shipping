@@ -338,7 +338,7 @@
     if (!records.length || !sh.folderPath) return null;
     const names = faceFiles({folderPath: sh.folderPath, fileBase: sh.fileBase, poolId: '', approvedAt: '', face});
     const items = await Promise.all(records.map(async b => ({png: b.outputs && b.outputs.png && b.outputs.png.url ? await deps.assetBytes(b.outputs.png.url).catch(() => null) : null, lines: indexLines(b, face, deps)})));
-    const pdfBytes = await backIndexPdf({title: sh.fileBase, backs: items, face});
+    const pdfBytes = await api.backIndexPdf({title: sh.fileBase, backs: items, face});   // (through the exported name: on the page the background worker takes it over, so the drawing stays off the page's thread)
     const report = records.map(b => reportRow(b, face));
     const [idx, rep] = await Promise.all([deps.upload(names.index, pdfBytes, 'application/pdf', face === 'front' ? 'Saving front index' : 'Saving back index'), deps.upload(names.report, new TextEncoder().encode(JSON.stringify(report, null, 1)), 'application/json')]);
     return {index: {path: idx.path, url: idx.url}, report: {path: rep.path, url: rep.url}, count: records.length};
