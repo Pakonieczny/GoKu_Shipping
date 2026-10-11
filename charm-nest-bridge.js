@@ -5554,7 +5554,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
     }
     return workerClient;
   }

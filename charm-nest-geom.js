@@ -4,7 +4,8 @@
  *  in the Netlify functions and in the node tests, so every number the
  *  reviewer sees can be reproduced outside a browser.
  *
- *    backView(charm, opts)         mirror the cut geometry, verify the flip step by step, orient hoop-up (design §7.2)
+ *    backView(charm, opts)         mirror the cut geometry, verify the flip step by step, orient hoop-up (design §7.2). opts.face "front": the FRONT view (plans/front-back-1011): the same
+ *                                  steps with nothing turned over (identity for the mirror, so its checks compare the charm with itself), view.face "front"
  *    upAngleOf(charm, opts)        direction from the outline's centroid to its hanging hole (§6.3 item 7); a LONG charm
  *                                  (long side >= LONG_ASPECT x short side) is turned to lie flat instead, see longAxisOf
  *    engraveMask(view, opts)       the back silhouette eroded by the engraving margin, keep-outs subtracted (§7.3)
@@ -453,8 +454,10 @@
     const ax = longAxisOf(charm, opts);
     if (!ax || !ax.isLong) return base;
     let pick = null;
-    for (const turn of [ax.angle, ax.angle - 180]) {
-      const score = base.hole ? Math.abs(wrap180(180 - base.angle + turn - 90)) : Math.abs(turn);
+    // (the FRONT is drawn as the charm is, not turned over: the hanging hole is at base.angle, the long axis at ax.angle, so a turn of -axis lays it flat; the back is mirrored first)
+    const front = opts.face === "front";
+    for (const turn of front ? [-ax.angle, 180 - ax.angle] : [ax.angle, ax.angle - 180]) {
+      const score = base.hole ? Math.abs(wrap180(front ? base.angle + turn - 90 : 180 - base.angle + turn - 90)) : Math.abs(turn);
       if (!pick || score < pick.score - 1e-6 || (Math.abs(score - pick.score) <= 1e-6 && Math.abs(turn) < Math.abs(pick.turn) - 1e-9)) pick = { score, turn };
     }
     const up = ((90 - pick.turn) % 360 + 360) % 360;
@@ -464,7 +467,7 @@
   /** The mark a placement's back view carries once it was made with the long-axis rule. */
   const ORIENT = "flat1";
   /** Which turn a placement's back view starts from (the one place the engraving fit decides it).
-   *    p = { editingBack, savedUp, charmUp, entry, nudged, viewUp, oriented }
+   *    p = { editingBack, savedUp, charmUp, entry, nudged, viewUp, oriented, face }  (face "front": the FRONT view, see backView)
    *  · a back that was already decided or approved (editingBack) keeps the angle it was saved with, and the original
    *    hoop-up rule if none was recorded: a saved engraving is never turned;
    *  · a placement a person moved or turned before the long-axis rule, and not yet re-made with it, keeps its old view;
@@ -473,9 +476,10 @@
    *    master index stored is only ever a computed one (hole direction), so it no longer decides. */
   function viewOptionsFor(p) {
     p = p || {}; const entry = p.entry || {}, o = { res: 6, materialVersion: 2 };
+    if (p.face === "front") o.face = "front";                                      // (the front view: backView and upAngleOf read it; the library's typed up angle is the back's, never the front's)
     if (p.editingBack) { const up = p.savedUp != null ? p.savedUp : p.charmUp; if (up != null) o.upAngle = +up; o.holeOnly = true; return o; }
     if (p.nudged && !p.oriented && p.viewUp != null) { o.upAngle = +p.viewUp; o.holeOnly = true; return o; }
-    if (entry.upSource === "operator" && entry.upAngle != null) o.upAngle = +entry.upAngle;
+    if (p.face !== "front" && entry.upSource === "operator" && entry.upAngle != null) o.upAngle = +entry.upAngle;
     return o;
   }
   /** An undecided placement fitted before the long-axis rule that nobody has moved: it is made again. */
@@ -526,26 +530,27 @@
     const bb = cutMembers.reduce((a, s) => bbUnion(a, s.bbox), null);
     const frame = makeFrame(bb, opts.res, cx, 1);
     const F = materialMask(cutMembers, outline, frame);                                                         // STEP 2 · holes open (even-odd)
-    const M = mirrorX(cx);                                                                       // STEP 3
+    const front = opts.face === "front";                                                         // (the FRONT view: the same steps without the turn-over; plans/front-back-1011)
+    const M = front ? [1, 0, 0, 1, 0, 0] : mirrorX(cx);                                          // STEP 3
     const mirrored = cutMembers.map(m => transformSeg(m, M));
     const B = materialMask(mirrored, mirrored[cutMembers.indexOf(outline)], frame);                                                           // STEP 4
     const holes = cutMembers.filter(m => m !== outline);
     const checks = {                                                                             // STEP 5
-      pixels: diffFraction(B, flipX(F)) <= opts.tolPixels,
-      holes: holes.every(h => { const p = interiorPoint(flatten(h, 12)); return at(B, 2 * cx - p[0], p[1]) === at(F, p[0], p[1]); }),
+      pixels: diffFraction(B, front ? F : flipX(F)) <= opts.tolPixels,
+      holes: holes.every(h => { const p = interiorPoint(flatten(h, 12)); return at(B, front ? p[0] : 2 * cx - p[0], p[1]) === at(F, p[0], p[1]); }),
       area: Math.abs(area(B) - area(F)) / Math.max(1, area(F)) <= opts.tolArea,
       detailDropped: mirrored.every(m => cut(m) || m.original === outline) && !mirrored.some(m => m.fill && !m.stroke && m.original !== outline && pathRole(m) !== "cut") && dropped.every(m => !cutMembers.includes(m))
     };
-    const detail = { filledArtwork: outline !== originalOutline, pixelDiff: diffFraction(B, flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
+    const detail = { filledArtwork: outline !== originalOutline, pixelDiff: diffFraction(B, front ? F : flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
     if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B, flipF: flipX(F), detail });
-    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut, holeOnly: opts.holeOnly }).angle;    // STEP 6
+    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut, holeOnly: opts.holeOnly, face: opts.face }).angle;    // STEP 6
     const angleDeg = 90 - up;
     const R = rotateAbout(cx, cy, angleDeg);
     const members = mirrored.map(m => transformSeg(m, R));
     const obb = members.reduce((a, s) => bbUnion(a, s.bbox), null);
     const oframe = makeFrame(obb, opts.res, cx, 1); oframe.cy = cy;
     const mask = materialMask(members, members[cutMembers.indexOf(outline)], oframe);
-    return { members, outline:members[cutMembers.indexOf(outline)], mask, cx, cy, M, R, angleDeg, upAngle: up, checks, detail, F, B, frame, cutMembers, dropped };
+    return { members, outline:members[cutMembers.indexOf(outline)], mask, cx, cy, M, R, angleDeg, upAngle: up, checks, detail, F, B, frame, cutMembers, dropped, ...(front ? { face: "front" } : {}) };
   }
 
   /** The eroded back mask: margin off every cut edge and cut-out, keep-out layers subtracted. */
@@ -553,6 +558,11 @@
     opts = Object.assign({ marginMm: 0.8, keepOut: [] }, opts || {});
     let m = view.mask;
     if (opts.keepOut && opts.keepOut.length) m = subtract(m, polysOfSegs(opts.keepOut.map(k => transformSeg(transformSeg(k, view.M), view.R))));
+    // the FRONT keeps its words off the design's own engraved art (opts.avoid: more segments to keep clear; the closed or filled shapes the cut view dropped are always kept clear)
+    if (view.face === "front") {
+      const art = (view.dropped || []).filter(d => d && (d.closed || d.fill)).concat(opts.avoid || []);
+      if (art.length) m = subtract(m, polysOfSegs(art.map(k => transformSeg(transformSeg(k, view.M), view.R))));
+    }
     const rPx = opts.marginMm * PT_PER_MM * m.res;
     m = erode(m, rPx);
     m.marginMm = opts.marginMm; m.wPt = m.w / m.res; m.hPt = m.h / m.res;
