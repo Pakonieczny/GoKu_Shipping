@@ -189,9 +189,14 @@
        · Angelina  = a light, upright handwriting                    -> Mynerve (Sarah Cadigan-Fried)
        · Typewriter= what the shop's chart draws as a humanist serif (descending J) -> Crimson Text (Sebastian Kosch); the name is the shop's, it is no typewriter face
        · Comic     = what the chart draws as a humanist sans (Myriad-like) -> Source Sans 3 (Adobe), already the app's font
-       · Vibur     = a monoline school print-cursive (the Mini Tag listings) -> Playwrite US Modern
-       · Ace       = thin geometric capitals, no lowercase (Mini Tag) -> Jost (Owen Earl; Regular + SemiBold)
-       · Britannic Bold = a bold, flared humanist sans (Mini Tag listing 4458930445) -> Alegreya Sans Bold (+ ExtraBold as its heavier cut; Huerta Tipografica)
+       · Vibur     = the font itself is open source (Johan Kallas, Google Fonts, SIL OFL): the Mini Tag chart's lettering is Vibur, letter for letter (ENGFONT, 11 Oct: the first
+                     match, Playwrite US Modern, was a look-alike; it stays installed because saved backs may name it)
+       · Ace       = thin geometric capitals, NO lowercase, slashed zero (Mini Tag) -> Jost Slashed Zero (Jost by Owen Earl, Futura-like, SIL OFL; Regular + SemiBold). The
+                     only change to Jost is the slash on the zero (the shop's Ace draws 0 as a slashed circle; Jost has none). `caps` = the text of such a piece is engraved in
+                     CAPITALS ("w" -> "W": there is no lowercase in Ace), see capsText. Plain Jost stays installed: saved backs may name it.
+       · Britannic Bold = a heavy, tall-x-height flared grotesque (Mini Tag listing 4458930445): Libre Franklin Bold (Regular file) + ExtraBold (the small-size cut) (Impallari / Libre Franklin Project, SIL OFL; static 37 KB
+                     instances of the Google Fonts variable file, Latin subset). Chosen by measuring the chart's 62 letters and digits against ~170 open fonts (ENGFONT): the old match,
+                     Alegreya Sans Bold, was the worst of those scored (calligraphic, light, old-style digits); Libre Franklin has the chart's weight, widths and plain grotesque forms
      To add one: put the font file(s) and its OFL.txt in vendor/fonts/, add a row here, add its words to FONT_WORDS (or its listing to FONT_LISTINGS). The Playwrite
      files are the static Regular (wght 400) instances Google Fonts serves from the variable fonts of google/fonts; the others are the files of google/fonts as they are. */
   const DEFAULT_FONT = "source-sans-3";
@@ -203,7 +208,11 @@
     { id: "crimson-text", name: "Crimson Text", names: ["Crimson Text"], files: { Regular: "vendor/fonts/CrimsonText-Regular.ttf", Semibold: "vendor/fonts/CrimsonText-SemiBold.ttf" } },
     { id: "playwrite-us-modern", name: "Playwrite US Modern", names: ["Playwrite US Modern"], files: { Regular: "vendor/fonts/PlaywriteUSModern-Regular.ttf" } },
     { id: "jost", name: "Jost", names: ["Jost"], files: { Regular: "vendor/fonts/Jost-Regular.ttf", Semibold: "vendor/fonts/Jost-SemiBold.ttf" } },
-    { id: "alegreya-sans", name: "Alegreya Sans", names: ["Alegreya Sans"], files: { Regular: "vendor/fonts/AlegreyaSans-Bold.ttf", Semibold: "vendor/fonts/AlegreyaSans-ExtraBold.ttf" } }
+    { id: "alegreya-sans", name: "Alegreya Sans", names: ["Alegreya Sans"], files: { Regular: "vendor/fonts/AlegreyaSans-Bold.ttf", Semibold: "vendor/fonts/AlegreyaSans-ExtraBold.ttf" } },
+    // ENGFONT (11 Oct 2026): the three Mini Tag words matched again against the shop's own chart. Added; nothing above was removed or changed (a saved back keeps its font).
+    { id: "vibur", name: "Vibur", names: ["Vibur"], files: { Regular: "vendor/fonts/Vibur-Regular.ttf" } },
+    { id: "jost-ace", name: "Jost Slashed Zero", names: ["Jost Slashed Zero"], caps: true, files: { Regular: "vendor/fonts/JostSlashedZero-Regular.ttf", Semibold: "vendor/fonts/JostSlashedZero-SemiBold.ttf" } },
+    { id: "libre-franklin", name: "Libre Franklin", names: ["Libre Franklin"], files: { Regular: "vendor/fonts/LibreFranklin-Bold.ttf", Semibold: "vendor/fonts/LibreFranklin-ExtraBold.ttf" } }
   ];
   /** The font words the shop's drop-downs offer, any spelling (case, spacing, punctuation, "Typewrite" for "Typewriter"), and the installed font each one is. */
   const FONT_WORDS = [
@@ -212,16 +221,24 @@
     { id: "mynerve", words: ["Angelina"] },
     { id: "crimson-text", words: ["Typewriter", "Typewrite", "TypeWrit", "Typewritr", "TypeWrt"] },   // (seven real spellings; any other that starts "typewr" is read by FONT_STEMS)
     { id: "source-sans-3", words: ["Comic"] },
-    { id: "playwrite-us-modern", words: ["Vibur"] },
-    { id: "jost", words: ["Ace"] },                                           // (a 3-letter English word: read only as a whole part of a font option or a length option, never inside other text)
-    { id: "alegreya-sans", words: ["Britannic Bold", "Britannic"] }
+    { id: "vibur", words: ["Vibur"] },
+    { id: "jost-ace", words: ["Ace", "Ace (no lowercase)"] },                // (a 3-letter English word: read only as a whole part of a font option or a length option, never inside other text; "no lowercase" is the shop's own suffix)
+    { id: "libre-franklin", words: ["Britannic Bold", "Britannic"] }
   ];
-  /** Listings that engrave in ONE font whatever the buyer picks (Paul, 10 Oct: the three Mini Tag listings, "ignore the Font choice"). Matched by listing id or by SKU. */
+  /** The USUAL font of a listing: used ONLY when the buyer names no font the shop offers (ENGFONT, 11 Oct 2026). On 10 Oct this was a rule that engraved the three Mini Tag listings in ONE
+   *  font whatever the buyer picked ("ignore the Font choice"); Paul then asked for each offered font to be matched, so the buyer's own word always wins now (a font choice never holds an
+   *  order, never changes silently) and this is only the fallback for a line that carries no font word at all. Matched by listing id or by SKU. */
   const FONT_LISTINGS = [
-    { font: "playwrite-us-modern", listings: ["4458930445", "1714117116"], skus: ["TINY INITIAL TAG 1", "TINY INITIAL TAG 1-CO"], why: "the Mini Tag listings engrave in one font (the buyer's choice of Britannic Bold, Vibur or Ace is not followed)" }
+    { font: "vibur", listings: ["4458930445", "1714117116"], skus: ["TINY INITIAL TAG 1", "TINY INITIAL TAG 1-CO"], why: "the Mini Tag listings: Vibur when the buyer names no font" }
   ];
   /** Words read by their stem, case aside (Etsy cuts a value at 9 letters and buyers misspell: TYPEWRITE, TypeWrit, Typewritr, TypeWrt, "Type Writer"): [{ id, stem }], on the folded word. */
-  const FONT_STEMS = [{ id: "crimson-text", stem: /^typewr[a-z]{0,6}$/ }];
+  const FONT_STEMS = [
+    { id: "crimson-text", stem: /^typewr[a-z]{0,6}$/ },
+    // the three Mini Tag words, on the folded word (case, spaces and punctuation are gone): Ace with the shop's own "(no lowercase)" suffix or a buyer's variant, Britannic Bold with the one-n spelling, Vibur
+    { id: "jost-ace", stem: /^ace(?:(?:no|without)?lower(?:case)?|capsonly|allcaps|caps|(?:upper|capital)(?:case|s)?(?:only)?)?$/ },
+    { id: "libre-franklin", stem: /^britann?ic(?:bold)?$/ },
+    { id: "vibur", stem: /^vib[ue]r$/ }
+  ];
   /** "No Font" / "NO FONT" is a choice in the same drop-downs, not a font: nothing is asked or held, the line engraves in the app's own font. */
   const NO_FONT = /^no(?:n|t)?fonts?$/;
   const FONT_RULES = { unknownHolds: false };
@@ -273,9 +290,10 @@
   function fontFrom(p, fx, strict) {
     const none = p.words.some(w => NO_FONT.test(fontKey(w))), rest = p.words.filter(w => !NO_FONT.test(fontKey(w)));
     const shop = rest.filter(w => strict ? fontOfWord(w) : fontOfPhrase(w)), words = shop.length ? shop : strict ? [] : rest;
-    if (!words.length) return none && !strict ? { asked: "", chain: p.chain, align: p.align, id: "", name: "", listing: !!fx, pick: [], none: true } : null;   // ("No Font": the buyer asks for no font; a length that carries it stays the length it was)
-    const asked = words.join(" / "), font = fontById(fx ? fx.font : fontOfPhrase(asked));
-    return { asked, chain: p.chain, align: p.align, id: font ? font.id : "", name: font ? font.name : "", listing: !!fx, pick: fontChoices(asked) };
+    if (!words.length) return none && !strict ? { asked: "", chain: p.chain, align: p.align, id: "", name: "", listing: false, pick: [], none: true } : null;   // ("No Font": the buyer asks for no font; a length that carries it stays the length it was)
+    // ENGFONT (11 Oct): the buyer's own word always wins; the listing's usual font (FONT_LISTINGS) stands in only when the words name no font the shop offers
+    const asked = words.join(" / "), word = fontOfPhrase(asked), font = fontById(word || (fx ? fx.font : ""));
+    return { asked, chain: p.chain, align: p.align, id: font ? font.id : "", name: font ? font.name : "", listing: !!fx && !word, pick: fontChoices(asked) };
   }
   /** What ONE option says about a font: null when its NAME is not a font's or its value holds no font word; else
    *  { asked (the font as the buyer's option writes it), chain, align, id, name (the installed font the word is, any spelling; "" for a word the shop does not offer), listing, pick: [{ id, name }] }.
@@ -296,11 +314,25 @@
   const fontSpecOf = (fr, source) => Object.assign({ asked: fr.asked, id: fr.id || "", name: fr.name || "", source }, fr.align ? { align: fr.align } : {}, fr.listing ? { listing: true } : {});
   /** The engraving font of ONE piece of a line (a counted disc, a left ear, a single charm): { id, name, asked, mapped, source }. A piece's own font (spec.fontPieces[index],
    *  one per disc when a listing asks per disc) wins over the line's (spec.font); a font word the shop does not offer, or none, is Source Sans 3 with `asked` kept. */
-  function pieceFont(spec, index) {
-    const own = spec && Array.isArray(spec.fontPieces) && index != null ? spec.fontPieces[index] : null, f = own || (spec && spec.font) || null;
+  function pieceFont(spec, index, face) {
+    const own = spec && Array.isArray(spec.fontPieces) && index != null ? spec.fontPieces[index] : null;
+    // a FACE that names its own font word (front + back engraving: spec.engraving[face].fontWord, CONTRACT section 8) is read like a drop-down word; every other face uses the line's font (one font per purchase line)
+    const fw = faceFontWord(spec, face), fid = fw ? fontOfPhrase(fw) : "";
+    const f = fid ? { id: fid, asked: fw, source: "face" } : own || (spec && spec.font) || null, askedOnly = fw && !fid ? fw : "";
     const inst = (f && f.id && fontById(f.id)) || fontById(DEFAULT_FONT);
-    return { id: inst.id, name: inst.name, asked: f && f.asked ? String(f.asked) : "", mapped: !!(f && f.id && fontById(f.id)), listing: !!(f && f.listing), source: f && f.source ? f.source : "default" };
+    const listing = !!(f && f.listing), asked = askedOnly || (f && f.asked ? String(f.asked) : "");
+    // (a listing's usual font that stands in for a word the shop does not offer is still a request to look at: not "mapped")
+    return { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
   }
+  /** The font word a face of a front + back line names for itself (spec.engraving[face].fontWord), "" when it names none (the line's font then serves both faces).
+   *  No face means the back, as everywhere else (CONTRACT: an absent face is "back"). */
+  function faceFontWord(spec, face) {
+    const e = spec && spec.engraving && spec.engraving[face === "front" ? "front" : "back"];
+    return e && typeof e.fontWord === "string" ? e.fontWord.trim() : "";
+  }
+  /** Fonts that have no lowercase (Ace): the text of a piece in one is engraved in capitals ("w" -> "W"). Any other font keeps the text exactly as it is. */
+  const fontCaps = id => { const f = fontById(id); return !!(f && f.caps); };
+  const capsText = (text, id) => fontCaps(id) ? String(text == null ? "" : text).toLocaleUpperCase("en-US") : String(text == null ? "" : text);
   /** The installed font a saved back says it was engraved in: its fontKey, else its font NAME (every back saved before the other fonts says "Source Sans 3"), else Source Sans 3. */
   function fontOfRecord(rec) {
     if (rec && rec.fontKey && fontById(rec.fontKey)) return fontById(rec.fontKey).id;
@@ -308,11 +340,11 @@
     return hit ? hit.id : DEFAULT_FONT;
   }
   /** The one plain line the cards show: "Font: Stylish → Playwrite US Trad", or for a font the shop does not offer "Requested font: Script (engraved in Source Sans 3)"; "" when the line has no font. */
-  function fontLine(spec, index) {
-    const f = spec && (spec.font || (spec.fontPieces && spec.fontPieces[index])); if (!f) return "";
-    const p = pieceFont(spec, index), asked = clip(p.asked, 40);
-    if (p.listing) return `Font: ${asked ? asked + " → " : ""}${p.name} (this listing engraves in one font)`;
-    return p.mapped ? `Font: ${asked ? asked + " → " : ""}${p.name}` : asked ? `Requested font: ${asked} (engraved in ${p.name})` : "";
+  function fontLine(spec, index, face) {
+    const f = spec && (spec.font || (spec.fontPieces && spec.fontPieces[index]) || (faceFontWord(spec, face) && {})); if (!f) return "";
+    const p = pieceFont(spec, index, face), asked = clip(p.asked, 40), caps = p.caps ? " · capitals only" : "";
+    if (p.listing) return asked ? `Requested font: ${asked} (engraved in ${p.name}, the usual font of this listing${caps})` : `Font: ${p.name} (the usual font of this listing: the buyer named none${caps})`;
+    return p.mapped ? `Font: ${asked ? asked + " → " : ""}${p.name}${caps}` : asked ? `Requested font: ${asked} (engraved in ${p.name})` : "";
   }
   const fontWhy = fr => `font “${clip(fr.asked, 40)}” is not one of the engraving fonts (${fr.pick.length === 1 ? "the app engraves in " : "the app has "}${fr.pick.map(f => f.name).join(", ")}): a person picks`;
 
@@ -2163,7 +2195,8 @@
         if (how) { unread[0].mapped = { field: "design", value: sku, source: "sku:" + how }; problems.splice(problems.indexOf(ask), 1); }
       }
     }
-    if (fx) { const f = fontById(fx.font); spec.font = Object.assign({ asked: "" }, spec.font, { id: f.id, name: f.name, source: "rule:font-listing", listing: true }); }   // (the listing's one font, with or without a font option)
+    // the listing's usual font (FONT_LISTINGS), ONLY for a line whose buyer named no font the shop offers (no font option, "No Font", a word the shop does not offer): the buyer's own font word is never replaced
+    if (fx && !(spec.font && spec.font.id)) { const f = fontById(fx.font); spec.font = Object.assign({ asked: "" }, spec.font, { id: f.id, name: f.name, source: "rule:font-listing", listing: true }); }
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
     // listing whose signs share one SKU), and a charm given to the SKU instead would be every sign's
     const optionOpen = problems.some(p => p.kind === "needsMapping");
@@ -2578,7 +2611,7 @@
   }
   return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
-    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
+    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign,

@@ -7,6 +7,9 @@
 //  A · the fonts: files, licences, glyphs, the registry
 //  B · the words: all 8 font words, every spelling seen, the option name is not needed, "No Font" is no font, an unknown word never holds
 //  C · the real lines: the three Mini Tag lines read with no font question, every other listing keeps its own font
+//  E · ENGFONT (11 Oct 2026, Paul: "double check that you've correctly identified the font choices ... identify open source versions of each offered font"): the Mini Tag family's three words
+//      are each matched to the shop's own chart (Vibur -> Vibur itself, Ace -> Jost with the slashed zero + capitals only, Britannic Bold -> Libre Franklin), the BUYER'S word always wins
+//      (the FONT_LISTINGS one-font rule is only the fallback for a line with no font word), every spelling, both faces of a front + back line, the capitals rule, the slashed zero
 //  D · the engraving: "C." (and the other tag words) typeset in the tag font on the real tag, inside it; the weight rule; the worker; the saved back reopens in its font
 'use strict';
 const assert = require('assert'), fs = require('fs'), path = require('path'), vm = require('vm');
@@ -20,7 +23,7 @@ let n = 0; const ok = (c, m) => { assert(c, m); n++; }, eq = (a, b, m) => { asse
 const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 const bytes = f => { const b = fs.readFileSync(path.join(root, f)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
 
-const WORDS = { Stylish: 'playwrite-us-trad', Pristina: 'marck-script', Angelina: 'mynerve', Typewriter: 'crimson-text', Comic: 'source-sans-3', Vibur: 'playwrite-us-modern', Ace: 'jost', 'Britannic Bold': 'alegreya-sans' };
+const WORDS = { Stylish: 'playwrite-us-trad', Pristina: 'marck-script', Angelina: 'mynerve', Typewriter: 'crimson-text', Comic: 'source-sans-3', Vibur: 'vibur', Ace: 'jost-ace', 'Britannic Bold': 'libre-franklin' };
 const FIX = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/font-option-lines.json'), 'utf8')).lines;
 const AUDIT = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/font-audit-values.json'), 'utf8'));
 
@@ -45,8 +48,9 @@ for (const f of O.ENGRAVING_FONTS) {
   for (const f of O.ENGRAVING_FONTS) if (f.id !== 'source-sans-3') ok(build.includes('vendor/fonts/' + path.basename(f.files.Regular).replace(/-[A-Za-z]+\.ttf$/, '-OFL.txt')), `${f.name}: the licence is served with the font`);
   const files = new Set(fs.readdirSync(path.join(root, 'vendor/fonts')));
   for (const f of O.ENGRAVING_FONTS) for (const file of Object.values(f.files)) ok(files.has(path.basename(file)), `${file} is copied by the build (every .otf/.ttf of vendor/fonts)`); }
-eq(O.ENGRAVING_FONTS.map(f => f.id), ['source-sans-3', 'playwrite-us-trad', 'marck-script', 'mynerve', 'crimson-text', 'playwrite-us-modern', 'jost', 'alegreya-sans'], 'Source Sans 3 and seven lookalikes');
-eq(O.ENGRAVING_FONTS.filter(f => !f.files.Semibold).map(f => f.id), ['playwrite-us-trad', 'marck-script', 'mynerve', 'playwrite-us-modern'], 'the four scripts have ONE weight; the others have a heavier cut for the small sizes');
+eq(O.ENGRAVING_FONTS.map(f => f.id), ['source-sans-3', 'playwrite-us-trad', 'marck-script', 'mynerve', 'crimson-text', 'playwrite-us-modern', 'jost', 'alegreya-sans', 'vibur', 'jost-ace', 'libre-franklin'], 'Source Sans 3 and ten others (the first match of Vibur / Ace / Britannic Bold stay installed: a saved back may name them)');
+eq(O.ENGRAVING_FONTS.filter(f => !f.files.Semibold).map(f => f.id), ['playwrite-us-trad', 'marck-script', 'mynerve', 'playwrite-us-modern', 'vibur'], 'the five scripts have ONE weight; the others have a heavier cut for the small sizes');
+eq(O.ENGRAVING_FONTS.filter(f => f.caps).map(f => f.id), ['jost-ace'], 'only the Ace font is a capitals-only font');
 for (const g of O.FONT_WORDS) ok(O.fontById(g.id), `${g.words[0]} maps to an installed font`);
 
 // ── B · the words ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -62,9 +66,9 @@ for (const g of O.FONT_WORDS) ok(O.fontById(g.id), `${g.words[0]} maps to an ins
   eq([...new Set(AUDIT.rows.filter(r => r.word).map(r => r.word))].sort(), Object.keys(WORDS).sort(), 'the 8 words of the shop'); }
 { // 2. the seven spellings of Typewriter, case aside, and the other words in any case
   for (const w of ['Typewriter', 'TYPEWRITE', 'TYPEWRITER', 'TypeWrit', 'Typewrite', 'Typewritr', 'TypeWrt', 'typewriter', 'Type Writer', 'type-writer']) eq(O.fontOfWord(w), 'crimson-text', `Typewriter: ${w}`);
-  for (const [w, id] of [['STYLISH', 'playwrite-us-trad'], ['stylish', 'playwrite-us-trad'], ['PRISTINA', 'marck-script'], ['ANGELINA', 'mynerve'], ['angelina', 'mynerve'], ['COMIC', 'source-sans-3'], ['Vibur', 'playwrite-us-modern'], ['Ace', 'jost'], ['Britannic Bold', 'alegreya-sans']]) eq(O.fontOfWord(w), id, w);
+  for (const [w, id] of [['STYLISH', 'playwrite-us-trad'], ['stylish', 'playwrite-us-trad'], ['PRISTINA', 'marck-script'], ['ANGELINA', 'mynerve'], ['angelina', 'mynerve'], ['COMIC', 'source-sans-3'], ['Vibur', 'vibur'], ['Ace', 'jost-ace'], ['Britannic Bold', 'libre-franklin']]) eq(O.fontOfWord(w), id, w);
   eq([O.fontOfWord('Typed'), O.fontOfWord('Type'), O.fontOfWord('Wrist'), O.fontOfWord('Pace'), O.fontOfWord('Place'), O.fontOfWord('Face')], ['', '', '', '', '', ''], 'a word that merely looks like a font word is none');
-  eq(O.fontOfPhrase('Typewriter font'), 'crimson-text', 'the word inside a phrase'); eq(O.fontOfPhrase('Ace of hearts font'), 'jost', 'Ace in a font option reads as Ace'); }
+  eq(O.fontOfPhrase('Typewriter font'), 'crimson-text', 'the word inside a phrase'); eq(O.fontOfPhrase('Ace of hearts font'), 'jost-ace', 'Ace in a font option reads as Ace'); }
 { // 3. "No Font" and "Silver • Custom" are not fonts: nothing asked, nothing held, the line engraves in the app's own font
   for (const [name, value] of [['Necklace Length', '18" ·NO FONT·'], ['Chain Length', '18"·No Font'], ['Bracelet Length/Font Choice', '9"/No Font'], ['Necklace Length and Font', '14" ·NO FONT·']]) {
     eq([O.fontRead(name, value), O.fontHidden(name, value)], [null, null], `${name}: ${value} carries no font (and stays the length it was)`);
@@ -88,21 +92,32 @@ const interpret = (x, c) => O.interpretLine({ receiptId: x.rid, updateTs: 0 }, l
 const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
 { const tagLines = FIX.filter(x => ['4458930445', '1714117116'].includes(x.listingId));
   eq(tagLines.map(x => x.sku), ['Tiny Initial Tag 1-CO', 'Tiny Initial Tag 1', ''], 'the three real lines: "Tiny Initial Tag 1-CO", "Tiny Initial Tag 1" and the listing with no SKU');
+  // ENGFONT: the buyer's own word reaches the engraving (these three lines all say Vibur) and the font is Vibur itself; no flag turns it into something else
   for (const hold of [false, true]) { const keep = O.FONT_RULES.unknownHolds; O.FONT_RULES.unknownHolds = hold; try {
     for (const x of tagLines) {
       const sp = interpret(x), fontOpt = sp.options.find(o => /font/i.test(o.name));
-      eq([sp.font.id, sp.font.name, sp.font.source, sp.font.listing, sp.font.asked], ['playwrite-us-modern', 'Playwrite US Modern', 'rule:font-listing', true, 'Vibur'], `${x.rid} ${x.sku || '(no SKU)'}: the listing's one font, whatever the buyer picked (the switch ${hold ? 'on' : 'off'})`);
-      eq([fontOpt.mapped.field, fontOpt.mapped.value, fontOpt.mapped.source], ['font', 'playwrite-us-modern', 'rule:font-listing'], 'the Font Choice option is settled by the listing rule');
+      eq([sp.font.id, sp.font.name, sp.font.source, !!sp.font.listing, sp.font.asked], ['vibur', 'Vibur', 'rule:font', false, 'Vibur'], `${x.rid} ${x.sku || '(no SKU)'}: the buyer's Vibur is Vibur (the switch ${hold ? 'on' : 'off'})`);
+      eq([fontOpt.mapped.field, fontOpt.mapped.value, fontOpt.mapped.source], ['font', 'vibur', 'rule:font'], 'the Font Choice option answers itself with the buyer\'s word');
       eq(asks(sp).filter(p => /font/i.test(p.optionName) || p.font), [], 'no question about the font');
     } } finally { O.FONT_RULES.unknownHolds = keep; } }
-  // whatever the buyer picks on these listings is ignored, never held
-  for (const w of ['Ace', 'Britannic Bold', 'Vibur', 'Brush Script', 'Papyrus']) for (const [lid, sku] of [['4458930445', ''], ['1714117116', 'Tiny Initial Tag 1'], ['1714117116', 'Tiny Initial Tag 1-CO']]) {
+  // the buyer's pick is followed on every listing of the family, whatever the font
+  for (const [w, id] of [['Ace', 'jost-ace'], ['Britannic Bold', 'libre-franklin'], ['Vibur', 'vibur']]) for (const [lid, sku] of [['4458930445', ''], ['4458930445', 'Mini_0445'], ['1714117116', 'Tiny Initial Tag 1'], ['1714117116', 'Tiny Initial Tag 1-CO'], ['1714112618', 'Tiny Initial Tag 3'], ['1714117068', 'Tiny Initial Tag 4']]) {
     const sp = interpret({ rid: '1', listingId: lid, sku, vars: [['Metal Choice', 'Gold Filled'], ['Font Choice', w]] });
-    eq([sp.font.id, asks(sp).filter(p => /font/i.test(p.optionName)).length], ['playwrite-us-modern', 0], `${lid} ${sku || '(no SKU)'}: ${w} is ignored`);
+    eq([sp.font.id, !!sp.font.listing, asks(sp).filter(p => /font/i.test(p.optionName)).length], [id, false, 0], `${lid} ${sku || '(no SKU)'}: ${w} -> ${id} (the buyer's choice, never the listing's)`);
   }
-  // by SKU alone as well, and a listing that is not one of them keeps the buyer's font
-  eq(interpret({ rid: '1', listingId: '999', sku: 'tiny initial tag 1-co', vars: [['Font Choice', 'Ace']] }).font.id, 'playwrite-us-modern', 'the SKU names the listing too (any spelling of case)');
-  eq(interpret({ rid: '1', listingId: '1714112618', sku: 'Tiny Initial Tag 3', vars: [['Font Choice (see listing photo for choices)', 'Ace']] }).font.id, 'jost', 'Tiny Initial Tag 3 (another listing) keeps its own font word: Ace is Jost'); }
+  // the listing's usual font (Vibur, FONT_LISTINGS) is ONLY the fallback: no font option at all, "No Font", or a word the shop does not offer
+  for (const [label, vars] of [['no font option', [['Metal Choice', 'Gold Filled']]], ['No Font', [['Font Choice', 'No Font']]], ['a word the shop does not offer', [['Font Choice', 'Brush Script']]]]) for (const [lid, sku] of [['4458930445', ''], ['1714117116', 'Tiny Initial Tag 1-CO']]) {
+    const sp = interpret({ rid: '1', listingId: lid, sku, vars });
+    eq([sp.font.id, !!sp.font.listing, sp.font.source, asks(sp).filter(p => /font/i.test(p.optionName)).length], ['vibur', true, 'rule:font-listing', 0], `${lid}: ${label} -> the listing's usual font, no question, never a hold`);
+  }
+  { const none = interpret({ rid: '1', listingId: '4458930445', sku: '', vars: [['Metal Choice', 'Gold Filled']] }); eq(O.fontLine(none), 'Font: Vibur (the usual font of this listing: the buyer named none)', 'the card says it is the listing\'s usual font'); }
+  { const sp = interpret({ rid: '1', listingId: '4458930445', sku: '', vars: [['Font Choice', 'Brush Script']] }); eq([O.pieceFont(sp).mapped, O.fontLine(sp)], [false, 'Requested font: Brush Script (engraved in Vibur, the usual font of this listing)'], 'a font the shop does not offer is flagged "Requested font", engraved in the listing\'s usual font'); }
+  // a listing that is not in the family has no usual font: no font word, no font (Source Sans 3)
+  eq(interpret({ rid: '1', listingId: '999', sku: 'A', vars: [['Metal Choice', 'Gold Filled']] }).font, undefined, 'another listing with no font word has no font at all');
+  // by SKU alone as well (any spelling of case): the SKU names the listing for the fallback; the word still wins
+  eq(interpret({ rid: '1', listingId: '999', sku: 'tiny initial tag 1-co', vars: [['Font Choice', 'Ace']] }).font.id, 'jost-ace', 'the SKU names the listing; the buyer\'s Ace still wins');
+  eq(interpret({ rid: '1', listingId: '999', sku: 'tiny initial tag 1-co', vars: [['Metal Choice', 'Gold']] }).font.id, 'vibur', 'and with no word the SKU\'s listing falls back to Vibur');
+  eq(interpret({ rid: '1', listingId: '1714112618', sku: 'Tiny Initial Tag 3', vars: [['Font Choice (see listing photo for choices)', 'Ace']] }).font.id, 'jost-ace', 'Tiny Initial Tag 3 (another listing of the family): Ace is the Ace font'); }
 { // every other listing with a Font option: mapped per word, never the tag font
   for (const x of FIX.filter(l => !['4458930445', '1714117116'].includes(l.listingId))) {
     const sp = interpret(x), word = x.vars.map(v => O.fontParts(v[1]).words.map(w => O.fontOfWord(w)).find(Boolean)).find(Boolean);
@@ -117,12 +132,81 @@ const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
   const withIds = c => O.interpretLine({ receiptId: x.rid, updateTs: 0 }, Object.assign(lineOf(x), { productId: '31726160304', variations: lineOf(x).variations.map(v => v.name === 'Charm Type' ? Object.assign(v, { property_id: 513, value_id: 1481636059101 }) : v) }), c);
   const sp = withIds(ctx({ listingSkus: table })), q = asks(sp);
   eq(q.map(p => [p.optionName, p.optionValue]), [['Charm Type', 'Tag1 (front engrave)']], 'the Tag1 option still waits for a person (and only it)');
-  ok(/one SKU \(MINI_0445\) for every choice of this listing/.test(q[0].why), 'with the plain reason: ' + q[0].why);
-  ok(sp.designSku === 'MINI_0445' && sp.designSku !== 'TINY INITIAL TAG 1', 'the only SKU Etsy gives is MINI_0445; TINY INITIAL TAG 1 (a look-alike by name) is never picked');
+  // (TAGSKU 1 of 11 Oct: the Tag number is now read as the tag SHAPE, so the plain reason names the shape, not the shared SKU; the option still waits, and never picks a look-alike by name)
+  ok(/no design for the Tag1 shape/.test(q[0].why), 'with the plain reason: ' + q[0].why);
+  ok(sp.designSku !== 'TINY INITIAL TAG 1', 'TINY INITIAL TAG 1 (a look-alike by name) is never picked');
   // a person's saved answer for the option settles it (not written here)
   const saved = { 4458930445: { 'charm type': { 'tag1 (front engrave)': { field: 'design', value: 'TINY INITIAL TAG 1', by: 'Paul', at: 1 } } } };
   const sp2 = withIds(ctx({ listingSkus: table, optionMaps: saved }));
   eq([asks(sp2).length, sp2.designSku], [0, 'TINY INITIAL TAG 1'], 'once a person says which design Tag1 is, the line goes on, in the tag font'); }
+
+// ── E · ENGFONT: the three Mini Tag words, every spelling, both faces, the capitals rule, the slashed zero ───────────────────────────────────────────────
+{ // 1. every option name and spelling of the family reads to the same font (the value says it, the option's name only has to be a font's)
+  const SPELL = { 'jost-ace': ['Ace', 'ACE', 'ace', 'Ace (no lowercase)', 'ACE (NO LOWERCASE)', 'Ace - no lowercase', 'Ace no lowercase', 'ace(no lowercase)', 'Ace (caps only)', 'Ace (uppercase)'],
+    'libre-franklin': ['Britannic Bold', 'BRITANNIC BOLD', 'britannic bold', 'Britannic-Bold', 'Britannic', 'Britanic Bold', 'BritannicBold'], vibur: ['Vibur', 'VIBUR', 'vibur', 'Viber'] };
+  const NAMES = ['Font Choice', 'Font', 'Font Style', 'Font Choice (see listing photo for choices)', 'Fonts', 'Font Selection', 'Font Choice:', 'FONT CHOICE', 'Typeface', 'Lettering Style'];
+  let n0 = 0;
+  for (const [id, values] of Object.entries(SPELL)) for (const value of values) {
+    eq(O.fontOfWord(value), id, `"${value}" is the word of ${id}`);
+    for (const name of NAMES) { eq((O.fontRead(name, value) || {}).id, id, `"${name}": ${value}`); n0++; }
+    eq((O.fontHidden('Necklace Length /Font /Alignment', `16"·${value}·Center`) || {}).id, id, `a length option that carries ${value}`);
+    eq((O.fontInMetal('Metal? Font Choice?', `Gold • ${value}`) || {}).id, id, `a metal option that carries ${value}`);
+    const sp = interpret({ rid: '1', listingId: '4458930445', sku: '', vars: [['Font Choice', value]] });
+    eq([sp.font.id, !!sp.font.listing], [id, false], `${value} on listing 4458930445 reaches the engraving as ${id}`);
+  }
+  ok(n0 >= 200, `${n0} (option name x spelling) pairs read`);
+  eq([O.fontOfWord('Pace'), O.fontOfWord('Space'), O.fontOfWord('Acer'), O.fontOfWord('Brit'), O.fontOfWord('Britain'), O.fontOfWord('Vibrant'), O.fontOfWord('Vibe')], ['', '', '', '', '', '', ''], 'words that merely look like them are none');
+  // the other word families are untouched
+  for (const [w, id] of [['Stylish', 'playwrite-us-trad'], ['Pristina', 'marck-script'], ['Angelina', 'mynerve'], ['Typewriter', 'crimson-text'], ['Comic', 'source-sans-3']]) eq(O.fontOfWord(w), id, `${w} keeps ${id}`); }
+{ // 2. order 4195966039 as Paul's screenshot shows it: Mini Tag add-on, Charm Type "Tag1 (front+back)", Font Choice "Ace": the engraving is Ace -> Jost Slashed Zero, capitals only
+  const sp = interpret({ rid: '4195966039', listingId: '4458930445', sku: 'MINI_0445', vars: [['Charm Type', 'Tag1 (front+back)'], ['Font Choice', 'Ace'], ['Metal Choice', 'Gold Filled']] });
+  eq([sp.font.asked, sp.font.id, sp.font.name, sp.font.source, !!sp.font.listing], ['Ace', 'jost-ace', 'Jost Slashed Zero', 'rule:font', false], 'order 4195966039: "Font Choice: Ace" is the Ace font');
+  eq(asks(sp).filter(p => /font/i.test(p.optionName) || p.font), [], 'no question about the font');
+  eq(O.fontLine(sp), 'Font: Ace → Jost Slashed Zero · capitals only', 'the card line');
+  // both faces: the line's one font serves the front and the back, unless a face names its own word
+  for (const face of [undefined, 'front', 'back']) { const pf = O.pieceFont(sp, null, face); eq([pf.id, pf.caps, pf.mapped], ['jost-ace', true, true], `face ${face || '(none)'}: Ace`); }
+  const both = Object.assign({}, sp, { engraving: { mode: 'both', front: { text: 'W', lines: ['W'], fontWord: null }, back: { text: '1. 27. 24', lines: ['1. 27. 24'], fontWord: null } } });
+  eq(['front', 'back'].map(f => O.pieceFont(both, null, f).id), ['jost-ace', 'jost-ace'], 'a front + back line with no per-face word: Ace on both faces');
+  both.engraving.back.fontWord = 'Vibur';
+  eq(['front', 'back'].map(f => O.pieceFont(both, null, f).id), ['jost-ace', 'vibur'], 'a face that names its own font word (Back: ... - Vibur) gets that font; the other face keeps the line\'s');
+  eq(O.pieceFont(both, null, 'back').caps, false, 'and the capitals rule follows the face\'s own font');
+  both.engraving.back.fontWord = 'Britannic Bold'; eq(O.pieceFont(both, null, 'back').id, 'libre-franklin', 'Britannic Bold on a face');
+  both.engraving.back.fontWord = 'Papyrus'; { const pf = O.pieceFont(both, null, 'back'); eq([pf.id, pf.mapped, pf.asked], ['jost-ace', false, 'Papyrus'], 'a face word the shop does not offer: the line\'s font, flagged as requested'); eq(O.fontLine(both, null, 'back'), 'Requested font: Papyrus (engraved in Jost Slashed Zero)', 'and the card says so'); }
+  eq(O.faceFontWord(both, 'front'), '', 'a face with no word names none'); }
+{ // 3. the capitals rule and the engraving of the page (the bridge's own ensureJobFont, run against fakes)
+  eq([O.capsText('w', 'jost-ace'), O.capsText('Anna & Joe 1. 27. 24', 'jost-ace'), O.capsText('w', 'jost'), O.capsText('w', 'vibur'), O.capsText('w', 'libre-franklin'), O.capsText('w', 'source-sans-3'), O.capsText(null, 'jost-ace')], ['W', 'ANNA & JOE 1. 27. 24', 'w', 'w', 'w', 'w', ''], 'Ace text is capitals; every other font keeps the text as typed');
+  const src = read('charm-nest-bridge.js'), a = src.indexOf('  async function ensureJobFont(job) {'), b = src.indexOf('    return setOf(job);\n  }', a);
+  ok(a > 0 && b > a, 'ensureJobFont is in the bridge');
+  const run = async (job, loaded) => { const env = vm.createContext({ O, pieceIndexOf: () => null, loadFontSet: async () => ({ ok: loaded !== false }), setOf: () => ({}), Array }); vm.runInContext(src.slice(a, b) + '    return setOf(job);\n  }\nthis.ensureJobFont = ensureJobFont;', env); await env.ensureJobFont(job); return job; };
+  const sp = interpret({ rid: '4195966039', listingId: '4458930445', sku: 'MINI_0445', vars: [['Charm Type', 'Tag1 (front+back)'], ['Font Choice', 'Ace']] });
+  (async () => {
+    let j = await run({ row: { spec: sp }, text: 'w\n1. 27. 24', lines: ['w', '1. 27. 24'], lineInput: ['w', '1. 27. 24'] });
+    eq([j.fontKey, j.fontName, j.lines, j.text, j.lineInput, j.fontCapsApplied], ['jost-ace', 'Jost Slashed Zero', ['W', '1. 27. 24'], 'W\n1. 27. 24', ['W', '1. 27. 24'], true], 'the piece of order 4195966039: "w" is engraved as "W" (lines, text and the line input), in Jost Slashed Zero');
+    j = await run({ row: { spec: sp }, text: 'w', lines: ['w'], lineInput: ['w'], fontKey: 'jost-ace', fontLocked: true, fit: {} });
+    eq([j.fontKey, j.lines], ['jost-ace', ['W']], 'a saved back reopened in Engrave (its font is locked) and edited with a lowercase letter: capitals still');
+    j = await run({ row: { spec: sp }, text: 'w', lines: ['w'], lineInput: ['w'] }, false);
+    eq([j.fontKey, j.lines, /could not be loaded/.test(j.fontFallback)], ['source-sans-3', ['W'], true], 'if the Ace font will not load the piece falls back to Source Sans 3 (said on the card) and its words are still capitals');
+    for (const [word, id] of [['Vibur', 'vibur'], ['Britannic Bold', 'libre-franklin']]) {
+      const sp2 = interpret({ rid: '1', listingId: '4458930445', sku: '', vars: [['Font Choice', word]] });
+      j = await run({ row: { spec: sp2 }, text: 'w', lines: ['w'], lineInput: ['w'] });
+      eq([j.fontKey, j.lines, !!j.fontCapsApplied], [id, ['w'], false], `${word}: the text is left exactly as typed`);
+    }
+    j = await run({ row: { spec: {} }, text: 'w', lines: ['w'], lineInput: ['w'] }); eq([j.fontKey, j.lines], ['source-sans-3', ['w']], 'a line with no font at all: Source Sans 3, text untouched');
+    console.log(`font-map E (ensureJobFont): done`);
+  })().catch(e => { console.error(e); process.exitCode = 1; }); }
+{ // 4. the slashed zero: the Ace font's zero carries a slash (one more contour than plain Jost: the ring, and the slash splits its counter in two), nothing else changed
+  const moves = (font, ch) => font.getPath(ch, 0, 0, 100).commands.filter(c => c.type === 'M').length;
+  for (const w of ['Regular', 'Semibold']) {
+    eq([moves(sets['jost-ace'][w], '0'), moves(sets.jost[w], '0')], [3, 2], `${w}: Jost Slashed Zero draws the zero with a slash (3 contours), plain Jost without (2)`);
+    for (const ch of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789.&-\'') eq(JSON.stringify(sets['jost-ace'][w].getPath(ch, 0, 0, 100).commands), JSON.stringify(sets.jost[w].getPath(ch, 0, 0, 100).commands), `${w}: "${ch}" is Jost's own drawing, unchanged`);
+    eq(sets['jost-ace'][w].getAdvanceWidth('0', 100), sets.jost[w].getAdvanceWidth('0', 100), `${w}: the slashed zero has the zero's own width`); }
+  ok(/Modified Version|slash/i.test(fs.readFileSync(path.join(root, 'vendor/fonts/JostSlashedZero-OFL.txt'), 'utf8')) && /Jost Project Authors/.test(fs.readFileSync(path.join(root, 'vendor/fonts/JostSlashedZero-OFL.txt'), 'utf8')), 'the licence file says what was changed and keeps Jost\'s copyright');
+  // Vibur is the font of the shop's chart: the app's own layout of it has no stray advance (the font's "rs" ligature carries a bad advance in the file; the app lays out sanely)
+  const vib = sets.vibur.Regular; for (const t of ['Doris', 'Mars', 'Ross', 'Pearson', 'rs', 'Marsha']) ok(vib.getAdvanceWidth(t, 100) > 20 && vib.getAdvanceWidth(t, 100) < 100 * t.length * 1.1, `Vibur lays out "${t}" in sane width (${vib.getAdvanceWidth(t, 100).toFixed(1)})`); }
+{ // 5. records: a back saved in any of the fonts reopens in it, old and new
+  const rec = (font, fontKey) => Object.assign({ font }, fontKey ? { fontKey } : {});
+  eq([rec('Jost Slashed Zero'), rec('Libre Franklin'), rec('Vibur'), rec('Jost'), rec('Alegreya Sans'), rec('Playwrite US Modern'), rec('Source Sans 3'), rec('x', 'jost-ace'), rec('x', 'vibur')].map(r => O.fontOfRecord(r)),
+    ['jost-ace', 'libre-franklin', 'vibur', 'jost', 'alegreya-sans', 'playwrite-us-modern', 'source-sans-3', 'jost-ace', 'vibur'], 'a saved back names its font by name or key; the first matches of Vibur, Ace and Britannic Bold still open in themselves'); }
 
 // ── D · the engraving ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 (async () => {
@@ -139,6 +223,11 @@ const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
     ok(G.verifyInk(res.fit.cmds, res.mask).ok, `${f.name} "${text}": zero ink outside the tag's cut line and in no hole`);
     ok(res.fit.capMm >= 1.0, `${f.name} "${text}": legible (cap ${res.fit.capMm.toFixed(2)} mm)`);
     fitted[f.id + '|' + text] = res;
+  }
+  // ENGFONT: the words of order 4195966039 ("W" on the front, "1. 27. 24" on the back, the zero too) in the three Mini Tag fonts on the real tag, inside it
+  for (const id of ['jost-ace', 'vibur', 'libre-franklin']) for (const text of ['W', '1. 27. 24', '10 0', 'MC']) {
+    const res = Fit.calculate(input(O.capsText(text, id)), sets[id], G);
+    ok(res.fit && res.check.ok && G.verifyInk(res.fit.cmds, res.mask).ok, `${id}: "${O.capsText(text, id)}" fits the real tag with no ink outside it`);
   }
   // the tag font's own letters, not Source Sans 3's: "C." is drawn from Playwrite US Modern's glyphs
   const tag = fitted['playwrite-us-modern|C.'], plain = fitted['source-sans-3|C.'];
@@ -207,7 +296,8 @@ const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
     // the cache tokens carry the change
     const html = read('charm-nest-1.html');
     for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js', 'charm-nest-sheetwin.js', 'charm-nest-engraving-seals.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-vf1(?:-[a-z0-9]+)*"').test(html), `${f}: the ?v= token carries -vf1`);
-    ok(/charm-nest-engrave-worker\.js\?v=[^"']*-vf1/.test(bridge), 'and the worker URL'); }
+    ok(/charm-nest-engrave-worker\.js\?v=[^"']*-vf1/.test(bridge), 'and the worker URL');
+    for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-ef1(?:-[a-z0-9]+)*"').test(html), `${f}: the ?v= token carries -ef1 (ENGFONT)`); }
 
   console.log(`font-map: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exitCode = 1; });
