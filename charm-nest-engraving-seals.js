@@ -2,6 +2,11 @@
 (function(root,factory){const api=factory(root);if(typeof module==='object'&&module.exports)module.exports=api;else root.CNEngravingSeals=api;})(typeof window!=='undefined'?window:null,function(root){
   'use strict';
   const kinds=new Set(['engraveApproved','engravePlain']);
+  /* ── the FACE of an engraving (front / back; the model is charm-nest-engrave-faces.js; a job, a seal or a record that does not say "front" is the back) ──
+   * Every word this card says about "the back" is said about "the front" for a front job, and not otherwise: a back (every engraving made before the front existed) is drawn byte for byte as it was. */
+  const faceLib=()=>root?.CharmNestEngraveFaces || (typeof module==='object' && typeof require==='function'?(()=>{try{return require('./charm-nest-engrave-faces.js');}catch(_){return null;}})():null);
+  const faceOf=x=>{const F=faceLib();return F && F.faceOf?F.faceOf(x):x && (x.face==='front' || String(x.key || '').endsWith('~front'))?'front':'back';};
+  const aboutFace=(text,face)=>face==='front'?String(text).replace(/\bback\b/g,'front').replace(/\bBack\b/g,'Front'):text;
   /* FACES (plans/front-back-1011): a seal of a FRONT engraving says `face:'front'` and its id is `how:front:at:by`; a back seal has no `face` and the id it always had (`how:at:by`), so
      every seal already made reads and merges exactly as before, and a front and a back approved in the same instant by the same person are two seals. The face of a seal given by a
      record is that record's own (a front job, a front back-file record); a seal that carries its face keeps it. */
@@ -74,7 +79,7 @@
     if(e.kind==='words')add(e.reason || job.reason);
     for(const q of job.questions || [])add(q);
     const r=job.requests || {};
-    if(r.side && !['back','unspecified'].includes(r.side))add(`Asked for the ${r.side} side`);
+    if(r.side && ![faceOf(job),'unspecified'].includes(r.side))add(`Asked for the ${r.side} side`);   // (a side other than the face this card is about)
     if(r.font)add(`Asked for the font ${r.font}`);
     const of=job.row?.spec?.font;   // a font chosen in a drop-down that the app does not have (Font: Script): said like one asked for in a note; one the app has is engraved in its lookalike (spec.font.id) and is no question
     if(of?.asked && !of.id && String(of.asked).toLowerCase()!==String(r.font || '').toLowerCase())add(`Requested font: ${of.asked} (a drop-down option, engraved in Source Sans 3)`);
@@ -107,52 +112,77 @@
     if(job.decision?.by)return `Words confirmed by ${job.decision.by}`;
     if(!job.source || job.source==='none')return '';
     const pct=Math.round((+job.confidence || 0)*100);
+    // the words of a front or back taken from the order's own reading (spec.engraving: the option and the labelled note), with no paid reading: a person's edit says who
+    if(job.wordsSource==='spec.engraving'){
+      const ov=job.row?.engravingOverride || job.row?.parentRow?.engravingOverride;
+      return job.source==='person' || ov?.by?`Words set by ${ov?.by || 'a person'}`:`Read from the order's own labels${pct>0?` · ${pct}% sure`:''}`;
+    }
     return `Read from ${SOURCE[job.source] || job.source}${pct>0?` · ${pct}% sure`:''}`;
+  }
+  /** The pieces of a cycle as piece groups (a piece with its Front and Back job), and the key to go to from the shown one: Back / Next go piece by piece, keeping the face that is shown. */
+  const groupsOf=c=>{const F=faceLib();return F && F.groupPieces && c && Array.isArray(c.pieces)?F.groupPieces(c.pieces.map(p=>p.job).filter(Boolean)):[];};
+  function neighbour(c,dir){
+    const gs=groupsOf(c);if(gs.length<2)return null;
+    const at=gs.findIndex(g=>g.jobs.some(j=>j.key===c.key));if(at<0)return null;
+    const here=gs[at].jobs.find(j=>j.key===c.key),face=here?faceOf(here):'back',to=gs[(at+(dir<0?gs.length-1:1))%gs.length];
+    const job=(face==='front'?to.front || to.back:to.back || to.front);
+    return job?{key:job.key,name:to.label || 'the piece'}:null;
   }
   /** The counted discs of one order, one at a time (Paul, 10 Oct 2026): the very switch of the Engrave editor (charm-nest-piece-switch.js: one button for each disc with its words, its font by name
    *  and where it stands) and Back / Next round the discs. `c` = { pieces (CharmNestPieceSwitch.list of the line's discs), key (the disc shown) }. Nothing here for any other line: no `cycle`, no markup. */
   function cycleHtml(c){
-    const PS=root?.CharmNestPieceSwitch;if(!c || !PS || !Array.isArray(c.pieces) || c.pieces.length<2)return '';
+    const PS=root?.CharmNestPieceSwitch;if(!c || !PS || !Array.isArray(c.pieces))return '';
+    // a line with a piece that has a front AND a back: the piece switch (when there are several pieces) and, under it, the Front | Back switch of the piece shown, both drawn by the switch component itself
+    if(c.faces){
+      const cur=PS.cursor(c.pieces,c.key);if(!cur.current)return '';
+      const prev=neighbour(c,-1),next=neighbour(c,1);
+      const nav=prev && next?`<span class="nav" role="group" aria-label="Back and next piece"><button type="button" class="btn ghost xs" data-a="discPrev" title="the previous piece: ${esc(prev.name)}">‹ Back</button><button type="button" class="btn ghost xs" data-a="discNext" title="the next piece: ${esc(next.name)}">Next ›</button></span>`:'';
+      return `<div class="egCycle" data-cycle>${PS.html(c.pieces,c.key,{fonts:true,faces:true})}${nav}</div>`;
+    }
+    if(c.pieces.length<2)return '';
     const cur=PS.cursor(c.pieces,c.key);if(!cur.current)return '';
     return `<div class="egCycle" data-cycle>${PS.html(c.pieces,c.key,{fonts:true})}<span class="nav" role="group" aria-label="Back and next disc"><button type="button" class="btn ghost xs" data-a="discPrev" title="the previous disc: ${esc(cur.prev.name)}">‹ Back</button><button type="button" class="btn ghost xs" data-a="discNext" title="the next disc: ${esc(cur.next.name)}">Next ›</button></span></div>`;
   }
   /** Both sheet inspectors and the order window use exactly the same back preview, words, approval and historical seals. */
   function panel(e={kind:'none'}){
-    const kind=e.kind || 'none',status=STATUS[kind] || '',compact=!!e.compact,cycle=cycleHtml(e.cycle);
+    const kind=e.kind || 'none',face=e.face || faceOf(e.job),say=t=>aboutFace(t,face),status=say(STATUS[kind] || ''),compact=!!e.compact,cycle=cycleHtml(e.cycle);
     const all=list(record(e)),ap=canApprove(e),done=kind==='approved' || kind==='skipped';
     const sealsHtml=all.length && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="${all.length}" role="group" aria-label="Engraving approval history">${all.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';
     // (the seals rest on the button once it is approved; before that an earlier approval's seals sit below, so no seal covers the words "Approve engraving": the new one is pressed on the button)
     const history=kind==='approved'?'':html({seals:all});
-    const why=kind==='preparing'?(e.job?.state==='classify'?'The words are not read yet':'Preview not ready yet'):(WHY[kind] || 'Back engraving');
+    const why=kind==='preparing'?(e.job?.state==='classify'?'The words are not read yet':'Preview not ready yet'):say(WHY[kind] || 'Back engraving');
     const reasonId='egWhy'+(++askN);
     let approve='';
-    if(kind==='approved')approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton" disabled aria-label="Back engraving approved">Approved</button>${sealsHtml}</span>`;
+    if(kind==='approved')approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton" disabled aria-label="${say('Back engraving approved')}">Approved</button>${sealsHtml}</span>`;
     else if(ap.ok)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-e="approve">Approve engraving</button></span>`;
-    else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(ap.why)}</span>`;
+    else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(say(ap.why))}</span>`;
+    // one press for both faces of the piece shown ("Approve both faces"): offered by the host (e.both = { ok, why }) only when this piece has a Front and a Back still to approve; off, with the reason as its tip, until both placements have been looked at
+    if(e.both && e.cycle?.faces && ap.ok && kind==='approve')approve+=`<button type="button" class="btn ghost sm egApproveBoth" data-e="approveBoth"${e.both.ok?'':` disabled title="${esc(e.both.why || '')}"`}>Approve both faces</button>`;
     const open=kind==='none'?'':`<button type="button" class="btn ${kind==='words'?'gold':'ghost'} sm egOpen" data-e="engrave">${done?'View in Engraving':'Fix in Engraving'} <span aria-hidden="true">→</span></button>`;
     const acts=kind==='words'?open+approve:approve+open;
-    if(kind==='none')return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top">${cycle}<b>No back engraving</b></div></div>`;
+    if(kind==='none')return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top">${cycle}<b>${status}</b></div></div>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
-    const lbl=kind==='approve' || kind==='approved'?'Words on the back':'Words as read',from=kind==='approved'?'':readFrom(e);
+    const lbl=say(kind==='approve' || kind==='approved'?'Words on the back':'Words as read'),from=kind==='approved'?'':readFrom(e);
     const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}${fontMeta(e)?`<span class="egMeta egFont">${esc(fontMeta(e))}</span>`:''}</div>`
       :kind==='words' || kind==='preparing'?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words egNone">Nothing read yet</div></div>`:'';
     const un=unclear(e),unclearHtml=un.length?`<div class="egUnclear"><span class="egLbl">${kind==='words'?'What is unclear':'Worth a look'}</span><ul>${un.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
-    const saving=kind==='approved' && !e.note?savingNote(e.job):null,note=e.note || saving?.note || '',working=e.note?e.working:saving?.working;
+    const saving=kind==='approved' && !e.note?savingNote(e.job):null,note=e.note || (saving?say(saving.note):'') || '',working=e.note?e.working:saving?.working;
     const sub=note?`<span class="by egSub">${working?'<span class="owSpin" aria-hidden="true"></span>':''}<span>${esc(note)}</span></span>`:'';
     const failKey=e.job?.key,failed=kind==='approve' && failKey?fails.get(failKey):'';if(kind!=='approve' && failKey)fails.delete(failKey);
     const forPiece=e.pieceLabel?`<span class="egFor"><b>${esc(e.pieceLabel)}</b>${e.pieceMeta?` <small>${esc(e.pieceMeta)}</small>`:''}</span>`:'';
     const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
-    return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
+    return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"${face==='front'?' data-face="front"':''}><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for
    *  the same piece keeps its zoom; the picture drawn from the fitted words is drawn again larger when the zoom settles. */
   function zoomPreview(slot,zoom,job,fitted){
     const Z=root?.CNZoomPan;if(!Z||!slot)return;
-    try{Z.attach(slot,{id:(zoom&&zoom.id)||'eng',key:((zoom&&zoom.key)||job?.key||'')+(fitted?'|fit':'|png'),label:'Back engraving preview',maxPx:1800,
-      hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=root.Engrave.renderBack(job,size,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');return{el:cv,px:size};}:undefined});}catch(_){}
+    const face=faceOf(job);
+    try{Z.attach(slot,{id:(zoom&&zoom.id)||'eng',key:((zoom&&zoom.key)||job?.key||'')+(fitted?'|fit':'|png'),label:aboutFace('Back engraving preview',face),maxPx:1800,
+      hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=root.Engrave.renderBack(job,size,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',face));return{el:cv,px:size};}:undefined});}catch(_){}
   }
-  function wirePanel(host,e,{approve,open,imageUrl,zoom,stale,pick}={}){
+  function wirePanel(host,e,{approve,approveBoth,open,imageUrl,zoom,stale,pick}={}){
     // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
     // before the stamp is said on the button, with a small spinner; a refusal gives the button back as it was.
     // A refusal says why where the button is: the line a toast would have said is shown in the card (a toast sits under a modal order window).
@@ -178,6 +208,16 @@
       const back=()=>{if(btn.isConnected && !btn.closest('[data-state=approved]')){btn.innerHTML=was;btn.removeAttribute('aria-busy');}};
       run.then(()=>{back();tell();},err=>{console.warn('engraving card: approve',err);back();tell(err);});
     });
+    // Approve both faces: the host runs the ordinary approval of each face of the piece in turn (two approvals, two seals, two back files: as if each Approve had been pressed); the wait is said on the button, with a small spinner.
+    host.querySelector('[data-e=approveBoth]')?.addEventListener('click',ev=>{
+      const btn=ev.currentTarget;if(btn.disabled || !approveBoth)return;
+      const was=btn.innerHTML;let run;
+      try{run=approveBoth(btn);}catch(err){console.warn('engraving card: approve both',err);return;}
+      if(!run || typeof run.then!=='function')return;
+      btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Approving both…';
+      const back=()=>{if(btn.isConnected){btn.disabled=false;btn.removeAttribute('aria-busy');btn.innerHTML=was;}};
+      run.then(back,err=>{console.warn('engraving card: approve both',err);back();});
+    });
     // Fix / View in Engraving: the host opens that exact order and piece (EngraveLink.open); the wait is a small labelled spinner on the button.
     host.querySelector('[data-e=engrave]')?.addEventListener('click',ev=>{
       const btn=ev.currentTarget;if(btn.disabled)return;
@@ -193,15 +233,17 @@
     if(cyc && PS && pick && e.cycle){
       const cur=PS.cursor(e.cycle.pieces,e.cycle.key);
       PS.bind(cyc,k=>{if(k!==e.cycle.key)pick(k);});
-      cyc.querySelector('[data-a=discPrev]')?.addEventListener('click',()=>{if(cur.prev && cur.prev.key!==e.cycle.key)pick(cur.prev.key);});
-      cyc.querySelector('[data-a=discNext]')?.addEventListener('click',()=>{if(cur.next && cur.next.key!==e.cycle.key)pick(cur.next.key);});
+      // (a line with a Front and a Back: Back / Next go piece by piece and keep the face shown; the face is picked on its own switch)
+      const go=dir=>{const n=e.cycle.faces?neighbour(e.cycle,dir):(dir<0?cur.prev:cur.next);if(n && n.key!==e.cycle.key)pick(n.key);};
+      cyc.querySelector('[data-a=discPrev]')?.addEventListener('click',()=>go(-1));
+      cyc.querySelector('[data-a=discNext]')?.addEventListener('click',()=>go(1));
     }
     const slot=host.querySelector('[data-engraving-preview]');if(!slot)return;
     const job=e.job,img=e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.
-    if(job?.fit && job?.view && root?.Engrave?.renderBack){try{const cv=root.Engrave.renderBack(job,600,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}catch(_){}}
-    if(img){const im=root.document.createElement('img');im.alt='The full approved back engraving';im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);return;}
-    slot.classList.add('egPvNone');slot.innerHTML='<span class="by">No preview here: see the back in Engraving</span>';
+    if(job?.fit && job?.view && root?.Engrave?.renderBack){try{const cv=root.Engrave.renderBack(job,600,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',faceOf(job)));slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}catch(_){}}
+    if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);return;}
+    slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Engraving',faceOf(job))}</span>`;
   }
   async function press(button,stamp){
     if(!button || !root?.Seal)return;
@@ -209,7 +251,7 @@
     let row=wrap.querySelector('.sealRow');if(!row){row=root.document.createElement('span');row.className='sealRow egButtonSeal';wrap.append(row);}
     row.dataset.sealGroup='';
     const wasDisabled=button.disabled,wasBusy=button.getAttribute('aria-busy');
-    let seal=[...row.querySelectorAll('.seal')].find(s=>{try{const m=JSON.parse(s.querySelector('svg')?.getAttribute('data-seal-model'));return +m.at===+stamp.at && m.by===String(stamp.by || '') && m.action===(stamp.how==='engravePlain'?'CUT PLAIN':'BACK ENGRAVING');}catch(_){return false;}});
+    let seal=[...row.querySelectorAll('.seal')].find(s=>{try{const m=JSON.parse(s.querySelector('svg')?.getAttribute('data-seal-model'));return +m.at===+stamp.at && m.by===String(stamp.by || '') && m.action===(stamp.how==='engravePlain'?faceOf(stamp)==='front'?'FRONT CUT PLAIN':'CUT PLAIN':faceOf(stamp)==='front'?'FRONT ENGRAVING':'BACK ENGRAVING');}catch(_){return false;}});
     if(seal && !seal.classList.contains('pending'))return;
     if(!seal){const holder=root.document.createElement('span');holder.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal pending');seal=holder.firstElementChild;row.append(seal);}
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
