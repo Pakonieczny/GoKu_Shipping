@@ -1038,7 +1038,8 @@ const DesignLink = window.DesignLink = (() => {
     if (d.type === "ack") { p.acked = performance.now(); return; }
     clearTimeout(p.t); S_.pending.delete(d.id); if (!p.quiet) S_.replies++;
     if (!p.quiet) logLine("reply", p.type, d.type === "done" ? d.result : { error: d.error }, performance.now() - p.sent, d.type !== "done");
-    if (d.type === "done") p.resolve(d.result); else { if (!p.quiet) S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
+    // (Etsy's text arrives HTML-escaped, "ACORN&#39;S LEAF": the orders the station answers are decoded here, once, as they come in, so every list, window, search and master lookup reads "ACORN'S LEAF"; charm-nest-orders.js cleanOrders)
+    if (d.type === "done") { try { if (/^orders\./.test(p.type)) O.cleanOrders(d.result); } catch (_) {} p.resolve(d.result); } else { if (!p.quiet) S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
   }
   /* ── Connect Etsy from the sorter. Etsy refuses to load inside a frame, so the station is opened in its own popup on
         its origin (a click is needed — browsers block popups otherwise); the popup signs in, the token lands in the
@@ -1322,7 +1323,9 @@ const Orders = window.Orders = (() => {
     // the server's clock at the whole list's read: the Review tab's changes feed (ReviewLive) asks for what changed after it
     if (cl && cl.records && typeof cl.at === "number") { customBase = { at: cl.at, seen: Date.now() }; }
     // the maps are replaced only when what was read differs: a new map object is what makes interpretAll read lines again
-    const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
+    const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }];
+    try { O.cleanMaps(next[1], next[2]); } catch (_) {}   // (a person's answer saved while its SKU still carried an entity, "ACORN&#39;S LEAF", is read under "ACORN'S LEAF"; nothing stored is rewritten)
+    const sig = JSON.stringify(next);
     // (a read that was asked for before another one that has already come back is older than it: its answer is not put over the newer)
     if (seq > mapsApplied && (sig !== mapsSig || !mapsSame())) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
     if (seq > mapsApplied) mapsApplied = seq;
@@ -1414,7 +1417,7 @@ const Orders = window.Orders = (() => {
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
-    const link = a && a.pairBySku && a.pairBySku[String(l.sku || "").trim().toUpperCase()];   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
+    const link = a && a.pairBySku && O.bySkuOf(a.pairBySku, String(O.decodeEntities(l.sku) || "").trim().toUpperCase());   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
     return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
@@ -1675,6 +1678,7 @@ const Orders = window.Orders = (() => {
     const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
+    O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
