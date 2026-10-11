@@ -24,6 +24,8 @@
  *  Added to the contract (never renamed): describe(charm), sameBody(a, b), sideForPiece(piece, bodies), pieceFields(line, charm),
  *  groupOf(pieces), siblingsOf(piece, pieces), splitAcross(pieces, sheetOf), designPair(entry), pieceCountOf(line, charm), discsOf(line).
  *  Which lines are groups (Paul's ruling, 9 Oct, after ADVCOMPAT findings 1 and 2): isGroupLine(line, charm), groupSizeOf(piece), inGroup(piece), sharedKey(piece).
+ *  ONE charm of a design that draws the same outline twice, on a line that is not an earring pair (Paul, 11 Oct): soloOf(line, charm) → { index, count, rule, how } | null, with
+ *  oneChoice(line, charm), alikeDesign(charmOrEntry), bodiesAlike(charm), sameOutline(bodyA, bodyB), ALIKE_SKUS (section 4c).
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -405,6 +407,66 @@
     if (pr && (pr.glued || pr.legacy)) return false;
     const total = pieceCountOf(line, charm);
     return total >= 2 && total > quantityOf(line);
+  }
+
+  /* ═══ 4c · ONE charm of a design that draws more than one body (Paul, 11 Oct 2026) ═══════════════════════════════
+     "This listing is not an earring so it should NOT have duplicate charms." (order 4196617547: a Key Necklace, quantity 1, whose design KEY_5598 draws TWO keys, an H and an M.)
+     A design the master draws as two bodies under one label is a Left and a Right ONLY on an earring line. On every other line (a necklace, pendant, bracelet, key ring, a charm sold
+     alone, a single earring that names no ear) the buyer gets ONE charm of that design: one body goes on the sheet, one into the thumbnail, no Left or Right, counted as one piece.
+     WHICH BODY: the left one, the first in the drawing (its bodyIndex 0). Nothing in a master can say which of two bodies a buyer's option means (a master charm is vector paths, no
+       text: the H and the M of KEY_5598 are cut-outs, not letters the app can read), so the choice is always the same; a person's word, `spec.pair.useBody` (0 | 1), wins when a line carries one.
+     WHEN: the word is about DUPLICATES. When the two bodies are clearly different charms of one design (BEE + HIVE, WOLF + MOON, a heart's two halves, a key and its lock) the line keeps
+       what it always made: one piece holding both bodies. The test is the SHAPE of the cut line: two bodies are the same outline when their silhouettes, laid over each other at one scale,
+       overlap 85 percent as drawn (95 percent when one is turned over) and their boxes are within 6 percent in each direction. Measured on the 26 two-body designs of the 14 Sep masters
+       (KEYONE-findings.md): KEY_5598 / KEY_6641 (92 percent), MISMATCHED_7134 (100) and SCHR_1215 (100) are the same outline; every other design is under 75 percent as drawn and
+       under 90 percent turned over. alikeDesign() answers from the master entry alone (before the file is read) for the four SKUs measured; once the file is read the geometry decides. */
+  const ALIKE = { same: 0.85, mirrored: 0.95, size: 0.06 };
+  const ALIKE_SKUS = new Set(["KEY_5598", "KEY_6641", "MISMATCHED_7134", "SCHR_1215"]);
+  /** Do two bodies have the same cut outline? { alike, same, mirrored, sizeOk, how: "as drawn" | "turned over" | null } (same / mirrored: silhouette overlap, 1 = identical). */
+  function sameOutline(a, b) {
+    if (!a || !b || !a.outline || !b.outline) return { alike: false, same: 0, mirrored: 0, sizeOk: false, how: null };
+    const wa = a.outlineBbox[2] - a.outlineBbox[0], ha = a.outlineBbox[3] - a.outlineBbox[1], wb = b.outlineBbox[2] - b.outlineBbox[0], hb = b.outlineBbox[3] - b.outlineBbox[1];
+    const sizeOk = Math.abs(wa - wb) <= ALIKE.size * Math.max(wa, wb) + 0.1 && Math.abs(ha - hb) <= ALIKE.size * Math.max(ha, hb) + 0.1;
+    const sim = shapeSimilarity(a, b), how = !sizeOk ? null : sim.same >= ALIKE.same ? "as drawn" : sim.mirrored >= ALIKE.mirrored ? "turned over" : null;
+    return { alike: !!how, same: Math.round(sim.same * 1000) / 1000, mirrored: Math.round(sim.mirrored * 1000) / 1000, sizeOk, how };
+  }
+  const alikeCache = typeof WeakMap === "function" ? new WeakMap() : null;
+  /** { n, alike, parts } for a charm that draws two or more bodies: alike when every other body has the first one's outline; null for a one-body charm (or no geometry). */
+  function bodiesAlike(charm) {
+    if (!charm || typeof charm !== "object" || !charm.outline) return null;
+    const bodies = bodiesOf(charm); if (bodies.length < 2) return null;
+    const hit = alikeCache && alikeCache.get(charm); if (hit && hit.bodies === bodies) return hit.out;
+    const parts = bodies.slice(1).map(b => sameOutline(bodies[0], b)), out = { n: bodies.length, alike: parts.every(p => p.alike), parts };
+    if (alikeCache) alikeCache.set(charm, { bodies, out });
+    return out;
+  }
+  /** Is this design one whose bodies are the same outline? A charm (its geometry decides) or a master index entry (`pair.alike` when an indexer wrote it, else the four measured SKUs):
+   *  true | false, or null when it cannot be told (an entry of any other design: the file has to be read). */
+  function alikeDesign(x) {
+    if (!x || typeof x !== "object") return null;
+    if (x.outline) { const d = bodiesAlike(x); return d ? d.alike : null; }
+    const rec = x.entry || x;
+    if (rec.pair && typeof rec.pair === "object" && typeof rec.pair.alike === "boolean") return rec.pair.alike;
+    const sku = String(rec.sku || x.sku || "").trim().toUpperCase();
+    return sku && ALIKE_SKUS.has(sku) ? true : null;
+  }
+  /** Is this LINE one that makes one charm of a two-body design, by what it is sold as (the design is asked separately)? Not an earring pair, not an old line pinned to the pieces it
+   *  already has, and not a single earring that names its ear (that is one ear's own body, as before). A necklace, pendant, bracelet, key ring, charm alone and a single earring that
+   *  names no ear are. */
+  function oneChoice(line, charm) {
+    if (!line || typeof line !== "object") return false;
+    const pr = pairSpecOf(line);
+    if (pr && (pr.glued || pr.legacy)) return false;
+    if (pr && pr.single && (pr.sideSaid === "L" || pr.sideSaid === "R")) return false;
+    return !isEarringPair(line, charm);
+  }
+  /** The ONE body a line makes of its design: { index, count, rule, how } or null (the line is an earring pair, or keeps both bodies: the design is no mismatched design, or its
+   *  bodies are clearly different charms). `charm` is the design as the page reads it (geometry); with an entry or no geometry the answer is null (the file has to be read). */
+  function soloOf(line, charm) {
+    if (!charm || typeof charm !== "object" || !charm.outline || !isMismatched(charm) || !oneChoice(line, charm)) return null;
+    const d = bodiesAlike(charm); if (!d || !d.alike) return null;
+    const pr = pairSpecOf(line), asked = pr && Number.isInteger(pr.useBody) && pr.useBody >= 0 && pr.useBody < d.n ? pr.useBody : null;
+    return { index: asked != null ? asked : 0, count: d.n, rule: asked != null ? "a person's choice" : "the left body", how: d.parts[0].how };
   }
 
   /* ═══ 5 · helpers for the callers (added; the names above are the contract) ═══ */
@@ -901,6 +963,7 @@
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet, isGroupLine, groupSizeOf, inGroup, sharedKey,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, plainLine, charmOfBody,
+    sameOutline, bodiesAlike, alikeDesign, oneChoice, soloOf, ALIKE_SKUS,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, entryFields, heldPair, keepPairs,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };

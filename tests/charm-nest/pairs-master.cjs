@@ -248,7 +248,8 @@ ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0
 // ── the indexers end to end on a synthetic master (one mismatched pair, one lone charm): the script and the server route write the same records ──
 (async () => {
   const fs = require('fs'), os = require('os'), pth = require('path');
-  const { start } = require('./bridge-server.cjs');
+  const { start, REPO_TEST } = require('./bridge-server.cjs');
+  process.env.CHARM_REPO_PASSWORD = REPO_TEST.password;   // (IM.api asks the Charm Repo's password door for a token: Paul's throwaway test login of the stand-in)
   const { PDFDocument, PDFName, rgb, StandardFonts } = require(pth.join(__dirname, '../../vendor/pdf-lib-1.17.1.min.js'));
   const IM = require('../../scripts/index-master.cjs');
   const { CharmNestPDF: PDF } = require('../../netlify/functions/_charmNestPdf.js');
