@@ -249,6 +249,10 @@
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
   const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert", "designSent"]);
   const isPlainDecision = e => !!e && e.type === "engraveChanged" && !!e.data && e.data.how === "skipped";
+  // (an engraving event of the FRONT of a charm says so in its data; one that says nothing is the back's, as every one was before the front existed)
+  const frontEv = e => !!e && !!e.data && e.data.face === "front";
+  /** The faces a line engraves when it engraves more than the back (["front"] or ["front","back"]), as the host tells it (line.engraveFaces), else null: a back-only line reads exactly as it always did. */
+  const facesOf = line => (line && Array.isArray(line.engraveFaces) && line.engraveFaces.includes("front") ? line.engraveFaces.slice() : null);
   const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
@@ -262,7 +266,7 @@
       e.same = null;
       if (!MILESTONE_SEAL.has(e.type)) { out.push(e); continue; }
       const st = own(STOP_OF, e.type) ? STAGES[STOP_OF[e.type]].k : e.type;
-      const g = st + "|" + (e.lineKey || e.transactionId || "");
+      const g = st + "|" + (e.lineKey || e.transactionId || "") + (st === "engraved" && frontEv(e) ? "|front" : "");   // (the front's seal is its own: a piece engraved on both faces has two)
       const kept = first.get(g) || (e.type === "etsyCompleted" && ship) || null;
       if (kept) { (kept.same = kept.same || []).push(e); continue; }
       first.set(g, e); out.push(e);
@@ -662,7 +666,7 @@
   const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "prepared", engraveApproved: "engraving", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
   function faceModel(e) {
     const printed = !!e.print || isPrint(e), plain = isPlainDecision(e), at = +(plain ? e.data.decidedAt ?? e.at : e.at) || 0, family = printed ? "prepared" : FAMILY_BY_TYPE[e.type] || "exceptions";
-    const action = plain ? "CUT PLAIN" : printed ? "QR LABEL PRINTED" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();
+    const action = plain ? (frontEv(e) ? "FRONT CUT PLAIN" : "CUT PLAIN") : printed ? "QR LABEL PRINTED" : e.type === "engraveApproved" && frontEv(e) ? "FRONT ENGRAVING" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();
     return { family, action, icon: plain ? "plain" : CANONICAL_ICON[e.type], path: plain || CANONICAL_ICON[e.type] ? undefined : ICON[printed ? "qr" : kindOf(e.type).ic] || ICON.dot, date: at ? dateOf(at) : "", time: at ? timeOf(at) : "", by: e.ghost || (!at && !String(e.by || "").trim()) ? "" : personOf(e), at };
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
@@ -758,7 +762,7 @@
    *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
    *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
   const PLACE_STATES = new Set(["sheet", "waiting", "hold", "hand", "cancelled", "loading"]);
-  function derive(events, cancelRec, where, rail, place) {
+  function derive(events, cancelRec, where, rail, place, faces) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
     let W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
@@ -771,6 +775,13 @@
       if (CANCEL_TYPES.has(e.type) || e.type === "cancelRestored") lastCancel = e;
     }
     let full = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
+    /* A piece engraved on BOTH faces has two approvals to make (own words, own placement, own seal): the Engraved step is done when every face it engraves has been approved, not when the first was.
+       `faces` (the host's: line.engraveFaces) lists them; a face with no approval yet keeps the step open (its seal, if the other face made one, stays drawn). Only while nothing after it has happened. */
+    const iEng = Array.isArray(faces) && faces.length > 1 ? rail.findIndex(x => x.k === "engraved") : -1;
+    if (iEng >= 0) {
+      const have = new Set(events.filter(e => e && e.type === "engraveApproved").map(e => (frontEv(e) ? "front" : "back"))), miss = faces.filter(f => !have.has(f)), at = STAGES.indexOf(rail[iEng]);
+      if (miss.length && full <= at) { stages[iEng].partial = miss; if (full === at) full = at - 1; }
+    }
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
     else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
@@ -808,7 +819,7 @@
   }
   /** Whether step i (an index into STAGES) counts as done for a derived piece or order: reached, or stamped, and (placement) not a step after Nested that a
    *  piece taken off its sheet no longer stands on. ONE rule for the row's dots, the rail's counts and the Timeline (never `D.step` or `first` alone). */
-  const stepDone = (D, i) => !!D && (D.step >= i || (!D.fenced && !!(D.stages && D.stages[i] && D.stages[i].first)));
+  const stepDone = (D, i) => !!D && !(D.stages && D.stages[i] && D.stages[i].partial) && (D.step >= i || (!D.fenced && !!(D.stages && D.stages[i] && D.stages[i].first)));
 
   /* ════ orders of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ════
      A piece is one line of the order: { key (its lineKey), tid, qty, line, pools [poolIds], sheets [sheetIds] }. An event
@@ -833,7 +844,7 @@
     const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
     // (placeOf(key), or a piece's own .place: where the piece IS now, the PiecePlacement; see derive)
     const placed = p => { try { return typeof placeOf === "function" ? placeOf(p.key) || null : p.place || null; } catch (_) { return null; } };
-    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec, null, null, placed(p)), steps: keepDone(stagesFor(p.line), list), events: list }; });
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec, null, null, placed(p), facesOf(p.line)), steps: keepDone(stagesFor(p.line), list), events: list }; });
     const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
@@ -895,7 +906,7 @@
     const i = typeof step === "number" ? step : STAGES.findIndex(s => s.k === (step && typeof step === "object" ? step.k : step));
     const s = STAGES[i]; if (!s) return null;
     const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
-    let D = data.D || derive(evs, data.cancelled || null, data.where || null, null, data.place || null);
+    let D = data.D || derive(evs, data.cancelled || null, data.where || null, null, data.place || null, data.faces || null);
     // (derive's own rail is the steps themselves; the rail a view draws is railed's { s, i })
     if (!Array.isArray(D.rail) || !D.rail.length || !D.rail[0].s) D = railed(D, keepDone(data.stages, evs));
     const R = D.rail, pos = R.findIndex(r => r.i === i);
@@ -973,7 +984,11 @@
     } else if (s.k === "engraved") {
       const eng = lines.filter(l => l.engrave && l.engrave.needed);
       if (lines.length && !eng.length && lines.every(l => l.engrave || l.engraveCandidate === false)) facts.push("Nothing to engrave on this order");
-      for (const l of eng) if (!l.engrave.approved) add("person", `Approve the back engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
+      // (a line engraved on the front too names the face still to approve: "the front engraving", "the front and back engraving"; a back-only line says "the back engraving", as it always did)
+      for (const l of eng) if (!l.engrave.approved) {
+        const fs = facesOf(l), todo = fs ? fs.filter(f => !(l.engraveDone && l.engraveDone[f])) : null;
+        add("person", `Approve the ${todo && todo.length ? todo.join(" and ") : "back"} engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
+      }
       for (const x of sheets) if (x.required > 0 && x.saved < x.required) add("wait", `${x.name} has ${x.saved} of ${x.required} back files saved`);
       if (!need.some(n => n.kind !== "after")) add("next", HOW.engraved);
     } else if (s.k === "laser" || s.k === "approved") {
@@ -1746,8 +1761,8 @@
     }
     function deriveNow() {
       const p = pieceNow();
-      if (p) return railed(derive(S.events, S.cancelled, null, null, plaOf(p.key)), withDone(stagesFor(p.line), S.events));
-      const D = derive(S.events, S.cancelled, whereNow(), null, plaOf(null));
+      if (p) return railed(derive(S.events, S.cancelled, null, null, plaOf(p.key), facesOf(p.line)), withDone(stagesFor(p.line), S.events));
+      const D = derive(S.events, S.cancelled, whereNow(), null, plaOf(null), S.pieces.length === 1 ? facesOf(S.pieces[0].line) : null);
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
       const sum = summary(S.every, S.pieces, S.cancelled, plaOf), far = D.step;
       if (D.hand && !sum.each.every(x => x.D.hand)) D.hand = null;   // (completed by hand: every piece of it)

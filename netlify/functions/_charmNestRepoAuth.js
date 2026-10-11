@@ -10,6 +10,12 @@
  *  THE ALERT     repoAlerts / repoAlertClose answer only for a caller whose `by` is on config/stationAdmins (_stationAdmins.js).
  *  TOKENS        repoUnlock answers with a token: 32 random bytes + a short HMAC (so a document forged in Firestore is no token).
  *                Only sha256(token) is stored (CharmRepo_Tokens/{sha256}), with its expiry, its action and whether it is single use.
+ *  SESSION       (Paul, 11 Oct 2026: "password protect the settings menu ... if I'm logged in and working from my account do not prompt me")
+ *                The sorter cannot show the server an email-app operator session (the inbox is another origin and its endpoints need its own
+ *                secret header), so a right password buys a SESSION token instead: one unlock for Settings and for the repo's upload / change /
+ *                download, kept by the browser until the server's expiry (the earliest of 12 hours, the next 5:00 pm Toronto, midnight Toronto).
+ *                Lock now (repoLock) deletes it here; changing the operator's password or revoking the account ends every session; a delete never
+ *                rides on it by itself (a session buys a single-use delete token WITHOUT the password, with the confirm sentence still asked by the page).
  *  LOCKOUT       5 wrong from one source in 10 minutes lock that source for 15 minutes; 20 wrong from all sources lock everyone.
  *  RECORDS       EVERY attempt (right, wrong, locked) writes CharmRepo_AuthAttempts/{id} and CharmRepo_Alerts/{id}: flat fields only.
  *  THE GATE      requirement(fn, op, body) names what an HTTP call needs; authorize() checks the token. The gate sits in the HTTP
@@ -22,14 +28,14 @@ const { json, str, safePath, header } = require("./_charmNestAuth");
 
 const C = { ATTEMPTS: "CharmRepo_AuthAttempts", ALERTS: "CharmRepo_Alerts", TOKENS: "CharmRepo_Tokens", LOCKS: "CharmRepo_Lock", OPERATORS: "EtsyMail_Operators", CONFIG: "config", CONFIG_DOC: "repoProtect", INDEX: "Charm_Master_Index", FILES: "Charm_Master_Files" };
 const MIN = 60000;
-const ACTIONS = new Set(["upload", "delete", "download", "modify", "history", "other"]);
+const ACTIONS = new Set(["upload", "delete", "download", "modify", "history", "other", "settings"]);
 /* how long a token lives, and which are single use (a destructive click asks again) */
-const TTL_MS = { upload: 15 * MIN, modify: 5 * MIN, download: 5 * MIN, other: 5 * MIN, delete: 2 * MIN, history: 2 * MIN };
+const TTL_MS = { upload: 15 * MIN, modify: 5 * MIN, download: 5 * MIN, other: 5 * MIN, settings: 5 * MIN, delete: 2 * MIN, history: 2 * MIN };   // (settings and any unlock asked with session:true get a SESSION token instead: sessionEnd below)
 const ONCE = new Set(["delete", "history"]);
 /* what each kind of token opens: the needs below are upload | modify | download | delete-file | delete-sku */
-const OPENS = { upload: ["upload", "modify"], modify: ["modify"], download: ["download"], other: ["upload", "modify", "download"], delete: ["delete-file", "delete-sku"], history: ["delete-file"] };
+const OPENS = { upload: ["upload", "modify"], modify: ["modify"], download: ["download"], other: ["upload", "modify", "download"], delete: ["delete-file", "delete-sku"], history: ["delete-file"], session: ["settings", "upload", "modify", "download"] };
 const WINDOW_MS = 10 * MIN, LOCK_MS = 15 * MIN, SRC_MAX = 5, ALL_MAX = 20;
-const OPERATOR_CACHE_MS = 30000, TOKEN_CACHE_MS = 30000, ALERT_LIST = 100, ALERT_READ = 300;
+const OPERATOR_CACHE_MS = 30000, TOKEN_CACHE_MS = 30000, SESSION_CACHE_MS = 5000, SESSION_MAX_MS = 12 * 60 * MIN, ALERT_LIST = 100, ALERT_READ = 300;
 
 /* time is replaceable so a test runs in no time */
 const deps = { now: () => Date.now() };
@@ -38,11 +44,17 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
 const warn = (what, e) => { try { console.warn("[repoAuth] " + what + ":", String((e && (e.message || e.code)) || e).slice(0, 160)); } catch (_) {} };
 
 /* ── what needs a token ── */
-const LIBRARY = { masterPutIndex: "upload", masterPutFile: "upload", startMaster: "upload", masterPatch: "modify", masterRemoveFile: "delete-file", masterRemoveSku: "delete-sku", masterDownload: "download" };
+const LIBRARY = { masterPutIndex: "upload", masterPutFile: "upload", startMaster: "upload", masterPatch: "modify", masterRemoveFile: "delete-file", masterRemoveSku: "delete-sku", masterDownload: "download", sandboxPullLimitSet: "modify", customSaveCommit: "upload" };   // (sandboxPullLimitSet: Settings → how many newest Etsy orders the sandbox pulls; a setting, 11 Oct 2026)
+/* the buttons of the Settings menu that change shared state (plans/save-to-repo-1011/ADMINSESSION-settings.md): they need the SESSION unlock, from a person at the
+   Settings menu or at the sandbox's Start button. Other sandbox ops (sandboxStream, sandboxStatus, sandboxCancel) are the sandbox page's own all-day traffic and stay free. */
+const SETTINGS_OPS = { purgeHistory: "settings", sandboxReset: "settings", sandboxPullOrders: "settings" };
 const MASTER_PATH = /^charmnest\/(?:sandbox\/)?master\//, MASTER_FILE_PATH = /^charmnest\/(?:sandbox\/)?master\/files\//;
 /** What an HTTP call to function `fn` with this op and body needs: { op, need } or null (free). Pure. */
 function requirement(fn, op, body) {
-  if (fn === "charmNestLibrary") return Object.prototype.hasOwnProperty.call(LIBRARY, op) ? { op, need: LIBRARY[op] } : null;
+  if (fn === "charmNestLibrary") {
+    if (Object.prototype.hasOwnProperty.call(LIBRARY, op)) return { op, need: LIBRARY[op] };
+    return Object.prototype.hasOwnProperty.call(SETTINGS_OPS, op) ? { op, need: SETTINGS_OPS[op] } : null;
+  }
   if (fn === "charmNestOutput") {
     const p = safePath(body && body.path);
     if (op === "sign" || op === "put" || op === "finalize") return MASTER_PATH.test(p) ? { op, need: "upload" } : null;
@@ -59,11 +71,32 @@ function mint() { const rand = crypto.randomBytes(32).toString("hex"); return ra
 function wellFormed(t) { const m = /^([0-9a-f]{64})\.([0-9a-f]{32})$/.exec(typeof t === "string" ? t : ""); return !!m && same(m[2], macOf(m[1])); }
 const tokenCache = new Map();   // sha256(token) → { rec, until } for REUSABLE tokens only; a single-use token is never kept
 
-/** Writes a token document and returns { token, exp, once }. */
+/* ── sessions: how long one password lasts ── */
+const TORONTO = "America/Toronto";
+const dtf = new Intl.DateTimeFormat("en-CA", { timeZone: TORONTO, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/** Toronto's clock minus UTC at instant t, in ms (-4 h in summer, -5 h in winter). */
+function torontoOffsetMs(t) {
+  const p = {}; for (const x of dtf.formatToParts(new Date(t))) p[x.type] = x.value;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(t / 1000) * 1000;
+}
+/** The first instant after t at which Toronto's wall clock reads hour:00 (hour 24 = the coming midnight). */
+function nextTorontoHour(t, hour) {
+  const off = torontoOffsetMs(t), local = t + off;
+  let cand = Math.floor(local / 86400000) * 86400000 + hour * 3600000;
+  if (cand <= local) cand += 86400000;
+  return cand - torontoOffsetMs(cand - off);
+}
+/** When a session opened at `now` ends: the earliest of 12 hours, the next 5:00 pm Toronto and the coming Toronto midnight (Paul: "until 5 pm or 12 hours, whichever first"; never over a midnight). */
+const sessionEnd = now => Math.min(now + SESSION_MAX_MS, nextTorontoHour(now, 17), nextTorontoHour(now, 24));
+const tsMs = v => { if (!v) return 0; if (typeof v === "number") return v; if (v instanceof Date) return v.getTime(); if (typeof v.toMillis === "function") { try { return v.toMillis(); } catch (_) { return 0; } } return typeof v._seconds === "number" ? v._seconds * 1000 : typeof v.seconds === "number" ? v.seconds * 1000 : 0; };
+
+/** Writes a token document and returns { token, exp, once, action, session }. o.session (or action "settings") makes it a SESSION token: reusable, one unlock for Settings and for the repo's upload / change / download. */
 async function issue(db, o) {
-  const action = ACTIONS.has(o && o.action) ? o.action : "other", now = deps.now(), token = mint(), exp = now + TTL_MS[action];
-  await db.collection(C.TOKENS).doc(sha256(token)).set({ exp, action, once: ONCE.has(action), used: false, at: now, by: str(o && o.by, 80), tab: str(o && o.tab, 24) });
-  return { token, exp, once: ONCE.has(action), action };
+  const action = ACTIONS.has(o && o.action) ? o.action : "other", now = deps.now(), token = mint();
+  const session = !ONCE.has(action) && (action === "settings" || (o && o.session === true));
+  const kind = session ? "session" : action, exp = session ? sessionEnd(now) : now + TTL_MS[action];
+  await db.collection(C.TOKENS).doc(sha256(token)).set(Object.assign({ exp, action: kind, once: ONCE.has(kind), used: false, at: now, by: str(o && o.by, 80), tab: str(o && o.tab, 24) }, session ? { for: action } : {}));
+  return { token, exp, once: ONCE.has(kind), action, session };
 }
 const deny = (need, why, status) => ({ status: status || 401, body: status === 503 ? { error: "repo-unavailable" } : { error: "repo-locked", need: needWord(need), once: need.startsWith("delete"), why } });
 /**
@@ -83,6 +116,7 @@ async function authorize(db, req, body, event) {
     else { const s = await db.collection(C.TOKENS).doc(id).get(); if (!s.exists) return deny(need, "invalid"); rec = s.data() || {}; }
     if (!(rec.exp > now)) { tokenCache.delete(id); return deny(need, "expired"); }
     if (!(OPENS[rec.action] || []).includes(need)) return deny(need, "scope");
+    if (rec.action === "session") { const why = await sessionEnded(db, rec); if (why) { tokenCache.delete(id); return deny(need, why); } }
     if (rec.once) {
       const ref = db.collection(C.TOKENS).doc(id);
       const out = await db.runTransaction(async tx => {
@@ -93,10 +127,19 @@ async function authorize(db, req, body, event) {
       });
       return out === "ok" ? null : deny(need, out);
     }
-    tokenCache.set(id, { rec, until: Math.min(rec.exp, now + TOKEN_CACHE_MS) });
+    // a session is looked at again within seconds (Lock now on another instance, a changed password); the shorter tokens keep their 30 s
+    tokenCache.set(id, { rec, until: Math.min(rec.exp, now + (rec.action === "session" ? SESSION_CACHE_MS : TOKEN_CACHE_MS)) });
     if (tokenCache.size > 500) for (const [k, v] of tokenCache) if (v.until <= now) tokenCache.delete(k);
     return null;
   } catch (e) { warn("token check", e); return deny(need, "unavailable", 503); }
+}
+/** Why a SESSION token no longer counts although its time has not run out: "revoked" when the operator account is gone / revoked, or its password was
+    changed after the session was opened. "" while it stands. Throws when Firestore cannot be read (the caller answers 503, never a pass). */
+async function sessionEnded(db, rec) {
+  const list = await operatorRecords(db);
+  if (!list.length) return "revoked";
+  const changed = Math.max(0, ...list.map(o => tsMs(o.passwordChangedAt)));
+  return changed > (+rec.at || 0) ? "revoked" : "";
 }
 
 /* ── Paul's login: the operator accounts that may unlock ── */
@@ -107,7 +150,7 @@ const usable = d => !!d && !d.revokedAt && !!d.passwordHash && !!d.salt && OWNER
 /** The accounts whose password unlocks: config/repoProtect.operators, else `paul`, else the active owner accounts named Paul. Throws when Firestore cannot be read. */
 async function operatorRecords(db) {
   const memo = operatorMemo.get(db), now = deps.now();
-  if (memo && now - memo.at < OPERATOR_CACHE_MS) return memo.list;
+  if (memo && now - memo.at >= 0 && now - memo.at < OPERATOR_CACHE_MS) return memo.list;   // (a clock that went back is never trusted as fresh)
   let ids = [];
   const cfg = await db.collection(C.CONFIG).doc(C.CONFIG_DOC).get();
   const named = cfg && cfg.exists && cfg.data() && Array.isArray(cfg.data().operators) ? cfg.data().operators : [];
@@ -193,6 +236,7 @@ async function prune(db, now) {
 /** repoUnlock. Always HTTP 200 for a recorded attempt; 503 when nothing could be checked or recorded. */
 async function unlock(db, event, body) {
   const now = deps.now(), action = ACTIONS.has(body.action) ? body.action : "other";
+  if (ONCE.has(action) && typeof body.sessionToken === "string" && body.sessionToken && !body.password) return unlockBySession(db, event, body, action);
   const rec = { at: now, by: str(body.by, 80), action, target: str(body.target, 80), ok: false, reason: "wrong", tab: str(body.tab, 24).replace(/[^\w-]/g, ""), ua: str(header(event, "user-agent"), 80), src: srcHash(event).slice(0, 8) };
   const keys = lockKeys(event);
   let ls;
@@ -209,12 +253,52 @@ async function unlock(db, event, body) {
   rec.ok = true; rec.reason = "ok";
   try {
     await record(db, rec);
-    const t = await issue(db, { action, by: rec.by, tab: rec.tab });
+    const t = await issue(db, { action, by: rec.by, tab: rec.tab, session: body.session === true });
     const mine = ls.states[keys[0].id];
     if (mine && +mine.n > 0) db.collection(C.LOCKS).doc(keys[0].id).set({ t0: now, n: 0, lockedUntil: 0, at: now }).catch(e => warn("lock reset", e));
     await prune(db, now);
-    return json(200, { ok: true, token: t.token, expiresAt: t.exp, once: t.once, action });
+    return json(200, Object.assign({ ok: true, token: t.token, expiresAt: t.exp, once: t.once, action }, t.session ? { session: true } : {}));
   } catch (e) { warn("unlock", e); return json(503, { ok: false, error: "unavailable" }); }
+}
+
+/** The session behind a repoUnlock / repoLock / repoSession body: { id, rec } while it stands, else { why: "invalid" | "expired" | "revoked" }. Throws when Firestore cannot be read. */
+async function readSession(db, token) {
+  if (!wellFormed(token)) return { why: "invalid" };
+  const id = sha256(token), s = await db.collection(C.TOKENS).doc(id).get();
+  if (!s.exists) return { why: "invalid" };
+  const rec = s.data() || {};
+  if (rec.action !== "session") return { why: "invalid" };
+  if (!(rec.exp > deps.now())) return { why: "expired" };
+  const why = await sessionEnded(db, rec);
+  return why ? { why } : { id, rec };
+}
+/** A single-use delete token for a person who holds a standing session: no password (the page still asks its confirm sentence). It is recorded in
+    CharmRepo_AuthAttempts (reason "session": who deleted what, when) and raises no Alert; if that record cannot be written no token is given. */
+async function unlockBySession(db, event, body, action) {
+  const now = deps.now();
+  let ses; try { ses = await readSession(db, body.sessionToken); } catch (e) { warn("session check", e); return json(503, { ok: false, error: "unavailable" }); }
+  if (ses.why) return json(200, { ok: false, error: "session", why: ses.why });
+  const rec = { at: now, by: str(body.by, 80), action, target: str(body.target, 80), ok: true, reason: "session", tab: str(body.tab, 24).replace(/[^\w-]/g, ""), ua: str(header(event, "user-agent"), 80), src: srcHash(event).slice(0, 8) };
+  try {
+    await db.collection(C.ATTEMPTS).doc().set(rec);
+    const t = await issue(db, { action, by: rec.by, tab: rec.tab });
+    return json(200, { ok: true, token: t.token, expiresAt: t.exp, once: t.once, action, viaSession: true });
+  } catch (e) { warn("session unlock", e); return json(503, { ok: false, error: "unavailable" }); }
+}
+/** Lock now: the session is deleted here, so its token opens nothing from this moment (an instance that looked within the last seconds may still honour it that long). */
+async function lockNow(db, body) {
+  if (!wellFormed(body.sessionToken)) return json(200, { ok: true, closed: false });
+  const id = sha256(body.sessionToken); tokenCache.delete(id);
+  try {
+    const ref = db.collection(C.TOKENS).doc(id), s = await ref.get();
+    if (s.exists && (s.data() || {}).action === "session") { await ref.delete(); return json(200, { ok: true, closed: true }); }
+    return json(200, { ok: true, closed: false });
+  } catch (e) { warn("lock now", e); return json(503, { ok: false, error: "unavailable" }); }
+}
+/** Is this browser's session still good? (read only; the Settings menu asks once when it opens) */
+async function sessionStatus(db, body) {
+  try { const ses = await readSession(db, body.sessionToken); return json(200, ses.why ? { ok: true, active: false, why: ses.why } : { ok: true, active: true, expiresAt: ses.rec.exp }); }
+  catch (e) { warn("session status", e); return json(503, { ok: false, error: "unavailable" }); }
 }
 
 /* ── the Alert: master admin only ── */
@@ -279,7 +363,7 @@ async function masterDownload(db, body) {
 }
 
 /* ── the ops this file answers itself (kept out of charmNestLibrary's OPS list on purpose) ── */
-const OWN = new Set(["repoUnlock", "repoAlerts", "repoAlertClose", "masterDownload"]);
+const OWN = new Set(["repoUnlock", "repoAlerts", "repoAlertClose", "masterDownload", "repoLock", "repoSession"]);
 const owns = op => OWN.has(op);
 async function handle(db, event, body) {
   if (event.httpMethod !== "POST") return json(405, { error: "post-only" });   // (a password, a token or a close never travels in a URL)
@@ -287,6 +371,8 @@ async function handle(db, event, body) {
     case "repoUnlock": return unlock(db, event, body);
     case "repoAlerts": return alerts(db, body);
     case "repoAlertClose": return alertClose(db, body);
+    case "repoLock": return lockNow(db, body);
+    case "repoSession": return sessionStatus(db, body);
     case "masterDownload": {
       const no = await authorize(db, { op: "masterDownload", need: "download" }, body, event); if (no) return json(no.status, no.body);
       try { return await masterDownload(db, body); } catch (e) { warn("download", e); return json(500, { error: "download failed" }); }
@@ -295,4 +381,4 @@ async function handle(db, event, body) {
   }
 }
 
-module.exports = { C, ACTIONS, TTL_MS, ONCE, OPENS, LIBRARY, WINDOW_MS, LOCK_MS, SRC_MAX, ALL_MAX, deps, requirement, authorize, unlock, alerts, alertClose, masterDownload, owns, handle, issue, forget: () => { tokenCache.clear(); } };
+module.exports = { C, ACTIONS, TTL_MS, ONCE, OPENS, LIBRARY, SETTINGS_OPS, sessionEnd, WINDOW_MS, LOCK_MS, SRC_MAX, ALL_MAX, deps, requirement, authorize, unlock, alerts, alertClose, masterDownload, owns, handle, issue, forget: () => { tokenCache.clear(); } };

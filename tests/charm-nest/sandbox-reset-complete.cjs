@@ -131,7 +131,8 @@ global.fetch = async () => ({ ok: true, headers: { get: () => 'image/jpeg' }, ar
 delete process.env.EDIT_PASSCODE;
 const lib = require(path.join(fnDir, 'charmNestLibrary.js')), stations = require(path.join(fnDir, 'firebaseOrders.js')), archive = require(path.join(fnDir, 'designArchive.js'));
 
-const post = b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = async b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 const must = async b => { const r = await post(b); assert.strictEqual(r.status, 200, JSON.stringify(b).slice(0, 120) + ' → ' + JSON.stringify(r.body).slice(0, 300)); return r.body; };
 const station = (sb, body) => stations.handler({ httpMethod: 'POST', headers: {}, queryStringParameters: sb ? { sandbox: '1' } : {}, body: JSON.stringify(body) }).then(r => { assert.strictEqual(r.statusCode, 200, JSON.stringify(body).slice(0, 100) + ' → ' + r.body.slice(0, 300)); return JSON.parse(r.body); });
 const putArchive = (sb, rid) => archive.handler({ httpMethod: 'POST', headers: {}, queryStringParameters: sb ? { sandbox: '1' } : {}, body: JSON.stringify({ op: 'put', orders: [{ receiptId: rid, items: [{ transactionId: '1', imageUrl: 'https://i.etsystatic.com/il/x.jpg' }] }] }) }).then(r => { assert.strictEqual(r.statusCode, 200, r.body); return JSON.parse(r.body); });
@@ -237,7 +238,7 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
 
 (async () => {
   /* ═══ 1 · the sandbox holds every family; the reset clears them all, a page at a time ═══ */
-  await seedAll(); bulk(true, 700); bulk(false, 700);
+  await seedAll(); await repoStamp.prime(); bulk(true, 700); bulk(false, 700);
   const seededFamilies = families(sandboxKeys());
   const EXPECT = ['Charm_Custom_Orders', 'Charm_Custom_Sheet', 'Charm_Nest_Cancelled', 'Charm_Nest_Cancelled_History', 'Charm_Nest_Arrivals', 'Charm_Nest_Counters', 'Charm_Nest_Release', 'Charm_Nest_Run_Lines', 'Charm_Nest_Run_Live', 'Charm_Nest_Runs',
     'Charm_Nest_Rose_Rehearsals', 'Charm_Nest_Rose_Stock', 'Charm_Nest_Rose_Stock/cuts', 'Charm_Nest_Sets', 'Charm_Nest_Sheets', 'Charm_Nest_Shape_Guidance', 'Charm_Nest_Agent', 'Charm_Pool', 'Charm_Pool_Back', 'Design_Bridge', 'Design_Bridge/log', 'Design_Completed Orders',
@@ -285,7 +286,7 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   assert(store.get(`Charm_Custom_Orders/${A}_10010`).stamps.length === 2, 'and production is as it was');
 
   /* ═══ 3 · Purge all run history: production's own behaviour, and the sandbox completely ═══ */
-  await seedAll(); bulk(true, 350); bulk(false, 350);
+  await seedAll(); await repoStamp.prime(); bulk(true, 350); bulk(false, 350);
   store.set('Sandbox_Charm_Nest_Runs/run-open', { runId: 'run-open', status: 'running', updatedAt: new TS(Date.now()) });
   const prodBefore = new Map([...store.entries()].filter(([k]) => !isOwn(k)).map(([k, v]) => [k, canon(v)])), sandboxBefore = sandboxKeys().length, snap = () => canon([...store.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
   const whole = snap();

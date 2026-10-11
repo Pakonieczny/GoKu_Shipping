@@ -64,7 +64,8 @@ Module._load = function (req, ...rest) {
 };
 delete process.env.EDIT_PASSCODE;
 const lib = require(path.join(fnDir, "charmNestLibrary.js"));
-const post = async body => { const r = await lib.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(body) }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = async body => { const r = await lib.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', body)) }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
 const realWarn = console.warn, realLog = console.log; console.warn = () => {}; console.log = () => {};
 
 let passed = 0;
@@ -76,6 +77,7 @@ const RID = "4200000101", KEY = `${RID}_77`, NOW = Date.now();
 store.set(`Charm_Nest_CustomRead/${KEY}`, { order: RID, latest: "h1", reads: { h1: { kind: "custom", confidence: 0.91, summary: "a drawing to cut", at: NOW - 86400000 } }, decided: { kind: "regular", by: "Paul", at: NOW - 3600000 } });
 
 (async () => {
+  await repoStamp.prime();   // (the standing unlock of the Settings buttons is made before the first write is counted)
   await check("a sandbox decision on a shared reading is the sandbox's own: production's decision and timeline never see it", async () => {
     const d = await post({ op: "customDecide", sandbox: true, key: KEY, kind: "custom", by: "Tester" });
     assert.equal(d.status, 200, JSON.stringify(d.body));

@@ -86,7 +86,8 @@ Module._load = function (req, ...rest) {
 };
 global.fetch = async () => { throw new Error('no network in this test'); };
 const lib = require(path.join(fnDir, 'charmNestLibrary.js')), emulator = require(path.join(fnDir, 'etsySandbox.js'));
-const post = b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = async b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 const pullOp = (startId, extra) => post(Object.assign({ op: 'sandboxPullOrders', sandbox: true, startId, by: 'tester' }, extra || {}));
 const listed = async () => (await emulator.handler({ httpMethod: 'GET', queryStringParameters: { fn: 'listOpenOrders' } }).then(r => JSON.parse(r.body))).results;
 const emu = q => emulator.handler({ httpMethod: 'GET', queryStringParameters: q }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));

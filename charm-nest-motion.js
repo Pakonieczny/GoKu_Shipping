@@ -320,7 +320,7 @@
       if (!model.date && +model.at > 0) model.date = dateOf(model.at);
       if (!model.time && +model.at > 0) model.time = timeOf(model.at);
       const f=FAMILY[model.family] || FAMILY.received, ink=opts.ghost?'#92968f':f.ink;
-      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=(['BACK ENGRAVING','ORDER RECEIVED','ORDER COMPLETE'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
+      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='FRONT CUT PLAIN'?['FRONT','CUT PLAIN']:(['BACK ENGRAVING','FRONT ENGRAVING','ORDER RECEIVED','ORDER COMPLETE'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
       const serifFree='system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif';
       const txt=(value,y,size,weight=700,color=ink)=>`<text x="60" y="${y}" text-anchor="middle" fill="${color}" stroke="none" font-family="${serifFree}" font-size="${size}" font-weight="${weight}" letter-spacing="0">${esc(value)}</text>`;
       // Explicit typographic widths keep every glyph inside the actual family silhouette,
@@ -421,6 +421,8 @@
     const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.toLocaleString("en-US",{timeZone:"America/Toronto",day:"2-digit"})).padStart(2, "0")} ${d.toLocaleString("en-US", { timeZone:"America/Toronto", month: "short" }).toUpperCase()} ${d.toLocaleString("en-US",{timeZone:"America/Toronto",year:"numeric"})}`; };
     const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { timeZone:"America/Toronto", hour: "numeric", minute: "2-digit" });
     const engravingOf=st=>st.how==='engraveApproved' || st.how==='engravePlain';
+    // (a seal of the FRONT of a charm says so: face "front" on the seal, or on the event it came from; one that says nothing is the back, as every seal was)
+    const frontOf=st=>!!st && (st.face==='front' || !!(st.data && st.data.face==='front'));
     const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st);
     const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
     const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved';
@@ -429,7 +431,7 @@
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? 'BACK ENGRAVING' : st.how === 'engravePlain' ? 'CUT PLAIN' : 'QR LABEL PRINTED';
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : 'QR LABEL PRINTED';
       const icon = st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       return { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
     }
@@ -438,7 +440,7 @@
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
       if(st.how==='sheet')return `Sent to sheet${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
-      if(engravingOf(st))return `${st.how==='engravePlain'?'Engraving waived · cut plain':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
+      if(engravingOf(st))return `${st.how==='engravePlain'?(frontOf(st)?'Front engraving waived · cut plain':'Engraving waived · cut plain'):frontOf(st)?'Front engraving placement approved':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(processOf(st))return `${st.how==='laserReady'?'Laser ready':st.scope==='set'?'Set completed':'Sheet completed'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;
     }

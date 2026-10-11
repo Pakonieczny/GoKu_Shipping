@@ -69,7 +69,7 @@ const PROD = {
 };
 for (const [k, v] of Object.entries(PROD)) store.set(k, v);
 store.set("EtsyMail_OrderLinkStations/" + crypto.createHash("sha256").update(KEY).digest("hex"), { username: "paul", displayName: "Paul", createdAtMs: NOW - 1e7 });
-store.set("EtsyMail_Operators/paul", { username: "paul", displayName: "Paul", role: "owner" });
+store.set("EtsyMail_Operators/paul", { username: "paul", displayName: "Paul", role: "owner", passwordHash: "ab".repeat(64), salt: "cd".repeat(32), iterations: 1000, digest: "sha512" });   // (a throwaway hash nobody has the password of: the Settings buttons' standing unlock only counts while this owner account exists)
 const SBX = (id, outbox) => ({ id, receiptId: RID_S, scope: "order", sandbox: true, status: "open", threadId: null, link: "sandbox", createdAtMs: NOW - 5e5, v: 10, outbox, seen: [], sim: [], unread: 0, inboundCount: 0, customer: { name: "Cleo Real" } });
 store.set("EtsyMail_OrderLinks/olsb_seed1", SBX("olsb_seed1", [{ id: "f1", text: "failed", status: "failed", atMs: NOW - 4e5 }, { id: "m1", text: "manual", status: "manual", atMs: NOW - 3e5 }, { id: "n1", text: "new", status: "new", atMs: NOW - 2e5 }]));
 
@@ -157,7 +157,7 @@ const allowedForSandbox = p => /^EtsyMail_OrderLinks\/olsb_/.test(p) || /^EtsyMa
   console.log("The wipe");
   const sandboxMade = [...store.keys()].filter(k => /^EtsyMail_OrderLinks\/olsb_/.test(k) && (store.get(k) || {}).sandbox === true);
   check(sandboxMade.length >= 3, `the sandbox holds its engagements before the wipe (${sandboxMade.length})`);
-  const live = async b => { const r = await lib.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(b), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
+  const live = async b => { const r = await lib.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(await require("../charm-nest/_repoToken.cjs")("charmNestLibrary", b)), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || "{}") }; };
   let w = await live({ op: "sandboxReset", sandbox: true }), calls = 1;
   while (w.body.more && calls < 100) { w = await live({ op: "sandboxReset", sandbox: true }); calls++; }
   check(w.status === 200 && w.body.ok === true && w.body.more === false, "the real sandboxReset ran to the end: " + JSON.stringify(w.body).slice(0, 120));

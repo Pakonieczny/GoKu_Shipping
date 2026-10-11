@@ -1968,7 +1968,14 @@
        angleDeg                                    rotation applied AFTER the mirror, about (cx, cy), CCW y-up
        padPt                                       page margin around the piece (5 mm by default)
        glyphs: [{ cmds:[{type:"M"|"L"|"C"|"Q"|"Z", x, y, x1, y1, x2, y2}] }]   text outlines, back-frame pt, origin at (cx, cy), y-up
-       view: "asSeenFromBack" | "frontCoordinates" title, meta
+       view: "asSeenFromBack" | "frontCoordinates" | "asSeenFromFront" title, meta
+       face: "front" (absent = "back": today's file, byte for byte)   a FRONT engraving (front + back engraving, 11 Oct 2026, CONTRACT section 9 and 11): the same builder
+             with the mirror step skipped. The charm is drawn as it is, not turned over (M = identity), turned hoop-up by `angleDeg` (the caller's
+             CharmNestGeom.backView(charm, { face: "front" }) already has no mirror), the words are in the front frame, and the file says so:
+             view "asSeenFromFront" whatever the engraver setting for backs (backFileView) is, `face: "front"` in the subject, and `BritesFrontFrame`
+             in the Info dictionary = the matrix that took the charm's source points onto this page, which CharmNestExport.compose reads to put
+             the file ON its charm in the sheet. The layers keep their names (CUT OUTLINE (reference), ENGRAVE): the sheet document renames them
+             "FRONT <poolId> / ..." when it takes the file in.
      }
      The CUT OUTLINE (reference) layer carries the ORIGINAL cut bytes under a mirror·rotate·translate matrix whenever
      the cut members are whole top-level segments of the source (nothing redrawn); when a cut line shares a form
@@ -1977,7 +1984,8 @@
   async function buildBackFile(spec) {
     const { PDFDocument, PDFName, PDFString, PDFOperator, PDFOperatorNames, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject, endMarkedContent, moveTo, lineTo, appendBezierCurve, closePath, fill, setFillingRgbColor, setStrokingRgbColor, setLineWidth, stroke } = L();
     const c = spec.charm, parsed = spec.parsed, cut = spec.cutMembers, cx = spec.cx, cy = spec.cy, th = (spec.angleDeg || 0) * Math.PI / 180, pad = spec.padPt == null ? 5 / MMPT : spec.padPt;
-    const M = [-1, 0, 0, 1, 2 * cx, 0];
+    const isFront = spec.face === "front";                          // a front engraving: the charm as it is, not turned over
+    const M = isFront ? [1, 0, 0, 1, 0, 0] : [-1, 0, 0, 1, 2 * cx, 0];
     const R = [Math.cos(th), Math.sin(th), -Math.sin(th), Math.cos(th), cx - cx * Math.cos(th) + cy * Math.sin(th), cy - cx * Math.sin(th) - cy * Math.cos(th)];
     const MR = mul(M, R);                                          // mirror first, then rotate
     const back = cut.map(m => transformSegment(m, MR));
@@ -1986,13 +1994,13 @@
     const pw = bb[2] - bb[0] + 2 * pad + lw, ph = bb[3] - bb[1] + 2 * pad + lw;
     const T = [1, 0, 0, 1, pad + lw / 2 - bb[0], pad + lw / 2 - bb[1]];
     const out = await PDFDocument.create();
-    out.setTitle(spec.title || "Back"); out.setProducer("Brites Charm Nesting Station"); out.setCreator("Brites Charm Nesting Station");
+    out.setTitle(spec.title || (isFront ? "Front" : "Back")); out.setProducer("Brites Charm Nesting Station"); out.setCreator("Brites Charm Nesting Station");
     const page = out.addPage([pw, ph]); page.node.normalize();
     const res = page.node.Resources(); const props = out.context.obj({}); res.set(PDFName.of("Properties"), props);
     const ocgRefs = [];
     const addOCG = (name, tag) => { const ocg = out.context.obj({ Type: "OCG", Name: PDFString.of(name) }); const ref = out.context.register(ocg); ocgRefs.push(ref); props.set(PDFName.of(tag), ref); return ref; };
     const cm = m => concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]);
-    const frontView = spec.view === "frontCoordinates";
+    const frontView = !isFront && spec.view === "frontCoordinates";   // (the engraver-flips setting is about backs: a front file is in front coordinates already)
     const Mp = [-1, 0, 0, 1, pw, 0];
     const cutSet = new Set(cut);
     const topOf = m => (m.parent != null ? m.parent : m.index);
@@ -2049,7 +2057,9 @@
     page.pushOperators(popGraphicsState(), endMarkedContent());
     const order = out.context.obj(ocgRefs), on = out.context.obj(ocgRefs);
     out.catalog.set(PDFName.of("OCProperties"), out.context.obj({ OCGs: out.context.obj(ocgRefs), D: out.context.obj({ Order: order, ON: on, BaseState: "ON" }) }));
-    if (spec.meta) { try { out.setSubject(JSON.stringify(Object.assign({ view: spec.view || "asSeenFromBack", reference }, spec.meta)).slice(0, 4000)); } catch (_) { /* ignore */ } }
+    if (spec.meta) { try { out.setSubject(JSON.stringify(Object.assign(isFront ? { view: "asSeenFromFront", face: "front", reference } : { view: spec.view || "asSeenFromBack", reference }, spec.meta)).slice(0, 4000)); } catch (_) { /* ignore */ } }
+    // a front file also says where its page sits against the charm's source points (an Info entry of its own: the subject above is cut at 4000 characters)
+    if (isFront) { try { out.getInfoDict().set(PDFName.of("BritesFrontFrame"), PDFString.of(JSON.stringify({ v: 1, face: "front", matrix: mul(MR, T) }))); } catch (_) { /* a file without it is laid above the sheet */ } }
     void fill; void rgb;
     pruneUnreachable(out);
     const bytes = await out.save({ useObjectStreams: false });

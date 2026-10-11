@@ -71,6 +71,7 @@ function query(coll, filters = [], orders = [], lim = 0, mask = null, after = nu
 }
 const db = {
   collection: c => query(c),
+  doc: p => docRef(p),   // (a document by its whole path, "config/etsyOauth")
   // every commit takes `slow` ms of the test's clock (where a reset of a big sandbox spends its time)
   batch() { const ops = []; return { set: (r, d, o) => ops.push(() => r.set(d, o)), update: (r, d) => ops.push(() => r.update(d)), delete: r => ops.push(() => r.delete()), create: (r, d) => ops.push(() => r.create(d)),
     async commit() { assert(ops.length <= 500, 'a write batch holds at most 500 writes (' + ops.length + ')'); skew += slow; for (const o of ops) await o(); } }; },

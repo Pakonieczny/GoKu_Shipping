@@ -185,8 +185,8 @@ for (const sku of ['WOLF CHARM', 'WOLF', 'MITTENS-MIS', 'TENNIS-MIS', 'WOLF + MO
     const J = x => JSON.parse(JSON.stringify(x));
     eq(J(c.livePairOf(neck, '4170000001')), [], 'live card: a necklace of a two-body design is told as one plain piece (not "Left + Right", not both)');
     eq(J(c.livePairOf(ear, '4170000001')).map(p => p.side), ['L', 'R'], 'live card: the same design as earrings is a Left and a Right');
-    const pa = src.indexOf('const pairRow = row => {'), pb = src.indexOf('\n', pa);
-    ok(pa > 0 && pb > pa, 'pairRow is in the bridge');
+    const pa = src.indexOf('const oneRow = row => {'), pb = src.indexOf('\n', src.indexOf('const pairRow = row => {'));   // (oneRow, the one-body line of a design drawn twice (KEYONE), comes first: pairRow asks it)
+    ok(pa > 0 && pb > pa && src.indexOf('const pairRow = row => {') > pa, 'pairRow is in the bridge');
     vm.runInContext(src.slice(pa, pb) + '\n;this.pairRow = pairRow;', c);
     eq([c.pairRow(neck), c.pairRow(ear)], [false, true], 'list picture: "Left + Right" is said of the earring line, not of the necklace');
   }

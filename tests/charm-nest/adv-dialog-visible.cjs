@@ -38,6 +38,7 @@ const ROUNDS = ['button', 'Esc', 'button'];
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => r.abort());
     await context.addInitScript(() => {
+      try { localStorage.setItem('cn.repoSession.v1', JSON.stringify({ t: 'test-standing-unlock', e: Date.now() + 8 * 3600 * 1000 })); } catch (_) {}   // (Settings is behind the repo password: this page is already unlocked, the window animation is what is judged)
       window.__lt = [];
       try { new PerformanceObserver(l => { for (const e of l.getEntries()) window.__lt.push({ at: e.startTime, ms: e.duration }); }).observe({ type: 'longtask' }); } catch (_) {}
       // what flies: the window, its surface, its parts, its closing copy and shade, a menu's panel (not a button's own

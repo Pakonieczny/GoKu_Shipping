@@ -29,6 +29,7 @@ const server = http.createServer((req, res) => {
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => r.abort());
     // every closing copy's (closed) shadow root, kept for the checks
     await context.addInitScript(() => {
+      try { localStorage.setItem('cn.repoSession.v1', JSON.stringify({ t: 'test-standing-unlock', e: Date.now() + 8 * 3600 * 1000 })); } catch (_) {}   // (Settings is behind the repo password: this page is already unlocked, the window animation is what is judged)
       const a = Element.prototype.attachShadow; window.__ghosts = [];
       Element.prototype.attachShadow = function (o) { const r = a.call(this, o); if (this.classList && this.classList.contains('mdGhost')) window.__ghosts.push({ host: this, root: r, at: performance.now() }); return r; };
     });

@@ -2,11 +2,12 @@
  * button it does not open the actual back engraving modal with this specific order, it only open the Engraving tab list
  * with no specific order selected").
  *
- *   window.EngraveLink.open({ rid, key, poolId, piece, sandbox, closeFirst }) -> Promise<boolean>
+ *   window.EngraveLink.open({ rid, key, poolId, piece, face, sandbox, closeFirst }) -> Promise<boolean>
  *     rid        the order number (else read from poolId, piece or key)
  *     key        the order line's key (row.key): the line the Overview shows
  *     poolId     the pool id of one copy of the piece (the Sheet tab and the Sheet window know it)
  *     piece      the piece the order window has chosen (its line key); it wins over `key` when both name a job
+ *     face       "front" | "back": which face of a piece engraved on both (else the face a key names: a front's key ends "~front"; else the one still to settle)
  *     sandbox    optional true/false: what the caller knows about the order. A Sandbox order is never opened from the
  *                production page, nor a real one from the Sandbox page (the two never cross)
  *     closeFirst optional function (may return a promise): how the caller's own window closes, so nothing is ever
@@ -41,6 +42,10 @@
   const say = (msg, kind, ms) => { try { const t = typeof window.toast === "function" ? window.toast : window.CN && window.CN.toast; if (t) t(msg, kind || "", ms || 6500, "engrave-link"); } catch (_) {} };
   const sandboxNow = () => { try { return typeof WORKSPACE_SANDBOX !== "undefined" ? !!WORKSPACE_SANDBOX : !!(window.Sandbox && window.Sandbox.on && window.Sandbox.on()); } catch (_) { return false; } };
 
+  /* the face of an engraving (charm-nest-engrave-faces.js): a job, a key or a request that does not say "front" is the back */
+  const faceOf = x => { const F = window.CharmNestEngraveFaces; return F && F.faceOf ? F.faceOf(x) : x && (x.face === "front" || /~front$/.test(String(x.key || ""))) ? "front" : "back"; };
+  /** The face a caller asked for: `face`, else the face a key names ("...~front"), else none (no preference). */
+  const face = t => (t.face === "front" || t.face === "back" ? t.face : /~front$/.test(String(t.piece || t.key || "")) ? "front" : "");
   /** The job of the piece named, and nothing else: another piece of the same order is never put in its place. */
   function resolve(t) {
     t = t || {};
@@ -50,8 +55,15 @@
     const items = E.items(), mine = j => live(j) && (!rid || ridOfJob(j) === rid);
     let job = null;
     // a copy's own job first (two copies of one line share one; a copy edited on its own has its own), then the piece, then the line
-    if (t.poolId) job = jobs().find(j => mine(j) && !j.editingBack && (j.copies || []).includes(t.poolId)) || null;
+    // (a piece engraved on both faces has TWO jobs that hold the same copy: the one asked for is the one named by `piece` / `key` (a front's key ends "~front"), else the face asked for, else the one still to settle, else the back)
+    if (t.poolId) {
+      const held = jobs().filter(j => mine(j) && !j.editingBack && (j.copies || []).includes(t.poolId));
+      job = held.length > 1 ? (held.find(j => j.key === String(t.piece)) || held.find(j => j.key === String(t.key)) || (face(t) && held.find(j => faceOf(j) === face(t))) || held.find(j => PLACE.includes(j.state)) || held.find(j => faceOf(j) === "back") || held[0]) : held[0] || null;
+    }
     for (const k of [t.piece, t.key]) { if (job || !k) continue; const j = items.get(String(k)); if (j && mine(j)) job = j; }
+    // the face asked for, when the job found is the piece's other face (a line key names the back; the front of the same piece is its sibling)
+    const want = face(t), F = window.CharmNestEngraveFaces;
+    if (job && want && F && F.parseKey && faceOf(job) !== want) { const pk = F.parseKey(job.key), sib = items.get(F.jobKey(pk.lineKey, pk.slot, want)); if (sib && mine(sib) && !sib.editingBack) job = sib; }
     // nothing but the order named: its one job; an order of several pieces is shown as its own list instead (no guess)
     if (!job && rid && !t.poolId && !t.piece && !t.key) { const all = jobs().filter(j => mine(j) && !j.editingBack); if (all.length === 1) job = all[0]; }
     return { rid, job, tab: tab(job) };

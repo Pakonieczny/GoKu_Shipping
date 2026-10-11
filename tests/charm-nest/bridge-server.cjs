@@ -91,7 +91,18 @@ async function functions(st, name, req, res, base) {
     // the Charm Repo's password door (plans/repo-protect-1011): unless a test sets st.repoStrict, a call to a protected op carries a token the door issued on this
     // same in-memory Firestore, as if the master admin had unlocked (a body that brings its own repoToken is left alone; REPO_TEST says how to unlock for real)
     let bodyText = bodyBuf ? bodyBuf.toString('utf8') : '';
-    if (!st.repoStrict && bodyText && (name === 'charmNestLibrary' || name === 'charmNestOutput')) { try { const b = JSON.parse(bodyText), s2 = await require('./_repoToken.cjs')(name, b, st.db); if (s2 !== b) bodyText = JSON.stringify(s2); } catch (_) {} }
+    if (!st.repoStrict && bodyText && (name === 'charmNestLibrary' || name === 'charmNestOutput')) {
+      try {
+        let b = JSON.parse(bodyText), changed = false;
+        // (the sorter page is served with a stand-in token in its sessionStorage, see start(): the door issues a real one for it here)
+        if (b && st.repoToken && b.repoToken === st.repoToken) { b = Object.assign({}, b); delete b.repoToken; changed = true; }
+        // (and the page's standing unlock, stored in its localStorage with the same stand-in token, is the door's real one here: the page's questions about it, its Lock now and its
+        //  delete-confirm without a password all reach the real code with a real session of this same in-memory Firestore)
+        if (b && st.repoToken && b.sessionToken === st.repoToken && /^repo(Session|Lock|Unlock)$/.test(String(b.op))) { b = Object.assign({}, b, { sessionToken: await require('./_repoToken.cjs').session(st.db) }); changed = true; }
+        const s2 = await require('./_repoToken.cjs')(name, b, st.db);
+        if (changed || s2 !== b) bodyText = JSON.stringify(s2);
+      } catch (_) { /* not JSON: left as it is */ }
+    }
     const out = await h.handler({ httpMethod: req.method, headers: Object.fromEntries(Object.entries(req.headers)), body: bodyText, queryStringParameters: q });
     res.writeHead(out.statusCode || 200, Object.assign({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, out.headers || {})); return res.end(out.body || '');
   }
@@ -153,7 +164,7 @@ function fakeAdmin(st, base) {
       runs other ops of its own sets st.quiet while it does, so that they are not looked into in turn. A read made with a `view`
       (a snapshot Map of st.docs, as a read-only transaction's) sees the documents as they were then) */
   const tick = async what => { if (st.tick && !st.quiet) await st.tick(what); };
-  const docRef = (coll, id) => ({ id, path: coll + '/' + id, collection: sub => collection(coll + '/' + id + '/' + sub), async get(view) { if (st.tick) await tick('get ' + coll + '/' + id); const d = (view || st.docs).get(coll + '/' + id); st.reads = (st.reads || 0) + 1; return { exists: !!d, id, data: () => (d ? { ...d } : undefined), get: k => d && d[k], updateTime: d ? updateTime(d) : undefined }; }, async set(data, o) { if (st.strictArrays) refuseNestedArrays(data, coll + '/' + id); const cur = (o && o.merge && st.docs.get(coll + '/' + id)) || {}; st.docs.set(coll + '/' + id, apply({ ...cur }, data)); }, async update(data) { if (st.strictArrays) refuseNestedArrays(data, coll + '/' + id); const cur = st.docs.get(coll + '/' + id); if (!cur) throw new Error('NOT_FOUND: ' + coll + '/' + id); st.docs.set(coll + '/' + id, apply({ ...cur }, data)); }, async delete() { st.docs.delete(coll + '/' + id); } });
+  const docRef = (coll, id) => ({ id, path: coll + '/' + id, collection: sub => collection(coll + '/' + id + '/' + sub), async get(view) { if (st.tick) await tick('get ' + coll + '/' + id); const d = (view || st.docs).get(coll + '/' + id); st.reads = (st.reads || 0) + 1; return { exists: !!d, id, data: () => (d ? { ...d } : undefined), get: k => d && d[k], updateTime: d ? updateTime(d) : undefined }; }, async set(data, o) { if (st.strictArrays) refuseNestedArrays(data, coll + '/' + id); const cur = (o && o.merge && st.docs.get(coll + '/' + id)) || {}; st.docs.set(coll + '/' + id, apply({ ...cur }, data)); }, async update(data) { if (st.strictArrays) refuseNestedArrays(data, coll + '/' + id); const cur = st.docs.get(coll + '/' + id); if (!cur) throw new Error('NOT_FOUND: ' + coll + '/' + id); st.docs.set(coll + '/' + id, apply({ ...cur }, data)); }, async create(data) { if (st.docs.has(coll + '/' + id)) throw new Error('6 ALREADY_EXISTS: ' + coll + '/' + id); if (st.strictArrays) refuseNestedArrays(data, coll + '/' + id); st.docs.set(coll + '/' + id, apply({}, data)); }, async delete() { st.docs.delete(coll + '/' + id); } });
   /* (orderBy(FieldPath.documentId()) orders by the document's id; several orderBy order by each in turn, and startAfter
      starts past the values given, one for each, as Firestore's cursor does) */
   const query = (coll, filters = [], order = [], lim = 0, after = null) => ({ where: (f, op, v) => query(coll, filters.concat([[f, op, v]]), order, lim, after), orderBy: (f, dir) => query(coll, filters, order.concat([[f, dir || 'asc']]), lim, after), limit: n => query(coll, filters, order, n, after), startAfter: (...v) => query(coll, filters, order, lim, v), select() { return this; }, count() { const q = this; return { get: async () => { const r = await q.get(); return { data: () => ({ count: r.size }) }; } }; }, async get(view) { if (st.tick) await tick('query ' + coll); st.queries = (st.queries || 0) + 1; let rows = [...(view || st.docs).entries()].filter(([k]) => k.startsWith(coll + '/') && !k.slice(coll.length + 1).includes('/')).map(([k, v]) => ({ id: k.slice(coll.length + 1), exists: true, data: () => ({ ...v }), ref: docRef(coll, k.slice(coll.length + 1)), get: f => v[f], updateTime: updateTime(v) })); for (const [f, op, v] of filters) rows = rows.filter(r => { const x = f === '__name__' ? r.id : r.data()[f]; return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : op === '>' ? x > v : op === '<' ? x < v : op === '!=' ? x !== v : op === 'in' ? v.includes(x) : op === 'array-contains' ? Array.isArray(x) && x.includes(v) : op === 'array-contains-any' ? Array.isArray(x) && x.some(e => v.includes(e)) : true; }); const norm = x => (x && x.toMillis ? x.toMillis() : x), key = (r, f) => norm(f === '__name__' ? r.id : r.data()[f]), cmp = (x, y) => (x > y ? 1 : x < y ? -1 : 0); if (order.length) rows.sort((a, b) => { for (const [f, dir] of order) { const c = cmp(key(a, f), key(b, f)); if (c) return dir === 'desc' ? -c : c; } return 0; }); if (order.length && after != null) rows = rows.filter(r => { for (const [i, [f, dir]] of order.entries()) { if (i >= after.length) return false; const x = key(r, f); if (x === undefined) return false; const c = cmp(x, norm(after[i])); if (c) return dir === 'desc' ? c < 0 : c > 0; } return false; }); if (lim) rows = rows.slice(0, lim); st.reads = (st.reads || 0) + rows.length; return { size: rows.length, docs: rows, empty: !rows.length, forEach: fn => rows.forEach(fn) }; }, async add(data) { const id = 'auto' + Math.random().toString(36).slice(2, 8); await docRef(coll, id).set(data); return docRef(coll, id); }, doc: id => docRef(coll, id || 'auto' + Math.random().toString(36).slice(2, 10)) });
@@ -164,12 +175,12 @@ function fakeAdmin(st, base) {
      that another commit changed before then makes it run again (optimistic, up to five more times: st.txRetries counts them),
      and a read-only one sees the documents as they were when it began. */
   const isQuery = x => typeof x.orderBy === 'function';
-  const db = { collection, batch() { const ops = []; return { set: (ref, data, o) => ops.push(() => ref.set(data, o)), update: (ref, data) => ops.push(() => ref.update(data)), delete: ref => ops.push(() => ref.delete()), async commit() { if (st.tick) await tick('commit'); await Promise.all(ops.map(o => o())); } }; }, async getAll(...refs) { /* a trailing { fieldMask } is read options, not a document */ let opts = null; if (refs.length && typeof refs[refs.length - 1].get !== 'function') opts = refs.pop(); const snaps = await Promise.all(refs.map(r => r.get())); if (!st.strictMasks) return snaps;
+  const db = { collection, batch() { const ops = []; return { set: (ref, data, o) => ops.push(() => ref.set(data, o)), update: (ref, data) => ops.push(() => ref.update(data)), create: (ref, data) => ops.push(() => ref.create(data)), delete: ref => ops.push(() => ref.delete()), async commit() { if (st.tick) await tick('commit'); await Promise.all(ops.map(o => o())); } }; }, async getAll(...refs) { /* a trailing { fieldMask } is read options, not a document */ let opts = null; if (refs.length && typeof refs[refs.length - 1].get !== 'function') opts = refs.pop(); const snaps = await Promise.all(refs.map(r => r.get())); if (!st.strictMasks) return snaps;
       /* st.strictMasks (opt-in): a read with a fieldMask returns only those fields, as Firestore does, and st.readBytes counts the bytes of what came back */
       const mask = opts && Array.isArray(opts.fieldMask) ? new Set(opts.fieldMask) : null; st.readBytes = st.readBytes || 0;
       return snaps.map(sn => { if (!sn.exists) return sn; const whole = sn.data(), data = mask ? Object.fromEntries(Object.entries(whole).filter(([k]) => mask.has(k))) : whole; st.readBytes += JSON.stringify(data).length; return mask ? { ...sn, data: () => ({ ...data }), get: k => data[k] } : sn; }); },
     async runTransaction(fn, opts) {
-      if (!st.atomic) { const t = { get: ref => ref.get(), getAll: (...refs) => db.getAll(...refs), set: (ref, data, o) => { if (st.strictArrays) refuseNestedArrays(data, ref.path); return ref.set(data, o); }, update: (ref, data) => { if (st.strictArrays) refuseNestedArrays(data, ref.path); return ref.update(data); }, delete: ref => ref.delete() }; return fn(t); }
+      if (!st.atomic) { const t = { get: ref => ref.get(), getAll: (...refs) => db.getAll(...refs), set: (ref, data, o) => { if (st.strictArrays) refuseNestedArrays(data, ref.path); return ref.set(data, o); }, update: (ref, data) => { if (st.strictArrays) refuseNestedArrays(data, ref.path); return ref.update(data); }, delete: ref => ref.delete() }; t.create = (ref, data) => ref.create(data); return fn(t); }
       const readOnly = !!(opts && opts.readOnly);
       for (let attempt = 0; ; attempt++) {
         const view = readOnly ? new Map(st.docs) : undefined, seen = new Map(), writes = [];
@@ -177,7 +188,7 @@ function fakeAdmin(st, base) {
         const t = {
           get: async x => { const r = await x.get(view); if (isQuery(x)) r.docs.forEach(d => note(d.ref.path, d.updateTime)); else note(x.path, r.exists ? r.updateTime : null); return r; },
           getAll: async (...refs) => { if (refs.length && typeof refs[refs.length - 1].get !== 'function') refs.pop(); return Promise.all(refs.map(r => t.get(r))); },
-          set: (ref, data, o) => { writes.push(() => ref.set(data, o)); return t; }, update: (ref, data) => { writes.push(() => ref.update(data)); return t; }, delete: ref => { writes.push(() => ref.delete()); return t; }
+          set: (ref, data, o) => { writes.push(() => ref.set(data, o)); return t; }, create: (ref, data) => { writes.push(() => ref.create(data)); return t; }, update: (ref, data) => { writes.push(() => ref.update(data)); return t; }, delete: ref => { writes.push(() => ref.delete()); return t; }
         };
         const out = await fn(t);
         if (st.tick) await tick('tx commit');
@@ -196,6 +207,12 @@ function fakeAdmin(st, base) {
 async function start(opts = {}) {
   const st = makeState(opts);
   const servers = [];
+  /* The Charm Repo is locked for uploads, removals, changes and downloads (charm-nest-repo-lock.js): the page asks for a password and keeps
+     the token it is given in sessionStorage. A test that is not about the lock must not wait for a person, so the sorter page is served
+     with an unlock token already in its tab's sessionStorage (`other` serves every upload / change / download; a delete is never held).
+     The token is made new each run and is the fake server's (st.repoToken, srv.repoToken); { repoSeed: false } serves the page locked. */
+  const repoToken = 'tt-' + crypto.randomBytes(12).toString('hex'); st.repoToken = repoToken;
+  const repoSeed = opts.repoSeed === false ? '' : `<script>try{var k='cn.repoLock.v1';if(!sessionStorage.getItem(k))sessionStorage.setItem(k,JSON.stringify({other:{t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}}))}catch(_){}try{var q='cn.repoSession.v1';if(!localStorage.getItem(q))localStorage.setItem(q,JSON.stringify({t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}))}catch(_){}</script>`;
   const handler = (base) => async (req, res) => {
     try {
       if (req.method === 'OPTIONS') return json(res, 204, {});
@@ -207,6 +224,7 @@ async function start(opts = {}) {
       if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404, { 'Access-Control-Allow-Origin': '*' }); return res.end(); }
       const headers = { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' };
       if (p === '/design-1.html') headers['Content-Security-Policy'] = `frame-ancestors 'self' ${opts.sorterOrigin || 'http://127.0.0.1:*'} http://localhost:* http://127.0.0.1:*`;
+      if (repoSeed && path.basename(f) === 'charm-nest-1.html') { res.writeHead(200, headers); return res.end(fs.readFileSync(f, 'utf8').replace(/<head[^>]*>/i, m => m + repoSeed)); }
       res.writeHead(200, headers); fs.createReadStream(f).pipe(res);
     } catch (e) { json(res, 500, { error: e.message }); }
   };
@@ -231,10 +249,10 @@ async function start(opts = {}) {
   const anthro = require(path.join(fnDir, '_etsyMailAnthropic.js'));
   anthro.callClaudeRaw = async (o) => { const sys = (o.system && o.system[0] && o.system[0].text) || ''; const mode = /Grade EVERY numbered charm/.test(sys) ? 'packing' : /engraver and decide/.test(sys) ? 'engraveIntent' : /rendered BACK/.test(sys) ? 'engraveReview' : /strip directly BELOW/.test(sys) ? 'labelRead' : /quality reviewer/.test(sys) ? 'grouping' : /final inspector/.test(sys) ? 'layout' : 'name'; const fn = st.agentResults[mode]; const text = JSON.stringify(typeof fn === 'function' ? fn(o) : (fn || defaultAgent(mode, o))); return { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text }] }; };
   process.env.ANTHROPIC_API_KEY = 'test';
-  st.handlers = handlers; st.admin = admin; st.db = admin.firestore();
+  st.handlers = handlers; st.admin = admin; st.db = admin.firestore();   // (a test may read through the real functions' own db: the order timeline's derivation)
   // Paul's login for the repo door, throwaway and only in this in-memory state: operator `paul`, password REPO_TEST.password
   { const salt = crypto.randomBytes(32), hash = crypto.pbkdf2Sync(REPO_TEST.password, salt, 2000, 64, 'sha512'); st.put('EtsyMail_Operators', 'paul', { username: 'paul', displayName: 'Paul K', role: 'owner', passwordHash: hash.toString('hex'), salt: salt.toString('hex'), iterations: 2000, digest: 'sha512' }, false); }   // (a test may read through the real functions' own db: the order timeline's derivation)
-  return { st, sorterOrigin, stationOrigin, close: () => { servers.forEach(s => s.close()); Module._load = realLoad; }, blobUrl: p => tokenUrl(stationOrigin, p) };
+  return { st, sorterOrigin, stationOrigin, repoToken, close: () => { servers.forEach(s => s.close()); Module._load = realLoad; }, blobUrl: p => tokenUrl(stationOrigin, p) };
 }
 function defaultAgent(mode, o) {
   if (mode === 'engraveIntent') { const txt = String(o.messages[0].content[0].text); const m = /Personalisation field: (\[.*?\])/.exec(txt); let pers = []; try { pers = JSON.parse(m ? m[1] : '[]'); } catch (_) {} const engrave = pers.length > 0; return { engrave, text: pers.join('\n'), source: engrave ? 'personalization' : 'none', sourceQuote: pers[0] || '', requests: { side: 'back', font: null, handwriting: false, image: false }, questions: [], confidence: engrave ? 0.97 : 0.95 }; }

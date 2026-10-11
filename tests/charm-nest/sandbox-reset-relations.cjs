@@ -129,7 +129,8 @@ Module._load = function (req, ...rest) {
 global.fetch = async () => ({ ok: true, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => new Uint8Array([255, 216, 255]).buffer });
 delete process.env.EDIT_PASSCODE;
 const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
-const post = b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
+const post = async b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 const must = async b => { const r = await post(b); assert.strictEqual(r.status, 200, JSON.stringify(b).slice(0, 140) + ' → ' + JSON.stringify(r.body).slice(0, 300)); return r.body; };
 
 /* ── the order of the evidence, and the keys both sides write ── */
@@ -205,6 +206,7 @@ async function serverSection() {
   blobs.set(LEGACY_FILE, { buf: Buffer.from('LEGACY LION'), contentType: 'application/pdf' });
   // production wrote first, then the sandbox, on the same keys
   await seedRelations(false); bulkMaps(false, 20);
+  await repoStamp.prime();   // (the standing unlock is made first, so it is part of "before": the reset must leave it alone as it leaves every shared record)
   const prodWrote = productionMap(), prodBlobs = blobMap();
   await seedRelations(true); bulkMaps(true, 700);
   const renamed = await must({ op: 'renameCharm', hash: 'abcdef0123456789', name: 'LION', sandbox: true });

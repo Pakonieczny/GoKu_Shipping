@@ -41,25 +41,38 @@
  *   (3) the placement of each ear, as it stands now, has been put in front of the person (o.shown(job)).
  * The press then runs the ordinary approval of the Left, and only when it settled, the ordinary approval of the Right: two approvals, two seals, two back
  * files, two timeline events, as if each button had been pressed.
+ * FACES (plans/front-back-1011): a piece may also have a FRONT job (`job.face === 'front'`, key `<line>[#slot]~front`; charm-nest-engrave-faces.js). A line that has one is grouped
+ * by PIECE, not by job: its ears are ONE row (pair: two ears), its discs ONE row with o.discs (discs: two or more), a single charm one row, and a row that holds a front job says
+ * `faces: true` and keeps ALL the line's jobs of the tab (Front before Back, piece by piece) in `jobs`. Back / Next (step) go piece by piece. `approveBoth` / `approveAll` /
+ * `approveRow` ask Faces.approveAllGate (every placement ready, the same words per face, each shown). A line with no front job: every row, count and answer is what it always was.
  * Pure: no page, no network, no clock. Loads in the page (window.CharmNestEngraveRows) and in node. */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestEngraveRows = api;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
   const KEY = /^(.*)#(L|R|D\d{1,2})$/;
-  const slotOf = job => { if (!job) return null; if (job.slot) return String(job.slot); const m = KEY.exec(String(job.key == null ? '' : job.key)); return m ? m[2] : null; };
+  const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
+  const Faces = () => dep('CharmNestEngraveFaces', './charm-nest-engrave-faces.js');
+  const faceOf = job => { const F = Faces(); return F ? F.faceOf(job) : 'back'; };
+  /** { lineKey, slot } of a job key; a front key ("...~front") is its back's key with the suffix taken off. */
+  function parse(key) {
+    const F = Faces(), k = String(key == null ? '' : key);
+    if (F) { const p = F.parseKey(k); return { lineKey: p.lineKey, slot: p.slot }; }
+    const m = KEY.exec(k); return m ? { lineKey: m[1], slot: m[2] } : { lineKey: k, slot: null };
+  }
+  const slotOf = job => { if (!job) return null; if (job.slot) return String(job.slot); return parse(job.key).slot; };
   const earOf = job => { const s = slotOf(job); return s === 'L' || s === 'R' ? s : null; };
   const discOf = job => { const m = /^D(\d{1,2})$/.exec(slotOf(job) || ''); return m ? +m[1] : 0; };
   const pieceOf = job => { const s = slotOf(job); return s === 'L' || s === 'R' || /^D\d{1,2}$/.test(s || '') ? s : null; };
-  const lineKeyOf = job => { if (!job) return ''; if (job.rowKey) return String(job.rowKey); const m = KEY.exec(String(job.key == null ? '' : job.key)); return m ? m[1] : String(job.key == null ? '' : job.key); };
+  const lineKeyOf = job => { if (!job) return ''; if (job.rowKey) return String(job.rowKey); return parse(job.key).lineKey; };
   const mkRow = (lineKey, jobs) => ({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: jobs.length === 2 });
 
   const mkDiscRow = (lineKey, jobs) => ({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: false, discs: jobs.length >= 2 });
 
   /** Rows, in the order of `selected`: the Left and the Right job of one line are one row, at the place of whichever came first.
    *  With o.discs the discs of one counted line are one row as well (D1, D2, .. in disc order). */
-  function group(selected, universe, o) {
+  function groupPlain(selected, universe, o) {
     const uni = Array.isArray(universe) ? universe : selected || [], ears = new Map(), discs = new Map(), withDiscs = !!(o && o.discs);
     for (const j of uni) {
       const s = earOf(j), k = lineKeyOf(j);
@@ -83,6 +96,31 @@
     }
     return out;
   }
+  /** The rows of a line that has a front job (see FACES above): one per piece, but the ears of a pair and the discs of a counted line (o.discs) are one row each. */
+  function facedRows(F, k, jobs, o) {
+    const groups = F.groupPieces(jobs), isEar = g => g.slot === 'L' || g.slot === 'R', isDisc = g => /^D\d{1,2}$/.test(g.slot || ''), withDiscs = !!(o && o.discs);
+    const mk = (gs, extra) => { const js = [].concat(...gs.map(g => g.jobs)); return Object.assign({ key: js[0].key, lineKey: k, jobs: js, lead: js[0], pair: false }, extra, js.some(j => faceOf(j) === 'front') ? { faces: true } : {}); };
+    const out = [], ears = groups.filter(isEar), discs = withDiscs ? groups.filter(isDisc) : [];
+    if (ears.length) out.push(mk(ears, { pair: ears.length >= 2 }));
+    if (discs.length) out.push(mk(discs, { discs: discs.length >= 2 }));
+    for (const g of groups) if (!isEar(g) && !(withDiscs && isDisc(g))) out.push(mk([g]));
+    return out;
+  }
+  /** Rows, in the order of `selected` (see FACES above for a line with a front job). */
+  function group(selected, universe, o) {
+    const F = Faces(), sel = selected || [], uni = Array.isArray(universe) ? universe : sel;
+    const faced = F ? new Set([...uni, ...sel].filter(j => j && faceOf(j) === 'front').map(lineKeyOf)) : new Set();
+    if (!faced.size) return groupPlain(selected, universe, o);
+    const plain = groupPlain(sel.filter(j => !faced.has(lineKeyOf(j))), Array.isArray(universe) ? uni.filter(j => !faced.has(lineKeyOf(j))) : undefined, o);
+    const byJob = new Map(); for (const r of plain) for (const j of r.jobs) byJob.set(j.key, r);
+    const made = new Map(); for (const k of faced) {
+      const seen = new Set(), jobs = [...uni, ...sel].filter(j => j && lineKeyOf(j) === k && !seen.has(j.key) && seen.add(j.key));
+      for (const r of facedRows(F, k, jobs, o)) for (const j of r.jobs) made.set(j.key, r);
+    }
+    const out = [], done = new Set();
+    for (const j of sel) { const r = faced.has(lineKeyOf(j)) ? made.get(j.key) : byJob.get(j.key); if (r && !done.has(r)) { done.add(r); out.push(r); } }
+    return out;
+  }
   const rowOf = (rows, jobKey) => (rows || []).find(r => r.jobs.some(j => j.key === jobKey)) || null;
   function neighbour(rows, jobKey, dir) {
     const list = rows || []; if (!list.length) return null;
@@ -90,16 +128,20 @@
     if (i < 0) return dir < 0 ? list[list.length - 1] : list[0];
     return list[(i + (dir < 0 ? list.length - 1 : 1)) % list.length];
   }
-  const multi = row => !!(row && (row.pair || row.discs));
-  const kindOf = row => (row && row.pair ? 'ears' : row && row.discs ? 'discs' : null);
-  /** Back / Next through every piece: each disc of a counted line is a stop of its own, every other row (a pair, a single, a plain quantity-N line) is one stop. */
+  const multi = row => !!(row && (row.pair || row.discs || (row.faces && row.jobs.length >= 2)));
+  const kindOf = row => (row && row.pair ? 'ears' : row && row.discs ? 'discs' : row && row.faces && row.jobs.length >= 2 ? 'faces' : null);
+  /** The jobs of each piece of a disc row, in disc order: [[D1 front, D1 back], [D2 ...]] (one job each when the row has no front). */
+  function piecesOfRow(r) { const F = Faces(); return r.faces && F ? F.groupPieces(r.jobs).map(g => g.jobs) : r.jobs.map(j => [j]); }
+  /** Back / Next through every piece: each disc of a counted line is a stop of its own, every other row (a pair, a single, a plain quantity-N line) is one stop. A disc with both faces is one stop
+   *  (its Front, the Back is reached from the Front | Back switch). */
   function step(rows, jobKey, dir) {
     const stops = [];
-    for (const r of rows || []) { if (r.discs) for (const j of r.jobs) stops.push({ row: r, job: j }); else stops.push({ row: r, job: null }); }
+    for (const r of rows || []) { if (r.discs) for (const js of piecesOfRow(r)) stops.push({ row: r, job: js[0], jobs: js }); else stops.push({ row: r, job: null, jobs: r.jobs }); }
     if (!stops.length) return null;
-    const i = stops.findIndex(s => (s.job ? s.job.key === jobKey : s.row.jobs.some(j => j.key === jobKey)));
-    if (i < 0) return dir < 0 ? stops[stops.length - 1] : stops[0];
-    return stops[(i + (dir < 0 ? stops.length - 1 : 1)) % stops.length];
+    const i = stops.findIndex(s => (s.job ? s.jobs.some(j => j.key === jobKey) : s.row.jobs.some(j => j.key === jobKey)));
+    const at = n => ({ row: stops[n].row, job: stops[n].job });
+    if (i < 0) return at(dir < 0 ? stops.length - 1 : 0);
+    return at((i + (dir < 0 ? stops.length - 1 : 1)) % stops.length);
   }
   const openLead = (row, busy) => (row ? (row.jobs.find(j => !(busy && busy(j))) || row.jobs[0]) : null);
   function counts(queueRows, decidedRows) {
@@ -123,8 +165,11 @@
     }
   }
   const settling = j => !!(j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving);
+  /** A row with a front job: one press approves every placement of it (Faces.approveAllGate: all ready, nothing running, the same words per face, each shown). */
+  function facesGate(row, o) { const F = Faces(); return F ? F.approveAllGate(row.jobs, o) : { ok: false, why: 'Approve each placement on its own.' }; }
   function approveBoth(row, o) {
     o = o || {};
+    if (row && row.faces) return facesGate(row, o);
     if (!row || !row.pair) return { ok: false, why: 'This line has one ear to approve.' };
     const [l, r] = row.jobs;
     if (!row.jobs.every(j => j.state === 'review' && j.fit && j.verify && j.verify.geometry && j.verify.geometry.ok)) return { ok: false, why: 'Both ears must have a placement to check first.' };
@@ -136,6 +181,7 @@
   /** "Approve all discs": the same three conditions as "Approve both ears", for every disc of a counted line still to settle (two or more of them here). */
   function approveAll(row, o) {
     o = o || {};
+    if (row && row.faces) return facesGate(row, o);
     if (!row || !row.discs) return { ok: false, why: 'This order has one disc to approve.' };
     const name = j => 'Disc ' + discOf(j);
     if (!row.jobs.every(j => j.state === 'review' && j.fit && j.verify && j.verify.geometry && j.verify.geometry.ok)) return { ok: false, why: 'Every disc must have a placement to check first.' };
@@ -144,5 +190,7 @@
     for (const j of row.jobs) if (o.shown && !o.shown(j)) return { ok: false, why: `Look at ${name(j)}'s placement first (it is not on screen yet).` };
     return { ok: true, why: '' };
   }
-  return { earOf, discOf, pieceOf, lineKeyOf, group, rowOf, multi, kindOf, step, neighbour, openLead, counts, wordsOf, sameWords, sameWordsAll, stageOf, approveBoth, approveAll };
+  /** The one press of a row, whatever it holds: a row with a front job, a pair of ears or the discs of a counted line. */
+  const approveRow = (row, o) => (row && row.faces ? facesGate(row, o || {}) : row && row.pair ? approveBoth(row, o) : row && row.discs ? approveAll(row, o) : { ok: false, why: 'This line has one placement to approve.' });
+  return { faceOf, approveRow, earOf, discOf, pieceOf, lineKeyOf, group, rowOf, multi, kindOf, step, neighbour, openLead, counts, wordsOf, sameWords, sameWordsAll, stageOf, approveBoth, approveAll };
 });

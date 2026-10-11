@@ -41,6 +41,8 @@ const admin = require("./firebaseAdmin");
 const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
 const OrderRules = require("../../charm-nest-orders.js");
+const Faces = require("../../charm-nest-engrave-faces.js");   // the FACE of an engraving (front | back; absent = back): a back is keyed by its poolId, a front by "<poolId>~front" (plans/front-back-1011)
+const recKeyOf = x => Faces.recKey(x && x.poolId, Faces.faceOf(x));
 const SheetName = require("../../charm-nest-sheet-name.js");   // the one rule for a sheet's number and name (a number is given when a sheet joins a set and is never reused; a name is read from the record)
 const Readiness = require("../../charm-nest-readiness.js");
 const CutLine = require("../../charm-nest-rose.js");   // which metals have a green line (Cut Sheet): Rose Gold, 10K and 14K solid gold
@@ -154,7 +156,7 @@ function slim(d) {
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), ...(bk.slot ? { slot: bk.slot } : {}), ...(typeof bk.mirror === "boolean" && bk.side ? { mirror: bk.mirror } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, ...(bk.face === "front" ? { face: "front" } : {}), previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), ...(bk.slot ? { slot: bk.slot } : {}), ...(typeof bk.mirror === "boolean" && bk.side ? { mirror: bk.mirror } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
@@ -730,7 +732,7 @@ async function op_listCharms(b) {
    manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
    picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
    per back used to count toward the sheet document's 1 MiB. */
-const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "mirror", "bodyIndex", "groupKey", "slot"];   // (side: the ear of an earring pair this back is for, "L" or "R", and mirror: that piece is the mirror image of the drawn design; absent on every other back)
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "mirror", "bodyIndex", "groupKey", "slot", "face"];   // (face: "front" on the record of a FRONT engraving, absent on every back; side: the ear of an earring pair this back is for, "L" or "R", and mirror: that piece is the mirror image of the drawn design; absent on every other back)
 function sheetBack(bk) {
   if (!bk || typeof bk !== "object") return bk;
   const out = {};
@@ -742,10 +744,10 @@ function sheetBack(bk) {
 }
 /** The whole record of each back a sheet lists, from Charm_Pool_Back, when it is still the approval the sheet holds. */
 async function withFullBacks(d) {
-  const pool = d.backPool || [], ids = [...new Set(pool.map(bk => bk && bk.poolId).filter(isPoolId))], full = new Map();
+  const pool = d.backPool || [], ids = [...new Set(pool.filter(bk => bk && isPoolId(bk.poolId)).map(recKeyOf))], full = new Map();
   for (let i = 0; i < ids.length; i += 100) for (const s of await db.getAll(...ids.slice(i, i + 100).map(id => col(BACK).doc(id)))) if (s.exists) full.set(s.id, s.data());
   d.backPool = pool.map(bk => {
-    const r = bk && full.get(bk.poolId); if (!r || r.invalidated || +r.approvedAt !== +bk.approvedAt) return bk;
+    const r = bk && full.get(recKeyOf(bk)); if (!r || r.invalidated || +r.approvedAt !== +bk.approvedAt) return bk;
     const { updatedAt, invalidatedAt, superseded, ...rest } = r; void updatedAt; void invalidatedAt; void superseded;
     return Object.assign(rest, bk, { verified: rest.verified || bk.verified, outputs: bk.outputs || rest.outputs });
   });
@@ -830,14 +832,14 @@ async function op_putSheet(b) {
     if(CutLine.cuts(s.metal) && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
     const ids = new Set(s.poolIds || old.poolIds || []), backs = new Map();
     for (const bk of [...(s.backPool || []), ...(old.backPool || [])]) if (ids.has(bk.poolId)) {
-      const prev = backs.get(bk.poolId);
-      if (!prev || (+bk.approvedAt || 0) >= (+prev.approvedAt || 0)) backs.set(bk.poolId, bk);
+      const key = recKeyOf(bk), prev = backs.get(key);   // (a piece's front and back are two records: each the newest of its own face)
+      if (!prev || (+bk.approvedAt || 0) >= (+prev.approvedAt || 0)) backs.set(key, bk);
     }
     /* An approval this record already holds as it stands needs no look: a back is invalidated, and its sheet's record changed, in
        one commit (op_backInvalidate, putBacks, poolTakeOff), so the record that lists it says it is live. Only a back the
        record does not hold (a page's newer approval, or one a stale page would put back) is read, all together and with the
        three fields that decide it, where each was read whole, one after another, at every save of the sheet. */
-    const held = new Map((Array.isArray(old.backPool) ? old.backPool : []).map(bk => [bk && bk.poolId, +(bk && bk.approvedAt) || 0]));
+    const held = new Map((Array.isArray(old.backPool) ? old.backPool : []).map(bk => [bk && recKeyOf(bk), +(bk && bk.approvedAt) || 0]));
     const look = [...backs].filter(([id, bk]) => !(held.has(id) && held.get(id) === (+bk.approvedAt || 0)));
     for (let i = 0; i < look.length; i += 100) {
       const part = look.slice(i, i + 100), saved = await txGetAll(tx, part.map(([id]) => col(BACK).doc(id)), ["invalidated", "approvedAt", "invalidatedAt"]);
@@ -895,8 +897,9 @@ async function op_backPreview(b) {
   if (!isId(b.sheetId) || !isId(b.poolId)) return { error: "bad back identity" };
   const snap = await col(SHEETS).doc(b.sheetId).get();
   const sheet = snap.exists ? snap.data() : null;
-  const back = (sheet?.backPool || []).find(x => x.poolId === b.poolId);
-  if (!back || !(sheet.poolIds || []).includes(b.poolId)) return { error: "This back no longer belongs to the sheet" };
+  const face = b.face === "front" ? "front" : "back";   // (absent = the back, as every caller before the front engraving)
+  const back = (sheet?.backPool || []).find(x => x.poolId === b.poolId && Faces.faceOf(x) === face);
+  if (!back || !(sheet.poolIds || []).includes(b.poolId)) return { error: face === "front" ? "This front engraving no longer belongs to the sheet" : "This back no longer belongs to the sheet" };
   if (b.approvedAt && +b.approvedAt !== +back.approvedAt) return { error: "This engraving changed; refresh the sheet" };
   const bucket = admin.storage().bucket();
   let path = back.outputs?.png?.path;
@@ -930,6 +933,7 @@ async function refreshLinks(d) {
   for (const k of ["ai", "pdf", "labelled", "report", "preview"]) { const o = d.outputs && d.outputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
   for (const f of (d.label && d.label.files) || []) if (f.path) link(f.path, u => { f.url = u; });
   for (const k of ["index", "report"]) { const o = d.backOutputs && d.backOutputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
+  for (const k of ["index", "report"]) { const o = d.frontOutputs && d.frontOutputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }   // (the front records' own index and report, when the sheet has fronts)
   for (const bk of d.backPool || []) for (const k of ["ai", "png"]) { const o = bk.outputs && bk.outputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
   for (const c of d.charms || []) {
     const pngPath = c.pngPath || (c.hash ? "charmnest/charms/" + c.hash + ".png" : null), aiPath = c.aiPath || (c.hash ? "charmnest/charms/" + c.hash + ".ai" : null);
@@ -989,7 +993,7 @@ async function op_deleteSheet(b) {
     // Approved back files are never deleted: those a Charm_Pool_Back record still names stay where they are, and the
     // rest go to the archive path, as a superseded approval's do.
     const backs = (d.backPool || []).filter(bk => bk && isPoolId(bk.poolId)), named = new Set();
-    for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(bk.poolId)))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
+    for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(recKeyOf(bk))))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
     await archiveFiles(backs.flatMap(bk => ["ai", "png"].map(k => bk.outputs && bk.outputs[k] && bk.outputs[k].path)).filter(p => p && !named.has(p)).map(from => ({ from, to: archivePath(from) })));
   }
   return { ok: true, deleted: !!d, unlinked: cleared.length, ...(splits.length ? { splits } : {}) };
@@ -1163,6 +1167,11 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
+/* A custom design saved to the repository (plans/save-to-repo-1011, _charmNestCustomSave.js): customSaveGet reads the order's save record; customSaveCommit (behind the repo upload
+   token, refused in the sandbox) writes the SKU's index entry (create-only), its file record, the listing's alias and the save record in one transaction. No Etsy call here. */
+const CustomSave = require("./_charmNestCustomSave");
+async function op_customSaveGet(b) { return CustomSave.get({ db }, b); }
+async function op_customSaveCommit(b) { return CustomSave.commit({ db, FV, tokenUrl, bucket: admin.storage().bucket() }, b); }
 /** What changes whenever the index does: how many entries it holds, and when one was last indexed (masterPutIndex: every write of an
     entry stamps indexedAt) and last edited (masterPatch: pair, facing, angle, engravable ... all stamp updatedAt; a removal changes the
     count), and the shape the entries are sent in (Master.SHAPE: the code that makes them). A background reload of the library, or a page
@@ -1591,7 +1600,8 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "listingSkus", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
-  "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
+  "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
+["customSaveGet", "customSaveCommit"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -1659,18 +1669,22 @@ async function readOrderPieces(rd, ids, sheetIds) {
    charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
 const SANDBOX = "Charm_Sandbox";
 /* The Sep 17 style snapshot (the sorter uploaded a copy of the open orders and recorded it here) is retired as a source (Paul,
-   10 Oct 2026): the sandbox always pulls the 250 newest Etsy orders (sandboxPullOrders, _charmNestSandboxPull.js), a pull
+   10 Oct 2026): the sandbox always pulls the newest Etsy orders (250 unless the setting below says otherwise; sandboxPullOrders, _charmNestSandboxPull.js), a pull
    replaces the previous set completely, and only a pointer written by a pull (source "etsy-pull") is ever served or played. */
 const SandboxPull = require("./_charmNestSandboxPull");
 const pulled = d => (d && d.source === SandboxPull.SOURCE ? d : null);   // a pointer that is not a pull (an old snapshot) is no set
 async function op_sandboxPut() {
-  return { ok: false, error: "The sandbox snapshot is retired: the sandbox pulls the 250 newest Etsy orders each time it starts (op sandboxPullOrders).", reason: "retired", status: 410 };
+  return { ok: false, error: "The sandbox snapshot is retired: the sandbox pulls the newest Etsy orders each time it starts (op sandboxPullOrders).", reason: "retired", status: 410 };
 }
-/** The sandbox pulls the 250 newest Etsy receipts (see _charmNestSandboxPull.js and plans/sandbox-wipe-1010/ETSYPULL-contract.md). */
+/** The sandbox pulls the newest Etsy receipts, 250 unless Paul's number says otherwise (see _charmNestSandboxPull.js and plans/sandbox-wipe-1010/ETSYPULL-contract.md). */
 async function op_sandboxPullOrders(b) {
   if (!PREFIX) return { ok: false, error: "The order pull exists only in the sandbox.", reason: "bad", empty: false, status: 403 };
   return SandboxPull.pull(b, { stream: op_sandboxStream });
 }
+/** Paul's number (Settings, 11 Oct 2026): how many of the newest Etsy orders each sandbox pull brings. A SETTING, not sandbox data: it lives in
+    config/charmNestSandboxPull, which no wipe touches (charm-nest-sandbox-families.js protected()). The HTTP door asks for the Charm repo
+    password's token first (_charmNestRepoAuth.js LIBRARY: need "modify"); the server then holds the number to 10..500. Reading it is free: sandboxStatus. */
+async function op_sandboxPullLimitSet(b) { return SandboxPull.setLimit(b); }
 const Families = require("../../charm-nest-sandbox-families.js");   // the ONE list of what a sandbox run leaves behind: the status below, the wipe after it and tests/charm-nest/sandbox-wipe-guard.cjs all read it
 /** The id that ends a prefix range: "olsb_" → "olsb`" (the character after the last one), as the wipe has always asked it. */
 const idAfter = p => p.slice(0, -1) + String.fromCharCode(p.charCodeAt(p.length - 1) + 1);
@@ -1687,6 +1701,7 @@ async function op_sandboxStatus(b) {
   // each count is asked on its own and all at once; one that cannot be read is null (the page says so), never the whole answer lost
   const ask = (into, key, fn) => jobs.push(Promise.resolve().then(fn).then(n => { into[key] = n; }, e => { console.warn("[charmNestLibrary] sandbox count of", key, "failed:", e && e.message); into[key] = null; }));
   const budget = SandboxPull.readBudget().catch(() => null);   // (one read of Charm_Sandbox/pulls, the pull budget ledger)
+  const pullLimit = SandboxPull.readLimit().catch(() => null); // (one read of config/charmNestSandboxPull: Paul's number of newest orders per pull; the page reads it here once, no poll)
   for (const f of Families.server()) {
     if (f.store === "firestore") ask(counts, f.key, () => count(db.collection("Sandbox_" + f.key)));
     else if (f.store === "shared" && f.idPrefix) ask(counts, f.key, () => { const id = admin.firestore.FieldPath.documentId(); return count(db.collection(f.collection).where(id, ">=", f.idPrefix).where(id, "<", idAfter(f.idPrefix))); });
@@ -1700,7 +1715,7 @@ async function op_sandboxStatus(b) {
   ask(kept, "efficiencyDays", () => count(db.collection("Efficiency_Daily")));                 // employee efficiency: one daily rollup per person per day
   ask(kept, "efficiencySandboxDays", () => count(db.collection("Sandbox_Efficiency_Daily")));  // the same, as the sandbox's stations wrote them (kept too)
   await Promise.all(jobs);
-  return { ok: true, snapshot: set, budget: await budget, records: counts, recordsCapped: capped, kept };
+  return { ok: true, snapshot: set, budget: await budget, pullLimit: await pullLimit, records: counts, recordsCapped: capped, kept };
 }
 /* THE ONE WIPE of everything a sandbox run leaves behind (Paul, 10 Oct 2026: "completely wipe ALL sandbox data and order info; the
    only thing that remains is the employee efficiency and the Charm repo"). Reset sandbox records, Reset the sandbox... and Purge
@@ -1856,7 +1871,7 @@ async function op_sandboxStream(b) {
     const was = cur.exists ? cur.data() : null, set = pulled(snap.exists ? snap.data() : null), path = set ? set.path : null;
     if (action === "get") return { ok: true, stream: was };
     if (action === "off") { if (was && was.on) t.set(ref, Object.assign({}, was, { on: false })); return { ok: true, stream: null }; }
-    if (!path) return { error: "no sandbox orders yet: the sandbox pulls the 250 newest Etsy orders when it starts (sandboxPullOrders)", status: 409 };
+    if (!path) return { error: "no sandbox orders yet: the sandbox pulls the newest Etsy orders when it starts (sandboxPullOrders)", status: 409 };
     const now = Date.now(), speed = Math.max(1, Math.min(1000, Math.round(num(b.speed)) || 50));
     const mine = !!was && was.snapshotPath === path && was.v === STREAM_V;
     let s = mine ? Object.assign({}, was, { on: true, speed }) : null;
@@ -1956,7 +1971,7 @@ function mergeInto(into, patch) { for (const [k, v] of Object.entries(patch)) in
 /** One transaction's backs, every one for the sheet `sheetId`. Returns how many were written and skipped, the refused
     ones (errors) and the files to archive once it commits. */
 async function putBacks(tx, sheetId, list, expected) {
-  const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(x => x.poolId))];
+  const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(recKeyOf))];   // (the doc of a back is its poolId, the doc of a FRONT is "<poolId>~front": two records, never one overwriting the other)
   const [sheet, ...priors] = await tx.getAll(target, ...ids.map(id => col(BACK).doc(id)));
   const stored = new Map(priors.map((s, i) => [ids[i], s.exists ? s.data() : {}]));
   const formerIds = [...new Set([...stored.values()].map(r => r.sheetId).filter(id => id && id !== sheetId))];
@@ -1964,7 +1979,7 @@ async function putBacks(tx, sheetId, list, expected) {
   const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [], sheet: sheet.exists ? sheetLabel(sheet.data()) : "" };
   let pool = sheet.exists ? sheet.data().backPool || [] : null;
   for (const x of list) {
-    const old = stored.get(x.poolId), currentBack = pool && pool.find(v => v.poolId === x.poolId);
+    const key = recKeyOf(x), old = stored.get(key), currentBack = pool && pool.find(v => recKeyOf(v) === key);
     const refused = !sheet.exists || !poolIds.includes(x.poolId) ? "The target sheet does not contain this exact charm copy"
       : (old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt ? "This approval has been superseded; reopen the engraving"
       : null;
@@ -1985,9 +2000,9 @@ async function putBacks(tx, sheetId, list, expected) {
     if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
     // a later row for the same copy is checked against this one, as when each was its own transaction; a copy sent twice is
     // written once, whole, as the two writes would have left it (null)
-    patches.set(x.poolId, patches.has(x.poolId) ? null : record); stored.set(x.poolId, mergeInto(Object.assign({}, old), record));
-    pool = pool.filter(b => b.poolId !== x.poolId).concat([copy]);
-    if (old.sheetId && old.sheetId !== sheetId && formers.has(old.sheetId)) { formers.set(old.sheetId, formers.get(old.sheetId).filter(b => b.poolId !== x.poolId)); leaving.add(old.sheetId); }
+    patches.set(key, patches.has(key) ? null : record); stored.set(key, mergeInto(Object.assign({}, old), record));
+    pool = pool.filter(b => recKeyOf(b) !== key).concat([copy]);
+    if (old.sheetId && old.sheetId !== sheetId && formers.has(old.sheetId)) { formers.set(old.sheetId, formers.get(old.sheetId).filter(b => recKeyOf(b) !== key)); leaving.add(old.sheetId); }
     out.moved.push(...moved); out.written++;
   }
   for (const [id, patch] of patches) if (patch) tx.set(col(BACK).doc(id), patch, {merge:true}); else tx.set(col(BACK).doc(id), stored.get(id));
@@ -2002,6 +2017,7 @@ const earCaption = (x, joined) => { const w = earWords(str(x && x.slot, 4)); ret
 const pieceData = x => { const slot = str(x && x.slot, 4); return earWords(slot) ? { slot, ...(x.side === "L" || x.side === "R" ? { side: x.side } : {}) } : {}; };
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
+  for (const x of rows) if (x.face !== "front") delete x.face;   // (a back carries no `face`: the record is byte for byte what it was; only "front" is a face)
   const bySheet = new Map(), errors = [], moved = [], labels = new Map(); let written = 0, skipped = 0;
   for (const x of rows) {
     if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) { errors.push({ row: x, error: "approved back and sheet identity required", identity: true }); continue; }
@@ -2021,8 +2037,9 @@ async function op_backPut(b) {
   await stamp(() => rows.filter(x => !refused.has(x)).map(x => {
     // (the caption is one line: the back's lines joined as the seal and the derived history show them)
     const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
+    const front = Faces.isFront(x);   // (a FRONT engraving's event says so and has its own id, so a piece's front and back each keep their one event)
     return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
-      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: (words ? `“${words}”` : "") + earCaption(x, !!words), data: Object.assign({ text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, x.side === "L" || x.side === "R" ? { side: x.side } : {}, pieceData(x)), id: `${x.poolId}-${num(x.approvedAt)}` };
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + earCaption(x, !!words), data: Object.assign({ text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, front ? { face: "front" } : {}, x.side === "L" || x.side === "R" ? { side: x.side } : {}, pieceData(x)), id: `${recKeyOf(x)}-${num(x.approvedAt)}` };
   }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
@@ -2032,12 +2049,15 @@ async function op_backPut(b) {
   return Object.assign({ error: errors[0].error + (errors.length > 1 ? ` (and ${errors.length - 1} more of the ${rows.length} backs)` : ""), status: errors.every(x => x.identity) ? 400 : 500,
     errors: errors.map(x => ({ poolId: x.row.poolId, sheetId: str(x.row.sheetId, 80) || null, error: x.error })) }, done);
 }
+/** Invalidate the backs of pieces. `face` absent = the back only (what it always did); "front" = the front record; "all" = both. */
 async function op_backInvalidate(b) {
+  const faces = b.face === "all" ? ["back", "front"] : b.face === "front" ? ["front"] : ["back"];
   for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) await db.runTransaction(async tx => {
-    const ref = col(BACK).doc(id), snap = await tx.get(ref), old = snap.exists ? snap.data() : {};
-    const sr = old.sheetId ? col(SHEETS).doc(old.sheetId) : null, ss = sr ? await tx.get(sr) : null;
-    tx.set(ref, {poolId:id, invalidated:true, invalidatedAt:Date.now(), updatedAt:FV.serverTimestamp()}, {merge:true});
-    if (ss?.exists) tx.set(sr, {backPool:(ss.data().backPool || []).filter(x=>x.poolId !== id), updatedAt:FV.serverTimestamp()}, {merge:true});
+    const keys = faces.map(f => Faces.recKey(id, f)), refs = keys.map(k => col(BACK).doc(k)), snaps = await Promise.all(refs.map(r => tx.get(r)));
+    const olds = snaps.map(sn => (sn.exists ? sn.data() : {})), sheetIds = [...new Set(olds.map(o => o.sheetId).filter(Boolean))];
+    const sheets = new Map(); for (const sid of sheetIds) { const sr = col(SHEETS).doc(sid); sheets.set(sid, { sr, ss: await tx.get(sr) }); }
+    faces.forEach((f, i) => tx.set(refs[i], Object.assign({poolId:id, invalidated:true, invalidatedAt:Date.now(), updatedAt:FV.serverTimestamp()}, f === "front" ? { face: "front" } : {}), {merge:true}));
+    for (const { sr, ss } of sheets.values()) if (ss?.exists) tx.set(sr, {backPool:(ss.data().backPool || []).filter(x => !(x.poolId === id && faces.includes(Faces.faceOf(x)))), updatedAt:FV.serverTimestamp()}, {merge:true});
   });
   return {ok:true};
 }
@@ -3499,7 +3519,7 @@ function cancelCopy(r) {
 }
 const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
-  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
+  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
@@ -3956,6 +3976,10 @@ OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
 OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
+OPS.customSaveGet = op_customSaveGet;   // a custom design saved to the repository: the order's save record; read only
+OPS.customSaveCommit = op_customSaveCommit;   // ... and its write (repo upload token; refused in the sandbox)
+OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
+OPS.customEtsySkuWrite = require("./_charmNestEtsySku").ops.customEtsySkuWrite; NO_GEN_BUMP.add("customEtsySkuWrite");   // ETSYSKU: {rid} the last step of saving a custom design (CONTRACT section 5): the SKU on Etsy. Never in the sandbox, no token (the saved record decides). It writes Etsy and its own records, nothing a placement answer is made from, so it does not raise the placement counter
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {
