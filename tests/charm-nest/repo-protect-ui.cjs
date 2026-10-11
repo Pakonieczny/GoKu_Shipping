@@ -319,6 +319,30 @@ const FILES = [
   const stored = await page.evaluate(() => sessionStorage.getItem('cn.repoLock.v1') || '');
   ok(!/"delete"|"history"/.test(stored), 'a single-use token is never kept in sessionStorage');
 
+  // ── 7b · submitInline: a typed password from a field of the caller's own (the designs window's save strip): the dialog's own call and words, no dialog ──
+  await page.evaluate(() => CharmNestRepoLock.forget());
+  const inl = (pw, action = 'upload') => page.evaluate(async ({ pw, action }) => {
+    const r = await CharmNestRepoLock.submitInline(action, pw, { target: 'inline test' });
+    return { r, dialogs: document.querySelectorAll('dialog[open]').length, repoDlg: document.querySelectorAll('dialog.repoDlg').length, attempts: window.__attempts.slice(), unlocked: CharmNestRepoLock.unlocked(action), held: !!CharmNestRepoLock.find(action) };
+  }, { pw, action });
+  const u7 = unlocks, a7 = await page.evaluate(() => window.__attempts.length);
+  let r7 = await inl('');
+  ok(r7.r.ok === false && r7.r.reason === 'empty' && unlocks === u7 && r7.attempts.length === a7, 'submitInline: an empty password is answered "empty" without asking the server or firing an event');
+  r7 = await inl(WRONG);
+  ok(r7.r.ok === false && r7.r.reason === 'wrong' && !r7.unlocked && !r7.held && unlocks === u7 + 1 && r7.dialogs === 0 && r7.repoDlg === 0, 'submitInline: a wrong password answers {ok:false, reason:"wrong"}, asks the server once, opens no dialog, keeps no token');
+  const ev7 = r7.attempts.slice(-1)[0];
+  ok(r7.attempts.length === a7 + 1 && ev7.reason === 'wrong' && ev7.action === 'upload' && ev7.ok === false && !JSON.stringify(r7.attempts).includes(WRONG), 'submitInline: repo-auth-attempt fires (wrong, upload) with no password in it');
+  const lastU = log.filter(x => x.op === 'repoUnlock').slice(-1)[0];
+  ok(lastU.action === 'upload' && lastU.target === 'inline test' && lastU.by === 'Tester' && lastU.tab === true, 'submitInline: the server call is the dialog\'s own (action, target, who, tab)');
+  r7 = await inl(RIGHT);
+  ok(r7.r.ok === true && r7.r.reason === 'ok' && r7.unlocked && r7.held && r7.dialogs === 0 && unlocks === u7 + 2, 'submitInline: the right password unlocks, kept as the dialog keeps it (unlocked("upload") is true), no dialog');
+  ok(!JSON.stringify(r7.r.info ? Object.assign({}, r7.r.info, { token: '' }) : {}).includes(RIGHT) && !JSON.stringify(r7.attempts).includes(RIGHT), 'submitInline: no password appears in what it returns or in the event');
+  ok(r7.attempts.slice(-1)[0].ok === true && r7.attempts.slice(-1)[0].reason === 'ok', 'submitInline: the right attempt fires (ok)');
+  ok(await page.evaluate(() => { const m = CharmNestRepoLock.messages; return m.wrong === 'That password is not right. Try again.' && m.locked === 'Too many wrong tries. Please try again later.' && m.empty === 'Type the password first.' && /not available/.test(m.unavailable); }), 'messages: the words of every outcome are exported for the inline field');
+  const del7 = await inl(RIGHT, 'delete');
+  ok(del7.r.ok === true && del7.r.info.once === true && !del7.unlocked, 'submitInline: a delete unlock is single-use, as in the dialog (never kept for reuse)');
+  await page.evaluate(() => CharmNestRepoLock.forget());
+
   // ── 8 · lockout: a plain "try again later", no more tries from this tab ──
   process.env.__LOCK_ON = '1'; wrongs.n = 4;
   await page.evaluate(() => CharmNestRepoLock.forget());
@@ -336,6 +360,10 @@ const FILES = [
   await page.locator('[data-dl]').first().click(); await page.waitForSelector('dialog.repoDlg[open]');
   ok(await page.evaluate(() => /try again later/i.test(document.querySelector('dialog.repoDlg #repoMsg').textContent) && document.querySelector('dialog.repoDlg [data-k=go]').disabled) && unlocks === u2, 'lockout: reopening shows the same line at once and sends nothing more');
   await cancelDialog();
+
+  // submitInline hears the same wait: after "too many tries" it answers at once, with the wait, and sends nothing more
+  const u8 = unlocks, rl = await inl(RIGHT);
+  ok(rl.r.ok === false && rl.r.reason === 'locked' && rl.r.retryAfterSec > 0 && rl.r.retryAfterSec <= 900 && unlocks === u8 && rl.dialogs === 0, 'submitInline: during the wait it answers {reason:"locked"} with the seconds left, sends nothing, opens no dialog');
 
   ok(errors.length === 0, 'no page errors: ' + errors.join(' | ').slice(0, 300));
   await browser.close(); srv.close(); fs.rmSync(tmp, { recursive: true, force: true });

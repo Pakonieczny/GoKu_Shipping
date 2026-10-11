@@ -2916,6 +2916,66 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 .cuSum .warn{display:inline-block}.cuSum .warn.cuNudge{animation:cuShake .5s ease-in-out}
 @keyframes cuShake{0%,100%{transform:none}20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
 .cuWho{display:inline-flex;align-items:center;gap:6px}
+/* ── save to the charm repository (Paul, 11 Oct 2026): ONE strip in the designs window, between its add box and its foot, drawn like the metal bar above it.
+   It is a switch before the press, a card of four steps while it works (Sheet placement, Repository save, SKU created, Etsy linked), one calm line
+   when it is done. Nothing new at the page's foot, nothing under the top bar, no second pop-up: the password is asked in the strip itself. ── */
+.cuKeep{flex:0 0 auto;position:relative;padding:12px 18px;border-top:1px solid var(--line2);background:var(--card2)}
+.cuKeep[hidden],.cuKeep [hidden]{display:none!important}
+.cuKeepIn{display:grid;gap:10px}
+.cuKeepSw{display:flex;align-items:center;gap:12px;min-width:0}
+.cuSwitch{position:relative;flex:0 0 auto;width:40px;height:24px;margin:0;padding:0;border:1px solid var(--line);border-radius:999px;background:var(--paper2);cursor:pointer;transition:background-color .16s ease,border-color .16s ease}
+.cuSwitch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(30,24,16,.3);transition:transform .16s cubic-bezier(.3,.1,.2,1)}
+.cuSwitch[aria-checked="true"]{background:var(--velvet);border-color:var(--velvet)}.cuSwitch[aria-checked="true"]::after{transform:translateX(16px)}
+.cuSwitch:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}.cuSwitch:disabled{opacity:.45;cursor:default}
+.cuKeepTx{min-width:0;flex:1 1 auto;display:grid;gap:2px;cursor:pointer}
+.cuKeepTx b{font:600 13px var(--sans);color:var(--ink)}
+.cuKeepTx span{font:11.5px/1.4 var(--sans);color:var(--ink70);overflow-wrap:anywhere}
+.cuSku{font:600 11.5px var(--mono);letter-spacing:.01em;color:var(--ink);overflow-wrap:anywhere}
+.cuKeepPill{flex:0 0 auto;font:700 10.5px var(--mono);letter-spacing:.02em;color:#8a3a26;background:var(--claySoft);border:1px solid #e7c3b7;border-radius:999px;padding:4px 10px;white-space:nowrap}
+.cuKeepSw .btn{flex:0 0 auto}
+.cuKeepPw{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding-left:52px}
+.cuLockMk{flex:0 0 auto;width:10px;height:11px;background:var(--ink45);-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
+.cuKeepPw input{width:min(240px,100%);box-sizing:border-box;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:500 12.5px var(--sans)}
+.cuKeepPw input:focus-visible{outline:2px solid #8e6bb8;outline-offset:1px}
+.cuKeepPw input.cuShake{animation:cuShake .5s ease-in-out;border-color:var(--clay)}
+.cuKeepMsg{flex:1 1 220px;display:flex;align-items:center;gap:7px;min-height:18px;font:12px/1.4 var(--sans);color:var(--ink70)}
+.cuKeepMsg.bad{color:#8a3a26}
+.cuKeepMsg .spin,.cuKd .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
+.cuKeepSteps{display:grid;padding:4px 14px;border:1px solid var(--line2);border-radius:12px;background:var(--card)}
+.cuKr{position:relative;display:grid;grid-template-columns:18px 124px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:34px;padding:3px 0}
+.cuKm{position:relative;width:18px;height:18px;display:grid;place-items:center}
+.cuKr:not(:last-child) .cuKm::after{content:"";position:absolute;left:calc(50% - .5px);top:calc(100% + 3px);width:1px;height:12px;background:var(--line);transition:background-color .2s ease}
+.cuKr[data-s="done"]:not(:last-child) .cuKm::after{background:rgba(95,122,91,.5)}
+.cuKm .dot{width:7px;height:7px;border-radius:50%;background:var(--ink25)}
+.cuKm .spin{width:12px;height:12px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+.cuKm svg{display:block;width:18px;height:18px;overflow:visible}
+.cuTick circle{fill:var(--sageSoft);stroke:var(--sage);stroke-width:1.1}
+.cuTick path{fill:none;stroke:var(--sage);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0}
+.cuKr[data-s="rehearsed"] .cuTick circle{fill:none;stroke-dasharray:2.4 2.2}
+.cuKm .bang{width:18px;height:18px;border-radius:50%;background:var(--claySoft);border:1px solid #e7c3b7;color:#a4432c;display:grid;place-items:center;font:700 11px/1 var(--sans)}
+.cuKm .dash{width:9px;height:1.6px;border-radius:2px;background:var(--ink25)}
+.cuKm .lock{width:10px;height:11px;background:#8a6420;-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
+.cuKt{font:600 12.5px var(--sans);color:var(--ink);white-space:nowrap}
+.cuKr[data-s="idle"] .cuKt,.cuKr[data-s="skipped"] .cuKt{color:var(--ink45)}
+.cuKd{display:flex;align-items:center;gap:7px;min-width:0;font:12px/1.4 var(--sans);color:var(--ink70);overflow-wrap:anywhere}
+.cuKr[data-s="idle"] .cuKd,.cuKr[data-s="skipped"] .cuKd{color:var(--ink45)}
+.cuKr[data-s="failed"] .cuKd{color:#a4432c}.cuKr[data-s="locked"] .cuKd{color:#8a6420}
+.cuKr[data-s="idle"] .cuKd .cuSku{font-weight:500;color:var(--ink45)}
+.cuKa{display:flex;gap:10px;align-items:center;justify-self:end;padding-left:8px}
+.cuKeep .linkBtn{border:0;background:none;padding:2px 0;font:600 12px var(--sans);color:#6a4a93;text-decoration:underline;text-underline-offset:2px;cursor:pointer;white-space:nowrap}
+.cuKeep .linkBtn:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px;border-radius:3px}
+.cuKeepLine{display:flex;align-items:center;gap:11px;width:fit-content;max-width:100%;box-sizing:border-box;padding:9px 14px 9px 12px;border:1px solid rgba(95,122,91,.35);border-radius:12px;background:var(--sageSoft)}
+.cuKeepLine .cuKlTx{display:grid;gap:2px;min-width:0}
+.cuKeepLine b{font:600 13px var(--sans);color:var(--ink);overflow-wrap:anywhere}
+.cuKeepLine span.sub{font:11.5px/1.4 var(--sans);color:var(--ink70);overflow-wrap:anywhere}
+.cuKeepLine.warn{border-color:var(--goldLine);background:var(--goldSoft)}
+.cuKeepLine.quiet{border-color:transparent;background:none;padding:0}
+.cuKeepLine.quiet b{font:500 12px var(--sans);color:var(--ink70)}
+.cuKeepLine.cuRing{animation:cuKeepRing .9s ease-out}
+@keyframes cuKeepRing{0%{box-shadow:0 0 0 0 rgba(95,122,91,.5);border-color:var(--sage)}45%{box-shadow:0 0 0 6px rgba(95,122,91,.18)}100%{box-shadow:0 0 0 13px rgba(95,122,91,0)}}
+.cuKeepNote{font:600 11.5px var(--sans);color:var(--ink45)}.cuKeepNote.ok{color:#3c5a39}.cuKeepNote.warn{color:#8a6420}
+.cuDesigns .cuKeepNote{white-space:nowrap}
+@media(max-width:760px){.cuKeep .btn{min-height:44px}.cuSwitch{width:48px;height:28px}.cuSwitch::after{width:22px;height:22px}.cuSwitch[aria-checked="true"]::after{transform:translateX(20px)}.cuKeepSw{flex-wrap:wrap}.cuKeepPw{padding-left:0}.cuKeepPw input{min-height:44px;width:100%}.cuKr{grid-template-columns:18px minmax(0,1fr) auto;row-gap:1px}.cuKr .cuKd{grid-column:2/-1}.cuKr .cuKa{grid-column:2/-1;justify-self:start;padding:0}.cuKeep .linkBtn{min-height:44px;display:inline-flex;align-items:center}}
 /* a file flying in (on the window's own layer), and the window going back into its card (on the page's) */
 .cuChip{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:7px;max-width:240px;padding:5px 11px 5px 5px;border-radius:9px;background:var(--card);border:1px solid rgba(125,86,168,.45);box-shadow:0 14px 30px rgba(45,30,70,.24);font:600 12px/1.2 var(--sans);color:var(--ink);white-space:nowrap;transform-origin:50% 50%;will-change:transform,opacity}
 .cuChip span{overflow:hidden;text-overflow:ellipsis}
@@ -2923,7 +2983,7 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 .cuDlgGhost{position:fixed;overflow:hidden;border-radius:15px;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);will-change:transform,opacity}
 .cuShade{position:fixed;inset:0;background:rgba(20,18,15,.52)}
 @media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 30px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuQty{justify-self:start}.cuFile .cuRm{grid-column:3;grid-row:1}.cuAll{flex-wrap:wrap;gap:8px}.cuAll .cuMetals{justify-content:flex-start}.cuDlg .dlgFoot{flex-wrap:wrap}}
-@media(prefers-reduced-motion:reduce){.cuDropVeil,.cuDropVeil>*,.cuTip,.cuFile>*,.cuFile::before,#rvList>.reviewListRow,dialog.cuDlg{transition:none}.cuVeilIc svg,.cuDlg.dragOver .cuAddIc,.cuHint.cuNudge,.cuWho input.cuNudge,.cuFile.cuNudge,.cuThumb.cuLanded,.cuDesigns,.cuDzT.new,.cuEmpty,.cuSum .warn.cuNudge{animation:none!important}}
+@media(prefers-reduced-motion:reduce){.cuDropVeil,.cuDropVeil>*,.cuTip,.cuFile>*,.cuFile::before,#rvList>.reviewListRow,dialog.cuDlg{transition:none}.cuVeilIc svg,.cuDlg.dragOver .cuAddIc,.cuHint.cuNudge,.cuWho input.cuNudge,.cuFile.cuNudge,.cuThumb.cuLanded,.cuDesigns,.cuDzT.new,.cuEmpty,.cuSum .warn.cuNudge,.cuKeepLine.cuRing,.cuKeepPw input.cuShake{animation:none!important}.cuSwitch,.cuSwitch::after,.cuKr:not(:last-child) .cuKm::after{transition:none}}
 /* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
 #motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
 .mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
@@ -7262,6 +7322,9 @@ boot();
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1"></script>
 <script src="charm-nest-repo-lock.js?v=20261011-rpu1"></script>
+<!-- save a custom design to the charm repository and link its listing (Paul, 11 Oct 2026): the SKU rule (charm-nest-sku.js) and the save engine (charm-nest-keep.js), which the designs window's save strip drives (charm-nest-bridge.js, CustomSheet) -->
+<script src="charm-nest-sku.js?v=20261011-sv1"></script>
+<script src="charm-nest-keep.js?v=20261011-sv1"></script>
 <script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-ui2-spl1-eu3"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>

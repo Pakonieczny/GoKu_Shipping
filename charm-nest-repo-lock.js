@@ -13,6 +13,11 @@
  *    CharmNestRepoLock.mark(root)               → puts the locked / open padlock on every [data-repo] control under root
  *    CharmNestRepoLock.gate(el, action, ask)    → a text box or a select that asks before it takes a first touch
  *    CharmNestRepoLock.forget(action?)          → drop held tokens (all when no action)
+ *    CharmNestRepoLock.submitInline(action, password, ask) → Promise<{ok, reason, info?, retryAfterSec?}>: ONE try with a typed password for a field that lives
+ *                                                 in a window of its own (the designs window's save strip), with no dialog: the same server call, the same
+ *                                                 repo-auth-attempt event, the same wrong / locked words and wait as the dialog, and a right answer is kept
+ *                                                 exactly as the dialog keeps it. The caller clears its field before it calls; nothing here keeps the password.
+ *    CharmNestRepoLock.messages                 → the words of every outcome (empty, wrong, locked, unavailable), shared by the dialog and the inline field
  *
  *  `action` is one of upload, delete, download, modify, history, other (the server's words, plans/repo-protect-1011/REPOAUTH-api.md).
  *  `ask` = { what, target, go, title, message, note }: what the dialog says, the short target recorded with the attempt, the
@@ -117,6 +122,29 @@
     catch (e) { return answerOf(e) || { ok: false, error: "unavailable" }; }
   }
 
+  /* the words of every outcome of a try: the dialog and the inline field (submitInline) say the same */
+  const SAY = { empty: "Type the password first.", wrong: "That password is not right. Try again.", locked: "Too many wrong tries. Please try again later.", unavailable: "The check is not available right now. Please try again later." };
+  /** ONE try with a typed password, shared by the dialog and submitInline: the server is asked once, `repo-auth-attempt` fires, a right answer is kept
+   *  (remember), a "locked" answer starts the wait (lockedUntil). Answers { ok, reason: ok|empty|wrong|locked|unavailable, info?, retryAfterSec? }.
+   *  The password is read once, sent once, and not kept. */
+  async function attempt(action, pw, a) {
+    a = a || {};
+    if (Date.now() < lockedUntil) return { ok: false, reason: "locked", retryAfterSec: Math.max(1, Math.ceil((lockedUntil - Date.now()) / 1000)) };
+    if (!pw) return { ok: false, reason: "empty" };
+    let ans; try { ans = await unlockCall({ password: pw, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId(), ...(a.overwrite ? { overwrite: true } : {}) }); } finally { pw = ""; }
+    const ok = !!ans && ans.ok === true && typeof ans.token === "string" && ans.token.length > 0;
+    const reason = ok ? "ok" : ans && (ans.error === "wrong" || ans.error === "locked") ? ans.error : "unavailable";
+    try { root.dispatchEvent(new root.CustomEvent("repo-auth-attempt", { detail: { action, ok, reason } })); } catch (_) { /* the Alert is optional */ }
+    if (ok) {
+      const once = ans.once === true || ONCE.has(action);
+      const info = { action: ACTIONS.includes(ans.action) ? ans.action : action, token: ans.token, expiresAt: +ans.expiresAt > 0 ? +ans.expiresAt : Date.now() + 5 * 60 * 1000, once };
+      remember(info);
+      return { ok: true, reason: "ok", info };
+    }
+    if (reason === "locked") { const s = +ans.retryAfterSec; lockedUntil = Date.now() + (s > 0 ? Math.min(s, 3600) : 900) * 1000; return { ok: false, reason, retryAfterSec: Math.max(1, Math.ceil((lockedUntil - Date.now()) / 1000)) }; }
+    return { ok: false, reason };
+  }
+
   /* ── the dialog (made fresh each time and removed after: no password field is left in the page) ── */
   const SHUT = "M3 6V4.2a3 3 0 0 1 6 0V6", OPEN = "M3 6V4.2a3 3 0 0 1 5.9-.8";
   const padlock = (shackle, ink) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 14'><path d='${shackle}' fill='none' stroke='${ink}' stroke-width='1.7'/><rect x='1' y='6' width='10' height='7.5' rx='1.6' fill='${ink}'/></svg>`);
@@ -157,27 +185,20 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
       const say = (text, kind) => { msg.className = "repoMsg" + (kind === "bad" ? " bad" : ""); msg.textContent = ""; if (kind === "spin") { const s = doc.createElement("span"); s.className = "repoSpin"; msg.appendChild(s); msg.appendChild(doc.createTextNode(text)); } else msg.textContent = text; };
       const wait = on => { busy = on; input.disabled = on; go.disabled = on || Date.now() < lockedUntil; cancel.disabled = on; };
       const finish = info => { if (done) return; done = true; clearTimeout(hold); input.value = ""; try { if (d.open) d.close(); } catch (_) { d.removeAttribute("open"); } d.remove(); resolve(info); };
-      const lockLine = () => { say("Too many wrong tries. Please try again later.", "bad"); go.disabled = true; clearTimeout(hold); hold = setTimeout(() => { if (!done && !busy) { go.disabled = false; say(""); } }, Math.max(0, lockedUntil - Date.now()) + 50); };
+      const lockLine = () => { say(SAY.locked, "bad"); go.disabled = true; clearTimeout(hold); hold = setTimeout(() => { if (!done && !busy) { go.disabled = false; say(""); } }, Math.max(0, lockedUntil - Date.now()) + 50); };
       async function submit() {
         if (busy || done) return;
         if (Date.now() < lockedUntil) { lockLine(); return; }
         let pw = input.value; input.value = "";                              // the field is clear from here on, whatever happens
-        if (!pw) { say("Type the password first.", "bad"); input.focus(); return; }
+        if (!pw) { say(SAY.empty, "bad"); input.focus(); return; }
         wait(true); say("Checking the password…", "spin");
-        let ans; try { ans = await unlockCall({ password: pw, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId(), ...(a.overwrite ? { overwrite: true } : {}) }); } finally { pw = ""; }
+        let r; try { r = await attempt(action, pw, a); } finally { pw = ""; }
         input.value = "";
-        const ok = !!ans && ans.ok === true && typeof ans.token === "string" && ans.token.length > 0;
-        const reason = ok ? "ok" : ans && (ans.error === "wrong" || ans.error === "locked") ? ans.error : "unavailable";
-        try { root.dispatchEvent(new root.CustomEvent("repo-auth-attempt", { detail: { action, ok, reason } })); } catch (_) { /* the Alert is optional */ }
-        if (ok) {
-          const once = ans.once === true || ONCE.has(action);
-          const info = { action: ACTIONS.includes(ans.action) ? ans.action : action, token: ans.token, expiresAt: +ans.expiresAt > 0 ? +ans.expiresAt : Date.now() + 5 * 60 * 1000, once };
-          remember(info); wait(false); finish(info); return;
-        }
+        if (r.ok) { wait(false); finish(r.info); return; }
         wait(false);
-        if (reason === "locked") { const s = +ans.retryAfterSec; lockedUntil = Date.now() + (s > 0 ? Math.min(s, 3600) : 900) * 1000; lockLine(); go.disabled = true; }
-        else if (reason === "wrong") { say("That password is not right. Try again.", "bad"); input.focus(); }
-        else { say("The check is not available right now. Please try again later.", "bad"); input.focus(); }
+        if (r.reason === "locked") { lockLine(); go.disabled = true; }
+        else if (r.reason === "wrong") { say(SAY.wrong, "bad"); input.focus(); }
+        else { say(SAY.unavailable, "bad"); input.focus(); }
       }
       go.onclick = submit;
       cancel.onclick = () => { if (!busy) finish(null); };
@@ -220,6 +241,14 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
     }
   }
 
+  /** A typed password for `action` from a field of the caller's own (no dialog): one try, answered { ok, reason, info?, retryAfterSec? }; a right answer is kept as the
+   *  dialog keeps it, so find(action) / unlocked(action) hold a token from here on. The caller clears its field before it calls. */
+  async function submitInline(action, password, ask) {
+    action = norm(action);
+    let pw = password == null ? "" : String(password); password = "";
+    try { return await attempt(action, pw, ask); } finally { pw = ""; }
+  }
+
   /* ── the look: a closed padlock until unlocked, an open one while it is ── */
   function mark(scope) {
     const r = scope || doc; if (!r || !r.querySelectorAll) return;
@@ -246,7 +275,7 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
 
   load();
   if (doc) { try { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", () => { css(); changed(); }); else { css(); changed(); } } catch (_) { /* no page */ } }
-  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
+  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, submitInline, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
   root.CharmNestRepoLock = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

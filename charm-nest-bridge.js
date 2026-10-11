@@ -9889,7 +9889,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
   // dropped the drag state of the card under the pointer)
-  const stamp = it => { const c=cardOf(it), e = c?.e; return [busy.get(c?.ck || ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
+  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
 
   /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
   function read(F) {
@@ -10052,6 +10052,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const say=t=>{busy.set(ck,t);redraw();};
     let flying=false,snap=null,holdKey="",nestHold=null,stampHost=null;
     const letGo=()=>{if(holdKey && window.Motion && Motion.carry)Motion.carry(holdKey,0);holdKey="";};
+    const keepK=keepArm(ck,how);   // (the save strip, when its switch is on: its four steps open with the press; its work starts after the stamp)
     try {
       for(const F of files){
         say(`Reading ${F.name}…`);await read(F);if(!current())return;
@@ -10074,6 +10075,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if(!how.recover && !intent.pressed){
         say("Sending to the sheets…");
         const button=(how.from?.isConnected?how.from:null) || (D.ck===ck && D.dlg?.open?D.dlg.querySelector("[data-send]"):null) || cardNode(ck)?.querySelector("[data-cu-send]");
+        keepStart(keepK);   // (the save starts with the stamp, beside it: its work never waits for the animation, is never awaited here, and a failure in it never reaches the send; the send is already recorded)
         stampHost=await stampSend(button,intent);if(!current())return;
         intent.pressed=true;await checkpoint();
       }
@@ -10103,6 +10105,7 @@ const CustomSheet = window.CustomSheet = (() => {
       agent({bridge:true},"POOL",`${e.rid}: custom designs sent to the sheets by ${e.sent.by} — ${files.map(F=>`${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
       busy.delete(ck);redraw();stampHost?.remove();stampHost=null;
       if(how.recover)return;
+      await keepHold(keepK);   // (the window waits for the save, up to 20 s, then closes; a failure never holds it)
       let shutting=!!(D.dlg?.open && D.ck===ck);if(shutting && !motionOff()){await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));shutting=!!(D.dlg?.open && D.ck===ck);}if(shutting)shut();
       const placed=rows.filter(r=>["pooled","written","committed"].includes(r.state)),n=Object.values(lines).reduce((a,l)=>a+l.filter(pc=>!pc.removed).length,0),metals=[...new Set(files.map(F=>labelOf(F.metal)))].join(" and ");
       const sheets=`the ${metals} sheet${new Set(files.map(F=>F.metal)).size>1?"s":""}`,words=placed.length?`Order ${e.rid}: ${plural(n,"custom piece")} on ${sheets}`:`Order ${e.rid} is sent: ${n===1?"its piece goes":"its pieces go"} on ${sheets} with the next run`;
@@ -10115,7 +10118,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }catch(err){
       if(owner[e.ck]===e){e.sendError=String(err.message || err);Session.schedule();await Session.flushNow?.().catch(()=>{});}
       if(!how.recover){humanAct("error",{orderId:String(e.rid),detail:"send to the sheets not finished, kept for retry"});toast(`${e.rid}: send saved for retry — ${err.message}`,"bad",8000);}
-    }finally{stampHost?.remove();busy.delete(ck);if(!flying){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();redraw();}}
+    }finally{keepDisarm(keepK);stampHost?.remove();busy.delete(ck);if(!flying){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();redraw();}}
   }
   async function syncSent(e) {
     if(e.legacy)return;
@@ -10278,7 +10281,7 @@ const CustomSheet = window.CustomSheet = (() => {
       `<button type="button" class="cuDzThumbs" data-cu-designs title="${c.sent ? "These designs are on the sheets" : "Open the designs: each one's metal and how many to cut"}">` +
       c.files.slice(0, 6).map(F => `<span class="cuDzT${F.state === "error" ? " bad" : ""}${F.thumb && popThumb.has(F.id) ? " new" : ""}">${F.thumb ? `<img alt="" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : "!"}${F.metal ? `<i style="background:${esc(metalOf(F.metal).color)}" title="${esc(labelOf(F.metal))}"></i>` : ""}</span>`).join("") +
       (c.files.length > 6 ? `<span class="cuDzMore">+${c.files.length - 6}</span>` : "") + `</button>` +
-      `<span class="cuDzSum"><b>${plural(c.files.length, "design")} · ${plural(n, "piece")}</b>${[...byMetal].filter(([m]) => m).map(([m, k]) => `<span class="cuDzM"><i style="background:${esc(metalOf(m).color)}"></i>${esc(labelOf(m))}${byMetal.size > 1 ? " × " + k : ""}</span>`).join("")}<span class="cuDzWhy">${esc(words)}</span></span>` +
+      `<span class="cuDzSum"><b>${plural(c.files.length, "design")} · ${plural(n, "piece")}</b>${[...byMetal].filter(([m]) => m).map(([m, k]) => `<span class="cuDzM"><i style="background:${esc(metalOf(m).color)}"></i>${esc(labelOf(m))}${byMetal.size > 1 ? " × " + k : ""}</span>`).join("")}<span class="cuDzWhy">${esc(words)}</span></span>` + keepNoteHtml(c.ck) +
       (c.sent ? `<button type="button" class="linkBtn" data-cu-designs>View designs</button>` : c.e?.sendIntent ? "" : `<button type="button" class="linkBtn" data-cu-designs>Edit designs</button>`) + `</div>`;
   }
   /** Send to Sheet, and, while the card has no design, the place to drop them (a click there chooses the files; hint:
@@ -10300,6 +10303,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const c = cardOf(it); if (!c) return;
     node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
     node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
+    node.querySelectorAll("[data-cu-keep-retry]").forEach(b => b.onclick = ev => { ev.stopPropagation(); keepRetryFromCard(c.ck, it, node, b.dataset.cuKeepRetry); });
     const sb = node.querySelector("[data-cu-send]"); if (sb) sb.onclick = ev => { ev.stopPropagation(); if (sb.getAttribute("aria-disabled") === "true") { lit(node.querySelector(".cuHint"), "cuNudge"); return; } send(it); };
     // what just came onto the card: its strip of designs opens its room the first time, a new picture settles in
     const strip = node.querySelector(".cuDesigns");
@@ -10424,11 +10428,12 @@ const CustomSheet = window.CustomSheet = (() => {
       <div class="cuAll" hidden><span class="cuAllL" id="cuAllL">Same metal for all</span><span class="cuMetals" data-all role="radiogroup" aria-labelledby="cuAllL"></span></div>
       <div class="dlgBody cuList" id="cuList"></div>
       <button type="button" class="cuAdd" id="cuAdd"><span class="cuAddIc" aria-hidden="true">+</span><span class="cuAddT"></span></button><input type="file" id="cuFileIn" multiple accept=".ai,.dxf" hidden>
+      ${STRIP_HTML}
       <div class="dlgFoot"><span class="left cuSum" id="cuSum" role="status"></span><span class="cuWho" id="cuWho" hidden><input type="text" maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with the sheets" autocomplete="off"></span><button type="button" class="btn ghost sm" data-later>Send later</button><button type="button" class="btn gold sm" data-send>Send to Sheet</button></div></div>`;
     document.body.appendChild(d); D.dlg = d;
     d.querySelectorAll("[data-x],[data-later]").forEach(b => b.onclick = () => shut());
     d.addEventListener("cancel", ev => { ev.preventDefault(); shut(); });      // Esc: back into its card, as Close does
-    d.addEventListener("close", () => { settle(d); D.ck = null; D.it = null; D.askName = false; endDrag(); });
+    d.addEventListener("close", () => { settle(d); try { keepClosed(); } catch (_) { /* the strip is optional */ } D.ck = null; D.it = null; D.askName = false; endDrag(); });
     const inp = d.querySelector("#cuFileIn"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f); };
     d.querySelector("#cuAdd").onclick = () => inp.click();
     d.querySelector("[data-send]").onclick = () => {
@@ -10439,6 +10444,7 @@ const CustomSheet = window.CustomSheet = (() => {
       send(D.it);
     };
     d.querySelector("#cuWho input").onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); d.querySelector("[data-send]").click(); } };
+    try { wireKeep(d); } catch (err) { console.warn("Save strip", err); }
     return d;
   }
   // the metals, a group of choices: one stop for Tab (the one chosen), the arrows choose within it
@@ -10463,7 +10469,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!row) { d.close(); return; }
     const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
     d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
-    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(piecesOrdered(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
+    d.querySelector("#cuDlgSub").textContent = [txt(spc.label || "Custom order"), txt(sp.designSku || row.line.sku || ""), `${plural(piecesOrdered(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");   // (decoded: the Etsy SKU "ACORN&#39;S LEAF" printed raw)
     const files = e ? e.files : [], sent = !!(e && e.sent), locked = sent || !!e?.sendIntent || busy.has(D.ck), busyNow = busy.get(D.ck) || "", calm = D.opening || !d.open || motionOff();
     // one metal for every design (with two or more), its bar opening or folding its room
     const allRow = d.querySelector(".cuAll"), grp = allRow.querySelector("[data-all]");
@@ -10497,6 +10503,7 @@ const CustomSheet = window.CustomSheet = (() => {
     d.querySelector("#cuWho").hidden = !(D.askName && !employeeName());
     d.querySelector("#cuAdd").hidden = locked;
     if (drag.hot === d) says(d); else addWords();
+    paintKeep(calm);
   }
   /** A bar of the window shown or hidden opens or folds its room, rather than making everything under it jump. */
   function bar(n, show, calm) {
@@ -10549,6 +10556,448 @@ const CustomSheet = window.CustomSheet = (() => {
       const to = k === "first" ? group[0] : k === "last" ? group[group.length - 1] : group[(i + k + group.length) % group.length];
       to.focus(); to.click();
     });
+  }
+  /* ── save to the charm repository (Paul, 11 Oct 2026: "enhance this popup to also save the uploaded vector file to the master charm repository, give it a unique SKU,
+     and save that to Etsy and into our charm repository, so the next time that listing is purchased it is already linked") ──
+     ONE strip in this window, between its add box and its foot (nothing at the page's foot, nothing under the top bar, no second pop-up):
+       a switch before the press · a card of four steps while it works (Sheet placement, Repository save, SKU created, Etsy linked: they open together beside the
+       Send to Sheet animation) · one calm line when it is done · one quiet line when it is not offered.
+     The work is the engine's (charm-nest-keep.js, CharmNestKeep: sku, then repository, then Etsy; it never throws). This part shows it, asks the repository password in the
+     strip itself (before the press, never during a send), and keeps the window open while the save works (up to 20 s). The Sheet never waits for the save and never fails
+     because of it. In the sandbox the same steps play as a rehearsal ("Sandbox: nothing is saved"). A strip that cannot be built (no engine, an error) leaves the window
+     exactly as it was. */
+  /** A string from Etsy or the engine, as text: HTML entities decoded (the header printed ACORN&#39;S LEAF). Always set with textContent, never innerHTML. */
+  const txt = s => O.decodeEntities(String(s == null ? "" : s));
+  const keeps = new Map();        // card key → the strip's state { engine, rows, where it stands }: this tab only, never copied into a workspace
+  let keepSeq = 0, keepTimer = 0, keepLockWatch = false;
+  const KEEP_LS = "cn.keep", KEEP_WAIT = 20000, KEEP_DWELL = 900, LOCK_ASK = { target: "Custom design save" };
+  const keepPref = () => { try { const v = localStorage.getItem(KEEP_LS); return v === "on" ? true : v === "off" ? false : null; } catch (_) { return null; } };
+  const keepPrefSet = on => { try { localStorage.setItem(KEEP_LS, on ? "on" : "off"); } catch (_) { /* the strip works without it */ } };
+  const KeepLib = () => (window.CharmNestKeep && typeof window.CharmNestKeep.make === "function" ? window.CharmNestKeep : null);
+  const RLock = () => window.CharmNestRepoLock || null;
+  const tail4 = id => String(id == null ? "" : id).replace(/\D/g, "").slice(-4);
+  const WHY = {
+    one: "Saving works for one design at a time.", own: "This listing takes the buyer's own design every time, so it is not linked to one charm.",
+    offline: "Saving needs a connection."
+  };
+  /** Why the strip is not offered, in plain words (the engine says it as a sentence or as a short code). */
+  function keepWhy(o) {
+    const w = String((o && o.why) || "");
+    if (/\s/.test(w)) return txt(w);
+    if (/^(one|one-design|designs)$/.test(w)) return WHY.one;
+    if (/^(own|own-design|add-on|addon)$/.test(w)) return WHY.own;
+    if (/^(offline|cloud)$/.test(w)) return WHY.offline;
+    if (/^(linked|already-linked|master)$/.test(w)) { const s = txt((o && (o.sku || o.linked)) || ""); return s ? `This listing is already linked to ${s}.` : "This listing is already linked to a charm."; }
+    return "Saving is not offered for this order.";
+  }
+  const ROW_NAMES = { sheet: "Sheet placement", repo: "Repository save", sku: "SKU created", etsy: "Etsy linked" };
+  const ROW_ORDER = ["sheet", "repo", "sku", "etsy"];
+  const freshRows = () => ({ sku: { state: "idle", text: "" }, repo: { state: "idle", text: "" }, etsy: { state: "idle", text: "" } });
+  /** The words of a row when the engine gave none (the engine's own text wins). */
+  function rowWords(K, name, st) {
+    const sku = txt(K.sku || ""), tail = tail4(K.ctx && K.ctx.listingId);
+    const T = {
+      sku: { idle: sku, work: "Choosing a SKU…", done: sku, failed: "No free SKU for this design", locked: sku ? "Chosen: " + sku : "", skipped: "", rehearsed: sku },
+      repo: { idle: "Waits for the SKU", work: sku ? `Saving ${sku}.ai…` : "Saving…", done: "Saved to the repository", failed: "Not saved", locked: "Not saved: needs the repository password", skipped: "", rehearsed: `Rehearsed: would save ${sku}.ai` },
+      etsy: { idle: "Waits for the repository", work: "Setting the SKU on Etsy…", done: "Linked on Etsy", failed: "Etsy not updated", locked: "Waits for the repository", skipped: "", rehearsed: `Rehearsed: would set the SKU on listing …${tail}` }
+    };
+    return (T[name] && T[name][st]) || "";
+  }
+  /** What a row says now: the engine's words, with the plain prefix a failure carries ("Not saved: …", "Etsy not updated: …"). */
+  function rowOf(K, name) {
+    const o = K.rows[name] || { state: "idle", text: "" }; let t = o.text || rowWords(K, name, o.state);
+    if (o.state === "failed" && o.text) { if (name === "etsy" && !/^Etsy not updated/i.test(t)) t = "Etsy not updated: " + t; else if (name === "repo" && !/^(Not saved|Already in)/i.test(t)) t = "Not saved: " + t; }
+    return { state: o.state, text: t, retry: o.retry, name };
+  }
+  /** The Sheet row is the window's own: it follows what the send says (its busy words, sent, the recorded error). */
+  function sheetRow(e) {
+    const say = e && busy.get(e.ck);
+    if (e && e.sent) { const metals = [...new Set(e.files.map(F => labelOf(F.metal)).filter(Boolean))].join(" and "); return { state: "done", text: metals ? `On the ${metals} sheet` : "On the sheet", name: "sheet" }; }
+    if (say) return { state: "work", text: txt(say), name: "sheet" };
+    if (e && e.sendError) return { state: "failed", text: txt(e.sendError), retry: false, name: "sheet" };
+    return { state: "idle", text: "Waits for Send to Sheet", name: "sheet" };
+  }
+  const MARK_TICK = `<svg class="cuTick" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="8.2"/><path d="M5.4 9.3l2.5 2.5 4.8-5.2" pathLength="1"/></svg>`;
+  const markHtml = st => st === "done" || st === "rehearsed" ? MARK_TICK : st === "work" ? '<span class="spin" aria-hidden="true"></span>' : st === "failed" ? '<span class="bang" aria-hidden="true">!</span>'
+    : st === "locked" ? '<span class="lock" data-repo="upload" aria-hidden="true"></span>' : st === "skipped" ? '<span class="dash" aria-hidden="true"></span>' : '<span class="dot" aria-hidden="true"></span>';
+  const STRIP_HTML = `<section class="cuKeep" id="cuKeep" hidden aria-label="Save to the charm repository"><div class="cuKeepIn">` +
+    `<div class="cuKeepSw" hidden><button type="button" class="cuSwitch" id="cuKeepSwitch" role="switch" aria-checked="false" aria-labelledby="cuKeepL" aria-describedby="cuKeepP"></button>` +
+    `<div class="cuKeepTx" id="cuKeepTx"><b id="cuKeepL">Save to the charm repository and link this listing</b><span id="cuKeepP"></span></div>` +
+    `<span class="cuKeepPill" hidden>Sandbox: nothing is saved</span><button type="button" class="btn gold sm" data-k-now hidden>Save now</button></div>` +
+    `<div class="cuKeepPw" hidden><span class="cuLockMk" data-repo="upload" aria-hidden="true"></span>` +
+    `<input type="password" id="cuKeepPw" name="repo-unlock-field" placeholder="Password" aria-label="Repository password" aria-describedby="cuKeepMsg" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other">` +
+    `<button type="button" class="btn ghost sm" data-k-unlock>Unlock</button><div class="cuKeepMsg" id="cuKeepMsg" role="status" aria-live="polite"></div></div>` +
+    `<div class="cuKeepSteps" role="group" aria-label="Save progress" hidden>` +
+    ROW_ORDER.map(r => `<div class="cuKr" data-r="${r}" data-s="idle" role="status" aria-live="polite"><span class="cuKm"><span class="dot" aria-hidden="true"></span></span><b class="cuKt">${ROW_NAMES[r]}</b><span class="cuKd"></span><span class="cuKa"></span></div>`).join("") +
+    `</div>` +
+    `<div class="cuKeepLine" role="status" hidden><span class="cuKm" aria-hidden="true"></span><span class="cuKlTx"><b></b><span class="sub"></span></span></div>` +
+    `</div></section>`;
+
+  /** The strip's state for the open card: made when it is wanted (one design, read, a connection) and only then. null: the strip is not shown at all. */
+  function keepSync(e, it) {
+    const ck = D.ck; if (!ck || !e || !it || !e.files.length || e.files.some(F => F.state === "reading")) return null;
+    const row = linesOf(it)[0]; if (!row) return null;
+    if (!KeepLib()) return null;                                           // no engine: the window is exactly as it was
+    if (e.files.length !== 1 || e.files[0].state !== "ready" || e.files[0].pieces !== 1) return { phase: "quiet", why: WHY.one, stub: true, rows: freshRows(), pw: {} };
+    if (!S.cloud.ok) return { phase: "quiet", why: WHY.offline, stub: true, rows: freshRows(), pw: {} };
+    const F = e.files[0], sig = [ck, F.id, F.hash || "", row.line.sku || "", row.line.listingId || "", row.line.productId || ""].join("|");
+    let K = keeps.get(ck);
+    if (K && K.sig !== sig && !K.live && K.phase !== "running") { keeps.delete(ck); K = null; }
+    return K || keepBegin(ck, it, e, F, row, sig);
+  }
+  /** The engine for one card, made once its design is read; the strip says "Checking this listing…" until `open()` answers. */
+  function keepBegin(ck, it, e, F, row, sig) {
+    const K = { ck, sig, seq: ++keepSeq, phase: "opening", on: false, locked0: false, sku: "", rows: freshRows(), final: null, open: null, why: "", live: false, started: false, armed: false, toasted: false, pwOpen: false, k: null, ctx: null, pw: { busy: false, msg: "", bad: false, until: 0 } };
+    keeps.set(ck, K);
+    (async () => {
+      try {
+        const lib = KeepLib(); if (!lib) { keeps.delete(ck); return; }
+        const { parsed, charms } = await read(F);
+        if (!F.hash && F.bytes) F.hash = await sha256(F.bytes);
+        const line = row.line || {}, spc = (row.spec && row.spec.special) || {};
+        const ctx = {
+          rid: String(row.order.receiptId), listingId: String(line.listingId || ""), title: txt(line.title || ""),
+          line: { sku: txt(line.sku || ""), productId: line.productId != null ? line.productId : line.product_id != null ? line.product_id : null, variations: Array.isArray(line.variations) ? line.variations : [], listingId: String(line.listingId || "") },
+          listingKind: spc.own ? "own" : "", own: !!spc.own, special: spc, F, charm: charms[0], parsed, sandbox: !!WORKSPACE_SANDBOX,
+          S, O, Sku: window.CharmNestSku || null, Master, aliases: (B.maps && B.maps.aliases) || {}, tableFor: id => ((B.maps && B.maps.listingSkus) || {})[String(id)] || null,
+          api, lock: RLock(), now: () => Date.now()
+        };
+        Object.defineProperty(ctx, "by", { enumerable: true, get: () => employeeName() });   // (the signed-in login's name, read when it is used)
+        K.ctx = ctx; K.k = lib.make(ctx); K.k.on(ev => keepEvent(K, ev));
+        const o = (await K.k.open()) || {};
+        if (keeps.get(ck) !== K) return;
+        keepOpened(K, o);
+      } catch (err) {
+        if (keeps.get(ck) !== K) return;
+        console.warn("Save strip", err); K.phase = "quiet"; K.why = WHY.offline; K.k = null;
+      }
+      keepPaintLater();
+    })();
+    if (!keepLockWatch && RLock() && RLock().onChange) { keepLockWatch = true; try { RLock().onChange(() => keepPaintLater()); } catch (_) { /* no watch */ } }
+    return K;
+  }
+  /** Is the repository locked for this save right now? The lock is the truth; the sandbox rehearsal never asks. */
+  function keepLocked(K) {
+    if (K.ctx && K.ctx.sandbox || K.open && K.open.rehearsal) return false;
+    const lk = RLock(); return lk && typeof lk.unlocked === "function" ? !lk.unlocked("upload") : !!K.locked0;
+  }
+  /** `open()` answered: not offered (one quiet line), saved before (the record says how far it got), or ready (the switch). */
+  function keepOpened(K, o) {
+    K.open = o; K.sku = txt(o.sku || ""); K.locked0 = !!o.locked;
+    if (!o.offered) { K.phase = "quiet"; K.why = keepWhy(o); return; }
+    const sv = o.saved;
+    if (sv && sv.sku) {
+      K.sku = txt(sv.sku); const es = sv.etsy || {}, linked = es.state === "linked";
+      K.rows.sku = { state: "done", text: K.sku }; K.rows.repo = { state: "done", text: sv.reused ? `Already in the repository as ${K.sku}` : "Saved to the repository" };
+      K.rows.etsy = linked ? { state: "done", text: "Linked on Etsy" } : { state: "failed", text: txt(es.text || es.reason || "") || "Etsy not updated", retry: true };
+      K.final = { done: linked ? "linked" : "saved", sku: K.sku, text: "" }; K.phase = K.final.done; K.fromRecord = true; return;
+    }
+    const pref = keepPref(); K.on = pref === null ? !keepLocked(K) : pref; K.phase = K.on ? "ready" : "off";
+  }
+  /** What the engine says while it works: a row changing, or the end ({ done: linked | saved | held | rehearsed }). */
+  function keepEvent(K, ev) {
+    if (!ev || typeof ev !== "object" || keeps.get(K.ck) !== K) return;
+    if (ev.done) {
+      if (ev.sku) K.sku = txt(ev.sku);
+      K.final = { done: String(ev.done), sku: K.sku, text: txt(ev.text || "") }; K.phase = K.final.done; K.live = false; K.fromRecord = false;
+      if (K.phase === "linked" || K.phase === "rehearsed") K.foldP = new Promise(r => { K.foldDone = r; });
+      paintKeep(); keepAfter(K); return;
+    }
+    const r = ev.row; if (!K.rows[r]) return;
+    K.rows[r] = { state: String(ev.state || "idle"), text: txt(ev.text || ""), retry: ev.retry };
+    if (r === "sku" && ev.state === "done" && ev.text) K.sku = txt(ev.text);
+    paintKeep();
+  }
+  function keepPaintLater() { clearTimeout(keepTimer); keepTimer = setTimeout(() => { if (D.dlg && D.dlg.open) paint(); else redraw(); }, 0); }
+  /** The save ended: with the window gone, the card keeps its quiet line and a toast says how it went (a window still open shows it itself). */
+  function keepAfter(K) {
+    try { if (!(D.dlg && D.dlg.open && D.ck === K.ck)) keepToast(K); Session.schedule(); redraw(); } catch (_) { /* the strip never breaks anything */ }
+  }
+  const reasonOf = o => txt((o && o.text) || "").replace(/^(Etsy not updated|Not saved):\s*/i, "").replace(/\.$/, "");
+  function keepToast(K) {
+    if (!K || K.toasted || !K.final) return; const f = K.final.done, rid = K.ctx ? K.ctx.rid : "";
+    if (f === "linked") { K.toasted = true; toast(`Order ${rid}: ${K.sku} saved to the repository and linked on Etsy`, "ok", 6000); }
+    else if (f === "saved") { K.toasted = true; toast(`${K.sku} saved to the repository. Etsy not updated: ${reasonOf(rowOf(K, "etsy"))}. Open the order to retry.`, "bad", 9000); }
+    else if (f === "held") { K.toasted = true; const bad = ["repo", "sku", "etsy"].map(n => rowOf(K, n)).find(r => r.state === "failed" || r.state === "locked"); toast(`Order ${rid}: not saved to the repository${bad ? ": " + reasonOf(bad) : ""}. Open the order to save it.`, "bad", 9000); }
+    else if (f === "rehearsed") { K.toasted = true; toast("Rehearsal complete. Nothing was saved.", "ok", 4000); }
+  }
+  const keepStamp = ck => { const K = keeps.get(ck); return K ? [K.phase, K.sku, K.final ? K.final.done : "", K.rows.sku.state, K.rows.repo.state, K.rows.etsy.state].join(":") : ""; };
+  /** The card's quiet line (the window is closed): how the save stands, with Retry; while it works, a small spinner and its words. */
+  function keepNoteHtml(ck) {
+    const K = keeps.get(ck); if (!K || K.stub) return "";
+    if (K.phase === "running") return `<span class="cuKeepNote" role="status"><span class="spin" aria-hidden="true"></span> Saving to the repository…</span>`;
+    if (!K.final) return "";
+    const f = K.final.done, sku = esc(txt(K.sku));
+    if (f === "linked") return `<span class="cuKeepNote ok" role="status">Linked · ${sku}</span>`;
+    if (f === "saved") return `<span class="cuKeepNote warn" role="status">Saved to the repository · Etsy not updated</span><button type="button" class="linkBtn" data-cu-keep-retry="etsy">Retry</button>`;
+    if (f === "held") return `<span class="cuKeepNote" role="status">Not saved to the repository</span><button type="button" class="linkBtn" data-cu-keep-retry="repo">${keepLocked(K) ? "Save now" : "Retry"}</button>`;
+    return "";
+  }
+  /** The card's Retry: runs from the failed step; a save that needs the password opens the window, where the strip asks for it. */
+  function keepRetryFromCard(ck, it, node, which) {
+    const K = keeps.get(ck); if (!K) { open(it, { from: node }); return; }
+    if (which === "repo" && keepLocked(K) && !(K.ctx && K.ctx.sandbox)) { open(it, { from: node }); return; }
+    keepRetry(K, which);
+  }
+  /** The press of Send to Sheet: the strip's switch becomes the steps card at once (the work starts after the stamp, keepStart). Only for a strip showing its switch ON. */
+  function keepArm(ck, how) {
+    try {
+      const K = keeps.get(ck);
+      if (how.recover || !K || !K.k || !(D.dlg && D.dlg.open && D.ck === ck)) return null;
+      if (K.started) return K;   // (Retry send, after the Sheet failed: the save is under way or finished already; this press only waits for it)
+      if (K.phase !== "ready") return null;
+      K.phase = "running"; K.armed = true; K.started = false; K.final = null; K.toasted = false; K.rows = freshRows(); K.live = true; K.pwOpen = false;
+      paintKeep(); return K;
+    } catch (err) { console.warn("Save strip", err); return null; }
+  }
+  /** Nothing started (the send stopped before its stamp): the steps fold back into the switch. */
+  function keepDisarm(K) {
+    try { if (!K || !K.armed || K.started || keeps.get(K.ck) !== K) return; K.armed = false; K.live = false; K.phase = "ready"; K.rows = freshRows(); paintKeep(); } catch (_) { /* as it was */ }
+  }
+  /** One run of the engine, not awaited by the send. If it stops without an ending (it threw, a reply was cut off, a time-out), the strip does not hang: see keepEnded. */
+  function keepRun(K, fn) {
+    try {
+      K.runP = Promise.resolve().then(fn).then(() => null, err => { console.warn("Save strip", err); return err || new Error("stopped"); }).then(err => keepEnded(K, err));
+    } catch (err) { console.warn("Save strip", err); }
+  }
+  /** The engine stopped and no ending came: the step that was working is marked failed with Retry (a retry reads before it writes, so nothing is done twice); nothing already saved is touched. */
+  function keepEnded(K, err) {
+    if (!K || keeps.get(K.ck) !== K || K.phase !== "running" || K.final) return;
+    const R = K.rows, name = ["etsy", "repo", "sku"].find(n => R[n].state === "work") || ["sku", "repo", "etsy"].find(n => R[n].state !== "done" && R[n].state !== "rehearsed" && R[n].state !== "skipped") || "etsy";
+    const text = name === "etsy" ? "Etsy did not answer in time. Retry checks the listing first and never writes twice." : name === "repo" ? "The save did not finish. Retry tries again; nothing is lost." : "A SKU could not be chosen. Retry tries again.";
+    keepEvent(K, { row: name, state: "failed", text, retry: true });
+    keepEvent(K, { done: R.repo.state === "done" ? "saved" : "held", sku: K.sku, text });
+  }
+  /** After the Seal stamp: the engine runs, not awaited; the Sheet goes on beside it. A failure in the strip never reaches the send. */
+  function keepStart(K) {
+    if (!K || !K.armed || K.started) return null;
+    K.started = true;
+    keepRun(K, () => K.k.run());
+    return K;
+  }
+  /** A run again from the failed step (the rows before it are saved and stay so). */
+  function keepRetry(K, which) {
+    try {
+      if (!K || !K.k || K.phase === "running" || keeps.get(K.ck) !== K) return;
+      K.phase = "running"; K.live = true; K.armed = true; K.started = true; K.final = null; K.toasted = false; K.pwOpen = false;
+      paintKeep(); if (!(D.dlg && D.dlg.open)) redraw();   // (from the card, the window gone: the card shows it working)
+      keepRun(K, () => K.k.retry(which === "etsy" ? "etsy" : "repo"));
+    } catch (err) { console.warn("Save strip", err); }
+  }
+  /** Before the window closes: it waits for the save, up to 20 s (a time-out, not a pause), then a calm moment on a good ending; a failure never holds it (the toast says it). */
+  async function keepHold(K) {
+    if (!K || !K.started) return;
+    try {
+      await Promise.race([Promise.resolve(K.k && K.k.settled ? K.k.settled(KEEP_WAIT) : K.runP), new Promise(r => setTimeout(r, KEEP_WAIT + 400))]);
+      const f = K.final && K.final.done;
+      if (f === "linked" || f === "rehearsed") {
+        if (K.foldP) await Promise.race([K.foldP, new Promise(r => setTimeout(r, 1500))]);
+        const d = D.dlg; if (d && d.open && D.ck === K.ck) await dwell(d, KEEP_DWELL);
+      } else if (f) keepToast(K);
+    } catch (err) { console.warn("Save strip", err); }
+  }
+  /** A calm moment: any press, key, or the window closing, ends it at once. */
+  function dwell(d, ms) {
+    return new Promise(res => {
+      let t = 0; const evs = ["pointerdown", "keydown"];
+      // (on the document: the window is modal, so every press and key of the page is its own, and a focus that fell to the page's body after Send went grey is heard too)
+      const done = () => { clearTimeout(t); for (const n of evs) document.removeEventListener(n, done, true); d.removeEventListener("close", done); res(); };
+      t = setTimeout(done, ms); for (const n of evs) document.addEventListener(n, done, true); d.addEventListener("close", done);
+    });
+  }
+
+  /* ── what the strip does when pressed ── */
+  const keepHost = () => D.dlg && D.dlg.querySelector("#cuKeep");
+  function keepToggle(K, on) {
+    if (!K || (K.phase !== "off" && K.phase !== "ready")) return;
+    K.on = !!on; K.phase = K.on ? "ready" : "off"; keepPrefSet(K.on); K.pw.msg = ""; K.pw.bad = false; if (!K.on) K.pwOpen = false;
+    paintKeep(); if (K.on && keepLocked(K)) keepFocusPw();
+  }
+  function keepFocusPw() { setTimeout(() => { try { const i = keepHost().querySelector("#cuKeepPw"); if (i && !i.closest("[hidden]")) i.focus({ preventScroll: true }); } catch (_) { /* gone */ } }, 0); }
+  /** After the Sheet is sent the switch is of no use: "Save now" does it (the password first, in the strip, when locked). */
+  function keepNow() {
+    const K = keeps.get(D.ck), e = all()[D.ck]; if (!K || !K.k || !e || !(K.phase === "off" || K.phase === "ready")) return;
+    if (!employeeName()) { const d = D.dlg, who = d.querySelector("#cuWho input"); D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; }
+    if (keepLocked(K)) { K.pwOpen = true; K.pendingNow = true; paintKeep(); keepFocusPw(); return; }
+    keepGoNow(K);
+  }
+  function keepGoNow(K) {
+    K.pendingNow = false; K.pwOpen = false; K.on = true; K.phase = "running"; K.live = true; K.armed = true; K.started = true; K.final = null; K.toasted = false; K.rows = freshRows();
+    paintKeep(); keepRun(K, () => K.k.run());
+  }
+  /** "Save later" on a locked row: the steps fold back into the switch; nothing is saved, nothing is lost. */
+  function keepLater(K) {
+    if (!K) return; K.phase = "off"; K.on = false; K.live = false; K.armed = false; K.started = false; K.final = null; K.rows = freshRows(); K.pwOpen = false; K.pendingNow = false; K.pw.msg = ""; K.pw.bad = false;
+    paintKeep();
+  }
+  /** The password, typed in the strip: sent once, the field cleared at once; a wrong one shakes the field. Nothing is saved by unlocking alone before a press. */
+  async function keepUnlock() {
+    const K = keeps.get(D.ck), host = keepHost(); if (!K || !host || K.pw.busy) return;
+    const input = host.querySelector("#cuKeepPw"), words = (RLock() && RLock().messages) || {};
+    const say = (k, d) => words[k] || d;
+    let pw = input.value; input.value = "";
+    if (Date.now() < (K.pw.until || 0)) { K.pw.msg = say("locked", "Too many wrong tries. Please try again later."); K.pw.bad = true; paintKeep(); return; }
+    if (!pw) { K.pw.msg = say("empty", "Type the password first."); K.pw.bad = true; paintKeep(); input.focus(); return; }
+    K.pw.busy = true; K.pw.msg = ""; K.pw.bad = false; paintKeep();
+    let r;
+    try { r = await (K.k && typeof K.k.unlock === "function" ? K.k.unlock(pw) : RLock().submitInline("upload", pw, LOCK_ASK)); } catch (_) { r = { ok: false, reason: "unavailable" }; } finally { pw = ""; }
+    input.value = ""; K.pw.busy = false;
+    if (keeps.get(K.ck) !== K) return;
+    if (r && r.ok) {
+      K.pw.msg = ""; K.pw.bad = false; K.pw.until = 0; K.locked0 = false; K.pwOpen = false;
+      const again = K.phase === "held", now = K.pendingNow;
+      paintKeep();
+      if (again) keepRetry(K, "repo"); else if (now) keepGoNow(K);
+      setTimeout(() => { try { const s = D.dlg.querySelector("[data-send]"), n = D.dlg.querySelector("[data-k-now]"); const t = s && !s.disabled ? s : n && !n.hidden ? n : null; if (t) t.focus({ preventScroll: true }); } catch (_) { /* gone */ } }, 0);
+      return;
+    }
+    const why = r && r.reason;
+    if (why === "locked") { K.pw.until = Date.now() + Math.max(1, +(r.retryAfterSec) || 900) * 1000; K.pw.msg = say("locked", "Too many wrong tries. Please try again later."); setTimeout(() => keepPaintLater(), Math.min(2147483000, K.pw.until - Date.now() + 80)); }
+    else if (why === "wrong") { K.pw.msg = say("wrong", "That password is not right. Try again."); if (!motionOff()) lit(input, "cuShake", 600); }
+    else K.pw.msg = say("unavailable", "The check is not available right now. Please try again later.");
+    K.pw.bad = true; paintKeep(); try { input.focus({ preventScroll: true }); } catch (_) { /* gone */ }
+  }
+  function wireKeep(d) {
+    const host = d.querySelector("#cuKeep"); if (!host) return;
+    const flip = () => { const K = keeps.get(D.ck), e = all()[D.ck]; if (!K || !e || e.sent || busy.get(D.ck) || e.sendIntent) return; keepToggle(K, !K.on); };
+    host.querySelector(".cuSwitch").onclick = flip; host.querySelector(".cuKeepTx").onclick = () => { const e = all()[D.ck]; if (e && !e.sent) flip(); };
+    host.querySelector("[data-k-now]").onclick = () => keepNow();
+    host.querySelector("[data-k-unlock]").onclick = () => keepUnlock();
+    host.querySelector("#cuKeepPw").onkeydown = ev => { if (ev.key !== "Escape") ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); keepUnlock(); } };
+    host.addEventListener("click", ev => {
+      const r = ev.target.closest("[data-k-retry]"); if (r) { keepRetry(keeps.get(D.ck), r.dataset.kRetry); return; }
+      if (ev.target.closest("[data-k-later]")) keepLater(keeps.get(D.ck));
+    });
+  }
+  /** The window closed: no password stays typed in it, and its next opening draws the strip afresh. */
+  function keepClosed() {
+    const host = keepHost(); if (!host) return;
+    const i = host.querySelector("#cuKeepPw"); if (i) i.value = "";
+    const K = keeps.get(D.ck); if (K) { K.pw.busy = false; K.pwOpen = false; K.pendingNow = false; K.pw.msg = ""; K.pw.bad = false; }
+    host._ck = null;
+  }
+
+  /* ── the strip's picture ── */
+  function paintRow(n, o, calm) {
+    const st = o.state || "idle", was = n.dataset.s, m = n.querySelector(".cuKm");
+    if (was !== st) {
+      n.dataset.s = st; m.innerHTML = markHtml(st);
+      if (!calm && was && (st === "done" || st === "rehearsed") && was !== "done" && was !== "rehearsed") { const p = m.querySelector(".cuTick path"); if (p && p.animate) p.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 320, easing: "cubic-bezier(.3,.1,.2,1)" }); }
+      if (st === "locked") try { RLock() && RLock().mark(m); } catch (_) { /* unmarked */ }
+    }
+    const sig = [st, o.text || "", o.retry === false ? 0 : 1, o.noBtn ? 1 : 0].join("|");
+    if (n._sig === sig) return; const changed = !!n._sig && n._sig.split("|")[1] !== (o.text || ""); n._sig = sig;
+    const d = n.querySelector(".cuKd"); d.replaceChildren();
+    if (st === "work") { const s = el("span", "spin"); s.setAttribute("aria-hidden", "true"); d.appendChild(s); }
+    const t = el("span", o.name === "sku" && o.text && (st === "done" || st === "idle" || st === "rehearsed") ? "cuSku" : ""); t.textContent = o.text || ""; d.appendChild(t);
+    if (changed && !calm && t.animate) t.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: "ease" });
+    const a = n.querySelector(".cuKa"); a.replaceChildren();
+    if (st === "failed" && o.retry !== false && !o.noBtn) { const b = el("button", "linkBtn"); b.type = "button"; b.dataset.kRetry = o.name === "etsy" ? "etsy" : "repo"; b.textContent = "Retry"; a.appendChild(b); }
+    if (st === "locked" && o.name === "repo") { const b = el("button", "linkBtn"); b.type = "button"; b.dataset.kLater = "1"; b.textContent = "Save later"; a.appendChild(b); }
+  }
+  /** A block of the strip put away, or brought in: it folds (or opens) its own room rather than make what is under it jump. Returns a promise for a block that leaves. */
+  function keepLeave(n, calm, how) {
+    if (n.hidden || n._fold || n._fade) return n._gate || null;
+    if (calm) { n.hidden = true; return null; }
+    if (how === "fade") {
+      const f = n._fade = n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "ease", fill: "forwards" });
+      return n._gate = new Promise(res => { const fin = () => { n._fade = null; n._gate = null; try { f.cancel(); } catch (_) { /* gone */ } n.hidden = true; res(); }; f.finished.then(fin, fin); });
+    }
+    const f = n._fold = Motion.shut(n, { ms: 480, easing: "cubic-bezier(.4,0,.2,1)", done: () => { n.hidden = true; } });
+    return n._gate = f.finished.then(() => { if (n._fold === f) n._fold = null; n._gate = null; });
+  }
+  function keepEnter(n, calm, ms) {
+    if (n._fold) { n._fold.cancel(); n._fold = null; n._gate = null; }
+    if (n._fade) { try { n._fade.cancel(); } catch (_) { /* gone */ } n._fade = null; n._gate = null; }
+    if (!n.hidden) return false;
+    n.hidden = false; if (!calm) Motion.grow(n, { ms: ms || 420 }); return true;
+  }
+  function paintKeep(calmIn) {
+    const d = D.dlg, host = d && d.querySelector("#cuKeep"); if (!host) return;
+    try { paintKeepNow(d, host, calmIn); }
+    catch (err) { console.warn("Save strip", err); host.hidden = true; }
+  }
+  function paintKeepNow(d, host, calmIn) {
+    const e = D.ck && all()[D.ck], it = D.it; let calm = calmIn != null ? calmIn : (D.opening || !d.open || motionOff());
+    const blocks = { sw: host.querySelector(".cuKeepSw"), pw: host.querySelector(".cuKeepPw"), steps: host.querySelector(".cuKeepSteps"), line: host.querySelector(".cuKeepLine") };
+    if (host._ck !== D.ck) { host._ck = D.ck; for (const n of Object.values(blocks)) { if (n._fold) { n._fold.cancel(); n._fold = null; } if (n._fade) { try { n._fade.cancel(); } catch (_) { /* gone */ } n._fade = null; } n._gate = null; n.hidden = true; delete n._sig; } host.querySelectorAll(".cuKr").forEach(n => { delete n._sig; n.dataset.s = "idle"; n.querySelector(".cuKm").innerHTML = markHtml("idle"); }); host.hidden = true; }
+    const K = keepSync(e, it);
+    if (!K) { host.dataset.phase = ""; if (!host.hidden) { keepLeave(host, true); } return; }
+    const sent = !!(e && e.sent), ph = K.phase, sandbox = !!(K.ctx ? K.ctx.sandbox : WORKSPACE_SANDBOX), locked = keepLocked(K);
+    host.dataset.phase = ph; host.dataset.sandbox = sandbox ? "1" : "0";
+    // which blocks show
+    const sw = ph === "off" || ph === "ready", good = ph === "linked" || ph === "rehearsed";
+    // a good ending folds the four rows into one line once the Sheet is placed too (it still working, or failed, keeps its row in sight)
+    const fold = good && (K.fromRecord || sheetRow(e).state === "done");
+    const want = {
+      sw, steps: ph === "running" || ph === "saved" || ph === "held" || (good && !fold),
+      line: ph === "opening" || ph === "quiet" || fold || ph === "saved",
+      pw: !sandbox && locked && ((sw && ((K.on && !sent) || K.pwOpen)) || (ph === "held" && K.rows.repo.state === "locked"))
+    };
+    // the switch row
+    if (sw) {
+      const sB = blocks.sw.querySelector(".cuSwitch"), pv = blocks.sw.querySelector("#cuKeepP"), now = blocks.sw.querySelector("[data-k-now]"), pill = blocks.sw.querySelector(".cuKeepPill");
+      sB.hidden = sent; sB.setAttribute("aria-checked", K.on ? "true" : "false"); sB.disabled = !!(busy.get(D.ck) || (e && e.sendIntent));
+      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse].join("|");
+      if (pv._sig !== sig) {
+        pv._sig = sig; pv.replaceChildren(); const sk = el("span", "cuSku"); sk.textContent = K.sku; const T = s => document.createTextNode(s);
+        if (o.reuse) { if (typeof o.reuse === "string" && o.reuse.length > 11) sk.textContent = txt(o.reuse); pv.append(T("Already in the repository as "), sk, T(" · this listing will be linked to it")); }
+        else if (!K.sku) pv.append(T("A new SKU is chosen when you press"));
+        else pv.append(T("New SKU "), sk, T(o.aliasWorks === false ? " · Etsy gets the new SKU too, or the next order will still ask" : " · later orders of this listing will use this design"));
+      }
+      pill.hidden = !sandbox; now.hidden = !sent; now.disabled = !!K.pw.busy;
+      blocks.sw.querySelector(".cuKeepTx").style.cursor = sent ? "default" : "";
+    }
+    // the steps card
+    const shows = { sheet: sheetRow(e), repo: rowOf(K, "repo"), sku: rowOf(K, "sku"), etsy: rowOf(K, "etsy") };
+    if (K.fromRecord) for (const r of ["repo", "sku"]) shows[r].noBtn = true;
+    host.querySelectorAll(".cuKr").forEach(n => paintRow(n, shows[n.dataset.r], calm || blocks.steps.hidden));
+    // the password row: its words, its spinner
+    const unl = blocks.pw.querySelector("[data-k-unlock]"); unl.disabled = !!(K.pw.busy || Date.now() < (K.pw.until || 0));
+    const msg = blocks.pw.querySelector(".cuKeepMsg"), msgSig = K.pw.busy ? "spin" : (K.pw.msg || "") + "|" + !!K.pw.bad;
+    if (msg._sig !== msgSig) {
+      msg._sig = msgSig; msg.replaceChildren(); msg.classList.toggle("bad", !!K.pw.bad && !K.pw.busy);
+      if (K.pw.busy) { const s = el("span", "spin"); s.setAttribute("aria-hidden", "true"); msg.append(s, document.createTextNode("Checking the password…")); }
+      else msg.textContent = K.pw.msg || "Locked: type the repository password to save";
+    }
+    // the line
+    if (want.line) {
+      const b = blocks.line.querySelector("b"), sub = blocks.line.querySelector(".sub"), mk = blocks.line.querySelector(".cuKm");
+      let main = "", subT = "", mark = "", cls = "";
+      if (ph === "opening") { main = "Checking this listing…"; mark = "work"; cls = "quiet"; }
+      else if (ph === "quiet") { main = K.why || ""; cls = "quiet"; }
+      else if (ph === "linked") { main = `Linked · ${K.sku}`; subT = `Saved to the repository and set on Etsy listing …${tail4(K.ctx && K.ctx.listingId)}`; mark = "done"; }
+      else if (ph === "rehearsed") { main = "Rehearsal complete. Nothing was saved."; mark = "rehearsed"; }
+      else if (ph === "saved") { main = "Saved to the repository · Etsy not updated"; subT = K.open && K.open.aliasWorks === false ? "Until Etsy has the new SKU, the next order of this listing will still ask." : ""; cls = "warn"; }
+      const sig = [ph, main, subT, cls].join("|");
+      if (blocks.line._sig !== sig) {
+        blocks.line._sig = sig; const ring = blocks.line.classList.contains("cuRing"); blocks.line.className = "cuKeepLine" + (cls ? " " + cls : "") + (ring ? " cuRing" : "");
+        b.textContent = main; sub.textContent = subT; sub.hidden = !subT; mk.hidden = !mark; mk.innerHTML = mark ? markHtml(mark) : "";
+      }
+    }
+    // show and put away the blocks: what leaves first (the switch fades, the steps fold), then what comes (the rows open, the line grows)
+    const first = host.hidden, calm0 = calm; calm = calm || first;
+    let gate = null;
+    for (const [name, how] of [["sw", "fade"], ["steps", "fold"], ["line", "fold"], ["pw", "fold"]]) {
+      if (!want[name] && !blocks[name].hidden) { const g = keepLeave(blocks[name], calm, how); if (g && name !== "pw") gate = g; }
+    }
+    if (gate) { if (!host._wait) { host._wait = true; gate.then(() => { host._wait = false; if (D.dlg && D.dlg.open) paint(); }); } }
+    const waiting = !!host._wait || blocks.sw._fade || blocks.steps._fold || blocks.line._fold;
+    for (const name of ["sw", "steps", "line", "pw"]) {
+      if (!want[name] || !blocks[name].hidden) { if (want[name] && (blocks[name]._fold || blocks[name]._fade)) keepEnter(blocks[name], calm); continue; }
+      if (waiting && name !== "pw") continue;           // (a block still leaving goes first)
+      if (name === "steps") { keepEnter(blocks.steps, true); if (!calm && !motionOff()) [...blocks.steps.querySelectorAll(".cuKr")].forEach((n, i) => Motion.grow(n, { ms: 420, delay: i * 60 })); }
+      else if (name === "pw") { keepEnter(blocks.pw, calm, 420); if (!calm) keepFocusPw(); }
+      else if (name === "line") {
+        keepEnter(blocks.line, calm, 420);
+        if (ph === "linked" && !K.fromRecord && !calm && !motionOff()) { blocks.line.classList.remove("cuRing"); void blocks.line.offsetWidth; blocks.line.classList.add("cuRing"); setTimeout(() => blocks.line.classList.remove("cuRing"), 1000); }
+        if (fold && K.foldDone) { K.foldDone(); K.foldDone = null; }
+      } else keepEnter(blocks.sw, calm, 420);
+    }
+    if (fold && K.foldDone && !blocks.line.hidden && !waiting) { K.foldDone(); K.foldDone = null; }
+    keepEnter(host, calm0, 600);
+    if (ph === "running") host.setAttribute("aria-busy", "true"); else host.removeAttribute("aria-busy");
+    try { const lk = RLock(); if (lk && lk.mark) lk.mark(host); } catch (_) { /* unmarked */ }
   }
   /** The layer copies fly on: the page's, or the window's own (the window sits above the whole page). */
   function layerIn(d) { let l = d.querySelector(":scope > .motionLayer"); if (!l) { l = el("div", "motionLayer"); l.setAttribute("aria-hidden", "true"); d.appendChild(l); } return l; }
@@ -10685,7 +11134,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
+  return { add, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K) } : null; } };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
