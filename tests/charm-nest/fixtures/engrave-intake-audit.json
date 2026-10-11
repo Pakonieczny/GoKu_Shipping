@@ -1,0 +1,1129 @@
+{
+ "about": "ENGINTAKE test fixture: the rows of plans/front-back-1011/ENGAUDIT-cases.json (ENGAUDIT, 11 Oct 2026) the intake is tested against. Flat rows, no buyer data (words that were names or dates are stand-ins). options: [field, value as Etsy spells it, expectedMode]; negatives: titles and option values that are NOT face words; notes: the personalisation texts with the audit's expected reading [mode, front, back, textSource, needsPerson] and, where the intake reads it differently ON PURPOSE, mine plus the reason.",
+ "options": [
+  [
+   "Metal Choice · Engraving Options?",
+   "GOLD·6-10·Characters",
+   "back",
+   "default",
+   4
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "GOLD·1-5·Characters",
+   "back",
+   "default",
+   3
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "GOLD · Front&amp;Back",
+   "both",
+   "option",
+   2
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "SILVER · Front&amp;Back",
+   "both",
+   "option",
+   2
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "SILVR·6-10·Character",
+   "back",
+   "default",
+   2
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "GOLD·11+·Characters",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "SILVER·11+·Character",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "Solid Gold + Engrave",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·1-5·Characters",
+   "back",
+   "default",
+   18
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·6-10·Characters",
+   "back",
+   "default",
+   11
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER·1-5·Character",
+   "back",
+   "default",
+   5
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD · Front&amp;Back",
+   "both",
+   "option",
+   3
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·11+·Characters",
+   "back",
+   "default",
+   3
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER · Blank",
+   "none",
+   "option",
+   2
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER · Front&amp;Back",
+   "both",
+   "option",
+   2
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER·11+·Character",
+   "back",
+   "default",
+   2
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVR·6-10·Character",
+   "back",
+   "default",
+   2
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD · Blank",
+   "none",
+   "option",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·6-10·Characters",
+   "back",
+   "default",
+   13
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·1-5·Characters",
+   "back",
+   "default",
+   10
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER·1-5·Character",
+   "back",
+   "default",
+   6
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVR·6-10·Character",
+   "back",
+   "default",
+   4
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD · Front&amp;Back",
+   "both",
+   "option",
+   2
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD · Blank",
+   "none",
+   "option",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·11+·Characters",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER · Front&amp;Back",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER·11+·Character",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·6-10·Characters",
+   "back",
+   "default",
+   8
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·1-5·Characters",
+   "back",
+   "default",
+   6
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD · Front&amp;Back",
+   "both",
+   "option",
+   3
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER·1-5·Character",
+   "back",
+   "default",
+   3
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER·11+·Character",
+   "back",
+   "default",
+   3
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVR·6-10·Character",
+   "back",
+   "default",
+   3
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD·11+·Characters",
+   "back",
+   "default",
+   2
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "1-5 Character-SILVER",
+   "back",
+   "default",
+   5
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "11+ Character-GOLD",
+   "back",
+   "default",
+   4
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "6-10 Characters-GOLD",
+   "back",
+   "default",
+   4
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "1-5 Characters-GOLD",
+   "back",
+   "default",
+   3
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "11+ Charctr-ROSEGOLD",
+   "back",
+   "default",
+   2
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "1-5 Charctr-ROSEGOLD",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "11+ Character-SILVER",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "Blank- GOLD",
+   "none",
+   "option",
+   1
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "Blank- SILVER",
+   "none",
+   "option",
+   1
+  ],
+  [
+   "How Many Characters & Metal Color?",
+   "ROSE Front&amp;Back",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "GOLD · Front&amp;Back",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "GOLD·6-10·Characters",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "Metal Choice · Engraving Options?",
+   "SILVER·1-5·Character",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "Metal/Necklace Length",
+   "Silver - 16&quot;- 1 side",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "Length/Engrave:1 side/2 sides?",
+   "Silver- 16&quot;- 2 sides",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Metal Choice",
+   "Gold Writing-FRONT",
+   "front",
+   "option",
+   18
+  ],
+  [
+   "Metal Choice",
+   "Silver Writing-FRONT",
+   "front",
+   "option",
+   7
+  ],
+  [
+   "Metal Choice",
+   "Gold - FRONT &amp; BACK",
+   "both",
+   "option",
+   5
+  ],
+  [
+   "Color / Engraving",
+   "SILVER-Writing FRONT",
+   "front",
+   "option",
+   2
+  ],
+  [
+   "Color / Engraving",
+   "GOLD-Writing FRONT",
+   "front",
+   "option",
+   1
+  ],
+  [
+   "Engraving? (Double sided=both sides engraved)",
+   "GOLD·DOUBLE SIDED",
+   "both",
+   "option",
+   2
+  ],
+  [
+   "Engraving? (Double sided=both sides engraved)",
+   "ROSE GOLD·DBL SIDED",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Engraving? (Double sided=both sides engraved)",
+   "SILVER·DOUBLE SIDED",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Engraving? (Double sided=both sides engraved)",
+   "SILVER·ENGRAVED",
+   "back",
+   "default",
+   1
+  ],
+  [
+   "Metal/Both Sides Engraved? (Front/Back)",
+   "GOLD·Front",
+   "front",
+   "option",
+   1
+  ],
+  [
+   "METAL - ENGRAVING",
+   "GOLD + ENGRAVE",
+   "back",
+   "default",
+   4
+  ],
+  [
+   "METAL - ENGRAVING",
+   "SILVER + ENGRAVE",
+   "back",
+   "default",
+   4
+  ],
+  [
+   "METAL - ENGRAVING",
+   "ROSE + FRONT&amp;BACK",
+   "both",
+   "option",
+   2
+  ],
+  [
+   "Charm Type",
+   "Tag1 (front engrave)",
+   "front",
+   "option",
+   11
+  ],
+  [
+   "Charm Type",
+   "Tag1 (front+back)",
+   "both",
+   "option",
+   3
+  ],
+  [
+   "Charm Type",
+   "Tag2 (front engrave)",
+   "front",
+   "option",
+   2
+  ],
+  [
+   "Charm Type",
+   "Tag4 (front engrave)",
+   "front",
+   "option",
+   2
+  ],
+  [
+   "Charm Type",
+   "Tag2 (front+back)",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Charm Type",
+   "Tag3 (front + back)",
+   "both",
+   "option",
+   1
+  ],
+  [
+   "Charm Type",
+   "Tag3 (front engrave)",
+   "front",
+   "option",
+   1
+  ],
+  [
+   "Charm Type",
+   "Tag4 (front + back)",
+   "both",
+   "option",
+   1
+  ]
+ ],
+ "negativeTitles": [
+  [
+   "Truck Front Charm"
+  ],
+  [
+   "Hiking Charm Add On Charm Boot ... Backpack Charm"
+  ],
+  [
+   "Chicken Charm Disc ... Backyard Hen Charm"
+  ],
+  [
+   "Bunny Back Charm Rabbit Shape Charm"
+  ],
+  [
+   "Custom Single ... Stud Earring with Butterfly Back"
+  ],
+  [
+   "Daisy Flower Earrings ... Flat back stud"
+  ],
+  [
+   "Double Axe Earring"
+  ],
+  [
+   "DNA Earrings ... Double Helix"
+  ],
+  [
+   "Gold Double Heart Necklace"
+  ],
+  [
+   "Custom Handwriting Necklace ... Double Disc Circle Charm"
+  ],
+  [
+   "Flip-Flop Earring"
+  ],
+  [
+   "Diver Flipper Necklace Charm"
+  ]
+ ],
+ "negativeOptions": [
+  [
+   "Would you like just 1 earring or a pair ?",
+   "PAIR"
+  ],
+  [
+   "Would you like a Single earring or a Pair?",
+   "Pair"
+  ],
+  [
+   "Price",
+   "Gold Filled - Single"
+  ],
+  [
+   "Metal Choice :",
+   "Gold - Pair"
+  ],
+  [
+   "Metal Choice :",
+   "Silver - Pair"
+  ],
+  [
+   "Metal? Single earring or a Pair?",
+   "Silver - Single"
+  ],
+  [
+   "Metal? Single earring or a Pair?",
+   "Silver - Pair"
+  ],
+  [
+   "Price",
+   ".925 Silver - Single"
+  ],
+  [
+   "Price",
+   ".925 Silver - Pair"
+  ],
+  [
+   "Price",
+   "Gold Filled - Pair"
+  ],
+  [
+   "Price",
+   "Rose Filled - Pair"
+  ],
+  [
+   "Single or Pair",
+   "Single 8mm"
+  ]
+ ],
+ "notes": [
+  {
+   "id": "P01",
+   "field": "Charm Type",
+   "value": "Tag1 (front+back)",
+   "pers": "front - W\nback - 1. 27. 24",
+   "audit": [
+    "both",
+    "W",
+    "1. 27. 24",
+    "labelled",
+    false
+   ]
+  },
+  {
+   "id": "P02",
+   "field": "METAL - ENGRAVING",
+   "value": "SILVER · Front&Back",
+   "pers": "front: go birds\nback: WORD1\n\nboth center\nWORD1 upside down if possible\ndarkened font\n\nTHANK YOU ! <3",
+   "audit": [
+    "both",
+    "go birds",
+    "WORD1",
+    "labelled",
+    false
+   ]
+  },
+  {
+   "id": "P03",
+   "field": "Personalization (a real drop-down, prope",
+   "value": "Gold - FRONT & BACK",
+   "pers": "Gold - FRONT & BACK\nI am going to send two different pictures if we could get one on each side that would be amazing. Thank you so much!",
+   "audit": [
+    "both",
+    null,
+    null,
+    "none",
+    true
+   ]
+  },
+  {
+   "id": "P04",
+   "field": "Metal Choice",
+   "value": "Gold Writing-FRONT",
+   "pers": "darkened please",
+   "audit": [
+    "front",
+    null,
+    null,
+    "none",
+    true
+   ]
+  },
+  {
+   "id": "P05",
+   "field": "Charm Type",
+   "value": "Tag1 (front engrave)",
+   "pers": "\"JFC\" is the engraving, arranged sideways on the tag (like the example photo you show with DKR)",
+   "audit": [
+    "front",
+    "JFC",
+    null,
+    "single",
+    false
+   ]
+  },
+  {
+   "id": "P06",
+   "field": "Charm Type",
+   "value": "CHARM + Engraving",
+   "pers": "Please engrave the back of the charm with the following text, split into two lines and centered:\n\nLine 1:   NAME1\nLine 2:     DATE1\n\nPlease use a clean, all-caps block font so the text is sharp and ...",
+   "audit": [
+    "back",
+    null,
+    "NAME1\nDATE1",
+    "single",
+    false
+   ],
+   "mine": [
+    "back",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "back only: the words are left to the engraving reader, as today"
+  },
+  {
+   "id": "P07",
+   "field": "Metal Choice",
+   "value": "Silver",
+   "pers": "can you put a pretty A on the back",
+   "audit": [
+    "back",
+    null,
+    "A",
+    "single",
+    false
+   ],
+   "mine": [
+    "back",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "back only: the words are left to the engraving reader, as today"
+  },
+  {
+   "id": "P08",
+   "field": "Metal Choice",
+   "value": "Silver",
+   "pers": "Please engrave “Love, XX” on the back.",
+   "audit": [
+    "back",
+    null,
+    "Love, XX",
+    "single",
+    false
+   ],
+   "mine": [
+    "back",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "no engraving word beside the face word: nothing is read, the line stays the default back"
+  },
+  {
+   "id": "P09",
+   "field": "Charm Type",
+   "value": "CHARM + Engraving",
+   "pers": "please engrave the name \"NAME1\" on the back. Thank you!",
+   "audit": [
+    "back",
+    null,
+    "NAME1",
+    "single",
+    false
+   ],
+   "mine": [
+    "none",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "no engraving word beside the face word: nothing is read, the line stays the default back"
+  },
+  {
+   "id": "P10",
+   "field": "METAL - ENGRAVING",
+   "value": "14k Gold + Engrave",
+   "pers": "Back engrave- Dr. NAME1",
+   "audit": [
+    "back",
+    null,
+    "Dr. NAME1",
+    "labelled",
+    false
+   ],
+   "mine": [
+    "back",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "back only: the words are left to the engraving reader, as today"
+  },
+  {
+   "id": "P11",
+   "field": "Metal Choice",
+   "value": "Gold",
+   "pers": "Can you engrave on the back T+C",
+   "audit": [
+    "back",
+    null,
+    "T+C",
+    "single",
+    false
+   ],
+   "mine": [
+    "back",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "back only: the words are left to the engraving reader, as today"
+  },
+  {
+   "id": "P12",
+   "field": "",
+   "value": "",
+   "pers": "Bitte folgendes wenn es geht hochkant (von unten nach oben des Otters zu lesen) auf die Rückseite gravieren:\n\nAlways.",
+   "audit": [
+    "back",
+    null,
+    "Always.",
+    "single",
+    false
+   ],
+   "mine": [
+    "none",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "a foreign-language note: nothing is read, the line stays the default back"
+  },
+  {
+   "id": "P13",
+   "field": "Charm Size",
+   "value": "14mm + engraving",
+   "pers": "",
+   "audit": [
+    "back",
+    null,
+    "I dissent",
+    "single",
+    false
+   ],
+   "mine": [
+    "none",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "a receipt-level note with no label: nothing is read, the line stays the default back"
+  },
+  {
+   "id": "P14",
+   "field": "Charm Type",
+   "value": "CHARM + Engraving",
+   "pers": "I would like the charm to be double sided please.",
+   "audit": [
+    "both",
+    null,
+    null,
+    "none",
+    true
+   ]
+  },
+  {
+   "id": "P15",
+   "field": "",
+   "value": "",
+   "pers": "Hello!\nFront: m - Vibur\n\nBack: 3 - Vibur\n\nPoss...",
+   "audit": [
+    "both",
+    "m",
+    "3",
+    "labelled",
+    false
+   ]
+  },
+  {
+   "id": "P16",
+   "field": "",
+   "value": "",
+   "pers": "...round edges)\nFront of tag in font Britannic Bold: T (capital lett...",
+   "audit": [
+    "front",
+    "T",
+    null,
+    "single",
+    false
+   ],
+   "mine": [
+    "front",
+    null,
+    null,
+    "unlabelled",
+    true
+   ],
+   "why": "the fixture text starts in the middle of a sentence, so there are words before the front label: a person looks"
+  },
+  {
+   "id": "P17",
+   "field": "Length/Engrave:1 side/2 sides?",
+   "value": "Silver- 16\"- 2 sides",
+   "pers": "font: Pristina\nback: NAME1 and ...",
+   "audit": [
+    "both",
+    null,
+    "NAME1 and ...",
+    "labelled",
+    false
+   ],
+   "mine": [
+    "both",
+    null,
+    "NAME1 and ...",
+    "labelled",
+    true
+   ],
+   "why": "front and back chosen and only the back written: a person says the front (the audit keeps needsPerson false)"
+  },
+  {
+   "id": "P18",
+   "field": "METAL - ENGRAVING",
+   "value": "ROSE + FRONT&BACK (listing offers it)",
+   "pers": "... • NAME1\nBack I love you\nFont Angelina",
+   "audit": [
+    "both",
+    "NAME1",
+    "I love you",
+    "labelled",
+    false
+   ],
+   "mine": [
+    "both",
+    null,
+    null,
+    "unlabelled",
+    true
+   ],
+   "why": "one labelled face and the other by elimination: not guessed, a person looks"
+  },
+  {
+   "id": "P19",
+   "field": "",
+   "value": "",
+   "pers": "...in the back please but with the calligraphic font if possible",
+   "audit": [
+    "back",
+    null,
+    null,
+    "single",
+    false
+   ],
+   "mine": [
+    "none",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "no engraving word beside the face word: nothing is read, the line stays the default back"
+  },
+  {
+   "id": "P20",
+   "field": "",
+   "value": "",
+   "pers": "(Please see message for handwritten heart for back of the disc)",
+   "audit": [
+    "back",
+    null,
+    null,
+    "none",
+    true
+   ],
+   "mine": [
+    "none",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "a message, not the line's own note: nothing is read, the line stays the default back"
+  },
+  {
+   "id": "P21",
+   "field": "",
+   "value": "",
+   "pers": "...\" on both. Possibly in a small, handwriting style, but okay if not!",
+   "audit": [
+    "none",
+    null,
+    null,
+    "single",
+    false
+   ]
+  },
+  {
+   "id": "P22",
+   "field": "",
+   "value": "",
+   "pers": "Please use font #3 in all caps for both hearts.",
+   "audit": [
+    "none",
+    null,
+    null,
+    "none",
+    false
+   ]
+  },
+  {
+   "id": "P23",
+   "field": "",
+   "value": "",
+   "pers": "Can the initial be on the front and the date on the back?",
+   "audit": [
+    "both",
+    "the initial (words come later)",
+    "the date (words come later)",
+    "unlabelled",
+    true
+   ],
+   "mine": [
+    "both",
+    null,
+    null,
+    "unlabelled",
+    true
+   ],
+   "why": "the sentence names the faces but not the words: both faces stay empty for a person"
+  },
+  {
+   "id": "P24",
+   "field": "",
+   "value": "",
+   "pers": "Can I engrave both sides of the id tag? (WORD1 on one side and the date on the backside)",
+   "audit": [
+    "both",
+    null,
+    null,
+    "unlabelled",
+    true
+   ]
+  },
+  {
+   "id": "P25",
+   "field": "",
+   "value": "",
+   "pers": "just ordered a double sided necklace. Here are the two handwritten notes I'd like added to each side ... one on the back and the other on the front",
+   "audit": [
+    "both",
+    null,
+    null,
+    "none",
+    true
+   ]
+  },
+  {
+   "id": "P26",
+   "field": "",
+   "value": "",
+   "pers": "... the same back side engraving: 4.29.23",
+   "audit": [
+    "back",
+    null,
+    "4.29.23",
+    "single",
+    false
+   ],
+   "mine": [
+    "back",
+    null,
+    null,
+    "none",
+    false
+   ],
+   "why": "back only: the words are left to the engraving reader, as today"
+  },
+  {
+   "id": "P27",
+   "field": "Charm Type",
+   "value": "Tag2 (front+back)",
+   "pers": "Front: AB\nBack: CD",
+   "audit": [
+    "both",
+    "AB",
+    "CD",
+    "labelled",
+    false
+   ]
+  },
+  {
+   "id": "P28",
+   "field": "Charm Type",
+   "value": "Tag2 (front+back)",
+   "pers": "AB",
+   "audit": [
+    "both",
+    null,
+    null,
+    "unlabelled",
+    true
+   ]
+  },
+  {
+   "id": "P29",
+   "field": "Charm Type",
+   "value": "Tag3 (front + back)",
+   "pers": "AB\nCD",
+   "audit": [
+    "both",
+    null,
+    null,
+    "unlabelled",
+    true
+   ]
+  },
+  {
+   "id": "P30",
+   "field": "Charm Type",
+   "value": "Tag4 (front engrave)",
+   "pers": "AB",
+   "audit": [
+    "front",
+    "AB",
+    null,
+    "single",
+    false
+   ]
+  },
+  {
+   "id": "P31",
+   "field": "Charm Type",
+   "value": "Tag1 (front engrave)",
+   "pers": "front: AB / back: CD",
+   "audit": [
+    "front",
+    "AB",
+    null,
+    "labelled",
+    true
+   ],
+   "mine": [
+    "front",
+    null,
+    null,
+    "labelled",
+    true
+   ],
+   "why": "front chosen but the note labels the back too: BOTH faces stay empty so a person looks (a filled front would hide the conflict from the faces model)"
+  },
+  {
+   "id": "P32",
+   "field": "Charm Type",
+   "value": "Tag1 (front+back)",
+   "pers": "Back only: CD",
+   "audit": [
+    "both",
+    null,
+    "CD",
+    "labelled",
+    true
+   ]
+  }
+ ]
+}
