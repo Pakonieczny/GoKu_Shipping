@@ -1413,6 +1413,7 @@ const Orders = window.Orders = (() => {
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
   const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
+  const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
@@ -1423,9 +1424,9 @@ const Orders = window.Orders = (() => {
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
-      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
+      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) + "|" + libFacts(nameOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
-      libFacts(typoOf(l.sku)),
+      libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
       row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
@@ -1748,7 +1749,7 @@ const Orders = window.Orders = (() => {
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
           const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
-          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && oldSpec.designSku !== r.spec.designSku;
+          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && !O.sameDesign(oldSpec.designSku, r.spec.designSku, sku => Master.entryFor(sku));   // (the same drawing under another of its names is no change: a design the library keeps under two spellings)
           const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
           // An update that changes nothing this line is made from (Etsy moves an order's update time for an address, a
           // gift note, a shipping upgrade, or a change to one of its other lines) is taken as it is. Every such update
@@ -10772,7 +10773,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -11068,7 +11069,7 @@ const Review = window.Review = (() => {
       // SKUs named by the value are offered, and the answer is kept for this listing and value
       const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
-        `${p.note ? `<div class="why">${esc(p.note)}</div>` : ""}<div class="ask">What does this option decide?</div>
+        `${p.note ? `<div class="why">${esc(p.note)}</div>` : p.letter ? `<div class="why">${esc(p.letter.why)}</div>` : ""}<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
         <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>

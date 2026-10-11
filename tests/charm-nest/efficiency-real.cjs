@@ -106,6 +106,7 @@ seed();
       if (u.pathname.endsWith('/employeeEfficiency')) { let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {} Date.now = () => NOW; const a = await answer(b); Date.now = realNow; return route.fulfill({ status: a.status, contentType: 'application/json', body: JSON.stringify(a.body) }); }
       return route.continue();
     });
+    await require('./master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {} window.confirm = () => true; window.alert = () => {}; });
     const page = await ctx.newPage(), errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { /* a server that has no `live` op yet answers it 400 "unknown op" once (the console then goes on with the overview alone): the browser's own notice for that is not a page error */ if (m.type() === 'error' && !(/status of 400/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push(m.text()); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);

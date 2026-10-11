@@ -3,7 +3,7 @@
 // a resumed run skips what was already written.
 //   node tests/charm-nest/index-master.cjs
 const fs = require('fs'), path = require('path'), assert = require('assert'), os = require('os');
-const { start } = require('./bridge-server.cjs');
+const { start, REPO_TEST } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 const { main } = require('../../scripts/index-master.cjs');
 
@@ -13,6 +13,8 @@ const { main } = require('../../scripts/index-master.cjs');
   const fx = await buildMaster(file, { count: 8, edge: true });
   const srv = await start({ receipts: [] });
   const { st, sorterOrigin } = srv;
+  // the Charm Repo's password door is REAL here: the stand-in hands out no token of its own, the script unlocks with Paul's (throwaway) password from the environment
+  st.repoStrict = true; process.env.CHARM_REPO_PASSWORD = REPO_TEST.password;
   const lines = []; const log = l => { lines.push(String(l)); if (process.env.CN_VERBOSE) console.log(l); };
   // dry run: nothing written
   const dry = await main(['node', 'x', file, '--dry'], log);
@@ -28,6 +30,7 @@ const { main } = require('../../scripts/index-master.cjs');
   assert(ix.some(e => e.sizes && e.sizes.S), 'the size suffix became a sized entry');
   assert(ix.some(e => e.sku === 'BR-DUP-05') && ix.find(e => e.sku === 'BR-DUP-05').aiPath === ix.find(e => e.sku === 'BR-TST-05').aiPath, 'the second line under a charm is its own SKU on the same file');
   assert(rep.orphans.length === 1 && rep.unlabelled.length === 2 && rep.duplicates.length === 0, 'edge cases reported: ' + JSON.stringify({ o: rep.orphans.length, u: rep.unlabelled.length, d: rep.duplicates.length }));
+  { const tries = st.list('CharmRepo_AuthAttempts'), alerts = st.list('CharmRepo_Alerts'); assert(tries.length >= 1 && tries.every(t => t.ok === true && t.action === 'upload') && alerts.length === tries.length, 'the script unlocked through the door, once for its upload token, and every try is recorded: ' + JSON.stringify(tries.map(t => [t.action, t.ok]))); assert(!JSON.stringify([...st.docs]).includes(REPO_TEST.password), 'the password is stored nowhere'); }
   const files = st.list('Charm_Master_Files'); assert(files.length === 1 && files[0].indexedBy === 'local-indexer' && files[0].charms === 8, 'the file record');
   assert([...st.blobs.keys()].some(k => k.startsWith('charmnest/master/files/')), 'the master itself was stored');
   assert(fs.existsSync(file + '.index-progress.json') && fs.existsSync(file + '.index-report.json'), 'progress and report files written');

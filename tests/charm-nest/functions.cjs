@@ -85,7 +85,8 @@ const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
 const out = require(path.join(fnDir, 'charmNestOutput.js'));
 const name = require(path.join(fnDir, 'charmNestName.js'));
 const solve = require(path.join(fnDir, 'charmNestSolve-background.js'));
-const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers, body: JSON.stringify(body) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
+const repoStamp = require('./_repoToken.cjs');   // (a protected Charm Repo op carries the token the door issues on the same in-memory Firestore)
+const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers, body: JSON.stringify(await repoStamp(h === out ? 'charmNestOutput' : 'charmNestLibrary', body)) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
 
 (async () => {
   // ── gate ──

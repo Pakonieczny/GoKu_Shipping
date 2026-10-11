@@ -164,7 +164,7 @@ function source() {
   const src = fs.readFileSync(path.join(root, 'charm-nest-orders.js'), 'utf8'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   ok(/rule:tag-shape/.test(src) && /tagOptionOf, tagOptionRead, TAG_SHAPES/.test(src), 'the rule and its helper are in charm-nest-orders.js');
   const tok = (html.match(/charm-nest-orders\.js\?v=([^"]*)"/) || [])[1] || '';
-  ok(/-as1-ts1$/.test(tok) && /-fw2-/.test(tok), 'the sorter page\'s cache token for charm-nest-orders.js keeps every earlier suffix and ends with mine: ' + tok);
+  ok(/-ts1$/.test(tok) && /-fw2-as1/.test(tok), 'the sorter page\'s cache token for charm-nest-orders.js keeps every earlier suffix and ends with mine: ' + tok);
   step('source: the rule, its helper and exports are in; the cache token keeps its history and ends -ts1');
 }
 
