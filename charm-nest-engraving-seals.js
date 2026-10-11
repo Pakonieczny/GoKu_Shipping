@@ -119,14 +119,6 @@
     }
     return `Read from ${SOURCE[job.source] || job.source}${pct>0?` · ${pct}% sure`:''}`;
   }
-  /** What the intake read of this line's faces, in the one plain line it wrote for Paul (spec.engraving.why), or who set them; '' for a line that engraves the back only and was never edited, so those cards are exactly what they were. */
-  function setupWhy(e){
-    const F=faceLib(),row=e.job?.row,line=row?.parentRow || row;
-    if(!F || !F.setupOf || !line || !line.spec)return '';
-    let st=null;try{st=F.setupOf(line);}catch(_){return '';}
-    if(!st || !(st.faces.includes('front') || st.edited))return '';
-    return st.edited?`Faces set by ${st.by || 'a person'}: ${F.modeLabel(st.mode).toLowerCase()}`:String(st.why || '');
-  }
   /** The pieces of a cycle as piece groups (a piece with its Front and Back job), and the key to go to from the shown one: Back / Next go piece by piece, keeping the face that is shown. */
   const groupsOf=c=>{const F=faceLib();return F && F.groupPieces && c && Array.isArray(c.pieces)?F.groupPieces(c.pieces.map(p=>p.job).filter(Boolean)):[];};
   function neighbour(c,dir){
@@ -173,14 +165,13 @@
     const lbl=say(kind==='approve' || kind==='approved'?'Words on the back':'Words as read'),from=kind==='approved'?'':readFrom(e);
     const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}${fontMeta(e)?`<span class="egMeta egFont">${esc(fontMeta(e))}</span>`:''}</div>`
       :kind==='words' || kind==='preparing'?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words egNone">Nothing read yet</div></div>`:'';
-    const sw=setupWhy(e),setupHtml=sw?`<span class="egMeta egSetup" data-engraving-setup>${esc(sw)}</span>`:'';
     const un=unclear(e),unclearHtml=un.length?`<div class="egUnclear"><span class="egLbl">${kind==='words'?'What is unclear':'Worth a look'}</span><ul>${un.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
     const saving=kind==='approved' && !e.note?savingNote(e.job):null,note=e.note || (saving?say(saving.note):'') || '',working=e.note?e.working:saving?.working;
     const sub=note?`<span class="by egSub">${working?'<span class="owSpin" aria-hidden="true"></span>':''}<span>${esc(note)}</span></span>`:'';
     const failKey=e.job?.key,failed=kind==='approve' && failKey?fails.get(failKey):'';if(kind!=='approve' && failKey)fails.delete(failKey);
     const forPiece=e.pieceLabel?`<span class="egFor"><b>${esc(e.pieceLabel)}</b>${e.pieceMeta?` <small>${esc(e.pieceMeta)}</small>`:''}</span>`:'';
     const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
-    return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"${face==='front'?' data-face="front"':''}><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${setupHtml}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
+    return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"${face==='front'?' data-face="front"':''}><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for

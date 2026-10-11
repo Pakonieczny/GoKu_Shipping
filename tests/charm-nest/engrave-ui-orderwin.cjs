@@ -356,8 +356,8 @@ ok('a front seal keeps its face through merge, list and the timeline\'s events',
   });
 }
 
-/* 8c ── the card mounted in a host: the line's setup editor goes under it, once for each line ─── */
-okA('mount: a faced card with its Front | Back switch; the ENGSETUP editor mounted once under the card when it is on the page', async () => {
+/* 8c ── the card mounted in a host: ENGSETUP's line editor goes under it ──────────── */
+okA('mount: a faced card with its Front | Back switch; the ENGSETUP editor mounted under the card when it is on the page', async () => {
   reset(); w.Element.prototype.getClientRects = function () { return [{}]; };   // (jsdom has no layout: a card is drawn only where it can be seen)
   const host = d.createElement('div'); d.body.appendChild(host);
   const h = OE.mount(host, { rid: '4195966039', key: charm.key, poolId: 'p1', row: charm });
@@ -366,16 +366,15 @@ okA('mount: a faced card with its Front | Back switch; the ENGSETUP editor mount
   assert(card, 'the card is drawn'); assert.equal(host.querySelectorAll('.egEarSwitch.egFaces .egEarTab').length, 2, 'with the Front | Back switch');
   assert.equal(card.querySelector('.swEng').dataset.face, 'front', 'on the face still to settle');
   assert.equal(host.querySelector('.owEngSetup'), null, 'no editor while the component is not on the page');
-  const calls = []; w.CharmNestEngraveSetup = { mount: (slot, row, o) => { calls.push([slot.className, row, o]); } };
+  w.eval(src('charm-nest-engrave-setup.js'));   // (the real component, ENGSETUP's: mounted by its one call under every card)
   h.refresh(true, true); await new Promise(r => setTimeout(r, 30));
-  assert.equal(host.querySelectorAll('.owEngSetup').length, 1); assert.equal(calls.length >= 1, true); const last = calls[calls.length - 1];
-  assert.equal(last[1], charm, 'it gets the line'); assert.deepEqual(JSON.parse(JSON.stringify(last[2])), { compact: true });
-  assert.equal(host.querySelector('.owEngCard + .owEngSetup') !== null, true, 'right under the card');
-  // a list of cards (a pair: a card for each ear): one editor for the line
-  const lh = d.createElement('div'); d.body.appendChild(lh); calls.length = 0;
+  assert.equal(host.querySelectorAll('.owEngCard .owEngSetup').length, 1, 'inside the card, under its buttons');
+  const line = host.querySelector('.owEngSetup .egSetup'); assert(line, 'the line\'s editor is drawn'); assert(/Front \+ back|Front and back|both/i.test(line.textContent), line.textContent.slice(0, 120));
+  // a list of cards (a pair: a card for each ear), each with its Front | Back
+  const lh = d.createElement('div'); d.body.appendChild(lh);
   const ps = [{ key: earLF.key, slot: 'L', poolId: 'pL', row: earLF.row }, { key: earRF.key, slot: 'R', poolId: 'pR', row: earRF.row }];
   const lst = OE.mount(lh, { rid: '4195966040', pieces: ps }); await new Promise(r => setTimeout(r, 30));
-  assert.equal(lh.querySelectorAll('.owEngCard').length, 2, 'a card for each ear'); assert.equal(lh.querySelectorAll('.owEngSetup').length, 1, 'one editor for the line, not one for each ear'); assert.equal(calls.every(c => c[1] === ear || c[1].parentRow === ear), true);
+  assert.equal(lh.querySelectorAll('.owEngCard').length, 2, 'a card for each ear');
   lh.querySelectorAll('.owEngCard').forEach(c => assert.equal(c.querySelectorAll('.egEarSwitch.egFaces .egEarTab').length, 2, 'each ear has its Front | Back'));
   delete w.CharmNestEngraveSetup; lst.destroy(); h.destroy(); host.remove(); lh.remove(); reset();
 });

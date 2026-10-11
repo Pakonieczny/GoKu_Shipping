@@ -65,16 +65,6 @@
   }
   const waitNode = text => { const n = doc().createElement('div'); n.className = 'owEngWait'; n.setAttribute('role', 'status'); n.setAttribute('aria-live', 'polite'); n.innerHTML = `<span class="owSpin" aria-hidden="true"></span><span>${esc(text)}</span>`; return n; };
 
-  /** The line's engraving-setup editor (charm-nest-engrave-setup.js, ENGSETUP: "Engraves: Front / Back / Front + back", each face's words and font, one quiet line): mounted under the card with its one call.
-   *  It draws nothing for a line with no engraving to talk about; nothing here while the component is not on the page. A line is edited once: on its card, or on the first compact card of the line in a list. */
-  const SETUP = () => (root.CharmNestEngraveSetup && typeof root.CharmNestEngraveSetup.mount === 'function' ? root.CharmNestEngraveSetup : null);
-  function mountSetup(card, row) {
-    const ES = SETUP(); if (!ES || !row || !card || !card.parentNode) return;
-    const slot = doc().createElement('div'); slot.className = 'owEngSetup'; slot.setAttribute('data-engrave-setup', '');
-    card.after(slot);
-    tryDo(() => ES.mount(slot, row, { compact: true }));
-  }
-
   /* ── what a piece's back engraving is, as the card shows it ── */
   const ordersRows = () => tryDo(() => (root.Orders && root.Orders.rows && root.Orders.rows()) || [], []);
   function rowFor(ctx) {
@@ -241,7 +231,8 @@
     const seals = j && S ? tryDo(() => S.list(j).map(s => s.id).join(','), '') : e.saved && S ? tryDo(() => S.list({ seals: e.saved.seals || [], approvedAt: e.saved.approvedAt, approvedBy: e.saved.approvedBy, state: e.saved.state }).map(s => s.id).join(','), '') : '';
     return JSON.stringify([e.kind, e.text, e.note, !!e.working, e.by, +e.at || 0, !!e.foreign, j && j.state, j && +j.approvedAt || 0, j && j.backPending || '', seals, j && idOf(j.fit), j && idOf(j.view),
       e.back && (e.back.approvedAt || '') + (e.back.png || (e.back.outputs && e.back.outputs.png && e.back.outputs.png.url) || e.back.preview || ''),
-      r.cycle && [r.cycle.key, r.cycle.pieces.map(p => [p.key, p.state, p.words, p.font.name, p.stage])], j && faceOf(j) === 'front' ? 'front' : 0, r.both ? [!!r.both.ok, r.both.why] : 0]);
+      r.cycle && [r.cycle.key, r.cycle.pieces.map(p => [p.key, p.state, p.words, p.font.name, p.stage])], j && faceOf(j) === 'front' ? 'front' : 0, r.both ? [!!r.both.ok, r.both.why] : 0,
+      root.CharmNestEngraveSetup ? tryDo(() => root.CharmNestEngraveSetup.sig(j ? j.row : r.row), '') : '']);   // (the line's engraving setup changed somewhere else: its control is drawn again)
   }
 
   /* ── the card on a page ── */
@@ -295,6 +286,8 @@
       host.replaceChildren(card);
       // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again; each disc its own)
       S.wirePanel(card, shownEng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), approveBoth: b => approveBoth(b), open: b => openEngrave(b), stale: () => refresh(true, true), pick: k => pickDisc(k), zoom: { id: 'ow:eng', key: ident(ctx) + (r.cycle ? '|' + r.cycle.key : '') } });
+      // (the line's engraving setup: None / Front only / Back only / Front + back, each face's words and font; one control for every card, charm-nest-engrave-setup.js)
+      if (root.CharmNestEngraveSetup && (r.job || r.row)) { const su = doc().createElement('div'); su.className = 'owEngSetup'; card.appendChild(su); tryDo(() => root.CharmNestEngraveSetup.mount(su, r.job ? r.job.row : r.row, { compact: true })); }
       // every wait is said: the picture still coming, the words still being read
       const pv = card.querySelector('.pv'), im = pv && pv.querySelector('img');
       if (im && !im.complete) {
@@ -303,7 +296,6 @@
         im.addEventListener('error', () => { pv.classList.add('egPvNone'); pv.innerHTML = `<span class="by">${aboutFace('No preview here: see the back in Engraving', face)}</span>`; }, { once: true });
       }
       const sub = card.querySelector('.egSub'); if (sub && eng.kind === 'preparing' && eng.working) sub.setAttribute('role', 'status');
-      if (!ctx.compact || ctx.setup) mountSetup(card, r.row || (r.job && r.job.row));
     }
     /** Look again; draw only when what the card shows has changed (or at once when asked). `quiet`: the host is not told. */
     function refresh(force, quiet) {
@@ -451,15 +443,13 @@
       const keys = new Set(want.map(p => p.kid));
       for (const [k, v] of [...kids]) if (!keys.has(k)) { tryDo(() => v.handle.destroy()); v.el.remove(); kids.delete(k); }
       host.hidden = false;   // (a host we hid ourselves has no box: the cards inside are drawn only where they can be seen)
-      let at = head; const lines = new Set();
+      let at = head;
       for (const p of want) {
         let k = kids.get(p.kid);
         if (!k) { k = { el: doc().createElement('div'), handle: null }; kids.set(p.kid, k); }
         if (at.nextSibling !== k.el) host.insertBefore(k.el, at.nextSibling);
         at = k.el;
-        // (the line's setup editor goes on the first card of each line)
-        const lk = p.row ? (p.row.parentRow || p.row).key : '', first = !!lk && !lines.has(lk); if (lk) lines.add(lk);
-        const kctx = Object.assign({}, ctx, { key: p.key, poolId: p.poolId || '', row: p.row, piece: p.key, label: p.label || '', meta: p.meta || '', compact: true, setup: first, pieces: undefined, sheetEng: p.sheetEng, changed: r => { recompute(); told(r); } });
+        const kctx = Object.assign({}, ctx, { key: p.key, poolId: p.poolId || '', row: p.row, piece: p.key, label: p.label || '', meta: p.meta || '', compact: true, pieces: undefined, sheetEng: p.sheetEng, changed: r => { recompute(); told(r); } });
         if (!k.handle) k.handle = mountOne(k.el, kctx); else k.handle.update(kctx);
       }
       label(); recompute();
