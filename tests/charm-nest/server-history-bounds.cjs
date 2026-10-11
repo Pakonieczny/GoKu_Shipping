@@ -121,7 +121,8 @@ Module._load = function (req, ...rest) {
 const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
 const orders = require(path.join(fnDir, 'firebaseOrders.js'));
 const archive = require(path.join(fnDir, 'designArchive.js'));
-const call = (h, body, qs) => h.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body), queryStringParameters: qs || {} }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
+const repoStamp = require('./_repoToken.cjs');   // (a protected Charm Repo op carries the token the door issues on the same in-memory Firestore)
+const call = async (h, body, qs) => h.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(h === lib ? await repoStamp('charmNestLibrary', body) : body), queryStringParameters: qs || {} }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
 const post = body => call(lib, body);
 const readsOf = async fn => { reads.clear(); jsonReads.n = 0; const r = await fn(); return { r, reads: new Map(reads), total: [...reads.values()].reduce((a, b) => a + b, 0), json: jsonReads.n }; };
 const DAY_MS = 86400000, T0 = Date.parse('2026-09-24T12:00:00Z');

@@ -81,6 +81,8 @@ exports.handler = async (event) => {
   const body = parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
   const fn = OPS[body.op]; if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
+  // the Charm Repo's files (charmnest/master/...): uploading into them and minting a link to a whole master file need the repo token (_charmNestRepoAuth.js)
+  { const RepoAuth = require("./_charmNestRepoAuth"), need = RepoAuth.requirement("charmNestOutput", body.op, body); if (need) { const no = await RepoAuth.authorize(admin.firestore(), need, body, event); if (no) return json(no.status, no.body); } }
   // the sandbox keeps its files apart: every path is moved under charmnest/sandbox/ (a path already there is left alone)
   if ((body.sandbox === true || body.sandbox === 1 || body.sandbox === "1") && typeof body.path === "string") { const p = safePath(body.path); body.path = /^charmnest\/sandbox\//.test(p) ? p : p.replace(/^charmnest\//, "charmnest/sandbox/"); }
   try { const out = await fn(body); return json(out && out.error ? 400 : 200, out); }

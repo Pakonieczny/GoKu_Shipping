@@ -397,8 +397,24 @@
   }
   /** The master's SKU for a SKU that is exactly a known typo ("" when it is not, or the master does not hold the right one). */
   const typoSku = (sku, masterEntry, masterLoose) => { const t = knownTypo(sku); return t ? spelling(t, masterEntry, masterLoose) : ""; };
-  /** The master's SKU a SKU stands for ("" when the master holds none): its own spelling, else the right spelling of a known typo. */
-  const masterSku = (sku, masterEntry, masterLoose) => spelling(sku, masterEntry, masterLoose) || typoSku(sku, masterEntry, masterLoose);
+  /* KNOWN_SKU_NAMES (MUSICSKU, 11 Oct 2026): the ONE definition of an Etsy SKU that is a design's plain SKU with words after it, which Paul named as that design.
+     Order 4198591262 carries "MUSIC4 - SINGLE W/ DOUBLE LINE" (a necklace charm, Silver, 14"); the master design is the music note MUSIC4 (it was "MUSIC 4" until Paul
+     asked for the Etsy spelling). An exact entry, compared as every SKU is (looseKey: case, spacing and punctuation set aside, nothing fuzzier). It is a table of exact
+     SKUs and NOT a rule "<master SKU> - <words>": the master itself shows the words after " - " usually name ANOTHER design (of the 90 master SKUs written "<master SKU> - <words>",
+     61 are not the size of the SKU before the dash; MUSIC3 and "MUSIC3 - DOUBLE MUSIC NOTE" are two designs), so another SKU of the family (MUSIC4 - DOUBLE NOTE) still waits for a person.
+     It stands only when the master really holds the target, only for a SKU that is exactly that one, and after a person's saved answer (an alias, an option map); nothing stored is rewritten. */
+  const KNOWN_SKU_NAMES = Object.freeze({ "MUSIC4 - SINGLE W/ DOUBLE LINE": "MUSIC4" });
+  const NAME_IX = new Map(Object.keys(KNOWN_SKU_NAMES).map(k => [looseKey(k), upSku(KNOWN_SKU_NAMES[k])]));
+  /** The master SKU a SKU is when it is exactly a named one (KNOWN_SKU_NAMES), else "" (the master is not asked). */
+  const knownName = sku => NAME_IX.get(looseKey(sku)) || "";
+  /** The master's SKU for a SKU that is exactly a named one ("" when it is not, or the master does not hold the design: MUSIC4, else the one master SKU that reads the same). */
+  const namedSku = (sku, masterEntry, masterLoose) => { const t = knownName(sku); return t ? spelling(t, masterEntry, masterLoose) : ""; };
+  /** The master's SKU a SKU stands for ("" when the master holds none): its own spelling, else the right spelling of a known typo, else the design Paul named for it. */
+  const masterSku = (sku, masterEntry, masterLoose) => spelling(sku, masterEntry, masterLoose) || typoSku(sku, masterEntry, masterLoose) || namedSku(sku, masterEntry, masterLoose);
+  /** Are two SKUs one drawing in the library? The same SKU, or two the master holds that share one design file (a design sold under two names: "MUSIC 4" and "MUSIC4", the 227 spellings
+   *  the library already keeps twice). An Etsy update that moves a line from one name to the other is not a change of design: nothing is cut, asked or un-approved for it. */
+  const designFile = e => (e ? e.aiPath || (Object.values(e.sizes || {}).find(z => z && z.aiPath) || {}).aiPath || "" : "");
+  const sameDesign = (a, b, masterEntry) => { const x = upSku(a), y = upSku(b); if (x === y) return true; if (!x || !y || !masterEntry) return false; const f = designFile(masterEntry(x)); return !!f && f === designFile(masterEntry(y)); };
   const idOf = x => (x == null || x === "" ? "" : String(x));
   const pairKey = p => idOf(p[0]) + ":" + idOf(p[1]);
   // the (property, value) ids Etsy puts on each variation of a transaction; a question with no value id (Personalization) has none
@@ -671,6 +687,9 @@
     // a SKU that is exactly a known typo (KNOWN_SKU_TYPOS) is its master design: after every answer a person saved for it, before "unknown SKU"
     const typo = raw && typoSku(raw, masterEntry, masterLoose);
     if (typo) return { sku: typo, source: "typo" };
+    // a SKU that is exactly one Paul named as a master design (KNOWN_SKU_NAMES): the same place and the same conditions as a known typo
+    const named = raw && namedSku(raw, masterEntry, masterLoose);
+    if (named) return { sku: named, source: "named" };
     return raw ? { sku: raw, source: "transaction" } : { sku: "", source: null };
   }
   /** The charm an option picks on this listing ({ sku, name, value, variation }), when a person said so under Options, or null. */
@@ -2073,5 +2092,6 @@
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

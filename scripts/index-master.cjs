@@ -92,6 +92,7 @@ function onlySet(spec) {
 
 async function api(origin, passcode, fn, body) {
   const headers = { "Content-Type": "application/json" }; if (passcode) headers["X-Edit-Passcode"] = passcode;
+  body = await require("./_repo-door.cjs").stamp(origin, passcode, fn, body);   // (the Charm Repo's password door: an upload, a patch or a delete carries the token the site gives for Paul's login password)
   const res = await fetch(`${origin}/.netlify/functions/${fn}`, { method: "POST", headers, body: JSON.stringify(body || {}) });
   const txt = await res.text(); let data; try { data = JSON.parse(txt); } catch (_) { data = { error: txt.slice(0, 200) }; }
   if (!res.ok) throw new Error(`${fn} ${body && body.op}: HTTP ${res.status} ${data && data.error || ""}`);
