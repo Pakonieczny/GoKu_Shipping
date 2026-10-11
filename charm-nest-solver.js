@@ -921,6 +921,19 @@
       if (admitted.some(p => p.pinned)) return null;
       const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
       const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.block ? BLOCK_WEIGHTS(baseFine, wallFine, MM_PX, (roseAxis || stripAxis) === "x") : {}), ...(job.fitWeights || {}) };
+      /* Gold-filled and Sterling Silver (job.blockEase, Paul 11 Oct: "a somewhat straight vertical line front exactly like we already do with the RG 14/20 sheet"):
+         the same block weights, so the front stays straight while the sheet fills, and no cavern opens behind it; but a sheet is judged by how full it
+         closes, and the whole strip of stock per mm is a price for a cut sheet, not for one nothing is cut from. Once the front has gone far enough
+         along the sheet (job.blockEase = { from, to, scale }: the share of its length where the easing starts and where it ends, and the share of the
+         strip's price left at its end) a mm of growth costs less, so the last third of a sheet is fitted for density, as before (measured on 6 seeds:
+         the full price closed sheets at 72.7%, against 73.9% without the block; eased 73.8%, fronts as straight as the full price in the first half). */
+      let frontNow = 0;
+      const gw = () => {
+        const e = job.blockEase; if (!e || !job.block) return weights.growth;
+        const len = (axisX ? baseFine.W : baseFine.H) - 2 * wallFine, f = Math.max(0, frontNow - wallFine) / Math.max(1, len);
+        const k = f <= e.from ? 1 : f >= e.to ? e.scale : 1 + (e.scale - 1) * (f - e.from) / (e.to - e.from);
+        return weights.growth * k;
+      };
       const rPx = sliverMm * MM_PX / 2, rU = Math.round(3 * rPx), reach = Math.ceil(2 * rPx) + 2, margin = Math.max(reach, Math.ceil(POCKET_MM * MM_PX));
       const aroundU = Math.round(3 * (+job.aroundMm || AROUND_MM) * MM_PX);
       /* Thickness (see THICK): a free cell a disc of TH.mm[k] covers is worth TH.worth[k + 1], one only the sliver disc
@@ -1187,7 +1200,7 @@
         const along = (axisX ? x + v.fine.w / 2 : y + v.fine.h / 2) / MM_PX, claim = envAt(v, x, y) * cellMm2;
         const mated = markMate({ v, x, y }, p);
         graded++;
-        return { waste, around, growth, along, claim, far, ...(mated.mateHas !== undefined ? { mate: mated.mate, mateHas: mated.mateHas } : {}), fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim + weights.mate * (mated.mate || 0)) };
+        return { waste, around, growth, along, claim, far, ...(mated.mateHas !== undefined ? { mate: mated.mate, mateHas: mated.mateHas } : {}), fit: -(waste + weights.around * around + gw() * growth + weights.along * along + weights.env * claim + weights.mate * (mated.mate || 0)) };
       };
       /* Where a charm can go, exactly. At each angle every position on the fine grid is legal or not; the positions
          are taken 4×4 at a time: a block is out when even the part of the charm all 16 positions share hits
@@ -1335,7 +1348,7 @@
           const lb = (lossLive(v, s.x, s.y) - lastBonus) * cellMm2, around = aroundAt(v, s.x, s.y) * cellMm2;
           const far = axisX ? s.x + v.fine.w : s.y + v.fine.h, growth = Math.max(0, far - front) / MM_PX, along = (axisX ? s.x + v.fine.w / 2 : s.y + v.fine.h / 2) / MM_PX, claim = envAt(v, s.x, s.y) * cellMm2;
           markMate(s, p);
-          Object.assign(s, { waste: lb, around, growth, along, claim, far, fit: -(lb + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim + weights.mate * (s.mate || 0)), staleWaste: true });
+          Object.assign(s, { waste: lb, around, growth, along, claim, far, fit: -(lb + weights.around * around + gw() * growth + weights.along * along + weights.env * claim + weights.mate * (s.mate || 0)), staleWaste: true });
           graded++;
           probe(p, s.v, s.x, s.y, "try");
           if ((i & 63) === 63) { if (stopped()) return null; reportMetrics(); await yieldNow(); }
@@ -1434,7 +1447,7 @@
           the leaders are ever picked, and a marked spot is graded when it rises among them. So each placement costs
           the other waiting charms a few dozen grades, not hundreds.                                               */
       const LEADERS = 16, RESTING = 24, FAST_LEADERS = 6;
-      const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along + weights.env * t.claim + weights.mate * (t.mate || 0));
+      const fitOf = t => -(t.waste + weights.around * t.around + gw() * t.growth + weights.along * t.along + weights.env * t.claim + weights.mate * (t.mate || 0));
       const refresh = (p, spots, events, front) => {
         const out = [], seen = new Set(), key = c => c.v.angle + ":" + c.x + ":" + c.y;
         for (const s of spots) {
@@ -1540,7 +1553,7 @@
         sheetValue();
         while (left.length) {
           if (stopped()) { if (userStop()) return null; timedOut = true; break; }
-          const front = reachOf();
+          const front = reachOf(); frontNow = front;
           // best fit first over every waiting charm: each finds its best spot on the sheet as it is
           const firsts = left.filter(p => first.has(p)), moves = [];
           let lifted = false;
