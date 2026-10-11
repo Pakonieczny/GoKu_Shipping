@@ -2,26 +2,33 @@
 (function(root,factory){const api=factory(root);if(typeof module==='object'&&module.exports)module.exports=api;else root.CNEngravingSeals=api;})(typeof window!=='undefined'?window:null,function(root){
   'use strict';
   const kinds=new Set(['engraveApproved','engravePlain']);
+  /* FACES (plans/front-back-1011): a seal of a FRONT engraving says `face:'front'` and its id is `how:front:at:by`; a back seal has no `face` and the id it always had (`how:at:by`), so
+     every seal already made reads and merges exactly as before, and a front and a back approved in the same instant by the same person are two seals. The face of a seal given by a
+     record is that record's own (a front job, a front back-file record); a seal that carries its face keeps it. */
+  const frontOf=r=>!!r && (r.face==='front' || (typeof r.key==='string' && r.key.endsWith('~front')));
   function merge(...records){
     const stamps=new Map();
-    const add=s=>{if(!s || !kinds.has(s.how))return;const at=+s.at || 0,by=String(s.by || '').trim(),id=s.id || `${s.how}:${at}:${by}`;const identity=`${s.how}:${at}:${by}`;if(!stamps.has(identity))stamps.set(identity,{id,how:s.how,at,by});};
+    const add=(s,rf)=>{if(!s || !kinds.has(s.how))return;const at=+s.at || 0,by=String(s.by || '').trim(),front=s.face==='front' || (s.face!=='back' && rf),face=front?'front:':'';const identity=`${s.how}:${face}${at}:${by}`,id=s.id || identity;if(!stamps.has(identity))stamps.set(identity,front?{id,how:s.how,at,by,face:'front'}:{id,how:s.how,at,by});};
     for(const r of records.filter(Boolean)){
-      for(const s of [...(r.engravingSeals || []),...(r.seals || []),...(r.engrave?.seals || []),...(r.row?.engrave?.seals || [])])add(s);
-      if(+r.approvedAt>0)add({how:'engraveApproved',at:+r.approvedAt,by:r.approvedBy || ''});
-      if(r.state==='skipped' && +r.decidedAt>0)add({how:'engravePlain',at:+r.decidedAt,by:r.decidedBy || r.decision?.by || ''});
+      const rf=frontOf(r);
+      for(const s of [...(r.engravingSeals || []),...(r.seals || []),...(r.engrave?.seals || []),...(r.row?.engrave?.seals || [])])add(s,rf);
+      if(+r.approvedAt>0)add({how:'engraveApproved',at:+r.approvedAt,by:r.approvedBy || ''},rf);
+      if(r.state==='skipped' && +r.decidedAt>0)add({how:'engravePlain',at:+r.decidedAt,by:r.decidedBy || r.decision?.by || ''},rf);
     }
     return [...stamps.values()].sort((a,b)=>a.at-b.at || a.id.localeCompare(b.id));
   }
-  function list(job){const seals=merge(job,job?.row?.engrave,...(job?.backs || []),job?.editOriginal);if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || ''});return seals;}
+  function list(job){const seals=merge(job,job?.row?.engrave,...(job?.backs || []),job?.editOriginal);if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || '',...(frontOf(job)?{face:'front'}:{})});return seals;}
   function keep(job){const seals=list(job);job.engravingSeals=seals;if(job.row){job.row.engrave ||= {};job.row.engrave.seals=seals;}return seals;}
   function fromEvents(events,row){
     const rid=String(row.order?.receiptId || ''),tx=String(row.line?.transactionId || ''),copies=new Set(row.poolIds || []);
     // one ear (or one disc) of a pair: only its own pieces' approvals are its seals (the line's transaction id is shared by the other ear: it must not count)
     const slot=row.parentRow && row.slot ? row.slot : null,lineKey=slot ? row.parentRow.key : null;
-    const mine=e=>slot ? copies.has(e.data?.poolId) || e.type==='engraveChanged' && e.data?.slot===slot && e.lineKey===lineKey : e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId);
-    return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && mine(e)).map(e=>({id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''}))});
+    // (the row of ONE face of a piece sees only that face's events: a front's `data.face` is 'front'; the line's own row sees them all, each seal says its face)
+    const ownFace=row.parentRow ? (frontOf(row) ? e=>e.data?.face==='front' : e=>e.data?.face!=='front') : ()=>true;
+    const mine=e=>ownFace(e) && (slot ? copies.has(e.data?.poolId) || e.type==='engraveChanged' && e.data?.slot===slot && e.lineKey===lineKey : e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId));
+    return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && mine(e)).map(e=>{const s={id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''};if(e.data?.face==='front')s.face='front';return s;})});
   }
-  function add(job,how,by,at=Date.now()){keep(job);const seal={id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
+  function add(job,how,by,at=Date.now()){keep(job);const front=frontOf(job),seal=front?{id:`${how}:front:${at}:${String(by).trim()}`,how,at,by,face:'front'}:{id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
   const regularSize=()=>root?.Seal?.BASE_SIZE || 50;
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

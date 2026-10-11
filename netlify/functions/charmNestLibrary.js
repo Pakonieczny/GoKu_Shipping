@@ -41,6 +41,8 @@ const admin = require("./firebaseAdmin");
 const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
 const OrderRules = require("../../charm-nest-orders.js");
+const Faces = require("../../charm-nest-engrave-faces.js");   // the FACE of an engraving (front | back; absent = back): a back is keyed by its poolId, a front by "<poolId>~front" (plans/front-back-1011)
+const recKeyOf = x => Faces.recKey(x && x.poolId, Faces.faceOf(x));
 const SheetName = require("../../charm-nest-sheet-name.js");   // the one rule for a sheet's number and name (a number is given when a sheet joins a set and is never reused; a name is read from the record)
 const Readiness = require("../../charm-nest-readiness.js");
 const CutLine = require("../../charm-nest-rose.js");   // which metals have a green line (Cut Sheet): Rose Gold, 10K and 14K solid gold
@@ -730,7 +732,7 @@ async function op_listCharms(b) {
    manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
    picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
    per back used to count toward the sheet document's 1 MiB. */
-const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "mirror", "bodyIndex", "groupKey", "slot"];   // (side: the ear of an earring pair this back is for, "L" or "R", and mirror: that piece is the mirror image of the drawn design; absent on every other back)
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion", "side", "mirror", "bodyIndex", "groupKey", "slot", "face"];   // (face: "front" on the record of a FRONT engraving, absent on every back; side: the ear of an earring pair this back is for, "L" or "R", and mirror: that piece is the mirror image of the drawn design; absent on every other back)
 function sheetBack(bk) {
   if (!bk || typeof bk !== "object") return bk;
   const out = {};
@@ -742,10 +744,10 @@ function sheetBack(bk) {
 }
 /** The whole record of each back a sheet lists, from Charm_Pool_Back, when it is still the approval the sheet holds. */
 async function withFullBacks(d) {
-  const pool = d.backPool || [], ids = [...new Set(pool.map(bk => bk && bk.poolId).filter(isPoolId))], full = new Map();
+  const pool = d.backPool || [], ids = [...new Set(pool.filter(bk => bk && isPoolId(bk.poolId)).map(recKeyOf))], full = new Map();
   for (let i = 0; i < ids.length; i += 100) for (const s of await db.getAll(...ids.slice(i, i + 100).map(id => col(BACK).doc(id)))) if (s.exists) full.set(s.id, s.data());
   d.backPool = pool.map(bk => {
-    const r = bk && full.get(bk.poolId); if (!r || r.invalidated || +r.approvedAt !== +bk.approvedAt) return bk;
+    const r = bk && full.get(recKeyOf(bk)); if (!r || r.invalidated || +r.approvedAt !== +bk.approvedAt) return bk;
     const { updatedAt, invalidatedAt, superseded, ...rest } = r; void updatedAt; void invalidatedAt; void superseded;
     return Object.assign(rest, bk, { verified: rest.verified || bk.verified, outputs: bk.outputs || rest.outputs });
   });
@@ -830,14 +832,14 @@ async function op_putSheet(b) {
     if(CutLine.cuts(s.metal) && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
     const ids = new Set(s.poolIds || old.poolIds || []), backs = new Map();
     for (const bk of [...(s.backPool || []), ...(old.backPool || [])]) if (ids.has(bk.poolId)) {
-      const prev = backs.get(bk.poolId);
-      if (!prev || (+bk.approvedAt || 0) >= (+prev.approvedAt || 0)) backs.set(bk.poolId, bk);
+      const key = recKeyOf(bk), prev = backs.get(key);   // (a piece's front and back are two records: each the newest of its own face)
+      if (!prev || (+bk.approvedAt || 0) >= (+prev.approvedAt || 0)) backs.set(key, bk);
     }
     /* An approval this record already holds as it stands needs no look: a back is invalidated, and its sheet's record changed, in
        one commit (op_backInvalidate, putBacks, poolTakeOff), so the record that lists it says it is live. Only a back the
        record does not hold (a page's newer approval, or one a stale page would put back) is read, all together and with the
        three fields that decide it, where each was read whole, one after another, at every save of the sheet. */
-    const held = new Map((Array.isArray(old.backPool) ? old.backPool : []).map(bk => [bk && bk.poolId, +(bk && bk.approvedAt) || 0]));
+    const held = new Map((Array.isArray(old.backPool) ? old.backPool : []).map(bk => [bk && recKeyOf(bk), +(bk && bk.approvedAt) || 0]));
     const look = [...backs].filter(([id, bk]) => !(held.has(id) && held.get(id) === (+bk.approvedAt || 0)));
     for (let i = 0; i < look.length; i += 100) {
       const part = look.slice(i, i + 100), saved = await txGetAll(tx, part.map(([id]) => col(BACK).doc(id)), ["invalidated", "approvedAt", "invalidatedAt"]);
@@ -895,8 +897,9 @@ async function op_backPreview(b) {
   if (!isId(b.sheetId) || !isId(b.poolId)) return { error: "bad back identity" };
   const snap = await col(SHEETS).doc(b.sheetId).get();
   const sheet = snap.exists ? snap.data() : null;
-  const back = (sheet?.backPool || []).find(x => x.poolId === b.poolId);
-  if (!back || !(sheet.poolIds || []).includes(b.poolId)) return { error: "This back no longer belongs to the sheet" };
+  const face = b.face === "front" ? "front" : "back";   // (absent = the back, as every caller before the front engraving)
+  const back = (sheet?.backPool || []).find(x => x.poolId === b.poolId && Faces.faceOf(x) === face);
+  if (!back || !(sheet.poolIds || []).includes(b.poolId)) return { error: face === "front" ? "This front engraving no longer belongs to the sheet" : "This back no longer belongs to the sheet" };
   if (b.approvedAt && +b.approvedAt !== +back.approvedAt) return { error: "This engraving changed; refresh the sheet" };
   const bucket = admin.storage().bucket();
   let path = back.outputs?.png?.path;
@@ -989,7 +992,7 @@ async function op_deleteSheet(b) {
     // Approved back files are never deleted: those a Charm_Pool_Back record still names stay where they are, and the
     // rest go to the archive path, as a superseded approval's do.
     const backs = (d.backPool || []).filter(bk => bk && isPoolId(bk.poolId)), named = new Set();
-    for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(bk.poolId)))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
+    for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(recKeyOf(bk))))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
     await archiveFiles(backs.flatMap(bk => ["ai", "png"].map(k => bk.outputs && bk.outputs[k] && bk.outputs[k].path)).filter(p => p && !named.has(p)).map(from => ({ from, to: archivePath(from) })));
   }
   return { ok: true, deleted: !!d, unlinked: cleared.length, ...(splits.length ? { splits } : {}) };
@@ -1956,7 +1959,7 @@ function mergeInto(into, patch) { for (const [k, v] of Object.entries(patch)) in
 /** One transaction's backs, every one for the sheet `sheetId`. Returns how many were written and skipped, the refused
     ones (errors) and the files to archive once it commits. */
 async function putBacks(tx, sheetId, list, expected) {
-  const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(x => x.poolId))];
+  const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(recKeyOf))];   // (the doc of a back is its poolId, the doc of a FRONT is "<poolId>~front": two records, never one overwriting the other)
   const [sheet, ...priors] = await tx.getAll(target, ...ids.map(id => col(BACK).doc(id)));
   const stored = new Map(priors.map((s, i) => [ids[i], s.exists ? s.data() : {}]));
   const formerIds = [...new Set([...stored.values()].map(r => r.sheetId).filter(id => id && id !== sheetId))];
@@ -1964,7 +1967,7 @@ async function putBacks(tx, sheetId, list, expected) {
   const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [], sheet: sheet.exists ? sheetLabel(sheet.data()) : "" };
   let pool = sheet.exists ? sheet.data().backPool || [] : null;
   for (const x of list) {
-    const old = stored.get(x.poolId), currentBack = pool && pool.find(v => v.poolId === x.poolId);
+    const key = recKeyOf(x), old = stored.get(key), currentBack = pool && pool.find(v => recKeyOf(v) === key);
     const refused = !sheet.exists || !poolIds.includes(x.poolId) ? "The target sheet does not contain this exact charm copy"
       : (old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt ? "This approval has been superseded; reopen the engraving"
       : null;
@@ -1985,9 +1988,9 @@ async function putBacks(tx, sheetId, list, expected) {
     if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
     // a later row for the same copy is checked against this one, as when each was its own transaction; a copy sent twice is
     // written once, whole, as the two writes would have left it (null)
-    patches.set(x.poolId, patches.has(x.poolId) ? null : record); stored.set(x.poolId, mergeInto(Object.assign({}, old), record));
-    pool = pool.filter(b => b.poolId !== x.poolId).concat([copy]);
-    if (old.sheetId && old.sheetId !== sheetId && formers.has(old.sheetId)) { formers.set(old.sheetId, formers.get(old.sheetId).filter(b => b.poolId !== x.poolId)); leaving.add(old.sheetId); }
+    patches.set(key, patches.has(key) ? null : record); stored.set(key, mergeInto(Object.assign({}, old), record));
+    pool = pool.filter(b => recKeyOf(b) !== key).concat([copy]);
+    if (old.sheetId && old.sheetId !== sheetId && formers.has(old.sheetId)) { formers.set(old.sheetId, formers.get(old.sheetId).filter(b => recKeyOf(b) !== key)); leaving.add(old.sheetId); }
     out.moved.push(...moved); out.written++;
   }
   for (const [id, patch] of patches) if (patch) tx.set(col(BACK).doc(id), patch, {merge:true}); else tx.set(col(BACK).doc(id), stored.get(id));
@@ -2002,6 +2005,7 @@ const earCaption = (x, joined) => { const w = earWords(str(x && x.slot, 4)); ret
 const pieceData = x => { const slot = str(x && x.slot, 4); return earWords(slot) ? { slot, ...(x.side === "L" || x.side === "R" ? { side: x.side } : {}) } : {}; };
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
+  for (const x of rows) if (x.face !== "front") delete x.face;   // (a back carries no `face`: the record is byte for byte what it was; only "front" is a face)
   const bySheet = new Map(), errors = [], moved = [], labels = new Map(); let written = 0, skipped = 0;
   for (const x of rows) {
     if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) { errors.push({ row: x, error: "approved back and sheet identity required", identity: true }); continue; }
@@ -2021,8 +2025,9 @@ async function op_backPut(b) {
   await stamp(() => rows.filter(x => !refused.has(x)).map(x => {
     // (the caption is one line: the back's lines joined as the seal and the derived history show them)
     const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
+    const front = Faces.isFront(x);   // (a FRONT engraving's event says so and has its own id, so a piece's front and back each keep their one event)
     return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
-      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: (words ? `“${words}”` : "") + earCaption(x, !!words), data: Object.assign({ text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, x.side === "L" || x.side === "R" ? { side: x.side } : {}, pieceData(x)), id: `${x.poolId}-${num(x.approvedAt)}` };
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + earCaption(x, !!words), data: Object.assign({ text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, front ? { face: "front" } : {}, x.side === "L" || x.side === "R" ? { side: x.side } : {}, pieceData(x)), id: `${recKeyOf(x)}-${num(x.approvedAt)}` };
   }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
@@ -2032,12 +2037,15 @@ async function op_backPut(b) {
   return Object.assign({ error: errors[0].error + (errors.length > 1 ? ` (and ${errors.length - 1} more of the ${rows.length} backs)` : ""), status: errors.every(x => x.identity) ? 400 : 500,
     errors: errors.map(x => ({ poolId: x.row.poolId, sheetId: str(x.row.sheetId, 80) || null, error: x.error })) }, done);
 }
+/** Invalidate the backs of pieces. `face` absent = the back only (what it always did); "front" = the front record; "all" = both. */
 async function op_backInvalidate(b) {
+  const faces = b.face === "all" ? ["back", "front"] : b.face === "front" ? ["front"] : ["back"];
   for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) await db.runTransaction(async tx => {
-    const ref = col(BACK).doc(id), snap = await tx.get(ref), old = snap.exists ? snap.data() : {};
-    const sr = old.sheetId ? col(SHEETS).doc(old.sheetId) : null, ss = sr ? await tx.get(sr) : null;
-    tx.set(ref, {poolId:id, invalidated:true, invalidatedAt:Date.now(), updatedAt:FV.serverTimestamp()}, {merge:true});
-    if (ss?.exists) tx.set(sr, {backPool:(ss.data().backPool || []).filter(x=>x.poolId !== id), updatedAt:FV.serverTimestamp()}, {merge:true});
+    const keys = faces.map(f => Faces.recKey(id, f)), refs = keys.map(k => col(BACK).doc(k)), snaps = await Promise.all(refs.map(r => tx.get(r)));
+    const olds = snaps.map(sn => (sn.exists ? sn.data() : {})), sheetIds = [...new Set(olds.map(o => o.sheetId).filter(Boolean))];
+    const sheets = new Map(); for (const sid of sheetIds) { const sr = col(SHEETS).doc(sid); sheets.set(sid, { sr, ss: await tx.get(sr) }); }
+    faces.forEach((f, i) => tx.set(refs[i], Object.assign({poolId:id, invalidated:true, invalidatedAt:Date.now(), updatedAt:FV.serverTimestamp()}, f === "front" ? { face: "front" } : {}), {merge:true}));
+    for (const { sr, ss } of sheets.values()) if (ss?.exists) tx.set(sr, {backPool:(ss.data().backPool || []).filter(x => !(x.poolId === id && faces.includes(Faces.faceOf(x)))), updatedAt:FV.serverTimestamp()}, {merge:true});
   });
   return {ok:true};
 }
@@ -3966,8 +3974,13 @@ exports.handler = async (event) => {
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   DONE_TOUCH = false;
+  // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
+  // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
+  const RepoAuth = require("./_charmNestRepoAuth");
+  if (RepoAuth.owns(body.op)) return RepoAuth.handle(db, event, body);
   const fn = OPS[body.op];
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
+  { const need = RepoAuth.requirement("charmNestLibrary", body.op, body); if (need) { const no = await RepoAuth.authorize(db, need, body, event); if (no) return json(no.status, no.body); } }
   try {
     const out = await fn(body);
     await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)

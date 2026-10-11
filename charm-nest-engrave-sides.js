@@ -15,13 +15,16 @@
  *   plan(ctx, row, existing)       -> { split, slots:[slot|null], of: Map(poolId -> slot|null) }   how a line's jobs are cut
  *   mirrorOfId(ctx, poolId, charm, hint) -> boolean  is the piece the mirror image of the drawing (the Right earring)?   pieceCharm(ctx, poolId, charm, hint) -> the charm as
  *       THIS piece is cut (CharmNestPair.pieceGeometry: outline, holes and art mirrored, text never reversed); the same object for a piece that is not mirrored
- *   jobKey(rowKey, slot) / parseKey(key) -> { rowKey, slot }
+ *   jobKey(rowKey, slot, face) / parseKey(key) -> { rowKey, slot } (+ face: "front" for a front key only; a back key gives exactly what it always did)
  *   labelOf(slot) "Left" | "Right" | "Disc 2"  ·  earOf(slot) "Left ear" | "Right ear" | "Disc 2"  ·  tagOf(slot, of) "LEFT EAR" | "DISC 2 of 3"
  *   sideRow(ctx, parent, slot, job) -> a row for ONE slot: it inherits everything from the line's row (state, order, spec, line, hold: all
  *       live) and owns its key, its pool ids (only this slot's, live) and its engrave record (kept on the job, so a checkpoint keeps it)
  *   linkParent(ctx, parent, jobs)   -> the line's row `engrave` becomes the summary of its slots (read-only truth: worst state first,
  *       approved only when every slot is approved, `pieces[poolId]` = that piece's own decision); a write to it reaches every slot
  *   summary(ctx, legacy, jobs)      -> that summary, as plain data
+ * FACES (plans/front-back-1011/CONTRACT.md, charm-nest-engrave-faces.js): a piece may have a FRONT job beside its back job (`job.face === 'front'`, key `<rowKey>[#slot]~front`).
+ * Everything above is the BACK exactly as before; a front job is one more job of the line with its own side row, record and seals. A line with no front job reads and
+ * writes the very same data as before this paragraph existed (the face fields below are only ever added, and the summary text/pieces are built by the old code).
  * ctx: { poolRow(poolId), charmOf(poolId), entryFor(sku), pair: CharmNestPair, mergeSeals(...records) }; every member optional.
  * Pure: no page, no network, no clock. Loads in the page (window.CharmNestEngraveSides) and in node. */
 (function (root, factory) {
@@ -33,9 +36,20 @@
   const KEY = /^(.*)#(L|R|D\d{1,2})$/;
   const COPY = /_(\d{1,3})$/;
   const pairLib = ctx => (ctx && ctx.pair) || (root && root.CharmNestPair) || null;
+  const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
+  const Faces = () => dep('CharmNestEngraveFaces', './charm-nest-engrave-faces.js');
+  /** "front" | "back" of a job, a record or a key (absent = back). Without the face module every job is a back, as it was. */
+  const faceOf = x => { const F = Faces(); return F ? F.faceOf(x) : 'back'; };
+  const isFront = x => faceOf(x) === 'front';
 
-  const jobKey = (rowKey, slot) => (slot ? `${rowKey}#${slot}` : String(rowKey));
-  function parseKey(key) { const m = KEY.exec(String(key == null ? '' : key)); return m ? { rowKey: m[1], slot: m[2] } : { rowKey: String(key == null ? '' : key), slot: null }; }
+  const jobKey = (rowKey, slot, face) => (slot ? `${rowKey}#${slot}` : String(rowKey)) + (face === 'front' ? '~front' : '');
+  function parseKey(key) {
+    let k = String(key == null ? '' : key), front = false;
+    if (k.endsWith('~front')) { front = true; k = k.slice(0, -6); }
+    const m = KEY.exec(k), out = m ? { rowKey: m[1], slot: m[2] } : { rowKey: k, slot: null };
+    if (front) out.face = 'front';
+    return out;
+  }
   const labelOf = slot => (slot === 'L' ? 'Left' : slot === 'R' ? 'Right' : /^D\d+$/.test(slot || '') ? 'Disc ' + slot.slice(1) : '');
   const earOf = slot => (slot === 'L' ? 'Left ear' : slot === 'R' ? 'Right ear' : labelOf(slot));
   const tagOf = (slot, of) => (slot === 'L' ? 'LEFT EAR' : slot === 'R' ? 'RIGHT EAR' : /^D\d+$/.test(slot || '') ? 'DISC ' + slot.slice(1) + (of > 1 ? ' of ' + of : '') : '');
@@ -47,6 +61,8 @@
     // (not on a line that is no earring line: a necklace, pendant or charm of a two-body design is one piece per unit, never a Left and a Right ear: Paul, 10 Oct)
     try { if (row && row.spec && typeof P.plainLine === 'function' && P.plainLine({ spec: row.spec, form: row.spec.form })) return false; } catch (_) { /* decided below */ }
     const sku = row && row.spec && row.spec.designSku;
+    // (nor on a line that makes ONE body of a design that draws the same outline twice, a single earring that names no ear: one charm, no ear, Paul 11 Oct)
+    try { const e0 = ctx && ctx.entryFor && sku ? ctx.entryFor(sku) : null; if (e0 && typeof P.oneChoice === 'function' && typeof P.alikeDesign === 'function' && P.oneChoice({ spec: row.spec, form: row.spec.form }, e0) && P.alikeDesign(e0) === true) return false; } catch (_) { /* decided below */ }
     try { const dp = ctx && ctx.entryFor && sku ? P.designPair && P.designPair(ctx.entryFor(sku)) : null; if (dp) return !!dp.mismatched && dp.bodies === 2; } catch (_) { /* fall through to the charm */ }
     try { const ch = ctx && ctx.charmOf && poolId ? ctx.charmOf(poolId) : null; return !!(ch && ch.outline && P.isMismatched(ch)); } catch (_) { return false; }
   }
@@ -117,7 +133,7 @@
   function plan(ctx, row, existing) {
     const ids = (row && Array.isArray(row.poolIds) ? row.poolIds : []).slice();
     const of = new Map(ids.map(id => [id, slotOfId(ctx, row, id)]));
-    const have = (existing || []).filter(e => e && typeof e === 'object');
+    const have = (existing || []).filter(e => e && typeof e === 'object' && !isFront(e));   // (the slots are the back jobs' alone: a front job is a face of a piece, never a piece)
     const slotted = have.filter(e => e.slot), plain = have.find(e => !e.slot);
     const distinct = [...new Set([...of.values()].filter(Boolean))];
     const legacyDecided = !!plain && ['approved', 'written', 'skipped'].includes(plain.state) && !slotted.length;
@@ -132,20 +148,35 @@
 
   /** A row for one slot. Everything not owned here is the line's own (prototype), so a cancelled or held line reads as gone/held for every slot. */
   function sideRow(ctx, parent, slot, job) {
-    const row = Object.create(parent);
+    const row = Object.create(parent), face = job ? faceOf(job) : 'back';
     Object.defineProperties(row, {
-      key: { value: jobKey(parent.key, slot), enumerable: true, writable: true, configurable: true },
+      key: { value: jobKey(parent.key, slot, face), enumerable: true, writable: true, configurable: true },
       slot: { value: slot || null, enumerable: true, configurable: true },
       side: { value: slot === 'L' || slot === 'R' ? slot : null, enumerable: true, configurable: true },
       parentRow: { value: parent, enumerable: false, configurable: true },
       poolIds: { get() { return idsOfSlot(ctx, parent, slot); }, enumerable: true, configurable: true },
       engrave: { get() { return job.engraveRec; }, set(v) { job.engraveRec = v; }, enumerable: true, configurable: true }
     });
+    if (face === 'front') Object.defineProperty(row, 'face', { value: 'front', enumerable: true, configurable: true });   // (a back row has no `face`: the row is what it always was)
     return row;
   }
 
   const STATE_ORDER = ['reclassify', 'classify', 'words', 'blocked', 'ready', 'fitting', 'review', 'approved', 'written'];
   const settled = s => s === 'none' || s === 'skipped';
+  /** "Front: W · Back: 1. 27. 24" for a line with a front job; per piece when the pieces differ: "Left (Front: W · Back: 1) · Right (Front: W · Back: 2)". */
+  function textWithFaces(recs) {
+    const by = new Map();
+    for (const x of recs) {
+      const t = String(x.rec.text || '').replace(/\s*\n\s*/g, ' / ').trim(); if (!t) continue;
+      const slot = x.job.slot || ''; if (!by.has(slot)) by.set(slot, {});
+      by.get(slot)[faceOf(x.job)] = t;
+    }
+    const slots = [...by.keys()].sort((a, b) => order(a || null) - order(b || null));
+    if (!slots.length) return undefined;
+    const one = e => ['front', 'back'].filter(f => e[f]).map(f => (f === 'front' ? 'Front' : 'Back') + ': ' + e[f]).join(' · ');
+    const strs = slots.map(sl => one(by.get(sl)));
+    return new Set(strs).size === 1 ? strs[0] : slots.map((sl, i) => (labelOf(sl) ? labelOf(sl) + ' (' + strs[i] + ')' : strs[i])).join(' · ');
+  }
   /** The line's engraving as one record, from its slots' records. Approved only when every slot is; the state is the least advanced of the slots still
    *  needing a back; `pieces[poolId]` carries each piece's own decision (the readiness check reads it). Returns undefined when no slot has a record yet. */
   function summary(ctx, legacy, jobs) {
@@ -157,8 +188,9 @@
     if (needed.length) out.state = needed.map(x => x.rec.state).sort((a, b) => (STATE_ORDER.indexOf(a) < 0 ? 99 : STATE_ORDER.indexOf(a)) - (STATE_ORDER.indexOf(b) < 0 ? 99 : STATE_ORDER.indexOf(b)))[0];
     else out.state = recs.every(x => x.rec.state === 'none') ? 'none' : 'skipped';
     out.approved = recs.length === list.length && recs.every(x => !!x.rec.approved);
+    const anyFront = list.some(isFront);
     const texts = recs.map(x => ({ slot: x.job.slot, text: String(x.rec.text || '').replace(/\s*\n\s*/g, ' / ').trim() })).filter(x => x.text);
-    out.text = texts.length ? (new Set(texts.map(x => x.text)).size === 1 ? texts[0].text : texts.map(x => (labelOf(x.slot) || 'All') + ': ' + x.text).join(' · ')) : undefined;
+    out.text = anyFront ? textWithFaces(recs) : texts.length ? (new Set(texts.map(x => x.text)).size === 1 ? texts[0].text : texts.map(x => (labelOf(x.slot) || 'All') + ': ' + x.text).join(' · ')) : undefined;
     const by = recs.map(x => x.rec.approvedBy).filter(Boolean); if (by.length) out.approvedBy = by[0];
     out.approvedAt = Math.max(0, ...recs.map(x => +x.rec.approvedAt || 0)) || undefined;
     out.decidedAt = Math.max(0, ...recs.map(x => +x.rec.decidedAt || 0)) || undefined;
@@ -166,7 +198,14 @@
     const merge = ctx && ctx.mergeSeals;
     out.seals = merge ? merge(legacy, ...recs.map(x => x.rec)) : [].concat(...recs.map(x => x.rec.seals || []));
     const pieces = {};
-    for (const x of recs) for (const id of x.job.copies || []) pieces[id] = { needed: !!x.rec.needed, state: x.rec.state, approved: !!x.rec.approved };
+    if (!anyFront) for (const x of recs) for (const id of x.job.copies || []) pieces[id] = { needed: !!x.rec.needed, state: x.rec.state, approved: !!x.rec.approved };
+    else {
+      // a piece with a front job: ONE combined decision (the old three fields, so readiness and the order gate stay right untouched), approved only when every face is, and the faces apart (additive)
+      const by = new Map();
+      for (const x of recs) for (const id of x.job.copies || []) { if (!by.has(id)) by.set(id, []); by.get(id).push({ face: faceOf(x.job), needed: !!x.rec.needed, state: x.rec.state, approved: !!x.rec.approved }); }
+      const F = Faces();
+      for (const [id, rs] of by) pieces[id] = F ? F.combine(rs) : { needed: !!rs[0].needed, state: rs[0].state, approved: !!rs[0].approved };
+    }
     if (Object.keys(pieces).length) out.pieces = pieces;
     for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
     return out;
@@ -256,8 +295,8 @@
 
   /* ── the per-piece record (DISCCYCLE, DISCMODALS, the engraving cards): the existing job read as the disc it is. Derived, never stored, no nested arrays. ──
      pieceRecord(job, o) -> { index (1-based), of, slot, key, lineKey, groupKey, tag "DISC 2 of 3", label "Disc 2", poolIds, words, lines, font, fontAsked, state, approved,
-                              approvedBy, approvedAt, sealed, wordsSource }
-     o: { of } (the number of discs of the line; else the line's own count) */
+                              approvedBy, approvedAt, sealed, wordsSource, face "back"|"front", faceLabel "Back"|"Front", faceTag "BACK"|"FRONT", pieceKey "<line>[#slot]" }
+     o: { of, faces } (the number of PIECES of the line; else the line's own count · how many faces this piece has: 2 puts " · FRONT" on the front's tag) */
   const fontOf = job => {
     const f = (job && job.font) || (job && job.row && job.row.spec && job.row.spec.font) || (job && job.row && job.row.parentRow && job.row.parentRow.spec && job.row.parentRow.spec.font) || null;
     return f && typeof f === 'object' && (f.asked || f.id || f.name) ? { asked: String(f.asked || ''), id: String(f.id || ''), name: String(f.name || ''), source: String(f.source || '') } : null;
@@ -268,15 +307,24 @@
     const of = Math.max(1, Math.floor(+(o && o.of) || 0) || (job.row && job.row.parentRow && perUnitOf(job.row.parentRow)) || idx);
     const lines = (Array.isArray(job.lines) ? job.lines : []).map(x => String(x).trim()).filter(Boolean), font = fontOf(job);
     const seals = [].concat(job.engravingSeals || [], (job.engraveRec && job.engraveRec.seals) || [], job.seals || []);
-    return { index: idx, of, slot, key: job.key, lineKey: job.rowKey || parseKey(job.key).rowKey, groupKey: job.groupKey || '', tag: tagOf(slot, of), label: labelOf(slot),
+    const face = faceOf(job), lineKey = job.rowKey || parseKey(job.key).rowKey, withBack = !!(o && o.faces > 1);
+    const rec = { index: idx, of, slot, key: job.key, lineKey, groupKey: job.groupKey || '', tag: tagOf(slot, of), label: labelOf(slot),
       poolIds: (Array.isArray(job.copies) ? job.copies : []).slice(), words: lines.join(' / '), lines, font, fontAsked: font ? font.asked : '', state: job.state || '',
       approved: ['approved', 'written'].includes(job.state), approvedBy: job.approvedBy || (job.engraveRec && job.engraveRec.approvedBy) || '', approvedAt: +job.approvedAt || +(job.engraveRec && job.engraveRec.approvedAt) || 0, sealed: seals.length > 0, wordsSource: job.wordsSource || job.source || '' };
+    // the face of the job (additive: derived, never stored). A front's tag says so only when the piece has a back besides ("DISC 2 of 3 · FRONT"); the back's tag is what it always was.
+    rec.face = face; rec.faceLabel = face === 'front' ? 'Front' : 'Back'; rec.faceTag = face === 'front' ? 'FRONT' : 'BACK'; rec.pieceKey = lineKey + (slot ? '#' + slot : '');
+    if (face === 'front' && withBack) rec.tag = [rec.tag, 'FRONT'].filter(Boolean).join(' · ');
+    return rec;
   }
-  const bySlot = (a, b) => order(a.slot) - order(b.slot);
-  /** The discs of one line, D1..Dn, each record saying the same `of`. */
+  const faceRank = j => (isFront(j) ? 0 : 1);
+  const bySlot = (a, b) => order(a.slot) - order(b.slot) || faceRank(a) - faceRank(b);
+  /** The pieces of one line (D1..Dn, Left and Right, ...), each record saying the same `of` (the number of PIECES: a piece with a front and a back counts once) and, when a piece has
+   *  both faces, `faces` 2; one record per (piece, face), Front before Back. A line with no front job: exactly the records it always gave. */
   function pieceRecords(jobs, o) {
-    const list = (jobs || []).filter(Boolean).slice().sort(bySlot), of = Math.floor(+(o && o.of) || 0) || list.length;
-    return list.map(j => pieceRecord(j, { of }));
+    const list = (jobs || []).filter(Boolean).slice().sort(bySlot), front = list.some(isFront);
+    const of = Math.floor(+(o && o.of) || 0) || (front ? new Set(list.map(j => j.slot || (j.row && j.row.slot) || null)).size : list.length);
+    const per = new Map(); for (const j of list) { const k = j.slot || (j.row && j.row.slot) || ''; per.set(k, (per.get(k) || 0) + 1); }
+    return list.map(j => pieceRecord(j, { of, faces: front ? per.get(j.slot || (j.row && j.row.slot) || '') : 1 }));
   }
-  return { jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, STATE_ORDER, SLOT: SLOT };
+  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, STATE_ORDER, SLOT: SLOT };
 });

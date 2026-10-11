@@ -82,6 +82,7 @@ function backend(env) {
       }
       try { const r = await route.fetch({ url: `${bk.base}/fn/${m[1]}${u.search}` }); return await route.fulfill({ response: r }); } catch (_) { try { return await route.abort(); } catch (_2) {} }
     });
+    await require('./master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
     await ctx.addInitScript(([k, sb, who]) => {
       try { if (who) localStorage.setItem('cn.employee', who); if (sb) localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', sandbox: 'on' })); } catch (_) {}
       try { if (k && !sessionStorage.getItem('__seeded')) { sessionStorage.setItem('__seeded', '1'); sessionStorage.setItem('cn.eff.key', k); } } catch (_) {}

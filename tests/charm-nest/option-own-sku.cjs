@@ -46,7 +46,7 @@ function cause() {
     // what the OLD reading did, reproduced: the same line with the new rule switched off (a SKU that is no numbered family member), and the same ids so inventoryWhy speaks
     const off = JSON.parse(JSON.stringify(l)); off.sku = 'ZODIAC_EARRINGS-LONE'; off.variations = l.variations;
     const sp = read(rid, off, { listingSkus: {} }), q = open(sp)[0];
-    ok(q && /SKU list for listing \d+ is not loaded yet/.test(q.why), rid + ': a SKU nothing says is the option\'s own still asks, with the plain reason: ' + JSON.stringify(sp.problems));
+    ok(q && (/SKU list for listing \d+ is not loaded yet/.test(q.why) || (q.letter && q.why === 'no master design for letter T on this listing')), rid + ': a SKU nothing says is the option\'s own still asks, with the plain reason (a letter option on a design that is no letter\'s says so in KEYLETTER\'s one line): ' + JSON.stringify(sp.problems));
     ok(sp.designSku === 'ZODIAC_EARRINGS-LONE', 'resolveSku already returned the line\'s own SKU');
   }
   step('cause: the transaction SKU was already the line\'s master design; only the option was left "not mapped" (no table to tie it to the option)');
@@ -199,7 +199,7 @@ function unchanged() {
 }
 
 /* ── 8 · FLAGAUDIT's 211 cases (plans/flag-fix-1011/FLAGAUDIT-cases.json, with the real master list), when the files are there: every "clear" row has no option question with no table,
-      every "ask" / "wait" row still has one, the design is unchanged. The key listing's letters (KEY_5598, one design SKU, not a numbered family) are KEYLETTER's, not this rule's. ── */
+      every "ask" / "wait" row still has one, the design is unchanged. The key listing's letters (KEY_5598, one design SKU, not a numbered family) are KEYLETTER's, not this rule's; the Mini Tag listing's Charm Type (C013) is TAGSKU's. ── */
 function audit() {
   const dir = '/mnt/project-files/plans/flag-fix-1011/', fs = require('fs');
   if (!fs.existsSync(dir + 'FLAGAUDIT-cases.json') || !fs.existsSync(dir + 'master-skus-1011.json')) { console.log('  - audit cases not present here: skipped'); return; }
@@ -209,6 +209,7 @@ function audit() {
   let rows = 0, skipped = 0;
   for (const r of D.cases) {
     if (r.id === 'C208') { skipped++; continue; }
+    if (r.id === 'C013') { skipped++; continue; }   // (TAGSKU: Mini Tag "Charm Type: Tag1 (front engrave)" is read by the tag number now: tests/charm-nest/tag-options.cjs)
     const l = { transactionId: 'T1', listingId: r.listingId, productId: r.productId, sku: r.sku, title: r.title, quantity: 1, metalKey: 'gold', metalLabel: '', personalization: [], buyerMessage: '',
       variations: [{ name: r.metalField, value: r.metalValue, propertyId: r.metalPropertyId || null, valueId: r.metalValueId || null }, { name: r.optionField, value: r.optionValue, propertyId: r.optionPropertyId || null, valueId: r.optionValueId || null }] };
     const sp = O.interpretLine({ receiptId: 'R1', updateTs: 1 }, l, c), asks = sp.problems.some(p => p.kind === 'needsMapping' && p.optionName === r.optionField);

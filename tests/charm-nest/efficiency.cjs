@@ -56,6 +56,7 @@ const F = require('./efficiency-fixture.cjs');
       }
       return route.continue();
     });
+    await require('./master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.__prompted = 0; window.prompt = () => { window.__prompted++; return null; }; });
   };
   const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s, 403s, 405s, 429s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !(/status of (401|403|405|429|503)/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push('console: ' + m.text()); }); return { errs, logs }; };
@@ -76,6 +77,7 @@ const F = require('./efficiency-fixture.cjs');
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
     await page.waitForFunction(() => window.Efficiency && window.CN && window.OrderWin && document.readyState === 'complete', null, { timeout: 60000 });
     await page.evaluate(() => { Efficiency.options.pollMs = 400; Efficiency.options.growMs = 0; Efficiency.options.holdMs = 900; });
+    await page.waitForFunction(() => window.CharmNestMasterAdmin && CharmNestMasterAdmin.is() === true, null, { timeout: 15000 });   // (the Employee efficiency entry shows once the server has said "Tester" is the Admin)
 
     /* ── 2 · the menu, the tab, the passcode ── */
     await page.click('#moreMenu > summary');

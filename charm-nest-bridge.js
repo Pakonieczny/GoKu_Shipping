@@ -196,7 +196,20 @@ const ListMedia = (() => {
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
-  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
+  // ONE charm of a design that draws the same outline twice, on a line that is not an earring pair (Paul, 11 Oct 2026: "This listing is not an earring so it should NOT have duplicate charms"; charm-nest-pair.js
+  // soloOf): the index of the body its picture shows (0 = the left one), or -1 (an earring pair, a design of two different charms, a line pooled before this with both bodies, or no master entry yet). Asked of the
+  // master entry alone (pair.alike, or one of the SKUs measured: CharmNestPair.alikeDesign) and of what the intake already said (spec.pair.oneBody); the geometry has the last word when the pool makes the piece.
+  const oneRow = row => { try {
+    const CP = window.CharmNestPair, sp = row && row.spec; if (!CP || !CP.oneChoice || !CP.alikeDesign || !sp || sp.noDesign || sp.ownDesign || !window.Master || !window.Master.entryFor) return -1;
+    const e = window.Master.entryFor(sp.designSku || (row.line && row.line.sku) || ""); if (!e || !e.pair || !CP.isMismatched(e)) return -1;
+    if (!CP.oneChoice(Object.assign({}, row.line, { spec: sp, form: sp.form }), e)) return -1;
+    // (a line pooled before this, its pool rows holding the folded charm, is the whole charm it was cut as)
+    const live = (row.poolIds || []).map(id => window.B && B.pool.rows.get(id)).filter(r => r && r.charmHash && !["abandoned", "superseded"].includes(r.state));
+    if (live.length) { const g = window.Pool && Pool.sizeEntry(e, sp.size), whole = String((g && g.charmHash) || e.charmHash || ""); if (whole && live.some(r => String(r.charmHash) === whole)) return -1; }
+    const ob = sp.pair && sp.pair.oneBody; if (ob && Number.isInteger(ob.index) && ob.index >= 0) return ob.index;
+    return CP.alikeDesign(e) === true ? 0 : -1;
+  } catch (_) { return -1; } };
+  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)) && oneRow(row) < 0; } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct; nor on a line that makes ONE body of a design that draws the same outline twice, Paul 11 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
   const earPair = row => { try { return !!row && !row.spec?.noDesign && !row.spec?.ownDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
@@ -299,6 +312,9 @@ const ListMedia = (() => {
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
+    // (a line that makes ONE body of a design drawn twice (oneRow): the picture is that body alone, no Left or Right; a picture asked for one ear or one wash is not that line's)
+    const one=!own && !both && !(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.body===0 || opts.body===1))?oneRow(row):-1;
+    if(one>=0)ro=Object.assign({},ro||{},{one});
     if(both){const g=Pool.sizeEntry(entry,row.spec?.size),f=(g&&g.facing)||entry.facing;ro={pair:true,sku:String(entry.sku||sku),...(f==='L'||f==='R'||f==='X'?{facing:f}:{})};}   // (which way the master drawing faces, a person's word: the same rule as the piece the sheet cuts)
     if(own){const turnOwn=earTurn(row,opts.side,entry)?{mirror:true}:null;return turnOwn?(px?Pool.masterFront(entry,row.spec?.size,px,turnOwn):Pool.masterPreview(entry,row.spec?.size,true,turnOwn)):(px?Pool.masterFront(entry,row.spec?.size,px):Pool.masterPreview(entry,row.spec?.size,true));}
     if(ro)return px ? Pool.masterFront(entry,row.spec?.size,px,ro) : Pool.masterPreview(entry,row.spec?.size,true,ro);
@@ -323,15 +339,15 @@ const ListMedia = (() => {
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
-    const both=matchPair(row),two=twoOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[])));
+    const both=matchPair(row),two=twoOf(row),one=oneRow(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(one>=0?['one',one]:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -1413,6 +1429,7 @@ const Orders = window.Orders = (() => {
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
   const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
+  const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
@@ -1423,9 +1440,9 @@ const Orders = window.Orders = (() => {
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
-      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
+      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) + "|" + libFacts(nameOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
-      libFacts(typoOf(l.sku)),
+      libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
       row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
@@ -1748,7 +1765,7 @@ const Orders = window.Orders = (() => {
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
           const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
-          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && oldSpec.designSku !== r.spec.designSku;
+          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && !O.sameDesign(oldSpec.designSku, r.spec.designSku, sku => Master.entryFor(sku));   // (the same drawing under another of its names is no change: a design the library keeps under two spellings)
           const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
           // An update that changes nothing this line is made from (Etsy moves an order's update time for an address, a
           // gift note, a shipping upgrade, or a change to one of its other lines) is taken as it is. Every such update
@@ -2293,6 +2310,24 @@ const Master = window.Master = (() => {
   }
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
+  /* The Charm Repo is locked for everything that adds, removes, changes or hands out a charm file (Paul, 11 Oct 2026): ONE password
+     dialog (charm-nest-repo-lock.js), the token it returns rides in `repoToken` on the protected calls, and looking, searching and
+     "use this charm" never ask. Without the lock file these fail closed (nothing is called). */
+  const RLOCK = () => window.CharmNestRepoLock || null;
+  const guard = (action, ask, fn) => { const L = RLOCK(); return L ? L.call(action, ask, fn) : Promise.reject(new Error("The charm repo lock did not load: reload the page")); };
+  const upAsk = name => ({ what: `Adding ${name} to the charm repo.`, target: String(name).replace(/[“”]/g, ""), go: "Add", overwrite: reindexAll || undefined });
+  /** Ask for the upload password once, up front (before any heavy work); false when the person cancels. */
+  const unlockUpload = async name => { const L = RLOCK(); if (!L) { toast("The charm repo lock did not load: reload the page", "bad", 7000); return false; } return !!(await L.ensure("upload", upAsk(name))); };
+  /** The picked or dropped files: unlocked once for all of them, then indexed as before. */
+  async function addFiles(files) {
+    files = [...files || []]; if (!files.length) return;
+    if (!(await unlockUpload(files.length === 1 ? `“${files[0].name}”` : `${files.length} files`))) return;
+    for (const f of files) indexFile(f).catch(err => toast(err.message, "bad", 7000));
+  }
+  /** A Storage upload under charmnest/master/ with the upload token in its calls (a token that ran out on the way is asked for again). */
+  const upBytes = (path, bytes, type, label, name) => guard("upload", upAsk(name || path.split("/").pop()), tok => uploadBytes(path, bytes, type, label, { repoToken: tok }));
+  /** A protected call of the library function: the token in the body, a refusal asks once more. */
+  const repoApi = (action, ask, body, opts) => guard(action, ask, tok => api("charmNestLibrary", Object.assign({}, body, { repoToken: tok }), opts));
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
   /* A design's stored picture as a small <img>, for the lists that offer designs (the SKU picker). The page's COEP (require-corp) blocks
@@ -2454,6 +2489,8 @@ const Master = window.Master = (() => {
     return n >= 3 && n >= live.length * 0.2 ? n : 0;
   }
   async function indexFile(file) {
+    // locked: the upload password first (addFiles has usually asked already, so this finds the token), before any reading or tracing
+    if (!(await unlockUpload(`“${file && file.name ? file.name : "the file"}”`))) throw Object.assign(new Error("Not added: the charm repo password was not given"), { cancelled: true });
     // whatever the caller had to hand — a File from the picker or a drop, bytes already read, or a plain buffer
     const bytes = await (async () => {
       // `data` is what this app hands over. A File also answers to `bytes`, but there it is a method the browser added
@@ -2479,8 +2516,8 @@ const Master = window.Master = (() => {
       // the server route (a background function with about 1 GB) is opt-in by charm count; 0 keeps every master in this tab
       if (+S.settings.masterServerAbove > 0 && g.charms.length > +S.settings.masterServerAbove && S.cloud.ok) {
         say("MASTER", `over ${S.settings.masterServerAbove} charms — indexing on the server`);
-        const up = await uploadBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master");
-        const r = await api("charmNestLibrary", { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash) } });
+        const up = await upBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master", `“${file.name}”`);
+        const r = await repoApi("upload", upAsk(`“${file.name}”`), { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash) } });
         job.state = "server"; job.jobId = r.id;
         const t0 = Date.now(); let lastChange = Date.now(), lastSig = "";
         for (;;) { await sleep(3000); const j = await api("charmNestLibrary", { op: "getJob", id: r.id }); const d = j.job; if (!d) throw new Error("server job vanished");
@@ -2585,7 +2622,7 @@ const Master = window.Master = (() => {
     const one = async (c) => {
       const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
       let ai = null, png = null;
-      if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([uploadBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`), uploadBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png")]); }
+      if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([upBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`, `“${name}”`), upBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png", undefined, `“${name}”`)]); }
       const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
       try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry',{charm:{outline:c.outline,members:c.members,bbox:c.bbox,widthPt:c.widthPt,heightPt:c.heightPt}}) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if(!window.CharmNestBackground)G.backView(c, { res: 6, upAngle }); }
@@ -2603,12 +2640,12 @@ const Master = window.Master = (() => {
     job.entries = entries; job.blocked = blocked; job.written = entries.length;
     if (!S.cloud.ok) return;
     const replaces = [...new Set(B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash).concat(job.supersede || []))];
-    const r = await api("charmNestLibrary", { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
+    const r = await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
     job.conflicts = r.blocked || []; job.sizeMoved = r.sizeMoved || [];
     if ((r.pairKept || []).length) { const text = `${r.pairKept.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${r.pairKept.slice(0, 12).map(b => b.sku).join(", ")}${r.pairKept.length > 12 ? " …" : ""}`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     if (job.conflicts.length) agent({ master: masterHash }, "warn", `${name}: ${job.conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${job.conflicts.map(b => b.sku).join(", ")}`);
     if (job.sizeMoved.length) agent({ master: masterHash }, "warn", `${name}: ${job.sizeMoved.length} SKU(s) changed size by more than 5% since the last index: ${job.sizeMoved.map(b => b.sku).join(", ")}`);
-    await api("charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
+    await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
   }
   /** Members drawn on a "BACK KEEP-OUT" layer of the master are subtracted from the engraving mask. */
   const keepOutOf = c => c.members.filter(m => m.layer && /back\s*keep-?out/i.test(m.layer));
@@ -2617,8 +2654,20 @@ const Master = window.Master = (() => {
     for (const v of reads) { const c = v.charm; c.sku = v.sku; c.skuSize = v.size || null; c.labelSource = "vision"; c.labelConfidence = v.confidence; c.name = v.sku; v.confirmed = true; job.lab.labels.set(c.index, { sku: v.sku, size: v.size, seg: null }); job.lab.unlabelled = job.lab.unlabelled.filter(i => i !== c.index); }
     job.state = "writing"; render();
     await writeIndex(job);
-    for (const v of reads) await api("charmNestLibrary", { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
+    for (const v of reads) await repoApi("modify", { what: `Marking ${v.sku} as read by Claude and confirmed.`, target: v.sku, go: "Save" }, { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
     job.state = "done"; await load(true); settleJob(job); render();
+  }
+  /** One charm's .ai file, for a person to keep: the download password first (a download token), then the server's link, then the bytes are saved as <SKU>.ai. */
+  async function downloadCharm(sku, size, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await repoApi("download", { what: `Downloading ${sku}${size ? " · " + size : ""} (.ai) from the charm repo.`, target: sku + (size ? " " + size : ""), go: "Download" }, { op: "masterDownload", sku, ...(size ? { size } : {}) }, { label: `Preparing ${sku}.ai` });
+      if (!r || !r.url) throw new Error((r && r.error) || "the server sent no file link");
+      const bytes = await CharmNestAssets.bytes(r.url);
+      download(bytes, r.name || `${sku}${size ? "-" + size : ""}.ai`, "application/illustrator");
+      toast(`${sku}${size ? " · " + size : ""} saved`, "ok");
+    } catch (e) { if (!(e && e.cancelled)) toast(`${sku} was not downloaded — ${e.message}`, "bad", 7000); }
+    finally { if (btn) btn.disabled = false; }
   }
   /** The same patch on every SKU of one charm, with a single redraw. */
   /** Everything the run found, as a file: the lists are too long to read on screen but belong somewhere. */
@@ -2633,8 +2682,10 @@ const Master = window.Master = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 8000);
     toast("report saved", "ok");
   }
-  async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p, p.upAngle != null ? { upSource: "operator" } : {}); } render(); }
-  async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
+  /** A change to a charm in the repo: asks for the password when none is held (modify; an upload unlock serves too), then writes. */
+  const patchAsk = (skus, p) => ({ what: `Changing ${skus.length > 1 ? skus.length + " SKUs" : skus[0]} in the charm repo (${p.upAngle != null ? "up angle" : "facing" in p || "facings" in p ? "facing" : "blocked" in p ? "unblock" : "settings"}).`, target: skus.join(", "), go: "Save" });
+  async function patchMany(skus, p) { await guard("modify", patchAsk(skus, p), async tok => { for (const s of skus) await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p, repoToken: tok }); }); for (const s of skus) { const e = entryFor(s); if (e) Object.assign(e, p, p.upAngle != null ? { upSource: "operator" } : {}); } render(); }
+  async function patch(sku, p) { await guard("modify", patchAsk([sku], p), tok => api("charmNestLibrary", { op: "masterPatch", sku, patch: p, repoToken: tok })); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
   /** Every SKU the pulled orders want that no master file holds, newest pull first. */
   function missingSkus() {
     const out = new Map();
@@ -2663,7 +2714,7 @@ const Master = window.Master = (() => {
       '<button class="x" data-a="shut" title="close this \u2014 it stays closed">\u00d7</button></div>' +
       (B.missOpen ? '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
       (miss.length > 60 ? '<span class="s more">\u2026 and ' + (miss.length - 60) + ' more</span>' : "") + '</div>' +
-      '<div class="acts"><button class="btn ghost xs" data-a="copy">Copy the list</button><button class="btn ghost xs" data-a="save">Save as a file</button><button class="btn gold xs" data-a="add">Add a master file</button></div>' : "");
+      '<div class="acts"><button class="btn ghost xs" data-a="copy">Copy the list</button><button class="btn ghost xs" data-a="save">Save as a file</button><button class="btn gold xs" data-a="add" data-repo="upload">Add a master file</button></div>' : "");
     box.querySelector("[data-a=shut]").onclick = () => { B.missShut = true; paintMissing(v); };
     box.querySelector("[data-a=see]").onclick = () => { B.missOpen = !B.missOpen; paintMissing(v); };
     if (!B.missOpen) return;
@@ -2676,19 +2727,21 @@ const Master = window.Master = (() => {
     };
     box.querySelector("[data-a=add]").onclick = () => { const f = v.querySelector("#mFile"); if (f) f.click(); };
   }
-  function render() {
+  // every draw ends with the padlocks put right on the controls it made (closed until unlocked, open while a token is held)
+  function render() { try { return paint(); } finally { const v = document.getElementById("masterView"), L = RLOCK(); if (L && v && !v.classList.contains("hidden")) L.mark(v); } }
+  function paint() {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" title="index another master .ai into the charm library">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
         <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</details>
-        <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
+        <div id="mJobs" style="display:grid;gap:10px"></div><details class="noteBox masterHist" id="mHist"><summary id="mHistSum">Upload history</summary><div id="mFiles" style="display:grid;gap:10px"></div></details><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
       ["dragenter", "dragover"].forEach(ev => v.addEventListener(ev, e => { if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"))) return; e.preventDefault(); e.stopPropagation(); v.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
       ["dragleave", "drop"].forEach(ev => v.addEventListener(ev, () => v.classList.remove("dragOver")));
-      v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); for (const f of e.dataTransfer.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); });
-      v.querySelector("#mFile").onchange = e => { for (const f of e.target.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); e.target.value = ""; };
+      v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); addFiles([...e.dataTransfer.files]); });
+      v.querySelector("#mFile").onchange = e => { const picked = [...e.target.files]; e.target.value = ""; addFiles(picked); };   // (a file is picked first, then the password: the picker needs the click, the password dialog does not)
       v.querySelector("#mSearch").oninput = render;
       v.querySelector("#mAdd").onclick = () => v.querySelector("#mFile").click();
       load().then(render).catch(() => {});
@@ -2721,8 +2774,8 @@ const Master = window.Master = (() => {
       if (pending.length) {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
         pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img crossorigin="anonymous" src="${cors(x.image)}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img crossorigin="anonymous" src="${cors(x.charm.thumb)}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
-        const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button";
-        btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName() && !(await needEmployee("Kept with the labels you confirm."))) return; await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
+        const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button"; btn.dataset.repo = "upload";
+        btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!(await unlockUpload(`${reads.length} confirmed label${reads.length === 1 ? "" : "s"}`))) return; if (!employeeName() && !(await needEmployee("Kept with the labels you confirm."))) return; try { await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); } catch (e) { toast("The labels were not saved: " + e.message, "bad", 7000); } };
         card.append(head, tray, btn);
       }
       // a finished run is a line you can open; only what is still running stays open in front of you
@@ -2746,7 +2799,9 @@ const Master = window.Master = (() => {
     }
     const days = [...byDay.entries()];
     const num = (c, l) => (c != null ? c : (l || []).length);
-    files.innerHTML = days.map(([day, list], di) => {
+    // ALL the upload history sits under one small closed dropdown (Paul, 11 Oct): display only, nothing here is removed or changed by it
+    { const sum = v.querySelector("#mHistSum"); if (sum) { const nf = days.reduce((n, [, l]) => n + l.length, 0); sum.textContent = B.master.loadedAt ? `Upload history (${days.length})` : "Upload history"; sum.title = `${days.length} upload day${days.length === 1 ? "" : "s"} · ${nf} file${nf === 1 ? "" : "s"}`; } }
+    if (!days.length) files.innerHTML = `<div style="font-size:12px;color:var(--ink45)">${B.master.loadedAt ? "No master files indexed yet." : "Loading…"}</div>`; else files.innerHTML = days.map(([day, list], di) => {
       list.sort((a,b)=>CNListActivity.compare(a,b,CNListActivity.state("master").direction));
       const skus = list.reduce((n, f) => n + (f.skus ? f.skus.length : 0), 0);
       return `<details class="masterDay"${di === 0 ? " open" : ""}><summary>${esc(day)} · ${list.length} file${list.length === 1 ? "" : "s"} · ${skus} SKU line${skus === 1 ? "" : "s"}</summary>` +
@@ -2755,10 +2810,16 @@ const Master = window.Master = (() => {
           const u = num(f.unlabelledCount, f.unlabelled), o = num(f.orphanCount, f.orphans), b = num(f.blockedCount, f.blocked);
           return `<details class="masterFileRow"><summary><b>${esc(f.name || f.masterHash)}</b><span class="hash">${at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span><span>${f.labelled || 0} of ${f.charms || 0} labelled</span>${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}</summary>` +
             `<div class="fh" style="margin:6px 0 4px"><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span>${u ? `<span style="color:#8a3a26">${u} charm${u === 1 ? "" : "s"} with no SKU under ${u === 1 ? "it" : "them"}</span>` : ""}${o ? `<span style="color:#8a3a26">${o} line${o === 1 ? "" : "s"} with no charm above</span>` : ""}<span class="hash">${esc(f.indexedBy || "")}</span></div>` +
-            `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}">Remove every SKU from this file</button></details>`;
+            `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}" data-repo="delete">Remove every SKU from this file</button></details>`;
         }).join("") + `</details>`;
     }).join("");
-    files.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { if (!confirm("Remove every SKU indexed from this master file? Pool adds for them will fail until it is re-indexed.")) return; b.disabled = true; try { await api("charmNestLibrary", { op: "masterRemoveFile", masterHash: b.dataset.rm }); } catch (e) { b.disabled = false; toast("The SKUs were not removed: " + e.message, "bad", 7000); return; } await load(true).catch(() => {}); render(); });
+    // a removal asks for the password every time (a single-use token), and the confirmation is in that same dialog: no second pop-up
+    files.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
+      const hash = b.dataset.rm, rec = B.master.files.find(f => f.masterHash === hash), nm = (rec && rec.name) || hash.slice(0, 12);
+      b.disabled = true;
+      try { await repoApi("delete", { title: "Remove from the charm repo", message: `Remove every SKU indexed from “${nm}”? Pool adds for them will fail until it is re-indexed.`, target: `${nm} ${hash.slice(0, 12)}`, go: "Remove" }, { op: "masterRemoveFile", masterHash: hash }); }
+      catch (e) { b.disabled = false; if (!(e && e.cancelled)) toast("The SKUs were not removed: " + e.message, "bad", 7000); return; }
+      await load(true).catch(() => {}); render(); });
     const q = (v.querySelector("#mSearch").value || "").trim().toUpperCase();
     // One charm is one tile, whatever it is sold as. The same design carries several SKUs (the jewellery it goes into),
     // and they share one file in the library; the tile lists every one of them and the search matches any of them.
@@ -2789,8 +2850,8 @@ const Master = window.Master = (() => {
             ? `<div class="libEmpty">No indexed SKU contains &ldquo;${esc(raw)}&rdquo;.` +
               (wanted ? ` ${wanted.lines} piece(s) are waiting on it — the master file that carries it has not been indexed yet.` : ` Check the spelling, or index the master file that carries it.`) +
               `<br><button class="btn ghost sm" id="mClear" style="margin-top:10px">Show all ${designs.length} charm${designs.length === 1 ? "" : "s"}</button>` +
-              `<button class="btn gold sm" id="mEmptyAdd" style="margin:10px 0 0 6px">＋ Add a master file</button></div>`
-            : `<div class="libEmpty">No charms indexed yet — drop a master file here, or press Add.<br><button class="btn gold sm" id="mEmptyAdd" style="margin-top:10px">＋ Add a master file</button></div>`;
+              `<button class="btn gold sm" id="mEmptyAdd" data-repo="upload" style="margin:10px 0 0 6px">＋ Add a master file</button></div>`
+            : `<div class="libEmpty">No charms indexed yet — drop a master file here, or press Add.<br><button class="btn gold sm" id="mEmptyAdd" data-repo="upload" style="margin-top:10px">＋ Add a master file</button></div>`;
       const c2 = grid.querySelector("#mClear"); if (c2) c2.onclick = () => { const f = v.querySelector("#mSearch"); f.value = ""; f.focus(); render(); };
       const a2 = grid.querySelector("#mEmptyAdd"); if (a2) a2.onclick = () => v.querySelector("#mFile").click();
       const r2 = grid.querySelector("#mRetry"); if (r2) r2.onclick = () => { B.master.error = null; load(true).then(render).catch(() => render()); };
@@ -2804,7 +2865,7 @@ const Master = window.Master = (() => {
     const facesBox = (e, keys) => {
       const Pr = window.CharmNestPair, fc = Pr && Pr.facingControl ? Pr.facingControl(e, e.sym ? "" : heldSym(e)) : null;
       if (!fc || !fc.show) return "";
-      const box = (value, options, extra) => `<select data-faces="${keys}"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+      const box = (value, options, extra) => `<select data-faces="${keys}" data-repo="modify"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
       return fc.bodies ? fc.bodies.map(bd => box(bd.value, bd.options, ` data-body="${bd.index}"`)).join("") : box(fc.value, fc.options);
     };
     grid.innerHTML = shown.map(d => {
@@ -2820,29 +2881,33 @@ const Master = window.Master = (() => {
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
-        `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
+        `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
         facesBox(e, keys) +
-        (blocked ? `<button class="btn ghost xs" data-unblock="${keys}">unblock</button>` : "") +
-        (e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>`
-                 : sizes.filter(([, s]) => s && s.aiUrl).map(([k, s]) => `<a class="btn ghost xs" href="${s.aiUrl}" target="_blank" rel="noopener">${esc(k)}.ai</a>`).join("")) +
+        (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
+        (e.aiUrl ? `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-repo="download" title="download this charm's .ai file (asks for your password)">.ai</button>`
+                 : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-size="${esc(k)}" data-repo="download" title="download this charm's .ai file (asks for your password)">${esc(k)}.ai</button>`).join("")) +
         `</div></div>`;
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
     mountMasterPreviews(grid);
     // a charm's settings belong to the charm, so they are written to every SKU that shares it
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
     // a failed save says so (it used to fail in silence, the typed angle standing in the box as if kept)
-    each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
+    // (locked: the changing boxes ask for the password before the first touch; a refusal puts the old word back and says it was not saved)
+    const L = RLOCK(), notSaved = (e, skus, what) => e && e.cancelled ? toast(`${skus.join(", ")}: ${what} not saved — the repo stayed locked`, "", 4000) : toast(`${skus.join(", ")}: ${what} not saved — ${e.message}`, "bad", 7000);
+    each("up", (inp, skus) => { if (L) L.gate(inp, "modify", () => patchAsk(skus, { upAngle: 0 })); inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => { inp.value = inp.defaultValue; notSaved(e, skus, "up angle"); }); }; });
     // saved to every SKU that shares the charm, like the up angle; "" gives the word back (the drawing is taken as the Left again). The pieces of orders already made up are not changed.
-    each("faces", (sel, skus) => { let was = sel.value; sel.onchange = () => {
+    each("faces", (sel, skus) => { let was = sel.value; if (L) L.gate(sel, "modify", () => patchAsk(skus, { facing: null })); sel.onchange = () => {
       const v2 = sel.value, two = sel.dataset.body != null;   // (a mismatched pair has one box per body: both words are saved together, body 0 is also `facing`)
       const words = two ? [...sel.parentNode.querySelectorAll("select[data-faces][data-body]")].sort((x, y) => x.dataset.body - y.dataset.body).map(x => x.value || null) : null;
       const patch = two ? { facing: words[0], facings: words.some(Boolean) ? words : null } : { facing: v2 === "" ? null : v2 };
       const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (no longer used: earrings are always mirrored)" : "facing not set (the drawing is the Left)";
       sel.disabled = true;
-      patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
-    each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
+      patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; notSaved(e, skus, "facing"); }); }; });
+    each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; if (e && e.cancelled) toast(`${skus.join(", ")} not unblocked — the repo stayed locked`, "", 4000); else toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
+    // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
+    each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
   }
-  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -2904,6 +2969,34 @@ const Pool = window.Pool = (() => {
     } catch (e) { src.bodies = null; agent({ pool: true }, "warn", `${src.sku}: its two bodies could not be told apart (${e.message}) — kept as one piece`); return null; }
     finally { src.bodiesChecked = true; }
   }
+  /* ONE charm of a design that draws the same outline twice, on a line that is not an earring pair (Paul, 11 Oct 2026; charm-nest-pair.js section 4c: soloOf). src.solo = one one-body charm per body of the
+     design (its own outline, members, tops, silhouette and hash), made the way traceBodies makes the bodies of a pair, except that two bodies of the SAME shape are fine here: that is the very case (traceBodies
+     refuses them). The line is cut from solo[index] only. Nothing new is stored in Firestore: the piece's stored charm hash (the pool row's charmHash, the sheet record's charm hash) is a body's, not the folded
+     charm's, and soloBase below reads that back. A line pooled before this holds the folded charm's hash and stays whole. A design whose bodies share a group of the master cannot be written body by body
+     (the sheet writer copies whole groups): src.solo stays null and such a line keeps both bodies, as it always did. */
+  const soloBodies = src => src.soloChecked ? Promise.resolve(src.solo) : once(src, "solo", () => traceSolo(src));
+  async function traceSolo(src) {
+    src.solo = null;
+    try {
+      const Pair = window.CharmNestPair, charm = src.charms[0];
+      if (!Pair || !Pair.bodiesOf || !Pair.isMismatched || !Pair.isMismatched(charm)) return null;
+      const bodies = Pair.bodiesOf(charm); if (bodies.length < 2) return null;
+      const tops = bodies.map(b => new Set(b.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null)));
+      if (tops.some((t, i) => tops.some((u, j) => j > i && [...t].some(x => u.has(x))))) { agent({ pool: true }, "warn", `${src.sku}: its bodies are drawn in one group of the master, so one cannot be written alone — a line of it keeps both bodies`); return null; }
+      const made = bodies.map((b, i) => Object.assign({}, charm, { outline: b.outline, members: b.members.slice(), bbox: b.bbox.slice(), extras: (charm.extras || []).filter(x => b.members.includes(x)), topIndices: [...tops[i]], id: `${src.id}:s${i}`, oneBody: i }));
+      for (const c of made) delete c.frontAt;
+      await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
+      for (const c of made) c.backKeepOut = Master.keepOutOf(c);
+      return (src.solo = made);
+    } catch (e) { src.solo = null; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
+    finally { src.soloChecked = true; }
+  }
+  /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm, and its charm hash is that body's, not the
+   *  folded charm's. null when it is not (an old record, a line that keeps both bodies, an earring pair): the design's one charm, whole, as before. */
+  async function soloBase(src, rec) {
+    const h = rec ? String(rec.charmHash || rec.hash || "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;
+    const bodies = await soloBodies(src); return bodies && bodies.find(c => String(c.hash) === h) || null;
+  }
   async function readMasterCharm(entry,size) {
     const geom=sizeEntry(entry,size);
     const url = geom.aiUrl || (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
@@ -2927,15 +3020,21 @@ const Pool = window.Pool = (() => {
     { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
     return {url,bytes,parsed,g,charm};
   }
+  /** The charm a picture is drawn from: with opts.one (a body's index) the ONE body of a design that draws more than one, alone (charm-nest-pair.js charmOfBody: its own outline, members and box; nothing is
+   *  traced, nothing is stored), so a picture of a line that makes one charm shows one charm and no Left / Right chips; the charm itself otherwise, and when the design has no such body. */
+  function oneBody(charm, opts) {
+    if (!opts || !Number.isInteger(opts.one) || opts.one < 0) return charm;
+    try { const Pair = window.CharmNestPair, bodies = Pair && Pair.bodiesOf && Pair.charmOfBody ? Pair.bodiesOf(charm) : null; return bodies && bodies.length >= 2 && bodies[opts.one] ? Pair.charmOfBody(charm, bodies[opts.one]) : charm; } catch (_) { return charm; }
+  }
   const masterPreviewCache=new Map();
   // `front` draws the charm as the Orders and Engrave lists show a pooled charm (white, a 3 mm margin), so an order's
   // picture keeps its look and size when its charm reaches the pool; the Master tab's tiles keep the tight thumbnail.
   async function masterPreview(entry,size,front,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
+    const draw=charm=>front&&P.frontPreview?P.frontPreview(oneBody(charm,opts),220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
-    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+":":"")+path;
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
     // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
     // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
@@ -2951,7 +3050,7 @@ const Pool = window.Pool = (() => {
   async function masterFront(entry,size,px,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
+    const cached=B.pool.sources.get(path),whole=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm,charm=oneBody(whole,opts);   // (charm: the design, or with opts.one the ONE body of it)
     return P.frontPreview ? P.frontPreview(charm,px,opts) : Engrave.renderFront(charm,px,opts);
   }
   /** The picture of an earring line of TWO separate designs (the Left's design and the Right's), side by side in one picture (charm-nest-pair-thumb.js, opts.pair with opts.other): kept in memory under both files. */
@@ -3045,6 +3144,8 @@ const Pool = window.Pool = (() => {
     // waits for a piece whose pool row was never written. A row the page has not loaded yet changes nothing (the last word stays); a line taken off has no live row.
     const live = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(r => r && !["abandoned", "superseded"].includes(r.state));
     if (live.length) { const g = Math.max(0, ...live.map(r => +r.groupSize || 0)); if (g > 1) row.groupSize = g; else delete row.groupSize; }
+    // a line pooled before one body was made of a design drawn twice (a live pool row of it holds the folded charm's hash) is the whole charm it was cut as: the intake's words about one body are taken back
+    if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), g = e && sizeEntry(e, sp.size), whole = String((g && g.charmHash) || (e && e.charmHash) || ""); if (whole && live.some(r => String(r.charmHash) === whole)) O.solo(sp, null); }
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
     const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
@@ -3110,7 +3211,12 @@ const Pool = window.Pool = (() => {
     // (a plan is the pieces of an earring pair, or ONE piece with its side: a single earring whose line names its ear is cut as that ear, the Right the mirror image by the same facing rule; a single that names no ear has no side and is cut as drawn)
     // (a pair of two designs: each piece is body 0 of ITS OWN design, the Right marked body 1 of the pair, and its direction is that design's own: the Right earring is turned over unless its drawing already faces right)
     const plan = wanted && wanted.length >= 1 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && (ear2 ? true : wholeBody(src, +p.bodyIndex))) ? (ear2 ? wanted.map(p => Object.assign({}, p, { bodyIndex: p.side === "R" ? 1 : 0, mirror: earMirror(p, earOf(p), row) })) : wanted) : null;
-    if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
+    // ONE body (Paul, 11 Oct 2026: "This listing is not an earring so it should NOT have duplicate charms"): a line that is not an earring pair, of a design that draws the SAME outline twice, is cut from one body of it
+    // (the left one, charm-nest-pair.js soloOf): one piece per unit, no side, nothing mirrored, nothing glued. A line pooled before this (its pool rows hold the folded charm), an old glued line and a design whose
+    // two bodies are different charms keep what they made. The piece's stored charm hash is that body's: the only mark it carries (soloBase reads it back).
+    const one = !plan && !ear2 ? await soloFor(row, src) : null, cutBase = one ? one.charm : base;
+    if (one) O.solo(sp, one); else if (sp.pair && sp.pair.oneBody) O.solo(sp, null);   // (the intake said one body from the master entry; the geometry says it is not: the old words)
+    if (!plan && !one && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
     /* Only a GROUP carries a group (Paul 9 Oct, after ADVCOMPAT 1 and 2): an earring pair (sided pieces), a necklace of counted discs, letters or charms (n pieces of ONE necklace), a line
@@ -3118,7 +3224,7 @@ const Pool = window.Pool = (() => {
     const grouped = !!(Pair && Pair.isGroupLine && Pair.isGroupLine(pairLine(row), base)), loose = grouped && !plan && count >= 2 && count <= PoolPieces.MAX_PIECES;
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
-    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : [base]) {
+    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : [cutBase]) {
       if (b.areaPt2 > usable || Math.min(b.widthPt, b.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(b.widthPt * MM).toFixed(1)} × ${(b.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: b.widthPt * MM, heightMm: b.heightPt * MM, material: sp.material }); return null; }
     }
     // a Right piece is drawn the other way round (its mirror image); a line whose mirrored charm cannot be made is held, never drawn the wrong way
@@ -3129,7 +3235,7 @@ const Pool = window.Pool = (() => {
       // (an ear piece of a line that is not a group, a single earring that names its ear: a group of ONE, however many are bought; discs, letters, charms of a counted necklace: group fields, no ear)
       const mine = pp ? PoolPieces.fieldsOf(grouped ? pp : Object.assign({}, pp, { groupSize: 1 })) : loose ? PoolPieces.cleanGroupFields({ poolId, groupSize: count }) : null;
       const ear = earOf(pp), cut = ear.src;   // (the ear's own design: the line's one design for every piece but the Right of a pair of two designs)
-      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
+      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : one ? cloneCharm(cutBase, `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
       charm.name = `${row.order.receiptId} · ${ear.sku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
@@ -3138,6 +3244,15 @@ const Pool = window.Pool = (() => {
       charms.push(charm);
     }
     return { sp, pools, charms };
+  }
+  /** The ONE body a line that is not an earring pair is cut from, or null (it keeps what it always made): { index, count, rule, how, charm } (charm-nest-pair.js soloOf says which body and why; the charm is that body
+      cut alone). Never for an old glued line, nor for a line a live pool row of which holds the folded charm (pooled before this: it is cut whole as it was). */
+  async function soloFor(row, src) {
+    const Pair = window.CharmNestPair, whole = src.charms[0]; if (!Pair || !Pair.soloOf || gluedLine(row)) return null;
+    if ((row.poolIds || []).some(id => { const r = B.pool.rows.get(id); return r && r.charmHash && !["abandoned", "superseded"].includes(r.state) && String(r.charmHash) === String(whole.hash); })) return null;
+    const one = Pair.soloOf(pairLine(row), whole); if (!one) return null;
+    const bodies = await soloBodies(src), charm = bodies && bodies[one.index];
+    return charm ? Object.assign({}, one, { charm }) : null;
   }
   /** The two master designs of a mismatched pair named by two SKUs ({ L, R }), or null: a line made of one design, a mismatched design of two bodies, a glued or an old line. */
   function memberSkus(sp) {
@@ -3170,8 +3285,8 @@ const Pool = window.Pool = (() => {
   }
   /** baseFor, making what it needs: the bodies of a recovered source, and the mirrored charm (CharmNestPair.pieceGeometry: the outline and art
       reflected about the body's own vertical axis, its silhouette traced again) once per body and source. Throws when a mirrored charm cannot be made. */
-  async function ensureBase(src, piece) {
-    if (!sidedPiece(piece)) return src.charms[0];
+  async function ensureBase(src, piece, rec) {
+    if (!sidedPiece(piece)) return (rec && await soloBase(src, rec)) || src.charms[0];   // (`rec`, the piece's stored record, may say it is ONE body of the design: soloBase)
     await splitBodies(src);
     const i = +piece.bodyIndex, whole = wholeBody(src, i);
     if (!whole || piece.mirror !== true || (src.mirrors && src.mirrors[i])) return baseFor(src, piece);
@@ -3428,10 +3543,12 @@ const Pool = window.Pool = (() => {
     const sp = row.spec || {}, q = Math.max(1, Math.round(+(sp.quantity || row.line?.quantity) || 1));
     const Pair = window.CharmNestPair, e = sp.designSku ? Master.entryFor(sp.designSku) : null, g = e && sizeEntry(e, sp.size), src = g && g.aiPath ? B.pool.sources.get(g.aiPath) : null;
     let n = Pair && Pair.pieceCountOf && row.line ? Pair.pieceCountOf(pairLine(row), src ? src.charms[0] : null) : q;
-    if (n === q && designMismatched(sp.designSku, sp.size)) n = 2 * q;   // (the master entry says two bodies; the charm is not traced yet)
+    // (the master entry says two bodies; the charm is not traced yet. Two pieces per unit is an earring pair's: a necklace, pendant, bracelet or charm line of such a design is ONE piece per unit, and so is a
+    //  line that makes one body of a design drawn twice: Paul, 11 Oct 2026, "This listing is not an earring so it should NOT have duplicate charms")
+    if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -5063,7 +5180,7 @@ const Engrave = window.Engrave = (() => {
         if (!source?.pool) throw new Error("Restore this sheet to the Nest workspace before editing backs from a combined source file.");
         if (!source?.url) throw new Error("The original front design is unavailable. Restore this sheet's source file before editing its back.");
         const src=await Pool.masterCharm({sku:saved.sku,aiPath:source.path || source.url,aiUrl:source.url,upAngle:saved.upAngle},null);
-        const piece=CharmNestPoolPieces.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece).catch(()=>null);   // (a piece of a mismatched pair is its own body)
+        const piece=CharmNestPoolPieces.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece,savedCharm?.hash?savedCharm:(B.pool.rows.get(poolId) || saved)).catch(()=>null);   // (a piece of a mismatched pair is its own body)
         if(!base) throw new Error("This piece's own body is no longer in its design. Rebuild this sheet before editing its back.");
         charm=Pool.cloneCharm(base,poolId); charm.poolId=poolId; if(piece) Object.assign(charm,CharmNestPoolPieces.fieldsOf(piece));
         if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
@@ -5443,7 +5560,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
     }
     return workerClient;
   }
@@ -5916,7 +6033,7 @@ const Engrave = window.Engrave = (() => {
     if(!current())return;
     const geom=entry && Pool.sizeEntry(entry,job.row.spec.size);
     if(!entry || !geom?.aiPath){host.textContent="Preview unavailable";return;}
-    try { const src=await Pool.masterCharm(entry,job.row.spec.size);if(current())paint(src.charms[0]); }
+    try { const src=await Pool.masterCharm(entry,job.row.spec.size),rec=(job.copies || job.row.poolIds || []).map(id=>B.pool.rows.get(id)).find(Boolean),base=await Pool.ensureBase(src,null,rec).catch(()=>src.charms[0]);if(current())paint(base); }   // (a piece cut as ONE body of its design is that body: its pool row's charm hash says so)
     catch(_){if(current())host.textContent="Preview unavailable";}
 
   }
@@ -8726,7 +8843,7 @@ const RunCtl = window.RunCtl = (() => {
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
-        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece).catch(() => null);
+        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         if (!pg.charms.some(c => c.poolId === rc.poolId)) pg.charms.push(charm);
@@ -10778,7 +10895,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -11074,7 +11191,7 @@ const Review = window.Review = (() => {
       // SKUs named by the value are offered, and the answer is kept for this listing and value
       const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
-        `${p.note ? `<div class="why">${esc(p.note)}</div>` : ""}<div class="ask">What does this option decide?</div>
+        `${p.note ? `<div class="why">${esc(p.note)}</div>` : p.letter ? `<div class="why">${esc(p.letter.why)}</div>` : ""}<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
         <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
@@ -15873,7 +15990,7 @@ const Recall = window.Recall = (() => {
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
-        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece).catch(() => null);
+        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         pg.charms.push(charm);
