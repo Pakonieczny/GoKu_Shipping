@@ -7436,6 +7436,7 @@ const Engrave = window.Engrave = (() => {
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{
+  const faceOf = x => { const F = window.CharmNestEngraveFaces; return F ? F.faceOf(x) : (x && x.face === "front" ? "front" : "back"); };   // (a job or a saved record: the front or the back; the back when the faces module is not there)
   const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0,sealPoll=0,dirty=null,drawAll=false,paintedWhileChecking=false;
   /* One pass over the cards (batch: a refresh frame, the Library's first drawing, a Sets view) reads each sheet's projection once,
      and what every order row says about its pieces once. projected() worked both out again each time it was called, which is
@@ -7464,11 +7465,11 @@ const LaserReview = window.LaserReview = (()=>{
       if(!holders.has(pid))holders.set(pid,[]);holders.get(pid).push(j);
       if(j.state==='written' && !j.backSaving)continue; // cloud evidence wins once saved
       d.engraving[pid]={needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state)};
-      d.backPool=d.backPool.filter(b=>!(b.poolId===pid && Engrave.faceOf(b)===Engrave.faceOf(j)));   // (this job's face alone)
+      d.backPool=d.backPool.filter(b=>!(b.poolId===pid && faceOf(b)===faceOf(j)));   // (this job's face alone)
       if(j.state==='approved')d.backPool.push(...(j.backs || []).filter(b=>b.poolId===pid));
     }
-    if(window.CharmNestEngraveFaces)for(const [pid,js] of holders)if(js.some(j=>Engrave.faceOf(j)==='front')) {
-      d.engraving[pid]=CharmNestEngraveFaces.combine(js.map(j=>({face:Engrave.faceOf(j),needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state) || (j.state==='written' && !j.backSaving)})));
+    if(window.CharmNestEngraveFaces)for(const [pid,js] of holders)if(js.some(j=>faceOf(j)==='front')) {
+      d.engraving[pid]=CharmNestEngraveFaces.combine(js.map(j=>({face:faceOf(j),needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state) || (j.state==='written' && !j.backSaving)})));
     }
     if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
     if(passDepth)(passProjected || (passProjected=new Map())).set(base,d);
@@ -8217,6 +8218,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
 const Sets = window.Sets = (() => {
+  const faceOf = x => { const F = window.CharmNestEngraveFaces; return F ? F.faceOf(x) : (x && x.face === "front" ? "front" : "back"); };   // (a job or a saved record: the front or the back; the back when the faces module is not there)
   /* ofRun and setOfSheet searched every set the session holds at each call, and a page's closed() asks once a page. The
      sets are grouped by run and by id once, and again only when the map is replaced or changed (its set, delete and
      clear count the changes; a set's run and id never change after it is made). */
@@ -8423,7 +8425,7 @@ const Sets = window.Sets = (() => {
           // a piece with a front is held to each face it expects: that face approved, written and its file saved (a line with no front: the back, as it always was)
           const faces = eng.faces ? ["front", "back"].filter(f => eng.faces[f] && eng.faces[f].needed !== false && !["none", "skipped"].includes(eng.faces[f].state)) : ["back"];
           for (const f of faces) {
-            const back = (sh.backPool || []).find(b => b.poolId === poolId && Engrave.faceOf(b) === f), e = eng.faces ? eng.faces[f] : eng;
+            const back = (sh.backPool || []).find(b => b.poolId === poolId && faceOf(b) === f), e = eng.faces ? eng.faces[f] : eng;
             if (!e.approved || e.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: ${f === "front" ? "front" : "back"} engraving is not approved and saved`);
           }
         }
@@ -8452,14 +8454,14 @@ const Sets = window.Sets = (() => {
     const spans = window.SetEdit && SetEdit.spanLines ? SetEdit.spanLines(set.orders) : [];
     if (spans.length) { y -= 6; line("Orders on more than one sheet (they stay in one set)", { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line("Engraving", { font: bold, size: 11 });
-    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${Engrave.faceOf(b) === "front" ? " · FRONT" : ""}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) + (CharmNestPairLabels.discWord ? CharmNestPairLabels.discWord(b) : "") : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
+    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${faceOf(b) === "front" ? " · FRONT" : ""}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) + (CharmNestPairLabels.discWord ? CharmNestPairLabels.discWord(b) : "") : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");
     y -= 6; line("Labels", { font: bold, size: 11 }); files.forEach(f => line(`${f.label}  ${f.path || "(not uploaded)"}`));
     // released for labels: a sheet without its .pdf yet gets it now, copied from its .ai inside the bucket (op_sheetPdf)
     const noPdf = sheetsOf(set).filter(sh => sh.sheetId && sh.cloud && sh.cloud.ai && !sh.cloud.pdf);
     if (S.cloud.ok && !set.offline && noPdf.length) await api("charmNestLibrary", { op: "sheetPdf", ids: noPdf.map(sh => sh.sheetId) }, { label: "Saving the sheets' .pdf", quiet: true })
       .then(r => { for (const sh of noPdf) if (r && r.urls && r.urls[sh.sheetId]) sh.cloud.pdf = r.urls[sh.sheetId]; }).catch(e => console.warn("sheet .pdf", e));
-    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, ...(Engrave.faceOf(b) === "front" ? { face: "front" } : {}), order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
+    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, ...(faceOf(b) === "front" ? { face: "front" } : {}), order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
     set.backCount = sheetsOf(set).reduce((n, sh) => n + (sh.backPool || []).length, 0);
     if (S.cloud.ok && !set.offline) {
       const [lp, mp, jp] = await Promise.all([uploadBytes(`${set.folder}/labels/${set.name}_labels.pdf`, await labels.save({ useObjectStreams: false }), "application/pdf", "Saving the set's labels PDF"), uploadBytes(`${set.folder}/${set.name}_manifest.pdf`, await man.save({ useObjectStreams: false }), "application/pdf", "Saving the manifest"), uploadBytes(`${set.folder}/set.json`, new TextEncoder().encode(JSON.stringify(json, null, 1)), "application/json")]);
