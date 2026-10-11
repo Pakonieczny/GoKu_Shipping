@@ -28,6 +28,9 @@
   const options = { pollMs: 10000, liveMs: 3000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480, timeoutMs: 9000, staleMs: 13000, nudgeMs: 4000, mountRetryMs: 400, mountGiveUpMs: 20000, tabMs: 260 };
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
+  /* Employee efficiency is for the master admin (Paul) alone (his ask, 11 Oct 2026; charm-nest-master-admin.js). For anyone else this file shows nothing, runs
+     nothing, writes no address and makes no request, whoever calls it and however (the menu, #efficiency, Efficiency.open / go / api, a mounted module). */
+  const masterOk = () => { try { const M = root.CharmNestMasterAdmin; return !!(M && typeof M.is === "function" && M.is()); } catch (_) { return false; } };
   const REST_TAG = " (desk not recorded)";   // the quiet row of a numbered station for work with no desk: "Assembly (desk not recorded)"
   const CORE = ["shipping", "assembly", "welding", "sorting", "design", "laser"], EXTRA = ["inbox"];   // (Laser and Design are two stations of their own: both always have a row, as on the Stations board; the Sorter app and the QR Printer are Sorting's pages, no row of their own)
   /* ONE Sorting station (Paul, 6 Oct 2026): the stored keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are SHOWN as "sorting". Same rule as displayStation in
@@ -741,15 +744,16 @@
     else if (h[1] === "person" && h.slice(2).join("/")) { tab = "people"; try { person = decodeURIComponent(h.slice(2).join("/")); } catch (_) { person = h.slice(2).join("/"); } }
     st.tab = tab; st.person = person.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80); return true;
   }
-  function writeHash(push) { try { const want = hashFor(); if (root.location.hash !== want) root.history[push ? "pushState" : "replaceState"](null, "", want); } catch (_) {} }
+  function writeHash(push) { try { if (!masterOk()) return; const want = hashFor(); if (root.location.hash !== want) root.history[push ? "pushState" : "replaceState"](null, "", want); } catch (_) {} }
   /** A person or a tab was chosen: the address follows (a new history entry, so Back returns to where you were). */
   function route(tab, person, o) {
+    if (!masterOk()) return;
     o = o || {}; person = String(person || "").trim();
     const same = tab === st.tab && person === st.person; if (same) return;
     st.tab = tab; st.person = person; writeHash(o.push !== false); showRoute(true);
   }
   function onHash() {
-    if (!st.built) return;
+    if (!st.built || !masterOk()) return;
     const mine = String(root.location.hash || "").replace(/^#/, "").split("/")[0] === "efficiency"; if (!mine) return;
     if (parseHash()) showRoute(true);
   }
@@ -893,6 +897,7 @@
   }
   /** One read: the passcode and the chosen data (Real, or Sandbox) are added here and nowhere else. A read that does not answer in `timeoutMs` is dropped. */
   async function call(body, key, signal) {
+    if (!masterOk()) throw Object.assign(new Error("Not available."), { barred: true });     // (no request leaves for anyone else, and a refusal here never forgets the passcode)
     const k = key || st.key, payload = Object.assign({}, body, { key: k }); st.sandbox = isSandbox(); if (st.sandbox) payload.sandbox = true;
     for (const f of ["day", "trend", "after"]) if (payload[f] === undefined) delete payload[f];
     const ctl = root.AbortController ? new AbortController() : null; let timedOut = false, timer = 0, onAbort = null, res, txt;
@@ -1585,7 +1590,9 @@
   }
   function visibility() {
     if (!st.built) return;
-    const was = st.shown; st.shown = !host.classList.contains("hidden");
+    const barred = !masterOk();
+    if (barred && !host.classList.contains("hidden")) host.classList.add("hidden");       // (not the master admin: the screen is put away at once, whoever showed it; the observer comes back here and finds it hidden)
+    const was = st.shown; st.shown = !barred && !host.classList.contains("hidden");
     if (st.shown && !was) onShown();
     if (!st.shown && was) unmountAll();                       // another Workspace tab is open: nothing of ours runs
     if (!(st.shown && doc.visibilityState !== "hidden")) { clearTimeout(st.timer); clearTimeout(st.liveTimer); st.timer = st.liveTimer = 0; if (!st.out) st.out = Date.now(); paintLive(); return; }   // out of sight: nothing is read
@@ -1608,8 +1615,8 @@
     if (needOverview() && !st.busy && !st.timer) schedule(options.pollMs);
   }
   function open() { try { if (root.CN && typeof root.CN.setMode === "function") root.CN.setMode("efficiency"); } catch (_) {} }
-  /** Opens the screen on a tab (or a person) from anywhere. */
-  function goTo(tab, name) { if (!st.shown) open(); if (tab === "person") openPerson(name); else route(tab === "stations" || tab === "people" ? tab : "overview", ""); }
+  /** Opens the screen on a tab (or a person) from anywhere. (The sorter page decides whether this person may have the tab: charm-nest-1.html setMode.) */
+  function goTo(tab, name) { if (!masterOk()) return; if (!st.shown) open(); if (tab === "person") openPerson(name); else route(tab === "stations" || tab === "people" ? tab : "overview", ""); }
   /** What the two modules (and other screens) use. The passcode and the chosen data are added here, never by the caller. */
   const api = {
     version: 1,
@@ -1624,6 +1631,7 @@
   };
   function mount() {
     if (!build()) return;
+    try { const M = root.CharmNestMasterAdmin; if (M && typeof M.onChange === "function") M.onChange(visibility); } catch (_) {}      // (the master admin signs in or out: the screen follows at once)
     visibility();
     setInterval(tickLive, Math.max(250, +options.tickMs || 1000));
   }

@@ -88,6 +88,7 @@ seed();
       return route.continue();
     });
     // the sorter itself is in SANDBOX mode (Settings > Sandbox on): the very thing that used to switch the console to the Sandbox copies
+    await require('./master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', sandbox: 'on' })); } catch (_) {} window.confirm = () => true; window.alert = () => {}; });
   };
   const track = page => { const errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/status of (400|503)/.test(m.text()) && !(/status of 409/.test(m.text()) && /charmNestLibrary/.test((m.location() && m.location().url) || ''))) errs.push(m.text() + ' @ ' + ((m.location() && m.location().url) || '')); }); return errs; };   // (the browser's own notice for the answers this test forces; and the library's "another tab holds it" 409 when a second sorter tab opens, which is the sorter's, not the console's)

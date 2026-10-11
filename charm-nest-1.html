@@ -3041,7 +3041,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
         <details class="moreMenu" id="moreMenu"><summary title="Workspace tools and settings"><span id="moreLabel">Workspace</span><span aria-hidden="true">⌄</span><i class="apiAlert hidden" id="etsyAlert" title="Etsy API needs attention"></i></summary>
           <div class="moreList">
             <div class="menuLabel">Workspace</div>
-            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="efficiency" title="Who is in, what they made and scanned, throughput by hour: the whole shop">Employee efficiency</button>
+            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="efficiency" hidden data-master-only title="Who is in, what they made and scanned, throughput by hour: the whole shop">Employee efficiency</button>
             <div class="menuSection"><label class="menuLabel" for="stockSel">Sheet preset · GF / SS / Rose</label><select class="topSel" id="stockSel" title="Solid gold uses its own custom size"></select></div>
             <button id="btnRoleSwitch" type="button" hidden>Laser · switch to Design</button>
             <button id="btnSettings">Settings<span class="menuHint">⚙</span></button>
@@ -6925,8 +6925,32 @@ async function loadCharms() {
     });
   } catch (e) { if (!had) body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; else toast("Charms not refreshed: " + e.message, "bad", 4000); }
 }
+/* Employee efficiency is for the master admin (Paul) alone (his ask, 11 Oct 2026): nobody else sees its menu entry, can open its tab, or reaches it by
+   the address (#efficiency...), Back, a link or a call. Whoever asks gets the screen they are already on. Hidden until the server has said who is
+   signed in (charm-nest-master-admin.js), so a deep link that arrives before that answer is kept for a moment and opened if the answer is Paul. */
+const effAllowed = () => { try { return !!(window.CharmNestMasterAdmin && CharmNestMasterAdmin.is()); } catch (_) { return false; } };
+let effWanted = 0, effWantedHash = "";
+window.addEventListener("charmnest:master-admin", () => {
+  try {
+    if (!effAllowed()) { if (S.mode === "efficiency") setMode("nest"); return; }
+    if (effWanted && Date.now() - effWanted < 20000 && S.mode !== "efficiency") {
+      const h = effWantedHash; effWanted = 0; effWantedHash = ""; setMode("efficiency");
+      if (/^#efficiency\//.test(h)) { try { history.replaceState(null, "", h); window.dispatchEvent(new Event("hashchange")); } catch (_) {} }   // (the tab or person the link named)
+    }
+  } catch (_) {}
+});
 function setMode(mode) {
   if(window.Seal?.defer("main-mode",()=>setMode(mode)))return;
+  if (modeFromUser) effWanted = 0;
+  if (mode === "efficiency") {
+    if (effAllowed()) { effWanted = 0; effWantedHash = ""; }
+    else {
+      if (!modeFromUser) { effWanted = Date.now(); if (/^#efficiency(\/|$)/.test(location.hash || "")) effWantedHash = location.hash; }
+      modeFromUser = false;
+      if (S.mode !== "efficiency") { try { if ((location.hash || "").slice(1).split("/")[0] === "efficiency") history.replaceState(null, "", "#" + S.mode); } catch (_) {} return; }
+      mode = "nest";
+    }
+  }
   if (S.mode === "library" && mode !== "library" && $("#libBody .libCard")) S.library.place = libraryPlace();
   S.mode = mode; renderNestFlow(); $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
@@ -7293,7 +7317,7 @@ try {
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
 <script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2"></script>
-<script src="charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1"></script>
+<script src="charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1"></script>
 <script src="charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2"></script>
 <script src="charm-nest-efficiency-laser.js?v=20261006-int2"></script>
 <script src="charm-nest-efficiency-person.js?v=20261006-ep14-ad4"></script>
