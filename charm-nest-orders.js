@@ -378,6 +378,54 @@
     const live = table.products.filter(x => x && !x.d), mine = live.filter(x => upSku(x.sku) === sku);
     return mine.length > 0 && mine.every(has) && live.some(x => !has(x));
   }
+  /* ── an option's OWN SKU, told without Etsy's table (FLAGWHY, 11 Oct 2026) ───────────────────────────────────────────
+     Paul, on 4197589560 ZODIAC_CONSTE_GEM-7 "Zodiac Sign: Scorpio", 4195168363 ZODIAC_EARRINGS-3 "Cancer" and 4194545985 LETTER_EARRING-19 "Letter: T", all
+     "REVIEW REQUIRED: option not mapped, Etsy's SKU list is not loaded yet", with the right charm already on each row: "These 3 were chosen correctly".
+     The transaction's SKU was a master design and the product's own (Etsy puts the SKU of the variation bought on the transaction), but the option was
+     only ever answered by the listing's inventory table (tiesToOption), which the page does not hold until a line waits and Etsy has been asked. A master
+     SKU on the transaction settles the option when it is demonstrably the OPTION's own and not the one SKU the whole listing shares:
+       · index: it is `BASE-n` / `BASE_n` and the master holds the numbered family BASE-0, BASE-1, BASE-2… (zodiac 0-11, letters 0-25, runes 0-23, birth flowers,
+         goddesses: the shop numbers one design per drop-down value), read from the master itself, never from a list of listings;
+       · seen: the orders the page already holds for the listing carry a different SKU for each value of the option (this value's SKU is on no other value).
+     Never when something says the SKU is shared: the same SKU on two values of the option in the orders the page holds, or in the listing's table
+     (held by several products, or the listing's only SKU). Never for a SKU that is not a master design, never for a SKU of another family than the line
+     (a necklace pendant on an earrings line), never over a person's saved pick, and only when exactly ONE option of the line is still unread (two could be
+     two charms: a person says). The line's own SKU is the design either way; this only decides whether the option still has to be asked. */
+  const INDEXED_SKU = /^(.+?)([-_])(\d{1,3})$/;
+  /** The master family a numbered SKU belongs to ({ base: "ZODIAC_EARRINGS-", n: 3 }), when the master holds that base numbered 0, 1 and 2 (else null). */
+  function skuIndexFamily(sku, masterEntry) {
+    const m = INDEXED_SKU.exec(upSku(sku)); if (!m || !masterEntry || String(+m[3]) !== m[3]) return null;
+    const base = m[1] + m[2];
+    for (let i = 0; i < 3; i++) if (!masterEntry(base + i)) return null;
+    return { base, n: +m[3] };
+  }
+  /** What the page's own lines say about each listing's SKUs: { listingId: { rows: [{ sku, v: { option name: value } }], sig } } (names and values as optionLookup reads them; lines with no SKU left out). */
+  function seenSkus(lines) {
+    const by = {};
+    for (const l of lines || []) {
+      const sku = l && l.listingId ? upSku(l.sku) : ""; if (!sku) continue;
+      const v = {}; for (const x of l.variations || []) { const n = norm(lvName(x)), val = norm(lvValue(x)); if (n && val) v[n] = val; }
+      const id = String(l.listingId), e = by[id] || (by[id] = { rows: [], keys: new Set() }), k = sku + "\u0001" + JSON.stringify(v);
+      if (!e.keys.has(k)) { e.keys.add(k); e.rows.push({ sku, v }); }
+    }
+    for (const id of Object.keys(by)) { by[id].sig = [...by[id].keys].sort().join("\u0002"); delete by[id].keys; }
+    return by;
+  }
+  /** What the page's lines of this listing say about a SKU against one option's value: "shared" (the SKU is on another value of the option), "follows" (every line with
+   *  this value has this SKU, no other value has it, and another value has another SKU), or "" (nothing to say). */
+  function seenVerdict(seen, listingId, name, value, sku) {
+    const e = seen && seen[String(listingId)], s = upSku(sku); if (!e || !s) return "";
+    const n = norm(name), x = norm(value); let shared = false, varies = false, other = false;
+    for (const r of e.rows) {
+      const rx = r.v[n]; if (rx == null) continue;
+      if (rx !== x && r.sku === s) shared = true;
+      else if (rx === x && r.sku !== s) varies = true;
+      else if (rx !== x && r.sku !== s) other = true;
+    }
+    return shared ? "shared" : varies ? "" : other ? "follows" : "";
+  }
+  /** The listing's table says this SKU is the listing's own: its only SKU, or on several products. */
+  const tableShares = (table, sku) => !!table && typeof table === "object" && !table.gone && (Array.isArray(table.products) ? listingWide(table, upSku(sku)) : !!table.uni && upSku(table.uni) === upSku(sku));
   /* ── family: what a SKU and a line say they are (necklace, earrings…) ─────────────────────────────────────────────────
      Paul, 10 Oct: each drop-down option's own SKU decides the charm. Etsy's SKU for the product bought is exact evidence only
      when it is also the right KIND of design for the line: the Greek Goddess EARRINGS listing carries "GreekGoddess_Necklace_4"
@@ -1318,7 +1366,7 @@
   function interpretLine(order, line, ctx) {
     ctx = ctx || {};
     const problems = [];
-    const me = ctx.masterEntry, loose = ctx.masterLoose;
+    const me = ctx.masterEntry, loose = ctx.masterLoose, txSku = upSku(line.sku);   // (txSku: the SKU as the transaction carries it, before any inventory SKU stands in for it)
     // 0 · the SKU Etsy keeps for the product bought, in the listing's inventory table (when the page holds one): it stands in
     // for a transaction SKU that is missing or names no design, and for one that is the listing's own (held by products that
     // differ in their options) while the product has a SKU of its own. Never for a SKU that names a design and is no one
@@ -1416,6 +1464,8 @@
       }
       return help;
     };
+    // FLAGWHY: with no table loaded, the orders the page holds can still show the SKU is the listing's one SKU (it is on other choices of this option): said in the row
+    const sharedWhy = (name, value) => !table && txSku && seenVerdict(ctx.seen, line.listingId, name, value, txSku) === "shared" ? { why: `SKU ${txSku} is on orders with other choices of “${name}” too, so it does not say which charm this is: map this option once` } : {};
     // a listing that engraves in ONE font whatever the buyer picks (FONT_LISTINGS): its font option never holds, asks or changes the font
     const fx = fontListing(line, sku, bought);
     for (const v of line.variations || []) {
@@ -1460,7 +1510,7 @@
       if (fh && !spec.font) spec.font = fontSpecOf(fh, fh.listing ? "rule:font-listing" : "rule:font-in-length");
       spec.options.push({ name, value, mapped });
       // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
-      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp())); continue; }
+      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp(), sharedWhy(name, value))); continue; }
       if (mapped.field === "font") {   // the font the buyer asked for and the app font it is (none: asked only); the length it came with is the line's chain
         const af = fontById(mapped.value);
         if (!spec.font) spec.font = fr ? fontSpecOf(Object.assign({}, fr, { id: af ? af.id : "", name: af ? af.name : "" }), mapped.source) : { asked: value, id: af ? af.id : "", name: af ? af.name : "", source: mapped.source };
@@ -1471,6 +1521,15 @@
       if (mapped.field === "form" && !spec.form) spec.form = mapped.value;
       else if (mapped.field === "size" && !spec.size) spec.size = mapped.value;
       else if (mapped.field === "chain" && !spec.chain) spec.chain = mapped.value;
+    }
+    // FLAGWHY: the transaction's SKU is a master design that is demonstrably THIS option's own (skuIndexFamily, or the page's own orders: seenVerdict; never when the page's
+    // orders or the listing's table say it is shared): the one option nothing else could read is answered by it, as a table's tied SKU answers it. No hold, no person asked.
+    if (!quiet && !viaPick && !viaInventory && !heldFamily && !set && sku && txSku && me && me(sku) && ["transaction", "spelling", "variation"].includes(skuSource) && !skuFamilyConflict(sku, line) && !tableShares(table, txSku)) {
+      const unread = spec.options.filter(o => !o.mapped), ask = unread.length === 1 ? problems.find(p => p.kind === "needsMapping" && !p.font && p.optionName === unread[0].name && p.optionValue === unread[0].value) : null;
+      if (ask) {
+        const seen = seenVerdict(ctx.seen, line.listingId, unread[0].name, unread[0].value, txSku), how = seen === "shared" ? "" : seen === "follows" ? "seen" : skuIndexFamily(sku, me) ? "index" : "";
+        if (how) { unread[0].mapped = { field: "design", value: sku, source: "sku:" + how }; problems.splice(problems.indexOf(ask), 1); }
+      }
     }
     if (fx) { const f = fontById(fx.font); spec.font = Object.assign({ asked: "" }, spec.font, { id: f.id, name: f.name, source: "rule:font-listing", listing: true }); }   // (the listing's one font, with or without a font option)
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
@@ -1867,7 +1926,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
