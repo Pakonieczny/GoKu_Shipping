@@ -146,7 +146,7 @@ await t('2d the font of each face: null = the line\'s own font (spec.font), a wo
   const o = eng('Tag1 (front+back)', ['Front in Ace font: W\nBack: 5'], {}, 'Vibur'); assert.deepEqual([o.front.fontWord, o.back.fontWord], ['Ace', null], 'only the face that names a font changes');
   const lbl = eng('Tag1 (front+back)', ['Front of tag in font Britannic Bold: T\nBack of tag in font Vibur: m'], {}, 'Ace');
   assert.deepEqual([lbl.front.text, lbl.front.fontWord, lbl.back.text, lbl.back.fontWord], ['T', 'Britannic Bold', 'm', 'Vibur'], 'a font named in the label ("Front of tag in font Britannic Bold: T")');
-  assert.equal(O.fontOfPhrase(lbl.front.fontWord), 'alegreya-sans'); assert.equal(O.fontOfPhrase(v.front.fontWord), 'playwrite-us-modern');
+  assert.equal(O.fontOfPhrase(lbl.front.fontWord), 'libre-franklin'); assert.equal(O.fontOfPhrase(v.front.fontWord), 'vibur');
   const ln = eng('Tag1 (front+back)', ['front - W\nback - 5\nfont: Britannic Bold'], {}, null); assert.deepEqual([ln.front.text, ln.back.text, ln.front.fontWord, ln.back.fontWord], ['W', '5', 'Britannic Bold', 'Britannic Bold'], 'a line "font: X" is the font of both faces, not words to engrave');
   const nf = eng('Tag1 (front+back)', ['front - Jack - Ace\nback - 5'], {}, null); assert.equal(nf.front.text, 'Jack - Ace', '"Ace" is a name as often as a font: a font only with the word font beside it');
   const none = eng('Tag1 (front+back)', ['front - W\nback - 5'], {}, null); assert.deepEqual([none.front.fontWord, none.back.fontWord], [null, null]);

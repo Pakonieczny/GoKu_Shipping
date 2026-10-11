@@ -2320,13 +2320,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     host.innerHTML = CNEngravingSeals.panel(shown);
     CNEngravingSeals.wirePanel(host,shown,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
-    // the line's own "Engraves: Front / Back / Front + back" editor (ENGSETUP's one component, mounted once under the card; nothing is drawn where it is not on the page or the line has no engraving to talk about)
-    const ES = window.CharmNestEngraveSetup, line = e.job && e.job.row;
-    if (ES && ES.mount && line) {
-      const slot = document.createElement('div'); slot.className = 'swEngSetup'; host.appendChild(slot);
-      slot.addEventListener('cn-engrave-setup', () => { if (W.sel === x) renderEng(x); });   // (a save: the card is drawn again from the jobs the save made)
-      tryDo(() => ES.mount(slot, line, { compact: true }));
-    }
+    // the line's engraving setup (None / Front only / Back only / Front + back, each face's words and font): one control for every card, charm-nest-engrave-setup.js
+    if (window.CharmNestEngraveSetup && (e.job || rowOf(x))) { const su = document.createElement('div'); su.className = 'swEngSetup'; host.appendChild(su); su.addEventListener('cn-engrave-setup', () => { if (W.sel === x) renderEng(x); }); tryDo(() => CharmNestEngraveSetup.mount(su, e.job ? e.job.row : rowOf(x), { compact: true })); }
   }
 
   /** The switch the card shows for a piece: the discs of a counted order (the order window's own cycle) and, for a piece engraved on both faces, its Front | Back. A piece with no front gets
