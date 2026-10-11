@@ -1575,7 +1575,8 @@
     // orders or the listing's table say it is shared): the one option nothing else could read is answered by it, as a table's tied SKU answers it. No hold, no person asked.
     if (!quiet && !viaPick && !viaInventory && !heldFamily && !set && sku && txSku && me && me(sku) && ["transaction", "spelling", "variation"].includes(skuSource) && !skuFamilyConflict(sku, line) && !tableShares(table, txSku)) {
       const unread = spec.options.filter(o => !o.mapped), ask = unread.length === 1 ? problems.find(p => p.kind === "needsMapping" && !p.font && p.optionName === unread[0].name && p.optionValue === unread[0].value) : null;
-      if (ask) {
+      // (a yes / no / none answer is never a choice of charm: "Gift Wrap: Yes" on a numbered-SKU line is still an option nobody has read)
+      if (ask && !/^\s*(?:yes|no|none|n\/a|true|false)\b/i.test(unread[0].value)) {
         const seen = seenVerdict(ctx.seen, line.listingId, unread[0].name, unread[0].value, txSku), how = seen === "shared" ? "" : seen === "follows" ? "seen" : skuIndexFamily(sku, me) ? "index" : "";
         if (how) { unread[0].mapped = { field: "design", value: sku, source: "sku:" + how }; problems.splice(problems.indexOf(ask), 1); }
       }
