@@ -715,6 +715,10 @@
        Tag 2  pointed top, rounded tip       5X8.8    (0.011; TINY INITIAL TAG 2 and 3 are the same outline to 0.002 and 1.5 % smaller: the picture cannot tell them apart, 5X8.8 is of the same set)
        Tag 3  pointed top, flat tip          4.6X8.8  (0.010; every other design 0.073 and more)
        Tag 4  chamfered rectangle            5X9      (0.019; MINI_0445, the listing's one shared SKU, is the same outline to 0.004, 1.5 % smaller, and has no engraving area)
+     Confidence: Tag 1 and Tag 3 high (the only plain portrait design, the only flat-tipped one); Tag 2 and Tag 4 medium-high (each has a look-alike of the same outline and 1.5 % other size: TINY INITIAL
+     TAG 2 / 3, MINI_0445). The master's own "TINY INITIAL TAG n" are no map: TAG 4 is a byte copy of TAG 1 (charm hash b5023f11), TAG 1 lies on its side (45 x 16.7 pt), TAG 3 is the 5X8.8 drawing. Paul noted
+     MINI_0445 "chosen correctly" on a Tag1 order; MINI_0445 is the octagon of the picture's Tag 4: if the shop's Tag 1 is in fact that octagon, TAG_SHAPES is the one place to change. A tag whose design is only a
+     COPY of a lower tag's drawing (the same charm hash) is no shape of its own and waits like a missing one: two shapes never end on one design.
      The tag number is the shape, whatever SKU the transaction carries: MINI_0445 is the listing's shared SKU, not "Tag 1". Who decides first (never overridden): a person's saved
      answer for the value (optionMapPut), then the option's own SKU (Etsy's table ties one to the value, or an indexed master family: FLAGWHY), then this rule. A shape the master
      has no design for is never replaced by a look-alike: the value waits with ONE plain line that names the shape. */
@@ -746,7 +750,12 @@
       else if (!sh) { out.state = "missing"; out.why = `Tag${t.tag} is not one of the listing's four tag shapes (1 to 4), so no master design is known for it`; }
       else if (!me) out.state = "unchecked";
       else if (!me(sh.sku)) { out.state = "missing"; out.why = `the master has no design for the Tag${t.tag} shape (${sh.shape}, ${sh.sku}): add it to the master and this line reads on its own`; }
-      else out.state = "found";
+      else {
+        // never two shapes on one drawing: a tag whose master design is the very same drawing (the same charm hash) as a LOWER tag's is a copy, not its own shape (the master's TINY INITIAL TAG 4 is a copy of TAG 1)
+        const mine = me(sh.sku), h = String(mine && mine.charmHash || ""), twin = h ? [1, 2, 3, 4].find(u => u < t.tag && TAG_SHAPES[u] && String((me(TAG_SHAPES[u].sku) || {}).charmHash || "") === h) : 0;
+        if (twin) { out.state = "missing"; out.why = `the master has no design of its own for the Tag${t.tag} shape (${sh.shape}): ${sh.sku} is the same drawing as Tag${twin}'s ${TAG_SHAPES[twin].sku}`; }
+        else out.state = "found";
+      }
       return out;
     }
     return null;

@@ -16,8 +16,9 @@ const eq = (a, b, m) => assert.deepStrictEqual(a, b, m), ok = (c, m) => assert(c
 /* ── the world: the real master, twice: the tag part of it as the live index answered (committed fixture), and the whole saved list when this machine has it (6,856 SKUs) ── */
 const SAVED = '/mnt/project-files/plans/flag-fix-1011/master-skus-1011.json';
 const worlds = [];
-const mkLib = skus => { const lib = new Map(skus.map(s => [s, { sku: s }])), loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; } return { lib, loose }; };
-worlds.unshift(Object.assign({ name: 'the tag designs of the real master (fixture)', skus: Object.keys(EV.master).map(s => s.toUpperCase()) }, mkLib(Object.keys(EV.master).map(s => s.toUpperCase()))));
+const mkLib = (skus, hashes) => { const lib = new Map(skus.map(s => [s, Object.assign({ sku: s }, hashes && hashes[s] ? { charmHash: hashes[s] } : {})])), loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; } return { lib, loose }; };
+const HASH = {}; for (const [k, m] of Object.entries(EV.master)) HASH[k.toUpperCase()] = m.charmHash;   // (the live entries carry their drawing's charmHash)
+worlds.unshift(Object.assign({ name: 'the tag designs of the real master (fixture)', skus: Object.keys(EV.master).map(s => s.toUpperCase()) }, mkLib(Object.keys(EV.master).map(s => s.toUpperCase()), HASH)));
 try { const all = JSON.parse(fs.readFileSync(SAVED, 'utf8')); if (Array.isArray(all) && all.length > 6000) { const skus = all.map(e => String(e.sku).toUpperCase()); worlds.push(Object.assign({ name: 'the whole saved master (' + all.length + ' SKUs)', skus }, mkLib(skus))); } } catch (_) { /* the saved list is not on this machine: the fixture world alone runs */ }
 const ctxOf = (w, extra) => Object.assign({ optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [] }, masterEntry: s => w.lib.get(String(s || '').toUpperCase()) || null, masterLoose: s => w.loose[O.looseKey(s)] || '' }, extra || {});
 const TITLE = 'Mini Tag Initial Charm Add On Charm Personalized Letter Charm Minimalist Tiny Pendant Gift for Her Custom Initial Charm';
@@ -48,6 +49,9 @@ function evidence() {
   for (const [a, b] of pairs) { ok(rms(EV.etsy[a].profile, EV.etsy[b].profile) > 0.05, `the picture's Tag${a} and Tag${b} differ`); ok(rms(EV.master[SHAPE[a]].profile, EV.master[SHAPE[b]].profile) > 0.05, `${SHAPE[a]} and ${SHAPE[b]} differ`); }
   eq(O.TAG_SHAPES[1].sku, SHAPE[1]); eq(O.TAG_SHAPES[2].sku, SHAPE[2]); eq(O.TAG_SHAPES[3].sku, SHAPE[3]); eq(O.TAG_SHAPES[4].sku, SHAPE[4]);
   eq(new Set([1, 2, 3, 4].map(n => O.TAG_SHAPES[n].sku)).size, 4, 'four different designs');
+  eq(new Set([1, 2, 3, 4].map(n => EV.master[O.TAG_SHAPES[n].sku].charmHash)).size, 4, 'four different drawings (four charm hashes), no copy of one in another\'s place');
+  // the master's own numbering is no map: TINY INITIAL TAG 4 is a byte-identical copy of TAG 1 (same hash), TAG 1 lies on its side (2.9 : 1), TAG 3 is the 5X8.8 drawing
+  eq(EV.master['TINY INITIAL TAG 4'].charmHash, EV.master['TINY INITIAL TAG 1'].charmHash); eq(EV.master['TINY INITIAL TAG 3'].charmHash, EV.master['5X8.8'].charmHash); ok(EV.master['TINY INITIAL TAG 1'].aspect > 2.5);
   // MINI_0445 (the listing's one shared SKU) is the chamfered outline, i.e. Tag 4's shape, and has no engraving area: it is NOT Tag 1
   ok(rms(EV.master['MINI_0445'].profile, EV.master['5X9'].profile) <= 0.01 && rms(EV.master['MINI_0445'].profile, EV.master['5X8.5'].profile) >= 0.02 && EV.master['MINI_0445'].engravable === false, 'MINI_0445 is the chamfered tag with no engraving area');
   step('evidence: Tag1 = 5X8.5 (plain rounded), Tag2 = 5X8.8 (pointed, rounded tip), Tag3 = 4.6X8.8 (pointed, flat tip), Tag4 = 5X9 (chamfered); the picture\'s outlines against the master\'s thumbnails; MINI_0445 is the chamfered shape');
@@ -123,6 +127,16 @@ function missingShape() {
       ok(!sp.options.find(o => o.name === 'Charm Type').mapped, value + ': the option stays unmapped');
     }
   }
+  // a design that is only a COPY of a lower tag's drawing (the same charm hash) is no shape of its own: Tag4 on Tag1's drawing waits, Tag1 does not
+  const copy = mkLib(full.skus, Object.assign({}, HASH, { '5X9': HASH['5X8.5'] }));
+  for (const [value, t] of VALUES) {
+    const sp = read(copy, value, {}), asks = askedAbout(sp);
+    if (t !== 4) { eq(sp.problems, [], value + ': the other tags are not affected by a copy in Tag4\'s place'); eq(sp.designSku, SHAPE[t]); continue; }
+    eq(asks.length, 1, value + ': ONE question'); ok(asks[0].why.includes('Tag4') && asks[0].why.includes('same drawing as Tag1') && asks[0].why.includes('5X9') && asks[0].why.includes('5X8.5'), 'one plain line naming the shape and the copy: ' + asks[0].why);
+    eq(sp.designSku, null, value + ': never two shapes on one design'); eq(sp.tagOption.how, 'missing');
+  }
+  // two DIFFERENT shapes never end on one design, whatever the master holds
+  for (const w of worlds) for (const [value, t] of VALUES) { const sp = read(w, value, {}); if (sp.designSku) for (const [v2, t2] of VALUES) if (t2 !== t) ok(read(w, v2, {}).designSku !== sp.designSku, `${value} and ${v2} are different designs`); }
   const sp = read(without(['5X8.5', '5X8.8', '4.6X8.8', '5X9']), 'Tag2 (front+back)', {}); ok(askedAbout(sp)[0].why.includes('Tag2') && sp.designSku === null, 'a master with none of the four: each value names its own shape');
   // the picture has four tags: Tag5 is no shape of the listing
   const t5 = read(full, 'Tag5 (front+back)', {}); eq(askedAbout(t5).length, 1); ok(/Tag5 is not one of the listing's four tag shapes/.test(askedAbout(t5)[0].why), askedAbout(t5)[0].why); eq(t5.designSku, null);
