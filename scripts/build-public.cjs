@@ -187,6 +187,7 @@ const assets = [
   "vendor/fonts/LibreFranklin-OFL.txt",
   "vendor/fonts/Unicode-LICENSE.txt",
   "charm-nest-orders.js",
+  "charm-nest-sku.js",
   "charm-nest-shared-orders.js",
   "charm-nest-set-rules.js",
   "charm-nest-set-edit.js",
