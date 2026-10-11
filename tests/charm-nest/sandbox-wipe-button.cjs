@@ -68,6 +68,7 @@ async function main() {
     const srv = await start({ receipts: [] });
     const { st, sorterOrigin, stationOrigin } = srv;
     seed(st);
+    await require('./_repoToken.cjs').prime(st.db);   // (the page's standing unlock exists before the snapshot: the wipe must leave it alone like every other shared record)
     const prodBefore = productionSnap(st), prodBlobsBefore = canon([...st.blobs.keys()].filter(k => !/^(charmnest\/sandbox\/|design-archive\/sandbox\/)/.test(k)).sort());
     const dirty = sandboxLeft(st).length, dirtyFiles = sandboxFilesLeft(st).length;
     assert(dirty > 60 && dirtyFiles === 3, `${name}: the sandbox is dirty first (control): ${dirty} documents, ${dirtyFiles} files`);

@@ -96,6 +96,9 @@ async function functions(st, name, req, res, base) {
         let b = JSON.parse(bodyText), changed = false;
         // (the sorter page is served with a stand-in token in its sessionStorage, see start(): the door issues a real one for it here)
         if (b && st.repoToken && b.repoToken === st.repoToken) { b = Object.assign({}, b); delete b.repoToken; changed = true; }
+        // (and the page's standing unlock, stored in its localStorage with the same stand-in token, is the door's real one here: the page's questions about it, its Lock now and its
+        //  delete-confirm without a password all reach the real code with a real session of this same in-memory Firestore)
+        if (b && st.repoToken && b.sessionToken === st.repoToken && /^repo(Session|Lock|Unlock)$/.test(String(b.op))) { b = Object.assign({}, b, { sessionToken: await require('./_repoToken.cjs').session(st.db) }); changed = true; }
         const s2 = await require('./_repoToken.cjs')(name, b, st.db);
         if (changed || s2 !== b) bodyText = JSON.stringify(s2);
       } catch (_) { /* not JSON: left as it is */ }
@@ -209,7 +212,7 @@ async function start(opts = {}) {
      with an unlock token already in its tab's sessionStorage (`other` serves every upload / change / download; a delete is never held).
      The token is made new each run and is the fake server's (st.repoToken, srv.repoToken); { repoSeed: false } serves the page locked. */
   const repoToken = 'tt-' + crypto.randomBytes(12).toString('hex'); st.repoToken = repoToken;
-  const repoSeed = opts.repoSeed === false ? '' : `<script>try{var k='cn.repoLock.v1';if(!sessionStorage.getItem(k))sessionStorage.setItem(k,JSON.stringify({other:{t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}}))}catch(_){}</script>`;
+  const repoSeed = opts.repoSeed === false ? '' : `<script>try{var k='cn.repoLock.v1';if(!sessionStorage.getItem(k))sessionStorage.setItem(k,JSON.stringify({other:{t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}}))}catch(_){}try{var q='cn.repoSession.v1';if(!localStorage.getItem(q))localStorage.setItem(q,JSON.stringify({t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}))}catch(_){}</script>`;
   const handler = (base) => async (req, res) => {
     try {
       if (req.method === 'OPTIONS') return json(res, 204, {});

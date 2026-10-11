@@ -12,7 +12,18 @@
  *    CharmNestRepoLock.unlocked(action)         → is a usable token held right now (the lock icons read this)
  *    CharmNestRepoLock.mark(root)               → puts the locked / open padlock on every [data-repo] control under root
  *    CharmNestRepoLock.gate(el, action, ask)    → a text box or a select that asks before it takes a first touch
- *    CharmNestRepoLock.forget(action?)          → drop held tokens (all when no action)
+ *    CharmNestRepoLock.forget(action?)          → drop held tokens (all when no action, the session too)
+ *    CharmNestRepoLock.lockNow()                → Promise<{ok, server}>: the session ends at once on this computer and, asked of the server, there
+ *    CharmNestRepoLock.status()                 → { open, until }: is a session held (until = its end, ms), for the "Unlocked until ... Lock now" line
+ *    CharmNestRepoLock.verify()                 → Promise<true|false|null>: asks the server whether the held session still stands (false: it ended, so it is dropped)
+ *    CharmNestRepoLock.untilText(ms)            → "5:00 pm" in Toronto time
+ *
+ *  SESSION (Paul, 11 Oct 2026: "password protect the settings menu using my login password. If I'm logged into and working from my account then do not prompt me"):
+ *  one right password buys a SESSION token for Settings AND the repo's upload / change / download. It is kept in localStorage (so reloads and new tabs of this
+ *  computer share it) until the server's expiry (the earliest of 12 hours, the next 5:00 pm Toronto, midnight Toronto) or Lock now. The sorter has no way to show the
+ *  server the email app's operator session (another origin), so this stands in for "logged in". A delete never rides on the session by itself: it still asks its
+ *  confirm sentence, but takes a single-use token from the session with no password. Action "settings" opens the Settings menu; "modify" / "upload" / "download"
+ *  are covered by the same session.
  *
  *  `action` is one of upload, delete, download, modify, history, other (the server's words, plans/repo-protect-1011/REPOAUTH-api.md).
  *  `ask` = { what, target, go, title, message, note }: what the dialog says, the short target recorded with the attempt, the
@@ -30,11 +41,12 @@
 (function (root) {
   "use strict";
   const doc = root.document;
-  const KEY = "cn.repoLock.v1", TAB = "cn.repoTab.v1", MARGIN = 5000;
-  const ACTIONS = ["upload", "delete", "download", "modify", "history", "other"];
+  const KEY = "cn.repoLock.v1", SKEY = "cn.repoSession.v1", TAB = "cn.repoTab.v1", MARGIN = 5000;
+  const ACTIONS = ["upload", "delete", "download", "modify", "history", "other", "settings"];
   /* which held token may serve which need (REPOAUTH-api.md: an upload token also serves masterPatch, "other" serves every
      upload / modify / download op and never a delete; delete and history tokens are single use and are never held) */
-  const COVERS = { upload: ["upload", "other"], modify: ["modify", "upload", "other"], download: ["download", "other"], delete: ["delete"], history: ["history"], other: ["other"] };
+  const COVERS = { upload: ["upload", "other"], modify: ["modify", "upload", "other"], download: ["download", "other"], delete: ["delete"], history: ["history"], other: ["other"], settings: [] };
+  const SESSION_NEEDS = new Set(["settings", "upload", "modify", "download", "other"]);   // what a standing session serves (never a delete: that takes a single-use token)
   const ONCE = new Set(["delete", "history"]);
   const norm = a => (ACTIONS.includes(a) ? a : "other");
   const WORDS = {
@@ -43,11 +55,13 @@
     download: { title: "Download a charm file", what: "Downloading a charm file from the repo.", go: "Download" },
     modify: { title: "Change a charm in the repo", what: "Changing a charm in the repo.", go: "Unlock" },
     history: { title: "Charm repo history", what: "Changing the charm repo history.", go: "Unlock" },
-    other: { title: "Charm repo password", what: "This part of the charm repo is locked.", go: "Unlock" }
+    other: { title: "Charm repo password", what: "This part of the charm repo is locked.", go: "Unlock" },
+    settings: { title: "Settings", what: "The Settings menu is locked. Enter your login password to open it.", go: "Unlock" }
   };
 
   let hook = null;                      // tests: { api }
   let mem = {};                         // action → { t, e }: the tokens held (a single-use one is never put here)
+  let sess = null;                      // { t, e }: the standing session of this computer (localStorage, shared by its tabs); the token as the server gave it
   let lockedUntil = 0;                  // after a "locked" answer: no further try from this tab before this time (no more records)
   let queue = Promise.resolve();
   const listeners = new Set();
@@ -61,26 +75,40 @@
     return mem;
   }
   function save() { try { const s = store(); if (s) s.setItem(KEY, JSON.stringify(mem)); } catch (_) { /* the tab still holds it in memory */ } }
+  const shared = () => { try { return root.localStorage || null; } catch (_) { return null; } };
+  /** The standing session, read from localStorage (an ended one is dropped). Without storage the tab keeps what it holds in memory. */
+  function loadSession() {
+    const st = shared();
+    if (st) {
+      let o = null; try { const raw = st.getItem(SKEY); if (raw) o = JSON.parse(raw); } catch (_) { o = null; }
+      sess = o && typeof o.t === "string" && o.t && +o.e > Date.now() + MARGIN ? { t: o.t, e: +o.e } : null;
+    } else if (sess && !(sess.e > Date.now() + MARGIN)) sess = null;
+    return sess;
+  }
+  function saveSession() { try { const st = shared(); if (!st) return; if (sess) st.setItem(SKEY, JSON.stringify({ t: sess.t, e: sess.e })); else st.removeItem(SKEY); } catch (_) { /* memory only */ } }
   function prune() {
     const now = Date.now();
     for (const k of Object.keys(mem)) { const x = mem[k]; if (!ACTIONS.includes(k) || ONCE.has(k) || !x || typeof x.t !== "string" || !x.t || !(+x.e > now + MARGIN)) delete mem[k]; }
   }
   function find(need) {
-    load();
-    for (const a of COVERS[norm(need)] || []) { const x = mem[a]; if (x) return { action: a, token: x.t, expiresAt: +x.e, once: false }; }
+    need = norm(need); load();
+    if (SESSION_NEEDS.has(need)) { const s = loadSession(); if (s) return { action: "session", token: s.t, expiresAt: s.e, once: false, session: true }; }
+    for (const a of COVERS[need] || []) { const x = mem[a]; if (x) return { action: a, token: x.t, expiresAt: +x.e, once: false }; }
     return null;
   }
   function remember(info) {
+    if (info.session) { sess = { t: info.token, e: info.expiresAt }; saveSession(); changed(); return; }
     if (info.once || ONCE.has(info.action)) return;
     mem[info.action] = { t: info.token, e: info.expiresAt }; save(); changed();
   }
   function drop(info) {
     if (!info) return;
+    if (info.session || info.action === "session") { loadSession(); if (sess && sess.t === info.token) { sess = null; saveSession(); } changed(); return; }
     load(); if (mem[info.action] && mem[info.action].t === info.token) { delete mem[info.action]; save(); }
     changed();
   }
   function forget(action) {
-    load(); if (action) delete mem[norm(action)]; else mem = {};
+    load(); if (action) delete mem[norm(action)]; else { mem = {}; sess = null; saveSession(); }
     save(); changed();
   }
   const unlocked = action => !!find(action);
@@ -88,7 +116,8 @@
   function changed() {
     clearTimeout(expiryTimer);
     const now = Date.now(); let next = Infinity; for (const k of Object.keys(mem)) { const x = mem[k]; if (x && +x.e - MARGIN > now) next = Math.min(next, +x.e - MARGIN); }
-    if (next < Infinity) expiryTimer = setTimeout(() => { prune(); save(); changed(); }, Math.min(2147483000, Math.max(250, next - now + 50)));
+    if (sess && sess.e - MARGIN > now) next = Math.min(next, sess.e - MARGIN);
+    if (next < Infinity) expiryTimer = setTimeout(() => { prune(); save(); loadSession(); saveSession(); changed(); }, Math.min(2147483000, Math.max(250, next - now + 50)));
     try { mark(); } catch (_) { /* no page yet */ }
     for (const fn of [...listeners]) { try { fn(); } catch (_) { /* a listener never breaks the lock */ } }
   }
@@ -110,12 +139,13 @@
   function answerOf(e) { return e && e.data && typeof e.data === "object" ? e.data : null; }
   const isRepoLocked = e => !!e && e.status === 401 && !!e.data && e.data.error === "repo-locked";
   const cancelledError = () => Object.assign(new Error("Not done: the charm repo password was not given"), { cancelled: true });
-  async function unlockCall(body) {
+  async function callOp(op, body) {
     const api = getApi();
     if (typeof api !== "function") return { ok: false, error: "unavailable" };
-    try { return await api("charmNestLibrary", Object.assign({ op: "repoUnlock" }, body), { quiet: true }); }
+    try { return await api("charmNestLibrary", Object.assign({ op }, body), { quiet: true }); }
     catch (e) { return answerOf(e) || { ok: false, error: "unavailable" }; }
   }
+  const unlockCall = body => callOp("repoUnlock", body);
 
   /* ── the dialog (made fresh each time and removed after: no password field is left in the page) ── */
   const SHUT = "M3 6V4.2a3 3 0 0 1 6 0V6", OPEN = "M3 6V4.2a3 3 0 0 1 5.9-.8";
@@ -140,7 +170,8 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
   function css() { try { if (!doc || doc.getElementById("cnRepoLockCss")) return; const s = doc.createElement("style"); s.id = "cnRepoLockCss"; s.textContent = CSS; doc.head.appendChild(s); } catch (_) { /* unstyled, still works */ } }
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  function openDialog(action, ask) {
+  /** via: the person holds a standing session and this is a delete: the dialog shows its confirm sentence with no password field, and takes a single-use token from the session. */
+  function openDialog(action, ask, via) {
     return new Promise(resolve => {
       css();
       const W = WORDS[action] || WORDS.other, a = ask || {};
@@ -148,30 +179,43 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
       d.setAttribute("aria-labelledby", "repoT"); d.setAttribute("aria-describedby", "repoP");
       d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3 id="repoT">${esc(a.title || W.title)}</h3></div>
         <div class="dlgBody"><p id="repoP">${esc(a.message || a.what || W.what)}</p>${a.note ? `<div class="repoNote">${esc(a.note)}</div>` : ""}
-          <div class="field"><label for="repoPw">Password</label><input id="repoPw" type="password" name="repo-unlock-field" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" aria-describedby="repoMsg"></div>
+          <div class="field" id="repoField"><label for="repoPw">Password</label><input id="repoPw" type="password" name="repo-unlock-field" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" aria-describedby="repoMsg"></div>
           <div class="repoMsg" id="repoMsg" role="status" aria-live="polite"></div></div>
         <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn gold sm" data-k="go">${esc(a.go || W.go)}</button></div></div>`;
       (doc.body || doc.documentElement).appendChild(d);
-      const input = d.querySelector("#repoPw"), msg = d.querySelector("#repoMsg"), go = d.querySelector("[data-k=go]"), cancel = d.querySelector("[data-k=cancel]");
+      const input = d.querySelector("#repoPw"), msg = d.querySelector("#repoMsg"), go = d.querySelector("[data-k=go]"), cancel = d.querySelector("[data-k=cancel]"), field = d.querySelector("#repoField");
       let busy = false, done = false, hold = 0;
+      if (via) { field.hidden = true; d.dataset.repoVia = "session"; }
       const say = (text, kind) => { msg.className = "repoMsg" + (kind === "bad" ? " bad" : ""); msg.textContent = ""; if (kind === "spin") { const s = doc.createElement("span"); s.className = "repoSpin"; msg.appendChild(s); msg.appendChild(doc.createTextNode(text)); } else msg.textContent = text; };
       const wait = on => { busy = on; input.disabled = on; go.disabled = on || Date.now() < lockedUntil; cancel.disabled = on; };
       const finish = info => { if (done) return; done = true; clearTimeout(hold); input.value = ""; try { if (d.open) d.close(); } catch (_) { d.removeAttribute("open"); } d.remove(); resolve(info); };
       const lockLine = () => { say("Too many wrong tries. Please try again later.", "bad"); go.disabled = true; clearTimeout(hold); hold = setTimeout(() => { if (!done && !busy) { go.disabled = false; say(""); } }, Math.max(0, lockedUntil - Date.now()) + 50); };
+      /* a delete with a standing session: the confirm sentence is the dialog; no password, no attempt record (the server notes who deleted what) */
+      async function submitSession() {
+        const s0 = loadSession();
+        if (!s0) { via = false; field.hidden = false; delete d.dataset.repoVia; say("The unlock has ended. Enter the password again.", "bad"); try { input.focus(); } catch (_) { /* gone */ } return; }
+        wait(true); say("Checking…", "spin");
+        const ans = await unlockCall({ sessionToken: s0.t, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId() });
+        wait(false);
+        if (ans && ans.ok === true && typeof ans.token === "string" && ans.token) { finish({ action, token: ans.token, expiresAt: +ans.expiresAt > 0 ? +ans.expiresAt : Date.now() + 2 * 60 * 1000, once: true }); return; }
+        if (ans && ans.error === "session") { drop({ session: true, token: s0.t }); via = false; field.hidden = false; delete d.dataset.repoVia; say("The unlock has ended. Enter the password again.", "bad"); try { input.focus(); } catch (_) { /* gone */ } return; }
+        say("The check is not available right now. Please try again later.", "bad");
+      }
       async function submit() {
         if (busy || done) return;
+        if (via) return submitSession();
         if (Date.now() < lockedUntil) { lockLine(); return; }
         let pw = input.value; input.value = "";                              // the field is clear from here on, whatever happens
         if (!pw) { say("Type the password first.", "bad"); input.focus(); return; }
         wait(true); say("Checking the password…", "spin");
-        let ans; try { ans = await unlockCall({ password: pw, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId(), ...(a.overwrite ? { overwrite: true } : {}) }); } finally { pw = ""; }
+        let ans; try { ans = await unlockCall({ password: pw, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId(), ...(ONCE.has(action) ? {} : { session: true }), ...(a.overwrite ? { overwrite: true } : {}) }); } finally { pw = ""; }
         input.value = "";
         const ok = !!ans && ans.ok === true && typeof ans.token === "string" && ans.token.length > 0;
         const reason = ok ? "ok" : ans && (ans.error === "wrong" || ans.error === "locked") ? ans.error : "unavailable";
         try { root.dispatchEvent(new root.CustomEvent("repo-auth-attempt", { detail: { action, ok, reason } })); } catch (_) { /* the Alert is optional */ }
         if (ok) {
-          const once = ans.once === true || ONCE.has(action);
-          const info = { action: ACTIONS.includes(ans.action) ? ans.action : action, token: ans.token, expiresAt: +ans.expiresAt > 0 ? +ans.expiresAt : Date.now() + 5 * 60 * 1000, once };
+          const once = ans.once === true || ONCE.has(action), session = ans.session === true && !once;
+          const info = { action: session ? "session" : ACTIONS.includes(ans.action) ? ans.action : action, token: ans.token, expiresAt: +ans.expiresAt > 0 ? +ans.expiresAt : Date.now() + 5 * 60 * 1000, once, ...(session ? { session: true } : {}) };
           remember(info); wait(false); finish(info); return;
         }
         wait(false);
@@ -192,7 +236,7 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
   /* ── the way in ── */
   async function ensureNow(action, ask) {
     if (!ONCE.has(action)) { const f = find(action); if (f) return f; }
-    return openDialog(action, ask);
+    return openDialog(action, ask, ONCE.has(action) && !!loadSession());
   }
   /** A token for `action`, from the ones held or from the dialog; null when the person cancels. Asks one at a time: a second caller waits and then finds the token the first one got. */
   function ensure(action, ask) {
@@ -220,11 +264,36 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
     }
   }
 
+  /* ── the session: Lock now, the "Unlocked until" line, and a look at the server ── */
+  /** "5:00 pm", Toronto's clock. */
+  function untilText(ms) {
+    try { return new Date(+ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Toronto" }).replace(/\s*([AP])M$/i, (m, x) => " " + x.toLowerCase() + "m"); }
+    catch (_) { return ""; }
+  }
+  /** { open, until }: a session is held now, and when it ends. */
+  function status() { const s = loadSession(); return { open: !!s, until: s ? s.e : 0 }; }
+  /** Lock now: this computer forgets the session first (so the lock holds even when the server cannot be reached), then the server deletes it. */
+  async function lockNow() {
+    const s = loadSession(); sess = null; saveSession(); mem = {}; save(); changed();
+    if (!s) return { ok: true, server: true };
+    const ans = await callOp("repoLock", { sessionToken: s.t });
+    return { ok: true, server: !!ans && ans.ok === true };
+  }
+  /** Does the server still honour the held session? false: it ended (dropped here); true: it stands; null: could not be asked (the server still checks every protected call). */
+  async function verify() {
+    const s = loadSession(); if (!s) return false;
+    const ans = await callOp("repoSession", { sessionToken: s.t });
+    if (ans && ans.ok === true && ans.active === false) { drop({ session: true, token: s.t }); return false; }
+    if (ans && ans.ok === true && ans.active === true) { if (+ans.expiresAt > 0 && +ans.expiresAt !== s.e) { sess = { t: s.t, e: +ans.expiresAt }; saveSession(); changed(); } return true; }
+    return null;
+  }
+
   /* ── the look: a closed padlock until unlocked, an open one while it is ── */
   function mark(scope) {
     const r = scope || doc; if (!r || !r.querySelectorAll) return;
+    const memo = {}; // (one look per action, not one per control)
     r.querySelectorAll("[data-repo]").forEach(el => {
-      const open = unlockedQuiet(el.dataset.repo);
+      const act = el.dataset.repo, open = act in memo ? memo[act] : (memo[act] = unlockedQuiet(act));
       el.classList.toggle("repoLocked", !open); el.classList.toggle("repoOpen", open);
       if (!el.dataset.repoTitle) { const t = el.getAttribute("title") || ""; el.dataset.repoTitle = t ? "1" : "0"; if (!t) el.setAttribute("title", "Locked: asks for your password"); }
       else if (el.dataset.repoTitle === "0") el.setAttribute("title", open ? "Unlocked for a few minutes" : "Locked: asks for your password");
@@ -244,9 +313,11 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
     el.addEventListener("mousedown", block, true); el.addEventListener("keydown", block, true);
   }
 
-  load();
+  load(); loadSession();
+  /* another tab of this computer unlocked or locked: the padlocks and the Settings line here follow at once */
+  try { if (root.addEventListener) root.addEventListener("storage", e => { try { if (e.key === SKEY || e.key === null) { loadSession(); changed(); } } catch (_) { /* never breaks the page */ } }); } catch (_) { /* no events */ }
   if (doc) { try { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", () => { css(); changed(); }); else { css(); changed(); } } catch (_) { /* no page */ } }
-  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
+  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
   root.CharmNestRepoLock = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

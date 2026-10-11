@@ -33,7 +33,7 @@ const hash = k => crypto.createHash('sha256').update('repo-door-' + k).digest('h
   const calls = [];   // what reached the real handlers: operation, whether a token went with it, the answer's status (never a password or a token)
   for (const fn of ['charmNestLibrary', 'charmNestOutput']) {
     const h = st.handlers[fn], real = h.handler;
-    h.handler = async ev => { const out = await real(ev); let b = {}; try { b = JSON.parse(ev.body || '{}') || {}; } catch (_) { /* not JSON */ } calls.push({ fn, op: b.op, token: !!b.repoToken, action: b.action || null, status: out.statusCode || 200 }); return out; };
+    h.handler = async ev => { const out = await real(ev); let b = {}; try { b = JSON.parse(ev.body || '{}') || {}; } catch (_) { /* not JSON */ } calls.push({ fn, op: b.op, token: !!b.repoToken, action: b.action || null, viaSession: !!b.sessionToken, pw: !!b.password, status: out.statusCode || 200 }); return out; };
   }
   await ctx.addInitScript(() => {
     try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {}
@@ -84,24 +84,27 @@ const hash = k => crypto.createHash('sha256').update('repo-door-' + k).digest('h
 
   await page.evaluate(() => { window.__dl = []; window.download = (b, name) => window.__dl.push(name); CharmNestAssets.bytes = async () => new Uint8Array([1, 2, 3]); });
   await page.locator('[data-dl]').first().click();
-  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=download]');
-  ok(true, 'a download opens its own password dialog (the upload token does not serve it)');
-  await typeAndGo(REPO_TEST.password);
   await page.waitForFunction(() => window.__dl.length === 1, null, { timeout: 15000 });
-  ok(asked('masterDownload').length === 1 && asked('masterDownload')[0].token && asked('masterDownload')[0].status === 200, 'the real masterDownload answered once, with the download token, and the file was saved');
+  ok(!(await page.evaluate(() => !!document.querySelector('dialog.repoDlg'))) && asked('repoUnlock').length === before, 'a download needs no second password: the one unlock (a session, since Paul\'s 11 Oct words) covers it');
+  ok(asked('masterDownload').length === 1 && asked('masterDownload')[0].token && asked('masterDownload')[0].status === 200, 'the real masterDownload answered once, with the session token, and the file was saved');
 
+  // a removal still asks its confirm sentence every time, but takes a single-use token from the session with no password
   const filesNow = await page.evaluate(() => B.master.files.length);
   await page.evaluate(() => { document.getElementById('mHist').open = true; const r = document.querySelector('#mFiles .masterFileRow'); r.closest('.masterDay').open = true; r.open = true; });
   await page.locator('[data-rm]').first().click();
   await page.waitForSelector('dialog.repoDlg[open][data-repo-action=delete]');
-  await typeAndGo(REPO_TEST.password);
+  ok(await page.evaluate(() => document.querySelector('#repoField').hidden && /\S/.test(document.querySelector('#repoP').textContent)), 'a removal shows its confirm sentence and no password field');
+  await page.locator('dialog.repoDlg [data-k=go]').click();
   await page.waitForFunction(f => B.master.files.length === f - 1, filesNow, { timeout: 15000 });
   ok(asked('masterRemoveFile').length === 1 && asked('masterRemoveFile')[0].token && asked('masterRemoveFile')[0].status === 200, 'a removal: the real door took the single-use delete token and removed the file');
+  const delUnlock = asked('repoUnlock').filter(c => c.action === 'delete');
+  ok(delUnlock.length === 1 && delUnlock[0].viaSession && !delUnlock[0].pw && delUnlock[0].status === 200, 'that token came from the session: no password was sent');
   await page.evaluate(() => { document.getElementById('mHist').open = true; const r = document.querySelector('#mFiles .masterFileRow'); r.closest('.masterDay').open = true; r.open = true; });
   await page.locator('[data-rm]').first().click();
   await page.waitForSelector('dialog.repoDlg[open][data-repo-action=delete]');
-  ok(true, 'the next removal asks again (a delete token is never reused)');
+  ok(true, 'the next removal asks its confirm again (a delete token is never reused)');
   await page.locator('dialog.repoDlg [data-k=cancel]').click();
+  ok(asked('masterRemoveFile').length === 1, 'cancelled: nothing more was removed');
 
   // 4 · nothing the page or the door kept holds a password or a token
   const all = JSON.stringify([...st.docs.entries()]);
