@@ -334,7 +334,9 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
     ok(/patchMany\(skus, patch\)/.test(line) && /\{ facing: v2 === "" \? null : v2 \}/.test(line) && /applies to orders made up from now on/.test(line), 'H8 the box saves { facing } (null gives the word back) for every SKU and says it applies from now on');
     const run = async (patchMany) => {
       const toasts = [], sel = { value: 'L', disabled: false, dataset: {} }, fake = { each: (attr, fn) => fn(sel, ['A', 'A2']), patchMany, toast: (m, k) => toasts.push([m, k]), facingLive: (...a) => { toasts.live = a; } };
-      new Function('each', 'patchMany', 'toast', 'facingLive', line)(fake.each, fake.patchMany, fake.toast, fake.facingLive);
+      // (the cut-out code now also reads the repo lock `L` and the page's `notSaved` helper: no lock here, and the same words the page says)
+      const notSaved = (e, skus, what) => e && e.cancelled ? fake.toast(`${skus.join(', ')}: ${what} not saved — the repo stayed locked`, '') : fake.toast(`${skus.join(', ')}: ${what} not saved — ${e.message}`, 'bad');
+      new Function('each', 'patchMany', 'toast', 'facingLive', 'L', 'notSaved', line)(fake.each, fake.patchMany, fake.toast, fake.facingLive, null, notSaved);
       sel.value = 'R'; sel.onchange(); await new Promise(r => setTimeout(r, 5)); return { sel, toasts };
     };
     const calls = []; const good = await run(async (skus, p) => { calls.push([skus.slice(), p]); });
@@ -349,12 +351,12 @@ const line = (over) => Object.assign({ receiptId: '3912345678', transactionId: '
     const mis = { sku: 'M', pair: { v: 1, bodies: 2, mismatched: true }, facings: [null, 'R'] }, mc = Pair.facingControl(mis);
     ok(mc.show && mc.mismatched && mc.bodies.length === 2 && mc.bodies[0].value === '' && mc.bodies[1].value === 'R' && mc.bodies[1].options.map(o => o[0]).join() === ',L,R' && Pair.facingControl({ sku: 'M', pair: { v: 1, bodies: 2, mismatched: true }, facing: 'L' }).bodies[0].value === 'L', 'H14 a mismatched pair always gets one box per body, each with its own word');
     const mhtml = M.facesBox(mis, 'M');
-    ok((mhtml.match(/<select data-faces="M" data-body="/g) || []).length === 2 && /data-body="1"[\s\S]*<option value="R" selected>Right faces right/.test(mhtml) && /Left: not set/.test(mhtml), 'H15 and draws both boxes: ' + mhtml.slice(0, 160));
+    ok((mhtml.match(/<select data-faces="M"[^>]*? data-body="/g) || []).length === 2 && /data-body="1"[\s\S]*<option value="R" selected>Right faces right/.test(mhtml) && /Left: not set/.test(mhtml), 'H15 and draws both boxes: ' + mhtml.slice(0, 160));
     {
       const mk2 = v => ({ value: v, dataset: { body: '' } }); const s0 = Object.assign(mk2(''), { dataset: { body: '0' } }), s1 = Object.assign(mk2('R'), { dataset: { body: '1' } });
       s0.parentNode = s1.parentNode = { querySelectorAll: () => [s1, s0] };
       const calls2 = []; const toasts2 = [];
-      new Function('each', 'patchMany', 'toast', 'facingLive', line)((attr, fn) => fn(s1, ['M', 'M2']), async (skus, p) => { calls2.push([skus, p]); }, (m, k) => toasts2.push([m, k]), () => {});
+      new Function('each', 'patchMany', 'toast', 'facingLive', 'L', 'notSaved', line)((attr, fn) => fn(s1, ['M', 'M2']), async (skus, p) => { calls2.push([skus, p]); }, (m, k) => toasts2.push([m, k]), () => {}, null, () => {});
       s0.value = 'L'; s1.onchange(); await new Promise(r => setTimeout(r, 5));
       ok(calls2.length === 1 && JSON.stringify(calls2[0][1]) === JSON.stringify({ facing: 'L', facings: ['L', 'R'] }) && /left body faces left, right body faces right/.test(toasts2[0][0]), 'H16 changing a body saves both words together, body 0 also as facing: ' + JSON.stringify(calls2[0] && calls2[0][1]));
       s0.value = ''; s1.value = ''; s1.onchange(); await new Promise(r => setTimeout(r, 5));
