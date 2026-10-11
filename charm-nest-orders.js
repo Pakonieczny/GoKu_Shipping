@@ -613,6 +613,55 @@
     return null;
   }
 
+  /* ═══ 3a · Mini Tag "Charm Type: Tag3 (front + back)" (TAGSKU, 11 Oct 2026) ══════════════════════════════════════════════
+     Paul, on listing 4458930445 (Mini Tag Initial Charm), order 4195966039 "Charm Type: Tag1 (front+back)" held "not mapped", and the older 4171852053 "Tag1 (front
+     engrave)": "the tag designs and font options of this listing should be mapped to SKUs in our repository". The listing's Charm Type drop-down has eight values: the tag
+     SHAPE (the listing's picture shows four, numbered 1 to 4) and, in brackets, the ENGRAVING: "front engrave" (the front face only) or "front+back" / "front + back" (both faces).
+     Etsy cannot say which design each value is: its inventory table for the listing holds ONE SKU (Mini_0445: "Mini" and the last four digits of the listing id) on all 32
+     products. So the shape comes from the tag number and the master design of that shape, and the engraving mode from the words in the brackets (told to the line: spec.tagOption).
+     The four shapes are the four designs of the master's OBJECTS file named by their size in millimetres: the outline of every master thumbnail was compared with the four tags
+     of the listing's own picture (outline width at 60 heights, root-mean-square difference; the 6,856 master SKUs were first cut to the portrait mini tags):
+       Tag 1  plain rounded rectangle        5X8.5    (0.020; the next closest, the chamfered tags, 0.039)
+       Tag 2  pointed top, rounded tip       5X8.8    (0.011; TINY INITIAL TAG 2 and 3 are the same outline to 0.002 and 1.5 % smaller: the picture cannot tell them apart, 5X8.8 is of the same set)
+       Tag 3  pointed top, flat tip          4.6X8.8  (0.010; every other design 0.073 and more)
+       Tag 4  chamfered rectangle            5X9      (0.019; MINI_0445, the listing's one shared SKU, is the same outline to 0.004, 1.5 % smaller, and has no engraving area)
+     The tag number is the shape, whatever SKU the transaction carries: MINI_0445 is the listing's shared SKU, not "Tag 1". Who decides first (never overridden): a person's saved
+     answer for the value (optionMapPut), then the option's own SKU (Etsy's table ties one to the value, or an indexed master family: FLAGWHY), then this rule. A shape the master
+     has no design for is never replaced by a look-alike: the value waits with ONE plain line that names the shape. */
+  const TAG_SHAPES = {
+    1: { sku: "5X8.5", shape: "plain rounded rectangle" },
+    2: { sku: "5X8.8", shape: "pointed top with a rounded tip" },
+    3: { sku: "4.6X8.8", shape: "pointed top with a flat tip" },
+    4: { sku: "5X9", shape: "chamfered rectangle" }
+  };
+  const TAG_BOTH = /\bfront\s*(?:\+|&|and|\/|plus|,)\s*back\b|\b(?:both|two|2)[\s-]*sides?\b|\bdouble[\s-]*sided\b/i;
+  const TAG_FRONT = /^front(?:\s*(?:only|engrav\w*))?$|^engrav\w*\s*(?:on\s*)?front(?:\s*only)?$/i, TAG_BACK = /^back(?:\s*(?:only|engrav\w*))?$|^engrav\w*\s*(?:on\s*)?back(?:\s*only)?$/i;
+  /** The tag and the engraving of a drop-down value like "Tag3 (front + back)": { tag: 3, mode: "front" | "both" | "back" | null, words } (mode null: no engraving words in it), or null when the value is no tag choice. */
+  function tagOptionOf(value) {
+    const s = String(value == null ? "" : value).replace(/&quot;/g, "\"").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+    const m = /^tag\s*#?\s*(\d{1,2})(?![\d.])\s*(.*)$/i.exec(s); if (!m) return null;
+    const words = m[2].replace(/^[\s(\[:,\-–—]+/, "").replace(/[\s)\]]+$/, "").toLowerCase().trim();
+    const mode = !words ? null : TAG_BOTH.test(words) ? "both" : TAG_FRONT.test(words) ? "front" : TAG_BACK.test(words) ? "back" : null;
+    return { tag: +m[1], mode, words };
+  }
+  /** What a line's options say about a Mini Tag choice: { tag, mode, name, value, variation, shape, sku, state, why } or null. state: "answered" (a person's saved answer stands), "found" (the shape's design is in the
+   *  master), "missing" (it is not: why says which shape), "unchecked" (no master to ask). Only a value with engraving words in its brackets is a tag choice ("Tag 1: J" in a note is not). */
+  function tagOptionRead(line, maps, me) {
+    for (const v of (line && line.variations) || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
+      const t = tagOptionOf(value); if (!t || !t.mode) continue;
+      const sh = TAG_SHAPES[t.tag], out = { tag: t.tag, mode: t.mode, name, value, variation: v, shape: sh ? sh.shape : "", sku: sh ? sh.sku : "", state: "", why: "" };
+      const said = optionLookup(maps, line.listingId, name, value);
+      if (said) { out.state = "answered"; if (/^(?:front|both|back)$/.test(String(said.engrave || ""))) out.mode = said.engrave; }   // (a saved answer may say the engraving too: engrave "front" | "both")
+      else if (!sh) { out.state = "missing"; out.why = `Tag${t.tag} is not one of the listing's four tag shapes (1 to 4), so no master design is known for it`; }
+      else if (!me) out.state = "unchecked";
+      else if (!me(sh.sku)) { out.state = "missing"; out.why = `the master has no design for the Tag${t.tag} shape (${sh.shape}, ${sh.sku}): add it to the master and this line reads on its own`; }
+      else out.state = "found";
+      return out;
+    }
+    return null;
+  }
+
   /* ═══ 3b · special orders: not a regular listing purchase ══════════════
      Custom charms and custom pieces, rework, chain-only orders, add-ons and other one-off purchases are made or handled
      by hand, not picked from the catalogue: each is one card under Review → Custom Orders. Read from what the shop itself
@@ -1452,7 +1501,13 @@
     // option's answer: the option is not asked, and no charm a person once picked for it stands over the SKU
     const sold = viaInventory && viaInventory.etsy || upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
-    const picked = optionDesign(line, ctx.optionMaps), viaPick = !!picked && !tied(picked.variation);
+    // TAGSKU: a Mini Tag choice ("Charm Type: Tag3 (front + back)"): the tag number is the shape (the master's design for it), the words in the brackets the engraving. A person's saved answer, then the
+    // option's own SKU (Etsy's table ties one to the value, or an indexed master family on the transaction), decide first; only a SKU the whole listing shares leaves the shape to this rule
+    const tagOpt = tagOptionRead(line, ctx.optionMaps, me);
+    const tagOwn = !!tagOpt && (tied(tagOpt.variation) || (!!sku && !!me && !!me(sku) && ["transaction", "spelling", "variation"].includes(skuSource) && (!!skuIndexFamily(sku, me) || seenVerdict(ctx.seen, line.listingId, tagOpt.name, tagOpt.value, txSku) === "follows")));
+    const tagPick = tagOpt && !tagOwn && tagOpt.state === "found" ? { sku: tagOpt.sku, name: tagOpt.name, value: tagOpt.value, variation: tagOpt.variation } : null;
+    const tagMiss = tagOpt && !tagOwn && tagOpt.state === "missing" ? tagOpt : null;
+    const picked = optionDesign(line, ctx.optionMaps) || tagPick, viaPick = !!picked && !tied(picked.variation);
     if (viaPick) { sku = picked.sku; skuSource = "option"; }
     // two designs named by the line (a SKU that names two, or options for the left and the right earring), both in the master: the pair's
     // members. Pooled as those two only once the pool makes a piece for each (PIECE_RULES.mismatchedMakesTwo); until then the line is
@@ -1522,7 +1577,7 @@
       if (name && value && !spec.font) { const fm = fontInMetal(name, value, fx); if (fm) spec.font = fontSpecOf(fm, fm.listing ? "rule:font-listing" : "rule:font-in-metal"); }   // ("Metal? Font Choice?": the metal is read as before, the font from the same value)
       if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
-      let mapped = hit ? { field: hit.field, value: hit.value, source: hit.source } : null;
+      let mapped = hit ? Object.assign({ field: hit.field, value: hit.value, source: hit.source }, hit.engrave ? { engrave: hit.engrave } : {}) : null;
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
       const fr = fontRead(name, value, fx), fh = fr ? null : fontHidden(name, value, fx);
       if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
@@ -1543,6 +1598,8 @@
         else if (isPriceOption(name) && looksLikePrice(value)) mapped = { field: "ignore", value: null, source: "rule:price" };
         // the SKU is this value's own (the inventory never gives it to another value of the option) and a design: it answers the option
         else if (!viaPick && tied(v)) mapped = { field: "design", value: sku, source: "sku" };
+        // a Mini Tag choice: the tag number is the shape, the master's design of that shape is the charm (tagOptionRead), the bracket's words the engraving (spec.tagOption)
+        else if (tagPick && v === tagPick.variation) mapped = { field: "design", value: tagPick.sku, source: "rule:tag-shape" };
         // a font option names an app font exactly: it answers itself (never a look-alike); any other font waits below with its one plain line, unless FONT_RULES lets it through
         else if (fr && fr.none) mapped = { field: "font", value: null, source: "rule:no-font" };
         else if (fr && fr.id) mapped = { field: "font", value: fr.id, source: fr.listing ? "rule:font-listing" : "rule:font" };
@@ -1559,7 +1616,7 @@
       if (fh && !spec.font) spec.font = fontSpecOf(fh, fh.listing ? "rule:font-listing" : "rule:font-in-length");
       spec.options.push({ name, value, mapped });
       // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
-      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp(), sharedWhy(name, value))); continue; }
+      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, tagMiss && v === tagMiss.variation ? { why: tagMiss.why } : Object.assign({}, optionHelp(), sharedWhy(name, value)))); continue; }   // (TAGSKU: a tag shape with no master design says which one, in one plain line, not Etsy's table)
       if (mapped.field === "font") {   // the font the buyer asked for and the app font it is (none: asked only); the length it came with is the line's chain
         const af = fontById(mapped.value);
         if (!spec.font) spec.font = fr ? fontSpecOf(Object.assign({}, fr, { id: af ? af.id : "", name: af ? af.name : "" }), mapped.source) : { asked: value, id: af ? af.id : "", name: af ? af.name : "", source: mapped.source };
@@ -1604,6 +1661,16 @@
     if (!quiet) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && (p.count || p.earWords))) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "" }, a.rule === "ear:words" ? { earWords: { why: a.why } } : { count: { guess: a.guess || 0, why: a.why, rule: a.rule } }));
     // a person said this listing's words are a pair of earrings: the form it is (what an answered option does too)
     if (!spec.form && spec.pair.earForm) spec.form = spec.pair.earForm;
+    // TAGSKU: the Mini Tag choice the line carries, however its charm was settled (how: a person's answer, the option's own SKU, this rule's tag number, or nothing yet), with the engraving it names:
+    // mode "front" (front face only), "both" (front and back faces) or "back"; the listing sells the tag as a charm to add to a chain, so with no other word on the form it is a loose charm (never a pair, never mirrored)
+    if (tagOpt) {
+      // the option's entry says the engraving too (CONTRACT section 13, "engrave"): whoever settled the charm (a person's answer, Etsy's own SKU, an indexed family SKU, this rule)
+      const to = spec.options.find(x => x.name === tagOpt.name && x.value === tagOpt.value);
+      if (to && to.mapped && to.mapped.field === "design") to.mapped = Object.assign({}, to.mapped, { engrave: tagOpt.mode });
+      spec.tagOption = { name: tagOpt.name, value: tagOpt.value, tag: tagOpt.tag, mode: tagOpt.mode, shape: tagOpt.shape, sku: tagOpt.state === "found" ? tagOpt.sku : "", how: tagOpt.state === "answered" ? "answer" : tagOwn ? "sku" : tagOpt.state === "found" ? "rule:tag-shape" : tagOpt.state };
+      if (!spec.form) spec.form = "charm";
+      if (tagMiss) { spec.designSku = null; spec.skuSource = null; spec.sources.sku = null; }   // (the shape has no design: no vector of a look-alike on the row)
+    }
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
     if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !quiet && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
@@ -1979,6 +2046,6 @@
   return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
-    skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
+    skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, tagOptionOf, tagOptionRead, TAG_SHAPES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
