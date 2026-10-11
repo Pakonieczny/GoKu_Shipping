@@ -1582,6 +1582,381 @@
     return spec;
   }
 
+  /* ═══ 3e · front and back engraving (ENGINTAKE, Paul 11 Oct 2026) ═══════════════════════════════════════════════════════
+     (Paul, order 4195966039, Mini Tag listing 4458930445, Charm Type "Tag1 (front+back)", font Ace, personalisation "front - W" / "back - 1. 27. 24":
+     "there must be an actual check on every single listing that is being processed to ensure that if there is back and front engraving, it's
+     correctly identified and then interpreted: what is supposed to go on the front, what on the back, in terms of what the buyer chose.")
+     Until now every line was read as a BACK engraving. engravingOf(line, spec) reads, for EVERY line whatever its listing, what the buyer chose and wrote,
+     and interpretLine keeps it as spec.engraving. It answers null for a line that has no front / back word anywhere (the option values and names, the
+     title, the personalisation, the notes): such a line is read exactly as before (the back, by the engraving reader). Otherwise:
+       { mode: "none" | "front" | "back" | "both",
+         front: { text, fontWord, fontId, fontFrom } | null,   back: the same,
+         pieces?: { L: { front, back }, R: ... } | { D1: ... }  only when the buyer gave different words per ear / disc (an earring pair, a counted-disc line),
+         slots?: ["L","R"] | ["D1".."Dn"],
+         source: "option" | "title" | "note" | "person",       where the MODE came from (option = a drop-down value or name; note = labels or a phrase the buyer typed)
+         modeFrom: the quoted words, textFrom: "personalization" | "staffNote" | "buyerMessage" | "messages" | "",
+         confidence: 0..1, why: one plain line, raw: the buyer's words when a person must read them,
+         review: null | { kind: "texts" | "mode" | "conflict" | "nowords", reason: one plain line } }   a person must look (never guessed, never blocks other lines)
+     MODE (the buyer's choice): the option value, else the option name with a yes, else the title (front / both words only, and always to be confirmed), else the
+       labels typed in the box (both labels = both), else a phrase typed in a note. Words that mean both: "front+back", "front + back", "front & back", "Front&Back",
+       "front and back", "front/back", "both sides", "two sided", "engraved on both"; front: "front engrave", "front only", "engraved on front", "Writing-FRONT";
+       back: "back engraving", "back only", "engraved on the back". "Truck Front Charm" (a design's name) is no engraving word: a face word counts only beside an
+       engraving word, a joiner (+ & / and), "only", or as the whole value of an option named for an engraving / a side.
+     TEXTS (what goes on each face), labelled forms only: "front - W / back - 1. 27. 24", "Front: A, Back: B", "front = A" "back = B", "front / A" "back / B", one label
+       per line, either order, "on the front: A", "A on the front and B on the back", "Front of tag in font Britannic Bold: T", "Front: m - Vibur". Never guessed: mode
+       both (or front) with unlabeled, mixed, doubled, or instruction-bearing words is marked for a person with the buyer's words kept in `raw`.
+     FONT: each face has the font word the line's single font choice gives, unless the face names its own ("Front: m - Vibur", "Front in font Ace: W", a line "font: Ace").
+     A PERSON's saved edit (o.person) always wins; the detector's own reading is kept beside it (`detected`) and never replaces it. */
+  const E_ENG = "(?:engrav\\w*|engr\\b|etch\\w*|inscri\\w*|writing|handwrit\\w*|personali[sz]\\w*|monogram\\w*)";
+  const E_SIDE = "(?:[\\s-]*side)?", E_JOIN = "(?:\\+|&|\\/|,|\\band\\b|\\bplus\\b)";
+  const E_RX = s => new RegExp(s, "i");
+  const FB_BOTH = [E_RX(`\\bfront${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?back\\b`), E_RX(`\\bback${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?front\\b`), /\bboth[\s-]*(?:sides?|faces?)\b/i, /\b(?:two|2|double|dual|dbl|dble)[\s-]*(?:sided|sides|faces?)\b/i];
+  const FB_BOTH_ENG = [E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+)?both\\b`)];
+  const FB_FRONT = [E_RX(`\\bfront${E_SIDE}\\s*[-–:()]*\\s*(?:only\\b|${E_ENG})`), E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+|to\\s+|for\\s+|in\\s+)?(?:the\\s+)?front\\b`)];
+  const FB_BACK = [E_RX(`\\bback${E_SIDE}\\s*[-–:()]*\\s*(?:only\\b|${E_ENG})`), E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+|to\\s+|for\\s+|in\\s+)?(?:the\\s+)?back\\b`)];
+  const FB_NONE = /\bno[\s-]*engrav\w*|\bwithout\s+(?:any\s+)?engrav\w*|\bengrav\w*\s*[:\-]?\s*(?:none|no)\b|\bnot\s+engraved\b|\bno\s+personali[sz]ation\b/i;
+  const FB_NEAR = new RegExp(E_ENG, "i");
+  const FB_QUICK = /front|back|both|sided|faces?\b|\bsides?\b|blank/i;
+  const FB_BLANK = /(?:^|[\s·|\-–+\/,])blank(?:$|[\s·|\-–+\/,])/i;   // a bar's "GOLD · Blank" / "Blank- SILVER": the buyer chose no engraving
+  const FB_VALUE = /^\s*(?:the\s+)?(front|back|both)(?:[\s-]*sides?)?(?:\s+only)?\s*$/i, FB_NAME = /engrav|side|face|where|position|placement|location|inscri|writing|monogram|etch|personali[sz]/i;
+  const FB_YES = /^\s*(?:yes|y|true|included?|add(?:ed)?|\+|1)\s*$/i, FB_NO = /^\s*(?:no|none|n\/a|false|0|-)\s*$/i;
+  const FB_WORD = /(?:^|[^\p{L}\p{N}_])(?:front|back)(?![\p{L}\p{N}_])/iu;
+  /** The mode the words of ONE text mean ("" for none): "front" | "back" | "both". `strict`: a joiner or "both sides" counts only beside an engraving word (a title, a message). */
+  function engravingModeIn(text, strict, opt) {
+    const t = decodeEntities(text == null ? "" : text);
+    for (const r of FB_BOTH) { const m = r.exec(t); if (m && (!strict || FB_NEAR.test(t.slice(Math.max(0, m.index - 40), m.index + m[0].length + 40)))) return "both"; }
+    if (opt && FB_BOTH_ENG.some(r => r.test(t))) return "both";   // ("engrave on both" in a note may mean two items, never two faces: only an option's own value says it)
+    const f = FB_FRONT.some(r => r.test(t)), k = FB_BACK.some(r => r.test(t));
+    return f && k ? "both" : f ? "front" : k ? "back" : "";
+  }
+  /** The mode one OPTION chose: its value ("Tag1 (front+back)"), else the value alone as a side ("Front" under an option named for a side or an engraving), else its name when the value says yes. */
+  function engravingModeOfOption(name, value) {
+    const n = decodeEntities(name || ""), v = decodeEntities(value || "").trim();
+    let m = engravingModeIn(v, false, true);
+    if (!m && FB_NAME.test(n)) for (const seg of v.split(/\s*[·|]\s*/)) { const f = FB_VALUE.exec(seg); if (f) { m = f[1].toLowerCase(); break; } }   // ("GOLD·Front" under "Metal/Both Sides Engraved? (Front/Back)")
+    if (!m && FB_YES.test(v)) m = engravingModeIn(n, false);
+    return m;
+  }
+
+  /* ── the words of each face ─────────────────────────────────────────────────────────────────────────────────────────── */
+  const FB_TAIL_OF = /^\s+of\s+(?:the\s+|my\s+|this\s+|each\s+)?(?:tag|charm|disc|disk|pendant|bar|piece|necklace|earring|it)s?(?![\p{L}\p{N}_])/iu;
+  const FB_NOUN = /^\s+(?:engrav\w*|text|words?|wording|initials?|letters?|inscription|numbers?|date|says?|reads?|design)(?![\p{L}\p{N}_])/iu;
+  const FB_FONT = /^\s+(?:in|with|using)\s+(?:the\s+)?(?:font\s+)?([^:=\-–—,;/\n]{2,30}?)(?=\s*(?:[:=\-–—,;/\n]|$))/i;
+  const FB_INSTR = /\b(?:please|pls|thanks?|thank\s*you|capital|capitals|uppercase|upper\s*case|lowercase|lower\s*case|all\s*caps|cent(?:er|re)d?|font|typeface|size|bold|italics?|cursive|script|engrav\w*|hello|hi|hey|dear|would\s+like|i\s+want|i'd\s+like|make\s+it|leave\s+it|same\s+as|if\s+possible)\b/i;
+  const isWordCh = c => !!c && /[\p{L}\p{N}_]/u.test(c);
+  const trimFace = s => String(s == null ? "" : s).split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean).join("\n")
+    .replace(/^[\s,;/|&+:=\-–—]+/, "").replace(/[\s,;/|&+:\-–—]+$/, "").replace(/^and\s+/i, "").replace(/\s+and$/i, "").replace(/^(["'“‘])([\s\S]*)(["'”’])$/, "$2").trim();
+  /** The labels of a body of text: [{ face, kind: "L" label first | "W" label and a space only | "D" text first ("A on the front") , start, end, own }] and the face words that are no label. */
+  function faceLabels(body) {
+    const labels = [], strays = [], re = /(front|back)(?![\p{L}\p{N}_])/giu;
+    for (let m; (m = re.exec(body));) {
+      if (isWordCh(body[m.index - 1])) continue;
+      const face = m[1].toLowerCase(); let start = m.index, end = start + m[0].length, own = "", t, prep = false;
+      const pre = /(?:^|[\s,;/|&+(\[])((?:on|at|in|for)\s+(?:the\s+)?)$/i.exec(body.slice(0, start));
+      if (pre) { start -= pre[1].length; prep = true; }
+      if ((t = /^[\s-]*side(?![\p{L}\p{N}_])/iu.exec(body.slice(end)))) end += t[0].length;
+      if ((t = /^\s+only(?![\p{L}\p{N}_])/iu.exec(body.slice(end)))) end += t[0].length;
+      if ((t = FB_TAIL_OF.exec(body.slice(end)))) end += t[0].length;
+      if ((t = FB_FONT.exec(body.slice(end)))) { const w = t[1].replace(/\s+font$/i, "").trim(); if (fontOfPhrase(w)) { own = w; end += t[0].length; } }
+      if ((t = FB_NOUN.exec(body.slice(end)))) end += t[0].length;
+      const after = body.slice(end), before = body.slice(0, start);
+      let sep = "", len = 0;
+      if ((t = /^[ \t]*[:=][ \t]*/.exec(after))) { sep = "colon"; len = t[0].length; }
+      else if ((t = /^[ \t]*[-–—]+[ \t]*/.exec(after))) { sep = "dash"; len = t[0].length; }
+      else if ((t = /^[ \t]*\/[ \t]*/.exec(after))) { sep = "slash"; len = t[0].length; }
+      else if ((t = /^[ \t]*\n[ \t]*/.exec(after))) { sep = "newline"; len = t[0].length; }
+      else if (/^[ \t]*[.!?]*[ \t]*$/.test(after)) sep = "end";
+      else if ((t = /^[ \t]*[,;|&+][ \t]*/.exec(after))) { sep = "list"; len = t[0].length; }
+      else if ((t = /^[ \t]+and(?![\p{L}\p{N}_])[ \t]*/iu.exec(after))) { sep = "and"; len = t[0].length; }
+      else if ((t = /^[ \t]+(?=\S)/.exec(after))) { sep = "space"; len = t[0].length; }
+      const prev = /(?:^|\n)[ \t]*$/.test(before) ? "line" : /(?:[,;|&+/(\[]|\band\b)[ \t]*$/i.test(before) ? "list" : "text";
+      let kind = "";
+      if (sep === "colon") kind = "L";
+      else if (prev !== "text" && ["dash", "slash", "newline", "end"].includes(sep)) kind = "L";
+      else if (prev !== "text" && sep === "space") kind = "W";
+      else if (prev === "text" && prep && ["end", "newline", "list", "and", "slash"].includes(sep)) kind = "D";
+      if (kind === "D") len = 0;
+      else if (!kind && prev === "text" && !prep && sep === "space") kind = "X";   // "front A back B": the second face word follows the first one's words
+      if (kind) labels.push({ face, kind, start, end: end + len, own }); else strays.push(face);
+    }
+    // a face word that follows words with a space only is a label when it is the one other face word of the text ("front A back B", "front: A back B"); else it is part of the words
+    const xs = labels.filter(l => l.kind === "X"), clear = labels.filter(l => l.kind !== "X");
+    if (xs.length && !(xs.length === 1 && !strays.length && clear.length === 1 && clear[0].face !== xs[0].face)) { for (const l of xs) strays.push(l.face); labels.splice(0, labels.length, ...clear); }
+    else for (const l of xs) l.kind = "L";
+    // a label with a space only ("front W / back 1.27") is a label when a clear one stands beside it, or when both faces are named; alone it may be part of the words ("Front Row Seats")
+    const strong = labels.filter(l => l.kind === "L"), weak = labels.filter(l => l.kind === "W");
+    const promote = weak.length && (strong.length || new Set(weak.map(l => l.face)).size === 2);
+    return { labels: labels.filter(l => l.kind !== "W" || promote).map(l => (l.kind === "W" ? Object.assign({}, l, { kind: "L" }) : l)), strays: strays.concat(promote ? [] : weak.map(l => l.face)) };
+  }
+  /** A font named after the words ("m - Vibur", "W (Vibur)", "A in Vibur font"): { text, word }. "Ace" is a name as often as a font: it counts only with the word font beside it. */
+  function faceFont(text) {
+    const m = /^([\s\S]*?\S)\s*(?:[-–—]|[(\[]|\b(?:in|with|using)\b)\s*(?:the\s+)?(font\s+)?([A-Za-z][A-Za-z ]{1,20}?)(\s+font)?\s*[)\]]?\s*$/i.exec(text);
+    if (!m) return { text, word: "" };
+    const word = m[3].trim(), hasFont = !!(m[2] || m[4]);
+    if (!fontOfPhrase(word) || (/^ace$/i.test(word) && !hasFont)) return { text, word: "" };
+    return { text: m[1].trim(), word };
+  }
+  /** Words before the first label that only greet or ask ("Hello!", "please engrave on the front: W"): no inscription in them, so they are no reason to stop. */
+  const FB_FILL = new Set("please pls kindly can could would you i id i'd to have has put place write add engrave engraved engraving inscribe the my this that following text words word wording on at in for it and thanks thank thx hello hi hey dear want like need".split(" "));
+  const askOnly = t => { const w = String(t || "").toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").split(/\s+/).filter(Boolean); return w.length > 0 && w.every(x => FB_FILL.has(x)) && !(w.length === 1 && (w[0] === "i" || w[0] === "id")); };
+  /** A line that asks for something ("both center", "WORD upside down if possible", "darkened font", "THANK YOU <3") and is no inscription. */
+  const FB_REQ = /\b(?:upside\s*down|dark(?:en\w*)?|deeper?|sideways|vertical(?:ly)?|horizontal(?:ly)?|proof|possibl\w*|poss\b|also|thanks)\b|<3|^[\s\-•*]*poss/i;
+  const askLine = l => FB_INSTR.test(l) || FB_REQ.test(l);
+  /** One face's block of words: a blank line ends it when everything after it is a request ("front: go birds / back: WORD1 [blank] both center / upside down / THANK YOU"). */
+  function cutBlock(raw) {
+    const m = /^([\s\S]*?\S)[ \t]*\n[ \t]*\n([\s\S]*)$/.exec(String(raw));
+    if (!m) return { text: raw, gap: false };
+    const rest = m[2].split("\n").map(x => x.trim()).filter(Boolean);
+    return !rest.length || rest.every(askLine) ? { text: m[1], gap: false } : { text: raw, gap: true };
+  }
+  /** "T (capital letter)" / "mine (lowercase)": a closing note in brackets about HOW to write the words is no part of them. */
+  function stripNote(t) { const m = /^([\s\S]*?\S)\s*\(([^()]*)\)\s*$/.exec(String(t)); return m && askLine(m[2]) ? m[1] : t; }
+  const plainInscription = t => { const ls = String(t || "").split("\n"); return ls.length <= 3 && ls.every(l => l.length <= 40) && !FB_INSTR.test(t) && !/[()\[\]]/.test(t); };
+  /** The faces a text labels: { n (labels taken), front, back (each { text, own } or null), problems: [codes], strays, lead }.
+   *  problems: lead (words before the first label), empty (a label with no words), dup (a face labelled twice), mixed (two label styles), tail (words after the last "on the back"). */
+  function faceParse(body) {
+    const out = { n: 0, front: null, back: null, problems: [], strays: [], lead: "", named: [] };
+    const { labels, strays } = faceLabels(body); out.strays = strays; out.n = labels.length; out.named = [...new Set(labels.map(l => l.face))];
+    if (!labels.length) return out;
+    const L = labels.filter(l => l.kind === "L"), D = labels.filter(l => l.kind === "D");
+    if (L.length && D.length) { out.problems.push("mixed"); return out; }
+    if (D.length && /\?/.test(body)) { out.problems.push("ask"); return out; }   // "Can the initial be on the front and the date on the back?": a question to the shop, not the words
+    const segs = [];
+    if (L.length) {
+      out.lead = trimFace(body.slice(0, L[0].start)); if (out.lead && !askOnly(out.lead)) out.problems.push("lead");
+      L.forEach((l, i) => segs.push({ l, raw: body.slice(l.end, i + 1 < L.length ? L[i + 1].start : body.length) }));
+    } else {
+      let at = 0;
+      D.forEach(l => { segs.push({ l, raw: body.slice(at, l.start) }); at = l.end; });
+      const tail = trimFace(body.slice(at)).replace(/^[.!]+$/, "");
+      if (tail && !/^(?:please|pls|thanks?|thank you|thx)[.!]*$/i.test(tail)) out.problems.push("tail");
+    }
+    for (const s of segs) {
+      const cb = L.length ? cutBlock(s.raw) : { text: s.raw, gap: false};
+      if (cb.gap && !out.problems.includes("gap")) out.problems.push("gap");
+      const t = stripNote(trimFace(cb.text)), f = faceFont(t), face = s.l.face;
+      if (out[face]) { if (!out.problems.includes("dup")) out.problems.push("dup"); continue; }
+      if (!f.text) { out.problems.push("empty"); out[face] = { text: "", own: s.l.own || f.word }; continue; }
+      out[face] = { text: f.text, own: s.l.own || f.word };
+    }
+    return out;
+  }
+  const FB_PIECE_EAR = /(left|right)(?:\s*ear(?:ring)?s?)?(?![\p{L}\p{N}_])/giu;
+  const FB_ORD = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5, "6th": 6 };
+  const FB_PIECE_DISC = /(?:(?:disc|disk|tag|charm|initial|letter|pendant)\s*#?\s*(\d{1,2})|(first|second|third|fourth|fifth|sixth|1st|2nd|3rd|4th|5th|6th)\s+(?:disc|disk|tag|charm|initial|letter|pendant))(?![\p{L}\p{N}_])/giu;
+  /** A text cut at the pieces it names ("Left: front A back B / Right: front C back D", "Disc 1: ..."): [{ slot, raw }] and the words before the first, or null when it names none. */
+  function pieceSegments(body, slots) {
+    const ears = slots.includes("L") || slots.includes("R"), discs = slots.some(s => /^D\d/.test(s));
+    if (!ears && !discs) return null;
+    const hits = [], re = new RegExp((ears ? FB_PIECE_EAR : FB_PIECE_DISC).source, "giu");
+    for (let m; (m = re.exec(body));) {
+      if (isWordCh(body[m.index - 1])) continue;
+      const slot = ears ? (m[1].toLowerCase() === "left" ? "L" : "R") : "D" + (+m[1] || FB_ORD[String(m[2]).toLowerCase()] || 0);
+      const after = body.slice(m.index + m[0].length), before = body.slice(0, m.index);
+      const prev = /(?:^|\n)[ \t]*$/.test(before) ? "line" : /(?:[,;|&+/(\[]|\band\b)[ \t]*$/i.test(before) ? "list" : "text";
+      const sep = /^[ \t]*[:=]/.test(after) ? "colon" : /^[ \t]*(?:[-–—]|\/|\n)/.test(after) ? "dash" : /^[ \t]+\S/.test(after) ? "space" : "";
+      if (sep === "colon" || (prev !== "text" && sep)) hits.push({ slot, start: m.index, end: m.index + m[0].length + /^[ \t]*(?:[:=]|[-–—]+|\/)?[ \t]*/.exec(after)[0].length });
+    }
+    if (!hits.length) return null;
+    const segs = hits.map((h, i) => ({ slot: h.slot, raw: body.slice(h.end, i + 1 < hits.length ? hits[i + 1].start : body.length) }));
+    return { lead: body.slice(0, hits[0].start), segs };
+  }
+  const faceNames = { front: "front", back: "back" };
+  /** Words that say the writing comes as a picture, not as text. */
+  const PICT = /\b(?:pictures?|photos?|photographs?|images?|handwrit\w*|hand[\s-]?written|drawings?|sketch\w*|logos?|artwork)\b/i;
+  /** The one word or phrase in double quotes ("JFC" is the engraving ...), or "" when there is none or more than one. */
+  const quotedOne = t => { const q = String(t || ""); if ((q.match(/[“”"«»]/g) || []).length !== 2) return ""; const m = /[“"«]([^“”"«»\n]{1,40})[”"»]/.exec(q); return m ? m[1].trim() : ""; };
+  const REASON = {
+    lead: "words come before the first front / back label",
+    empty: "a front / back label has no words",
+    dup: "the same face is labelled twice",
+    mixed: "the front / back labels are written two different ways",
+    ask: "the note is a question or a request, not the words to engrave",
+    gap: "more words follow a blank line, and they are not a request",
+    tail: "words are left over after the last label",
+    dupPiece: "the same ear or disc is named twice",
+    missingPiece: "not every ear or disc is named",
+    pieceWords: "the words for an ear or disc do not say which is the front and which the back"
+  };
+  const sayFace = f => (f && f.text ? `“${clip(f.text, 30)}”` : "nothing");
+  const uniqStr = arr => [...new Set(arr)];
+  const pieceName = s => (s === "L" ? "the left ear" : s === "R" ? "the right ear" : "disc " + String(s).slice(1));
+  /** What the buyer chose and wrote about the faces of ONE line (the CONTRACT's spec.engraving, plans/front-back-1011/CONTRACT.md section 2). line: the Etsy line (variations, title,
+   *  personalization); spec: its reading (personalization, buyerMessage, staffNote, messages, font, pair, pieceCount). null when the line has no face word anywhere: such a line has no
+   *  `spec.engraving`, which the faces model reads as today's default (the back, as the engraving reader always read it). Never a person's word: that is row.engravingOverride. */
+  function engravingOf(line, spec) {
+    line = line || {}; spec = spec || {};
+    // a rework / modification fee line ("Re-work: $5 back engraving fee") and any line with no design of its own is never an engraving of its own
+    if (spec.noDesign || /\b(?:re-?work|modifications?)\b/i.test(String(line.title || ""))) return null;
+    const opts = (line.variations || []).map(v => { const id = idOf(v && (v.valueId != null ? v.valueId : v.value_id)); return { name: decodeEntities(lvName(v)).trim(), value: decodeEntities(lvValue(v)).trim(), drop: !!id && id !== "0" }; }).filter(v => v.name || v.value);
+    const asText = x => visible(x).replace(/\r/g, "").trim();
+    // (every line passes here: a line that mentions no face at all is answered at once)
+    if (!FB_QUICK.test([line.title, spec.buyerMessage, line.buyerMessage, spec.staffNote, line.staffNote].concat(spec.personalization || [], line.personalization || [], (spec.messages || line.messages || []).map(m => m && m.text), opts.map(v => v.name + " " + v.value)).join("\n"))) return null;
+    // a drop-down Etsy happens to call "Personalization" has a value id: it is an option (its value is no words); the text box has none
+    const free = v => isPersonalisation(v.name) && !v.drop;
+    const given = (spec.personalization && spec.personalization.length ? spec.personalization : line.personalization) || [];
+    const dropVals = new Set(opts.filter(v => v.drop && isPersonalisation(v.name)).map(v => asText(v.value)));   // (main still reads these as buyer text; here they only say the mode)
+    const pers = uniqStr([].concat(given, opts.filter(v => v.value && free(v)).map(v => v.value)).map(asText).filter(t => t && !dropVals.has(t)));
+    const buyer = asText(spec.buyerMessage || line.buyerMessage || ""), staff = asText(spec.staffNote || line.staffNote || "");
+    const msgs = (spec.messages || line.messages || []).map(m => asText(m && m.text)).filter(t => t && engravingNote(t));
+    const title = decodeEntities(line.title || "");
+    // the pieces that can carry their own words: an earring pair (L, R) or a counted-disc line (D1..Dn); a single charm has none
+    const slots = (() => {
+      const pr = spec.pair, pc = Math.floor(+spec.pieceCount) || 0;
+      if (pr && pr.earring && !pr.glued && pc >= 2) return ["L", "R"];
+      const per = pr && !pr.earring && !pr.glued && pr.kind === "multi" && pc >= 2 ? Math.round(pc / Math.max(1, Math.round(+spec.quantity) || 1)) : 0;
+      return per >= 2 && per <= 24 ? Array.from({ length: per }, (_, i) => "D" + (i + 1)) : [];
+    })();
+
+    // ── what the buyer chose: the mode ──
+    // an option the line reader already settled says the engraving itself (TAGSKU / CONTRACT section 13: spec.options[].mapped.engrave, from a person's saved answer for the value or the Mini Tag rule):
+    // that exact word is used instead of reading the option's text again, and a person's saved answer stays above the text
+    const said = new Map();
+    for (const o of spec.options || []) if (o && o.mapped && /^(?:front|both|back)$/.test(String(o.mapped.engrave || ""))) said.set(decodeEntities(String(o.name || "")).trim() + "\n" + decodeEntities(String(o.value == null ? "" : o.value)).trim(), o.mapped.engrave);
+    const hits = [];
+    for (const v of opts) { if (free(v) || !v.value) continue; const mode = said.get(v.name + "\n" + v.value) || engravingModeOfOption(v.name, v.value); if (mode) hits.push({ mode, name: v.name, value: v.value, from: `${v.name}: ${v.value}` }); }
+    const noneOpt = opts.find(v => !free(v) && v.value && (FB_NONE.test(v.value) || (/engrav/i.test(v.name) && FB_NO.test(v.value))));
+    const blankOpt = !noneOpt && !hits.length && pers.length ? opts.find(v => !free(v) && v.value && FB_BLANK.test(v.value)) : null;
+    const titleMode = engravingModeIn(title, true);
+    // font lines ("font: Ace", "Ace font") are not words to engrave: set aside and read as the buyer's font
+    let noteFont = "";
+    const stripFont = txt => String(txt || "").split("\n").filter(l => {
+      const f = /^\s*(?:(?:the\s+)?font(?:\s+choice)?|typeface|lettering)\s*(?:is|[:=\-–—])\s*(.+?)\s*$/i.exec(l) || /^\s*(.+?)\s+font\s*$/i.exec(l);
+      if (f && fontOfPhrase(f[1])) { noteFont = noteFont || f[1].trim(); return false; }
+      return true;
+    }).join("\n");
+    const persText = stripFont(pers.join("\n"));
+    const pools = [["staffNote", staff], ["personalization", persText], ["buyerMessage", buyer], ["messages", msgs.join("\n")]].map(([k, t]) => ({ k, text: k === "personalization" ? t : stripFont(t) })).filter(p => p.text.trim());
+    const readPool = p => {
+      const cut = slots.length > 1 && p.k === "personalization" ? pieceSegments(p.text, slots) : null;
+      if (!cut) return Object.assign({ k: p.k, text: p.text, pieces: null }, faceParse(p.text));
+      const lead = faceParse(cut.lead), out = { k: p.k, text: p.text, n: lead.n, front: lead.front, back: lead.back, problems: lead.problems.slice(), strays: lead.strays.slice(), lead: "", pieces: {} };
+      for (const s of cut.segs) {
+        if (out.pieces[s.slot]) { if (!out.problems.includes("dupPiece")) out.problems.push("dupPiece"); continue; }
+        const r = faceParse(s.raw); out.n += r.n; out.strays.push(...r.strays); out.problems.push(...r.problems.filter(x => !out.problems.includes(x)));
+        out.pieces[s.slot] = Object.assign(r, { words: trimFace(s.raw) });
+      }
+      if (slots.some(x => !out.pieces[x]) && !out.problems.includes("missingPiece")) out.problems.push("missingPiece");
+      return out;
+    };
+    // the buyer's message and the shop's conversations are free talk: their face words are labels only on a line whose option or title already says front / back (else "front desk ... back at work" is no engraving)
+    const noteLabels = hits.length > 0 || !!titleMode;
+    const parsed = pools.map(p => (p.k === "buyerMessage" || p.k === "messages") && !noteLabels ? { k: p.k, text: p.text, pieces: null, n: 0, front: null, back: null, problems: [], strays: [], lead: "" } : readPool(p));
+    const labelled = parsed.filter(p => p.n > 0 || p.pieces);
+    const noneHit = noneOpt ? (pools.some(p => p.k === "personalization" && FB_WORD.test(p.text)) ? noneOpt : null) : blankOpt;
+    const anyFace = hits.length || titleMode || labelled.length || pools.some(p => engravingModeIn(p.text, p.k !== "personalization")) || noneHit;
+    if (!anyFace) return null;
+    const lf = noteFont ? { word: noteFont } : spec.font && spec.font.asked ? { word: String(spec.font.asked), line: true } : { word: "" };
+    const faceOut = f => {
+      if (!f || !f.text) return null;
+      const ls = String(f.text).split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean);
+      return ls.length ? { text: ls.join("\n"), lines: ls, fontWord: f.own || noteFont || null } : null;
+    };
+
+    // ── the mode and where it came from ──
+    let mode = "", source = "", modeFrom = "", conflict = "";
+    const modes = uniqStr(hits.map(h => h.mode));
+    if (modes.length) { mode = hits[0].mode; source = "option"; modeFrom = hits[0].from; if (modes.length > 1) conflict = `two options disagree: “${clip(hits[0].from, 40)}” and “${clip(hits.find(h => h.mode !== mode).from, 40)}”`; }
+    else if (noneHit) { mode = "none"; source = "option"; modeFrom = `${noneHit.name}: ${noneHit.value}`; }   // (the buyer chose no engraving: that stays, and words that came with it are a conflict)
+    else if (titleMode) { mode = titleMode; source = "title"; modeFrom = clip(title, 60); }
+    const pick = labelled.find(p => !p.problems.length) || labelled[0] || null;   // the first source that labels the faces (the staff note first: it overrides the buyer's field)
+    const namedFaces = p => { const set = new Set(); for (const q of [p].concat(Object.values(p.pieces || {}))) for (const f of q.named || []) set.add(f); return ["front", "back"].filter(f => set.has(f)); };
+    if (!mode) for (const p of pools) { const m = engravingModeIn(p.text, p.k !== "personalization"); if (m) { mode = m; source = "note"; modeFrom = `what the buyer wrote in ${p.k === "personalization" ? "the personalisation" : p.k === "staffNote" ? "the staff note" : "a note"}`; break; } }
+    if (!mode && pick) {
+      const named = namedFaces(pick);
+      mode = named.length === 2 ? "both" : named[0] || "";
+      if (mode) { source = "note"; modeFrom = `the ${named.join(" and ")} labels in ${pick.k === "personalization" ? "the personalisation" : pick.k === "staffNote" ? "the staff note" : "a note"}`; }
+    }
+    if (!mode) return null;
+    const optHit = source === "option" ? (hits.length ? { name: hits[0].name, value: hits[0].value } : noneHit ? { name: noneHit.name, value: noneHit.value } : null) : null;
+
+    // ── the texts: what goes on each face ──
+    const eng = { v: 1, mode, source, front: null, back: null, textSource: "none", needsPerson: false, confidence: 0.5, why: "", option: optHit };
+    let review = null;
+    const flag = (kind, reason, partial) => { if (!review) review = { kind, reason: clip(reason, 170), partial: !!partial }; };
+    const raw = (pers.length ? pers.join("\n") : [staff, buyer, msgs.join("\n")].filter(Boolean).join("\n")).slice(0, 300);
+    const modeWords = { front: "front", back: "back", both: "front and back", none: "no engraving" }[mode];
+    const fromWhat = source === "option" ? `the option “${clip(modeFrom, 50)}”` : source === "title" ? "the listing title" : modeFrom;
+    const hand = source === "option" && /hand\s*writ|writing/i.test(modeFrom);
+    const picture = PICT.test(raw) || hand;
+    let single = false, quoted = false;
+    if (conflict) flag("conflict", conflict);
+    const backOnly = mode === "back" && !(pick && (pick.front || Object.values(pick.pieces || {}).some(q => q.front)));   // (back only: the engraving reader reads the words as it always did; only a front label would be a conflict)
+    if (pick && !backOnly && pick.k !== "personalization" && pick.k !== "staffNote") flag("texts", `${modeWords} engraving, but the words are only in a note, not in the personalisation box: a person confirms what goes on each face`);
+    if (pick && backOnly) { /* nothing to read here */ }
+    else if (pick && pick.problems.length) flag("texts", `${modeWords} engraving, but ${REASON[pick.problems[0]] || "the words are not clear"}: a person says what goes on each face`);
+    else if (pick) {
+      const shared = { front: pick.front, back: pick.back };
+      const fsets = pick.pieces ? slots.map(sl => { const r = pick.pieces[sl]; return { slot: sl, front: r && r.front || shared.front, back: r && r.back || shared.back, words: r && r.words, labelled: !!(r && (r.front || r.back)) }; }) : null;
+      // a named piece with plain words and no label takes them on the one face a front-only (or back-only) line has
+      if (fsets) for (const x of fsets) if (!x.labelled && x.words) { if (mode === "front") x.front = { text: x.words }; else if (mode === "back") x.back = { text: x.words }; }
+      const has = f => (fsets ? fsets.some(x => x[f]) : !!shared[f]);
+      const allHave = f => (fsets ? fsets.every(x => x[f]) : !!shared[f]);
+      const every = fsets ? fsets : [shared];
+      const odd = every.flatMap(x => [x.front, x.back]).filter(x => x && !plainInscription(x.text) || x && slots.length > 1 && /\b(?:left|right)\b/i.test(x.text));
+      if (mode === "both" && !(allHave("front") && allHave("back"))) {
+        const gap = fsets && fsets.find(x => !x.front || !x.back);
+        flag("texts", gap ? (!gap.labelled && gap.words ? `front and back engraving, but the words for ${pieceName(gap.slot)} do not say which is the front and which the back: a person decides` : `front and back engraving, but ${pieceName(gap.slot)} is missing its ${gap.front ? "back" : "front"}: a person says what goes on it`)
+          : `front and back engraving, but only the ${shared.front ? "front" : "back"} is written: a person says what goes on the ${shared.front ? "back" : "front"}`, !fsets);
+      }
+      else if (mode === "front" && has("back")) flag("conflict", `front engraving chosen but the words are labelled back${has("front") ? " too" : ""}: a person says which face`);
+      else if (mode === "back" && has("front")) flag("conflict", `back engraving chosen but the words are labelled front${has("back") ? " too" : ""}: a person says which face`);
+      else if (mode === "none") flag("conflict", "the option says no engraving, but the buyer labelled front / back words: a person decides");
+      else if (mode === "front" && !allHave("front")) flag("texts", `front engraving, but ${pieceName((fsets.find(x => !x.front) || {}).slot)} has no words: a person says what goes on it`);
+      if (odd.length) flag("texts", `the words include instructions or notes (${odd.slice(0, 2).map(x => `“${clip(x.text, 30)}”`).join(", ")}): a person writes exactly what is engraved`);
+      if (!review || review.partial) {
+        if (fsets) {
+          const sig = x => JSON.stringify([x.front && x.front.text, x.back && x.back.text, x.front && x.front.own, x.back && x.back.own]);
+          const face = x => ({ front: mode === "back" ? null : faceOut(x.front), back: mode === "front" ? null : faceOut(x.back) });
+          if (fsets.every(x => sig(x) === sig(fsets[0]))) Object.assign(eng, face(fsets[0]));
+          else {
+            eng.pieces = {}; for (const x of fsets) eng.pieces[x.slot] = face(x);
+            flag("pieces", `each ${slots[0] === "L" ? "ear" : "disc"} has its own words (${clip(slots.map(sl => `${pieceName(sl)}: ${[eng.pieces[sl].front && `front ${sayFace(eng.pieces[sl].front)}`, eng.pieces[sl].back && `back ${sayFace(eng.pieces[sl].back)}`].filter(Boolean).join(", ")}`).join("; "), 110)}): a person enters them for each`);
+          }
+        } else { eng.front = mode === "back" ? null : faceOut(shared.front); eng.back = mode === "front" ? null : faceOut(shared.back); }
+      }
+    } else if (hand) {
+      flag("texts", "handwriting engraving on the " + (mode === "both" ? "front and back" : mode) + ": the writing comes as a picture, a person handles it");
+    } else if (mode === "front") {
+      const own = persText.trim();
+      if (!pers.length) flag(buyer || staff || msgs.length ? "texts" : "nowords", buyer || staff || msgs.length ? "front engraving chosen; the words are only in a note, not in the personalisation box: a person says exactly what is engraved" : "front engraving was chosen but no words were written");
+      else if (parsed.some(p => p.strays.length) && /^\s*(?:the\s+)?(?:front|back)(?![\p{L}\p{N}_])/iu.test(own)) flag("texts", `front engraving, and the words start with “${/^\s*(?:the\s+)?(front|back)/i.exec(own)[1]}”: a person checks it is not a label`);
+      else if (!plainInscription(own)) {
+        const q = quotedOne(own);
+        if (q && plainInscription(q) && source === "option") { eng.front = faceOut({ text: q }); single = quoted = true; }
+        else flag("texts", picture ? "front engraving, but the writing comes as a picture or handwriting: a person handles it" : `front engraving, but the words are not a plain inscription (“${clip(own, 40)}”): a person writes exactly what is engraved`);
+      }
+      else if (own.split("\n").length > 1 || /\s[\/|]\s/.test(own)) flag("texts", "front engraving with more than one item of words (“" + clip(own.replace(/\n/g, " / "), 40) + "”): a person checks all of it goes on the front");
+      else if (source === "title") flag("mode", "the listing title says front engraving but no option says which the buyer chose: a person confirms");
+      else { eng.front = faceOut({ text: own }); single = true; }
+    } else if (mode === "both") {
+      if (!pers.length && !buyer && !staff && !msgs.length) flag("nowords", "front and back engraving was chosen but no words were written");
+      else if (picture && !labelled.length) flag("texts", "front and back engraving, but the writing comes as pictures or handwriting: a person handles it");
+      else if (!pers.length && !staff) flag("texts", "front and back engraving; the words are only in a note, not in the personalisation box: a person says what goes on each face");
+      else flag("texts", "front and back engraving, but the words do not say which go on the front and which on the back: a person decides");
+    } else if (mode === "none" && pers.length) flag("conflict", "the option says blank (no engraving), but the buyer wrote words: a person decides");
+    if (mode === "none" && !review) return null;
+    if (mode === "back") { eng.front = null; eng.back = null; }   // (back only: the engraving reader reads the words as it always did)
+    // ── the plain line, the confidence and what a person is asked ──
+    const fw = eng.front && eng.front.fontWord, bw = eng.back && eng.back.fontWord, lineFont = !fw && !bw && spec.font && spec.font.asked ? String(spec.font.asked) : "";
+    const fontSay = fw && bw && fw !== bw ? ` · fonts ${fw} / ${bw}` : fw || bw ? ` · font ${fw || bw}` : lineFont ? ` · font ${lineFont}` : "";
+    if (review) {
+      eng.needsPerson = true; eng.reviewKind = review.kind; eng.why = review.reason; eng.raw = raw;
+      eng.textSource = mode === "none" || review.kind === "nowords" || picture ? "none" : pick && !pick.problems.length ? "labelled" : "unlabelled";
+      eng.confidence = review.kind === "nowords" ? 0.3 : eng.front || eng.back ? 0.5 : 0.3;
+      if (!(eng.front || eng.back)) { eng.front = null; eng.back = null; }
+    } else {
+      eng.textSource = !(eng.front || eng.back) ? "none" : single ? "single" : "labelled";
+      const sure = source === "option" ? 0.95 : source === "title" ? 0.7 : 0.6;
+      if (mode === "both") { eng.why = `front and back from ${fromWhat}: front ${sayFace(eng.front)}, back ${sayFace(eng.back)}${fontSay}`; eng.confidence = sure; }
+      else if (mode === "front") { eng.why = `front only from ${fromWhat}: ${sayFace(eng.front)} goes on the front${fontSay}`; eng.confidence = quoted ? Math.min(sure, 0.8) : Math.min(sure, 0.9); }
+      else { eng.why = `back only from ${fromWhat}: read as before`; eng.confidence = source === "option" ? 0.95 : 0.8; }
+      if (source !== "option" && (mode === "front" || mode === "both")) eng.why = clip(`${eng.why} · the listing has no such option: a person confirms`, 200);
+    }
+    return eng;
+  }
+  engravingOf.faceParse = faceParse; engravingOf.modeIn = engravingModeIn; engravingOf.modeOfOption = engravingModeOfOption;
+
   /* ═══ 4 · the line spec ════════════════════════════════════════════════ */
   /**
    * order: the bridge order (design §4.4); line: one of its lines
@@ -1824,6 +2199,14 @@
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
     if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !quiet && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
+    // front and back engraving (ENGINTAKE): what the buyer chose and wrote about the faces, for EVERY line; null (nothing added to the spec) when the line has no front / back word.
+    // ENGINTAKE (CONTRACT section 2): what the buyer chose for the faces, for EVERY line. A line with no face word has no `spec.engraving` (the faces model reads that as the default back); a person's
+    // word is never here (it is row.engravingOverride). Nothing else of the spec is touched, engraveCandidate included: a front / both-faces line with no words says so in its reading
+    // (needsPerson, reviewKind "nowords") and the engraving pass (the faces model) raises it; here it is still cut plain exactly as before.
+    try {
+      const eng = engravingOf(line, spec);
+      if (eng) spec.engraving = eng;
+    } catch (_) { /* a reading that fails leaves the line as it always was */ }
     return spec;
   }
   /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
@@ -2194,6 +2577,7 @@
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
   return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+    engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
