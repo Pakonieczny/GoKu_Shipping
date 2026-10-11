@@ -179,7 +179,9 @@
       if (list && list.length >= 1 && list.every(p => p && (p.side === "L" || p.side === "R"))) return list;   // (one piece with a side: a single earring that names its ear prints that ear's sticker)
     }
     // (a mismatched design is a pair whatever the form says, EXCEPT on a line that is no earring line: a necklace, pendant, bracelet, key ring or charm of a two-body design prints its one sticker, Paul, 10 Oct)
-    if (mismatchedDesign(entry) && !(P && typeof P.plainLine === "function" && P.plainLine(row))) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
+    // (nor on a line that makes ONE body of a design that draws the same outline twice, a single earring that names no ear: one charm, one sticker, Paul 11 Oct)
+    const oneBody = !!(P && typeof P.oneChoice === "function" && typeof P.alikeDesign === "function" && P.oneChoice(row, entry || null) && P.alikeDesign(entry) === true);
+    if (mismatchedDesign(entry) && !oneBody && !(P && typeof P.plainLine === "function" && P.plainLine(row))) { const q = quantityOf(row), out = []; for (let n = 0; n < q; n++) out.push({ side: "L" }, { side: "R" }); return out; }
     return null;
   }
 

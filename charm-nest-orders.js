@@ -957,6 +957,13 @@
   // what a listing, an option or a note says when the buyer wants two different charms (the shop's own staff fact stud-mismatch:
   // "order the earrings and leave a note naming the two designs"; the snapshot's "Mismatched Tennis Ball and Raquet Huggie Hoops",
   // "Silver • 2 symbols"). "left" or "right" alone never counts (a necklace font, "Left-facing wolf"): only an option NAMED for a side.
+  /* ONE charm of a two-body design on a line that is not an earring pair (Paul, 11 Oct 2026: "This listing is not an earring so it should NOT have duplicate charms"). The design's
+     two bodies being the SAME outline (two keys, two mittens) is a duplicate: the line makes one body, the left one (CharmNestPair.soloOf says which, and why). Two clearly different charms of
+     one design (BEE + HIVE, WOLF + MOON) keep today's one piece holding both. The intake has no geometry, so it asks the shared module about the master entry alone (alikeDesign: the four SKUs
+     measured, or an entry that says `pair.alike`); the bridge asks again with the traced design when it makes the piece and calls solo() below when the geometry says one body. */
+  const pairModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestPair) return g.CharmNestPair; if (typeof require === "function") return require("./charm-nest-pair.js"); } catch (_) { /* the page without the module: the old words */ } return null; };
+  const alikeKnown = o => { try { const M = pairModule(); return !!(M && typeof M.alikeDesign === "function" && M.alikeDesign(Object.assign({ sku: o && o.sku }, (o && o.entry) || {})) === true); } catch (_) { return false; } };
+  const ONE_WORDS = (index, count, why) => `the design draws ${count || 2} bodies (${why || "a left and a right charm"}) but the line is not an earring pair: made as ONE charm, the ${index === 1 ? "right" : "left"} body only, no Left or Right, nothing duplicated or mirrored`;
   const MIS_WORD = /\bmis-?match(?:ed)?\b/i;
   const TWO_DESIGNS = /\b(?:2|two)\s+(?:different\s+)?(?:symbols?|designs?|signs?)\b|\bdifferent\s+(?:designs?|charms?|symbols?)\b|\b(?:one|1)\s+of\s+each\b/i;
   const SIDE_NAME = /\b(?:left|right)\b/i, SIDE_THING = /\b(?:ear(?:ring)?s?|charm|design|stud|huggie|hoop|side)\b/i;
@@ -1455,7 +1462,10 @@
     if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the line says two different designs: ${info.second.why}` : "the line says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
-    if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
+    // (the same outline twice, two keys or two mittens, on a line that is not an earring pair: ONE charm. A single earring that names no ear is such a line too.)
+    if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) info.oneBody = { index: 0, count: 2, rule: "the left body" };
+    if (info.oneBody) info.notes.push(ONE_WORDS(info.oneBody.index, info.oneBody.count, "the same outline twice"));
+    else if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
     else if (info.twoNamed) info.notes.push("the line names two designs but is not an earring pair: made as one piece of the first design, no Left or Right");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
     return info;
@@ -1523,6 +1533,25 @@
     spec.pair.glued = true; spec.pair.perUnit = 1; spec.pair.split = false; delete spec.pieceRule; delete spec.pieceNote;
     spec.pieceCount = unitsOf(spec); spec.pair.sides = sidesOf(spec); spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.notes.push("made as one glued piece for each unit (the pool could not cut its two bodies apart)");
+    return spec;
+  }
+  /** The pool read the design's geometry and found that a line that is not an earring pair draws the same outline twice (CharmNestPair.soloOf: { index, count, rule }): the line makes ONE charm, that body.
+   *  Records it in spec.pair.oneBody and says so in spec.pair.notes in place of the words that said both bodies. The count, the sides and the kind do not change (one piece per unit, no side). */
+  function solo(spec, one) {
+    if (!spec || !spec.pair) return spec;
+    // (no `one`: the line is NOT cut as one body after all (the geometry says its bodies are different charms, or it was pooled before with both): the intake's words about one body are taken back)
+    if (!one) {
+      const pr = spec.pair; if (!pr.oneBody) return spec;
+      delete pr.oneBody; pr.notes = (Array.isArray(pr.notes) ? pr.notes : []).filter(n => !/made as ONE charm, the (?:left|right) body only/.test(String(n)));
+      if (pr.twoBodies) pr.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
+      return spec;
+    }
+    if (!Number.isInteger(one.index)) return spec;
+    const pr = spec.pair, was = pr.oneBody;
+    pr.oneBody = { index: one.index, count: +one.count || 2, rule: String(one.rule || "the left body") };
+    if (was && was.index === pr.oneBody.index && was.rule === pr.oneBody.rule) return spec;
+    pr.notes = (Array.isArray(pr.notes) ? pr.notes : []).filter(n => !/made as one piece with both bodies|made as ONE charm, the (?:left|right) body only|made as one glued piece/.test(String(n)));
+    pr.notes.push(ONE_WORDS(one.index, one.count, "the same outline twice"));
     return spec;
   }
   /** single | pair | mismatched | multi, as CharmNestPair.kindOf says it, from the pair facts and the number of pieces */
@@ -2155,7 +2184,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,

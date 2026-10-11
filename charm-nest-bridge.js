@@ -196,7 +196,20 @@ const ListMedia = (() => {
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   // a MISMATCHED pair line (the master record says its design draws two different bodies, and the shared module agrees): the picture shows a Left and a Right charm
-  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)); } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct)
+  // ONE charm of a design that draws the same outline twice, on a line that is not an earring pair (Paul, 11 Oct 2026: "This listing is not an earring so it should NOT have duplicate charms"; charm-nest-pair.js
+  // soloOf): the index of the body its picture shows (0 = the left one), or -1 (an earring pair, a design of two different charms, a line pooled before this with both bodies, or no master entry yet). Asked of the
+  // master entry alone (pair.alike, or one of the SKUs measured: CharmNestPair.alikeDesign) and of what the intake already said (spec.pair.oneBody); the geometry has the last word when the pool makes the piece.
+  const oneRow = row => { try {
+    const CP = window.CharmNestPair, sp = row && row.spec; if (!CP || !CP.oneChoice || !CP.alikeDesign || !sp || sp.noDesign || sp.ownDesign || !window.Master || !window.Master.entryFor) return -1;
+    const e = window.Master.entryFor(sp.designSku || (row.line && row.line.sku) || ""); if (!e || !e.pair || !CP.isMismatched(e)) return -1;
+    if (!CP.oneChoice(Object.assign({}, row.line, { spec: sp, form: sp.form }), e)) return -1;
+    // (a line pooled before this, its pool rows holding the folded charm, is the whole charm it was cut as)
+    const live = (row.poolIds || []).map(id => window.B && B.pool.rows.get(id)).filter(r => r && r.charmHash && !["abandoned", "superseded"].includes(r.state));
+    if (live.length) { const g = window.Pool && Pool.sizeEntry(e, sp.size), whole = String((g && g.charmHash) || e.charmHash || ""); if (whole && live.some(r => String(r.charmHash) === whole)) return -1; }
+    const ob = sp.pair && sp.pair.oneBody; if (ob && Number.isInteger(ob.index) && ob.index >= 0) return ob.index;
+    return CP.alikeDesign(e) === true ? 0 : -1;
+  } catch (_) { return -1; } };
+  const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)) && oneRow(row) < 0; } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct; nor on a line that makes ONE body of a design that draws the same outline twice, Paul 11 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
   const earPair = row => { try { return !!row && !row.spec?.noDesign && !row.spec?.ownDesign && (pairRow(row) || earPairRow(row)); } catch (_) { return false; } };
@@ -299,6 +312,9 @@ const ListMedia = (() => {
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
+    // (a line that makes ONE body of a design drawn twice (oneRow): the picture is that body alone, no Left or Right; a picture asked for one ear or one wash is not that line's)
+    const one=!own && !both && !(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.body===0 || opts.body===1))?oneRow(row):-1;
+    if(one>=0)ro=Object.assign({},ro||{},{one});
     if(both){const g=Pool.sizeEntry(entry,row.spec?.size),f=(g&&g.facing)||entry.facing;ro={pair:true,sku:String(entry.sku||sku),...(f==='L'||f==='R'||f==='X'?{facing:f}:{})};}   // (which way the master drawing faces, a person's word: the same rule as the piece the sheet cuts)
     if(own){const turnOwn=earTurn(row,opts.side,entry)?{mirror:true}:null;return turnOwn?(px?Pool.masterFront(entry,row.spec?.size,px,turnOwn):Pool.masterPreview(entry,row.spec?.size,true,turnOwn)):(px?Pool.masterFront(entry,row.spec?.size,px):Pool.masterPreview(entry,row.spec?.size,true));}
     if(ro)return px ? Pool.masterFront(entry,row.spec?.size,px,ro) : Pool.masterPreview(entry,row.spec?.size,true,ro);
@@ -323,15 +339,15 @@ const ListMedia = (() => {
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
-    const both=matchPair(row),two=twoOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[])));
+    const both=matchPair(row),two=twoOf(row),one=oneRow(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(one>=0?['one',one]:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -2905,6 +2921,34 @@ const Pool = window.Pool = (() => {
     } catch (e) { src.bodies = null; agent({ pool: true }, "warn", `${src.sku}: its two bodies could not be told apart (${e.message}) — kept as one piece`); return null; }
     finally { src.bodiesChecked = true; }
   }
+  /* ONE charm of a design that draws the same outline twice, on a line that is not an earring pair (Paul, 11 Oct 2026; charm-nest-pair.js section 4c: soloOf). src.solo = one one-body charm per body of the
+     design (its own outline, members, tops, silhouette and hash), made the way traceBodies makes the bodies of a pair, except that two bodies of the SAME shape are fine here: that is the very case (traceBodies
+     refuses them). The line is cut from solo[index] only. Nothing new is stored in Firestore: the piece's stored charm hash (the pool row's charmHash, the sheet record's charm hash) is a body's, not the folded
+     charm's, and soloBase below reads that back. A line pooled before this holds the folded charm's hash and stays whole. A design whose bodies share a group of the master cannot be written body by body
+     (the sheet writer copies whole groups): src.solo stays null and such a line keeps both bodies, as it always did. */
+  const soloBodies = src => src.soloChecked ? Promise.resolve(src.solo) : once(src, "solo", () => traceSolo(src));
+  async function traceSolo(src) {
+    src.solo = null;
+    try {
+      const Pair = window.CharmNestPair, charm = src.charms[0];
+      if (!Pair || !Pair.bodiesOf || !Pair.isMismatched || !Pair.isMismatched(charm)) return null;
+      const bodies = Pair.bodiesOf(charm); if (bodies.length < 2) return null;
+      const tops = bodies.map(b => new Set(b.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null)));
+      if (tops.some((t, i) => tops.some((u, j) => j > i && [...t].some(x => u.has(x))))) { agent({ pool: true }, "warn", `${src.sku}: its bodies are drawn in one group of the master, so one cannot be written alone — a line of it keeps both bodies`); return null; }
+      const made = bodies.map((b, i) => Object.assign({}, charm, { outline: b.outline, members: b.members.slice(), bbox: b.bbox.slice(), extras: (charm.extras || []).filter(x => b.members.includes(x)), topIndices: [...tops[i]], id: `${src.id}:s${i}`, oneBody: i }));
+      for (const c of made) delete c.frontAt;
+      await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
+      for (const c of made) c.backKeepOut = Master.keepOutOf(c);
+      return (src.solo = made);
+    } catch (e) { src.solo = null; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
+    finally { src.soloChecked = true; }
+  }
+  /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm, and its charm hash is that body's, not the
+   *  folded charm's. null when it is not (an old record, a line that keeps both bodies, an earring pair): the design's one charm, whole, as before. */
+  async function soloBase(src, rec) {
+    const h = rec ? String(rec.charmHash || rec.hash || "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;
+    const bodies = await soloBodies(src); return bodies && bodies.find(c => String(c.hash) === h) || null;
+  }
   async function readMasterCharm(entry,size) {
     const geom=sizeEntry(entry,size);
     const url = geom.aiUrl || (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
@@ -2928,15 +2972,21 @@ const Pool = window.Pool = (() => {
     { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
     return {url,bytes,parsed,g,charm};
   }
+  /** The charm a picture is drawn from: with opts.one (a body's index) the ONE body of a design that draws more than one, alone (charm-nest-pair.js charmOfBody: its own outline, members and box; nothing is
+   *  traced, nothing is stored), so a picture of a line that makes one charm shows one charm and no Left / Right chips; the charm itself otherwise, and when the design has no such body. */
+  function oneBody(charm, opts) {
+    if (!opts || !Number.isInteger(opts.one) || opts.one < 0) return charm;
+    try { const Pair = window.CharmNestPair, bodies = Pair && Pair.bodiesOf && Pair.charmOfBody ? Pair.bodiesOf(charm) : null; return bodies && bodies.length >= 2 && bodies[opts.one] ? Pair.charmOfBody(charm, bodies[opts.one]) : charm; } catch (_) { return charm; }
+  }
   const masterPreviewCache=new Map();
   // `front` draws the charm as the Orders and Engrave lists show a pooled charm (white, a 3 mm margin), so an order's
   // picture keeps its look and size when its charm reaches the pool; the Master tab's tiles keep the tight thumbnail.
   async function masterPreview(entry,size,front,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
+    const draw=charm=>front&&P.frontPreview?P.frontPreview(oneBody(charm,opts),220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
     const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
-    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+":":"")+path;
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+":":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
     // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
     // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
@@ -2952,7 +3002,7 @@ const Pool = window.Pool = (() => {
   async function masterFront(entry,size,px,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
+    const cached=B.pool.sources.get(path),whole=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm,charm=oneBody(whole,opts);   // (charm: the design, or with opts.one the ONE body of it)
     return P.frontPreview ? P.frontPreview(charm,px,opts) : Engrave.renderFront(charm,px,opts);
   }
   /** The picture of an earring line of TWO separate designs (the Left's design and the Right's), side by side in one picture (charm-nest-pair-thumb.js, opts.pair with opts.other): kept in memory under both files. */
@@ -3046,6 +3096,8 @@ const Pool = window.Pool = (() => {
     // waits for a piece whose pool row was never written. A row the page has not loaded yet changes nothing (the last word stays); a line taken off has no live row.
     const live = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(r => r && !["abandoned", "superseded"].includes(r.state));
     if (live.length) { const g = Math.max(0, ...live.map(r => +r.groupSize || 0)); if (g > 1) row.groupSize = g; else delete row.groupSize; }
+    // a line pooled before one body was made of a design drawn twice (a live pool row of it holds the folded charm's hash) is the whole charm it was cut as: the intake's words about one body are taken back
+    if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), g = e && sizeEntry(e, sp.size), whole = String((g && g.charmHash) || (e && e.charmHash) || ""); if (whole && live.some(r => String(r.charmHash) === whole)) O.solo(sp, null); }
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
     const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
@@ -3111,7 +3163,12 @@ const Pool = window.Pool = (() => {
     // (a plan is the pieces of an earring pair, or ONE piece with its side: a single earring whose line names its ear is cut as that ear, the Right the mirror image by the same facing rule; a single that names no ear has no side and is cut as drawn)
     // (a pair of two designs: each piece is body 0 of ITS OWN design, the Right marked body 1 of the pair, and its direction is that design's own: the Right earring is turned over unless its drawing already faces right)
     const plan = wanted && wanted.length >= 1 && wanted.length <= PoolPieces.MAX_PIECES && wanted.every(p => (p.side === "L" || p.side === "R") && (ear2 ? true : wholeBody(src, +p.bodyIndex))) ? (ear2 ? wanted.map(p => Object.assign({}, p, { bodyIndex: p.side === "R" ? 1 : 0, mirror: earMirror(p, earOf(p), row) })) : wanted) : null;
-    if (!plan && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
+    // ONE body (Paul, 11 Oct 2026: "This listing is not an earring so it should NOT have duplicate charms"): a line that is not an earring pair, of a design that draws the SAME outline twice, is cut from one body of it
+    // (the left one, charm-nest-pair.js soloOf): one piece per unit, no side, nothing mirrored, nothing glued. A line pooled before this (its pool rows hold the folded charm), an old glued line and a design whose
+    // two bodies are different charms keep what they made. The piece's stored charm hash is that body's: the only mark it carries (soloBase reads it back).
+    const one = !plan && !ear2 ? await soloFor(row, src) : null, cutBase = one ? one.charm : base;
+    if (one) O.solo(sp, one); else if (sp.pair && sp.pair.oneBody) O.solo(sp, null);   // (the intake said one body from the master entry; the geometry says it is not: the old words)
+    if (!plan && !one && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
     const count = plan ? plan.length : fixed || sp.quantity;
     /* Only a GROUP carries a group (Paul 9 Oct, after ADVCOMPAT 1 and 2): an earring pair (sided pieces), a necklace of counted discs, letters or charms (n pieces of ONE necklace), a line
@@ -3119,7 +3176,7 @@ const Pool = window.Pool = (() => {
     const grouped = !!(Pair && Pair.isGroupLine && Pair.isGroupLine(pairLine(row), base)), loose = grouped && !plan && count >= 2 && count <= PoolPieces.MAX_PIECES;
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
-    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : [base]) {
+    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : [cutBase]) {
       if (b.areaPt2 > usable || Math.min(b.widthPt, b.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(b.widthPt * MM).toFixed(1)} × ${(b.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: b.widthPt * MM, heightMm: b.heightPt * MM, material: sp.material }); return null; }
     }
     // a Right piece is drawn the other way round (its mirror image); a line whose mirrored charm cannot be made is held, never drawn the wrong way
@@ -3130,7 +3187,7 @@ const Pool = window.Pool = (() => {
       // (an ear piece of a line that is not a group, a single earring that names its ear: a group of ONE, however many are bought; discs, letters, charms of a counted necklace: group fields, no ear)
       const mine = pp ? PoolPieces.fieldsOf(grouped ? pp : Object.assign({}, pp, { groupSize: 1 })) : loose ? PoolPieces.cleanGroupFields({ poolId, groupSize: count }) : null;
       const ear = earOf(pp), cut = ear.src;   // (the ear's own design: the line's one design for every piece but the Right of a pair of two designs)
-      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
+      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : one ? cloneCharm(cutBase, `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
       charm.name = `${row.order.receiptId} · ${ear.sku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
@@ -3139,6 +3196,15 @@ const Pool = window.Pool = (() => {
       charms.push(charm);
     }
     return { sp, pools, charms };
+  }
+  /** The ONE body a line that is not an earring pair is cut from, or null (it keeps what it always made): { index, count, rule, how, charm } (charm-nest-pair.js soloOf says which body and why; the charm is that body
+      cut alone). Never for an old glued line, nor for a line a live pool row of which holds the folded charm (pooled before this: it is cut whole as it was). */
+  async function soloFor(row, src) {
+    const Pair = window.CharmNestPair, whole = src.charms[0]; if (!Pair || !Pair.soloOf || gluedLine(row)) return null;
+    if ((row.poolIds || []).some(id => { const r = B.pool.rows.get(id); return r && r.charmHash && !["abandoned", "superseded"].includes(r.state) && String(r.charmHash) === String(whole.hash); })) return null;
+    const one = Pair.soloOf(pairLine(row), whole); if (!one) return null;
+    const bodies = await soloBodies(src), charm = bodies && bodies[one.index];
+    return charm ? Object.assign({}, one, { charm }) : null;
   }
   /** The two master designs of a mismatched pair named by two SKUs ({ L, R }), or null: a line made of one design, a mismatched design of two bodies, a glued or an old line. */
   function memberSkus(sp) {
@@ -3171,8 +3237,8 @@ const Pool = window.Pool = (() => {
   }
   /** baseFor, making what it needs: the bodies of a recovered source, and the mirrored charm (CharmNestPair.pieceGeometry: the outline and art
       reflected about the body's own vertical axis, its silhouette traced again) once per body and source. Throws when a mirrored charm cannot be made. */
-  async function ensureBase(src, piece) {
-    if (!sidedPiece(piece)) return src.charms[0];
+  async function ensureBase(src, piece, rec) {
+    if (!sidedPiece(piece)) return (rec && await soloBase(src, rec)) || src.charms[0];   // (`rec`, the piece's stored record, may say it is ONE body of the design: soloBase)
     await splitBodies(src);
     const i = +piece.bodyIndex, whole = wholeBody(src, i);
     if (!whole || piece.mirror !== true || (src.mirrors && src.mirrors[i])) return baseFor(src, piece);
@@ -3429,10 +3495,12 @@ const Pool = window.Pool = (() => {
     const sp = row.spec || {}, q = Math.max(1, Math.round(+(sp.quantity || row.line?.quantity) || 1));
     const Pair = window.CharmNestPair, e = sp.designSku ? Master.entryFor(sp.designSku) : null, g = e && sizeEntry(e, sp.size), src = g && g.aiPath ? B.pool.sources.get(g.aiPath) : null;
     let n = Pair && Pair.pieceCountOf && row.line ? Pair.pieceCountOf(pairLine(row), src ? src.charms[0] : null) : q;
-    if (n === q && designMismatched(sp.designSku, sp.size)) n = 2 * q;   // (the master entry says two bodies; the charm is not traced yet)
+    // (the master entry says two bodies; the charm is not traced yet. Two pieces per unit is an earring pair's: a necklace, pendant, bracelet or charm line of such a design is ONE piece per unit, and so is a
+    //  line that makes one body of a design drawn twice: Paul, 11 Oct 2026, "This listing is not an earring so it should NOT have duplicate charms")
+    if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -5058,7 +5126,7 @@ const Engrave = window.Engrave = (() => {
         if (!source?.pool) throw new Error("Restore this sheet to the Nest workspace before editing backs from a combined source file.");
         if (!source?.url) throw new Error("The original front design is unavailable. Restore this sheet's source file before editing its back.");
         const src=await Pool.masterCharm({sku:saved.sku,aiPath:source.path || source.url,aiUrl:source.url,upAngle:saved.upAngle},null);
-        const piece=CharmNestPoolPieces.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece).catch(()=>null);   // (a piece of a mismatched pair is its own body)
+        const piece=CharmNestPoolPieces.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece,savedCharm?.hash?savedCharm:(B.pool.rows.get(poolId) || saved)).catch(()=>null);   // (a piece of a mismatched pair is its own body)
         if(!base) throw new Error("This piece's own body is no longer in its design. Rebuild this sheet before editing its back.");
         charm=Pool.cloneCharm(base,poolId); charm.poolId=poolId; if(piece) Object.assign(charm,CharmNestPoolPieces.fieldsOf(piece));
         if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
@@ -5911,7 +5979,7 @@ const Engrave = window.Engrave = (() => {
     if(!current())return;
     const geom=entry && Pool.sizeEntry(entry,job.row.spec.size);
     if(!entry || !geom?.aiPath){host.textContent="Preview unavailable";return;}
-    try { const src=await Pool.masterCharm(entry,job.row.spec.size);if(current())paint(src.charms[0]); }
+    try { const src=await Pool.masterCharm(entry,job.row.spec.size),rec=(job.copies || job.row.poolIds || []).map(id=>B.pool.rows.get(id)).find(Boolean),base=await Pool.ensureBase(src,null,rec).catch(()=>src.charms[0]);if(current())paint(base); }   // (a piece cut as ONE body of its design is that body: its pool row's charm hash says so)
     catch(_){if(current())host.textContent="Preview unavailable";}
 
   }
@@ -8721,7 +8789,7 @@ const RunCtl = window.RunCtl = (() => {
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
-        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece).catch(() => null);
+        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         if (!pg.charms.some(c => c.poolId === rc.poolId)) pg.charms.push(charm);
@@ -15868,7 +15936,7 @@ const Recall = window.Recall = (() => {
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size);
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
-        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece).catch(() => null);
+        const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         pg.charms.push(charm);

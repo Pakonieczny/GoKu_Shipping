@@ -47,6 +47,8 @@
     // (not on a line that is no earring line: a necklace, pendant or charm of a two-body design is one piece per unit, never a Left and a Right ear: Paul, 10 Oct)
     try { if (row && row.spec && typeof P.plainLine === 'function' && P.plainLine({ spec: row.spec, form: row.spec.form })) return false; } catch (_) { /* decided below */ }
     const sku = row && row.spec && row.spec.designSku;
+    // (nor on a line that makes ONE body of a design that draws the same outline twice, a single earring that names no ear: one charm, no ear, Paul 11 Oct)
+    try { const e0 = ctx && ctx.entryFor && sku ? ctx.entryFor(sku) : null; if (e0 && typeof P.oneChoice === 'function' && typeof P.alikeDesign === 'function' && P.oneChoice({ spec: row.spec, form: row.spec.form }, e0) && P.alikeDesign(e0) === true) return false; } catch (_) { /* decided below */ }
     try { const dp = ctx && ctx.entryFor && sku ? P.designPair && P.designPair(ctx.entryFor(sku)) : null; if (dp) return !!dp.mismatched && dp.bodies === 2; } catch (_) { /* fall through to the charm */ }
     try { const ch = ctx && ctx.charmOf && poolId ? ctx.charmOf(poolId) : null; return !!(ch && ch.outline && P.isMismatched(ch)); } catch (_) { return false; }
   }
