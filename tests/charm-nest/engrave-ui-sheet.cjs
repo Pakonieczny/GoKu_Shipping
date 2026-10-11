@@ -198,7 +198,7 @@ const rec = (copy, face, text) => Object.assign({ poolId: P(copy), sheetId: 's1'
 
   console.log(`\n${n} pure checks passed`);
   if (process.argv.includes('--pure') || process.exitCode) return;
-  await browser();
+  if (!process.env.EU3_NEST_ONLY) await browser();
   await nestCard();
 })();
 
@@ -324,7 +324,9 @@ async function nestCard() {
     }, card);
     // the plate's FRONT carries the front words ("W") in ink once the font is in; the plain charm stays plain
     const until = async (fn, ms, what) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 150)); } };
-    const f = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 90000, 'front words in ink on the Front of the plate');
+    const f = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 90000, 'front words in ink on the Front of the plate').catch(async e => {
+      console.error('diagnostics', JSON.stringify(await page.evaluate(() => { const sh = S.sheets.gold; return { fonts: !!(window.Engrave && Engrave.fonts && Engrave.fonts.ok), ff: sh._frontFont, fh: sh._frontHas, backs: !!sh._backs, hasFront: SheetWin.cardBack.hasFront(sh), face: (document.querySelector('.sheetCard[data-m="gold"] [data-r="canvas"]') || {})._face || 'front' }; })));
+      throw e; });
     assert.equal(f.b, 0, 'the plain charm stays plain from the front: ' + f.b);
     // the shelf and the pill
     const shelf = await page.evaluate(c => ({ faces: [...document.querySelectorAll(c + ' .backFace')].map(e => e.textContent), figures: document.querySelectorAll(c + ' .backPieces figure').length, label: (document.querySelector(c + ' [data-r="eng"] button') || document.body).getAttribute('aria-label') }), card);

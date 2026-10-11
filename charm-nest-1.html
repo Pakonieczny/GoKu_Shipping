@@ -6503,7 +6503,7 @@ function backsMap(sh) {
     is read for it (the front records are in the page's own backs); the engraving font is asked for once and the card drawn again when it lands. Null for any other sheet: its card is drawn as it always was. */
 function frontOf(sh) {
   const CB = cardBack(); if (!CB || !CB.front || !CB.hasFront) return null;
-  const now = Date.now(); let h = sh._frontHas; if (!h || now - h.at > 1000) h = sh._frontHas = { at: now, v: !!CB.hasFront(sh) };
+  const now = Date.now(); let h = sh._frontHas; if (!h || !h.v || now - h.at > 1000) h = sh._frontHas = { at: now, v: !!CB.hasFront(sh) };   // (a "no front" answer is never kept: a front record that has just landed is drawn at once)
   if (!h.v) return null;
   if (!sh._frontFont) { sh._frontFont = true; const f = CB.font(); if (f) f.then(() => { sh._backs = null; if (sh.el) drawPreview(sh); }); }
   return backsMap(sh);
