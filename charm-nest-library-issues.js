@@ -207,7 +207,7 @@
         m.notes.push({ k: 'n:unverified', key: 'unverified', step: 'orders', label: tidy(it.label) || 'Orders not checked yet', orders: (Array.isArray(it.orderIds) ? it.orderIds : []).map(String), tone: 'gold' });
       } else if (!it.orderId && !m.own && (OWN_KEY[it.key] || OWN[it.step])) {
         const o = OWN_KEY[it.key] || OWN[it.step], go = o.go || (it.open && it.open.type === 'sheet' ? 'sheet' : '');
-        m.own = { k: 'own:' + it.step, step: it.step, key: it.key || it.step, label: o.go || OWN_KEY[it.key] ? o.label : String(it.label || o.label), icon: o.icon, go, target: String((it.open && it.open.id) || (feed && feed.id) || '') };
+        m.own = { k: 'own:' + it.step, step: it.step, key: it.key || it.step, label: o.go || OWN_KEY[it.key] ? (it.key === 'backFilesMissing' && it.label === 'Saving files' ? it.label : o.label) : String(it.label || o.label), icon: o.icon, go, target: String((it.open && it.open.id) || (feed && feed.id) || '') };
       }
     }
     m.count = m.orders.length + m.sheets.length + m.notes.length;

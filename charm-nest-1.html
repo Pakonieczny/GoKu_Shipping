@@ -2204,6 +2204,7 @@ details.masterHist>summary{white-space:nowrap}
 .backPieces .backThumb:focus-visible{outline:2px solid var(--gold2);outline-offset:3px}
 .backPieces .backThumb img{position:absolute;display:block;width:100%;height:100%;object-fit:contain;border:0;border-radius:0}
 .backPending{font:9px var(--mono);color:var(--ink45)}.sheetBacks:empty{display:none}
+.backPieces .backFace{position:absolute;left:0;bottom:0;padding:0 2px;border-radius:0 2px 0 0;background:rgba(255,255,255,.88);color:var(--ink70);font:600 7px/1.3 var(--mono);letter-spacing:.02em;pointer-events:none}
 /* Empty shelves collapse. Populated shelves align to their responsive row. */
 .sheetCard>[data-r="backs"]{flex:0 0 auto;height:auto;min-height:0}
 .sheetCard>[data-r="backs"]:empty{display:none}
@@ -3148,8 +3149,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
       <div class="field"><label for="stPollOrders">Check for new Etsy orders</label><select id="stPollOrders"><option value="on">On</option><option value="off">Off</option></select><div class="help">Checks while this station is open, including while a run waits for review. Auto processes arrivals; Manual adds them to the order list.</div></div>
       <div class="field"><label for="stPollMinutes">Check interval (minutes)</label><input id="stPollMinutes" type="number" min="10" max="1440" step="1"><div class="help">Orders and listing photos refresh in batches every 10 minutes by default. Longer intervals can further reduce background traffic. Unchanged order details are reused; new orders appear after the next check.</div></div>
       <input id="stAutoEvery" type="hidden" value="0">
-      <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy serving the 250 newest Etsy orders, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator, which serves the 250 newest Etsy orders pulled once each time the sandbox starts (switching it on, or Start after a reset: about 3 Etsy calls, at most 6 starts a day), and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. Every start first clears the previous sandbox, so no old order carries over; reloading this page pulls nothing again. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbReset" title="wipe everything the sandbox made, in the cloud and in this browser — the same complete wipe as Reset the sandbox… and Purge all run history…; the Charm repo, employee efficiency and every real record stay">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="clear the previous sandbox, switch to it and pull the 250 newest Etsy orders — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
-      <div class="field"><label for="stSbStream">Sandbox orders · speed · seed</label><div class="fieldRow3"><select id="stSbStream"><option value="on">A few at a time, as Etsy brings them</option><option value="off">The pulled orders all at once</option></select><input id="stSbSpeed" type="number" min="1" max="1000" step="1" title="how many times faster than real time the sandbox day plays"><input id="stSbSeed" type="number" min="0" step="1" placeholder="new each reset" title="the same seed gives the same arrival times and counts for the orders pulled"></div><div class="help">A few at a time: every simulated 10 minutes 2 to 5 of the 250 newest Etsy orders that are open arrive, oldest first, under their real Etsy order numbers and the simulated time. Each order comes once; when all have come, no more arrive until the sandbox is started again, which pulls the 250 newest orders afresh. In Auto the next check starts as soon as the sorter has placed the last orders, so no time is spent waiting between them; in Manual one comes every simulated 10 minutes at this speed (12 s at 50x). Dates and due days follow the simulated clock; nesting keeps its real time. Enter a seed (the status shows the current one): the same seed gives the same arrival times and counts for the orders pulled.</div></div>
+      <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy serving the newest Etsy orders, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator, which serves the <span data-sbn>250</span> newest Etsy orders pulled once each time the sandbox starts (switching it on, or Start after a reset: about <span data-sbc>3 Etsy calls</span>, at most <span data-sbp>6 starts</span> a day; the number is set in "Newest Etsy orders the sandbox pulls" below), and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. Every start first clears the previous sandbox, so no old order carries over; reloading this page pulls nothing again. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbReset" title="wipe everything the sandbox made, in the cloud and in this browser — the same complete wipe as Reset the sandbox… and Purge all run history…; the Charm repo, employee efficiency and every real record stay">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="clear the previous sandbox, switch to it and pull the newest Etsy orders — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
+      <div class="field"><label for="stSbStream">Sandbox orders · speed · seed</label><div class="fieldRow3"><select id="stSbStream"><option value="on">A few at a time, as Etsy brings them</option><option value="off">The pulled orders all at once</option></select><input id="stSbSpeed" type="number" min="1" max="1000" step="1" title="how many times faster than real time the sandbox day plays"><input id="stSbSeed" type="number" min="0" step="1" placeholder="new each reset" title="the same seed gives the same arrival times and counts for the orders pulled"></div><div class="help">A few at a time: every simulated 10 minutes 2 to 5 of the <span data-sbn>250</span> newest Etsy orders that are open arrive, oldest first, under their real Etsy order numbers and the simulated time. Each order comes once; when all have come, no more arrive until the sandbox is started again, which pulls the <span data-sbn>250</span> newest orders afresh. In Auto the next check starts as soon as the sorter has placed the last orders, so no time is spent waiting between them; in Manual one comes every simulated 10 minutes at this speed (12 s at 50x). Dates and due days follow the simulated clock; nesting keeps its real time. Enter a seed (the status shows the current one): the same seed gives the same arrival times and counts for the orders pulled.</div></div>
+      <div class="field" style="grid-column:1 / -1"><label for="stSbPull">Newest Etsy orders the sandbox pulls</label><div class="fieldRow3"><input id="stSbPull" type="number" min="10" max="500" step="10" inputmode="numeric" title="how many of the shop's newest Etsy orders each sandbox pull brings (250 until you change it)"><button class="btn ghost xs" type="button" id="stSbPullSave" data-repo="modify" style="justify-self:start;align-self:center" disabled>Save number</button></div><div class="help" id="stSbPullNote" role="status" aria-live="polite"></div><div class="help">How many of the shop's newest orders the sandbox brings each time it pulls after a reset: 250 until you change it, 10 to 500. A reset or purge leaves this number alone; a change takes effect at the next pull. Saving it asks for your charm repo password.</div></div>
       <div class="field"><label>Sandbox records</label><button class="btn ghost sm" id="stSandboxReset" type="button" title="wipe everything the sandbox made, in the cloud and in this browser — the same complete wipe as Reset sandbox records and Purge all run history…; the Charm repo, employee efficiency and every real record stay">Reset the sandbox…</button><div class="help">Wipes everything the sandbox made, in the cloud and in this browser. Stays: the Charm repo, employee efficiency and every real record.</div><div class="help" id="stSandboxResetNote" role="status" aria-live="polite"></div></div>
       <div class="field"><label>Run history</label><button class="btn ghost sm" id="stPurge" type="button" title="delete the real run history (every run, sheet, set, pool row, back record and set counter) and then wipe the sandbox completely, the same as Reset sandbox records; the Charm repo, employee efficiency, the master files, the SKU index, the mappings and the real seals, custom orders and cancelled orders stay">Purge all run history…</button><div class="help">Asks for the passcode. Deletes the real run history (runs, sheets, sets, pool rows, back records, set counters), then wipes the sandbox completely, the same as Reset sandbox records. A run that is still open is named and has to be given up first, or the purge can be forced. Stays: the Charm repo, employee efficiency, master files, SKU index, mappings, and the real seals, custom orders and cancelled orders.</div><div class="help" id="stPurgeNote" role="status" aria-live="polite"></div></div>
       <div class="field" style="grid-column:1 / -1"><label>Build · last reset</label><div class="help" id="stBuildNote" role="status" aria-live="polite"></div><div class="help">Reset sandbox records, Reset the sandbox… and Purge all run history… all end in the same complete wipe, so none leaves anything of the sandbox behind. The sandbox is then empty and waiting: it plays again when you press Start on the Orders tab (or turn Auto on). The two lines above say what the sandbox holds now (every kind, at 0 when empty) and what is kept.</div></div>
@@ -3228,15 +3230,15 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1"></script>
 <script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1"></script>
-<script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1"></script>
-<script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
+<script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1-eu3"></script>
+<script src="charm-nest-engraving-toggle.js?v=20261005-engtog1-eu3"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engrave-setup.js?v=20261011-su1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
@@ -6159,9 +6161,9 @@ function engKey(sh) {
 function engraveShelf(sh, el) {
   const ET = window.EngravingToggle; if (!ET) return;   // (without it the shelf simply stays shown, as before)
   const shelf = $(`[data-r="backs"]`, el), host = $(`[data-r="eng"]`, el); if (!shelf || !host) return;
-  const key = engKey(sh), n = ET.countIn(shelf);
-  if (!el._engTog) el._engTog = ET.mount(host, { sheetKey: key, count: n });
-  el._engTog.update(n, key); ET.follow(shelf, key);
+  const key = engKey(sh), n = ET.countIn(shelf), mx = !!(ET.mixedIn && ET.mixedIn(shelf));   // (n = engraving pictures: pieces x faces; mx = any front, so the words are "Engravings")
+  if (!el._engTog) el._engTog = ET.mount(host, { sheetKey: key, count: n, mixed: mx });
+  el._engTog.update(n, key, mx); ET.follow(shelf, key);
 }
 function renderCard(sh) {
   if (window.NestHold && NestHold.without(sh, () => renderCard(sh))) return;   // (drawn without the pieces still flying: NestHold)
@@ -6308,7 +6310,7 @@ function drawRecalled(sh, cv) {
   const ctx = cv.getContext("2d"); ctx.fillStyle = sw < w - 1 || sh2 < h - 1 ? TRAY : "#fff"; ctx.fillRect(0, 0, w, h); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, sw, sh2);
   // turned over: not the saved picture (that is its front) but each charm from behind, with its own words (12b)
   if (faceOf(cv) === "back" && cardBack()) return drawRecalledBack(sh, cv, ctx, w / f.fw, sw, sh2);
-  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); return; }
+  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); recalledFront(sh, ctx, w / f.fw); return; }
   if (!sh._img || sh._imgSource !== r.previewSrc) {
     r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.previewAt || r.createdAt || r.updatedAt || 0) : "");
     const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img; sh._imgSource=r.previewSrc;
@@ -6368,6 +6370,7 @@ function paintPreview(cv, sh, clean, R) {
   // turned over (12b): the sheet mirrored about its own middle, as it lies under the laser — each charm keeps its place on
   // the metal, and is drawn from behind with its own words; never in the files' pictures or Claude's
   const back = !clean && !sh._forClaude && faceOf(cv) === "back" && !!cardBack(), backs = back ? liveBacks(sh) : null;
+  const frontMap = !back && !clean && !sh._forClaude ? frontOf(sh) : null;   // (the FRONT words of a sheet that has a front engraving; null for every other sheet)
   const behind = (c, p, fill) => cardBack().piece(ctx, pieceOf(c, p, sh), backs, k, { dpr: devicePixelRatio, fill });
   if (back) { ctx.translate(W, 0); ctx.scale(-1, 1); }
   // inset guide
@@ -6402,6 +6405,7 @@ function paintPreview(cv, sh, clean, R) {
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
     }
     CharmNestPDF.drawCharm(ctx, c, tx, k);
+    if (frontMap) cardBack().front(ctx, pieceOf(c, p, sh), frontMap, k);
     if (!clean && c.custom) customRing(ctx, c, tx, k);
     if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
@@ -6489,15 +6493,38 @@ function liveBacks(sh) {
     // (the words fade in as they land, once the card has come round on its plain back: Motion.landIn)
     if (jobs.length) { sh._backWait = (sh._backWait || 0) + 1; Promise.all(jobs).then(() => { sh._backWait--; sh._backs = null; if (sh.el) landWords(sh); }); }
   }
-  const b = sh._backs; if (b && now - b.at < 1000 && b.pool === sh.backPool) return b.map;
+  return backsMap(sh);
+}
+/** The backs a page knows (its own, Engrave's, and the saved ones once read), worked out again at most once a second. */
+function backsMap(sh) {
+  const CB = cardBack(), now = Date.now(), b = sh._backs; if (b && now - b.at < 1000 && b.pool === sh.backPool) return b.map;
   sh._backs = { at: now, pool: sh.backPool, map: CB.ofPage(sh, sh._backList) };
   return sh._backs.map;
+}
+/** The words on the FRONT of a card's charms: only for a sheet that has a front engraving (CharmNestEngraveFaces; a saved front record, a decision with a front, or a front job on one of its pieces). Nothing
+    is read for it (the front records are in the page's own backs); the engraving font is asked for once and the card drawn again when it lands. Null for any other sheet: its card is drawn as it always was. */
+function frontOf(sh) {
+  const CB = cardBack(); if (!CB || !CB.front || !CB.hasFront) return null;
+  const now = Date.now(); let h = sh._frontHas; if (!h || !h.v || now - h.at > 1000) h = sh._frontHas = { at: now, v: !!CB.hasFront(sh) };   // (a "no front" answer is never kept: a front record that has just landed is drawn at once)
+  if (!h.v) return null;
+  if (!sh._frontFont) { sh._frontFont = true; const f = CB.font(); if (f) f.then(() => { sh._backs = null; if (sh.el) drawPreview(sh); }); }
+  return backsMap(sh);
+}
+/** What a recalled card does as its saved sheet (designs, backs, font) fills in: drawn again, and the words land once it is complete. */
+function backStep(sh) { return sh._onBack || (sh._onBack = b => { if (!sh.el) return; if (b && b.done && !b._landed) { b._landed = true; landWords(sh); } else drawPreview(sh); }); }
+/** A recalled sheet's FRONT words over its saved picture: only for a sheet whose record carries a front engraving. Its pieces' designs are read as the Back view reads them (SheetWin.cardBack.sheet, kept) and the
+    words are drawn on each charm as it lies, not turned over. A sheet with no front engraving is drawn as it always was, and nothing is read for it. */
+function recalledFront(sh, ctx, k) {
+  const CB = cardBack(), r = sh.recalled; if (!CB || !CB.front || !CB.hasFront || !r || !CB.hasFront(r)) return;
+  const B = sh._backSheet = CB.sheet(sh.sheetId || r.id, backStep(sh));
+  if (!B.pieces) return;
+  for (const x of B.pieces) { const p = x.p; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); CB.front(ctx, x, B.backs, k); ctx.restore(); }
 }
 /** A recalled sheet turned over: its saved record's pieces (their designs read as the window reads them) and its saved
     backs, at true scale in the card's frame. Until the record is read, the bare sheet; each design is drawn as it comes. */
 function drawRecalledBack(sh, cv, ctx, k, sw, sh2) {
   const CB = cardBack(), id = sh.sheetId || sh.recalled.id;
-  const B = sh._backSheet = CB.sheet(id, sh._onBack || (sh._onBack = b => { if (!sh.el) return; if (b && b.done && !b._landed) { b._landed = true; landWords(sh); } else drawPreview(sh); }));
+  const B = sh._backSheet = CB.sheet(id, backStep(sh));
   sh._backView = { k, sw };
   ctx.save(); ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, sw - 1, sh2 - 1);
   if (B.pieces) {
@@ -7233,9 +7260,9 @@ boot();
 <!-- Is the person signed in the master admin (Paul)? CharmNestMasterAdmin.is() / login(): true only for the master admin, by the server's Admin answer for the signed-in name (charm-nest-role.js CNRole). An element with data-master-only shows only for him. -->
 <script src="charm-nest-master-admin.js?v=20261011-ma1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1"></script>
+<script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1"></script>
 <script src="charm-nest-repo-lock.js?v=20261011-rpu1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7283,7 +7310,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1-dr2"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
@@ -7301,7 +7328,7 @@ try {
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2-ef1"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>
@@ -7311,16 +7338,16 @@ try {
 <!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
 <script src="charm-nest-options-modal.js?v=20261007-os2-mn3-inc1-sn1"></script>
-<script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
+<script src="charm-nest-library-engraving.js?v=20261005-egl1-eu3"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2"></script>
-<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2"></script>
+<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2-eu3"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1-pow1-ui2"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3"></script>
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <!-- the persistent Alert for password attempts on the Charm Repo Library: the master admin's login only, a pill at the right end of the top bar until he closes it (CharmNestRepoAlerts) -->
 <script src="charm-nest-repo-alerts.js?v=20261011-ra1"></script>

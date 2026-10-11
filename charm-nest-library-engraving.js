@@ -24,7 +24,8 @@
   const CARD = '.libCard[data-id]', SHELF = ':scope > [data-back-sheet]';
   const live = new Set();                                  // the cards that carry a control (so a card that has left the page lets go of it)
   const toggle = () => { const t = W.EngravingToggle; return t && typeof t.mount === 'function' && typeof t.follow === 'function' ? t : null; };
-  const pieces = (shelf, T) => !shelf ? 0 : T && typeof T.countIn === 'function' ? T.countIn(shelf) : shelf.querySelectorAll('.backPieces figure').length;   // (one figure per piece)
+  const pieces = (shelf, T) => !shelf ? 0 : T && typeof T.countIn === 'function' ? T.countIn(shelf) : shelf.querySelectorAll('.backPieces figure').length;   // (one figure per engraving: pieces x faces)
+  const mixedOf = (shelf, T) => !!(shelf && (T && typeof T.mixedIn === 'function' ? T.mixedIn(shelf) : shelf.querySelector('.backPieces figure[data-face="front"]')));   // (any front: the words are "Engravings")
 
   const CSS = `
 .libCard>.h>.engLibHost{flex:0 0 auto;display:inline-flex;align-items:center;margin-block:-4px}
@@ -55,8 +56,8 @@
     const shelf = card.querySelector(SHELF); let r = card._engLib;
     if (r && (r.shelf !== shelf || !r.host.isConnected || r.host.parentElement !== card.querySelector(':scope > .h'))) { release(card); r = null; }
     if (r) {
-      const n = pieces(shelf, T);
-      if (n !== r.n) { r.n = n; r.handle.update(n); }
+      const n = pieces(shelf, T), mx = mixedOf(shelf, T);
+      if (n !== r.n || mx !== r.mx) { r.n = n; r.mx = mx; r.handle.update(n, undefined, mx); }
       r.follow = T.follow(shelf, r.key) || r.follow;       // (idempotent: the same host, the same sheet, nothing to do)
       return;
     }
@@ -70,8 +71,8 @@
     // (LibraryDnd) never starts from it either
     host.addEventListener('click', e => e.stopPropagation());
     head.insertBefore(host, head.querySelector(':scope > .tm'));
-    const n = pieces(shelf, T);
-    card._engLib = { host, handle: T.mount(host, { sheetKey: key, count: n }), follow: T.follow(shelf, key), shelf, n, key };
+    const n = pieces(shelf, T), mx = mixedOf(shelf, T);
+    card._engLib = { host, handle: T.mount(host, { sheetKey: key, count: n, mixed: mx }), follow: T.follow(shelf, key), shelf, n, mx, key };
     live.add(card);
   }
   /** The Library has drawn (or redrawn) its cards: each sheet card whose shelf has pieces carries the control. */

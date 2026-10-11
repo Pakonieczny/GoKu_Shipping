@@ -1859,6 +1859,12 @@ const Orders = window.Orders = (() => {
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
+  /** The face(s) a line engraves, as one small chip beside its state: "Front + back" or "Front only". A back-only line (every line there was) has none, so the table reads as it always did. */
+  function faceChip(r) {
+    const F = window.CharmNestEngraveFaces; if (!F || !F.setupOf || !r || !r.spec) return ["", ""];
+    let mode = ""; try { mode = F.setupOf(r).mode; } catch (_) { /* a line the model cannot read has no chip */ }
+    return mode === "both" ? ["info", "Front + back"] : mode === "front" ? ["info", "Front only"] : ["", ""];
+  }
   const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now
   const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
   const viewMode = () => OV.view || S.settings.orderView || "list";
@@ -2096,8 +2102,8 @@ const Orders = window.Orders = (() => {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
       const sb = n.querySelector(".sbWait"), t = Sandbox.heldText(); if (sb.textContent !== t) sb.textContent = t;
-      // the pull of the 250 newest orders (or the clean-up before it) is a wait: the button says so, with a spinner
-      { const go = n.querySelector("[data-sb-start]"), busy = Sandbox.pulling() || ""; if ((go.dataset.busy || "") !== busy) { go.dataset.busy = busy; go.disabled = !!busy; if (busy) { const sp = el("span", "spin"); sp.setAttribute("aria-hidden", "true"); go.setAttribute("aria-busy", "true"); go.replaceChildren(sp, document.createTextNode(busy === "pull" ? "Pulling the 250 newest orders…" : "Starting…")); } else { go.removeAttribute("aria-busy"); go.replaceChildren(document.createTextNode("Start")); } } }
+      // the pull of the newest orders (or the clean-up before it) is a wait: the button says so, with a spinner
+      { const go = n.querySelector("[data-sb-start]"), busy = Sandbox.pulling() || ""; if ((go.dataset.busy || "") !== busy) { go.dataset.busy = busy; go.disabled = !!busy; if (busy) { const sp = el("span", "spin"); sp.setAttribute("aria-hidden", "true"); go.setAttribute("aria-busy", "true"); go.replaceChildren(sp, document.createTextNode(busy === "pull" ? `Pulling the ${Sandbox.want()} newest orders…` : "Starting…")); } else { go.removeAttribute("aria-busy"); go.replaceChildren(document.createTextNode("Start")); } } }
       wanted.push(n);
     }
     else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
@@ -2113,7 +2119,7 @@ const Orders = window.Orders = (() => {
       const date=dayOf(r);
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
-      const st = stateWords(r), due = dueOf(r), where = placeOf(r);
+      const st = stateWords(r), due = dueOf(r), where = placeOf(r), fc = faceChip(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
@@ -2121,7 +2127,7 @@ const Orders = window.Orders = (() => {
       // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
       const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
       const held=heldNow(r);
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec)]);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec),fc[1]]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -2129,7 +2135,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${fc[1] ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -7847,7 +7853,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(p.archived || p.laserDoneAt || R.laserSheet(p).ready)return null;
     const b=R.approveBlock(p);
     if(!b)return {why:''};
-    if(b.step==='engraving')return {why:`Waiting on ${plural(R.laserSheet(p).waiting,'back engraving')}`,quiet:true};   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
+    if(b.step==='engraving'){const L=R.laserSheet(p),E=L.faces || L;return {why:`Waiting on ${plural(E.waiting,L.faces?'engraving':'back engraving')}`,quiet:true};}   // (a sheet with a front counts engravings, one per face)   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
     return {why:b.why.replace(/^./,c=>c.toUpperCase())};
   }
   /* A set advances as ONE (Paul, 5 Oct, round 7: "you cannot have a green approved button on a single sheet that is part of a set where the
@@ -8415,7 +8421,7 @@ const Sets = window.Sets = (() => {
       if (!labelsReady(sh, set)) throw pendingRelease(`${sh.fileBase}: QR labels are missing or out of date`);
       const placed = new Set(sh.placements.map(p => sh.charms.find(c => c.id === p.id)?.poolId).filter(Boolean));
       for (const job of Engrave.items().values()) {
-        if (job.row?.state !== "gone" && job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: back engraving still needs to be finished`);
+        if (job.row?.state !== "gone" && job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: ${job.face === "front" ? "front" : "back"} engraving still needs to be finished`);
       }
       for (const row of Orders.rows()) {
         if (!row.engrave?.needed || row.state === "gone") continue;
@@ -12135,7 +12141,14 @@ const Sandbox = window.Sandbox = (() => {
      next Start asks again: nothing here retries by itself, and one start is one startId, so a repeat of that very
      request (a slow answer) is answered with the stored set and costs Etsy nothing. ── */
   const PULL_NEXT = "cn.sandboxPullNext";   // (sessionStorage, this tab) the page that opens next starts the sandbox by itself: switched on, or cleared first
-  const PULL_LABEL = "Pulling the 250 newest orders";
+  /* HOW MANY (Paul, 11 Oct 2026: "adjust the # of newest listings the Sandbox test pulls from Etsy"): a number in Settings, 250 until he
+     changes it. It lives in the cloud (config/charmNestSandboxPull, one document that no wipe touches), the cloud holds it to 10..500 and
+     uses it for every pull, and this page only SHOWS it: it arrives with the status read Settings and the sandbox already make (no poll,
+     no listener of its own) and a pull's answer renews it. Saving a new number is a protected write (the charm repo password dialog). */
+  const PULL_DEFAULT = 250;
+  let pullCfg = null;   // the cloud's answer: { limit, def, min, max, perPage, callsPerPull, pullsPerDay, callsCap, pullsCap, isSet, setBy, setAt }
+  const want = () => (pullCfg && +pullCfg.limit > 0 ? +pullCfg.limit : PULL_DEFAULT);
+  const pullLabel = () => `Pulling the ${want()} newest orders`;
   let pullTask = null, pulled = null, setCheck = null;
   const nextFlag = () => { try { return sessionStorage.getItem(PULL_NEXT) || ""; } catch (_) { return ""; } };
   const setNext = v => { try { if (v) sessionStorage.setItem(PULL_NEXT, v); else sessionStorage.removeItem(PULL_NEXT); } catch (_) {} };
@@ -12144,11 +12157,11 @@ const Sandbox = window.Sandbox = (() => {
   const calls = n => `${n} Etsy call${n === 1 ? "" : "s"}`;
   /** What the calm line says (also the Orders tab's empty state while the sandbox waits). */
   function heldText() {
-    if (pulling()) return pullTask ? "Asking Etsy for the shop's 250 newest orders, a few seconds…" : "Starting the sandbox: clearing the old orders, then pulling the 250 newest…";
+    if (pulling()) return pullTask ? `Asking Etsy for the shop's ${want()} newest orders, a few seconds…` : `Starting the sandbox: clearing the old orders, then pulling the ${want()} newest…`;
     const h = holdInfo(), auto = S.settings.runMode === "auto";
     if (h.failed) return `Sandbox is empty. ${h.failed}${h.reason === "cap" || /press start/i.test(h.failed) ? "" : " Press Start to try again."}${h.calls ? ` (${calls(h.calls)} used)` : ""}`;
-    if (h.dirty) return `Sandbox is empty: it held orders from an earlier run, which are cleared first. Press Start to pull the 250 newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
-    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to pull the 250 newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+    if (h.dirty) return `Sandbox is empty: it held orders from an earlier run, which are cleared first. Press Start to pull the ${want()} newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to pull the ${want()} newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
   }
   /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the 250 newest orders
       begins (a start asks for it exactly once; the stream and every check wait for it). false: nothing started (it was not
@@ -12158,7 +12171,7 @@ const Sandbox = window.Sandbox = (() => {
     if (holdInfo().dirty) { clearThenStart().catch(e => toast(e.message, "bad", 9000)); return false; }
     try { localStorage.removeItem(HOLD); } catch (_) {}
     setNext("");
-    agent({ bridge: true }, "DS", "Sandbox started: pulling the 250 newest Etsy orders");
+    agent({ bridge: true }, "DS", `Sandbox started: pulling the ${want()} newest Etsy orders`);
     pullTask = pullNewest(); pullTask.catch(() => {});
     try { if (window.Arrivals && Arrivals.start) Arrivals.start(); } catch (_) {}   // the checks begin now: the first at once in Auto, else after one step's wait, as on a fresh load (each waits for the pull)
     try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
@@ -12187,12 +12200,12 @@ const Sandbox = window.Sandbox = (() => {
     return pulled;
   }
   async function pullNewest() {
-    const bar = window.CNProgress ? CNProgress.start(PULL_LABEL) : null;
+    const bar = window.CNProgress ? CNProgress.start(pullLabel()) : null;
     try {
       render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
       const r = await askPull(newStartId());
       if (!r || r.ok === false) throw new Error((r && r.error) || "Etsy gave no orders, so the sandbox is empty.");
-      remember(r); setCheck = Promise.resolve(true);
+      remember(r); setCheck = Promise.resolve(true); if (+r.want > 0 && (!pullCfg || +pullCfg.limit !== +r.want)) pullCfg = Object.assign({}, pullCfg || {}, { limit: +r.want, isDefault: +r.want === PULL_DEFAULT });
       adopt(r.stream && r.stream.on ? r.stream : null);
       agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} of ${r.callsCap || 20} today` : ""}`);
       toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} of ${r.callsCap || 20} today, ${r.capLeft} pull${r.capLeft === 1 ? "" : "s"} left)` : ""}`, "ok", 9000);
@@ -12201,7 +12214,7 @@ const Sandbox = window.Sandbox = (() => {
       // the sandbox stays empty and waits (the cloud holds no orders after a failed pull, and none are played from before)
       const d = e.data || {}; stream = null; pulled = null; setCheck = null; SimClock.set(null);
       hold({ failed: e.message, reason: e.reason || "", calls: d.calls || 0 });
-      agent({ bridge: true }, "warn", `Sandbox: the 250 newest orders could not be pulled — ${e.message}`);
+      agent({ bridge: true }, "warn", `Sandbox: the ${want()} newest orders could not be pulled — ${e.message}`);
       throw e;
     } finally { if (bar) bar.end(); pullTask = null; render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
   }
@@ -12210,7 +12223,7 @@ const Sandbox = window.Sandbox = (() => {
   let clearing = null, starting = null;
   const clearThenStart = () => clearing ||= (async () => {
     setNext("start");
-    const r = await wipe({}, { verb: "Resetting", next: "Now it pulls the 250 newest Etsy orders." });
+    const r = await wipe({}, { verb: "Resetting", next: `Now it pulls the ${want()} newest Etsy orders.` });
     if (!r || !r.ok) { setNext(""); const text = (r && r.text) || "the old sandbox orders could not be cleared"; hold({ dirty: true, failed: text }); throw new Error(text); }
     return r;
   })().finally(() => { clearing = null; });
@@ -12277,7 +12290,7 @@ const Sandbox = window.Sandbox = (() => {
   function checkSet() {
     return setCheck ||= api("charmNestLibrary", { op: "sandboxStatus", light: true }, { quiet: true }).then(st => {
       if (st && st.ok && !st.error) status = st;
-      if (st && st.ok && !st.snapshot) { hold({ dirty: true }); toast("The sandbox holds no pulled orders. Press Start on the Orders tab: it clears what is left and pulls the 250 newest Etsy orders.", "", 9000); return false; }
+      if (st && st.ok && !st.snapshot) { hold({ dirty: true }); toast(`The sandbox holds no pulled orders. Press Start on the Orders tab: it clears what is left and pulls the ${want()} newest Etsy orders.`, "", 9000); return false; }
       return true;
     }).catch(() => true);
   }
@@ -12285,7 +12298,7 @@ const Sandbox = window.Sandbox = (() => {
       that is starting has its one pull out first: the stream is the one that pull began. `strict` (a sweep about to go ahead):
       a stream that cannot start is an error, not a warning. */
   function ready(strict) {
-    if (strict && held() && !release()) return Promise.reject(new Error("The sandbox order stream could not start: the sandbox still holds an earlier run's orders, so it is clearing them first and then pulls the 250 newest"));   // a pull or a run asked for orders: that is Start
+    if (strict && held() && !release()) return Promise.reject(new Error(`The sandbox order stream could not start: the sandbox still holds an earlier run's orders, so it is clearing them first and then pulls the ${want()} newest`));   // a pull or a run asked for orders: that is Start
     const go = () => {
       if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
       const task = stream ? Promise.resolve(stream) : (readyTask ||= checkSet().then(ok => { if (!ok) throw new Error("the sandbox holds no pulled orders: press Start"); return firstLook(); }).then(() => streamApi("ensure")).then(r => { if (!sameRun(r.stream)) { staleStop(GONE); throw new Error("this sandbox is another run now"); } return adopt(r.stream); }).finally(() => { readyTask = null; }));
@@ -12321,15 +12334,15 @@ const Sandbox = window.Sandbox = (() => {
   const pulledNow = () => pulled || (status && status.snapshot && status.snapshot.source === "etsy-pull" ? status.snapshot : null);
   function sourceText() {
     const p = pulledNow(); if (!p) return "";
-    const n = p.count != null ? p.count : 250, at = p.pulledAt || p.at;
+    const n = p.count != null ? p.count : want(), at = p.pulledAt || p.at;
     return `${n} newest Etsy orders, pulled ${at ? when(at) : "just now"}${p.open != null && p.open < n ? ` (${p.open} open)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
   }
-  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: ${sourceText() ? sourceText() + " · " : ""}seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? `Orders: ${sourceText() || "the 250 newest Etsy orders"}, all at once` : ""; }
+  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: ${sourceText() ? sourceText() + " · " : ""}seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? `Orders: ${sourceText() || `the ${want()} newest Etsy orders`}, all at once` : ""; }
   /** Settings' line beside the buttons says it again when the pull, the stream or the stored set changes (it is read when the dialog opens). */
   function paintLine() { try { const el = document.getElementById("stSbStatus"); if (el) { const t = streamText(); if (el.textContent !== t) el.textContent = t; } } catch (_) {} }
   async function refresh(light) {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
-    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();paintLine();return status;})();
+    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}if(status&&status.pullLimit&&+status.pullLimit.limit>0)pullCfg=status.pullLimit;render();paintLine();try{paintPull();}catch(_){}return status;})();
     try{return await refreshTask;}finally{refreshTask=null;}
   }
   /** "Rehearse a run in the sandbox": a start from the real orders. The sandbox is switched on and the sorter reloads with the
@@ -12341,7 +12354,7 @@ const Sandbox = window.Sandbox = (() => {
     if (S.cloud.ok === false) throw new Error("the cloud is offline: the sandbox needs it to clear the old orders and pull the new ones");
     S.settings.sandbox = "on"; saveSettings();
     hold({ dirty: true }); setNext("start");
-    toast("Sandbox ON — reloading; it clears the previous sandbox, then pulls the 250 newest Etsy orders", "ok", 5000);
+    toast(`Sandbox ON — reloading; it clears the previous sandbox, then pulls the ${want()} newest Etsy orders`, "ok", 5000);
     setTimeout(() => location.reload(), 700);
   }
   /** After a reload in the sandbox. A sandbox that is waiting (switched on just now, or cleaned) starts by itself when the page
@@ -12590,6 +12603,77 @@ const Sandbox = window.Sandbox = (() => {
     // the Orders tab's empty state names the snapshot's day once the status is read
     try { if (held() && document.querySelector) { const n = document.querySelector('[data-mkey="ordEmpty:held"] .sbWait'); if (n && n.textContent !== heldText()) n.textContent = heldText(); } } catch (_) {}
   }
+  /* ── Settings → "Newest Etsy orders the sandbox pulls" (Paul, 11 Oct 2026). One number box and a Save: what a number means is worked out
+     here from the limits the cloud sent (pullFacts: held to 10..500, one Etsy call per 100 orders, how many pulls the sandbox's daily
+     Etsy calls allow), and the cloud holds it to the same limits again. Saving is a PROTECTED write: the charm repo password dialog
+     (charm-nest-repo-lock.js, "modify"), then the cloud op sandboxPullLimitSet with the token it gave. The number is a setting, not a
+     sandbox record: Reset and Purge leave it alone, and a change only takes effect at the next pull. ── */
+  const byId = id => document.getElementById(id);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  /** What `n` means: the number held to the limits (held: it had to be), its Etsy calls per pull and the pulls a day those calls allow. */
+  function pullFacts(n) {
+    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 500, per = +c.perPage || 100, cap = +c.callsCap || 20, most = +c.pullsCap || 6;
+    const r = Math.round(+n), v = Math.min(max, Math.max(min, r)), calls = Math.ceil(v / per);
+    return { value: v, held: v !== r, min, max, calls, cap, pulls: Math.max(1, Math.min(most, Math.floor(cap / calls))) };
+  }
+  /** The one plain line under the box: the cost of a number, and (when it had to be held) why it was. */
+  function pullLine(f) {
+    return `${f.held ? `Held to ${f.value}: the ${f.value <= f.min ? "fewest" : "most"} one pull may bring. ` : ""}About ${plural(f.calls, "Etsy call", "Etsy calls")} per pull, up to ${plural(f.pulls, "pull", "pulls")} a day (the sandbox may use ${f.cap} Etsy calls a day).`;
+  }
+  /** The numbers written into the Settings help texts (a span each), so they follow the setting. */
+  function paintPullWords() {
+    const f = pullFacts(want());
+    for (const [a, v] of [["sbn", String(f.value)], ["sbc", plural(f.calls, "Etsy call", "Etsy calls")], ["sbp", plural(f.pulls, "start", "starts")]]) document.querySelectorAll(`[data-${a}]`).forEach(n => { if (n.textContent !== v) n.textContent = v; });
+  }
+  function pullSay(text, bad) { const n = byId("stSbPullNote"); if (!n) return; if (n.textContent !== text) n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; }
+  let savingPull = false;
+  const pullDirty = box => !!box && box.value.trim() !== "" && Math.round(+box.value) !== want();
+  /** What the box says while it is typed in: the cost line of the number, the Save button live only for a change. */
+  function pullTyped() {
+    const box = byId("stSbPull"), btn = byId("stSbPullSave"); if (!box || !btn) return;
+    const raw = box.value.trim(), n = Number(raw), ok = raw !== "" && Number.isFinite(n);
+    box.dataset.dirty = pullDirty(box) ? "1" : "";
+    if (!savingPull) btn.disabled = !(ok && pullDirty(box));
+    if (!ok) { pullSay(`Type a whole number from ${pullFacts(0).min} to ${pullFacts(0).max}.`, true); return; }
+    pullSay(pullLine(pullFacts(n)), false);
+  }
+  /** Save: the password dialog, then the protected write. Nothing is written without the token the dialog gets. */
+  async function savePull() {
+    const box = byId("stSbPull"), btn = byId("stSbPullSave"); if (!box || !btn || savingPull) return;
+    const raw = box.value.trim(), n = Number(raw);
+    if (raw === "" || !Number.isFinite(n)) { pullTyped(); return; }
+    const f = pullFacts(n), L = window.CharmNestRepoLock;
+    if (!L) { pullSay("The charm repo lock did not load: reload the page.", true); return; }
+    savingPull = true; btn.disabled = true; const was = btn.textContent;
+    const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.setAttribute("aria-busy", "true"); btn.replaceChildren(sp, document.createTextNode("Saving…"));
+    try {
+      const by = (() => { try { return typeof employeeName === "function" ? employeeName() || "" : ""; } catch (_) { return ""; } })();
+      const r = await L.call("modify", { title: "Change a sandbox setting", what: "Changing how many of the newest Etsy orders the sandbox pulls.", target: `sandbox pulls ${f.value} newest`, go: "Save" },
+        tok => api("charmNestLibrary", { op: "sandboxPullLimitSet", limit: f.value, by, repoToken: tok }, { quiet: true }));
+      if (!r || r.ok === false) throw new Error((r && r.error) || "the cloud did not take the number");
+      pullCfg = r; box.dataset.dirty = ""; box.value = want(); paintPullWords();
+      pullSay(`Saved: each sandbox pull now brings the newest ${want()} Etsy orders. ${r.note ? r.note + " " : ""}${pullLine(pullFacts(want()))}`, false);
+    } catch (e) {
+      pullSay(L.cancelled && L.cancelled(e) ? "Not changed: the charm repo password was not given." : `Not saved: ${e.message}`, true);
+    } finally {
+      savingPull = false; btn.removeAttribute("aria-busy"); btn.replaceChildren(document.createTextNode(was)); btn.disabled = !pullDirty(box);
+      try { if (L.mark) L.mark(btn.parentNode); } catch (_) {}
+    }
+  }
+  /** Settings was opened (or the status was read): the box shows the cloud's number, unless it is being typed in. */
+  function paintPull() {
+    paintPullWords();
+    const box = byId("stSbPull"), btn = byId("stSbPullSave"); if (!box || !btn) return;
+    if (!box.dataset.wired) {
+      box.dataset.wired = "1";
+      box.addEventListener("input", pullTyped);
+      box.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); if (!btn.disabled) savePull(); } });
+      btn.addEventListener("click", () => { savePull(); });
+    }
+    const c = pullFacts(0);
+    box.min = String(c.min); box.max = String(c.max);
+    if (box.dataset.dirty !== "1" && !savingPull) { if (document.activeElement !== box) box.value = want(); pullSay(pullLine(pullFacts(want())), false); btn.disabled = true; }
+  }
   /* ── Settings: the page build, what the last reset did, what the sandbox holds now (calm lines inside the dialog; no
      pop-up). Paul, 3 Oct: "it still didn't purge the system fully": which build was he running, what had the reset done,
      and what was in the sandbox again a moment later? ── */
@@ -12648,6 +12732,7 @@ const Sandbox = window.Sandbox = (() => {
     host = host || document.getElementById("stBuildNote"); if (!host) return;
     const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
     const set = (n, text, bad) => { n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; };
+    try { paintPull(); } catch (_) {}   // (the number box shows what the page holds now; the status read below brings the cloud's)
     const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), cur = buildOf(document);
     set(b, cur ? `Page build ${cur.id}` : "Page build unknown", false);
     set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText()); set(kp, keptText());
@@ -12656,7 +12741,7 @@ const Sandbox = window.Sandbox = (() => {
     if (cur && latest && latest.sig !== cur.sig) set(b, `Page build ${cur.id} — a newer build (${latest.id}) is live: reload this page with Ctrl+Shift+R to run it`, true);
     else if (cur && latest) set(b, `Page build ${cur.id} — up to date`);
   }
-  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, staleStop, restoredStream, runId: () => streamIdent, browserLeft, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: pageBuild, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, staleStop, restoredStream, runId: () => streamIdent, browserLeft, mountPanel, render, status: () => status, want, pullLimit: () => pullCfg, paintPull, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: pageBuild, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
@@ -16120,10 +16205,12 @@ const RunHistory = window.RunHistory = (() => {
     note(g, null); H.back = false; close(true);
     RunCtl.resumeRun(g.runId).catch(err => toast(err.message, "bad", 7000));
   }
+  /** Does any sheet of this group carry a FRONT engraving record? Then its downloads say "engravings", not "back engravings" (a back-only group says what it always said). */
+  const groupFront = g => (g.sheets || []).some(s => s && (s.backPool || s.backs || []).some(b => b && b.face === "front" && !b.invalidated));
   async function exportAs(g, format) {
     const ids = [...new Set((g.sheets || []).map(idOf).filter(Boolean))]; if (!ids.length) return;
     if (!window.ProductionExports) { note(g, "The download tools are still loading. Try again in a moment.", "bad"); return; }
-    busy(g, `Preparing ${n(ids.length, "sheet")} as .${format}${ids.length > 1 ? ", in one .zip" : ""}, with their back engravings…`, format);
+    busy(g, `Preparing ${n(ids.length, "sheet")} as .${format}${ids.length > 1 ? ", in one .zip" : ""}, with their ${groupFront(g) ? "front and back " : "back "}engravings…`, format);
     const was = toastsNow();
     try { await ProductionExports.run(ids, format); } finally { busy(g, null); }
     const said = saidSince(was); said.drop();
@@ -16176,7 +16263,7 @@ const RunHistory = window.RunHistory = (() => {
     if (!spec) { m.hidden = true; m.innerHTML = ""; return; }
     const g = groupByKey(spec.key); if (!g) { H.menu = null; m.hidden = true; return; }
     const count = (g.sheets || []).length, isSet = !!(g.setId && !g.draft && !g.standalone), labelled = (g.sheets || []).some(s => s.label && (s.label.files || []).length);
-    m.innerHTML = `<button type="button" role="menuitem" data-m="ai">${ICON.file}<span>Download .ai</span><small>${count > 1 ? `all ${count} sheets in one .zip` : "the sheet"} · with back engravings</small></button>`
+    m.innerHTML = `<button type="button" role="menuitem" data-m="ai">${ICON.file}<span>Download .ai</span><small>${count > 1 ? `all ${count} sheets in one .zip` : "the sheet"} · with ${groupFront(g) ? "engravings" : "back engravings"}</small></button>`
       + `<button type="button" role="menuitem" data-m="dxf">${ICON.file}<span>Download .dxf</span><small>millimetres · original colours and layers</small></button>`
       + (isSet ? `<button type="button" role="menuitem" data-m="qr">${ICON.qr}<span>QR labels PDF</span><small>${labelled ? "one page for each sheet's label" : "made when the set is labelled"}</small></button>` : "")
       + `<div class="sep"></div><button type="button" role="menuitem" data-m="copy">${ICON.copy}<span>Copy order numbers</span><small>${n(ordersCount(g), "order")}, one per line</small></button>`;

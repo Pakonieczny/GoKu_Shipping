@@ -143,12 +143,14 @@
     // Engraving is the approved backs AND their saved files (round 13: the Back files step is part of it; the gate is the same). The files are
     // saved right after an approval and it normally takes seconds, so the gap says so in plain words.
     const engFiles = ex.engraving && ex.engraving.items ? ex.engraving.items.filter(i => i.part === 'files') : [];
-    if (!st.approval) need('engraving', n => `${count(n, 'back engraving')} not approved`, ex.engraving && ex.engraving.detail || `${count(L.waiting, 'back engraving')} still need approval.`, ex.engraving && ex.engraving.items, Math.max(1, L.waiting));
+    // (a sheet with a front counts ENGRAVINGS, one per face, and says "engraving"; a back-only sheet counts and says what it always did)
+    const E = L.faces || L, fr = !!L.faces, eng = fr ? 'engraving' : 'back engraving';
+    if (!st.approval) need('engraving', n => `${count(n, eng)} not approved`, ex.engraving && ex.engraving.detail || `${count(E.waiting, eng)} still need approval.`, ex.engraving && ex.engraving.items, Math.max(1, E.waiting));
     else if (!st.backs) {
       const failed = !!(ex.engraving && ex.engraving.state === 'blocked');
-      need('engravingFiles', (n, of) => failed ? 'A saved back file failed its check' : `Saving back files: ${Math.max(0, of - n)} of ${of}`,
-        failed && ex.engraving.detail || 'Each approved back is saved as a file before the sheet can be cut. This normally takes a few seconds.', engFiles, Math.max(1, L.required - L.saved), L.required);
-    } else if (L.required) g.checks.engraving = { ok: true, a: L.approved, r: L.required };
+      need('engravingFiles', (n, of) => failed ? `A saved ${fr ? '' : 'back '}file failed its check` : `Saving ${fr ? '' : 'back '}files: ${Math.max(0, of - n)} of ${of}`,
+        failed && ex.engraving.detail || `Each approved ${fr ? 'engraving' : 'back'} is saved as a file before the sheet can be cut. This normally takes a few seconds.`, engFiles, Math.max(1, E.required - E.saved), E.required);
+    } else if (L.required) g.checks.engraving = { ok: true, a: E.approved, r: E.required, f: fr };
     // the QR label belongs to Order check (it covers every order on the sheet): made by the press when it can be, else a gap with its one shortcut
     if (!st.qr) {
       const orders = (rec.orders || (rec.label && rec.label.orders) || []).length, rose = rec.metal === 'rose' && !rec.roseCutAt, can = !rose && orders > 0 && rec.verification?.ok === true && !!(rec.outputs && (rec.outputs.ai || rec.outputs.preview)) && env.canRelabel !== false;
@@ -182,7 +184,7 @@
     const out = [], every = t => gaps.every(g => g.checks[t] && g.checks[t].ok), n = mine.length, tail = n > 1 ? ` · ${count(n, 'sheet')}` : '';
     const sum = (t, k) => gaps.reduce((a, g) => a + ((g.checks[t] && g.checks[t][k]) || 0), 0);
     if (every('layout')) out.push({ key: 'check:layout', label: 'Layout verified' + tail, detail: 'The saved layout passed its check.', check: true });
-    if (every('engraving')) out.push({ key: 'check:engraving', label: `Back engravings approved · ${sum('engraving', 'a')} of ${sum('engraving', 'r')}`, detail: 'Every back engraving on it is approved, and its back file is saved.', check: true });
+    if (every('engraving')) { const fr = gaps.some(g => g.checks.engraving && g.checks.engraving.f); out.push({ key: 'check:engraving', label: `${fr ? 'Engravings' : 'Back engravings'} approved · ${sum('engraving', 'a')} of ${sum('engraving', 'r')}`, detail: fr ? 'Every engraving on it is approved, and its file is saved.' : 'Every back engraving on it is approved, and its back file is saved.', check: true }); }
     if (every('orders')) out.push({ key: 'check:orders', label: "Every order's other pieces ready" + tail, detail: 'Nothing on it waits for a piece on another sheet.', check: true });
     return out;
   }

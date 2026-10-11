@@ -1084,7 +1084,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (window.LaserReview) LaserReview.record(rec);
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
-      head(rec, false); indexPieces(); if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill();
+      head(rec, false); indexPieces(); if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill(); frontWordsReady();
       E.addBtn.hidden = !canAdd();
       if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
       // the charm clicked is the one the window opens on, as soon as the sheet's pieces are known: the panel comes in
@@ -1541,6 +1541,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         else { ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; outlinePath(ctx, x); ctx.stroke(); }
         // from behind, this charm's own words, where the laser burns them (a charm with no engraving stays plain)
         if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
+        // the front of the plate: this charm's FRONT words, as they lie on it (not turned over); a charm with no front engraving is drawn as it always was
+        else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
       });
     }
@@ -1607,11 +1609,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     for (const paint of [() => paintLanding(ctx, now), () => paintGhost(ctx, now), () => paintHand(ctx)]) { try { ctx.save(); paint(); } catch (e) { console.warn("sheet window: plate marks", e); } finally { ctx.restore(); } }
     // back engraving: a small mark on each charm that has one (clay: still to approve, sage: approved)
+    // (a charm engraved on both faces carries two marks, the Front's on the left and the Back's on the right, each in the colour of its own face)
     if (W.showBacks) for (const x of W.pieces) {
       if (x.gone || !x.eng || x.eng.kind === "none" || x.eng.kind === "skipped") continue;
       const cx = plateX(x.p.cxPt), cy = R + x.p.cyPt * k, r = Math.max(3.5, Math.min(6, 1.6 * k / W.dpr)) * W.dpr;
-      ctx.beginPath(); ctx.arc(cx, cy, r + 2 * W.dpr, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = x.eng.kind === "approved" ? "#5f7a5b" : "#b0563f"; ctx.fill();
+      const us = x.eng.faces ? x.eng.units.filter(u => u.kind !== "none" && u.kind !== "skipped") : [x.eng];
+      us.forEach((u, i) => {
+        const mx = us.length > 1 ? cx + (i ? 1 : -1) * (r + 1.5 * W.dpr) : cx;
+        ctx.beginPath(); ctx.arc(mx, cy, r + 2 * W.dpr, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
+        ctx.beginPath(); ctx.arc(mx, cy, r, 0, Math.PI * 2); ctx.fillStyle = u.kind === "approved" ? "#5f7a5b" : "#b0563f"; ctx.fill();
+      });
     }
     // the selected charm's pulse
     for (const f of W.fx) if (f.kind === "pulse") {
@@ -1643,10 +1650,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = "#fffefb"; ctx.fill(); ctx.lineWidth = 1.4 * W.dpr; ctx.strokeStyle = "#a9823f"; ctx.stroke();
     ctx.fillStyle = "#6b5120"; ctx.font = `700 ${Math.round(r * 1.15)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(q, cx, cy + .5 * W.dpr); ctx.restore();
   }
-  /** A charm marked above the plate keeps its words: they are drawn again over the mark, in full ink, never covered. */
+  /** A charm marked above the plate keeps its words: they are drawn again over the mark, in full ink, never covered. From the front it keeps its FRONT words (only a charm that has a front engraving). */
   function markBack(ctx, x) {
-    if (!backFace() || !x.c) return;
-    const geo = engGeoOf(x, W.backs); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" }));
+    if (!x.c) return;
+    if (!backFace() && !(x.eng && x.eng.faces && x.eng.faces.front)) return;
+    const geo = engGeoOf(x, W.backs, backFace() ? undefined : "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" }));
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
   function markAt(ctx, at) {
@@ -1733,7 +1741,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const key = p.id + "|" + elsewhere.length + "|" + (side || "") + "|" + (pn ? pn.text : "");
     if (t.dataset.k !== key) {
       t.dataset.k = key;
-      const eng = p.eng && p.eng.kind !== "none" ? `<em style="--c:${p.eng.kind === "approved" ? "#7fb877" : "#e0876c"}"><i></i>Back · ${esc(p.eng.label)}</em>` : "";
+      // (a piece engraved on both faces says each: "Front · approved", "Back · to approve")
+      const eng = p.eng && p.eng.kind !== "none" ? (p.eng.faces ? p.eng.units.filter(u => u.kind !== "none") : [p.eng]).map(u => `<em style="--c:${u.kind === "approved" ? "#7fb877" : "#e0876c"}"><i></i>${u.face === "front" ? "Front" : "Back"} · ${esc(u.label)}</em>`).join("") : "";
       t.innerHTML = `<b>${esc(p.rid || p.name || "Charm")}</b><span>${esc(p.sku || "")}${side ? ` · ${sideWord(side)} piece` : p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}</span>${eng}` +
         (mates.length > 1 ? `<em><i></i>${mates.length - 1} more of this order here</em>` : "") +
         (pn ? `<em><i></i>${esc(pn.text)}</em>` : "") +
@@ -1812,21 +1821,45 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const OE = window.OrderEngraving; if (!x || !x.poolId || !OE || !OE.cycleOf) return null;
     const job = jobOfPiece(x); if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return null;
     const c = tryDo(() => OE.cycleOf(rowOf(x), job.key)); const at = c && c.pieces.find(p => p.key === job.key);
-    return at ? { n: at.n, of: c.pieces.length, name: at.name } : null;
+    // (the discs, not the jobs: a disc engraved on both faces has two jobs and is ONE disc)
+    const F = FACES(), of = F && F.pieceCount && c && c.pieces.some(p => faceOfJob(p.job) === "front") ? F.pieceCount(c.pieces.map(p => p.job)) : c && c.pieces.length;
+    return at ? { n: at.n, of, name: at.name } : null;
   }
   const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x); return d ? `Disc ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""; };
   const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
   const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 
   /* ── engraving of a piece ── */
+  /* FACES (Paul, 11 Oct 2026, plans/front-back-1011): a piece may be engraved on its FRONT as well as on its back. Each face is its own job, record and approval (charm-nest-engrave-faces.js);
+     a piece with no front is read by exactly the code that read it before. `x.eng` is the piece's engraving as one reading: its kind is the combined one (a piece is approved when every face is),
+     and, only for a piece that has a front, `x.eng.faces` = { front, back } (each a reading of its own, the shape this function always returned), `x.eng.units` = the faces it has (Front
+     first). Every count of "engravings" counts units; every count of pieces counts pieces. */
+  const FACES = () => window.CharmNestEngraveFaces || null;
+  const faceOfJob = j => { const F = FACES(); return F && F.faceOf ? F.faceOf(j) : j && (j.face === "front" || String(j.key || "").endsWith("~front")) ? "front" : "back"; };
+  const isFrontRec = b => !!b && b.face === "front";
+  const recKeyOf = (poolId, face) => { const F = FACES(); return F && F.recKey ? F.recKey(poolId, face) : poolId + (face === "front" ? "~front" : ""); };
+  const NEEDS = ["approve", "words", "preparing"];
+  const needsEng = u => !!u && NEEDS.includes(u.kind);
+  /** The readings of a piece's faces, in order (Front first): one for a piece with a single face, whatever the face. */
+  const unitsOf = x => (x && x.eng ? (x.eng.units || [x.eng]) : []);
+  const anyFront = pieces => (pieces || []).some(x => unitsOf(x).some(u => u.face === "front"));
+  /** The word for what a count counts: "back" while no piece of the list has a front (as it always was), else "engraving". */
+  const engWord = (n, front) => front ? `engraving${n === 1 ? "" : "s"}` : `back${n === 1 ? "" : "s"}`;
   function jobOfPiece(x) {
     if (!x.poolId || !window.Engrave) return null;
     for (const j of Engrave.items().values()) if (!j.editingBack && (j.copies || []).includes(x.poolId)) return j;
     return null;
   }
-  function engOf(x, rec = W.rec) {
-    const job = jobOfPiece(x), saved = rec?.engraving?.[x.poolId] || null;
-    const back = (rec?.backPool || []).find(b => b.poolId === x.poolId) || null;
+  /** Every engraving job of a piece by face: { front, back, list } (the first job of each face; both faces share the piece's pool ids). */
+  function jobsOfPiece(x) {
+    const out = { front: null, back: null, list: [] };
+    if (!x.poolId || !window.Engrave) return out;
+    for (const j of Engrave.items().values()) if (!j.editingBack && (j.copies || []).includes(x.poolId)) { out.list.push(j); const f = faceOfJob(j); if (!out[f]) out[f] = j; }
+    return out;
+  }
+  /** One face's reading of a piece: what engOf always answered for the piece's (only) engraving. `saved` is the sheet record's decision for the face. */
+  function engFace(x, rec, face, job, saved) {
+    const back = (rec?.backPool || []).find(b => b.poolId === x.poolId && (face === "front") === isFrontRec(b)) || null;
     if (job) {
       const s = job.state;
       // Engrave keeps a job for every line, "none" for one with nothing to engrave: that is no back engraving (it read as
@@ -1838,8 +1871,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (s === "words" || s === "blocked") return { kind: "words", label: "words to confirm", job, text: job.text, reason: job.reason };
       if (["classify", "ready", "fitting"].includes(s)) {
         // a spinner only while Engrave is actually reading or fitting it; otherwise what it waits for
-        const working = !!(Engrave.isWorking && Engrave.isWorking(job));
-        const note = working ? (s === "classify" ? "Reading the words…" : "Fitting the words on the back…")
+        const working = !!(Engrave.isWorking && Engrave.isWorking(job)), where = face === "front" ? "front" : "back";
+        const note = working ? (s === "classify" ? "Reading the words…" : `Fitting the words on the ${where}…`)
           : s === "classify" ? "Confirm them in Engraving, or wait for them to be read"
           : Engrave.canFit && !Engrave.canFit(job) ? "Waits for its sheet to be written, then it is fitted" : "Waits its turn in Engraving";
         return { kind: "preparing", label: "being prepared", job, text: job.text, working, note };
@@ -1850,6 +1883,39 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (saved && saved.needed) return saved.approved ? { kind: "approved", label: "approved", text: saved.text, saved, by:saved.approvedBy, at:saved.approvedAt } : { kind: "words", label: "to settle", text: saved.text, saved };
     return { kind: "none", label: "none" };
   }
+  /** A piece's reading from its faces: the least settled face speaks for the piece (words to confirm, then to approve, then being prepared); once every face is decided, approved. */
+  function combineEng(front, back) {
+    const units = [["front", front], ["back", back]].filter(([, e]) => e).map(([face, e]) => Object.assign({}, e, { face }));
+    const need = units.filter(needsEng), done = units.filter(u => u.kind === "approved");
+    const pick = need.find(u => u.kind === "words") || need.find(u => u.kind === "approve") || need[0] || done[0] || units.find(u => u.kind === "skipped") || units[0];
+    const say = u => u.text ? `${u.face === "front" ? "Front" : "Back"}: ${String(u.text).replace(/\n/g, " / ")}` : "";
+    const faces = {}; for (const u of units) faces[u.face] = u;
+    return Object.assign({}, pick, { text: units.map(say).filter(Boolean).join(" · ") || pick.text, faces, units, face: pick.face });
+  }
+  function engOf(x, rec = W.rec) {
+    const jobs = jobsOfPiece(x), saved = rec?.engraving?.[x.poolId] || null, recs = rec?.backPool || [];
+    const front = !!jobs.front || recs.some(b => b.poolId === x.poolId && isFrontRec(b) && !b.invalidated) || !!(saved && saved.faces && saved.faces.front);
+    // a piece with no front: the one reading it always had
+    if (!front) return engFace(x, rec, "back", jobs.back, saved);
+    // a piece with a front: a reading for each face it has (a face is there when it has a job, a record or a decision of its own), and the combined one
+    const part = f => (saved && saved.faces ? (saved.faces[f] ? Object.assign({}, saved, saved.faces[f]) : null) : saved);
+    const has = f => !!jobs[f] || recs.some(b => b.poolId === x.poolId && (f === "front") === isFrontRec(b) && !b.invalidated) || !!(saved && saved.faces && saved.faces[f]);
+    const mk = f => has(f) ? engFace(x, rec, f, jobs[f], part(f)) : null;
+    return combineEng(mk("front"), mk("back"));
+  }
+  /** Two readings of a piece say the same (the kind and note of each of its faces): the poll that keeps the marks true repaints only when they differ. */
+  const engSame = (a, b) => !!a && !!b && a.kind === b.kind && a.note === b.note && ["front", "back"].every(f => { const u = a.faces && a.faces[f], v = b.faces && b.faces[f]; return (u ? u.kind + "|" + u.note : "") === (v ? v.kind + "|" + v.note : ""); });
+  /** The face of a piece the panel shows: the one a person picked on the Front | Back switch, else the first face still to settle, else the Front. */
+  function shownFace(x) {
+    const e = x && x.eng; if (!e || !e.faces) return "back";
+    const have = e.units.map(u => u.face);
+    if (x._face && have.includes(x._face)) return x._face;
+    return (e.units.find(needsEng) || e.units[0]).face;
+  }
+  /** The reading of the face the panel shows (the piece's own reading when it has one face). */
+  const shownEng = x => { const e = x && x.eng; return e && e.faces ? e.faces[shownFace(x)] : e; };
+  /** The words a piece carries on one face ("" when none): a piece with one face (a back, as ever) says its words for the back and none for the front. */
+  const faceTextOf = (x, face) => { const e = x && x.eng; if (!e) return ""; if (!e.faces) return face === "front" ? "" : e.text || ""; const u = e.faces[face]; return (u && u.text) || ""; };
 
   /* ── the sheet pane: its orders ── */
   /** Pairs on this sheet: groups the line says are pairs (the kind OrderPieces gives them, or ears) with both pieces here, and half pairs with one piece here. Nothing when no group says so. */
@@ -1863,13 +1929,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if(window.Seal?.defer('sheet-strip',renderStrip))return;
     if (!W.rec) return;   // (a window opened on its Back asks for its engraving before its record is read)
     const rec = W.rec, E = W.el, n = W.pieces.filter(x => !x.gone).length, orders = [...W.orders.keys()].filter(k => k !== "—").length;
-    const backs = W.pieces.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = W.pieces.filter(x => x.eng?.kind === "approved").length;
+    // (engravings, not pieces: a piece with a front and a back has two to approve; "back" until a piece has a front)
+    const units = W.pieces.flatMap(unitsOf), backs = units.filter(needsEng).length, ok = units.filter(u => u.kind === "approved").length, fr = units.some(u => u.face === "front");
     const pc = pairCounts(); W.pairKey = pc.pairs + ":" + pc.halves;
     E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span>${pc.pairs ? `<span title="Pairs with both pieces on this sheet"><b>${pc.pairs}</b> pair${pc.pairs === 1 ? "" : "s"}</span>` : ""}${pc.halves ? `<span class="swLegend" title="A piece of a pair is here and its other piece is on another sheet or on none"><i class="freed"></i><b>${pc.halves}</b> half pair${pc.halves === 1 ? "" : "s"}</span>` : ""}<span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
-      `<span class="grow"></span>` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? `<span class="swLegend"><i></i>${backs} back${backs === 1 ? "" : "s"} to approve</span>` : "") + (ok ? `<span class="swLegend"><i class="ok"></i>${ok} back${ok === 1 ? "" : "s"} approved</span>` : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
-      `<button class="swToggle" data-r2="face" aria-pressed="${backFace()}" title="${backFace() ? "Turn the sheet back to its front" : "Turn the sheet over: every charm's back engraving, where the laser burns it"}">${backFace() ? "Front" : "Back · engraving"}</button>` +
+      `<span class="grow"></span>` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? `<span class="swLegend"><i></i>${backs} ${engWord(backs, fr)} to approve</span>` : "") + (ok ? `<span class="swLegend"><i class="ok"></i>${ok} ${engWord(ok, fr)} approved</span>` : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
+      `<button class="swToggle" data-r2="face" aria-pressed="${backFace()}" title="${backFace() ? "Turn the sheet back to its front" : fr ? "Turn the sheet over: every charm's back engraving, mirrored, where the laser burns it (the front engraving is drawn as laid on this side)" : "Turn the sheet over: every charm's back engraving, where the laser burns it"}">${backFace() ? "Front" : "Back · engraving"}</button>` +
       (W.backsWait ? `<span class="swLegend"><span class="spin"></span>${esc(W.backsWait)}</span>` : "") +
-      `<span>${backFace() ? "Back side, mirrored as the laser sees it" : "Hover a charm for its order · click to open it"}</span>`;
+      `<span>${backFace() ? "Back side, mirrored as the laser sees it" : fr ? "Front side, front engraving as laid · hover a charm for its order" : "Hover a charm for its order · click to open it"}</span>`;
     const t = E.strip.querySelector("[data-r2=backs]"); if (t) t.onclick = () => { W.showBacks = !W.showBacks; renderStrip(); paintFx(); };
     const f = E.strip.querySelector("[data-r2=face]"); if (f) { f.onclick = () => turnPlate(backFace() ? "front" : "back");
       // the turn never waits on a download: the font is loaded in idle time, the sheet's backs read as the switch is neared
@@ -1905,7 +1972,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W.backs = backsOf(W.rec || { id: W.id }, W.live || (W.rec ? null : liveOf(W.id)), W.backsList);
     if (W.backsAsked) return; W.backsAsked = true;
     const id = W.id, tok = W.token, F = window.Engrave && Engrave.fonts, jobs = [], what = [];
-    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) { W.backsList = list; W.backs = backsOf(W.rec || { id }, W.live || (W.rec ? null : liveOf(id)), list); return Promise.all(otherFonts(W.backs, W.pieces)); } }, () => {})); what.push("this sheet's back engraving"); }
+    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) { W.backsList = list; W.backs = backsOf(W.rec || { id }, W.live || (W.rec ? null : liveOf(id)), list); return Promise.all(otherFonts(W.backs, W.pieces)); } }, () => {})); what.push(anyFront(W.pieces) ? "this sheet's engraving" : "this sheet's back engraving"); }
     if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {})); what.push("the engraving font"); }
     const known = otherFonts(W.backs, W.pieces); if (known.length) { jobs.push(Promise.all(known)); if (!what.includes("the engraving font")) what.push("the engraving font"); }   // (backs the page already holds, saved in another font)
     if (!jobs.length) return;
@@ -1913,20 +1980,45 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     Promise.all(jobs).then(() => {
       if (tok !== W.token) return;
       // (once the plate has come round on its plain back, the words fade in over it: Motion.landIn)
-      const land = () => { if (tok !== W.token) return; W.backsWait = ""; for (const x of W.pieces) { x._engGeo = null; x._engGeoKey = null; }
-        renderStrip(); if (backFace() && (W.geom || (W.pre && W.pre.pieces))) { paintBase(); paintFx(); } };
+      const land = () => { if (tok !== W.token) return; W.backsWait = ""; for (const x of W.pieces) dropGeo(x);
+        renderStrip(); if ((backFace() || anyFront(W.pieces)) && (W.geom || (W.pre && W.pre.pieces))) { paintBase(); paintFx(); } };
       if (backFace() && W.el && W.el.base && window.Motion && Motion.landIn) Motion.landIn(W.el.base, land); else land();
     });
   }
+  /** A sheet with a FRONT engraving shows its front words on the plate's front, so its engraving font is asked for as the sheet opens (the words of its records are in the record already; nothing is read
+      for a sheet with no front engraving), and the plate is drawn again as the font lands. */
+  function frontWordsReady() {
+    if (!anyFront(W.pieces)) return;
+    W.backs = backsOf(W.rec || { id: W.id }, W.live || (W.rec ? null : liveOf(W.id)), W.backsList);
+    if (W.frontAsked === W.token) return; W.frontAsked = W.token;
+    const tok = W.token, F = window.Engrave && Engrave.fonts, jobs = [];
+    if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) jobs.push(Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {}));
+    jobs.push(...otherFonts(W.backs, W.pieces));
+    if (!jobs.length) return;
+    W.backsWait = "Reading the engraving font…"; renderStrip();
+    Promise.all(jobs).then(() => {
+      if (tok !== W.token) return;
+      W.backsWait = ""; for (const x of W.pieces) dropGeo(x);
+      renderStrip(); if (!backFace() && (W.geom || (W.pre && W.pre.pieces))) { paintBase(); paintFx(); }
+    });
+  }
+  /** Engrave settled something while the window is open: a sheet with a front engraving draws its front words again (new words, a new approval, a record just saved). */
+  function frontWordsAgain() {
+    if (backFace() || !anyFront(W.pieces)) return;
+    W.backs = backsOf(W.rec || { id: W.id }, W.live || (W.rec ? null : liveOf(W.id)), W.backsList);
+    for (const x of W.pieces) dropGeo(x);
+    frontWordsReady();
+    if (W.geom || (W.pre && W.pre.pieces)) paintBase();
+  }
   function renderSheetPane() {
     const E = W.el, all = [...W.orders.entries()];
-    const engN = all.filter(([, xs]) => xs.some(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind))).length;
+    const engN = all.filter(([, xs]) => xs.some(x => unitsOf(x).some(needsEng))).length, fr = anyFront(W.pieces);
     const multi = all.filter(([rid]) => rid !== "—" && otherSheets(rid).length).length;
     // (an order being put on hold by the change in progress is counted there already: its row flies to it)
     const heldIds = new Set(heldOrders().map(o => o.rid)); for (const [rid, g] of W.going) if (g.how === "hold") heldIds.add(rid);
     const held = heldIds.size, here = all.filter(([, xs]) => xs.some(x => !x.gone)).length;
     // a view shows only when it has something in it (or is the one open): an empty choice is clutter
-    const seg = [["all", "All", here, ""], ["backs", "Backs", engN, "Orders whose back engraving still needs approving"], ["multi", "Other sheets", multi, "Orders with pieces on other sheets too"], ["hold", "On hold", held, "Orders a person put on hold or took off a sheet, from every sheet"]]
+    const seg = [["all", "All", here, ""], ["backs", fr ? "Engravings" : "Backs", engN, fr ? "Orders whose engraving still needs approving" : "Orders whose back engraving still needs approving"], ["multi", "Other sheets", multi, "Orders with pieces on other sheets too"], ["hold", "On hold", held, "Orders a person put on hold or took off a sheet, from every sheet"]]
       .filter(([id, , n]) => id === "all" || n || W.filter === id);
     // (not while a released order is still flying to All: the list turns to All once it lands)
     if (W.filter !== "all" && !seg.some(([id, , n]) => id === W.filter && n) && !W.q && !(W.stay > Date.now())) { W.filter = "all"; return renderSheetPane(); }
@@ -1947,7 +2039,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (W.filter === "hold") return renderHeld();
     // (a row whose order is leaving stays, lit, until the list it is in has slid back into view: then it is seen going)
     let list = [...W.orders.entries()].filter(([rid, xs]) => xs.some(x => !x.gone) || (W.going.get(rid) || {}).keep);
-    if (W.filter === "backs") list = list.filter(([, xs]) => xs.some(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)));
+    if (W.filter === "backs") list = list.filter(([, xs]) => xs.some(x => unitsOf(x).some(needsEng)));
     if (W.filter === "multi") list = list.filter(([rid]) => rid !== "—" && otherSheets(rid).length);
     if (q) list = list.filter(([, xs]) => xs.some(x => matchesQ(x, q)));
     list.sort((a, b) => (a[0] === "—") - (b[0] === "—") || a[0].localeCompare(b[0]));
@@ -1959,16 +2051,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       E.orders.querySelectorAll("[data-add]").forEach(b => b.onclick = () => openAdd(b.dataset.add));
       return;
     }
-    if (!list.length) { putRows(`<li class="swNone">${q ? "No order on this sheet matches." : W.filter === "backs" ? "No back engraving is waiting on this sheet." : W.filter === "multi" ? "Every order here is only on this sheet." : "This sheet has no charms."}</li>`); return; }
+    if (!list.length) { putRows(`<li class="swNone">${q ? "No order on this sheet matches." : W.filter === "backs" ? (anyFront(W.pieces) ? "No engraving is waiting on this sheet." : "No back engraving is waiting on this sheet.") : W.filter === "multi" ? "Every order here is only on this sheet." : "This sheet has no charms."}</li>`); return; }
     putRows(list.map(([rid, xs]) => {
       const go = W.going.get(rid), kept = !!(go && go.keep) && !xs.some(x => !x.gone);
       const live = kept ? xs : xs.filter(x => !x.gone), skus = new Map(), ears = new Map(); for (const x of live) { skus.set(x.sku, (skus.get(x.sku) || 0) + 1); const q = rid === "—" ? null : sideOfPiece(x); if (q) (ears.get(x.sku) || ears.set(x.sku, []).get(x.sku)).push(q); }
       // (a mismatched pair says which ears are here: "MISMATCHED 7134 · Left + Right"; every other piece reads as it always did)
       const what = [...skus].map(([s, n]) => (ears.get(s) || []).length === n && n ? `${s} · ${sidesText(ears.get(s))}` : `${s}${n > 1 ? ` ×${n}` : ""}`).join(", ");
-      const need = live.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = live.filter(x => x.eng?.kind === "approved").length;
+      // (engravings: a piece engraved on both faces counts each; the word is "back" until a piece of this order has a front)
+      const lu = live.flatMap(unitsOf), need = lu.filter(needsEng).length, ok = lu.filter(u => u.kind === "approved").length, fr = lu.some(u => u.face === "front");
       const other = rid === "—" ? [] : otherSheets(rid);
       const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
-        (need ? `<span class="swTag eng" title="Back engraving still to approve">${need > 1 ? need + " backs" : "back"}</span>` : ok ? `<span class="swTag engOk" title="Back engraving approved">back</span>` : "") +
+        (need ? `<span class="swTag eng" title="${fr ? "Engraving" : "Back engraving"} still to approve">${need > 1 ? need + " " + engWord(need, fr) : fr ? "engraving" : "back"}</span>` : ok ? `<span class="swTag engOk" title="${fr ? "Engraving" : "Back engraving"} approved">${fr ? "engraving" : "back"}</span>` : "") +
         other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}${esc(awayAt(rid, s.id))}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
       return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span></li>`;
     }).join(""));
@@ -1984,7 +2077,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const n = (rec.label?.orders || rec.orders || []).length;
     const qr = f ? `<div class="swQr" data-r2="qr"><figure class="qrPart" style="margin:0"><div class="qrTile"><img data-big title="Sheet QR label" data-label-sheet="${esc(rec.id)}" data-label-path="${esc(f.path || "")}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url ? ` src="${esc(cors(f.url))}"` : ""} alt="Sheet QR code"></div></figure><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label${(rec.label.files || []).length > 1 ? ` · ${(rec.label.files || []).length} parts` : ""}</b><span data-r2="qrText">${n} order${n === 1 ? "" : "s"} · click to enlarge</span></span></div>`
       : (plan => `<div class="swQr" data-r2="qr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label</b><span data-r2="qrText">${esc(plan ? plan.note : rec.metal === "rose" && !(rec.label?.files || []).length ? "Made when you press Cut Sheet" : "Made when the sheet joins a set")}</span></span>${plan ? `<button type="button" class="btn sage xs" data-r2="label" title="${esc(plan.title)}">Make QR label</button>` : ""}</div>`)(labelPlan());
-    const files = [["ai", ".ai", "Download the sheet with its back engravings"], ["dxf", ".dxf", "DXF · millimetres"]].map(([fmt2, label, title]) => `<button class="btn ghost xs" data-export-one="${esc(rec.id)}" data-format="${fmt2}" title="${title}">${label}</button>`).join("") +
+    const files = [["ai", ".ai", hasFront(rec) ? "Download the sheet with its front and back engravings" : "Download the sheet with its back engravings"], ["dxf", ".dxf", "DXF · millimetres"]].map(([fmt2, label, title]) => `<button class="btn ghost xs" data-export-one="${esc(rec.id)}" data-format="${fmt2}" title="${title}">${label}</button>`).join("") +
       (rec.outputs?.labelled?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.labelled.url)}" target="_blank" rel="noopener" title="Every charm numbered, as a PDF">Proof</a>` : "") +
       (rec.outputs?.report?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.report.url)}" target="_blank" rel="noopener" title="The nest report (JSON)">Report</a>` : "");
     E.foot.innerHTML = `<div class="row">${qr}</div><div class="row"><span class="fLabel">Files</span><span class="swFiles">${files}</span></div>`;
@@ -2084,7 +2177,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function renderMenu() {
     const rec = W.rec, E = W.el, live = typeof openRunPage === "function" && openRunPage(rec.id);
     const srcs = (rec.sources || []).filter(s => s.url);
-    E.menu.innerHTML = `<button data-m="ai">Download .ai<small>with backs</small></button><button data-m="dxf">Download .dxf</button>` +
+    E.menu.innerHTML = `<button data-m="ai">Download .ai<small>${hasFront(rec) ? "with engravings" : "with backs"}</small></button><button data-m="dxf">Download .dxf</button>` +
       (rec.outputs?.labelled?.url ? `<a href="${esc(rec.outputs.labelled.url)}" target="_blank" rel="noopener">Labelled proof<small>PDF</small></a>` : "") +
       (rec.outputs?.report?.url ? `<a href="${esc(rec.outputs.report.url)}" target="_blank" rel="noopener">Nest report<small>JSON</small></a>` : "") +
       `<div class="sep"></div><button data-m="restore"${live ? ` disabled title="Already on its card, where the open run is using it"` : ""}>Restore into its card</button>` +
@@ -2220,27 +2313,58 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function renderEng(x, flash) {
     if(window.Seal?.defer('sheet-engrave',()=>renderEng(x,flash)))return;
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
-    x.eng = engOf(x); const e = x.eng;
-    // (the discs of a counted order, one at a time: the Engrave tab's own switch, charm-nest-piece-switch.js; a press selects that disc's charm, here or on the sheet it is on)
-    const cyc = e.job && window.OrderEngraving && OrderEngraving.cycleOf ? tryDo(() => OrderEngraving.cycleOf(rowOf(x), e.job.key)) : null, shown = cyc ? Object.assign({}, e, { cycle: cyc }) : e;
+    x.eng = engOf(x); if (x.eng.faces) x._face = shownFace(x); const e = shownEng(x);
+    // (the discs of a counted order, one at a time: the Engrave tab's own switch, charm-nest-piece-switch.js; a press selects that disc's charm, here or on the sheet it is on.
+    //  A piece engraved on both faces also has its Front | Back: the same switch, the face shown is the one the card is about)
+    const cyc = cycleFor(x, e), shown = cyc ? Object.assign({}, e, { cycle: cyc }) : e;
     host.innerHTML = CNEngravingSeals.panel(shown);
     CNEngravingSeals.wirePanel(host,shown,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
     // the line's engraving setup (None / Front only / Back only / Front + back, each face's words and font): one control for every card, charm-nest-engrave-setup.js
-    if (window.CharmNestEngraveSetup && (e.job || rowOf(x))) { const su = document.createElement('div'); su.className = 'swEngSetup'; host.appendChild(su); tryDo(() => CharmNestEngraveSetup.mount(su, e.job ? e.job.row : rowOf(x), { compact: true })); }
+    if (window.CharmNestEngraveSetup && (e.job || rowOf(x))) { const su = document.createElement('div'); su.className = 'swEngSetup'; host.appendChild(su); su.addEventListener('cn-engrave-setup', () => { if (W.sel === x) renderEng(x); }); tryDo(() => CharmNestEngraveSetup.mount(su, e.job ? e.job.row : rowOf(x), { compact: true })); }
   }
 
-  /** A press on a disc of the switch, or Back / Next: that disc's charm, on this sheet (selectPiece) or on the other sheet it is on (switchSheet, as its row of "This order" does). */
+  /** The switch the card shows for a piece: the discs of a counted order (the order window's own cycle) and, for a piece engraved on both faces, its Front | Back. A piece with no front gets
+      exactly the cycle it always had (discs only, nothing for any other piece). */
+  function cycleFor(x, e) {
+    const OE = window.OrderEngraving, base = e.job && OE && OE.cycleOf ? tryDo(() => OE.cycleOf(rowOf(x), e.job.key)) : null;
+    if (!x.eng || !x.eng.faces) return base;
+    if (base && base.pieces.some(p => faceOfJob(p.job) === "front")) return base;   // (the order window's switch already tells the faces)
+    return facesCycle(x, e);
+  }
+  /** The pieces and faces of a piece engraved on both faces as CharmNestPieceSwitch tells them (one entry per job): all the discs of a counted order, else this piece's own Front and Back. A
+      face that has a saved record and no job here (a sheet read from the Library) is told from the record. */
+  function facesCycle(x, e) {
+    const E = window.Engrave, PS = window.CharmNestPieceSwitch, F = FACES(); if (!PS || !PS.list) return null;
+    const all = E && E.jobsOf ? (tryDo(() => E.jobsOf(rowOf(x)), []) || []).filter(j => j && !j.editingBack) : [];
+    const discs = all.length > 1 && all.every(j => /^D\d{1,2}$/.test(String(j.slot || ""))) && all.some(j => (j.copies || []).includes(x.poolId));
+    const own = jobsOfPiece(x).list, jobs = discs ? all : own, key = (e.job && e.job.key) || recKeyOf(x.poolId, e.face || "back");
+    if (discs || (own.length === x.eng.units.length && own.length > 1)) {
+      const pieces = PS.list(jobs, { of: F && F.pieceCount ? F.pieceCount(jobs) : jobs.length, isWorking: j => !!(E && E.isWorking && tryDo(() => E.isWorking(j), false)) });
+      return pieces.some(p => p.key === key) ? { pieces, key } : null;
+    }
+    const n = x.eng.units.length;
+    if (n < 2) return null;
+    const pieces = x.eng.units.map(u => ({ key: (u.job && u.job.key) || recKeyOf(x.poolId, u.face), job: u.job || { key: recKeyOf(x.poolId, u.face), face: u.face, copies: [x.poolId], state: u.kind, lines: [] }, record: null,
+      slot: "", kind: "piece", n: 0, label: "", name: "", tag: "", words: String(u.text || "").replace(/\n/g, " / "), font: { name: "", asked: "" }, stage: u.label || "", state: u.job ? u.job.state : u.kind, busy: false,
+      face: u.face, faceLabel: u.face === "front" ? "Front" : "Back", pieceKey: x.poolId, faces: n }));
+    return { pieces, key };
+  }
+
+  /** A press on a disc of the switch, or Back / Next: that disc's charm, on this sheet (selectPiece) or on the other sheet it is on (switchSheet, as its row of "This order" does). A press on the
+      other FACE of the piece shown is the same charm: its card is drawn again for that face. */
   function pickDisc(x, cyc, key) {
     const p = cyc && cyc.pieces.find(q => q.key === key); if (!p) return;
+    if (p.face && x.eng && x.eng.faces && (p.job.copies || []).includes(x.poolId)) { x._face = p.face; renderEng(x); return; }
     const pid = (p.job.copies || [])[0] || "", here = pid && W.byPool.get(pid);
-    if (here && !here.gone) { selectPiece(here, { from: "disc" }); return; }
+    if (here && !here.gone) { if (p.face) here._face = p.face; selectPiece(here, { from: "disc" }); return; }
     const it = x.rid ? trailItems(x, x.rid).find(q => q.poolId === pid) : null;
     if (it && it.sheetId && it.sheetId !== W.id) { switchSheet(it.sheetId, { select: pid, from: "trail" }); return; }
     toast(`${p.name} is not on a sheet yet: its engraving is in the Engraving tab`, "", 5000);
   }
   async function approveHere(x, b) {
-    const job = x.eng && x.eng.job; if (!job) return;
+    // (the face the card shows is the one approved: a piece engraved on both faces has two cards, one for each)
+    const e0 = x.eng, e1 = e0 && e0.faces ? e0.faces[x._face] || e0.faces.back || e0.faces.front : e0, job = e1 && e1.job; if (!job) return;
     if (job.state !== 'review') { renderEng(x); return; }   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
     // (no name yet: the name bar asks; once given, the same button is pressed again through the card's own handler, so the spinner, the plain failure line and
     //  the out-of-date guard are the card's, as for a press with the name known; a card drawn again meanwhile is not pressed for the person)
@@ -2438,7 +2562,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!d.contains(at) || at === box) { const b = A.focus && A.focus.isConnected ? A.focus : A.btn && A.btn.isConnected ? A.btn : E.detail.querySelector("[data-r2=openOrd]"); if (b || !d.contains(at)) tryDo(() => (b || box).focus({ preventScroll: true })); }
       place();
       // a back approved in the order view shows here too (unless an approval of it here is still on its way)
-      const x = A.sel; if (x && W.sel === x && x.eng && !E.detail.querySelector("[data-r2=eng] button:disabled") && engOf(x).kind !== x.eng.kind) renderEng(x, true);
+      const x = A.sel; if (x && W.sel === x && x.eng && !E.detail.querySelector("[data-r2=eng] button:disabled") && !engSame(engOf(x), x.eng)) renderEng(x, true);
     };
     // (at once: with reduced motion the view fades over the window, which is put in order once it has gone)
     if (!ms) { if (ms0) setTimeout(done, ms0 + 60); else done(); return; }
@@ -2452,7 +2576,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* ── to Engrave and back ── */
   const RET = { el: null, ctx: null, timer: 0, poll: 0 };
   function goEngrave(x, b) {
-    const job = x.eng && x.eng.job, rec = W.rec;
+    const e0 = x.eng, e1 = e0 && e0.faces ? e0.faces[x._face] || e0.faces.back || e0.faces.front : e0, job = e1 && e1.job, rec = W.rec;
     RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: nameOf(rec), was: job ? job.state : null };
     if (b) b.innerHTML = `<span class="spin"></span>Opening Engraving…`;
     const plain = () => close().then(() => {
@@ -2466,7 +2590,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (this charm's own order and piece, its details open, the order's number in the search: EngraveLink, which this window
     // closes for; the way back stays as it was. Without it, the tab as it always was)
     if (window.EngraveLink && typeof EngraveLink.open === "function") {
-      let p; try { p = EngraveLink.open({ rid: x.rid, key: job ? job.key : undefined, poolId: x.poolId || x.id, closeFirst: () => close() }); } catch (_) { p = Promise.reject(); }
+      let p; try { p = EngraveLink.open(Object.assign({ rid: x.rid, key: job ? job.key : undefined, poolId: x.poolId || x.id, closeFirst: () => close() }, job && faceOfJob(job) === "front" ? { face: "front" } : {})); } catch (_) { p = Promise.reject(); }
       p.then(() => returnPill(), () => plain());
       return;
     }
@@ -4419,8 +4543,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   setInterval(() => {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.geom) return;
     let changed = false;
-    for (const x of W.pieces) { const e = engOf(x); if (!x.eng || e.kind !== x.eng.kind || e.note !== x.eng.note) { x.eng = e; changed = true; } }
-    if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); }
+    for (const x of W.pieces) { const e = engOf(x); if (!x.eng || !engSame(e, x.eng)) { x.eng = e; changed = true; } }
+    if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); frontWordsAgain(); }
   }, 1500);
 
   /* ── the window follows the cloud (Paul, 5 Oct: "make sure that everywhere the same information is available and that there's no mismatch in orders being on sheets, not
@@ -4534,12 +4658,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     sheetBacks.set(id, { at: Date.now(), p }); if (sheetBacks.size > 12) sheetBacks.delete(sheetBacks.keys().next().value);
     return p;
   }
-  /** Every back this page already knows of a sheet, newest approval per piece. */
+  /** Every back this page already knows of a sheet, newest approval per piece. A piece's FRONT record (face "front") is kept beside its back under its own key (poolId~front), so the two never replace each other. */
   function backsOf(rec, live, extra) {
     const id = (rec && rec.id) || null, m = new Map();
     const add = b => {
       if (!b || !b.poolId || b.invalidated || (b.sheetId && id && b.sheetId !== id)) return;
-      const p = m.get(b.poolId); if (!p || (+b.approvedAt || 0) >= (+p.approvedAt || 0)) m.set(b.poolId, b);
+      const k = recKeyOf(b.poolId, isFrontRec(b) ? "front" : "back"), p = m.get(k); if (!p || (+b.approvedAt || 0) >= (+p.approvedAt || 0)) m.set(k, b);
     };
     for (const b of (rec && rec.backPool) || []) add(b);
     for (const b of (live && live.backPool) || []) add(b);
@@ -4559,13 +4683,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const E = window.Engrave; if (!E || !E.loadFontSet || !E.fontSetFor) return [];
     const ids = new Set(), see = b => { const id = backFontId(b); if (b && id !== "source-sans-3") ids.add(id); };
     if (backs) for (const b of (backs.values ? backs.values() : backs)) see(b);
-    for (const x of pieces || []) { if (x && x.eng && x.eng.back) see(x.eng.back); const j = x && x.eng && x.eng.job; if (j && j.fontKey && j.fontKey !== "source-sans-3") ids.add(j.fontKey); }
+    for (const x of pieces || []) for (const u of unitsOf(x)) { if (u.back) see(u.back); const j = u.job; if (j && j.fontKey && j.fontKey !== "source-sans-3") ids.add(j.fontKey); }
     return [...ids].filter(id => !tryDo(() => E.fontSetFor(id))).map(id => Promise.resolve(tryDo(() => E.loadFontSet(id))).catch(() => {}));
   }
-  /** An engraving approved in Engrave but not written yet, as a back record: its fitted words, in the same back frame. */
-  function backOfJob(x) {
-    const j = x.eng && x.eng.job; if (!j || !j.fit || !j.view || !j.fit.centre) return null;
-    return { poolId: x.poolId, text: j.text, lines: j.lines, sizePt: j.fit.size, capMm: j.fit.capMm, weight: j.fit.weight,
+  /** An engraving approved in Engrave but not written yet, as a back record: its fitted words, in the same back frame. A front job's record says `face: "front"` (its words are laid as the charm is, not turned over). */
+  function backOfJob(x, face) {
+    const u = x.eng && (x.eng.faces ? x.eng.faces[face === "front" ? "front" : "back"] : face === "front" ? null : x.eng), j = u && u.job; if (!j || !j.fit || !j.view || !j.fit.centre) return null;
+    return { poolId: x.poolId, ...(face === "front" ? { face: "front" } : {}), text: j.text, lines: j.lines, sizePt: j.fit.size, capMm: j.fit.capMm, weight: j.fit.weight,
       centre: j.fit.centre, angle: j.fit.angle || 0, lineGap: j.fit.layout && j.fit.layout.lineGap, upAngle: j.view.upAngle, approvedAt: +j.approvedAt || 0,
       font: j.fontName || "Source Sans 3", fontKey: j.fontKey || "source-sans-3" };
   }
@@ -4586,20 +4710,34 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     wait("Reading " + what.join(" and ") + "…");
     Promise.all(jobs).then(() => {
       // (a plate still turning comes round on its plain back with its spinner, then the words fade in: Motion.landIn)
-      const land = () => { if (G.active && !G.active()) return; wait(null); for (const x of G.pieces) { x._engGeo = null; x._engGeoKey = null; } if (G.cv.isConnected && G.cv._order === G) { if (paintOrderBase(G)) paintOrder(G); } };
+      const land = () => { if (G.active && !G.active()) return; wait(null); for (const x of G.pieces) dropGeo(x); if (G.cv.isConnected && G.cv._order === G) { if (paintOrderBase(G)) paintOrder(G); } };
       if (G.backSide && G.cv.isConnected && window.Motion && Motion.landIn) Motion.landIn(G.cv, land); else land();
     });
   }
-  /** The words of one piece in the charm's own frame, worked out once per drawing and kept with the piece. */
-  function engGeoOf(x, backs) {
-    if (!x.c || !window.CharmNestBacks || !CharmNestBacks.engraveOn) return null;
-    const rec = (x.poolId && backs && backs.get(x.poolId)) || (x.eng && x.eng.back) || backOfJob(x);
-    if (!rec) return null;
-    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, backFontId(rec), !!backFont(rec.weight, rec)].join("|");
-    if (x._engGeo && x._engGeoKey === key) return x._engGeo;
-    x._engGeoKey = key; x._engGeo = tryDo(() => CharmNestBacks.engraveOn(rec, x.c, { font: backFont(rec.weight, rec) })) || null;
-    return x._engGeo;
+  /** The plate of a sheet with a FRONT engraving, from the front: the engraving font asked for once (the words are in the records the plate already holds), and the plate drawn again as it lands. */
+  function ensureFront(G) {
+    if (G.frontAsked || !anyFront(G.pieces)) return; G.frontAsked = true;
+    const F = window.Engrave && Engrave.fonts, jobs = [];
+    if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) jobs.push(Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {}));
+    jobs.push(...otherFonts(G.backs, G.pieces));
+    if (!jobs.length) return;
+    Promise.all(jobs).then(() => { if (G.active && !G.active()) return; for (const x of G.pieces) dropGeo(x); if (G.cv.isConnected && G.cv._order === G) { if (paintOrderBase(G)) paintOrder(G); } });
   }
+  /** The words of one piece in the charm's own frame, worked out once per drawing and kept with the piece. `face` "front" gives the piece's FRONT words (as the charm lies, not turned over); the
+      default, the back, is what it always gave. */
+  function engGeoOf(x, backs, face) {
+    if (!x.c || !window.CharmNestBacks || !CharmNestBacks.engraveOn) return null;
+    const front = face === "front", u = x.eng && (x.eng.faces ? x.eng.faces[front ? "front" : "back"] : front ? null : x.eng);
+    const rec = (x.poolId && backs && backs.get(front ? recKeyOf(x.poolId, "front") : x.poolId)) || (u && u.back) || backOfJob(x, front ? "front" : "back");
+    if (!rec) return null;
+    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, backFontId(rec), !!backFont(rec.weight, rec)].concat(front ? ["front"] : []).join("|");
+    const own = front ? "_engGeoF" : "_engGeo", ownKey = front ? "_engGeoFKey" : "_engGeoKey";
+    if (x[own] && x[ownKey] === key) return x[own];
+    x[ownKey] = key; x[own] = tryDo(() => CharmNestBacks.engraveOn(front && !isFrontRec(rec) ? Object.assign({}, rec, { face: "front" }) : rec, x.c, { font: backFont(rec.weight, rec) })) || null;
+    return x[own];
+  }
+  /** Forget the words worked out for a piece (the backs or the font changed). */
+  const dropGeo = x => { x._engGeo = null; x._engGeoKey = null; x._engGeoF = null; x._engGeoFKey = null; };
   function orderPiece(ctx, G, x, fn) { const p = x.p, k = G.k; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
   /** Where a piece's words land on the plate, through the very transform they are drawn with (the view's own check). */
   function engPointOf(G, x, geo) {
@@ -4675,7 +4813,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const pills = [];
     if (G.backSide) for (const x of G.pieces) {
       const geo = engGeoOf(x, G.backs);
-      if (!geo || !geo.glyphs) { if (x.eng && x.eng.text) pills.push(x); continue; }
+      if (!geo || !geo.glyphs) { if (faceTextOf(x, "back")) pills.push(x); continue; }
+      orderPiece(ctx, G, x, () => {
+        const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
+        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "#3f3320" });
+      });
+    }
+    // the front: a charm's FRONT words, as they lie on it, on the plate's front (only a charm that has a front engraving; the plate of a sheet with none is drawn as it always was)
+    if (!G.backSide) for (const x of G.pieces) {
+      if (!(x.eng && x.eng.faces && x.eng.faces.front)) continue;
+      const geo = engGeoOf(x, G.backs, "front"); if (!geo || !geo.glyphs) continue;
       orderPiece(ctx, G, x, () => {
         const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
         CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "#3f3320" });
@@ -4686,7 +4833,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.restore();
     // the words of a charm whose drawing or engraving font is not here yet: said on the plate until they can be drawn
     if (G.backSide) for (const x of pills) {
-      const words = x.eng && x.eng.text; if (!words) continue;
+      const words = faceTextOf(x, "back"); if (!words) continue;
       const px = R + G.Wp - x.p.cxPt * G.k, py = R + x.p.cyPt * G.k, size = Math.max(9 * dpr, Math.min(14 * dpr, Math.min(x.p.wPt, x.p.hPt) * G.k * .22));
       ctx.save(); ctx.font = `italic ${size}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       const tw = ctx.measureText(words).width + 10 * dpr; ctx.fillStyle = "rgba(255,254,251,.92)"; ctx.strokeStyle = "rgba(169,130,63,.8)"; ctx.lineWidth = dpr;
@@ -4778,11 +4925,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // another order of this sheet is the one pointed at (a click on its charm): its pieces take the gold now, its charm the firmer line
       aim: (orderId, poolId) => { if (!active()) return; G.mine = G.pieces.filter(x => x.rid === String(orderId)); G.focus = poolId || null; redraw(); },
       // the back side: the sheet's own backs and the engraving font, asked for once, and the plate drawn again as they land
-      back: on => { if (!active()) return; G.backSide = !!on; if (G.backSide) ensureBacks(G, readOpts); redraw(); },
-      engraved: () => G.pieces.filter(x => engGeoOf(x, G.backs) || (x.eng && x.eng.text)).length,
-      // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn
-      words: () => G.pieces.map(x => { const geo = engGeoOf(x, G.backs); const text = (geo && geo.text) || (x.eng && x.eng.text) || ""; if (!text) return null;
-        return Object.assign({ poolId: x.poolId, rid: x.rid, text, drawn: !!(geo && geo.glyphs) }, geo ? engPointOf(G, x, geo) : {}); }).filter(Boolean),
+      back: on => { if (!active()) return; G.backSide = !!on; if (G.backSide) ensureBacks(G, readOpts); else ensureFront(G); redraw(); },
+      // (pieces that carry words on a face, the back unless asked for the "front": a piece engraved on both faces is counted once on each, never twice on one)
+      engraved: face => G.pieces.filter(x => engGeoOf(x, G.backs, face === "front" ? "front" : undefined) || faceTextOf(x, face === "front" ? "front" : "back")).length,
+      sides: () => ({ front: G.pieces.filter(x => engGeoOf(x, G.backs, "front") || faceTextOf(x, "front")).length, back: G.pieces.filter(x => engGeoOf(x, G.backs) || faceTextOf(x, "back")).length }),
+      // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn (face "front": the front words)
+      words: face => G.pieces.map(x => { const f = face === "front" ? "front" : "back", geo = engGeoOf(x, G.backs, f === "front" ? "front" : undefined); const text = (geo && geo.text) || faceTextOf(x, f) || ""; if (!text) return null;
+        return Object.assign({ poolId: x.poolId, rid: x.rid, text, face: f, drawn: !!(geo && geo.glyphs) }, geo ? engPointOf(G, x, geo) : {}); }).filter(Boolean),
       hitAt: (x, y) => hitOrder(G, x, y),
       // where a piece's centre is on the screen
       pointOf: key => { const x = pieces.find(p => p.poolId === key || p.id === key), r = cv.getBoundingClientRect(); if (!x || !G.base || !r.width) return null; const px = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), py = G.R + x.p.cyPt * G.k; return { x: r.left + px * r.width / cv.width, y: r.top + py * r.height / cv.height }; },
@@ -4799,7 +4948,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       im.src = cors(url);
     };
     readOpts.onInfo(info);
-    if (active() && G.backSide) ensureBacks(G, readOpts);
+    if (active() && G.backSide) ensureBacks(G, readOpts); else if (active()) ensureFront(G);
     preview();
     redraw();
     // A tab hidden during an early read has a zero-sized box. Observe that box so returning to Sheet draws it even
@@ -4813,7 +4962,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       rec = G.rec = withLive(savedRec); info.rec = rec;
       info.sheet.name = rec.folder || rec.fileBase || "";
       G.backs = backsOf(rec, live, [...G.backs.values()]);
-      for (const x of pieces) { x.eng = engOf(x, rec); x._engGeo = null; x._engGeoKey = null; }
+      for (const x of pieces) { x.eng = engOf(x, rec); dropGeo(x); }
       readOpts.onInfo(info); redraw();
     }, e => { if (active()) console.warn("order view: sheet metadata", e.message); });
     const need = pieces.filter(x => !x.c), srcs = new Map((rec.sources || []).map(s => [s.id, s]));
@@ -4853,6 +5002,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, t, { fill: "#2f2512" }));
     if (cu) { path(false); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * dpr; ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.stroke(); ctx.setLineDash([]); }
     return !!(geo && geo.glyphs);
+  }
+  /** A charm's FRONT words, drawn on a card's front: the context is already at the charm's place on the plate (as backPiece's is), not mirrored. True when words were drawn (a charm with no front engraving, or
+      whose font is not here yet, draws nothing). */
+  function frontWords(ctx, x, backs, k) {
+    const c = x.c; if (!c || !(x.eng && x.eng.faces && x.eng.faces.front)) return false;
+    const geo = engGeoOf(x, backs, "front"); if (!geo || !geo.glyphs) return false;
+    return !!tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - c.centerPt[0]) * k, (c.centerPt[1] - py) * k], { fill: "#2f2512" }));
+  }
+  /** Does a sheet (a page of the Nest tab, a saved record) carry a FRONT engraving? A saved front record, a decision with a front, or a front job on one of its pieces. */
+  function hasFront(pg) {
+    if (!pg) return false;
+    if ((pg.backPool || []).some(b => b && isFrontRec(b) && !b.invalidated) || Object.values(pg.engraving || {}).some(e => e && e.faces && e.faces.front)) return true;
+    const ids = new Set([...(pg.poolIds || []), ...(pg.charms || []).map(c => c && c.poolId)].filter(Boolean));
+    return !!(ids.size && window.Engrave && tryDo(() => { for (const j of Engrave.items().values()) if (!j.editingBack && faceOfJob(j) === "front" && (j.copies || []).some(id => ids.has(id))) return true; return false; }));
   }
   /** The engraving font, asked for once (null when it is here already). */
   const backFontReady = () => { const F = window.Engrave && Engrave.fonts; return window.Engrave && Engrave.loadFonts && !(F && F.ok) ? Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {}) : null; };
@@ -4906,7 +5069,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const go = () => { for (const id of [].concat((ids && tryDo(ids)) || []).filter(Boolean).slice(0, 12)) backsFor(String(id)).catch(() => {}); };
     sw.addEventListener("pointerenter", go); sw.addEventListener("focusin", go);
   }
-  const cardBack = { piece: backPiece, sheet: backSheet, ofPage: backsOfPage, list: backsFor, font: backFontReady, engOf: (x, rec) => engOf(x, rec), warmFont, arm: armBack };
+  const cardBack = { piece: backPiece, front: frontWords, hasFront, sheet: backSheet, ofPage: backsOfPage, list: backsFor, font: backFontReady, engOf: (x, rec) => engOf(x, rec), warmFont, arm: armBack };
 
   // (asked to open from outside while the order view holds this window's place, as its Sheet tab does: the window is
   // back at once, under the order view closing)

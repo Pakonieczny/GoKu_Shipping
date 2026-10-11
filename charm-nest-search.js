@@ -222,8 +222,12 @@
     const all = allSteps(), stepName = (all[Math.min(reached, all.length - 1)] || {}).l || "";
     const review = e.review || rows.some(r => (r.problems || []).length);
     const eng = e.engrave.find(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state));
+    const faceOfJob = j => (j && j.face === "front" ? "front" : "back");
+    // the face(s) of the line that wait: "Front engraving", "Back engraving" (as ever) or "Front + back engraving" when both wait
+    const engName = !eng ? "" : (w => w.has("front") && w.has("back") ? "Front + back engraving" : w.has("front") ? "Front engraving" : "Back engraving")(new Set(e.engrave.filter(j => j.rowKey === eng.rowKey && ["words", "review", "fitting", "ready", "classify"].includes(j.state)).map(faceOfJob)));
     // (a counted disc names itself: "Back engraving · Disc 2 of 2 · words to read"; a single, an ear or a plain quantity-N line reads as ever)
-    const discSay = j => { try { if (!j || !/^D\d{1,2}$/.test(String(j.slot || ""))) return ""; const S = window.CharmNestEngraveSides, of = e.engrave.filter(x => x.rowKey === j.rowKey && /^D\d{1,2}$/.test(String(x.slot || ""))).length, r = S && S.pieceRecord ? S.pieceRecord(j, { of: of || undefined }) : null; return r ? ` · Disc ${r.index} of ${r.of}` : ""; } catch (_) { return ""; } };
+    // (the discs of a counted line are counted as PIECES: a disc engraved on both faces has two jobs and is one disc)
+    const discSay = j => { try { if (!j || !/^D\d{1,2}$/.test(String(j.slot || ""))) return ""; const S = window.CharmNestEngraveSides, mine = e.engrave.filter(x => x.rowKey === j.rowKey && /^D\d{1,2}$/.test(String(x.slot || ""))), of = mine.some(x => faceOfJob(x) === "front") ? new Set(mine.map(x => String(x.slot))).size : mine.length, r = S && S.pieceRecord ? S.pieceRecord(j, { of: of || undefined }) : null; return r ? ` · Disc ${r.index} of ${r.of}` : ""; } catch (_) { return ""; } };
     let tone = "warn", pill = "In progress", now = "", completed = false;
     // the pill names the step the rail has reached, as the order view does; before Nested it says where the order is
     if (cancel) { tone = "bad"; pill = "Cancelled"; now = `Cancelled${cancel.by ? " by " + cancel.by : ""}${cancel.at ? " · " + whenTxt(cancel.at) : ""}`; }
@@ -234,9 +238,9 @@
     else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = sheets.length ? stepName : "Done by hand"; /* (the rail counts a hand seal as its first step, "Nested": an order that is on no sheet does not say so) */ const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; completed = true; }
     else if (reached >= 1) {
       tone = reached >= 3 ? "ok" : "info"; pill = stepName;
-      now = eng && reached < 2 ? `Back engraving${discSay(eng)} · ${eng.state === "words" ? "words to read" : eng.state}` : sheets.length ? (sheets.some(s => s.cut) ? "Laser cut" : "On sheet") : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : stepName;
+      now = eng && reached < 2 ? `${engName}${discSay(eng)} · ${eng.state === "words" ? "words to read" : eng.state}` : sheets.length ? (sheets.some(s => s.cut) ? "Laser cut" : "On sheet") : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : stepName;
     }
-    else if (eng) { tone = "warn"; pill = "Engraving"; now = `Back engraving${discSay(eng)} · ${eng.state === "words" ? "words to read" : eng.state}`; }
+    else if (eng) { tone = "warn"; pill = "Engraving"; now = `${engName}${discSay(eng)} · ${eng.state === "words" ? "words to read" : eng.state}`; }
     else if (rows.length) { const st = rows[0].state; tone = "info"; pill = "In the pull"; now = pl && pl.state === "waiting" ? pl.say : st === "pooled" ? "Ready to nest" : st === "noDesign" ? "Nothing to cut" : st === "waiting" ? "Waiting" : "In this pull"; }
     else if (c) { tone = "info"; pill = "In the cloud"; now = pl && pl.say ? pl.say : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : c.archived ? "Design completed" : "Found in the cloud"; }
     else { tone = "neutral"; pill = "Seen"; now = ""; }
