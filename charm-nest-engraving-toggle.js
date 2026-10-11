@@ -17,7 +17,8 @@
      EngravingToggle.follow(shelfHost, sheetKey | () => sheetKey)   // keeps the shelf host's data-eng in step (idempotent; call it
          after every redraw of the host's own markup; the host's children may be replaced freely)
          → { setKey(k), stop() }
-     EngravingToggle.isOpen(sheetKey) · .set(sheetKey, open) · .toggle(sheetKey) · .rekey(from, to) · .countIn(root)
+     EngravingToggle.isOpen(sheetKey) · .set(sheetKey, open) · .toggle(sheetKey) · .rekey(from, to) · .countIn(root) · .mixedIn(root)
+         (front + back: the count is one per engraving picture, pieces x faces, and `mixed` / t.update(count, key, mixed) makes the words "Engravings"; a back-only shelf is unchanged)
      document event "engravingtoggle" (bubbles to window): detail { sheetKey, open, source } — any picture may listen.
    getState(key) / onChange(open, key) let a host keep the state itself; without them the module's own memory is used. */
 (function (root) {
@@ -73,7 +74,10 @@
     for (const m of mounts) if (m.key === from) m.key = to;
     for (const f of followers) if (f.key === from) f.key = to;
   }
+  // one figure per engraving record: a piece with both faces has two (pieces x faces)
   const countIn = r => r && r.querySelectorAll ? r.querySelectorAll('.backPieces figure').length : 0;
+  // true when the shelf holds any FRONT picture: the control then says "engravings" (a back-only shelf says what it always said)
+  const mixedIn = r => !!(r && r.querySelector && r.querySelector('.backPieces figure[data-face="front"]'));
 
   /* ── the shelf host: data-eng follows the sheet's state; a press eases it open or shut, a redraw never animates ── */
   function stopAnim(f) {
@@ -128,19 +132,20 @@
     const sr = d.createElement('span'); sr.className = 'engSr'; sr.setAttribute('role', 'status'); sr.setAttribute('aria-live', 'polite');
     wrap.appendChild(btn); wrap.appendChild(sr); host.appendChild(wrap);
     const n = btn.querySelector('.engN');
-    const m = { key: keyOf(typeof o.sheetKey === 'function' ? o.sheetKey() : o.sheetKey), count: 0, shown: null, said: false };
+    const m = { key: keyOf(typeof o.sheetKey === 'function' ? o.sheetKey() : o.sheetKey), count: 0, mixed: !!o.mixed, shown: null, said: false };
     const on = () => typeof o.getState === 'function' ? !!o.getState(m.key) : isOpen(m.key);
-    const pieces = c => `${c} piece${c === 1 ? '' : 's'}`;
+    const pieces = c => m.mixed ? `${c} engraving${c === 1 ? '' : 's'}` : `${c} piece${c === 1 ? '' : 's'}`;
     function paint() {
-      const open = on(), sig = `${m.key}|${m.count}|${open}`;
+      const open = on(), sig = `${m.key}|${m.count}|${open}${m.mixed ? '|f' : ''}`;
       host.hidden = !(m.count > 0);
       if (m.shown === sig) return; m.shown = sig;
       n.textContent = String(m.count);
       btn.classList.toggle('on', open);
       btn.setAttribute('aria-expanded', open ? 'true' : 'false'); btn.setAttribute('aria-pressed', open ? 'true' : 'false');
-      btn.setAttribute('aria-label', `Back engraving, ${pieces(m.count)}`);
-      btn.title = `${open ? 'Hide' : 'Show'} the back engraving of this sheet · ${pieces(m.count)}`;
-      if (m.said) sr.textContent = `Back engraving ${open ? 'shown' : 'hidden'}, ${pieces(m.count)}`;
+      const what = m.mixed ? 'Engravings' : 'Back engraving';
+      btn.setAttribute('aria-label', `${what}, ${pieces(m.count)}`);
+      btn.title = `${open ? 'Hide' : 'Show'} the ${what.toLowerCase()} of this sheet · ${pieces(m.count)}`;
+      if (m.said) sr.textContent = `${what} ${open ? 'shown' : 'hidden'}, ${pieces(m.count)}`;
     }
     btn.addEventListener('click', () => {
       const next = !on(); m.said = true;
@@ -152,8 +157,9 @@
     return {
       button: btn,
       key: () => m.key,
-      update(count, sheetKey) {
+      update(count, sheetKey, mixed) {
         if (sheetKey != null && keyOf(sheetKey) !== m.key) m.key = keyOf(sheetKey);
+        if (mixed !== undefined) m.mixed = !!mixed;
         m.count = Math.max(0, +count || 0); paint();
       },
       destroy() { mounts.delete(m); try { wrap.remove(); } catch (_) {} host.hidden = true; }
@@ -167,6 +173,6 @@
     for (const f of followers) { if (!f.el.isConnected) continue; if (f.key === k) paintShelf(f, open, true); }
   });
 
-  root.EngravingToggle = { mount, follow, isOpen, set, toggle, rekey, countIn, EVENT };
+  root.EngravingToggle = { mount, follow, isOpen, set, toggle, rekey, countIn, mixedIn, EVENT };
   if (typeof module === 'object' && module.exports) module.exports = root.EngravingToggle;
 })(typeof self !== 'undefined' ? self : this);

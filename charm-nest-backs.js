@@ -127,11 +127,13 @@
   const pieceWords = b => { const k = (b && (b.slot || b.side)) || ''; return k === 'L' ? 'Left ear' : k === 'R' ? 'Right ear' : /^D\d+$/.test(k) ? 'Disc ' + k.slice(1) : ''; };
   function markup(backs, stock = {}) {
     if (!backs?.length) return '';
-    return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
+    // A shelf with any front picture names each picture's face (a back-only shelf is drawn exactly as it always was).
+    const mixed = backs.some(b => b.face === 'front');
+    return `<section class="sheetBacks" aria-label="${mixed ? 'Engravings' : 'Back engravings'}" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
       const png = previewCache.get(previewKey(b)) || previewUrl(b.preview || b.outputs?.png?.url || b.png);
       const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}${pieceWords(b) ? ' · ' + pieceWords(b) : ''}`;
       const front = b.face === 'front', dims = dimensions(b), label = (front ? 'Front: ' : 'Back: ') + (b.text || '') + ' — ' + identity + (front ? ' · front' : '');
-      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-approved-at="${+b.approvedAt || 0}" data-rid="${esc(b.order)}" ${front ? 'data-face="front" ' : ''}${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt=""></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
+      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-approved-at="${+b.approvedAt || 0}" data-rid="${esc(b.order)}" ${front ? 'data-face="front" ' : ''}${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt="">${mixed ? `<span class="backFace" aria-hidden="true">${front ? 'Front' : 'Back'}</span>` : ''}</button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
 
     }).join('')}</div></section>`;
   }

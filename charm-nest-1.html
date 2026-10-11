@@ -2204,6 +2204,7 @@ details.masterHist>summary{white-space:nowrap}
 .backPieces .backThumb:focus-visible{outline:2px solid var(--gold2);outline-offset:3px}
 .backPieces .backThumb img{position:absolute;display:block;width:100%;height:100%;object-fit:contain;border:0;border-radius:0}
 .backPending{font:9px var(--mono);color:var(--ink45)}.sheetBacks:empty{display:none}
+.backPieces .backFace{position:absolute;left:0;bottom:0;padding:0 2px;border-radius:0 2px 0 0;background:rgba(255,255,255,.88);color:var(--ink70);font:600 7px/1.3 var(--mono);letter-spacing:.02em;pointer-events:none}
 /* Empty shelves collapse. Populated shelves align to their responsive row. */
 .sheetCard>[data-r="backs"]{flex:0 0 auto;height:auto;min-height:0}
 .sheetCard>[data-r="backs"]:empty{display:none}
@@ -3228,14 +3229,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1"></script>
 <script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1"></script>
-<script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1"></script>
-<script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
+<script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1-eu3"></script>
+<script src="charm-nest-engraving-toggle.js?v=20261005-engtog1-eu3"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
@@ -6158,9 +6159,9 @@ function engKey(sh) {
 function engraveShelf(sh, el) {
   const ET = window.EngravingToggle; if (!ET) return;   // (without it the shelf simply stays shown, as before)
   const shelf = $(`[data-r="backs"]`, el), host = $(`[data-r="eng"]`, el); if (!shelf || !host) return;
-  const key = engKey(sh), n = ET.countIn(shelf);
-  if (!el._engTog) el._engTog = ET.mount(host, { sheetKey: key, count: n });
-  el._engTog.update(n, key); ET.follow(shelf, key);
+  const key = engKey(sh), n = ET.countIn(shelf), mx = !!(ET.mixedIn && ET.mixedIn(shelf));   // (n = engraving pictures: pieces x faces; mx = any front, so the words are "Engravings")
+  if (!el._engTog) el._engTog = ET.mount(host, { sheetKey: key, count: n, mixed: mx });
+  el._engTog.update(n, key, mx); ET.follow(shelf, key);
 }
 function renderCard(sh) {
   if (window.NestHold && NestHold.without(sh, () => renderCard(sh))) return;   // (drawn without the pieces still flying: NestHold)
@@ -7259,7 +7260,7 @@ boot();
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1"></script>
 <script src="charm-nest-repo-lock.js?v=20261011-rpu1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-eu3"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7307,7 +7308,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-eu3"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1-dr2"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
@@ -7325,7 +7326,7 @@ try {
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>
@@ -7335,16 +7336,16 @@ try {
 <!-- the Options window (Paul, 7 Oct): one large window for a sheet card's Options: This sheet, Partial sheets, Sheet history, All partial sheets (OptionsStudio) -->
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
 <script src="charm-nest-options-modal.js?v=20261007-os2-mn3-inc1-sn1"></script>
-<script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
+<script src="charm-nest-library-engraving.js?v=20261005-egl1-eu3"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2"></script>
-<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2"></script>
+<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2-eu3"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1-pow1"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3"></script>
 <script src="charm-nest-signins.js?v=20261006-st3"></script>
 <!-- the persistent Alert for password attempts on the Charm Repo Library: the master admin's login only, a pill at the right end of the top bar until he closes it (CharmNestRepoAlerts) -->
 <script src="charm-nest-repo-alerts.js?v=20261011-ra1"></script>

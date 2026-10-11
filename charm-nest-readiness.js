@@ -56,12 +56,12 @@
   function pieceFaces(d,b,fr){
     const fc=d && d.faces;
     const expF=!!(fc && fc.front && fc.front.needed!==false) || !!fr, expB=fc ? !!(fc.back && fc.back.needed!==false) || !!b : true;
-    const accepted=(!expB || faceAccepts(b,fc ? fc.back : d)) && (!expF || faceAccepts(fr,fc?.front));
-    return {b,fr,expB,expF,accepted,saved:(!expB || fileSaved(b)) && (!expF || fileSaved(fr))};
+    const aB=expB && faceAccepts(b,fc ? fc.back : d), aF=expF && faceAccepts(fr,fc?.front), sB=expB && fileSaved(b), sF=expF && fileSaved(fr);
+    return {b,fr,expB,expF,accepted:(!expB || aB) && (!expF || aF),saved:(!expB || sB) && (!expF || sF),aB,aF,sB,sF};
   }
   function sheet(s,options={}){
     const ids=idsOf(s), sid=s.id || s.sheetId, {backs,fronts}=recordsOf(s,sid);
-    let approved=0,waiting=0,saved=0,plain=0;
+    let approved=0,waiting=0,saved=0,plain=0,anyFront=false,fReq=0,fApp=0,fSaved=0;   // (f* = the same count by ENGRAVING, one per face: only reported when the sheet has a front)
     for(const id of ids){
       const d=s.engraving?.[id],b=backs.get(id),fr=fronts.get(id);
       const noBack=d && d.needed===false && d.approved===true && ['none','skipped'].includes(d.state);
@@ -69,6 +69,8 @@
       const f=pieceFaces(d,b,fr);
       if(f.accepted)approved++;else waiting++;
       if(f.saved && (b || fr))saved++;
+      if(f.expF || fr)anyFront=true;
+      fReq+=(f.expB?1:0)+(f.expF?1:0); fApp+=(f.aB?1:0)+(f.aF?1:0); fSaved+=(f.sB?1:0)+(f.sF?1:0);
     }
     // Missing identities are unresolved, never interpreted as plain charms.
     const unidentified=Math.max(0,(+s.placedCount || s.placements?.length || 0)-ids.length);waiting+=unidentified;
@@ -85,14 +87,19 @@
     };
     // a person's hold (Library move back to In progress, LibraryFlow) keeps every approval and seal but takes it out of Laser cutting
     const included=!s.draft && s.solidIncluded!==false && !s.archived && !held(s);
-    return {total,required,approved,waiting,saved,plain,saving:Math.max(0,approved-saved),stages,included,ready:included && Object.values(stages).every(Boolean)};
+    // a piece with both faces is ONE piece and TWO engravings: the words of a sheet with a front count engravings (`faces`), the gates keep counting pieces
+    const faces=anyFront ? {required:fReq+unidentified,approved:fApp,waiting:fReq+unidentified-fApp,saved:fSaved} : null;
+    return {total,required,approved,waiting,saved,plain,saving:Math.max(0,approved-saved),stages,included,ready:included && Object.values(stages).every(Boolean),...(faces?{faces}:{})};
   }
+  /** The engraving counts a person reads: by engraving (one per face) when a front exists anywhere in `r`, else the piece counts as ever. */
+  const engCounts=r=>r.faces || {required:r.required,approved:r.approved,waiting:r.waiting,saved:r.saved};
   function set(s,sheets){
     const unique=[...new Map((sheets || []).map(x=>[x.id || x.sheetId,x])).values()],reports=unique.map(sheet);
     const expected=s.sheetIds || unique.map(x=>x.id || x.sheetId),complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
     const stages=Object.fromEntries(['layout','front','approval','backs','qr','orders'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
     const rules=setRules(s,unique);
-    return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready) && rules.ok,rules,sheets:unique.length};
+    const faces=reports.some(r=>r.faces) ? Object.fromEntries(['required','approved','waiting','saved'].map(k=>[k,reports.reduce((n,r)=>n+engCounts(r)[k],0)])) : null;
+    return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready) && rules.ok,rules,sheets:unique.length,...(faces?{faces}:{})};
   }
   // Completion is proof that this saved sheet already passed through Laser cutting.
   // Reopening clears its current completion flag, not that approval. Blue readiness seals
@@ -373,7 +380,8 @@
   function seal(r,scope='Sheet',source){return '';}
   function counter(r,scope='Sheet',source){
     // A sheet with no engraved backs has nothing to count.
-    return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope,source);
+    const e=engCounts(r),what=r.faces?'engravings':'backs';
+    return (r.required ? `<span class="backSavedCount" title="${r.faces?'Engravings saved':'Engraved backs saved'}" aria-label="${e.saved} of ${e.required} ${what} saved"><b>${e.saved} / ${e.required}</b></span>` : '')+seal(r,scope,source);
   }
   /* ── explain: why a sheet or set is not in Laser cutting yet, in plain words ──────────────────────────────────────
    * The Library's step rail, its "what is left" line and its checklist read this, and the server may too: it is pure
@@ -471,11 +479,13 @@
       items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),part:'files',why:failed?`Its saved ${face} file failed its check: approve the ${face} again`:rec?.approvedAt?`Approved, and its ${face} file is still being saved`:`Approved, but its ${face} file is not saved yet`});
       if(failed){hard.engraving=true;failedFile=true;}
     }
-    if(unsaved.length>LISTED)items.engraving.push({kind:'sheet',id,label,part:'files',why:`${count(unsaved.length-LISTED,'more back file')} also wait to be saved`});
+    if(unsaved.length>LISTED)items.engraving.push({kind:'sheet',id,label,part:'files',why:`${count(unsaved.length-LISTED,r.faces?'more file':'more back file')} also wait to be saved`});
     ok.engraving=st.approval && st.backs;
-    const saving=`Saving back files: ${r.saved} of ${r.required}`;
-    detail.engraving=ok.engraving?(r.required?`Every back engraving is approved (${r.required} of ${r.required}).`:'No back engravings are needed on this sheet.'):!st.approval?`${count(r.waiting,'back engraving')} still ${r.waiting===1?'needs':'need'} approval (${r.approved} of ${r.required} approved).`:failedFile?`A saved back file failed its check: approve that back again (${r.saved} of ${r.required} saved).`:saving+'.';
-    short.engraving=!st.approval?`${count(r.waiting,'back engraving')} still ${r.waiting===1?'needs':'need'} approval`:failedFile?'a saved back file failed its check: approve that back again':lower(saving);
+    // (a sheet with a front says "engraving" and counts engravings, one per face; a back-only sheet keeps its words and its piece counts)
+    const e=engCounts(r),eng=r.faces?'engraving':'back engraving',bk=r.faces?'file':'back file',aw=r.faces?'that engraving':'that back';
+    const saving=`Saving ${r.faces?'':'back '}files: ${e.saved} of ${e.required}`;
+    detail.engraving=ok.engraving?(r.required?`Every ${eng} is approved (${e.required} of ${e.required}).`:`No ${eng}s are needed on this sheet.`):!st.approval?`${count(e.waiting,eng)} still ${e.waiting===1?'needs':'need'} approval (${e.approved} of ${e.required} approved).`:failedFile?`A saved ${bk} failed its check: approve ${aw} again (${e.saved} of ${e.required} saved).`:saving+'.';
+    short.engraving=!st.approval?`${count(e.waiting,eng)} still ${e.waiting===1?'needs':'need'} approval`:failedFile?`a saved ${bk} failed its check: approve ${aw} again`:lower(saving);
     // Order check: built on issues(): only an order with another piece holding it back is listed (a piece on this sheet, or an order of one piece, never is),
     // and the sheet's QR label (the stage `qr`, the QR label step until round 13): one label that covers every order on the sheet. A missing label is soft (the
     // press of Approve makes it), an incomplete one or one that leaves orders out is hard, exactly as before.
@@ -557,7 +567,7 @@
     if(lineMissing(s))return mk('nesting','roseLine','Green line needed');
     if(!(st.layout && st.front))return mk('nesting','layout',st.layout && !st.front?'Cutting files missing':'Layout not ready');
     if(!st.approval)return mk('engraving','approvalsNeeded','Approvals needed');
-    if(!st.backs)return mk('engraving','backFilesMissing','Saving back files');   // (the Engraving step since round 13: the saved files are part of it)
+    if(!st.backs)return mk('engraving','backFilesMissing',r.faces?'Saving files':'Saving back files');   // (the Engraving step since round 13: the saved files are part of it)
     if(!st.qr)return mk('orders','qrMissing','QR label not made yet');          // (the Order check step since round 13: the label covers every order on the sheet)
     return null;
   }
@@ -640,7 +650,7 @@
     s=s || {};
     const r=laserSheet(s);
     if(s.archived || +s.laserDoneAt>0 || r.ready)return null;
-    if(joinedNow(s) && r.waiting)return {step:'engraving',stepLabel:stepName('engraving'),why:`back engravings ${r.approved} of ${r.required}`,counter:{done:r.approved,of:r.required}};
+    if(joinedNow(s) && r.waiting){const e=engCounts(r);return {step:'engraving',stepLabel:stepName('engraving'),why:`${r.faces?'':'back '}engravings ${e.approved} of ${e.required}`,counter:{done:e.approved,of:e.required}};}
     if(laying(s))return {step:'nesting',stepLabel:stepName('nesting'),why:'still being laid out',counter:null};
     if(!joinedNow(s))return {step:'nesting',stepLabel:stepName('nesting'),why:s.draft?'still a draft':'not included in a set yet',counter:null};
     return null;
