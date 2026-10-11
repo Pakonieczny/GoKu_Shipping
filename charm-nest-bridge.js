@@ -2289,6 +2289,24 @@ const Master = window.Master = (() => {
   }
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
+  /* The Charm Repo is locked for everything that adds, removes, changes or hands out a charm file (Paul, 11 Oct 2026): ONE password
+     dialog (charm-nest-repo-lock.js), the token it returns rides in `repoToken` on the protected calls, and looking, searching and
+     "use this charm" never ask. Without the lock file these fail closed (nothing is called). */
+  const RLOCK = () => window.CharmNestRepoLock || null;
+  const guard = (action, ask, fn) => { const L = RLOCK(); return L ? L.call(action, ask, fn) : Promise.reject(new Error("The charm repo lock did not load: reload the page")); };
+  const upAsk = name => ({ what: `Adding ${name} to the charm repo.`, target: String(name).replace(/[“”]/g, ""), go: "Add", overwrite: reindexAll || undefined });
+  /** Ask for the upload password once, up front (before any heavy work); false when the person cancels. */
+  const unlockUpload = async name => { const L = RLOCK(); if (!L) { toast("The charm repo lock did not load: reload the page", "bad", 7000); return false; } return !!(await L.ensure("upload", upAsk(name))); };
+  /** The picked or dropped files: unlocked once for all of them, then indexed as before. */
+  async function addFiles(files) {
+    files = [...files || []]; if (!files.length) return;
+    if (!(await unlockUpload(files.length === 1 ? `“${files[0].name}”` : `${files.length} files`))) return;
+    for (const f of files) indexFile(f).catch(err => toast(err.message, "bad", 7000));
+  }
+  /** A Storage upload under charmnest/master/ with the upload token in its calls (a token that ran out on the way is asked for again). */
+  const upBytes = (path, bytes, type, label, name) => guard("upload", upAsk(name || path.split("/").pop()), tok => uploadBytes(path, bytes, type, label, { repoToken: tok }));
+  /** A protected call of the library function: the token in the body, a refusal asks once more. */
+  const repoApi = (action, ask, body, opts) => guard(action, ask, tok => api("charmNestLibrary", Object.assign({}, body, { repoToken: tok }), opts));
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
   /* A design's stored picture as a small <img>, for the lists that offer designs (the SKU picker). The page's COEP (require-corp) blocks
@@ -2450,6 +2468,8 @@ const Master = window.Master = (() => {
     return n >= 3 && n >= live.length * 0.2 ? n : 0;
   }
   async function indexFile(file) {
+    // locked: the upload password first (addFiles has usually asked already, so this finds the token), before any reading or tracing
+    if (!(await unlockUpload(`“${file && file.name ? file.name : "the file"}”`))) throw Object.assign(new Error("Not added: the charm repo password was not given"), { cancelled: true });
     // whatever the caller had to hand — a File from the picker or a drop, bytes already read, or a plain buffer
     const bytes = await (async () => {
       // `data` is what this app hands over. A File also answers to `bytes`, but there it is a method the browser added
@@ -2475,8 +2495,8 @@ const Master = window.Master = (() => {
       // the server route (a background function with about 1 GB) is opt-in by charm count; 0 keeps every master in this tab
       if (+S.settings.masterServerAbove > 0 && g.charms.length > +S.settings.masterServerAbove && S.cloud.ok) {
         say("MASTER", `over ${S.settings.masterServerAbove} charms — indexing on the server`);
-        const up = await uploadBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master");
-        const r = await api("charmNestLibrary", { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash) } });
+        const up = await upBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master", `“${file.name}”`);
+        const r = await repoApi("upload", upAsk(`“${file.name}”`), { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash) } });
         job.state = "server"; job.jobId = r.id;
         const t0 = Date.now(); let lastChange = Date.now(), lastSig = "";
         for (;;) { await sleep(3000); const j = await api("charmNestLibrary", { op: "getJob", id: r.id }); const d = j.job; if (!d) throw new Error("server job vanished");
@@ -2581,7 +2601,7 @@ const Master = window.Master = (() => {
     const one = async (c) => {
       const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
       let ai = null, png = null;
-      if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([uploadBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`), uploadBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png")]); }
+      if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([upBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`, `“${name}”`), upBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png", undefined, `“${name}”`)]); }
       const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
       try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry',{charm:{outline:c.outline,members:c.members,bbox:c.bbox,widthPt:c.widthPt,heightPt:c.heightPt}}) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if(!window.CharmNestBackground)G.backView(c, { res: 6, upAngle }); }
@@ -2599,12 +2619,12 @@ const Master = window.Master = (() => {
     job.entries = entries; job.blocked = blocked; job.written = entries.length;
     if (!S.cloud.ok) return;
     const replaces = [...new Set(B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash).concat(job.supersede || []))];
-    const r = await api("charmNestLibrary", { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
+    const r = await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
     job.conflicts = r.blocked || []; job.sizeMoved = r.sizeMoved || [];
     if ((r.pairKept || []).length) { const text = `${r.pairKept.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${r.pairKept.slice(0, 12).map(b => b.sku).join(", ")}${r.pairKept.length > 12 ? " …" : ""}`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     if (job.conflicts.length) agent({ master: masterHash }, "warn", `${name}: ${job.conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${job.conflicts.map(b => b.sku).join(", ")}`);
     if (job.sizeMoved.length) agent({ master: masterHash }, "warn", `${name}: ${job.sizeMoved.length} SKU(s) changed size by more than 5% since the last index: ${job.sizeMoved.map(b => b.sku).join(", ")}`);
-    await api("charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
+    await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
   }
   /** Members drawn on a "BACK KEEP-OUT" layer of the master are subtracted from the engraving mask. */
   const keepOutOf = c => c.members.filter(m => m.layer && /back\s*keep-?out/i.test(m.layer));
@@ -2613,8 +2633,20 @@ const Master = window.Master = (() => {
     for (const v of reads) { const c = v.charm; c.sku = v.sku; c.skuSize = v.size || null; c.labelSource = "vision"; c.labelConfidence = v.confidence; c.name = v.sku; v.confirmed = true; job.lab.labels.set(c.index, { sku: v.sku, size: v.size, seg: null }); job.lab.unlabelled = job.lab.unlabelled.filter(i => i !== c.index); }
     job.state = "writing"; render();
     await writeIndex(job);
-    for (const v of reads) await api("charmNestLibrary", { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
+    for (const v of reads) await repoApi("modify", { what: `Marking ${v.sku} as read by Claude and confirmed.`, target: v.sku, go: "Save" }, { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
     job.state = "done"; await load(true); settleJob(job); render();
+  }
+  /** One charm's .ai file, for a person to keep: the download password first (a download token), then the server's link, then the bytes are saved as <SKU>.ai. */
+  async function downloadCharm(sku, size, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await repoApi("download", { what: `Downloading ${sku}${size ? " · " + size : ""} (.ai) from the charm repo.`, target: sku + (size ? " " + size : ""), go: "Download" }, { op: "masterDownload", sku, ...(size ? { size } : {}) }, { label: `Preparing ${sku}.ai` });
+      if (!r || !r.url) throw new Error((r && r.error) || "the server sent no file link");
+      const bytes = await CharmNestAssets.bytes(r.url);
+      download(bytes, r.name || `${sku}${size ? "-" + size : ""}.ai`, "application/illustrator");
+      toast(`${sku}${size ? " · " + size : ""} saved`, "ok");
+    } catch (e) { if (!(e && e.cancelled)) toast(`${sku} was not downloaded — ${e.message}`, "bad", 7000); }
+    finally { if (btn) btn.disabled = false; }
   }
   /** The same patch on every SKU of one charm, with a single redraw. */
   /** Everything the run found, as a file: the lists are too long to read on screen but belong somewhere. */
@@ -2629,8 +2661,10 @@ const Master = window.Master = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 8000);
     toast("report saved", "ok");
   }
-  async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p, p.upAngle != null ? { upSource: "operator" } : {}); } render(); }
-  async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
+  /** A change to a charm in the repo: asks for the password when none is held (modify; an upload unlock serves too), then writes. */
+  const patchAsk = (skus, p) => ({ what: `Changing ${skus.length > 1 ? skus.length + " SKUs" : skus[0]} in the charm repo (${p.upAngle != null ? "up angle" : "facing" in p || "facings" in p ? "facing" : "blocked" in p ? "unblock" : "settings"}).`, target: skus.join(", "), go: "Save" });
+  async function patchMany(skus, p) { await guard("modify", patchAsk(skus, p), async tok => { for (const s of skus) await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p, repoToken: tok }); }); for (const s of skus) { const e = entryFor(s); if (e) Object.assign(e, p, p.upAngle != null ? { upSource: "operator" } : {}); } render(); }
+  async function patch(sku, p) { await guard("modify", patchAsk([sku], p), tok => api("charmNestLibrary", { op: "masterPatch", sku, patch: p, repoToken: tok })); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
   /** Every SKU the pulled orders want that no master file holds, newest pull first. */
   function missingSkus() {
     const out = new Map();
@@ -2659,7 +2693,7 @@ const Master = window.Master = (() => {
       '<button class="x" data-a="shut" title="close this \u2014 it stays closed">\u00d7</button></div>' +
       (B.missOpen ? '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
       (miss.length > 60 ? '<span class="s more">\u2026 and ' + (miss.length - 60) + ' more</span>' : "") + '</div>' +
-      '<div class="acts"><button class="btn ghost xs" data-a="copy">Copy the list</button><button class="btn ghost xs" data-a="save">Save as a file</button><button class="btn gold xs" data-a="add">Add a master file</button></div>' : "");
+      '<div class="acts"><button class="btn ghost xs" data-a="copy">Copy the list</button><button class="btn ghost xs" data-a="save">Save as a file</button><button class="btn gold xs" data-a="add" data-repo="upload">Add a master file</button></div>' : "");
     box.querySelector("[data-a=shut]").onclick = () => { B.missShut = true; paintMissing(v); };
     box.querySelector("[data-a=see]").onclick = () => { B.missOpen = !B.missOpen; paintMissing(v); };
     if (!B.missOpen) return;
@@ -2672,19 +2706,21 @@ const Master = window.Master = (() => {
     };
     box.querySelector("[data-a=add]").onclick = () => { const f = v.querySelector("#mFile"); if (f) f.click(); };
   }
-  function render() {
+  // every draw ends with the padlocks put right on the controls it made (closed until unlocked, open while a token is held)
+  function render() { try { return paint(); } finally { const v = document.getElementById("masterView"), L = RLOCK(); if (L && v && !v.classList.contains("hidden")) L.mark(v); } }
+  function paint() {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" title="index another master .ai into the charm library">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
         <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</details>
-        <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
+        <div id="mJobs" style="display:grid;gap:10px"></div><details class="noteBox masterHist" id="mHist"><summary id="mHistSum">Upload history</summary><div id="mFiles" style="display:grid;gap:10px"></div></details><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
       ["dragenter", "dragover"].forEach(ev => v.addEventListener(ev, e => { if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"))) return; e.preventDefault(); e.stopPropagation(); v.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
       ["dragleave", "drop"].forEach(ev => v.addEventListener(ev, () => v.classList.remove("dragOver")));
-      v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); for (const f of e.dataTransfer.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); });
-      v.querySelector("#mFile").onchange = e => { for (const f of e.target.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); e.target.value = ""; };
+      v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); addFiles([...e.dataTransfer.files]); });
+      v.querySelector("#mFile").onchange = e => { const picked = [...e.target.files]; e.target.value = ""; addFiles(picked); };   // (a file is picked first, then the password: the picker needs the click, the password dialog does not)
       v.querySelector("#mSearch").oninput = render;
       v.querySelector("#mAdd").onclick = () => v.querySelector("#mFile").click();
       load().then(render).catch(() => {});
@@ -2717,8 +2753,8 @@ const Master = window.Master = (() => {
       if (pending.length) {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
         pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img crossorigin="anonymous" src="${cors(x.image)}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img crossorigin="anonymous" src="${cors(x.charm.thumb)}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
-        const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button";
-        btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName() && !(await needEmployee("Kept with the labels you confirm."))) return; await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
+        const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button"; btn.dataset.repo = "upload";
+        btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!(await unlockUpload(`${reads.length} confirmed label${reads.length === 1 ? "" : "s"}`))) return; if (!employeeName() && !(await needEmployee("Kept with the labels you confirm."))) return; try { await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); } catch (e) { toast("The labels were not saved: " + e.message, "bad", 7000); } };
         card.append(head, tray, btn);
       }
       // a finished run is a line you can open; only what is still running stays open in front of you
@@ -2742,7 +2778,9 @@ const Master = window.Master = (() => {
     }
     const days = [...byDay.entries()];
     const num = (c, l) => (c != null ? c : (l || []).length);
-    files.innerHTML = days.map(([day, list], di) => {
+    // ALL the upload history sits under one small closed dropdown (Paul, 11 Oct): display only, nothing here is removed or changed by it
+    { const sum = v.querySelector("#mHistSum"); if (sum) { const nf = days.reduce((n, [, l]) => n + l.length, 0); sum.textContent = B.master.loadedAt ? `Upload history (${days.length})` : "Upload history"; sum.title = `${days.length} upload day${days.length === 1 ? "" : "s"} · ${nf} file${nf === 1 ? "" : "s"}`; } }
+    if (!days.length) files.innerHTML = `<div style="font-size:12px;color:var(--ink45)">${B.master.loadedAt ? "No master files indexed yet." : "Loading…"}</div>`; else files.innerHTML = days.map(([day, list], di) => {
       list.sort((a,b)=>CNListActivity.compare(a,b,CNListActivity.state("master").direction));
       const skus = list.reduce((n, f) => n + (f.skus ? f.skus.length : 0), 0);
       return `<details class="masterDay"${di === 0 ? " open" : ""}><summary>${esc(day)} · ${list.length} file${list.length === 1 ? "" : "s"} · ${skus} SKU line${skus === 1 ? "" : "s"}</summary>` +
@@ -2751,10 +2789,16 @@ const Master = window.Master = (() => {
           const u = num(f.unlabelledCount, f.unlabelled), o = num(f.orphanCount, f.orphans), b = num(f.blockedCount, f.blocked);
           return `<details class="masterFileRow"><summary><b>${esc(f.name || f.masterHash)}</b><span class="hash">${at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span><span>${f.labelled || 0} of ${f.charms || 0} labelled</span>${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}</summary>` +
             `<div class="fh" style="margin:6px 0 4px"><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span>${u ? `<span style="color:#8a3a26">${u} charm${u === 1 ? "" : "s"} with no SKU under ${u === 1 ? "it" : "them"}</span>` : ""}${o ? `<span style="color:#8a3a26">${o} line${o === 1 ? "" : "s"} with no charm above</span>` : ""}<span class="hash">${esc(f.indexedBy || "")}</span></div>` +
-            `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}">Remove every SKU from this file</button></details>`;
+            `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}" data-repo="delete">Remove every SKU from this file</button></details>`;
         }).join("") + `</details>`;
     }).join("");
-    files.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { if (!confirm("Remove every SKU indexed from this master file? Pool adds for them will fail until it is re-indexed.")) return; b.disabled = true; try { await api("charmNestLibrary", { op: "masterRemoveFile", masterHash: b.dataset.rm }); } catch (e) { b.disabled = false; toast("The SKUs were not removed: " + e.message, "bad", 7000); return; } await load(true).catch(() => {}); render(); });
+    // a removal asks for the password every time (a single-use token), and the confirmation is in that same dialog: no second pop-up
+    files.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
+      const hash = b.dataset.rm, rec = B.master.files.find(f => f.masterHash === hash), nm = (rec && rec.name) || hash.slice(0, 12);
+      b.disabled = true;
+      try { await repoApi("delete", { title: "Remove from the charm repo", message: `Remove every SKU indexed from “${nm}”? Pool adds for them will fail until it is re-indexed.`, target: `${nm} ${hash.slice(0, 12)}`, go: "Remove" }, { op: "masterRemoveFile", masterHash: hash }); }
+      catch (e) { b.disabled = false; if (!(e && e.cancelled)) toast("The SKUs were not removed: " + e.message, "bad", 7000); return; }
+      await load(true).catch(() => {}); render(); });
     const q = (v.querySelector("#mSearch").value || "").trim().toUpperCase();
     // One charm is one tile, whatever it is sold as. The same design carries several SKUs (the jewellery it goes into),
     // and they share one file in the library; the tile lists every one of them and the search matches any of them.
@@ -2785,8 +2829,8 @@ const Master = window.Master = (() => {
             ? `<div class="libEmpty">No indexed SKU contains &ldquo;${esc(raw)}&rdquo;.` +
               (wanted ? ` ${wanted.lines} piece(s) are waiting on it — the master file that carries it has not been indexed yet.` : ` Check the spelling, or index the master file that carries it.`) +
               `<br><button class="btn ghost sm" id="mClear" style="margin-top:10px">Show all ${designs.length} charm${designs.length === 1 ? "" : "s"}</button>` +
-              `<button class="btn gold sm" id="mEmptyAdd" style="margin:10px 0 0 6px">＋ Add a master file</button></div>`
-            : `<div class="libEmpty">No charms indexed yet — drop a master file here, or press Add.<br><button class="btn gold sm" id="mEmptyAdd" style="margin-top:10px">＋ Add a master file</button></div>`;
+              `<button class="btn gold sm" id="mEmptyAdd" data-repo="upload" style="margin:10px 0 0 6px">＋ Add a master file</button></div>`
+            : `<div class="libEmpty">No charms indexed yet — drop a master file here, or press Add.<br><button class="btn gold sm" id="mEmptyAdd" data-repo="upload" style="margin-top:10px">＋ Add a master file</button></div>`;
       const c2 = grid.querySelector("#mClear"); if (c2) c2.onclick = () => { const f = v.querySelector("#mSearch"); f.value = ""; f.focus(); render(); };
       const a2 = grid.querySelector("#mEmptyAdd"); if (a2) a2.onclick = () => v.querySelector("#mFile").click();
       const r2 = grid.querySelector("#mRetry"); if (r2) r2.onclick = () => { B.master.error = null; load(true).then(render).catch(() => render()); };
@@ -2800,7 +2844,7 @@ const Master = window.Master = (() => {
     const facesBox = (e, keys) => {
       const Pr = window.CharmNestPair, fc = Pr && Pr.facingControl ? Pr.facingControl(e, e.sym ? "" : heldSym(e)) : null;
       if (!fc || !fc.show) return "";
-      const box = (value, options, extra) => `<select data-faces="${keys}"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+      const box = (value, options, extra) => `<select data-faces="${keys}" data-repo="modify"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
       return fc.bodies ? fc.bodies.map(bd => box(bd.value, bd.options, ` data-body="${bd.index}"`)).join("") : box(fc.value, fc.options);
     };
     grid.innerHTML = shown.map(d => {
@@ -2816,29 +2860,33 @@ const Master = window.Master = (() => {
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
-        `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
+        `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
         facesBox(e, keys) +
-        (blocked ? `<button class="btn ghost xs" data-unblock="${keys}">unblock</button>` : "") +
-        (e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>`
-                 : sizes.filter(([, s]) => s && s.aiUrl).map(([k, s]) => `<a class="btn ghost xs" href="${s.aiUrl}" target="_blank" rel="noopener">${esc(k)}.ai</a>`).join("")) +
+        (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
+        (e.aiUrl ? `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-repo="download" title="download this charm's .ai file (asks for your password)">.ai</button>`
+                 : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-size="${esc(k)}" data-repo="download" title="download this charm's .ai file (asks for your password)">${esc(k)}.ai</button>`).join("")) +
         `</div></div>`;
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
     mountMasterPreviews(grid);
     // a charm's settings belong to the charm, so they are written to every SKU that shares it
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
     // a failed save says so (it used to fail in silence, the typed angle standing in the box as if kept)
-    each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => toast(`${skus.join(", ")}: up angle not saved — ${e.message}`, "bad", 7000)); });
+    // (locked: the changing boxes ask for the password before the first touch; a refusal puts the old word back and says it was not saved)
+    const L = RLOCK(), notSaved = (e, skus, what) => e && e.cancelled ? toast(`${skus.join(", ")}: ${what} not saved — the repo stayed locked`, "", 4000) : toast(`${skus.join(", ")}: ${what} not saved — ${e.message}`, "bad", 7000);
+    each("up", (inp, skus) => { if (L) L.gate(inp, "modify", () => patchAsk(skus, { upAngle: 0 })); inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok"), e => { inp.value = inp.defaultValue; notSaved(e, skus, "up angle"); }); }; });
     // saved to every SKU that shares the charm, like the up angle; "" gives the word back (the drawing is taken as the Left again). The pieces of orders already made up are not changed.
-    each("faces", (sel, skus) => { let was = sel.value; sel.onchange = () => {
+    each("faces", (sel, skus) => { let was = sel.value; if (L) L.gate(sel, "modify", () => patchAsk(skus, { facing: null })); sel.onchange = () => {
       const v2 = sel.value, two = sel.dataset.body != null;   // (a mismatched pair has one box per body: both words are saved together, body 0 is also `facing`)
       const words = two ? [...sel.parentNode.querySelectorAll("select[data-faces][data-body]")].sort((x, y) => x.dataset.body - y.dataset.body).map(x => x.value || null) : null;
       const patch = two ? { facing: words[0], facings: words.some(Boolean) ? words : null } : { facing: v2 === "" ? null : v2 };
       const say = two ? `left body ${words[0] === "L" ? "faces left" : words[0] === "R" ? "faces right" : "not set"}, right body ${words[1] === "L" ? "faces left" : words[1] === "R" ? "faces right" : "not set"}` : v2 === "L" ? "faces left" : v2 === "R" ? "faces right" : v2 === "X" ? "reads one way (no longer used: earrings are always mirrored)" : "facing not set (the drawing is the Left)";
       sel.disabled = true;
-      patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; toast(`${skus.join(", ")}: facing not saved — ${e.message}`, "bad", 7000); }); }; });
-    each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
+      patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; notSaved(e, skus, "facing"); }); }; });
+    each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; if (e && e.cancelled) toast(`${skus.join(", ")} not unblocked — the repo stayed locked`, "", 4000); else toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
+    // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
+    each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
   }
-  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */

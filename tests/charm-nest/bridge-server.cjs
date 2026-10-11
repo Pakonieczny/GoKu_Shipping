@@ -192,6 +192,12 @@ function fakeAdmin(st, base) {
 async function start(opts = {}) {
   const st = makeState(opts);
   const servers = [];
+  /* The Charm Repo is locked for uploads, removals, changes and downloads (charm-nest-repo-lock.js): the page asks for a password and keeps
+     the token it is given in sessionStorage. A test that is not about the lock must not wait for a person, so the sorter page is served
+     with an unlock token already in its tab's sessionStorage (`other` serves every upload / change / download; a delete is never held).
+     The token is made new each run and is the fake server's (st.repoToken, srv.repoToken); { repoSeed: false } serves the page locked. */
+  const repoToken = 'tt-' + crypto.randomBytes(12).toString('hex'); st.repoToken = repoToken;
+  const repoSeed = opts.repoSeed === false ? '' : `<script>try{var k='cn.repoLock.v1';if(!sessionStorage.getItem(k))sessionStorage.setItem(k,JSON.stringify({other:{t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}}))}catch(_){}</script>`;
   const handler = (base) => async (req, res) => {
     try {
       if (req.method === 'OPTIONS') return json(res, 204, {});
@@ -203,6 +209,7 @@ async function start(opts = {}) {
       if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404, { 'Access-Control-Allow-Origin': '*' }); return res.end(); }
       const headers = { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' };
       if (p === '/design-1.html') headers['Content-Security-Policy'] = `frame-ancestors 'self' ${opts.sorterOrigin || 'http://127.0.0.1:*'} http://localhost:* http://127.0.0.1:*`;
+      if (repoSeed && path.basename(f) === 'charm-nest-1.html') { res.writeHead(200, headers); return res.end(fs.readFileSync(f, 'utf8').replace(/<head[^>]*>/i, m => m + repoSeed)); }
       res.writeHead(200, headers); fs.createReadStream(f).pipe(res);
     } catch (e) { json(res, 500, { error: e.message }); }
   };
@@ -228,7 +235,7 @@ async function start(opts = {}) {
   anthro.callClaudeRaw = async (o) => { const sys = (o.system && o.system[0] && o.system[0].text) || ''; const mode = /Grade EVERY numbered charm/.test(sys) ? 'packing' : /engraver and decide/.test(sys) ? 'engraveIntent' : /rendered BACK/.test(sys) ? 'engraveReview' : /strip directly BELOW/.test(sys) ? 'labelRead' : /quality reviewer/.test(sys) ? 'grouping' : /final inspector/.test(sys) ? 'layout' : 'name'; const fn = st.agentResults[mode]; const text = JSON.stringify(typeof fn === 'function' ? fn(o) : (fn || defaultAgent(mode, o))); return { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text }] }; };
   process.env.ANTHROPIC_API_KEY = 'test';
   st.handlers = handlers; st.admin = admin; st.db = admin.firestore();   // (a test may read through the real functions' own db: the order timeline's derivation)
-  return { st, sorterOrigin, stationOrigin, close: () => { servers.forEach(s => s.close()); Module._load = realLoad; }, blobUrl: p => tokenUrl(stationOrigin, p) };
+  return { st, sorterOrigin, stationOrigin, repoToken, close: () => { servers.forEach(s => s.close()); Module._load = realLoad; }, blobUrl: p => tokenUrl(stationOrigin, p) };
 }
 function defaultAgent(mode, o) {
   if (mode === 'engraveIntent') { const txt = String(o.messages[0].content[0].text); const m = /Personalisation field: (\[.*?\])/.exec(txt); let pers = []; try { pers = JSON.parse(m ? m[1] : '[]'); } catch (_) {} const engrave = pers.length > 0; return { engrave, text: pers.join('\n'), source: engrave ? 'personalization' : 'none', sourceQuote: pers[0] || '', requests: { side: 'back', font: null, handwriting: false, image: false }, questions: [], confidence: engrave ? 0.97 : 0.95 }; }
