@@ -560,7 +560,7 @@
     if (opts.keepOut && opts.keepOut.length) m = subtract(m, polysOfSegs(opts.keepOut.map(k => transformSeg(transformSeg(k, view.M), view.R))));
     // the FRONT keeps its words off the design's own engraved art (opts.avoid: more segments to keep clear; the closed or filled shapes the cut view dropped are always kept clear)
     if (view.face === "front") {
-      const art = (view.dropped || []).filter(d => d && (d.closed || d.fill)).concat(opts.avoid || []);
+      const art = (view.dropped || []).filter(d => d && (d.closed || d.fill) && !/back\s*keep-?out/i.test(d.layer || "")).concat(opts.avoid || []);   // (a BACK keep-out layer keeps the back's words off a place; the front's words may go there)
       if (art.length) m = subtract(m, polysOfSegs(art.map(k => transformSeg(transformSeg(k, view.M), view.R))));
     }
     const rPx = opts.marginMm * PT_PER_MM * m.res;

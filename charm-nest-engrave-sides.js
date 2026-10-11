@@ -154,7 +154,7 @@
       slot: { value: slot || null, enumerable: true, configurable: true },
       side: { value: slot === 'L' || slot === 'R' ? slot : null, enumerable: true, configurable: true },
       parentRow: { value: parent, enumerable: false, configurable: true },
-      poolIds: { get() { return idsOfSlot(ctx, parent, slot); }, enumerable: true, configurable: true },
+      poolIds: { get() { return slot ? idsOfSlot(ctx, parent, slot) : (parent && Array.isArray(parent.poolIds) ? parent.poolIds.slice() : []); }, enumerable: true, configurable: true },   // (no slot: the whole line's pieces, as the job under the line key always had; only a front job or the back of a line with a front gets such a row)
       engrave: { get() { return job.engraveRec; }, set(v) { job.engraveRec = v; }, enumerable: true, configurable: true }
     });
     if (face === 'front') Object.defineProperty(row, 'face', { value: 'front', enumerable: true, configurable: true });   // (a back row has no `face`: the row is what it always was)

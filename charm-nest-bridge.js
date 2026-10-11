@@ -1676,7 +1676,7 @@ const Orders = window.Orders = (() => {
       // whose record was never written (Readiness.copyIds) and names the ear in its refusals. A line pooled before the rule carries neither.
       ...(row.groupSize > 1 ? { groupSize: row.groupSize } : {}), ...(row.spec && row.spec.pair && Array.isArray(row.spec.pair.sides) && row.spec.pair.sides.some(x => x === "L" || x === "R") ? { sides: row.spec.pair.sides.slice(0, 400).map(x => x === "L" || x === "R" ? x : "") } : {}),
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
-      activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
+      activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, ...(row.engravingOverride ? { engravingOverride: row.engravingOverride } : {}), problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}),   // (released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
@@ -1698,7 +1698,7 @@ const Orders = window.Orders = (() => {
     O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
-      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
+      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, ...(l.engravingOverride ? { engravingOverride: l.engravingOverride } : {}), fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
      in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
@@ -2648,7 +2648,7 @@ const Master = window.Master = (() => {
     await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
   }
   /** Members drawn on a "BACK KEEP-OUT" layer of the master are subtracted from the engraving mask. */
-  const keepOutOf = c => c.members.filter(m => m.layer && /back\s*keep-?out/i.test(m.layer));
+  const keepOutOf = (c, face) => c.members.filter(m => m.layer && (face === "front" ? /front\s*keep-?out/i : /back\s*keep-?out/i).test(m.layer));   // (face "front": the FRONT KEEP-OUT layer, subtracted from the front's words only)
   /** A person confirms Claude's read of an outlined label: the charm gets that SKU and is written like any labelled one. */
   async function confirmVision(job, reads) {
     for (const v of reads) { const c = v.charm; c.sku = v.sku; c.skuSize = v.size || null; c.labelSource = "vision"; c.labelConfidence = v.confidence; c.name = v.sku; v.confirmed = true; job.lab.labels.set(c.index, { sku: v.sku, size: v.size, seg: null }); job.lab.unlabelled = job.lab.unlabelled.filter(i => i !== c.index); }
@@ -2936,7 +2936,7 @@ const Pool = window.Pool = (() => {
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
     const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null, usedAt: Date.now() };
-    Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
+    Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm), frontKeepOut: Master.keepOutOf(charm, "front") });
     // a design that draws two DIFFERENT bodies under one label (a mismatched pair, charm-nest-pair.js) also gets one charm per body
     // which way the drawing faces, when a person set it on the master record (charm-nest-pair.js facingOf reads these two): decides which piece of a pair is the mirror image
     { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the old "reads one way" word; it no longer stops a Right being turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
@@ -2963,7 +2963,7 @@ const Pool = window.Pool = (() => {
       const made = bodies.map((b, i) => Object.assign({}, charm, { outline: b.outline, members: b.members.slice(), bbox: b.bbox.slice(), extras: (charm.extras || []).filter(x => b.members.includes(x)), topIndices: [...tops[i]], id: `${src.id}:b${i}`, bodyIndex: i, side: Pair.sideOf(i, 2) }));
       delete made[0].frontAt; delete made[1].frontAt;
       await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
-      for (const c of made) c.backKeepOut = Master.keepOutOf(c);
+      for (const c of made) { c.backKeepOut = Master.keepOutOf(c); c.frontKeepOut = Master.keepOutOf(c, "front"); }
       if (made[0].hash === made[1].hash) throw new Error("both bodies trace to one shape");
       return (src.bodies = made);
     } catch (e) { src.bodies = null; agent({ pool: true }, "warn", `${src.sku}: its two bodies could not be told apart (${e.message}) — kept as one piece`); return null; }
@@ -2986,7 +2986,7 @@ const Pool = window.Pool = (() => {
       const made = bodies.map((b, i) => Object.assign({}, charm, { outline: b.outline, members: b.members.slice(), bbox: b.bbox.slice(), extras: (charm.extras || []).filter(x => b.members.includes(x)), topIndices: [...tops[i]], id: `${src.id}:s${i}`, oneBody: i }));
       for (const c of made) delete c.frontAt;
       await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
-      for (const c of made) c.backKeepOut = Master.keepOutOf(c);
+      for (const c of made) { c.backKeepOut = Master.keepOutOf(c); c.frontKeepOut = Master.keepOutOf(c, "front"); }
       return (src.solo = made);
     } catch (e) { src.solo = null; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
     finally { src.soloChecked = true; }
@@ -3297,7 +3297,7 @@ const Pool = window.Pool = (() => {
     const made = Object.assign({}, whole, geo, { id: `${src.id}:${i}m`, bodyIndex: i, mirror: true });
     delete made.frontAt; made.pinned = null;
     await P.buildSilhouettes(src.parsed, [made], +S.settings.silhouetteRes || 6);
-    made.backKeepOut = Master.keepOutOf(made);
+    made.backKeepOut = Master.keepOutOf(made); made.frontKeepOut = Master.keepOutOf(made, "front");
     (src.mirrors || (src.mirrors = {}))[i] = made;
     return made;
     });
@@ -5130,6 +5130,9 @@ const Engrave = window.Engrave = (() => {
       // a font the buyer wrote in the note ("font: Pristina", "Angelina font") is read like a drop-down word when no drop-down or listing rule settled the font (spelling and case aside)
       const noted = !p.mapped && job.requests && job.requests.font ? O.fontOfPhrase(job.requests.font) : "";
       if (noted) p = { id: noted, asked: String(job.requests.font), mapped: true, listing: false, source: "note" };
+      // a font word the buyer gave FOR THIS FACE ("front - W (Ace)") outranks the line's font (Faces.setupOf: setup[face].fontWord)
+      const faceFont = job.faceFontWord ? O.fontOfPhrase(job.faceFontWord) : "";
+      if (faceFont) p = { id: faceFont, asked: String(job.faceFontWord), mapped: true, listing: false, source: "face" };
       job.fontKey = p.id; job.fontAsked = p.asked; job.fontMapped = p.mapped; job.fontListing = p.listing; job.fontFromNote = p.source === "note";
     }
     if (job.fontKey !== O.DEFAULT_FONT) {
@@ -5152,21 +5155,26 @@ const Engrave = window.Engrave = (() => {
     if (byHand && job?.mask) { const h = job.mask.hPt || job.mask.h / job.mask.res, w = job.mask.wPt || job.mask.w / job.mask.res; o.maxHeightFrac = 4 * Math.max(w, h) / h; }
     return o; };
   const items = () => B.engrave.items;
+  /** What a face's file says of itself: the BACK's is as the setting asks (as seen from behind, or the front's coordinates); the FRONT's is always as seen from the front (nothing is turned over). */
+  const fileViewOf = job => (isFront(job) ? "asSeenFromFront" : S.settings.backFileView || "asSeenFromBack");
+  const faceWord = job => (isFront(job) ? "front" : "back");
   /* the charm as THIS piece is cut: the Right earring is the Left mirrored (charm-nest-engrave-sides.js pieceCharm), so its fit, back view and back file are made on that; any other piece gets its charm back unchanged */
   const pieceCharmOf = (poolId, charm, hint) => { const S_ = window.CharmNestEngraveSides; return S_ && charm ? S_.pieceCharm(sidesCtx, poolId, charm, hint) : charm; };
   const charmFor = job => job.editCharm || pieceCharmOf(job.copies[0], Pool.charmOf(job.copies[0]), { slot: job.slot, side: job.row && job.row.side });
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
   let openingBack = null, openingBackId = null;
-  async function openBack(poolId, sheetId) {
+  async function openBack(poolId, sheetId, face) {
+    face = face === "front" ? "front" : "back";   // (the saved FRONT of a piece is opened the same way: openBack(poolId, sheetId, "front"))
+    const rk = recKeyFor(poolId, { face });
     // a press on another back while one is opening says so (it used to be dropped without a word)
-    if (openingBack) { if (poolId !== openingBackId) toast("Another back is still opening · press again in a moment", "", 3500); return openingBack; }
-    openingBackId = poolId;
+    if (openingBack) { if (rk !== openingBackId) toast(`Another ${face} is still opening · press again in a moment`, "", 3500); return openingBack; }
+    openingBackId = rk;
     openingBack = (async()=>{
       if (!poolId || !sheetId) throw new Error("This preview is missing its saved charm identity");
       const {sheet:d}=await api("charmNestLibrary",{op:"getSheet",id:sheetId},{label:"Opening back engraving"});
-      const saved=(d?.backPool || []).find(b=>b.poolId===poolId);
+      const saved=(d?.backPool || []).find(b=>b.poolId===poolId && faceOf(b)===face);
       if (!saved || !(d.poolIds || []).includes(poolId)) throw new Error("This charm moved or its engraving changed. Refresh the Library and reopen it.");
-      const existing=[...items().values()].find(j=>!j.editingBack && j.copies.includes(poolId));
+      const existing=[...items().values()].find(j=>!j.editingBack && j.copies.includes(poolId) && faceOf(j)===face);
       let charm=Pool.charmOf(poolId);
       const savedCharm=(d.charms || []).find(c=>c.poolId===poolId);
       if (!charm) {
@@ -5183,15 +5191,15 @@ const Engrave = window.Engrave = (() => {
       const sheet=Object.assign({},d,{sheetId:d.id,seq:d.setSeq,backPool:d.backPool || [],fileBase:d.fileBase || d.folder,
         folderPath:d.outputs?.ai?.path?.replace(/\/[^/]+$/,"")});
       if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
-      const row=existing ? {...existing.row,engrave:{...existing.row.engrave},poolIds:[poolId]} : {key:"back:"+poolId,state:"written",poolIds:[poolId],order:{receiptId:saved.order},line:{transactionId:saved.transactionId,sku:saved.sku},spec:{designSku:saved.sku,personalization:[saved.text || ""]},engrave:{needed:true,state:"review"}};
-      const job={key:"back:"+poolId,row,copies:[poolId],editingBack:true,editSheet:sheet,editCharm:charm,editOriginal:saved,expectedApprovedAt:saved.approvedAt,engravingSeals:CNEngravingSeals.merge(saved),
+      const row=existing ? {...existing.row,engrave:{...existing.row.engrave},poolIds:[poolId]} : {key:"back:"+rk,state:"written",poolIds:[poolId],order:{receiptId:saved.order},line:{transactionId:saved.transactionId,sku:saved.sku},spec:{designSku:saved.sku,personalization:[saved.text || ""]},engrave:{needed:true,state:"review"}};
+      const job={key:"back:"+rk,...(face==="front" ? {face:"front"} : {}),row,copies:[poolId],editingBack:true,editSheet:sheet,editCharm:charm,editOriginal:saved,expectedApprovedAt:saved.approvedAt,engravingSeals:CNEngravingSeals.merge(saved),
         fontKey:O.fontOfRecord(saved),fontAsked:saved.fontAsked || "",fontLocked:true,   // (a back that is edited stays in the font it was written in)
         lineGap:saved.lineGap ?? .18,lineMode:saved.lineMode || "preserve",lineInput:saved.lineInput || saved.lines, state:"review",text:saved.text || "",lines:saved.lines?.length ? saved.lines.slice() : String(saved.text || "").split("\n"),
-        solidBack:!!saved.solidBack,source:saved.source || "personalization",quote:saved.sourceQuote || null,confidence:1,questions:[],requests:{side:"back"},backs:[],t:Date.now(),materialVersion:2};
+        solidBack:!!saved.solidBack,source:saved.source || "personalization",quote:saved.sourceQuote || null,confidence:1,questions:[],requests:{side:face},backs:[],t:Date.now(),materialVersion:2};
       await loadFonts(); if(!F_.ok) throw new Error("Engraving font is unavailable");
       await ensureJobFont(job);   // (the font the back was saved in, from its record: job.fontKey is set from it above)
-      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,solidBack:job.solidBack});
-      job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm.backKeepOut || []});
+      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,solidBack:job.solidBack,...(face==="front" ? {face:"front"} : {})});
+      job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(face==="front" ? charm.frontKeepOut : charm.backKeepOut) || []});
       const font=fontFor(saved.weight,job),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
@@ -5215,13 +5223,21 @@ const Engrave = window.Engrave = (() => {
     for(const p of allSheets()) if(p.sheetId===d.id) {p.backPool=d.backPool || [];p.backOutputs=d.backOutputs || null;if(p.recalled) Object.assign(p.recalled,{backPool:p.backPool,backs:p.backPool});}
     for(const r of S.library.rows) if(r.id===d.id) Object.assign(r,{backPool:d.backPool || [],backs:d.backPool || [],backCount:(d.backPool || []).length});
     if(["written","skipped"].includes(job.state)) {
-      for(const other of items().values()) if(other!==job && other.copies.includes(job.copies[0])) {
+      const taken=[];
+      for(const other of items().values()) if(other!==job && other.copies.includes(job.copies[0]) && faceOf(other)===faceOf(job)) {   // (the piece's other face keeps its own job)
+        taken.push(other);
         other.copyOverrides=[...new Set([...(other.copyOverrides || []),job.copies[0]])];
         other.copies=other.copies.filter(id=>id!==job.copies[0]);other.backs=(other.backs || []).filter(b=>b.poolId!==job.copies[0]);
         if(!other.copies.length) {other.state="written";Review.remove("eng:"+other.key);}
       }
       const row=Orders.rows().find(r=>r.poolIds.includes(job.copies[0]));
-      if(row){
+      if(row && jobsOf(row).some(isFront)) {
+        // a line with a front: the line's record is the summary of its jobs, so only the job of THIS face takes the new words and seal (a write to the line would reach both faces)
+        for(const o of taken) if(o.engraveRec) {
+          o.engraveRec={...o.engraveRec,seals:CNEngravingSeals.merge(o.engraveRec,job)};
+          if(o.row.poolIds.length===1) Object.assign(o.engraveRec,{text:job.text,state:job.state,needed:job.state!=="skipped",approved:true,approvedBy:job.approvedBy,approvedAt:job.approvedAt,decidedBy:job.decidedBy,decidedAt:job.decidedAt});
+        }
+      } else if(row){
         row.engrave={...(row.engrave || {}),seals:CNEngravingSeals.merge(row.engrave,job)};
         if(row.poolIds.length===1) Object.assign(row.engrave,{text:job.text,state:job.state,needed:job.state!=="skipped",approved:true,approvedBy:job.approvedBy,approvedAt:job.approvedAt,decidedBy:job.decidedBy,decidedAt:job.decidedAt});
       }
@@ -5238,34 +5254,80 @@ const Engrave = window.Engrave = (() => {
   const sidesCtx = { poolRow: id => B.pool.rows.get(id), charmOf: id => Pool.charmOf(id), entryFor: sku => Master.entryFor(sku), get pair() { return window.CharmNestPair || null; }, mergeSeals: (...r) => CNEngravingSeals.merge(...r) };
   const SLOT_PROBE = [null, "L", "R"].concat(Array.from({ length: 24 }, (_, i) => "D" + (i + 1)));
   const lineOf = row => (row && row.parentRow) || row;
-  const slotKey = (row, slot) => (slot ? `${row.key}#${slot}` : row.key);
-  /** Every job of one line: the line's own, or one for each of its slots (a few map reads, no scan). */
-  function jobsOf(row) { row = lineOf(row); if (!row) return []; const out = []; for (const s of SLOT_PROBE) { const j = items().get(slotKey(row, s)); if (j) out.push(j); } return out; }
+  /* FRONT + BACK (plans/front-back-1011/CONTRACT.md): a piece may be engraved on both faces. A FRONT job is one more job of the line (`job.face === "front"`, key `<line>[#slot]~front`) with
+     its own side row, record, words, fit, approval, seals and file; every job without a `face` is the BACK, exactly as it always was. */
+  const FACES = () => window.CharmNestEngraveFaces || null;
+  const faceOf = x => { const F = FACES(); return F ? F.faceOf(x) : "back"; };
+  const isFront = x => faceOf(x) === "front";
+  const slotKey = (row, slot, face) => (face === "front" && FACES() ? FACES().jobKey(row.key, slot, "front") : slot ? `${row.key}#${slot}` : row.key);
+  /** Every job of one line, all faces: the line's own, or one for each of its slots (a few map reads, no scan). Slot by slot, Front before Back. `o.face`: one face's jobs only. */
+  function jobsOf(row, o) {
+    row = lineOf(row); if (!row) return []; const out = [], F = FACES();
+    for (const s of SLOT_PROBE) { if (F) { const f = items().get(slotKey(row, s, "front")); if (f) out.push(f); } const j = items().get(slotKey(row, s)); if (j) out.push(j); }
+    return o && o.face ? out.filter(j => faceOf(j) === o.face) : out;
+  }
+  /** One face's jobs of a line (the back's by default). */
+  const pieceJobsOf = (row, face = "back") => jobsOf(row, { face });
+  /** How many PIECES a line has (distinct slots): the "of" of "Disc 2 of 3". A piece with a front and a back counts once; jobsOf(row).length would count it twice. */
+  const pieceCountOf = row => { const js = jobsOf(row), F = FACES(); return F ? F.pieceCount(js) : js.length; };
+  /** The front and the back job of one piece (slot null: the whole line). */
+  const faceJobs = (row, slot) => { const F = FACES(); return F ? F.faceJobs(jobsOf(row), slot || null) : { front: null, back: jobsOf(row).find(j => (j.slot || null) === (slot || null)) || null }; };
   /** The job of a row. A side row gives its own. A line with one job gives it; a line cut into slots gives the one named (`which`: a slot or a pool id) or, for
-   *  a caller that shows the line as one, the first still to settle. */
-  const jobOf = (row, which) => {
+   *  a caller that shows the line as one, the first still to settle. A line with a front job: `face` picks the face (the front's, the back's); without it the face still to settle, else the back. */
+  const jobOf = (row, which, face) => {
     if (!row) return null;
     if (row.parentRow) return items().get(row.key) || null;
-    const whole = items().get(row.key);
-    if (whole) return whole;
-    const S = SIDES(); if (!S) return null;
-    const jobs = jobsOf(row); if (!jobs.length) return null;
-    if (which) { const slot = SLOT_PROBE.includes(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
-    return jobs.find(j => !DECIDED.includes(j.state) && j.state !== "none") || jobs[0];
+    const F = FACES(), faced = F ? jobsOf(row).some(isFront) : false;
+    if (!faced && !face) {
+      const whole = items().get(row.key);
+      if (whole) return whole;
+      const S = SIDES(); if (!S) return null;
+      const jobs = jobsOf(row); if (!jobs.length) return null;
+      if (which) { const slot = SLOT_PROBE.includes(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
+      return jobs.find(j => !DECIDED.includes(j.state) && j.state !== "none") || jobs[0];
+    }
+    const S = SIDES(), jobs = jobsOf(row); if (!jobs.length) return null;
+    let cands = jobs;
+    if (which) { const slot = SLOT_PROBE.includes(which) ? which : (S ? S.slotOfId(sidesCtx, row, which) : null); cands = jobs.filter(j => (j.slot || null) === (slot || null)); }
+    if (face) return cands.find(j => faceOf(j) === face) || null;
+    return cands.find(j => !DECIDED.includes(j.state) && j.state !== "none") || cands.find(j => faceOf(j) === "back") || cands[0] || null;
   };
   const newJob = (key, row) => ({ key, row, lineGap:.216, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() });
-  function ensureOne(row, slot) {
-    const key = slotKey(row, slot); let j = items().get(key);
-    if (!j) { j = newJob(key, row); if (slot) Object.assign(j, { slot, rowKey: row.key, groupKey: String(row.order && row.order.receiptId || "") + ":" + String(row.line && row.line.transactionId || "") }); items().set(key, j); }
-    if (slot) { if (!j.row || j.row.parentRow !== row) j.row = SIDES().sideRow(sidesCtx, row, slot, j); }
+  /** One job of a line for (slot, face), made when missing. A front job always has a side row of its own; so does the back of a line that has a front (`linked`): their records and seals never mix. */
+  function ensureOne(row, slot, face, linked) {
+    const front = face === "front", key = slotKey(row, slot, face); let j = items().get(key), created = false;
+    const grp = String(row.order && row.order.receiptId || "") + ":" + String(row.line && row.line.transactionId || "");
+    if (!j) { created = true; j = newJob(key, row); if (front) j.face = "front"; if (slot) Object.assign(j, { slot, rowKey: row.key, groupKey: grp }); else if (front || linked) Object.assign(j, { rowKey: row.key, groupKey: grp }); items().set(key, j); }
+    if (slot || front || linked) {
+      if (!j.row || j.row.parentRow !== row) {
+        // (a back job that was the whole line, its record kept on the line's own row, takes that record with it to its own side row)
+        const own = !created && !slot && !front ? row.engrave : undefined;
+        if (!slot && !front) { j.rowKey = row.key; j.groupKey ||= grp; j.linked = true; }
+        j.row = SIDES().sideRow(sidesCtx, row, slot, j);
+        if (own && typeof own === "object" && !j.engraveRec) j.engraveRec = Object.assign({}, own);
+      }
+    }
     j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id));
     return j;
   }
+  /** The jobs a line should have for its engraving setup (Faces.setupOf: the intake's reading under a person's choice), or null for a line that engraves the back only: that line runs the code it always ran. */
+  function faceWant(row, pl, have) {
+    const F = FACES(); if (!F) return null;
+    const setup = F.setupOf(row), anyFront = have.some(isFront);
+    if (!anyFront && !setup.faces.includes("front")) return null;
+    // a line that is over (committed, gone) gets no new job; the jobs it has stay
+    if (O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return have.map(j => ({ slot: j.slot || null, face: faceOf(j) }));
+    return F.planFaces(setup, pl.slots);
+  }
+  /** A job nobody has touched: not decided, no person's words, no move. A face the setup no longer asks for goes only when it is this. */
+  const untouched = j => ["classify", "reclassify", "words", "ready", "blocked", "fitting", "review"].includes(j.state) && !j.decision && !j.nudged && !j.fontLocked && !j.approvedAt && !j.approvalIntent;
   /** All the jobs of a line (made when missing): [the one job] for a line that is not cut into slots. */
   function ensureJobs(row) {
     row = lineOf(row); const S = SIDES();
-    const have = jobsOf(row), pl = S ? S.plan(sidesCtx, row, have) : { split: false, slots: [null] };
-    if (!pl.split) return [ensureOne(row, null)];
+    const have = jobsOf(row), backs = have.filter(j => !isFront(j)), pl = S ? S.plan(sidesCtx, row, backs) : { split: false, slots: [null] };
+    const want = faceWant(row, pl, have);
+    if (want) return ensureFaced(row, S, have, backs, pl, want);
+    if (!pl.split) { const one = ensureOne(row, null); if (row._engraveLinked) S.linkParent(sidesCtx, row, jobsOf(row)); return [one]; }   // (a line whose front was taken out is summarised by the jobs it has left)
     // an undecided job made under the plain line key before the line was known to be a pair: its words (already paid for) go to the slots, it goes
     const old = have.find(j => !j.slot);
     const jobs = pl.slots.map(s => ensureOne(row, s));
@@ -5276,34 +5338,70 @@ const Engrave = window.Engrave = (() => {
     S.linkParent(sidesCtx, row, jobs);
     return jobs;
   }
+  /** The jobs of a line with a front: one for each (piece, face) the setup asks for. A face job that exists stays (an approval is never re-keyed); one the setup no longer asks for goes only when
+   *  nobody touched it, and a decided one stays with its seals and files. The line's `engrave` becomes the summary of all of them (charm-nest-engrave-sides.js). */
+  function ensureFaced(row, S, have, backs, pl, want) {
+    // an undecided back made under the plain line key before the line was known to be cut into slots: its words go to the slots' backs, it goes
+    const old = backs.find(j => !j.slot), wanted = new Set(want.map(w => slotKey(row, w.slot, w.face)));
+    for (const w of want) ensureOne(row, w.slot, w.face, true);
+    if (old && pl.split && !wanted.has(old.key) && !DECIDED.includes(old.state)) {
+      for (const j of jobsOf(row).filter(x => !isFront(x) && x !== old)) if (!j.text && old.text) Object.assign(j, { text: old.text, lines: (old.lines || []).slice(), source: old.source, quote: old.quote, confidence: old.confidence, requests: old.requests, questions: (old.questions || []).slice(), seededFrom: old.key });
+    }
+    for (const j of have) if (!wanted.has(j.key) && items().get(j.key) === j && untouched(j)) { items().delete(j.key); Review.remove("eng:" + j.key); }
+    const jobs = jobsOf(row);
+    S.linkParent(sidesCtx, row, jobs);
+    return jobs;
+  }
   /** The legacy one-job door: a line with one job gives it; a line cut into slots gives its first job (all are made). */
-  function ensureJob(row, slot) {
-    if (slot) { const line = lineOf(row); ensureJobs(line); return items().get(slotKey(line, slot)) || null; }
+  function ensureJob(row, slot, face) {
+    if (slot || face) { const line = lineOf(row); ensureJobs(line); return items().get(slotKey(line, slot || null, face)) || null; }
     return ensureJobs(row)[0];
   }
-  /** What a back record (and its events) says of the piece it is for: nothing for a line that is not cut into slots, so those records stay as they were. */
-  const pieceFields = job => (job && job.slot ? { slot: job.slot, ...(job.row && job.row.side ? { side: job.row.side } : {}), ...((job.editCharm || (job.copies && job.copies.length && charmFor(job)) || {}).mirrored ? { mirror: true } : {}), groupKey: job.groupKey || "" } : {});
-  /** The job that holds one piece (by its pool id): the line's only job, or the one of that piece's slot. */
-  function jobForPool(row, poolId) {
-    const js = ensureJobs(row); if (js.length === 1) return js[0];
+  /** What a back record (and its events) says of the piece it is for: nothing for a line that is not cut into slots, so those records stay as they were. A front's says its face (and its slot, when it has one). */
+  const pieceFields = job => (job && job.slot ? { slot: job.slot, ...(job.row && job.row.side ? { side: job.row.side } : {}), ...((job.editCharm || (job.copies && job.copies.length && charmFor(job)) || {}).mirrored ? { mirror: true } : {}), groupKey: job.groupKey || "", ...(isFront(job) ? { face: "front" } : {}) } : isFront(job) ? { face: "front" } : {});
+  /** The job that holds one piece (by its pool id): the line's only job, or the one of that piece's slot. `face`: the front's or the back's (without it: the face still to settle, else the back). */
+  function jobForPool(row, poolId, face) {
+    const js = ensureJobs(row);
+    if (!js.some(isFront) && !face) {
+      if (js.length === 1) return js[0];
+      const slot = SIDES().slotOfId(sidesCtx, lineOf(row), poolId) || null;
+      return js.find(j => (j.slot || null) === slot) || js[0];
+    }
     const slot = SIDES().slotOfId(sidesCtx, lineOf(row), poolId) || null;
-    return js.find(j => (j.slot || null) === slot) || js[0];
+    const mine = js.filter(j => (j.slot || null) === slot), pool = mine.length ? mine : js;
+    if (face) return pool.find(j => faceOf(j) === face) || null;
+    return pool.find(j => !DECIDED.includes(j.state) && j.state !== "none") || pool.find(j => faceOf(j) === "back") || pool[0];
+  }
+  /** The front and the back job that hold one piece (by pool id), for the sheet window's piece card and the order card: { front, back } (a null for a face the piece has no job for). */
+  const jobsOfPiece = poolId => { const out = { front: null, back: null }; for (const j of items().values()) if (!j.editingBack && (j.copies || []).includes(poolId)) { const f = faceOf(j); out[f] = out[f] || j; } return out; };
+  /** The job a saved record (a backPool entry) belongs to: its piece's job of the record's own face. A back record gets exactly what jobForPool(row, poolId) gives. A front record whose line has no front job
+   *  (a recalled set, a restored run) makes that job, joined to the line like any other, so the saved front is a decided job of its own and never mixed with the back. */
+  function jobForRecord(row, rec) {
+    if (faceOf(rec) !== "front") return jobForPool(row, rec.poolId, "back") || jobForPool(row, rec.poolId);   // (a back record: the piece's back job, even when its front is the one still to settle)
+    const have = jobForPool(row, rec.poolId, "front"); if (have) return have;
+    const line = lineOf(row), slot = SIDES().slotOfId(sidesCtx, line, rec.poolId) || null;
+    for (const b of jobsOf(line)) if (!isFront(b) && !b.slot) ensureOne(line, null, "back", true);
+    const f = ensureOne(line, slot, "front", true);
+    SIDES().linkParent(sidesCtx, line, jobsOf(line));
+    return f;
   }
   /** A line leaves the pull (dropped, cancelled and cleared): every job of it goes with it. Seals live on in the order's timeline and the saved backs. */
   function dropLine(row) { row = lineOf(row); const gone = jobsOf(row); for (const j of gone) { items().delete(j.key); Review.remove("eng:" + j.key); } return gone.length; }
-  /** The pieces of a line as the order window's "All pieces" list wants them: one entry for each job when the line is cut into slots, else null. */
+  /** The pieces of a line as the order window's "All pieces" list wants them: one entry for each job when the line is cut into slots, else null. A line with a front: one entry for each
+   *  (piece, face), saying its `face`, with the number of pieces as `of`. */
   function piecesOf(row) {
     row = lineOf(row); const S = SIDES(); if (!S || !row) return null;
     const jobs = jobsOf(row); if (!jobs.some(j => j.slot)) return null;
-    const of = jobs.length;
-    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: S.earOf(j.slot) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: S.tagOf(j.slot, of) }));
+    const of = pieceCountOf(row), faced = jobs.some(isFront);
+    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: S.earOf(j.slot) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: S.tagOf(j.slot, of), ...(faced ? { face: faceOf(j), faceLabel: isFront(j) ? "Front" : "Back" } : {}) }));
   }
   /** The line's pieces and jobs joined again after a restore (the sides are made from the saved jobs: nothing is read or paid for). */
   function relinkAll() {
     const S = SIDES(); if (!S) return 0; let n = 0;
     const lines = new Map();
-    for (const j of items().values()) if (j.slot && j.rowKey) { if (!lines.has(j.rowKey)) lines.set(j.rowKey, []); lines.get(j.rowKey).push(j); }
-    for (const [k, jobs] of lines) { const row = B.orders.byKey.get(k); if (!row) continue; for (const j of jobs) j.row = S.sideRow(sidesCtx, row, j.slot, j); S.linkParent(sidesCtx, row, jobs.slice().sort((a, b) => SLOT_PROBE.indexOf(a.slot) - SLOT_PROBE.indexOf(b.slot))); n++; }
+    for (const j of items().values()) if ((j.slot || isFront(j) || j.linked) && j.rowKey) { if (!lines.has(j.rowKey)) lines.set(j.rowKey, []); lines.get(j.rowKey).push(j); }
+    const rank = j => SLOT_PROBE.indexOf(j.slot || null) * 2 + (isFront(j) ? 0 : 1);
+    for (const [k, jobs] of lines) { const row = B.orders.byKey.get(k); if (!row) continue; for (const j of jobs) j.row = S.sideRow(sidesCtx, row, j.slot || null, j); S.linkParent(sidesCtx, row, jobs.slice().sort((a, b) => rank(a) - rank(b))); n++; }
     return n;
   }
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
@@ -5320,7 +5418,7 @@ const Engrave = window.Engrave = (() => {
       for (const bk of pg.backPool || []) {
         const row = rows.find(r => (bk.poolId && r.poolIds.includes(bk.poolId)) || (String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)));
         if (!row) continue;
-        const j = jobForPool(row, bk.poolId);
+        const j = jobForRecord(row, bk);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
         Object.assign(j, { fontKey: O.fontOfRecord(bk), fontAsked: bk.fontAsked || "", fontName: bk.font || undefined, fontLocked: true, state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: bk.approvedAt || null, engravingSeals:bk.engravingSeals || [], backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
         j.row.engrave = { ...j.row.engrave, needed:true,state:"written",approved:true,text:j.text,approvedBy:j.approvedBy,approvedAt:j.approvedAt };CNEngravingSeals.keep(j);
@@ -5344,6 +5442,8 @@ const Engrave = window.Engrave = (() => {
   // the order timeline: a line read as needing a back engraving (once per line and words), and a person's decision on
   // the words (confirmed, edited, none, skipped: cut plain)
   // which disc of a counted line a job is, for the log lines that name the engraving ("Disc 2 of 3"); "" for a single, an ear or a plain quantity-N line (their lines read as they always did)
+  /** A job of a line that has a front (its own or the back beside it): the line's events and reasons name the face. A line with no front reads exactly as it always did. */
+  const facedJob = job => !!job && (isFront(job) || jobsOf(job.row).some(isFront));
   function discSay(job) {
     try {
       if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return "";
@@ -5355,14 +5455,16 @@ const Engrave = window.Engrave = (() => {
     try {
       if (!job || !job.row || !job.row.engrave || !job.row.engrave.needed) return;
       const t = String(job.text || "").trim();
-      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: ((d => (t ? `Back engraving${d ? " · " + d : ""}: “${t.replace(/\n/g, " / ")}”` : `Back engraving${d ? " · " + d : ""}: the words are to be confirmed`))(discSay(job))).slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state } });
+      const fw = isFront(job) ? "Front" : "Back";   // (the front's events say so; the back's read as they always did)
+      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: ((d => (t ? `${fw} engraving${d ? " · " + d : ""}: “${t.replace(/\n/g, " / ")}”` : `${fw} engraving${d ? " · " + d : ""}: the words are to be confirmed`))(discSay(job))).slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state, ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
   function wordsEvent(job, by, was, how) {
     try {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
-      const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", text = how === "none" ? `No engraving${of} — decided by ${by}` : how === "skipped" ? `Engraving skipped${of} by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
-      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
+      const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", fw = facedJob(job) ? (isFront(job) ? "Front " : "Back ") : "";   // (a line with a front names the face; every other line reads as it did)
+      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
   /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
@@ -5370,10 +5472,49 @@ const Engrave = window.Engrave = (() => {
     const S = SIDES(); if (!S || !S.wordsForDiscs) return null;
     return S.wordsForDiscs(row.spec || {}, jobs.map(j => j.slot), { engravingNote: typeof O !== "undefined" && O ? O.engravingNote : null });
   }
+  /** The line's engraving setup when the line is read face by face (a front job, a front in the setup, or a person's own back words); null for a line that engraves the back as it always did (the reader decides). */
+  function facedSetup(row, jobs) {
+    const F = FACES(); if (!F) return null;
+    const setup = F.setupOf(row);
+    return jobs.some(isFront) || setup.faces.includes("front") || (setup.edited && setup.faces.includes("back") && setup.back) ? setup : null;
+  }
+  /** What a face job starts with from the setup, or null. A back line the intake read as "back" with nothing a person said keeps the old reader: no seed. */
+  function seedOf(setup, job) {
+    const F = FACES(); if (!F || !setup) return null;
+    if (setup.mode === "back" && !setup.edited) return null;
+    return F.seedFor(setup, faceOf(job));
+  }
+  /** The words of each face job of a line that has a front or a person's own words: from the setup, no paid reading, nothing guessed. A face with no words goes to a person with the buyer's own words
+   *  beside it. Only the jobs still to be read are touched: a face already decided stays as it is. */
+  async function classifyFaces(row, jobs, setup) {
+    const sp = row.spec, owner = items(), job = jobs[0], F = FACES();
+    const todo = jobs.filter(j => ["classify", "reclassify"].includes(j.state) && items().get(j.key) === j);
+    const quote = (sp.personalization || []).join(" / ") || null;
+    for (const j of todo) {
+      const face = faceOf(j), seed = seedOf(setup, j);
+      j.state = "classify"; j.row.engrave = { needed: false, state: "classify", seals: CNEngravingSeals.merge(j.row.engrave, j) };
+      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
+      if (seed) {
+        delete j.seededFrom;
+        Object.assign(j, { text: seed.text, lines: seed.lines.slice(), source: seed.source, quote, confidence: seed.confidence, questions: [], claudeReasoning: null, requests: { side: face, font: seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed.fontWord || null });
+        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${j.slot ? " · " + SIDES().earOf(j.slot) : ""} · ${face}: "${seed.text.replace(/\n/g, " / ")}" taken from ${seed.how === "person" ? "the person's setup" : "the order"} (${setup.why || setup.mode}), no paid reading`);
+        await setReady(j);
+      } else {
+        const why = setup.needsPerson ? "The note does not say which words go on the front and which on the back" : `The order gives no words for the ${face}`;
+        Object.assign(j, { text: "", lines: [], source: "personalization", quote, confidence: 0, questions: [why], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false }, wordsSource: "spec.engraving" });
+        toWords(j, why);
+      }
+      if (items() !== owner || row.state === "gone") return job;
+      needEvent(j);
+    }
+    return job;
+  }
   async function classifyOnce(row) {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
     if (!sp.engraveCandidate) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
+    // a line with a front (or a person's own words for a face): each face job takes its words from the line's setup, no paid reading (charm-nest-engrave-faces.js)
+    const faceSetup = facedSetup(row, jobs); if (faceSetup) return classifyFaces(row, jobs, faceSetup);
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
     const engravable = true;
     // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
@@ -5461,7 +5602,7 @@ const Engrave = window.Engrave = (() => {
     const cov = G.glyphCoverage(setOf(job).Regular, job.lines.join("\n"));
     if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { ...job.row.engrave, needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
-    if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
+    if(!job.editingBack) {Pool.update(job.copies, isFront(job) ? { engraveFront: true } : { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
   }
   /** A person's decision on the words (confirm / edit / no engraving), recorded with the name. */
@@ -5470,12 +5611,56 @@ const Engrave = window.Engrave = (() => {
     const wasText = job.text;
     if (none) { setNone(job, `no engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, wasText, "none"); Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
     job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: "back", font: null, handwriting: false, image: false }; job.confidence = 1;
-    if (!job.editingBack && job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
+    if (!job.editingBack && !facedJob(job) && job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: words decided by ${by}: "${job.text.replace(/\n/g, " / ")}"`); wordsEvent(job, by, wasText, "words");
     Review.remove("eng:" + job.key);
     await setReady(job);
     if (job.state === "ready") { const ch = job.copies.length && sheetFor(job,job.copies[0]); if (ch && ch.fileBase) await fitJob(job); }
     Orders.render(); if(!job.editingBack) RunCtl.poke(); return job;
+  }
+  /** The line's effective engraving setup: the intake's reading (spec.engraving) under a person's choice (row.engravingOverride): { mode, faces, front, back, needsPerson, source, why, edited, ... } (Faces.setupOf). */
+  const setupOf = row => { const F = FACES(); return F && lineOf(row) ? F.setupOf(lineOf(row)) : null; };
+  /** A person's choice for a line (the setup editor, CONTRACT section 3): `patch` = { mode?, front?, back? } (mode "none" | "front" | "back" | "both"; a face's words { text | lines, fontWord }). It is kept on the line
+   *  (row.engravingOverride, saved with the run's lines, kept when the order is pulled again) and always wins over the reading. The name is the signed-in login. Then the jobs follow:
+   *  a face job nobody decided that the setup no longer asks for is taken out; one that was decided is never deleted, it is cut plain (skipped, with a seal by the person, its file revoked); a face the setup now asks
+   *  for gets its job, with the words of the setup (no paid reading) or, with none, a card for a person; an undecided face whose words changed is read from the setup again. A decided face whose words
+   *  changed keeps its decision (it is sent back from its own card). Returns { ok, setup, added, dropped, skipped, kept } or { ok: false, error }. */
+  async function applyEngraving(row, patch, by) {
+    const F = FACES(); row = lineOf(row);
+    if (!F || !row || !row.spec) return { ok: false, error: "This line is not read yet" };
+    if ((O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) || row.state === "gone") return { ok: false, error: "This order is past engraving" };
+    by = by || employeeName() || await needEmployee("Kept with this change to the engraving."); if (!by) return { ok: false, error: "No name signed in" };
+    const owner = items(), was = F.setupOf(row), at = Date.now(), clean = {};
+    for (const k of ["mode", "front", "back"]) if (patch && patch[k] !== undefined) clean[k] = patch[k];
+    row.engravingOverride = Object.assign({}, row.engravingOverride || {}, clean, { by, at });
+    const now = F.setupOf(row), before = new Set(jobsOf(row).map(j => j.key)), out = { ok: true, setup: now, added: [], dropped: [], skipped: [], kept: [] };
+    // 1 · the faces the setup no longer asks for
+    const rec = F.reconcile(now, jobsOf(row), null);
+    for (const j of rec.drop) { items().delete(j.key); Review.remove("eng:" + j.key); out.dropped.push(j.key); }
+    for (const j of rec.keep) if (!["skipped", "none"].includes(j.state)) { await skip(j, by); out.skipped.push(j.key); }
+    if (now.mode === "none") for (const j of jobsOf(row)) {
+      if (isFront(j) || j.state === "none") continue;
+      if (["approved", "written"].includes(j.state)) { await skip(j, by); out.skipped.push(j.key); }
+      else if (!DECIDED.includes(j.state)) { const t = j.text; setNone(j, `no engraving — decided by ${by}`); j.decision = { by, at, none: true }; wordsEvent(j, by, t, "none"); }
+    }
+    // 2 · an undecided face whose words (or font word) changed is read from the setup again
+    const sig = (st, f) => JSON.stringify(st[f] || null);
+    for (const j of jobsOf(row)) {
+      const f = faceOf(j); if (!now.faces.includes(f) || sig(was, f) === sig(now, f)) continue;
+      if (DECIDED.includes(j.state) || j.state === "none") { out.kept.push(j.key); continue; }
+      Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, decision: null, lineInput: null, wantSize: null, reason: null, missing: null }); Review.remove("eng:" + j.key);
+    }
+    // 3 · the jobs the setup asks for, and their words
+    const jobs = ensureJobs(row);
+    out.added = jobs.filter(j => !before.has(j.key)).map(j => j.key);
+    if (now.mode !== "none") await classifyFaces(row, jobs, now);
+    if (items() !== owner) return out;
+    try { TL.line(row, "engraveChanged", { id: `${row.key}.setup.${at}`, at, by, text: `Engraving set by ${by}: ${F.describe(now)}`.slice(0, 200), data: { how: "setup", mode: now.mode, faces: now.faces.slice(), front: now.front ? now.front.text : null, back: now.back ? now.back.text : null } }); } catch (_) {}
+    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${row.spec.designSku}: engraving set by ${by} · ${F.describe(now)}`);
+    Orders.render(); render(); Session.schedule();
+    if (B.run) { B.run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(B.run).catch(() => {}); }   // (the run record keeps the person's choice with the line)
+    RunCtl.poke();
+    return out;
   }
   let previewRecovery = false, previewRecoveryTimer = null, preparingJob = null;
   const isWorking = job => classifyTasks.has(job) || fitTasks.has(job) || preparingJob === job;
@@ -5507,6 +5692,15 @@ const Engrave = window.Engrave = (() => {
       }
     } finally { previewRecovery = false; RunCtl.poke(); render(); }
   }
+  /** A line whose setup asks for a front that has no front job yet (read before the front was known, or a person just asked for it): it is looked at again, and only the front is added. */
+  function wantsFront(r) {
+    const F = FACES(); if (!F || !r.engrave || (O.FINISHED_LINE && O.FINISHED_LINE.has(r.state))) return false;
+    try { if (!F.setupOf(r).faces.includes("front")) return false; } catch (_) { return false; }
+    if (jobsOf(r).some(isFront)) return false;
+    // (the back of that line, if nobody has touched it, is read again from the setup: its words come with the front's, not from the paid reading of the whole note)
+    for (const j of jobsOf(r)) if (!isFront(j) && untouched(j) && j.wordsSource !== "spec.engraving") { Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, lineInput: null, decision: null, wantSize: null, reason: null }); Review.remove("eng:" + j.key); }
+    return true;
+  }
   let classifyPass = null, classifyOwner = null;
   function classifyAll(run) {
     const owner=items();
@@ -5519,7 +5713,7 @@ const Engrave = window.Engrave = (() => {
     await loadFonts();
     if(items() !== owner)return 0;
     // the line's own fields first: most lines have nothing to read, and those need not be looked for on the sheets
-    const rows = Orders.rows().filter(r => ["pooled", "written"].includes(r.state) && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify") && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])));
+    const rows = Orders.rows().filter(r => ["pooled", "written"].includes(r.state) && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify" || wantsFront(r)) && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])));
     const q = rows.slice(); let done = 0;
     // one bar for the whole pass, not one per order: what a person needs to know is how far along the reading is
     const bar = rows.length && window.CNProgress ? CNProgress.start(`Reading the words of ${rows.length} piece${rows.length === 1 ? "" : "s"}`, { total: rows.length }) : null;
@@ -5563,8 +5757,8 @@ const Engrave = window.Engrave = (() => {
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),
-      viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT}),
-      maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm?.backKeepOut || []}};
+      viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,...(isFront(job) ? {face:"front"} : {})}),
+      maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || []}};
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
   const fitTasks = new WeakMap();
@@ -5667,13 +5861,13 @@ const Engrave = window.Engrave = (() => {
   function revokeBacks(job) {
     CNEngravingSeals.keep(job);
     job.approvedAt = null; job.backs = []; delete job._backPreview; delete job.writtenFit; delete job._shelveTried;
-    for (const sh of allSheets()) sh.backPool = (sh.backPool || []).filter(b=>!job.copies.includes(b.poolId));
+    for (const sh of allSheets()) sh.backPool = (sh.backPool || []).filter(b=>!(job.copies.includes(b.poolId) && faceOf(b) === faceOf(job)));   // (this job's face alone: the other face of the piece keeps its record)
     refreshBacks();
-    const invalidate=()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies});
+    const invalidate=()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies, ...(isFront(job) ? {face:"front"} : {})});
     const task = window.CharmNestOperations ? window.CharmNestOperations.run({key:'back-remove:'+job.key,label:'Updating engraving',resources:['production:'+(job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || 'manual')]},invalidate) : backQueue.catch(()=>{}).then(invalidate);
     backQueue = task; task.catch(e=>{ job.reason = "Back removal not saved: " + e.message; RunCtl.stopIfRunning(job.reason, "Reconnect and reopen this engraving before continuing."); toast(job.reason,"bad"); });
   }
-  function invalidate(row, why) { for (const j of jobsOf(row)) { invalidateJob(j, why); if (j.slot && j.engraveRec) Object.assign(j.engraveRec, { invalidatedBy: why, approved: false, state: "reclassify" }); } }
+  function invalidate(row, why) { for (const j of jobsOf(row)) { invalidateJob(j, why); if ((j.slot || isFront(j) || j.linked) && j.engraveRec) Object.assign(j.engraveRec, { invalidatedBy: why, approved: false, state: "reclassify" }); } }
   function invalidateJob(j, why) { if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit && (({ layout, glyphs, cmds, ...f }) => f)(j.fit), approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
@@ -5743,8 +5937,8 @@ const Engrave = window.Engrave = (() => {
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
     revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
-    job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
-    const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
+    job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
+    const saved = Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   async function prepareApproval(job, by, at) {
@@ -5752,9 +5946,9 @@ const Engrave = window.Engrave = (() => {
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
     const src=sourceOf(charm.sourceId),poolId=job.copies[0];
     const glyphs=fit.glyphs.map(g=>({cmds:g.cmds.map(c=>{const o={type:c.type};if(c.type!=="Z"){o.x=c.x-view.cx;o.y=c.y-view.cy;}if(c.type==="C" || c.type==="Q"){o.x1=c.x1-view.cx;o.y1=c.y1-view.cy;}if(c.type==="C"){o.x2=c.x2-view.cx;o.y2=c.y2-view.cy;}return o;})}));
-    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:job.fontName || "Source Sans 3",fontKey:fontIdOf(job),weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
+    const built=await P.buildBackFile({charm,mirrored:!!charm.mirrored,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,...(isFront(job) ? {face:"front"} : {}),view:fileViewOf(job),title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`,meta:{poolId,...(isFront(job) ? {face:"front"} : {}),order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:job.fontName || "Source Sans 3",fontKey:fontIdOf(job),weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
     const verified=await verifyBackFile(built.bytes,job);
-    if(!verified.ok)throw new Error(`The back file needs adjustment (${verified.why}). Move or resize the words before approving.`);
+    if(!verified.ok)throw new Error(`The ${faceWord(job)} file needs adjustment (${verified.why}). Move or resize the words before approving.`);
     return {fit,view};
   }
   /* Paul, 3 Oct 04:03: "I just approved the engraving ... the above timeline took like 30 seconds to update". backPut stamps
@@ -5769,9 +5963,10 @@ const Engrave = window.Engrave = (() => {
       const text = String(job.text || ""), words = text.trim().replace(/\s*\n\s*/g, " / ").slice(0, 180);
       for (const poolId of job.copies || []) {
         const sh = sheetFor(job, poolId), copy = B.pool.rows.get(poolId)?.copy || 1;
-        TL.rec({ orderId: rid, type: "engraveApproved", id: `${poolId}-${at}`, at, by, station: "sorter", device: "charm-nest-1", lineKey: String(poolId).replace(/_\d+$/, ""), transactionId: String(row.line?.transactionId || String(poolId).split("_")[1] || ""),
+        const front = isFront(job);   // (a FRONT engraving's event has its own id, "<poolId>~front-<at>", and says so: the same key the server's backPut writes, so each face keeps its one seal)
+        TL.rec({ orderId: rid, type: "engraveApproved", id: `${poolId}${front ? "~front" : ""}-${at}`, at, by, station: "sorter", device: "charm-nest-1", lineKey: String(poolId).replace(/_\d+$/, ""), transactionId: String(row.line?.transactionId || String(poolId).split("_")[1] || ""),
           ...(sh?.sheetId ? { sheetId: sh.sheetId, sheet: SheetEvents.label(sh), setId: sh.setId && !sh.draft ? sh.setId : "" } : {}),
-          text: (words ? `“${words}”` : "") + (job.slot ? `${words ? " · " : ""}${SIDES().earOf(job.slot)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
+          text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + (job.slot ? `${words ? " · " : ""}${SIDES().earOf(job.slot)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(front ? { face: "front" } : {}), ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
       }
     } catch (e) { console.warn("[Engrave] timeline", e); }
   }
@@ -5856,7 +6051,7 @@ const Engrave = window.Engrave = (() => {
     if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was approved. Review the current words.","bad");delete job.approvalIntent;return;}
     settleApproval(job);
     // the person pressed Approve and the approval stands: engraving approved for this line's pieces (once per press)
-    if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:"engraving approved"});}catch(_){}
+    if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
     job.approvalPreparing=false;
     if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
     for(const show of [()=>goes(job,{to:EG_TAB("done")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`),render])try{show();}catch(e){console.warn("Engraving approval view",e);}
@@ -6031,6 +6226,8 @@ const Engrave = window.Engrave = (() => {
     catch(_){if(current())host.textContent="Preview unavailable";}
 
   }
+  /** The key a saved record (or a job's record) is kept under: the pool id for a back (as it always was), "<pool id>~front" for a front. */
+  const recKeyFor = (poolId, x) => { const F = FACES(); return F ? F.recKey(poolId, faceOf(x)) : poolId; };
   // Preview ownership is always derived from placements, never from SKU, order number or a cached sheet name.
   function sheetBacks(sheet) {
     const id = sheet.sheetId || sheet.id;
@@ -6041,7 +6238,7 @@ const Engrave = window.Engrave = (() => {
     const invalid = new Set();
     for (const j of items().values()) {
       if (j.editingBack && j.state !== "written") continue;
-      if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(id)); continue; }
+      if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(recKeyFor(id, j))); continue; }
       records.push(...(j.backs || []));
       if (!(j.view && j.fit) && F_.ok && hasPlacement(j) && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) { try { restoreWritten(j); } catch (_) { /* written when it can be (writeBacks says why) */ } }
       if (j.view && j.fit && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) {
@@ -6052,7 +6249,7 @@ const Engrave = window.Engrave = (() => {
     // Older compact history records did not include placements; their saved back membership is authoritative.
     const normalized = target.recalled && !target.charms?.length ? Object.assign({}, target, {poolIds:target.recalled.poolIds?.length ? target.recalled.poolIds : (target.backPool || []).map(b=>b.poolId)}) : target;
     const fallback = !live && !Array.isArray(sheet.poolIds) && !sheet.placements ? Object.assign({}, sheet, {poolIds:(sheet.backPool || sheet.backs || []).map(b=>b.poolId)}) : normalized;
-    return window.CharmNestBacks.forSheet(fallback, records.filter(b => !invalid.has(b.poolId)));
+    return window.CharmNestBacks.forSheet(fallback, records.filter(b => !invalid.has(recKeyFor(b.poolId, b))));
   }
   const backsMarkup = sheet => {
     const st = sheet.stock || sheet.recalled?.stock || sheet.outputs?.report?.stock || (sheet.metal ? stockFor(sheet.metal) : {});
@@ -6075,11 +6272,11 @@ const Engrave = window.Engrave = (() => {
     // sent again: each back used to be its own round trip at every save of its sheet, so a sheet with more engraved
     // charms held the next charm back longer
     const records = reconcileSheet(sh), sent = sh._backsSent || (sh._backsSent = new Map());
-    const due = records.filter(b => sent.get(b.poolId) !== JSON.stringify(b));
+    const due = records.filter(b => sent.get(recKeyFor(b.poolId, b)) !== JSON.stringify(b));
     for (let i = 0; i < due.length; i += 400) {
       const chunk = due.slice(i, i + 400);
       await api("charmNestLibrary", {op:"backPut", backs:chunk});
-      for (const b of chunk) sent.set(b.poolId, JSON.stringify(b));
+      for (const b of chunk) sent.set(recKeyFor(b.poolId, b), JSON.stringify(b));
     }
     refreshBacks();
   }
@@ -6131,17 +6328,17 @@ const Engrave = window.Engrave = (() => {
     for (const [sh, poolIds] of bySheet) {
       sh.backPool = sh.backPool || [];
       for (const poolId of poolIds) {
-        if(job.backs.some(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url) && sh.backPool.some(b=>b.poolId===poolId && b.approvedAt===approval))continue;
+        if(job.backs.some(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url) && sh.backPool.some(b=>b.poolId===poolId && faceOf(b)===faceOf(job) && b.approvedAt===approval))continue;
         const p = B.pool.rows.get(poolId) || {}; const copy = job.editingBack ? job.editOriginal.copy || 1 : p.copy || 1;
-        const name = `${sh.fileBase}_back_${poolId}_${approval}`;
+        const name = `${sh.fileBase}_${faceWord(job)}_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
-        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
-        if (!verified.ok) throw Object.assign(new Error(`the written back file did not re-verify (${verified.why})`),{engravingInvalid:true});
+        if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
-        if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.ai`, built.bytes, "application/illustrator", `Saving ${faceWord(job)} ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.png`, pngBlob, "image/png"); }
+        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
         // Keep the exact uploaded payload before sending it. A lost reply must replay
         // these same file tokens, not upload again and look like a different edit.
@@ -6154,29 +6351,31 @@ const Engrave = window.Engrave = (() => {
           if (sheetFor(job,poolId) !== sh) throw Object.assign(new Error("The charm moved during approval. Retry on its current sheet."),{engravingPending:true});
           if (!S.cloud.ok || !rec.outputs.ai?.url || !rec.outputs.png?.url) throw new Error("Reconnect to save the approved back files");
           await api("charmNestLibrary", { op: "backPut", back: rec, ...(job.editingBack ? {expectedApprovedAt:job.expectedApprovedAt} : {}) });
-          for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
+          for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => !(b.poolId === poolId && faceOf(b) === faceOf(job)));   // (this face's record alone)
           if (!current()) return false;
-          sh.backPool = (sh.backPool || []).filter(b=>b.poolId!==poolId); sh.backPool.push(rec); job.backs.push(rec);
+          sh.backPool = (sh.backPool || []).filter(b=>!(b.poolId===poolId && faceOf(b)===faceOf(job))); sh.backPool.push(rec); job.backs.push(rec);
           job.stagedBacks=job.stagedBacks.filter(b=>b.poolId!==poolId);Session.schedule();
           if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); shown = true;
           return true;
         });
         if (!recorded) return;
-        agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${rec.reference?.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
+        agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `${isFront(job) ? "Front" : "Back"} file written and re-verified: ${name}.ai (${rec.reference?.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
       if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
       scheduleBackOutputs(sh);
     }
     } finally { if (shown) refreshBacks(); }
     if (!current()) return;
-    if(!job.copies.every(id=>job.backs.some(b=>b.poolId===id && b.approvedAt===approval && b.sheetId===sheetFor(job,id)?.sheetId)))throw Object.assign(new Error("Some pieces are still moving between sheets; their approved back files will finish after nesting"),{engravingPending:true});
+    if(!job.copies.every(id=>job.backs.some(b=>b.poolId===id && b.approvedAt===approval && b.sheetId===sheetFor(job,id)?.sheetId)))throw Object.assign(new Error(`Some pieces are still moving between sheets; their approved ${faceWord(job)} files will finish after nesting`),{engravingPending:true});
     job.poolPending=true;
     delete job._backPreview; delete job._previewSize; delete job._previewAt;   // the saved picture stands for it from now on
-    await Pool.update(job.copies, { engrave: true, engraveApprovedBy: job.approvedBy, ...(job.editingBack ? {} : {state:"engraved"}) });
+    // a piece is "engraved" when EVERY face it expects is written: the first face to be written leaves the piece as it was (Faces.bothFacesWritten, over this line's other jobs of the same piece)
+    const othersDone = !job.editingBack && jobsOf(job.row).filter(o => o !== job && (o.copies || []).some(id => job.copies.includes(id))).every(o => ["written", "skipped", "none"].includes(o.state));
+    await Pool.update(job.copies, isFront(job) ? { engraveFront: true, engraveFrontApprovedBy: job.approvedBy, ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) } : { engrave: true, engraveApprovedBy: job.approvedBy, ...(job.editingBack || !othersDone ? {} : {state:"engraved"}) });
     if(!current())return;
     delete job.poolPending;
     job.state = "written"; job.row.engrave.state = "written";
-    if(job.editingBack) {await syncEditedBack(job);toast("Back engraving updated","ok");}
+    if(job.editingBack) {await syncEditedBack(job);toast(`${isFront(job) ? "Front" : "Back"} engraving updated`,"ok");}
     render();
   }
   /* Paul, 24 Sep: "nothing may accumulate". A written engraving whose every copy has its back saved in the cloud (the .ai
@@ -6192,12 +6391,12 @@ const Engrave = window.Engrave = (() => {
     if (!F_.ok) throw new Error("Engraving font is unavailable");
     if (!fontSetOf(job)) { loadFontSet(fontIdOf(job)); throw Object.assign(new Error("The engraving font is loading; retry in a moment"), { engravingPending: true }); }
     const charm = charmFor(job); if (!charm) throw Object.assign(new Error("The charm is being moved between sheets; retry saving its engraving after nesting finishes"),{engravingPending:true});
-    let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle, holeOnly: true }); } catch (e) { throw again(`This charm's back could not be read again (${e.message}) — fit the words again`); }
-    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: charm.backKeepOut || [] });
+    let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle, holeOnly: true, ...(isFront(job) ? { face: "front" } : {}) }); } catch (e) { throw again(`This charm's ${faceWord(job)} could not be read again (${e.message}) — fit the words again`); }
+    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: (isFront(job) ? charm.frontKeepOut : charm.backKeepOut) || [] });
     // the charm's back is not what the words were approved on (its drawing or keep-out changed): a person fits them again
-    if (maskKey(mask) !== w.maskKey) throw again("This charm's back changed since the words were approved — fit the words again");
+    if (maskKey(mask) !== w.maskKey) throw again(`This charm's ${faceWord(job)} changed since the words were approved — fit the words again`);
     const layout = G.layoutLines(w.lines, fontFor(w.weight, job), w.size, w.lineGap, w.angle || 0, w.centre), geometry = G.verifyInk(layout.cmds, mask);
-    if (!geometry.ok) throw again("The approved words no longer fit this charm's back — fit the words again");
+    if (!geometry.ok) throw again(`The approved words no longer fit this charm's ${faceWord(job)} — fit the words again`);
     const { approvedAt, upAngle, marginMm, lineGap, filledArtwork, maskKey: k, ...fit } = w;
     job.view = view; job.mask = mask; job.fit = Object.assign(fit, { layout, glyphs: layout.glyphs, cmds: layout.cmds }); job.verify = { geometry, at: Date.now() };
   }
@@ -6239,7 +6438,7 @@ const Engrave = window.Engrave = (() => {
       // A new bbox-centred grid shifts the clearance pixels on asymmetric rotated charms.
       const originalFrame=job.view.mask;
       const frame=originalFrame ? {w:originalFrame.w,h:originalFrame.h,res:originalFrame.res,ox:originalFrame.ox-bbV[0],oy:originalFrame.oy-bbV[1],cx:originalFrame.cx-bbV[0],cy:originalFrame.cy-bbV[1]} : fv;
-      const front = (S.settings.backFileView || "asSeenFromBack") === "frontCoordinates";
+      const front = !isFront(job) && (S.settings.backFileView || "asSeenFromBack") === "frontCoordinates";   // (the FRONT file is the charm as it is: nothing to turn back)
       const normalized=G.translate(-bbW[0],-bbW[1]);
       const writtenToView=front ? G.mul(normalized,G.mirrorX((bbW[2]-bbW[0])/2)) : normalized;
       const wc=cut.map(m=>G.transformSeg(m,writtenToView)),vc=job.view.members.map(m=>G.transformSeg(m,G.translate(-bbV[0],-bbV[1])));
@@ -6274,21 +6473,26 @@ const Engrave = window.Engrave = (() => {
   }
   /** A back index that was still to be drawn when the page was left (a reload within those seconds) is drawn now. */
   function refreshBackIndexes() {
-    for (const sh of allSheets()) if (!sh.recalled && (sh.backPool || []).length && (!sh.backOutputs || sh.backOutputs.count !== sh.backPool.length) && !sh._backIndexTimer && !sh._backIndexRun) scheduleBackOutputs(sh);
+    for (const sh of allSheets()) { const nb = (sh.backPool || []).filter(b => !isFront(b)).length, nf = (sh.backPool || []).length - nb; if (!sh.recalled && (nb || nf) && ((nb && (!sh.backOutputs || sh.backOutputs.count !== nb)) || (nf && (!sh.frontOutputs || sh.frontOutputs.count !== nf))) && !sh._backIndexTimer && !sh._backIndexRun) scheduleBackOutputs(sh); }
   }
   async function sheetBackOutputs(sh) {
     if (!S.cloud.ok || !sh.folderPath || !(sh.backPool || []).length) return;
-    const backs = sh.backPool.slice(), when = at => at ? new Date(at).toLocaleString() : "";
-    const items = await Promise.all(backs.map(async b => ({
-      png: b.outputs && b.outputs.png && b.outputs.png.url ? await CharmNestAssets.bytes(b.outputs.png.url).catch(() => null) : null,
-      lines: [`${b.order} · ${b.sku} · copy ${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""}${b.slot && !b.side && SIDES() ? " · " + SIDES().earOf(b.slot) : ""}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
-    })));
-    const pdf = await CharmNestExport.backIndexPdf({ title: sh.fileBase, backs: items });
-    const report = backs.map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), ...(b.slot ? { slot: b.slot } : {}), text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
-    const [idx, rep] = await Promise.all([uploadBytes(`${sh.folderPath}/back/back-index.pdf`, pdf, "application/pdf", "Saving back index"), uploadBytes(`${sh.folderPath}/back/back-report.json`, new TextEncoder().encode(JSON.stringify(report, null, 1)), "application/json")]);
-    sh.backOutputs = { index: { path: idx.path, url: idx.url }, report: { path: rep.path, url: rep.url }, count: backs.length };
+    const all = sh.backPool.slice(), backs = all.filter(b => !isFront(b)), fronts = all.filter(isFront), when = at => at ? new Date(at).toLocaleString() : "";
+    // one index and one report for a face's records (the back's are exactly what they were; a sheet with a front has the same two files for its fronts, under front/)
+    const make = async (list, dir) => {
+      const items = await Promise.all(list.map(async b => ({
+        png: b.outputs && b.outputs.png && b.outputs.png.url ? await CharmNestAssets.bytes(b.outputs.png.url).catch(() => null) : null,
+        lines: [`${dir === "front" ? "FRONT · " : ""}${b.order} · ${b.sku} · copy ${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""}${b.slot && !b.side && SIDES() ? " · " + SIDES().earOf(b.slot) : ""}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
+      })));
+      const pdf = await CharmNestExport.backIndexPdf({ title: dir === "front" ? sh.fileBase + " · front" : sh.fileBase, backs: items });
+      const report = list.map(b => ({ poolId: b.poolId, ...(dir === "front" ? { face: "front" } : {}), order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), ...(b.slot ? { slot: b.slot } : {}), text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
+      const [idx, rep] = await Promise.all([uploadBytes(`${sh.folderPath}/${dir}/${dir}-index.pdf`, pdf, "application/pdf", `Saving ${dir} index`), uploadBytes(`${sh.folderPath}/${dir}/${dir}-report.json`, new TextEncoder().encode(JSON.stringify(report, null, 1)), "application/json")]);
+      return { index: { path: idx.path, url: idx.url }, report: { path: rep.path, url: rep.url }, count: list.length };
+    };
+    if (backs.length) sh.backOutputs = await make(backs, "back");
+    if (fronts.length) sh.frontOutputs = await make(fronts, "front");
     // the record is written in turn with the run's own sheet saves, which carry backOutputs too
-    if (sh.sheetId) { const put = () => api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, backOutputs: sh.backOutputs } }), ops = window.CharmNestOperations; await (ops ? ops.run({ key: "back-index:" + sh.sheetId, label: "Saving back index", resources: ["production:" + (sh.runId || sh.sheetId)] }, put) : put()).catch(() => {}); }
+    if (sh.sheetId) { const put = () => api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, ...(backs.length ? { backOutputs: sh.backOutputs } : {}), ...(fronts.length ? { frontOutputs: sh.frontOutputs } : {}) } }), ops = window.CharmNestOperations; await (ops ? ops.run({ key: "back-index:" + sh.sheetId, label: "Saving back index", resources: ["production:" + (sh.runId || sh.sheetId)] }, put) : put()).catch(() => {}); }
   }
 
   /* ── the Engraving tab ── */
@@ -6308,7 +6512,7 @@ const Engrave = window.Engrave = (() => {
   const allDiscs = pieces => !!(pieces && pieces.length && ROWS() && pieces.every(j => ROWS().discOf(j)));
   const PSW = () => window.CharmNestPieceSwitch || null;
   /** What a piece is engraved in, by name: { name, asked } (its own record first, then the font the line asked for). One place to read it from. */
-  const pieceFont = job => (PSW() ? PSW().list([job], { of: jobsOf(job.row).length })[0].font : { name: "", asked: "" });
+  const pieceFont = job => (PSW() ? PSW().list([job], { of: pieceCountOf(job.row) })[0].font : { name: "", asked: "" });
   const earLineOf = job => (ROWS() && ROWS().pieceOf(job) ? ROWS().lineKeyOf(job) : null);
   /* the placement of a job as a person last had it in front of them (kept here, never stored: the "Approve both ears" press needs both ears seen) */
   const placementSig = job => (job && job.fit ? JSON.stringify([job.text, job.lines, job.fit.size, job.fit.angle, job.fit.centre, job.fit.weight]) : "");
@@ -6483,7 +6687,7 @@ const Engrave = window.Engrave = (() => {
   const donePairs = new Map();
   let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   /** One ear's tag in a row, with the copies it holds when there are several ("LEFT EAR ×2": a quantity of two pairs is one row, each ear held twice). */
-  const earTagText = job => ((SIDES() && SIDES().tagOf(job.slot, jobsOf(job.row).length)) || String(job.slot || "")) + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
+  const earTagText = job => ((SIDES() && SIDES().tagOf(job.slot, pieceCountOf(job.row))) || String(job.slot || "")) + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
   const earChipHtml = job => `<span class="egPiece" data-slot="${esc(job.slot)}">${esc(earTagText(job))}</span>`;
   /** The row of the Engrave lists for one job, or for the Left and the Right job of one earring line (grp.pair): the pair is drawn by the same ListMedia.pair as everywhere
    *  (the line's row: both vectors side by side, the Etsy photo), its words and state are told ear by ear, and a click opens the editor on the first ear still to settle. */
@@ -6812,12 +7016,12 @@ const Engrave = window.Engrave = (() => {
    *  its own card, with its own words, fit and approval. */
   function earSwitchHtml(job, ears) {
     const PS = PSW(); if (!PS || !ROWS()) return "";
-    return PS.html(PS.list(ears, { of: jobsOf(job.row).length, isWorking }), job.key, { fonts: allDiscs(ears) });
+    return PS.html(PS.list(ears, { of: pieceCountOf(job.row), isWorking }), job.key, { fonts: allDiscs(ears) });
   }
   /** Why "Approve both ears" / "Approve all discs" is, or is not, offered: see charm-nest-engrave-rows.js approveBoth and approveAll. */
   const bothGate = ears => (allDiscs(ears) ? ROWS().approveAll({ discs: true, jobs: ears }, { busy: isWorking, shown: isShown }) : ROWS().approveBoth({ pair: true, jobs: ears }, { busy: isWorking, shown: isShown }));
   const bothTitle = (gate, ears) => (gate.ok ? (ears && allDiscs(ears) ? "Every disc carries the same words and every placement has been on screen: approves each disc in turn, each with its own seal and back file" : "Both ears carry the same words and both placements have been on screen: approves the Left, then the Right, each with its own seal and back file") : gate.why);
-  const bothLabel = (ears, job) => (allDiscs(ears) ? (ears.length >= jobsOf(job.row).length ? "Approve all discs" : `Approve the ${ears.length} discs left`) : "Approve both ears");
+  const bothLabel = (ears, job) => (allDiscs(ears) ? (ears.length >= pieceCountOf(job.row) ? "Approve all discs" : `Approve the ${ears.length} discs left`) : "Approve both ears");
   function approveBothHtml(ears, job) {
     if (!ROWS() || !ROWS().sameWordsAll(ears)) return "";   // pieces with different words are approved one by one: nothing is approved that was not shown
     const gate = bothGate(ears);
@@ -6868,7 +7072,7 @@ const Engrave = window.Engrave = (() => {
     if (requests.image) wants.push("Requested an image");
     const noteFont = job.fontFromNote && job.fontMapped ? `${requests.font} → ${job.fontName} (asked in the note)` : "";
     const fromOrder = `${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, jobsOf(job.row).length))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, pieceCountOf(job.row)))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the back file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
@@ -7136,7 +7340,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, jobForPool, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -7164,11 +7368,16 @@ const LaserReview = window.LaserReview = (()=>{
     if(window.LibraryDone)d.laserDoneAt=LibraryDone.isDone(base)?(base.laserDoneAt || 1):null;
     const rows=rowDecisions();
     for(const pid of ids)if(rows[pid] && !d.engraving[pid])d.engraving[pid]={...rows[pid]};
+    const holders=new Map();   // (a piece with a front has two jobs: its decision is the two faces together, not whichever job came last)
     for(const j of Engrave.items().values())for(const pid of j.copies || [])if(ids.includes(pid)) {
+      if(!holders.has(pid))holders.set(pid,[]);holders.get(pid).push(j);
       if(j.state==='written' && !j.backSaving)continue; // cloud evidence wins once saved
       d.engraving[pid]={needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state)};
-      d.backPool=d.backPool.filter(b=>b.poolId!==pid);
+      d.backPool=d.backPool.filter(b=>!(b.poolId===pid && Engrave.faceOf(b)===Engrave.faceOf(j)));   // (this job's face alone)
       if(j.state==='approved')d.backPool.push(...(j.backs || []).filter(b=>b.poolId===pid));
+    }
+    if(window.CharmNestEngraveFaces)for(const [pid,js] of holders)if(js.some(j=>Engrave.faceOf(j)==='front')) {
+      d.engraving[pid]=CharmNestEngraveFaces.combine(js.map(j=>({face:Engrave.faceOf(j),needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state) || (j.state==='written' && !j.backSaving)})));
     }
     if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
     if(passDepth)(passProjected || (passProjected=new Map())).set(base,d);
@@ -8118,10 +8327,14 @@ const Sets = window.Sets = (() => {
       for (const row of Orders.rows()) {
         if (!row.engrave?.needed || row.state === "gone") continue;
         for (const poolId of row.poolIds.filter(id => placed.has(id))) {
-          const back = (sh.backPool || []).find(b => b.poolId === poolId);
           const eng = row.engrave.pieces && typeof row.engrave.pieces[poolId] === "object" && row.engrave.pieces[poolId] || row.engrave;   // (a line that splits its engraving per ear: this piece's own decision)
           if (eng.needed === false) continue;
-          if (!eng.approved || eng.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: back engraving is not approved and saved`);
+          // a piece with a front is held to each face it expects: that face approved, written and its file saved (a line with no front: the back, as it always was)
+          const faces = eng.faces ? ["front", "back"].filter(f => eng.faces[f] && eng.faces[f].needed !== false && !["none", "skipped"].includes(eng.faces[f].state)) : ["back"];
+          for (const f of faces) {
+            const back = (sh.backPool || []).find(b => b.poolId === poolId && Engrave.faceOf(b) === f), e = eng.faces ? eng.faces[f] : eng;
+            if (!e.approved || e.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: ${f === "front" ? "front" : "back"} engraving is not approved and saved`);
+          }
         }
       }
     }
@@ -8148,14 +8361,14 @@ const Sets = window.Sets = (() => {
     const spans = window.SetEdit && SetEdit.spanLines ? SetEdit.spanLines(set.orders) : [];
     if (spans.length) { y -= 6; line("Orders on more than one sheet (they stay in one set)", { font: bold, size: 11 }); spans.forEach(t => line(t)); }
     y -= 6; line("Engraving", { font: bold, size: 11 });
-    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) + (CharmNestPairLabels.discWord ? CharmNestPairLabels.discWord(b) : "") : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
+    const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy}${Engrave.faceOf(b) === "front" ? " · FRONT" : ""}${window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) + (CharmNestPairLabels.discWord ? CharmNestPairLabels.discWord(b) : "") : ""} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");
     y -= 6; line("Labels", { font: bold, size: 11 }); files.forEach(f => line(`${f.label}  ${f.path || "(not uploaded)"}`));
     // released for labels: a sheet without its .pdf yet gets it now, copied from its .ai inside the bucket (op_sheetPdf)
     const noPdf = sheetsOf(set).filter(sh => sh.sheetId && sh.cloud && sh.cloud.ai && !sh.cloud.pdf);
     if (S.cloud.ok && !set.offline && noPdf.length) await api("charmNestLibrary", { op: "sheetPdf", ids: noPdf.map(sh => sh.sheetId) }, { label: "Saving the sheets' .pdf", quiet: true })
       .then(r => { for (const sh of noPdf) if (r && r.urls && r.urls[sh.sheetId]) sh.cloud.pdf = r.urls[sh.sheetId]; }).catch(e => console.warn("sheet .pdf", e));
-    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
+    const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, ...(Engrave.faceOf(b) === "front" ? { face: "front" } : {}), order: b.order, sku: b.sku, copy: b.copy, ...(b.side === "L" || b.side === "R" ? { side: b.side, groupKey: b.groupKey || undefined } : {}), text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
     set.backCount = sheetsOf(set).reduce((n, sh) => n + (sh.backPool || []).length, 0);
     if (S.cloud.ok && !set.offline) {
       const [lp, mp, jp] = await Promise.all([uploadBytes(`${set.folder}/labels/${set.name}_labels.pdf`, await labels.save({ useObjectStreams: false }), "application/pdf", "Saving the set's labels PDF"), uploadBytes(`${set.folder}/${set.name}_manifest.pdf`, await man.save({ useObjectStreams: false }), "application/pdf", "Saving the manifest"), uploadBytes(`${set.folder}/set.json`, new TextEncoder().encode(JSON.stringify(json, null, 1)), "application/json")]);
@@ -8789,7 +9002,7 @@ const RunCtl = window.RunCtl = (() => {
       for (const row of Orders.rows()) {
         const old = savedLines[row.key];
         if (!old || +old.updateTs !== +row.order.updateTs) continue;
-        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
+        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
       }
       Orders.interpretAll();
       await restoreRunSheets(rec);
@@ -8847,7 +9060,7 @@ const RunCtl = window.RunCtl = (() => {
       pg.persisted = Promise.resolve();
       computeSaturation(pg); renderCard(pg);
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
-      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.jobForPool(row, b.poolId); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); j.row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
+      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.jobForRecord(row, b); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); j.row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
       // sheet must be rebuilt and verified before it can acquire set membership.
       if (pg.draft || pg.placements.length !== (d.placements || []).length) {
@@ -15930,7 +16143,7 @@ const Recall = window.Recall = (() => {
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
         delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; pg._roseError=null; pg.roseCutAt=rec.roseCutAt || null;
         pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
-        pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, engravingSeals:bk.engravingSeals || [], approvedAt:bk.approvedAt, copy:bk.copy, previewWPt:bk.previewWPt, previewHPt:bk.previewHPt, pageWPt:bk.pageWPt, pageHPt:bk.pageHPt, poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
+        pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, engravingSeals:bk.engravingSeals || [], approvedAt:bk.approvedAt, copy:bk.copy, previewWPt:bk.previewWPt, previewHPt:bk.previewHPt, pageWPt:bk.pageWPt, pageHPt:bk.pageHPt, poolId: bk.poolId, ...(bk.face === "front" ? { face: "front" } : {}), order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
         pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
         pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
       });
