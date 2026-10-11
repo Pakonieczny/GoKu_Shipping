@@ -181,7 +181,7 @@
       const SS = window.StationSession;
       if (!name) { clear(); return; }
       if (!window.CNEmployee || typeof CNEmployee.roleBar !== "function") { if (SS) SS.signedIn({ name, id: null }); return; }   // (without the bar there is nobody to ask: as before)
-      if (adm && adm !== name) adm = "";
+      if (adm && adm !== name) { adm = ""; changed(); }                                      // (another person took the page over: whoever listens, e.g. CharmNestMasterAdmin, hears that the Admin is gone)
       const r = read();
       if (admin() || (r && known(r.role))) { commit(); changed(); return; }                       // already known for this name: nothing is asked
       if (checking === name) return;
@@ -201,7 +201,7 @@
   }
   function clear() {
     try {
-      const had = state() !== "none" || !!lsGet(KEY);
+      const had = state() !== "none" || !!lsGet(KEY) || !!adm;                            // (an Admin signing out was a change too, though the name is already gone here)
       seq++; checking = ""; unknownFor = ""; adm = "";
       drop(); bar({ state: "off" }); reset();
       if (had) changed();

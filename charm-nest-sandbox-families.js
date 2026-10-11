@@ -125,6 +125,7 @@
     { key: "Station_Rev", label: "employee efficiency: data revision", store: "firestore", why: "employee efficiency stays whole" },
     { key: "config", label: "config documents and passcodes", store: "firestore", why: "settings and passcodes" },
     { key: "Charm_Sandbox/pulls", label: "the daily Etsy pull budget", store: "firestore", why: "an Etsy call budget, not sandbox data" },
+    { key: "Charm_Listing_Skus", label: "the Etsy listing SKU tables (7-day cache) and their daily call budget", store: "firestore", why: "Etsy's own SKU list per listing, shared with production (the sandbox fills it within the shop's 60 calls a day): no order, buyer or sandbox content" },
     { key: "Charm_Nest_Rev", label: "production revision counters", store: "firestore", why: "production" },
     { key: "EtsyMail_Config", label: "Etsy call counters", store: "firestore", why: "the Etsy call budget: a counter every Etsy caller bumps, no sandbox content" },
     { key: "EtsyMail_OrderLinkMeta", label: "customer-mail change counter", store: "firestore", why: "a change counter every engagement bumps, real or sandbox: no sandbox content" }

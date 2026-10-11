@@ -1038,7 +1038,8 @@ const DesignLink = window.DesignLink = (() => {
     if (d.type === "ack") { p.acked = performance.now(); return; }
     clearTimeout(p.t); S_.pending.delete(d.id); if (!p.quiet) S_.replies++;
     if (!p.quiet) logLine("reply", p.type, d.type === "done" ? d.result : { error: d.error }, performance.now() - p.sent, d.type !== "done");
-    if (d.type === "done") p.resolve(d.result); else { if (!p.quiet) S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
+    // (Etsy's text arrives HTML-escaped, "ACORN&#39;S LEAF": the orders the station answers are decoded here, once, as they come in, so every list, window, search and master lookup reads "ACORN'S LEAF"; charm-nest-orders.js cleanOrders)
+    if (d.type === "done") { try { if (/^orders\./.test(p.type)) O.cleanOrders(d.result); } catch (_) {} p.resolve(d.result); } else { if (!p.quiet) S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
   }
   /* ── Connect Etsy from the sorter. Etsy refuses to load inside a frame, so the station is opened in its own popup on
         its origin (a click is needed — browsers block popups otherwise); the popup signs in, the token lands in the
@@ -1322,7 +1323,9 @@ const Orders = window.Orders = (() => {
     // the server's clock at the whole list's read: the Review tab's changes feed (ReviewLive) asks for what changed after it
     if (cl && cl.records && typeof cl.at === "number") { customBase = { at: cl.at, seen: Date.now() }; }
     // the maps are replaced only when what was read differs: a new map object is what makes interpretAll read lines again
-    const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
+    const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }];
+    try { O.cleanMaps(next[1], next[2]); } catch (_) {}   // (a person's answer saved while its SKU still carried an entity, "ACORN&#39;S LEAF", is read under "ACORN'S LEAF"; nothing stored is rewritten)
+    const sig = JSON.stringify(next);
     // (a read that was asked for before another one that has already come back is older than it: its answer is not put over the newer)
     if (seq > mapsApplied && (sig !== mapsSig || !mapsSame())) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
     if (seq > mapsApplied) mapsApplied = seq;
@@ -1393,7 +1396,9 @@ const Orders = window.Orders = (() => {
     return out;
   }
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku) });
+  // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
+  let seenIx = {};
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -1408,22 +1413,25 @@ const Orders = window.Orders = (() => {
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
   const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
+  const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
-    const link = a && a.pairBySku && a.pairBySku[String(l.sku || "").trim().toUpperCase()];   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
+    const link = a && a.pairBySku && O.bySkuOf(a.pairBySku, String(O.decodeEntities(l.sku) || "").trim().toUpperCase());   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
     return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
       // the master's own spelling of the SKU, and the listing's table of SKUs (the SKU Etsy keeps for the product bought) with the library's word on that SKU
-      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) : "",
+      libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) + "|" + libFacts(nameOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
-      libFacts(typoOf(l.sku)),
+      libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
-      row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0];
+      row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
+      // the page's other orders of this listing: a line is read again when they say something new about its SKU (a SKU on another choice of an option, a new choice with its own SKU)
+      (seenIx[String(l.listingId)] || {}).sig];
   }
   // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
   const readSaid = new Map();
@@ -1438,6 +1446,7 @@ const Orders = window.Orders = (() => {
     } catch (_) {}
   }
   function interpretAll() {
+    seenIx = O.seenSkus ? O.seenSkus(rowsOf().map(r => r.line)) : {};
     for (const row of rowsOf()) {
       // a line cut and committed is done: a later change to the maps or the library could only raise a decision on it
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
@@ -1476,9 +1485,13 @@ const Orders = window.Orders = (() => {
      listingSkus, _charmNestListingSkus.js) is asked for only the listings with a line that still waits on its SKU (no SKU, a
      SKU no master file holds, or an option nothing has answered) and whose ids the station gave (a line restored from a record
      has none). The page keeps what it was told for the same 7 days, so a reload asks for nothing it already knows; a listing
-     the cloud could not ask Etsy about yet is asked again after 10 minutes, then 30, then 90… (6 hours at most). */
-  const TABLES_LS = "cn.listingSkus.v1", TABLES_ASK_MS = 7 * 86400000, TABLES_KEEP_MS = 14 * 86400000, tableTry = new Map();   // (listing id → { until, n }: not asked again before `until`)
-  let tableTimer = 0, tableBusy = false, tablesRead = false;
+     the cloud could not ask Etsy about yet is asked again after 10 minutes, then 30, then 90… (6 hours at most).
+     The sandbox asks the same way (FLAGLOAD, 11 Oct 2026): it used to get the cache only, which nothing but a production page ever
+     filled, so a listing only the sandbox's own orders carried read "not loaded yet" for good. The listings go six to a request, the
+     wanted ones first (a line that asks about an option before one that only lacks its SKU, then the oldest order first), each
+     answer is read at once, and the Review row says what is happening: a spinner while it is asked, one plain line when it could not be. */
+  const TABLES_LS = "cn.listingSkus.v1", TABLES_ASK_MS = 7 * 86400000, TABLES_KEEP_MS = 14 * 86400000, TABLES_CHUNK = 6, tableTry = new Map(), tableNote = new Map();   // (listing id → { until, n }: not asked again before `until`; → { busy } while asked, { why } when it could not be)
+  let tableTimer = 0, tableBusy = false, tablesRead = false, tableRetryTimer = 0;
   function tablesLoad() {
     if (tablesRead) return; tablesRead = true;
     try {
@@ -1508,32 +1521,80 @@ const Orders = window.Orders = (() => {
     if (tableTimer || tableBusy || !S.cloud.ok) return;
     tableTimer = setTimeout(() => { tableTimer = 0; askTables().catch(e => console.warn("SKU tables", e)); }, 800);
   }
+  /** What a waiting line asks of its listing's table, most wanted first: a line that asks about an option (one look at the table can clear it)
+   *  before one that only lacks its SKU, a font / count question (the table cannot answer those) last; then the oldest order. */
+  function tableRank(r) {
+    const ps = r.problems || [], plain = ps.some(p => p.kind === "needsMapping" && !p.font && !p.count && !p.earWords && !p.pairSecond);
+    return plain ? 0 : ps.some(p => p.kind === "unmatchedSku" || (p.kind === "needsMapping" && p.pairSecond)) ? 1 : 2;
+  }
+  const nextUtcDay = now => Date.parse(new Date(now).toISOString().slice(0, 10) + "T00:00:00Z") + 86400000;
+  const clockOf = ms => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  /** One plain line on why a listing's table could not be loaded now, and when it is asked for again. */
+  function tableFail(why, until, cap) {
+    if (why === "day") return "Not loaded: today's Etsy budget for listing look-ups (" + (cap && cap.max || 60) + " a day) is used up. It is asked again after midnight UTC";
+    if (why === "sandbox") return "Not loaded: the sandbox's share of today's Etsy look-ups (" + (cap && cap.max || 30) + " of " + 60 + ") is used up. It is asked again after midnight UTC";
+    if (why === "error") return "Not loaded: Etsy did not answer for this listing. It is asked again at " + clockOf(until);
+    if (why === "cache") return "Not loaded: nothing is stored for it yet and this request did not ask Etsy. It is asked again at " + clockOf(until);
+    if (why === "batch") return "Not loaded yet: waiting for its turn (six listings at a time). It is asked again at " + clockOf(until);
+    return "Not loaded: the cloud did not answer. It is asked again at " + clockOf(until);
+  }
   async function askTables() {
     if (tableBusy || !S.cloud.ok) return;
-    const now = Date.now(), ids = [], nameIds = [];
+    const now = Date.now(), want = new Map();
     for (const r of rowsOf()) {
       if (!needsTable(r)) continue;
-      // (a table the page already holds is asked for again, once, only when a line needs Etsy's value names and the table has none: the cloud answers from its cache in the sandbox, from Etsy in production)
+      // (a table the page already holds is asked for again, once, only when a line needs Etsy's value names and the table has none: the cloud answers from its cache or from Etsy, within the day's caps)
       const id = String(r.line.listingId), have = B.maps.listingSkus[id], t = tableTry.get(id), names = needsNames(r) && !!have && Array.isArray(have.products) && !have.names;
-      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names) || (t && now < t.until) || ids.includes(id)) continue;
-      ids.push(id); if (names) nameIds.push(id);
+      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names) || (t && now < t.until)) continue;
+      const age = +(r.order && r.order.createTs) || (+r.arrivedAt ? r.arrivedAt / 1000 : 9e12), w = want.get(id) || { id, rank: 9, age: 9e13, names: false };
+      want.set(id, { id, rank: Math.min(w.rank, tableRank(r)), age: Math.min(w.age, age), names: w.names || names });
     }
-    if (!ids.length) return;
+    const list = [...want.values()].sort((a, b) => a.rank - b.rank || a.age - b.age || (a.id < b.id ? -1 : 1));
+    if (!list.length) return;
     tableBusy = true;
+    for (const w of list) tableNote.set(w.id, { busy: true });
+    paintTableNotes();
+    let stop = null;   // the cloud's answer that ends the round: the day's (or the sandbox's) calls used, Etsy failing, or no answer at all
     try {
-      for (let i = 0; i < ids.length; i += 25) {
-        const part = ids.slice(i, i + 25), r = await api("charmNestLibrary", { op: "listingSkus", listingIds: part, ...(nameIds.length ? { nameIds: part.filter(id => nameIds.includes(id)) } : {}) }, { quiet: true }).catch(() => null);
-        const pending = new Set((r && r.pending || []).map(String));
-        for (const id of part) {
-          const t = tableTry.get(id), n = t ? t.n : 0, back = r && r.tables && r.tables[id], noNames = nameIds.includes(id) && !!back && Array.isArray(back.products) && !back.names;   // (asked for names and still none: not again before the backoff)
-          if (back && !pending.has(id) && !noNames) tableTry.delete(id);
-          else if (r && r.why === "batch") tableTry.set(id, { until: Date.now() + 90000, n });   // (the cloud's six for this request were used: the rest come in the next)
-          else tableTry.set(id, { until: Date.now() + Math.min(6 * 3600000, 600000 * 3 ** n), n: Math.min(5, n + 1) });
+      for (let i = 0; i < list.length; i += TABLES_CHUNK) {
+        const part = list.slice(i, i + TABLES_CHUNK), ids = part.map(w => w.id), nm = part.filter(w => w.names).map(w => w.id);
+        const r = stop ? null : await api("charmNestLibrary", { op: "listingSkus", listingIds: ids, ...(nm.length ? { nameIds: nm } : {}) }, { quiet: true }).catch(() => null);
+        const pending = new Set((r && r.pending || []).map(String)), why = stop ? stop.why : r ? r.why : "net";
+        for (const id of ids) {
+          const t = tableTry.get(id), n = t ? t.n : 0, back = r && r.tables && r.tables[id], noNames = nm.includes(id) && !!back && Array.isArray(back.products) && !back.names;   // (asked for names and still none: not again before the backoff)
+          if (back && !pending.has(id) && !noNames) { tableTry.delete(id); tableNote.delete(id); continue; }
+          const until = why === "batch" ? Date.now() + 90000 : why === "day" || why === "sandbox" ? nextUtcDay(Date.now()) + 60000 : Date.now() + Math.min(6 * 3600000, 600000 * 3 ** n);   // (the cloud's six for this request were used: the rest come in the next; a day's calls come back at midnight UTC)
+          tableTry.set(id, { until, n: why === "batch" || why === "day" || why === "sandbox" ? n : Math.min(5, n + 1) });
+          tableNote.set(id, { why: tableFail(why, until, why === "sandbox" ? r && r.sandboxCap || (stop && stop.cap) : r && r.cap || (stop && stop.cap)) });
         }
         if (r && r.tables) await takeTables(r.tables);
+        // a day's calls used, or Etsy not answering: the rest of the round is not asked (nothing is retried in a loop; every listing waits for its own time above)
+        if (!stop && (!r || ["day", "sandbox", "error", "cache"].includes(r.why))) stop = { why, cap: r && (r.why === "sandbox" ? r.sandboxCap : r.cap) };
       }
-    } finally { tableBusy = false; }
+    } finally {
+      tableBusy = false; for (const [id, n] of tableNote) if (n.busy) tableNote.delete(id); paintTableNotes();   // (a round cut short leaves no spinner behind)
+      // one look at the earliest time a listing may be asked again (never a poll: nothing is waiting once every table is here)
+      clearTimeout(tableRetryTimer); tableRetryTimer = 0;
+      const soon = Math.min(...[...tableTry.values()].map(t => t.until));
+      if (Number.isFinite(soon)) tableRetryTimer = setTimeout(() => { tableRetryTimer = 0; wantTables(); }, Math.min(2 ** 30, Math.max(5000, soon - Date.now() + 500)));
+      wantTables();   // (a line that came while the round ran)
+    }
   }
+  /** What the Review row says while the table of a waiting line's listing is on its way, or could not come: a labelled spinner, or one plain line. */
+  function tableNoteInner(id) {
+    const n = tableNote.get(String(id));
+    if (n && n.busy) return `<span class="cuStat" role="status"><span class="spin" aria-hidden="true"></span>Loading Etsy's SKU list for listing ${esc(id)}…</span>`;
+    return n && n.why ? `<span class="tblFail" role="status">${esc(n.why)}</span>` : "";
+  }
+  function tableNoteHtml(rows) {
+    for (const r of rows || []) {
+      if (!r || !r.line || !r.line.listingId || !needsTable(r)) continue;
+      const id = String(r.line.listingId); if (B.maps.listingSkus[id]) continue;
+      return `<span class="tblSlot" data-tbl="${esc(id)}">${tableNoteInner(id)}</span>`;
+    }
+    return "";
+  }
+  function paintTableNotes(root) { try { for (const el of (root || document).querySelectorAll("[data-tbl]")) { const h = tableNoteInner(el.dataset.tbl); if (el.innerHTML !== h) el.innerHTML = h; } } catch (_) {} }
   /** Tables the cloud sent: the lines of those listings are read again, and a line held for its SKU or its option that now reads clean is made up again. */
   async function takeTables(fresh) {
     const next = Object.assign({}, B.maps.listingSkus); let changed = false;
@@ -1541,6 +1602,7 @@ const Orders = window.Orders = (() => {
     if (!changed) return;
     const waiting = new Set(rowsOf().filter(needsTable).map(r => r.key));
     B.maps.listingSkus = next; tablesSave();
+    for (const id of Object.keys(fresh || {})) if (next[id]) tableNote.delete(String(id));
     interpretAll();
     for (const r of rowsOf()) {
       if (!waiting.has(r.key) || !fresh[String(r.line.listingId)] || (r.problems || []).some(p => p.kind === "unmatchedSku" || p.kind === "needsMapping")) continue;
@@ -1617,6 +1679,7 @@ const Orders = window.Orders = (() => {
     const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
+    O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
@@ -1686,7 +1749,7 @@ const Orders = window.Orders = (() => {
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
           const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
-          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && oldSpec.designSku !== r.spec.designSku;
+          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && !O.sameDesign(oldSpec.designSku, r.spec.designSku, sku => Master.entryFor(sku));   // (the same drawing under another of its names is no change: a design the library keeps under two spellings)
           const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
           // An update that changes nothing this line is made from (Etsy moves an order's update time for an address, a
           // gift note, a shipping upgrade, or a change to one of its other lines) is taken as it is. Every such update
@@ -2214,7 +2277,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -10710,7 +10773,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -11006,7 +11069,7 @@ const Review = window.Review = (() => {
       // SKUs named by the value are offered, and the answer is kept for this listing and value
       const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
-        `${p.note ? `<div class="why">${esc(p.note)}</div>` : ""}<div class="ask">What does this option decide?</div>
+        `${p.note ? `<div class="why">${esc(p.note)}</div>` : p.letter ? `<div class="why">${esc(p.letter.why)}</div>` : ""}<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
         <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
@@ -11313,7 +11376,7 @@ const Review = window.Review = (() => {
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
     const stamp=stampOf(it);
-    const cached=reviewRows.get(it.key);if(cached?.stamp===stamp)return cached.node;
+    const cached=reviewRows.get(it.key);if(cached?.stamp===stamp){Orders.paintTableNotes?.(cached.node);return cached.node;}
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null);
     // any other card: the custom card's buttons, for the order it shows (actOf); cx is what those buttons act on
     const ax=cu?null:actOf(it),cx=cu?it:ax,busy=cx?CustomPrint.statusHtml(cx,'sm'):'';
@@ -11362,7 +11425,7 @@ const Review = window.Review = (() => {
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)

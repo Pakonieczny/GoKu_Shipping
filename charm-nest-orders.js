@@ -13,6 +13,53 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  /* ═══ 0 · Etsy's HTML-escaped text ═════════════════════════════════════
+     Etsy hands text over HTML-escaped: the shop's SKU "ACORN'S LEAF" arrives as "ACORN&#39;S LEAF" and no master file holds that
+     (Paul, 11 Oct 2026, order 4196630529: "Unknown SKU: SKU ACORN&#39;S LEAF"). decodeEntities is the ONE decoder: the standard
+     entities (&#39; &apos; &amp; &quot; &lt; &gt;) and the numeric (&#39;) and hex (&#x27;) forms, as many passes as it takes (Etsy
+     double-escapes some text, "&amp;#39;"; every pass that changes the text shortens it), so a text that is already decoded is never
+     changed and decoding twice is the same as decoding once. cleanLine / cleanOrders decode a line's SKU, title and option names and values
+     where the sorter takes the Etsy orders in (DesignLink, charm-nest-bridge.js) and where it reads a stored line back
+     (rowFromRecord); cleanMaps does the same for the SKUs a person's saved answers are keyed by. upSku, norm and bySkuOf below read
+     the decoded form too, so a SKU that carries no entity resolves exactly as it did, and one that does resolves as its decoded self.
+     The customer's own words (personalisation, buyer message, notes) are NOT touched here. */
+  const ENTITY = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|apos|quot|lt|gt));/g;
+  const NAMED_ENTITY = { amp: "&", apos: "'", quot: '"', lt: "<", gt: ">" };
+  const decodeEntities = v => {
+    let s = v == null ? "" : String(v);
+    while (s.indexOf("&") >= 0) {   // (each pass that changes anything makes the text shorter, so this ends)
+      const was = s;
+      s = s.replace(ENTITY, (m, dec, hex, name) => {
+        if (name) return NAMED_ENTITY[name];
+        const cp = dec != null ? parseInt(dec, 10) : parseInt(hex, 16);
+        return cp >= 32 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF) ? String.fromCodePoint(cp) : m;   // (a control code or a number that is no character stays as written)
+      });
+      if (s === was) break;
+    }
+    return s;
+  };
+  /** A line as the Etsy transaction gave it, with its SKU, title and the names and values of its options decoded; the line itself is changed (it is a fresh copy the station sent, or one the page built) and answered. */
+  function cleanLine(line) {
+    if (!line || typeof line !== "object") return line;
+    for (const k of ["sku", "title"]) if (typeof line[k] === "string" && line[k].indexOf("&") >= 0) line[k] = decodeEntities(line[k]);
+    if (Array.isArray(line.variations)) for (const v of line.variations) if (v && typeof v === "object") for (const k of ["name", "value", "formatted_name", "formatted_value"]) if (typeof v[k] === "string" && v[k].indexOf("&") >= 0) v[k] = decodeEntities(v[k]);
+    return line;
+  }
+  /** What the station answers to an orders call ({ orders: [...] } or { order }): every line of every order, decoded. */
+  function cleanOrders(res) {
+    if (!res || typeof res !== "object") return res;
+    for (const o of Array.isArray(res.orders) ? res.orders : res.order ? [res.order] : []) if (o && Array.isArray(o.lines)) o.lines.forEach(cleanLine);
+    return res;
+  }
+  /** One of the maps a person's answers are saved in (aliases: { listingId: { bySku, pairBySku, ... } }; noDesign: { skus } ), read with its SKUs decoded: a key saved while the SKU still carried an entity is read under the decoded spelling (a
+   *  decoded key already there wins); nothing is dropped. Answers the same objects when nothing in them carries an entity. */
+  function cleanMaps(aliases, noDesign) {
+    const keyed = m => { if (!m || typeof m !== "object" || !Object.keys(m).some(k => k.indexOf("&") >= 0)) return m; const out = {}; for (const k of Object.keys(m)) { const d = decodeEntities(k).trim().toUpperCase(); if (!(d in out) || d === k) out[d] = m[k]; } return out; };
+    if (aliases && typeof aliases === "object") for (const id of Object.keys(aliases)) { const a = aliases[id]; if (!a || typeof a !== "object") continue; const b = keyed(a.bySku), p = keyed(a.pairBySku); if (b !== a.bySku || p !== a.pairBySku) aliases[id] = Object.assign({}, a, b ? { bySku: b } : {}, p ? { pairBySku: p } : {}); }
+    if (noDesign && Array.isArray(noDesign.skus) && noDesign.skus.some(x => String(x).indexOf("&") >= 0)) noDesign.skus = noDesign.skus.map(x => decodeEntities(x));
+    return [aliases, noDesign];
+  }
+
   /* ═══ 1 · material: the station's metal key → the sorter's card ═══════ */
   const METAL_TO_CARD = { gold: "gold", silver: "silver", rose: "rose", "10k": "gold10k", "14k": "gold14k" };
   const CARD_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
@@ -22,7 +69,7 @@
      Charm_Option_Map/{listingId or "*"} = { optionName: { value: { field, value } } }. Names and values are matched
      after normalisation (lower-case, trimmed, single spaces). The built-in "*" map below covers the plain literal
      values the shop's listings use; anything else is a "Needs mapping" review item until a person maps it once. */
-  const norm = s => String(s == null ? "" : s).replace(/&quot;/g, "\"").toLowerCase().replace(/\s+/g, " ").trim();
+  const norm = s => decodeEntities(s).toLowerCase().replace(/\s+/g, " ").trim();   // (decoded: an option map saved under "women&#39;s" still meets "women's")
   // Display-only order details. Never alter fulfilment mapping or infer a
   // purchased variant from a design SKU (the same charm can be sold many ways).
   const optionText = value => String(value ?? "").replace(/&(?:quot|amp|apos|lt|gt|#39|#34);/g, entity => ({"&quot;":'"',"&amp;":"&","&apos;":"'","&#39;":"'","&#34;":'"',"&lt;":"<","&gt;":">"}[entity])).trim();
@@ -279,8 +326,8 @@
   /* ═══ 3 · SKUs that are not charms ═════════════════════════════════════ */
   /** noDesign = { patterns: [regex source strings], skus: [strings] } — Charm_Sku_NoDesign flattened. */
   function isNoDesign(sku, noDesign) {
-    const s = String(sku || "").trim().toUpperCase(); if (!s) return false;
-    if ((noDesign && noDesign.skus || []).some(x => String(x).trim().toUpperCase() === s)) return true;
+    const s = upSku(sku); if (!s) return false;
+    if ((noDesign && noDesign.skus || []).some(x => upSku(x) === s)) return true;
     for (const p of (noDesign && noDesign.patterns) || []) { try { if (new RegExp(p, "i").test(s)) return true; } catch (_) { /* a bad pattern never matches */ } }
     return false;
   }
@@ -308,7 +355,7 @@
   const HUGGIE_SET = /\bhuggie\s+charms?\s+set\b/i;
   const huggieSet = line => (line.variations || []).some(v => HUGGIE_SET.test(String(v.value != null ? v.value : v.formatted_value || "")));
   // (a real SKU that ends in "-CO", one the master already loaded holds itself or as a huggie, keeps its "-CO")
-  const huggieSku = (raw, masterEntry) => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
+  const huggieSku = (raw, masterEntry) => { const s = upSku(raw).replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
     const base = variationBase(s), real = !!base && !!masterEntry && !!(masterEntry(s) || masterEntry(s + " (HUGGIE)")); return (base && !real ? base : s) + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
   /* The SKU Etsy keeps for the variation bought comes before anything else (Paul, 9 Oct: a listing whose drop-down options
@@ -321,7 +368,9 @@
        and it outranks a charm a person picked for that option: tied means the inventory never gives that SKU to another
        value of the option (a SKU shared by every sign says nothing about which sign was bought, so the option is still asked);
      · a SKU no master file holds waits for a person, as before, and never becomes a sibling's design. */
-  const upSku = s => String(s == null ? "" : s).trim().toUpperCase();
+  const upSku = s => decodeEntities(s).trim().toUpperCase();   // (decoded before the capitals: "&#x27;" must not become "&#X27;")
+  /** The answer a person saved under a SKU in a map keyed by SKU (aliases bySku, pairBySku): under the SKU itself, else under a key that is the same SKU saved while it still carried an entity. */
+  const bySkuOf = (map, sku) => { if (!map || typeof map !== "object" || !sku) return undefined; if (map[sku] !== undefined) return map[sku]; for (const k of Object.keys(map)) if (k.indexOf("&") >= 0 && upSku(k) === sku) return map[k]; return undefined; };
   /** A SKU without its spacing and punctuation: the key under which two spellings of one SKU meet. */
   const looseKey = s => upSku(s).replace(/[^A-Z0-9]+/g, "");
   /* KNOWN_SKU_TYPOS: the ONE definition of a SKU Etsy carries misspelled that Paul named as an exception to "never a look-alike" (10 Oct 2026:
@@ -348,8 +397,24 @@
   }
   /** The master's SKU for a SKU that is exactly a known typo ("" when it is not, or the master does not hold the right one). */
   const typoSku = (sku, masterEntry, masterLoose) => { const t = knownTypo(sku); return t ? spelling(t, masterEntry, masterLoose) : ""; };
-  /** The master's SKU a SKU stands for ("" when the master holds none): its own spelling, else the right spelling of a known typo. */
-  const masterSku = (sku, masterEntry, masterLoose) => spelling(sku, masterEntry, masterLoose) || typoSku(sku, masterEntry, masterLoose);
+  /* KNOWN_SKU_NAMES (MUSICSKU, 11 Oct 2026): the ONE definition of an Etsy SKU that is a design's plain SKU with words after it, which Paul named as that design.
+     Order 4198591262 carries "MUSIC4 - SINGLE W/ DOUBLE LINE" (a necklace charm, Silver, 14"); the master design is the music note MUSIC4 (it was "MUSIC 4" until Paul
+     asked for the Etsy spelling). An exact entry, compared as every SKU is (looseKey: case, spacing and punctuation set aside, nothing fuzzier). It is a table of exact
+     SKUs and NOT a rule "<master SKU> - <words>": the master itself shows the words after " - " usually name ANOTHER design (of the 90 master SKUs written "<master SKU> - <words>",
+     61 are not the size of the SKU before the dash; MUSIC3 and "MUSIC3 - DOUBLE MUSIC NOTE" are two designs), so another SKU of the family (MUSIC4 - DOUBLE NOTE) still waits for a person.
+     It stands only when the master really holds the target, only for a SKU that is exactly that one, and after a person's saved answer (an alias, an option map); nothing stored is rewritten. */
+  const KNOWN_SKU_NAMES = Object.freeze({ "MUSIC4 - SINGLE W/ DOUBLE LINE": "MUSIC4" });
+  const NAME_IX = new Map(Object.keys(KNOWN_SKU_NAMES).map(k => [looseKey(k), upSku(KNOWN_SKU_NAMES[k])]));
+  /** The master SKU a SKU is when it is exactly a named one (KNOWN_SKU_NAMES), else "" (the master is not asked). */
+  const knownName = sku => NAME_IX.get(looseKey(sku)) || "";
+  /** The master's SKU for a SKU that is exactly a named one ("" when it is not, or the master does not hold the design: MUSIC4, else the one master SKU that reads the same). */
+  const namedSku = (sku, masterEntry, masterLoose) => { const t = knownName(sku); return t ? spelling(t, masterEntry, masterLoose) : ""; };
+  /** The master's SKU a SKU stands for ("" when the master holds none): its own spelling, else the right spelling of a known typo, else the design Paul named for it. */
+  const masterSku = (sku, masterEntry, masterLoose) => spelling(sku, masterEntry, masterLoose) || typoSku(sku, masterEntry, masterLoose) || namedSku(sku, masterEntry, masterLoose);
+  /** Are two SKUs one drawing in the library? The same SKU, or two the master holds that share one design file (a design sold under two names: "MUSIC 4" and "MUSIC4", the 227 spellings
+   *  the library already keeps twice). An Etsy update that moves a line from one name to the other is not a change of design: nothing is cut, asked or un-approved for it. */
+  const designFile = e => (e ? e.aiPath || (Object.values(e.sizes || {}).find(z => z && z.aiPath) || {}).aiPath || "" : "");
+  const sameDesign = (a, b, masterEntry) => { const x = upSku(a), y = upSku(b); if (x === y) return true; if (!x || !y || !masterEntry) return false; const f = designFile(masterEntry(x)); return !!f && f === designFile(masterEntry(y)); };
   const idOf = x => (x == null || x === "" ? "" : String(x));
   const pairKey = p => idOf(p[0]) + ":" + idOf(p[1]);
   // the (property, value) ids Etsy puts on each variation of a transaction; a question with no value id (Personalization) has none
@@ -378,6 +443,111 @@
     const live = table.products.filter(x => x && !x.d), mine = live.filter(x => upSku(x.sku) === sku);
     return mine.length > 0 && mine.every(has) && live.some(x => !has(x));
   }
+  /* ── an option's OWN SKU, told without Etsy's table (FLAGWHY, 11 Oct 2026) ───────────────────────────────────────────
+     Paul, on 4197589560 ZODIAC_CONSTE_GEM-7 "Zodiac Sign: Scorpio", 4195168363 ZODIAC_EARRINGS-3 "Cancer" and 4194545985 LETTER_EARRING-19 "Letter: T", all
+     "REVIEW REQUIRED: option not mapped, Etsy's SKU list is not loaded yet", with the right charm already on each row: "These 3 were chosen correctly".
+     The transaction's SKU was a master design and the product's own (Etsy puts the SKU of the variation bought on the transaction), but the option was
+     only ever answered by the listing's inventory table (tiesToOption), which the page does not hold until a line waits and Etsy has been asked. A master
+     SKU on the transaction settles the option when it is demonstrably the OPTION's own and not the one SKU the whole listing shares:
+       · index: it is `BASE-n` / `BASE_n` and the master holds the numbered family BASE-0, BASE-1, BASE-2… (zodiac 0-11, letters 0-25, runes 0-23, birth flowers,
+         goddesses: the shop numbers one design per drop-down value), read from the master itself, never from a list of listings;
+       · seen: the orders the page already holds for the listing carry a different SKU for each value of the option (this value's SKU is on no other value).
+     Never when something says the SKU is shared: the same SKU on two values of the option in the orders the page holds, or in the listing's table
+     (held by several products, or the listing's only SKU). Never for a SKU that is not a master design, never for a SKU of another family than the line
+     (a necklace pendant on an earrings line), never over a person's saved pick, and only when exactly ONE option of the line is still unread (two could be
+     two charms: a person says). The line's own SKU is the design either way; this only decides whether the option still has to be asked. */
+  const INDEXED_SKU = /^(.+?)([-_])(\d{1,3})$/;
+  /** The master family a numbered SKU belongs to ({ base: "ZODIAC_EARRINGS-", n: 3 }), when the master holds that base numbered 0, 1 and 2 (else null). */
+  function skuIndexFamily(sku, masterEntry) {
+    const m = INDEXED_SKU.exec(upSku(sku)); if (!m || !masterEntry || String(+m[3]) !== m[3]) return null;
+    const base = m[1] + m[2];
+    for (let i = 0; i < 3; i++) if (!masterEntry(base + i)) return null;
+    return { base, n: +m[3] };
+  }
+  /* ── letters (KEYLETTER, 11 Oct 2026) ─────────────────────────────────────────────────────────────────────────────────
+     Paul, on 4196617547 (listing 1099225598 "Key Necklace … Key to My Heart", SKU KEY_5598, "Initial: A" of an A to Z drop-down): "You are not correctly mapping these letter
+     options to the SKU's. In this case the user chose the letter "A". so the Key with the SKU should have the letter "A" in it already." The row said "option not mapped, Etsy's
+     SKU list … is not loaded yet". An option value that is ONE letter names the letter, and the shop numbers its letter designs in a master family of 26 (LETTER_EARRING-0 … -25,
+     INITIAL_NECKLACE_SCRIPT-0 … -25: 0 = A, 19 = T), so the letter finds its design by its place in the alphabet, from what the line already says, never from a list of listings:
+       1 · the line's own SKU is a member of such a family (the SKU Etsy keeps for the product bought): that is the letter's design when the member is the letter's own (FLAGWHY's
+           rule settles the option); the SKU of ANOTHER letter ("LETTER_EARRING-3" on "T") is a clash, said in one line and never cut;
+       2 · the line's SKU is the base of such a family (KEY_5598 with KEY_5598-0 … -25 in the master) or has a sibling named by the letter (KEY_5598-A, KEY_5598_A): that member is the design;
+       3 · a person's earlier answer for ANOTHER letter of the same option on the listing was that letter's own member of one family (A → INITIAL_NECKLACE_SCRIPT-0): the rest of the alphabet follows;
+     nothing is guessed beyond that: a letter whose design the master does not hold waits with one plain line ("no master design for letter A on this listing"), and suggestCharms offers the
+     master's letter families for it first. A look-alike (a heart key that happens to show an H) is never taken for another letter. The option must be a letter option: named for one
+     (Initial, Letter, Monogram, Alphabet), or on a line whose SKU or whose saved answers are in a letter family; "Size: S" and every other option an earlier rule reads are not touched. */
+  const LETTER_NAME = /\b(?:initials?|letters?|monograms?|alphabet)\b/i;
+  /** The one character an option value is ("A", "t", "7", '"T"', "Letter: T", "initial: S" followed by Etsy's object mark), else "". */
+  const blankChar = c => { const k = c.charCodeAt(0); return k === 0xa0 || (k >= 0x200b && k <= 0x200f) || k === 0x2028 || k === 0x2029 || k === 0xfeff || k === 0xfffc || k === 0xfffd; };   // (no-break space, zero-width marks, Etsy's object mark after typed text)
+  function oneChar(value) {
+    let t = Array.from(optionText(value)).map(c => blankChar(c) ? " " : c).join("").trim();
+    t = t.replace(/^(?:the\s+)?(?:initials?|letters?|monograms?|alphabet|number|digit)\s*[:=-]?\s*/i, "").replace(/^[\s"'“”‘’(\[]+|[\s"'“”‘’)\].,;:!]+$/g, "");
+    return t.length === 1 ? t : "";
+  }
+  /** 0 to 25 for an option value that is exactly one letter (any case), else -1. */
+  const letterIndex = value => { const t = oneChar(value); return /^[A-Za-z]$/.test(t) ? t.toUpperCase().charCodeAt(0) - 65 : -1; };
+  const letterOfIndex = i => String.fromCharCode(65 + i);
+  /** The master's 26-letter family a SKU is a member of or the base of: { base, n, own } (n: its own place, own: it is a member), when the master holds at least 25 of BASE0 … BASE25 and nothing past 25
+   *  (zodiac 12, runes 24 and birth flowers 30 are not letter families). */
+  function letterFamily(sku, me) {
+    const s = upSku(sku); if (!s || !me) return null;
+    const full = base => { let held = 0; for (let i = 0; i < 26; i++) if (me(base + i)) held++; return held >= 25 && !me(base + 26) && !me(base + 27); };
+    const m = INDEXED_SKU.exec(s);
+    if (m && String(+m[3]) === m[3] && full(m[1] + m[2])) return { base: m[1] + m[2], n: +m[3], own: true };
+    for (const sep of ["-", "_"]) if (full(s + sep)) return { base: s + sep, n: -1, own: false };
+    return null;
+  }
+  /** What the line says about a letter option: null (not a letter option, or the line's SKU is already that letter's own member: nothing to add), { sku, how, letter } (that member is the design:
+   *  "base" | "named" | "said"), or { sku: "", letter, why, clash?: { has, want } } (no design: one plain line). sku: the line's design SKU (master spelling, "" when none); listingMap: the
+   *  option maps saved for the listing ({ option: { value: { field, value } } }). */
+  function letterRead(name, value, sku, me, listingMap) {
+    const idx = letterIndex(value); if (idx < 0 || !me) return null;
+    const L = letterOfIndex(idx), s = upSku(sku), fam = letterFamily(s, me);
+    // a person's answers for other letters of this option: each the right member of one family
+    const n = norm(name), byName = listingMap && (listingMap[n] || listingMap[Object.keys(listingMap).find(k => norm(k) === n)]), said = new Set();
+    for (const [k, hit] of Object.entries(byName || {})) { const j = letterIndex(k); if (j < 0 || !hit || hit.field !== "design" || !hit.value) continue; const f = letterFamily(hit.value, me); if (f && f.own && f.n === j) said.add(f.base); }
+    if (!LETTER_NAME.test(String(name || "")) && !fam && !said.size) return null;
+    const none = why => ({ sku: "", letter: L, why });
+    if (fam && fam.own) {
+      if (!me(s)) return none(`no master design for letter ${L} on this listing (${s} is not in the master)`);
+      if (fam.n === idx) return null;                                                    // (the SKU is this letter's own member)
+      const want = fam.base + idx;
+      return Object.assign(none(`SKU ${s} is the letter ${letterOfIndex(fam.n)} but the buyer chose ${L}: a person says`), { clash: { has: s, want: me(want) ? want : "" } });
+    }
+    if (fam) { const t = fam.base + idx; return me(t) ? { sku: t, how: "base", letter: L } : none(`no master design for letter ${L} on this listing (${t} is not in the master)`); }
+    const named = s ? ["-", "_", " "].map(sep => s + sep + L).filter(k => me(k)) : [];
+    if (named.length === 1) return { sku: named[0], how: "named", letter: L };
+    if (said.size === 1) { const t = [...said][0] + idx; return me(t) ? { sku: t, how: "said", letter: L } : none(`no master design for letter ${L} on this listing (${t} is not in the master)`); }
+    // a line whose SKU is a master design that is no letter's (KEY_5598) has nothing more to wait for; one with no SKU or a SKU no master holds may still be answered by Etsy's SKU list: the old wording stays
+    return s && me(s) ? none(`no master design for letter ${L} on this listing`) : null;
+  }
+  /** What the page's own lines say about each listing's SKUs: { listingId: { rows: [{ sku, v: { option name: value } }], sig } } (names and values as optionLookup reads them; lines with no SKU left out). */
+  function seenSkus(lines) {
+    const by = {};
+    for (const l of lines || []) {
+      const sku = l && l.listingId ? upSku(l.sku) : ""; if (!sku) continue;
+      const v = {}; for (const x of l.variations || []) { const n = norm(lvName(x)), val = norm(lvValue(x)); if (n && val) v[n] = val; }
+      const id = String(l.listingId), e = by[id] || (by[id] = { rows: [], keys: new Set() }), k = sku + "\u0001" + JSON.stringify(v);
+      if (!e.keys.has(k)) { e.keys.add(k); e.rows.push({ sku, v }); }
+    }
+    for (const id of Object.keys(by)) { by[id].sig = [...by[id].keys].sort().join("\u0002"); delete by[id].keys; }
+    return by;
+  }
+  /** What the page's lines of this listing say about a SKU against one option's value: "shared" (the SKU is on another value of the option), "follows" (every line with
+   *  this value has this SKU, no other value has it, and another value has another SKU), or "" (nothing to say). */
+  function seenVerdict(seen, listingId, name, value, sku) {
+    const e = seen && seen[String(listingId)], s = upSku(sku); if (!e || !s) return "";
+    const n = norm(name), x = norm(value); let shared = false, varies = false, other = false;
+    for (const r of e.rows) {
+      const rx = r.v[n]; if (rx == null) continue;
+      if (rx !== x && r.sku === s) shared = true;
+      else if (rx === x && r.sku !== s) varies = true;
+      else if (rx !== x && r.sku !== s) other = true;
+    }
+    return shared ? "shared" : varies ? "" : other ? "follows" : "";
+  }
+  /** The listing's table says this SKU is the listing's own: its only SKU, or on several products. */
+  const tableShares = (table, sku) => !!table && typeof table === "object" && !table.gone && (Array.isArray(table.products) ? listingWide(table, upSku(sku)) : !!table.uni && upSku(table.uni) === upSku(sku));
   /* ── family: what a SKU and a line say they are (necklace, earrings…) ─────────────────────────────────────────────────
      Paul, 10 Oct: each drop-down option's own SKU decides the charm. Etsy's SKU for the product bought is exact evidence only
      when it is also the right KIND of design for the line: the Greek Goddess EARRINGS listing carries "GreekGoddess_Necklace_4"
@@ -472,24 +642,38 @@
    *  skus: the master's SKUs (any iterable). → [{ sku, why }] (at most `max`). */
   function suggestCharms(o) {
     o = o || {}; const max = o.max || 8, fam = lineFamily(o.line), huggieLine = /\bhuggies?\b/i.test(String(o.line && o.line.title || "") + " " + purchaseOptions(o.line || {}, {}).map(v => v.value).join(" "));
-    const wordsOf = t => upSku(t).split(/[^A-Z0-9]+/).filter(Boolean), keep = w => w.length >= 3 && !/^\d+$/.test(w);
-    const value = optionText(o.value), vw = wordsOf(norm(value)).filter(keep), lead = wordsOf(norm(value).split(/\s+[-–—:]\s+|\s*[:(]\s*/)[0]).filter(keep)[0] || "";
+    // (KEYLETTER: a value that is ONE character, "A" or "7", is a real value: it was dropped by the three-character filter, so a letter could never be matched. It matches a master SKU named exactly that character
+    // and nothing looser, and a letter also finds its place in the master's 26-letter families, below)
+    const wordsOf = t => upSku(t).split(/[^A-Z0-9]+/).filter(Boolean), one = oneChar(o.value).toUpperCase(), keep = w => (w.length >= 3 && !/^\d+$/.test(w)) || (one && w === one);
+    const value = optionText(o.value), vw = one ? [one] : wordsOf(norm(value)).filter(keep), lead = one ? "" : wordsOf(norm(value).split(/\s+[-–—:]\s+|\s*[:(]\s*/)[0]).filter(keep)[0] || "";
     const found = new Map(), put = (sku, rank, why) => { const k = upSku(sku); if (!k) return; const was = found.get(k); if (!was || rank < was.rank) found.set(k, { sku: k, rank, why }); };
     for (const x of o.picks || []) put(x.sku, x.conflict ? 3 : 0, x.why);
-    if (vw.length) for (const k of o.skus || []) {
+    const list = [...(o.skus || [])];
+    if (vw.length) for (const k of list) {
       const w = wordsOf(k), plain = w.filter(x => x !== "HUGGIE"), set = new Set(w);
       if (plain.length === vw.length && vw.every(x => plain.includes(x))) put(k, 1, "named exactly like the option");
+      else if (one) continue;
       else if (vw.every(x => set.has(x))) put(k, 2, "its name holds the option's words");
       else if (lead && lead.length >= 4 && set.has(lead) && vw.length > 1) put(k, 4, `its name holds “${lead.toLowerCase()}”`);
+    }
+    // a letter: its member of every 26-letter family the master holds that is named for letters (INITIAL_*, LETTER_*), best fitting the line first (below)
+    const li = letterIndex(o.value);
+    if (li >= 0) {
+      const have = new Set(list.map(upSku)), me = k => (have.has(k) ? { sku: k } : null), seenBase = new Set();
+      for (const k of have) {
+        const m = INDEXED_SKU.exec(k); if (!m || !/INITIAL|LETTER|ALPHA|MONOGRAM/.test(m[1])) continue;
+        const base = m[1] + m[2]; if (seenBase.has(base)) continue; seenBase.add(base);
+        const f = letterFamily(base + "0", me); if (f && have.has(base + li)) put(base + li, 1, `the letter ${letterOfIndex(li)} of the ${base}0 to ${base}25 designs`);
+      }
     }
     const bad = k => (skuFamilyConflict(k, o.line) ? 2 : 0) + (/\(HUGGIE\)\s*$/i.test(k) && !huggieLine ? 1 : 0);
     return [...found.values()].sort((a, b) => a.rank - b.rank || (a.rank ? bad(a.sku) - bad(b.sku) : 0) || a.sku.length - b.sku.length || a.sku.localeCompare(b.sku)).slice(0, max).map(x => ({ sku: x.sku, why: x.why }));
   }
   function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
-    const raw = String(line.sku || "").trim().toUpperCase();
+    const raw = upSku(line.sku);
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
     // (the listing's answer is its necklace charm's: never a huggie set's, which has its own for a line with no SKU)
-    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
+    const own = raw && a && a.bySku ? up(bySkuOf(a.bySku, raw)) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
     // a blocked SKU's card offers "Use this charm" too: the answer for that SKU is its design (the blocked entry beat it)
     const held = raw && masterEntry ? masterEntry(raw) : null;
     if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
@@ -503,6 +687,9 @@
     // a SKU that is exactly a known typo (KNOWN_SKU_TYPOS) is its master design: after every answer a person saved for it, before "unknown SKU"
     const typo = raw && typoSku(raw, masterEntry, masterLoose);
     if (typo) return { sku: typo, source: "typo" };
+    // a SKU that is exactly one Paul named as a master design (KNOWN_SKU_NAMES): the same place and the same conditions as a known typo
+    const named = raw && namedSku(raw, masterEntry, masterLoose);
+    if (named) return { sku: named, source: "named" };
     return raw ? { sku: raw, source: "transaction" } : { sku: "", source: null };
   }
   /** The charm an option picks on this listing ({ sku, name, value, variation }), when a person said so under Options, or null. */
@@ -624,7 +811,7 @@
    */
   function specialOf(line, opts) {
     line = line || {}; opts = opts || {};
-    const raw = String(line.sku || "").trim().toUpperCase(), sku = String(opts.sku || raw).trim().toUpperCase();
+    const raw = upSku(line.sku), sku = upSku(opts.sku || raw);
     const known = !!(sku && opts.masterEntry && opts.masterEntry(sku));
     const title = String(line.title || ""), lower = title.toLowerCase();
     const vars = (line.variations || []).map(v => ({ name: String(v.name != null ? v.name : v.formatted_name || ""), value: String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim() })).filter(v => v.name && v.value);
@@ -1083,7 +1270,7 @@
 
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
   function pairLinkOf(line, aliases) {
-    const a = aliases && line && aliases[String(line.listingId)], raw = String(line && line.sku || "").trim().toUpperCase(), k = a && a.pairBySku && raw && a.pairBySku[raw];
+    const a = aliases && line && aliases[String(line.listingId)], raw = upSku(line && line.sku), k = a && a.pairBySku && raw && bySkuOf(a.pairBySku, raw);
     return k && typeof k === "object" && k.L && k.R ? { L: upSku(k.L), R: upSku(k.R) } : null;
   }
   /** The two designs of a mismatched pair a line names, when both are in the master: [{ side: "L", sku }, { side: "R", sku }] or null.
@@ -1318,7 +1505,7 @@
   function interpretLine(order, line, ctx) {
     ctx = ctx || {};
     const problems = [];
-    const me = ctx.masterEntry, loose = ctx.masterLoose;
+    const me = ctx.masterEntry, loose = ctx.masterLoose, txSku = upSku(line.sku);   // (txSku: the SKU as the transaction carries it, before any inventory SKU stands in for it)
     // 0 · the SKU Etsy keeps for the product bought, in the listing's inventory table (when the page holds one): it stands in
     // for a transaction SKU that is missing or names no design, and for one that is the listing's own (held by products that
     // differ in their options) while the product has a SKU of its own. Never for a SKU that names a design and is no one
@@ -1348,7 +1535,7 @@
       }
     }
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
-    const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : String(line.sku || "").trim().toUpperCase();
+    const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
     if (viaInventory && skuSource !== "alias") skuSource = "inventory";
     // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
@@ -1357,6 +1544,19 @@
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
     const picked = optionDesign(line, ctx.optionMaps), viaPick = !!picked && !tied(picked.variation);
     if (viaPick) { sku = picked.sku; skuSource = "option"; }
+    // KEYLETTER: an option whose value is ONE letter finds its design by the letter's place in the master's 26-letter family (letterRead); when the one letter option of the line is not answered
+    // by a person or tied by a table, it is read here: another family member is the design (base / named / said), a clash or a missing design is one plain line (below, in the loop)
+    const letters = new Map(); let viaLetter = null;
+    if (!viaPick && !huggieSet(line)) {
+      for (const v of line.variations || []) {
+        const nm = lvName(v), val = lvValue(v).trim();
+        if (!nm || !val || isMetalOption(nm) || isPersonalisation(nm) || isSizeOption(nm) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
+        const r = letterRead(nm, val, sku, me, ctx.optionMaps && ctx.optionMaps[String(line.listingId)]); if (r) letters.set(v, Object.assign(r, { name: nm, value: val }));
+      }
+      if (letters.size > 1) letters.clear();                                    // (two letter options may be two charms: a person says, as before)
+      const only = letters.size === 1 ? [...letters.values()][0] : null;
+      if (only && only.sku) { sku = only.sku; skuSource = "letter"; viaLetter = only; }
+    }
     // two designs named by the line (a SKU that names two, or options for the left and the right earring), both in the master: the pair's
     // members. Pooled as those two only once the pool makes a piece for each (PIECE_RULES.mismatchedMakesTwo); until then the line is
     // read and held exactly as before, and the members are only told in spec.pair.
@@ -1397,6 +1597,7 @@
     if (done) spec.customDone = done;
     spec.boughtSku = bought; if (set) spec.huggieSet = true;
     if (viaInventory) spec.viaInventory = viaInventory;   // the transaction's SKU and the listing inventory's SKU for the product bought, when that one was used
+    if (viaLetter) spec.viaLetter = { letter: viaLetter.letter, sku: viaLetter.sku, how: viaLetter.how, name: viaLetter.name, value: viaLetter.value, from: txSku };   // KEYLETTER: the letter option's design is that letter's member of its family
     if (heldFamily) spec.inventoryHeld = heldFamily;      // the inventory's SKU for the product bought is another family's design than the line: not used, a person decides
     // a line with no design of its own (not on the no-design list, not finished by hand) is one Claude reads to tell a
     // custom order from a regular listing whose SKU is not indexed yet (Custom Orders)
@@ -1415,6 +1616,14 @@
         help = Object.assign({}, why ? { why } : {}, picks.length ? { picks } : {});
       }
       return help;
+    };
+    // FLAGWHY: with no table loaded, the orders the page holds can still show the SKU is the listing's one SKU (it is on other choices of this option): said in the row
+    const sharedWhy = (name, value) => !table && txSku && seenVerdict(ctx.seen, line.listingId, name, value, txSku) === "shared" ? { why: `SKU ${txSku} is on orders with other choices of “${name}” too, so it does not say which charm this is: map this option once` } : {};
+    // KEYLETTER: a letter option with no design says so in ONE plain line (never "not mapped, Etsy's SKU list is not loaded"), and a clash offers the letter's own member first
+    const letterAsk = v => {
+      const r = letters.get(v); if (!r || r.sku) return {};
+      const h = optionHelp().why, why = h && /not in any master file/.test(h) && !/\(/.test(r.why) ? `${r.why} (${h})` : r.why;   // (Etsy's own list, when it names a SKU the master lacks: "Etsy's SKU for this option, X, is not in any master file"; its other answers add nothing to this line)
+      return Object.assign({ letter: { letter: r.letter, why, clash: !!r.clash }, why }, r.clash && r.clash.want ? { picks: [{ sku: r.clash.want, why: `the letter ${r.letter} of the same family` }] } : {});
     };
     // a listing that engraves in ONE font whatever the buyer picks (FONT_LISTINGS): its font option never holds, asks or changes the font
     const fx = fontListing(line, sku, bought);
@@ -1458,9 +1667,11 @@
       }
       // a font hidden in a length option ("16"·STYLISH·Center"): the line's font too; the option itself reads as the length it always did
       if (fh && !spec.font) spec.font = fontSpecOf(fh, fh.listing ? "rule:font-listing" : "rule:font-in-length");
+      // KEYLETTER: the design the letter's place in its family gives (a member other than the line's own SKU, which letterRead found above)
+      if (!mapped && viaLetter && letters.get(v) === viaLetter) mapped = { field: "design", value: sku, source: "rule:letter-" + viaLetter.how };
       spec.options.push({ name, value, mapped });
       // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
-      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp())); continue; }
+      if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, optionHelp(), sharedWhy(name, value), letterAsk(v))); continue; }
       if (mapped.field === "font") {   // the font the buyer asked for and the app font it is (none: asked only); the length it came with is the line's chain
         const af = fontById(mapped.value);
         if (!spec.font) spec.font = fr ? fontSpecOf(Object.assign({}, fr, { id: af ? af.id : "", name: af ? af.name : "" }), mapped.source) : { asked: value, id: af ? af.id : "", name: af ? af.name : "", source: mapped.source };
@@ -1471,6 +1682,16 @@
       if (mapped.field === "form" && !spec.form) spec.form = mapped.value;
       else if (mapped.field === "size" && !spec.size) spec.size = mapped.value;
       else if (mapped.field === "chain" && !spec.chain) spec.chain = mapped.value;
+    }
+    // FLAGWHY: the transaction's SKU is a master design that is demonstrably THIS option's own (skuIndexFamily, or the page's own orders: seenVerdict; never when the page's
+    // orders or the listing's table say it is shared): the one option nothing else could read is answered by it, as a table's tied SKU answers it. No hold, no person asked.
+    if (!quiet && !viaPick && !viaInventory && !heldFamily && !set && sku && txSku && me && me(sku) && ["transaction", "spelling", "variation"].includes(skuSource) && !skuFamilyConflict(sku, line) && !tableShares(table, txSku)) {
+      const unread = spec.options.filter(o => !o.mapped), ask = unread.length === 1 ? problems.find(p => p.kind === "needsMapping" && !p.font && p.optionName === unread[0].name && p.optionValue === unread[0].value) : null;
+      // (a yes / no / none answer is never a choice of charm: "Gift Wrap: Yes" on a numbered-SKU line is still an option nobody has read)
+      if (ask && !(ask.letter && ask.letter.clash) && !/^\s*(?:yes|no|none|n\/a|true|false)\b/i.test(unread[0].value)) {
+        const seen = seenVerdict(ctx.seen, line.listingId, unread[0].name, unread[0].value, txSku), how = seen === "shared" ? "" : seen === "follows" ? "seen" : skuIndexFamily(sku, me) ? "index" : "";
+        if (how) { unread[0].mapped = { field: "design", value: sku, source: "sku:" + how }; problems.splice(problems.indexOf(ask), 1); }
+      }
     }
     if (fx) { const f = fontById(fx.font); spec.font = Object.assign({ asked: "" }, spec.font, { id: f.id, name: f.name, source: "rule:font-listing", listing: true }); }   // (the listing's one font, with or without a font option)
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
@@ -1867,9 +2088,10 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
-    skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms,
+    skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

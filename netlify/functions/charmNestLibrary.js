@@ -2942,12 +2942,13 @@ async function mapSig(name) {
   const own = await collSig(PREFIX + name, MAP_STAMP[name]); return own ? `${shared}~${own}` : null;
 }
 /* The SKU table of each listing a line waits on (the SKU Etsy keeps for each product: charm-nest-orders.js inventorySku). One
-   stored table per listing, kept 7 days; Etsy is asked at most once per listing then, 6 listings a request and 60 a day, never
-   by the sandbox (it reads what production stored). See _charmNestListingSkus.js for the cost. */
+   stored table per listing, kept 7 days; Etsy is asked at most once per listing then, 6 listings a request and 60 a day for the
+   whole shop, the sandbox included (at most 30 of the 60, and the table it stores is the shop's table: the cache is shared, not
+   prefixed). Only a request that says cacheOnly asks Etsy nothing. See _charmNestListingSkus.js for the cost. */
 async function op_listingSkus(b = {}) {
   const ids = Array.isArray(b.listingIds) ? b.listingIds : String(b.listingIds || b.listingId || "").split(",");
-  const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once; never in the sandbox)
-  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, cacheOnly: !!PREFIX || b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
+  const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once)
+  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, sandbox: !!PREFIX, cacheOnly: b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
 }
 async function op_aliasGet(b = {}) {
   const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };
@@ -3965,8 +3966,13 @@ exports.handler = async (event) => {
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   DONE_TOUCH = false;
+  // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
+  // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
+  const RepoAuth = require("./_charmNestRepoAuth");
+  if (RepoAuth.owns(body.op)) return RepoAuth.handle(db, event, body);
   const fn = OPS[body.op];
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
+  { const need = RepoAuth.requirement("charmNestLibrary", body.op, body); if (need) { const no = await RepoAuth.authorize(db, need, body, event); if (no) return json(no.status, no.body); } }
   try {
     const out = await fn(body);
     await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)

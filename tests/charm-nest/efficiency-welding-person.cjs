@@ -84,6 +84,7 @@ function weldingFor(j, o = {}) {
       }
       return route.continue();
     });
+    await require('./master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
     await ctx.addInitScript(k => { try { localStorage.setItem('cn.employee', 'Tester'); sessionStorage.setItem('cn.eff.key', k); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.prompt = () => null; }, F.KEY);
   };
   const track = page => { const errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push('console: ' + m.text()); }); return errs; };
