@@ -156,7 +156,7 @@ function slim(d) {
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), ...(bk.slot ? { slot: bk.slot } : {}), ...(typeof bk.mirror === "boolean" && bk.side ? { mirror: bk.mirror } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, ...(bk.face === "front" ? { face: "front" } : {}), previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, ...(bk.side === "L" || bk.side === "R" ? { side: bk.side } : {}), ...(bk.slot ? { slot: bk.slot } : {}), ...(typeof bk.mirror === "boolean" && bk.side ? { mirror: bk.mirror } : {}), approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
@@ -933,6 +933,7 @@ async function refreshLinks(d) {
   for (const k of ["ai", "pdf", "labelled", "report", "preview"]) { const o = d.outputs && d.outputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
   for (const f of (d.label && d.label.files) || []) if (f.path) link(f.path, u => { f.url = u; });
   for (const k of ["index", "report"]) { const o = d.backOutputs && d.backOutputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
+  for (const k of ["index", "report"]) { const o = d.frontOutputs && d.frontOutputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }   // (the front records' own index and report, when the sheet has fronts)
   for (const bk of d.backPool || []) for (const k of ["ai", "png"]) { const o = bk.outputs && bk.outputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
   for (const c of d.charms || []) {
     const pngPath = c.pngPath || (c.hash ? "charmnest/charms/" + c.hash + ".png" : null), aiPath = c.aiPath || (c.hash ? "charmnest/charms/" + c.hash + ".ai" : null);
@@ -3969,6 +3970,8 @@ OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
 OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
+OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
+OPS.customEtsySkuWrite = require("./_charmNestEtsySku").ops.customEtsySkuWrite; NO_GEN_BUMP.add("customEtsySkuWrite");   // ETSYSKU: {rid} the last step of saving a custom design (CONTRACT section 5): the SKU on Etsy. Never in the sandbox, no token (the saved record decides). It writes Etsy and its own records, nothing a placement answer is made from, so it does not raise the placement counter
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {

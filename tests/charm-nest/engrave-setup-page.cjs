@@ -75,7 +75,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(!('engravingOverride' in rec.plain), 'a line with no edit has no such key in its record (records are byte for byte as before)');
     const kept = await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); const fresh = { key: KEY, order: Object.assign({}, row.order, { updateTs: row.order.updateTs + 5 }), line: row.line, spec: null, problems: [], state: 'pulled', poolIds: [], engrave: null, metal: null };
       const was = B.orders.rows.slice(), run = B.run; B.run = { status: 'complete' }; Carry.capture(); B.run = run; const i = B.orders.rows.indexOf(row); B.orders.rows[i] = fresh; B.orders.byKey.set(KEY, fresh); Carry.adopt();
-      const after = B.orders.byKey.get(KEY); const ok = !!after.engravingOverride; B.orders.rows[B.orders.rows.indexOf(after)] = row; B.orders.byKey.set(KEY, row); return ok; }, KEY);
+      const after = B.orders.byKey.get(KEY); const ok = !!after.engravingOverride; B.orders.rows[B.orders.rows.indexOf(after)] = row; B.orders.byKey.set(KEY, row); Engrave.relinkAll(); return ok; }, KEY);   // (the jobs of a line with a front are joined to the row again, as Carry.adopt does for the row it adopts: here the test puts the first row back)
     check(kept, 'a fresh pull of a changed order keeps the edit (Carry.adopt)');
     const jobAfter = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY)); return { state: j.state, lines: j.lines, face: j.face || 'back' }; }, KEY);
     check(jobAfter.state === 'review' && jobAfter.lines.join('/') === '1. 27. 24', 'the undecided back job is as it was: ' + JSON.stringify(jobAfter));
@@ -92,24 +92,24 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     t = (await shown()).text;
     check(/Front \+ back/.test(t) && /Saved/.test(t) && !/Undo my edit/.test(t), 'Undo brings the system\'s reading back: ' + t.slice(0, 200));
 
-    const back2 = await page.evaluate(KEY => Engrave.jobOf(B.orders.byKey.get(KEY)).lines.join('/'), KEY);
+    const back2 = await page.evaluate(KEY => Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back').lines.join('/'), KEY);   // (the line has a front job again: the back job is asked for by its face)
     check(back2 === '1. 27. 24', 'and the undecided back takes the system\'s words again: ' + back2);
 
     // ── 4 · a decided face is never deleted: mode none cuts it plain ──
     const dec = await page.evaluate(async KEY => {
-      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row), at = Date.now() - 60000;
+      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), at = Date.now() - 60000;
       Object.assign(j, { state: 'approved', approvedBy: 'Cy', approvedAt: at, backs: [] }); Object.assign(row.engrave, { state: 'approved', approved: true, approvedBy: 'Cy', approvedAt: at }); CNEngravingSeals.add(j, 'engraveApproved', 'Cy', at);
       const res = await Engrave.saveSetup(row, { mode: 'none' });
-      const after = Engrave.jobOf(row);
+      const after = Engrave.jobOf(row, null, 'back');
       return { res: { ok: res.ok, plain: res.plain, none: res.none, removed: res.removed, message: res.message }, same: after === j, state: j.state, seals: CNEngravingSeals.list(j).map(s => s.how + '|' + s.by), kept: Engrave.items().has(j.key), eng: row.engrave && row.engrave.state };
     }, KEY);
-    check(dec.res.ok && dec.res.plain.length === 1 && dec.res.removed.length === 0, 'mode none on an approved face: cut plain, nothing removed: ' + JSON.stringify(dec.res));
+    check(dec.res.ok && dec.res.plain.length === 1 && dec.res.removed.every(k => /~front$/.test(k)), 'mode none on an approved face: cut plain; only the front placement nobody had touched is removed: ' + JSON.stringify(dec.res));
     check(dec.same && dec.kept && dec.state === 'skipped' && dec.seals.includes('engraveApproved|Cy') && dec.seals.some(s => s.startsWith('engravePlain|Test Operator')), 'the job and its approval seal stay, a cut-plain seal by the signed-in person is added: ' + JSON.stringify(dec.seals));
     check(dec.eng === 'skipped', 'the line says skipped');
 
     // ── 5 · the control is in the Engrave tab's card and in the order window's engraving card ──
     const hosts = await page.evaluate(async ({ KEY, RID }) => {
-      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row);
+      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back');
       Object.assign(j, { state: 'review', approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null }); Object.assign(row.engrave, { state: 'review', approved: false, needed: true }); delete row.engravingOverride; CharmNestEngraveSetup.DRAFTS.clear();
       const card = Engrave.placementCard(j, 1), engTab = !!card.querySelector('[data-engsetup] .egSetup');
       const box = document.createElement('div'); document.body.appendChild(box); box.className = 'owEng'; OrderEngraving.mount(box, { rid: RID, key: KEY, compact: false });

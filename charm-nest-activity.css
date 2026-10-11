@@ -98,6 +98,10 @@
 /* the piece a back engraving belongs to: one ear of a mismatched pair, or one disc of a necklace (charm-nest-engrave-sides.js) */
 .egPiece{display:inline-flex;align-items:center;flex:0 0 auto;padding:2px 9px;border-radius:999px;background:var(--goldSoft);color:#7a5a1e;font:700 9.5px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
 .egPiece[data-slot=R]{background:var(--sageSoft);color:#3f5b3c}
+/* FRONT + BACK engraving (plans/front-back-1011, ENGUI1): the face of a job told beside its piece; "Front + back" beside a line's SKU; the Front | Back switch beneath the piece switch (one block) */
+.egPiece[data-slot=""][data-face=back]{background:var(--paper2);color:var(--ink45);box-shadow:inset 0 0 0 1px var(--line)}
+.egPiece.egMode{background:transparent;color:#7a5a1e;box-shadow:inset 0 0 0 1px currentColor;margin-left:2px}
+.egSwitchStack{display:inline-flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;max-width:100%}
 /* the ENGRAVE lists: one row per earring line, its Left and its Right told on the row; the editor's Left | Right switch (charm-nest-engrave-rows.js) */
 .egEars{display:grid;gap:5px;min-width:0}
 .egEar{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}

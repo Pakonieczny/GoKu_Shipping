@@ -55,10 +55,10 @@
     const items = E.items(), mine = j => live(j) && (!rid || ridOfJob(j) === rid);
     let job = null;
     // a copy's own job first (two copies of one line share one; a copy edited on its own has its own), then the piece, then the line
-    // (a piece engraved on both faces has TWO jobs that hold the same copy: the one asked for is the one named by `piece` / `key` (a front's key ends "~front"), else the face asked for, else the one still to settle)
+    // (a piece engraved on both faces has TWO jobs that hold the same copy: the one asked for is the one named by `piece` / `key` (a front's key ends "~front"), else the face asked for, else the one still to settle, else the back)
     if (t.poolId) {
       const held = jobs().filter(j => mine(j) && !j.editingBack && (j.copies || []).includes(t.poolId));
-      job = held.length > 1 ? (held.find(j => j.key === String(t.piece)) || held.find(j => j.key === String(t.key)) || (face(t) && held.find(j => faceOf(j) === face(t))) || held.find(j => PLACE.includes(j.state)) || held[0]) : held[0] || null;
+      job = held.length > 1 ? (held.find(j => j.key === String(t.piece)) || held.find(j => j.key === String(t.key)) || (face(t) && held.find(j => faceOf(j) === face(t))) || held.find(j => PLACE.includes(j.state)) || held.find(j => faceOf(j) === "back") || held[0]) : held[0] || null;
     }
     for (const k of [t.piece, t.key]) { if (job || !k) continue; const j = items.get(String(k)); if (j && mine(j)) job = j; }
     // the face asked for, when the job found is the piece's other face (a line key names the back; the front of the same piece is its sibling)
