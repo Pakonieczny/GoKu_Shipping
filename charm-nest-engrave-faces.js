@@ -97,9 +97,15 @@
     const faces = mode === 'both' ? [FRONT, BACK] : mode === FRONT ? [FRONT] : mode === BACK ? [BACK] : [];
     const personalWords = !!(ov && (ov.front !== undefined || ov.back !== undefined));
     const lacking = faces.some(f => !(f === FRONT ? front : back));
-    const needsPerson = !!(base && base.needsPerson) && lacking && !personalWords ? true : false;
+    // a reading the intake marked for a person (an unlabelled "both", a conflict, one set of words for each ear) stays so until a person speaks; a person who changed only the mode keeps the flag for a face still without words
+    const needsPerson = !!(base && base.needsPerson) && !personalWords && (!ov || lacking) ? true : false;
     const source = ov ? 'person' : base ? str(base.source) || 'default' : 'default';
-    return { v: 1, mode, faces, front, back, needsPerson, source, edited: !!ov, multi: faces.length > 1,
+    // words that differ from one ear / disc to the next ({ L: { front, back }, R: ... }): kept as the intake read them, until a person gives the line words of their own
+    let pieces = null;
+    if (base && base.pieces && typeof base.pieces === 'object' && !personalWords && mode !== 'none') {
+      for (const sl of Object.keys(base.pieces)) { const q = base.pieces[sl]; if (!q || typeof q !== 'object') continue; const f = mode === BACK ? null : normFace(q.front), b = mode === FRONT ? null : normFace(q.back); if (f || b) (pieces = pieces || {})[sl] = { front: f, back: b }; }
+    }
+    return { v: 1, mode, faces, front, back, needsPerson, source, edited: !!ov, multi: faces.length > 1, pieces, reviewKind: base && base.reviewKind ? str(base.reviewKind) : null, raw: base && base.raw ? str(base.raw) : '',
       textSource: base ? str(base.textSource) || 'none' : 'none', confidence: base && Number.isFinite(+base.confidence) ? +base.confidence : (base ? 0.5 : 1),
       why: ov ? `Set by ${str(ov.by) || 'a person'}` : base ? str(base.why) : '', option: base && base.option ? base.option : null, by: ov ? str(ov.by) : '', at: ov ? +ov.at || 0 : 0 };
   }
@@ -108,12 +114,17 @@
   /** "Front: W · Back: 1. 27. 24" (a face that has no words yet says so). */
   function describe(setup) {
     if (!setup || !setup.faces.length) return modeLabel('none');
+    if (setup.pieces) return Object.keys(setup.pieces).map(sl => `${slotLabel(sl) || sl} (${setup.faces.map(f => `${label(f)}: ${joinWords(setup.pieces[sl][f]) || 'words to confirm'}`).join(' · ')})`).join(' · ');
     return setup.faces.map(f => `${label(f)}: ${joinWords(setup[f]) || 'words to confirm'}`).join(' · ');
   }
+  /** What the intake wants a person to look at on this line, or null: { kind: "nowords" | "texts" | "conflict" | "mode" | "pieces" | "review", why, raw, mode }. A person's own words for the line clear it (setupOf). The panel shows `why`
+   *  (and `raw`, the buyer's own words) even for a line whose mode is "none" (a blank option with words written), which has no face to hang it on. */
+  function review(setup) { return setup && setup.needsPerson ? { kind: setup.reviewKind || 'review', why: setup.why || '', raw: setup.raw || '', mode: setup.mode } : null; }
   /** The words a face job starts with, or null. null means: the reader decides (a back with nothing from the intake: today's path) or a person does (a face the intake could not fill, or a front). */
-  function seedFor(setup, face) {
+  function seedFor(setup, face, slot) {
     if (!setup || !setup.faces.includes(face)) return null;
-    const w = setup[face];
+    const own = slot && setup.pieces && setup.pieces[slot] ? setup.pieces[slot][face] : null;   // (words the buyer gave for THIS ear / disc)
+    const w = own && own.lines && own.lines.length ? own : setup[face];
     if (!w || !w.lines.length) return null;
     // the intake saying "back" with nothing but its own default is the old reading: the reader (and its paid call) decides, as it always did
     if (face === BACK && setup.source === 'default' && !setup.edited) return null;
@@ -257,5 +268,5 @@
 
   return { FRONT, BACK, FACES, MODES, SUFFIX, STATE_ORDER, DECIDED, faceOf, isFront, label, title, tag, jobKey, parseKey, pieceKeyOf, recKey, parseRecKey, recKeyOf,
     normFace, setupOf, modeLabel, describe, seedFor, planFaces, reconcile, pieceCount, faceJobs, groupPieces, slotLabel, faceStatus, bothFacesDone, bothFacesWritten, combine,
-    approveAllGate, dedupe, pickRecord, recordsOf, panelRows, isDecided };
+    approveAllGate, dedupe, pickRecord, recordsOf, panelRows, isDecided, review };
 });

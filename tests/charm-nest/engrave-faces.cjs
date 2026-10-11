@@ -413,4 +413,27 @@ ok('readiness: faces', () => {
   const old = Readiness.decisions([{ key: '1_2', state: 'pooled', poolIds: ['1_2_1'], spec: { engraveCandidate: true }, engrave: { needed: true, state: 'review', approved: false } }]); assert.deepEqual(old['1_2_1'], { needed: true, state: 'review', approved: false });
 });
 
+/* 16 ── the reading the intake marks for a person, and words for each ear (ENGINTAKE's shapes) */
+ok('setup: a reading marked for a person stays so until a person speaks; a mode-only change keeps the flag only for a face still without words', () => {
+  const eng = { v: 1, mode: 'both', source: 'option', front: { text: 'W' }, back: { text: 'B' }, needsPerson: true, reviewKind: 'conflict', why: 'two options disagree', raw: 'x' };
+  const spec = { engraveCandidate: true, engraving: eng };
+  const s = F.setupOf({ spec }); assert.equal(s.needsPerson, true); assert.equal(s.reviewKind, 'conflict'); assert.equal(s.raw, 'x'); assert.equal(s.why, 'two options disagree'); assert.deepEqual(F.seedFor(s, 'front').lines, ['W']);
+  assert.equal(F.setupOf({ spec, engravingOverride: { mode: 'back', by: 'P', at: 1 } }).needsPerson, false, 'the person chose the mode and the back has its words');
+  assert.equal(F.setupOf({ spec, engravingOverride: { front: { text: 'Z' }, by: 'P', at: 1 } }).needsPerson, false, 'the person gave words');
+  assert.equal(F.setupOf({ spec: { engraving: Object.assign({}, eng, { mode: 'back', front: null, back: null }) } }).needsPerson, true);
+  assert.equal(F.setupOf({ spec: { engraving: Object.assign({}, eng, { front: null, back: null }) }, engravingOverride: { mode: 'front', by: 'P', at: 1 } }).needsPerson, true, 'the front is still without words');
+  const nn = F.setupOf({ spec: { engraveCandidate: true, engraving: { v: 1, mode: 'none', source: 'option', needsPerson: true, reviewKind: 'conflict', why: 'the option says blank but the buyer wrote words' } } });
+  assert.deepEqual(nn.faces, []); assert.equal(nn.needsPerson, true); assert.equal(nn.mode, 'none');
+});
+ok('setup: words for each ear / disc', () => {
+  const eng = { v: 1, mode: 'both', source: 'note', needsPerson: true, reviewKind: 'pieces', why: 'each ear has its own words', pieces: { L: { front: { text: 'A' }, back: { text: '1' } }, R: { front: { text: 'B' }, back: { text: '2' } } } };
+  const s = F.setupOf({ spec: { engraving: eng } });
+  assert.deepEqual(Object.keys(s.pieces), ['L', 'R']); assert.deepEqual(s.pieces.R.front.lines, ['B']);
+  assert.deepEqual(F.seedFor(s, 'front', 'R').lines, ['B']); assert.deepEqual(F.seedFor(s, 'back', 'L').lines, ['1']); assert.equal(F.seedFor(s, 'front'), null, 'no words for the line as a whole');
+  assert.equal(F.describe(s), 'Left (Front: A · Back: 1) · Right (Front: B · Back: 2)');
+  assert.equal(F.setupOf({ spec: { engraving: eng }, engravingOverride: { front: { text: 'Z' }, by: 'P', at: 1 } }).pieces, null, 'a person\'s words for the line replace the ears\' own');
+  assert.equal(F.setupOf({ spec: { engraving: Object.assign({}, eng, { mode: 'front' }) } }).pieces.L.back, null);
+  assert.equal(F.setupOf({ spec: ORDER_4195966039.spec }).pieces, null);
+});
+
 console.log(`Engrave faces OK: ${n} groups (keys, setup, plan, pieces, status, gate, records, panel rows, sides, rows, switch, seals, backs, geometry, readiness)`);

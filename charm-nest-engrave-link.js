@@ -2,11 +2,12 @@
  * button it does not open the actual back engraving modal with this specific order, it only open the Engraving tab list
  * with no specific order selected").
  *
- *   window.EngraveLink.open({ rid, key, poolId, piece, sandbox, closeFirst }) -> Promise<boolean>
+ *   window.EngraveLink.open({ rid, key, poolId, piece, face, sandbox, closeFirst }) -> Promise<boolean>
  *     rid        the order number (else read from poolId, piece or key)
  *     key        the order line's key (row.key): the line the Overview shows
  *     poolId     the pool id of one copy of the piece (the Sheet tab and the Sheet window know it)
  *     piece      the piece the order window has chosen (its line key); it wins over `key` when both name a job
+ *     face       optional "front" | "back": the face of that piece to open (a key ending `~front` names a front job by itself); without it, the face still to settle, else the back
  *     sandbox    optional true/false: what the caller knows about the order. A Sandbox order is never opened from the
  *                production page, nor a real one from the Sandbox page (the two never cross)
  *     closeFirst optional function (may return a promise): how the caller's own window closes, so nothing is ever
@@ -49,9 +50,14 @@
     if (!E || !E.items) return { rid, job: null, tab: null };
     const items = E.items(), mine = j => live(j) && (!rid || ridOfJob(j) === rid);
     let job = null;
+    // FRONT + BACK (plans/front-back-1011): a piece may have a front job beside its back. `face` names the one wanted; without it the face still to settle, else the back (a piece with no front has one job: as it always was).
+    const faceOf = j => (j && (j.face === "front" || /~front$/.test(String(j.key || ""))) ? "front" : "back"), want = t.face === "front" || t.face === "back" ? t.face : "";
     // a copy's own job first (two copies of one line share one; a copy edited on its own has its own), then the piece, then the line
-    if (t.poolId) job = jobs().find(j => mine(j) && !j.editingBack && (j.copies || []).includes(t.poolId)) || null;
-    for (const k of [t.piece, t.key]) { if (job || !k) continue; const j = items.get(String(k)); if (j && mine(j)) job = j; }
+    if (t.poolId) {
+      const copies = jobs().filter(j => mine(j) && !j.editingBack && (j.copies || []).includes(t.poolId));
+      job = want ? copies.find(j => faceOf(j) === want) || null : copies.length > 1 ? copies.find(j => PLACE.includes(j.state)) || copies.find(j => faceOf(j) === "back") || copies[0] : copies[0] || null;
+    }
+    for (const k of [t.piece, t.key]) { if (job || !k) continue; const name = String(k), j = items.get(want === "front" && !/~front$/.test(name) ? name + "~front" : name); if (j && mine(j)) job = j; }
     // nothing but the order named: its one job; an order of several pieces is shown as its own list instead (no guess)
     if (!job && rid && !t.poolId && !t.piece && !t.key) { const all = jobs().filter(j => mine(j) && !j.editingBack); if (all.length === 1) job = all[0]; }
     return { rid, job, tab: tab(job) };
