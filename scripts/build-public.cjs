@@ -117,6 +117,7 @@ const assets = [
   "station-session.js",
   "station-fresh.js",
   "charm-nest-role.js",
+  "charm-nest-master-admin.js",
   "station-activity.js",
   "station-scan-queue.js",
   "station-mail-signals.js",
