@@ -107,7 +107,7 @@ ok(!O.sameDesign('MUSIC 4', 'GONE', AFTER.entry) && !O.sameDesign('GONE', 'MUSIC
 ok(O.sameDesign('A', 'B', s => ({ sizes: { S: { aiPath: 'f.ai' } } })), 'a design drawn in sizes: its first file counts');
 { const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), live = fs.readFileSync(path.join(root, 'netlify/functions/_stationLive.js'), 'utf8');
   ok(/skuChanged = oldSpec && !O\.sameDesign\(oldSpec\.designSku, r\.spec\.designSku, sku => Master\.entryFor\(sku\)\)/.test(bridge), 'revalidate: the same drawing under another of its names is not "SKU changed"');
-  ok(/O\.knownTypo \? O\.knownTypo\(sku\) \|\| \(O\.knownName \? O\.knownName\(sku\) : ""\)/.test(bridge), 'the line is read again when the library gets or loses the named design');
+  ok(/const nameOf = sku => \(O\.knownName \? O\.knownName\(sku\) : ""\);/.test(bridge) && /libFacts\(nameOf\(l\.sku\)\)/.test(bridge) && /libFacts\(nameOf\(own\.sku\)\)/.test(bridge), 'the line is read again when the library gets, loses or blocks the named design (inputsOf)');
   ok(/ordersLib\.knownName/.test(live), 'the Design Station looks the named SKU up under its design');
   const L2 = require('../../netlify/functions/_stationLive.js');
   eq([L2._t.designKey(NAMED), L2._t.designKey('MUSIC4'), L2._t.designKey('nitial_Disc_4571'), L2._t.designKey('MUSIC4 - DOUBLE NOTE')], ['MUSIC4', 'MUSIC4', 'INITIAL_DISC_4571', 'MUSIC4 - DOUBLE NOTE'], 'the station reads the named SKU as its design, the typo as before, any other SKU as it is'); }
@@ -126,4 +126,35 @@ if (fs.existsSync(SAVED)) {
   eq(changed, ['MUSIC 4 - SINGLE W/ DOUBLE LINE -> MUSIC 4 (named)'], 'of ' + (skus.length * 4) + ' probes (descriptors on every master SKU) only the named SKU, spelled with the space, is read through the table (the spacing rule reads what it always read)');
 } else console.log('(the saved master list is not on this machine: the sweep is skipped)');
 
-console.log(`music-sku: ${n} checks passed`);
+
+// ── 6 · the master write: the app's own masterPutIndex puts MUSIC4 beside "MUSIC 4" (offline, a fake index; nothing live) ──
+// "MUSIC 4" is NOT removed or rewritten: stored sheets, pool rows and orders name it and look it up in the master (sheet recall, the pool, Engrave), and the library already keeps 227 designs under
+// two spellings ("BEE 4" / "BEE4": one tile, both names, the very same file). MUSIC4 is a second index document with that file; nothing is copied, nothing is deleted from Storage.
+(async () => {
+  const Master = require(path.join(root, 'netlify/functions/_charmNestMaster.js'));
+  const FV = { serverTimestamp: () => 'TS', delete: () => 'DEL' };
+  // the live record of "MUSIC 4" as read on 11 Oct 2026 (masterGet; the Storage links left out)
+  const OLD4 = { sku: 'MUSIC 4', masterHash: '30968bcbe5aed6deb58d4fe8173ffc7798d53fbb64704e5a5c73a6ec20d69f30', masterPath: null, masterName: 'MASTER SKU_OBJECTS_MV_2026-0914.ai', charmHash: '332b3de4', widthPt: 23.254199999999855, heightPt: 42.50710000000072, areaPt2: 384.47222222222223,
+    members: 3, holes: 2, engravable: true, engravableBy: 'index', upAngle: 94.25665395835165, upSource: 'hole', backKeepOut: [], aiPath: 'charmnest/sandbox/master/MUSIC_4.ai', thumbPath: 'charmnest/sandbox/master/MUSIC_4.png', sizes: null, blocked: null, conflict: null, sizeMoved: null, labelSource: 'text', confirmedBy: null, open: false, indexedAt: 1791434950981, hashSource: 'browser' };
+  const stored = new Map([['MUSIC 4', Object.assign({}, OLD4)]]), writes = [], before = JSON.stringify(stored.get('MUSIC 4'));
+  const db = { collection: name => ({ doc: id => ({ id, path: name + '/' + id }) }),
+    getAll: async (...refs) => refs.filter(r => r && r.path).map(r => ({ exists: stored.has(r.id), data: () => stored.get(r.id) })),
+    batch: () => ({ set: (ref, doc, o) => writes.push({ id: ref.id, path: ref.path, doc, o }), commit: async () => {} }) };
+  const entry = { sku: 'MUSIC4', charmHash: OLD4.charmHash, widthPt: OLD4.widthPt, heightPt: OLD4.heightPt, areaPt2: OLD4.areaPt2, members: OLD4.members, holes: OLD4.holes, engravable: OLD4.engravable, upAngle: OLD4.upAngle, upSource: OLD4.upSource, backKeepOut: OLD4.backKeepOut,
+    aiPath: OLD4.aiPath, thumbPath: OLD4.thumbPath, aiUrl: 'https://example.invalid/m4.ai', thumbUrl: 'https://example.invalid/m4.png', open: false, labelSource: 'text' };
+  const r = await Master.putIndex(db, FV, { entries: [entry], masterHash: OLD4.masterHash, masterPath: null, masterName: OLD4.masterName, hashSource: OLD4.hashSource, replaces: [] });
+  eq([r.written, r.blocked, r.sizeMoved, r.pairKept], [1, [], [], []], 'masterPutIndex of the one entry: one written; no duplicate across master files, no size move, no pair held');
+  eq(writes.map(w => w.path), ['Charm_Master_Index/MUSIC4'], 'one document, keyed by the SKU, written; "MUSIC 4" is not written');
+  eq(JSON.stringify(stored.get('MUSIC 4')), before, 'the stored "MUSIC 4" is as it was');
+  const d = writes[0].doc;
+  for (const k of ['masterHash', 'masterName', 'charmHash', 'widthPt', 'heightPt', 'areaPt2', 'members', 'holes', 'aiPath', 'thumbPath', 'upAngle', 'upSource', 'engravable', 'labelSource', 'open']) eq(d[k], OLD4[k], `the new document's ${k} is MUSIC 4's`);
+  eq([d.sku, d.conflict, d.blocked, d.sizeMoved], ['MUSIC4', 'DEL', 'DEL', 'DEL'], 'its own SKU; no conflict, not blocked, no size move');
+  ok(!('sizes' in d) && !('pair' in d), 'a plain one-body design like MUSIC 4: no sizes, no pair');
+  ok(Master.isSku('MUSIC4'), 'MUSIC4 is an index SKU');
+  const slim = Master.slimEntry(Object.assign({}, d, { indexedAt: { toMillis: () => 1 } })), slimOld = Master.slimEntry(OLD4);
+  ok(slim.aiPath === slimOld.aiPath && slim.thumbPath === slimOld.thumbPath && slim.masterHash === slimOld.masterHash, 'slimEntry: the same file and picture as MUSIC 4 (one Library tile, two SKUs)');
+  // the page then holds both: the order reads as MUSIC4, MUSIC 4 as MUSIC 4, and a line moving between them is one design
+  const M2 = master(['MUSIC 4', 'MUSIC4']); M2.entry('MUSIC4').aiPath = slim.aiPath; M2.entry('MUSIC 4').aiPath = slimOld.aiPath;
+  eq([read(NAMED, M2).designSku, read('MUSIC 4', M2).designSku, O.sameDesign('MUSIC 4', 'MUSIC4', M2.entry)], ['MUSIC4', 'MUSIC 4', true], 'with both in the master the order reads as MUSIC4, a line named MUSIC 4 as MUSIC 4, and moving between them is no change of design');
+  console.log(`music-sku: ${n} checks passed`);
+})().catch(e => { console.error(e); process.exit(1); });
