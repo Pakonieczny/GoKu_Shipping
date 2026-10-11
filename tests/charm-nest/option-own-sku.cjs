@@ -199,7 +199,7 @@ function unchanged() {
 }
 
 /* ── 8 · FLAGAUDIT's 211 cases (plans/flag-fix-1011/FLAGAUDIT-cases.json, with the real master list), when the files are there: every "clear" row has no option question with no table,
-      every "ask" / "wait" row still has one, the design is unchanged. The key listing's letters (KEY_5598, one design SKU, not a numbered family) are KEYLETTER's, not this rule's. ── */
+      every "ask" / "wait" row still has one, the design is unchanged. The key listing's letters (KEY_5598, one design SKU, not a numbered family) are KEYLETTER's, not this rule's; the Mini Tag listing's Charm Type (C013) is TAGSKU's. ── */
 function audit() {
   const dir = '/mnt/project-files/plans/flag-fix-1011/', fs = require('fs');
   if (!fs.existsSync(dir + 'FLAGAUDIT-cases.json') || !fs.existsSync(dir + 'master-skus-1011.json')) { console.log('  - audit cases not present here: skipped'); return; }
@@ -209,6 +209,7 @@ function audit() {
   let rows = 0, skipped = 0;
   for (const r of D.cases) {
     if (r.id === 'C208') { skipped++; continue; }
+    if (r.id === 'C013') { skipped++; continue; }   // (TAGSKU: Mini Tag "Charm Type: Tag1 (front engrave)" is read by the tag number now: tests/charm-nest/tag-options.cjs)
     const l = { transactionId: 'T1', listingId: r.listingId, productId: r.productId, sku: r.sku, title: r.title, quantity: 1, metalKey: 'gold', metalLabel: '', personalization: [], buyerMessage: '',
       variations: [{ name: r.metalField, value: r.metalValue, propertyId: r.metalPropertyId || null, valueId: r.metalValueId || null }, { name: r.optionField, value: r.optionValue, propertyId: r.optionPropertyId || null, valueId: r.optionValueId || null }] };
     const sp = O.interpretLine({ receiptId: 'R1', updateTs: 1 }, l, c), asks = sp.problems.some(p => p.kind === 'needsMapping' && p.optionName === r.optionField);

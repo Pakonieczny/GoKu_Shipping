@@ -243,7 +243,8 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
     const withNames = clone(DATA.tables); withNames[LID] = TABLE;
     const summary = sp => ({ designSku: sp.designSku, skuSource: sp.skuSource, noDesign: !!sp.noDesign, material: sp.material, size: sp.size, form: sp.form, chain: sp.chain, pieceCount: sp.pieceCount,
       problems: sp.problems.map(p => [p.kind, p.optionName || '', p.optionValue || '', p.sku || '', p.pairSecond ? p.pairSecond.why : '']), pair: { mismatched: sp.pair.mismatched, source: sp.pair.source, members: (sp.pair.members || []).map(m => m.side + m.sku), sides: sp.pair.sides, second: sp.pair.second ? [sp.pair.second.answered, sp.pair.second.by || '', sp.pair.second.why || ''] : null } });
-    const scen = { A_noTables: [{}, []], B_realTables: [DATA.tables, []], C_zodiacNames: [withNames, ['4175402612/5218016559']] };   // (no table, or the table without names: the zodiac line still waits, only its words say more; with the names: it resolves)
+    const TAG = '4171852053/5214878738';   // (TAGSKU, 11 Oct 2026: the Mini Tag line "Charm Type: Tag1 (front engrave)" reads as the tag's shape now, in every scenario: tests/charm-nest/tag-options.cjs)
+    const scen = { A_noTables: [{}, [TAG]], B_realTables: [DATA.tables, [TAG]], C_zodiacNames: [withNames, ['4175402612/5218016559', TAG]] };   // (no table, or the table without names: the zodiac line still waits, only its words say more; with the names: it resolves)
     for (const [name, [lt, expectChanged]] of Object.entries(scen)) {
       const want = gold[name]; let lines = 0; const changed = [];
       for (const r of orders) for (const t of r.transactions) {
@@ -252,9 +253,9 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
         const sp = O.interpretLine({ receiptId: String(r.receipt_id), updateTs: 1 }, line, Object.assign({}, base, { listingSkus: lt })), key = r.receipt_id + '/' + t.transaction_id; lines++;
         if (crypto.createHash('sha1').update(JSON.stringify(summary(sp))).digest('hex').slice(0, 12) !== want[key]) changed.push(key);
       }
-      eq([lines, changed], [Object.keys(want).length, expectChanged], `${name}: all ${lines} lines of the snapshot read as before the change` + (expectChanged.length ? ', except order 4175402612' : ''));
+      eq([lines, changed], [Object.keys(want).length, expectChanged], `${name}: all ${lines} lines of the snapshot read as before the change` + (expectChanged.length ? ', except the Mini Tag line 4171852053 (TAGSKU)' + (expectChanged.length > 1 ? ' and order 4175402612' : '') : ''));
     }
-    pass('golden: 411 lines x 3 worlds (no tables, the 10 real tables, the zodiac table with names): only order 4175402612 changes, and only when the names are there');
+    pass('golden: 411 lines x 3 worlds (no tables, the 10 real tables, the zodiac table with names): only order 4175402612 changes, and only when the names are there (and the Mini Tag line 4171852053, which the tag number reads since TAGSKU)');
   } else console.log('  · (the Sep 17 snapshot, the master index or the golden file is not on this machine: the golden part was not run)');
   /* ── 9 · the page asks for the new files with a new cache token (other workers add suffixes after it) ───────────────────────────────────────────────────── */
   { const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
