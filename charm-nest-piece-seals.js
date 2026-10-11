@@ -5,7 +5,7 @@
    shown in the hover expanded view."
 
    Which step has which seal (one answer, read from the timeline's own table, OrderTimelineUI.STAGES / faceModel, never a second list):
-       Order in   ORDER RECEIVED (arrived)            Nested     ON SHEET (placed, renested)       Engraved  BACK ENGRAVING (engraveApproved)
+       Order in   ORDER RECEIVED (arrived)            Nested     ON SHEET (placed, renested)       Engraved  BACK ENGRAVING (engraveApproved; FRONT ENGRAVING beside it for a piece engraved on its front too)
        Laser cut  LASER CUT / PARTIAL CUT (laserDone, roseCut)   Sorted    SORTED (sorted)          Welded    WELDED (welded)
        Assembled  ASSEMBLED (assembled)               Shipped    SHIPPED / ETSY COMPLETE (shipped, etsyCompleted)
    plus two seals that are not steps of the rail but complete a piece by hand: 'complete' (ORDER COMPLETE) and 'print' (QR LABEL PRINTED). Every other
@@ -99,12 +99,12 @@
   /* ═══ the unfinished seal ═══ */
   /** The seal of `kind` as it is still to come: Seal.face's own ghost (dashed, grey, no date, time or person), in a wrapper that is NOT a .seal, so no
    *  zoom, no tab stop and no click ever treat it as a stamp. null when the kind has no seal. */
-  function ghost(kind, size) {
+  function ghost(kind, size, face) {
     try {
       const ui = UI(), S = SEAL(), type = ui && S ? typeOf(ui, kind) : ''; if (!type) return null;
       css();
-      // (the two hand seals are the Seal module's own faces, as the cards draw them; a step's seal is the timeline's, as the header rail draws it)
-      const hand = keyOf(kind), model = HAND[hand] && typeof S.modelOf === 'function' ? S.modelOf({ how: hand === 'complete' ? 'button' : 'print', at: 0, by: '' }) : ui.faceModel({ key: 'pg-ghost-' + type, type, at: 0, by: '', ghost: true });
+      // (the two hand seals are the Seal module's own faces, as the cards draw them; a step's seal is the timeline's, as the header rail draws it; `face` "front": the unfinished FRONT ENGRAVING seal of a piece engraved on its front too)
+      const hand = keyOf(kind), model = HAND[hand] && typeof S.modelOf === 'function' ? S.modelOf({ how: hand === 'complete' ? 'button' : 'print', at: 0, by: '' }) : ui.faceModel(Object.assign({ key: 'pg-ghost-' + type + (face === 'front' ? '-front' : ''), type, at: 0, by: '', ghost: true }, face === 'front' ? { data: { face: 'front' } } : {}));
       const label = model.action ? String(model.action).toLowerCase().replace(/^./, c => c.toUpperCase()) : 'Seal';
       const g = node('span', 'pgSeal pgGhost'); g.style.setProperty('--seal-fit', sizeOf(size) + 'px');
       g.setAttribute('role', 'img'); g.setAttribute('aria-label', `${label} seal: not stamped yet`);
@@ -154,7 +154,7 @@
   /** The step as requirementsOf reads it: state (done | now | later | stopped | gone | skipped | none), what is done, what is missing. */
   function stepInfo(c, key) {
     if (!c.u.requirementsOf) return null;
-    return c.u.requirementsOf(key, { events: c.events, D: c.D ? Object.assign({}, c.D) : undefined, stages: stagesFor(c), cancelled: c.cancelled || undefined, context: c.context || undefined });
+    return c.u.requirementsOf(key, { events: c.events, D: c.D ? Object.assign({}, c.D) : undefined, stages: stagesFor(c), cancelled: c.cancelled || undefined, context: c.context || undefined, faces: key === 'engraved' ? facesOfPiece(c) : undefined });
   }
 
   /* ═══ the real seal ═══ */
@@ -183,6 +183,30 @@
     if (caption) { const t = captionOf(d); if (t) { const by = node('span', 'pgBy'); by.textContent = t; w.append(by); } }
     return w;
   }
+  /* ═══ a piece engraved on BOTH faces (plans/front-back-1011): its Engraved step has one seal for each face, FRONT ENGRAVING and BACK ENGRAVING, each with the person and time of its own approval ═══ */
+  const isFront = e => !!e && ((e.data && e.data.face === 'front') || e.face === 'front');
+  /** The faces the piece engraves when it engraves the front too (the host's line.engraveFaces, else what its approvals say), else null: every other piece is drawn exactly as it always was. */
+  function facesOfPiece(c) {
+    const line = c.piece && c.piece.line, told = line && Array.isArray(line.engraveFaces) && line.engraveFaces.includes('front') ? line.engraveFaces : null;
+    const got = c.events.some(e => e && e.type === 'engraveApproved' && isFront(e));
+    return told ? ['front', 'back'].filter(f => told.includes(f)) : got ? ['front', 'back'] : null;
+  }
+  /** The Engraved step of such a piece: the first seal of each face (Front, then Back), and the unfinished seal of a face still to approve while the step is open. */
+  function facedOf(c, key, faces, o) {
+    const evs = eventsOf(c, key), first = { front: evs.find(isFront), back: evs.find(e => !isFront(e)) };
+    const size = sizeOf(o.size), caption = o.caption !== false;
+    let open = false;
+    if (faces.some(f => !first[f]) && o.done !== true) { const q = stepInfo(c, key); open = !!q && (q.state === 'now' || q.state === 'later'); }
+    if (!faces.some(f => first[f]) && !open) return null;
+    const w = wrap(key, faces.every(f => first[f]) ? 'done' : 'missing', evs.length); w.dataset.pgFaces = faces.join(',');
+    for (const f of faces) {
+      if (first[f]) {
+        const { s, d } = sealEl(c, first[f], f === 'front' ? 'Front engraving' : 'Back engraving', size); s.dataset.pgFace = f; w.append(s);
+        if (caption) { const t = captionOf(d); if (t) { const by = node('span', 'pgBy'); by.textContent = t; w.append(by); } }
+      } else if (open) { const g = ghost(key, size, f); if (g) { g.dataset.pgFace = f; w.append(g); } }
+    }
+    return w.children.length ? w : null;
+  }
   /** 'complete' / 'print': the Complete Order press that completed the piece (else the latest one), or the latest QR label print, and "+N" for the rest:
    *  Seal.compactRow, the order overview's own one-seal-and-"+N" component (the card's own seal face, so it looks and zooms exactly like the ones in the rows). */
   function handOf(c, key, size, caption) {
@@ -207,8 +231,11 @@
       // the two seals that complete a piece by hand are not steps: a real one, or nothing (a ghost would say the piece must be completed by hand)
       if (HAND[key]) return handOf(c, key, size, caption);
       if (!stageOf(c.u, key)) return null;
+      // (a piece engraved on both faces: a seal for each face, and the unfinished one of the face still to approve)
+      const faces = key === 'engraved' ? facesOfPiece(c) : null;
+      if (faces) { const both = facedOf(c, key, faces, o); if (both) return both; }
       // a recorded seal is permanent and wins over everything: it is shown whatever `done` says
-      const real = realOf(c, key, size, caption); if (real) return real;
+      const real = faces ? null : realOf(c, key, size, caption); if (real) return real;
       if (o.done === true) return null;   // (done, but the timeline holds no event of it: nothing is invented)
       const q = stepInfo(c, key);
       if (!q || (q.state !== 'now' && q.state !== 'later')) return null;   // (never taken: cancelled, completed by hand, not this piece's step; or done with no event)

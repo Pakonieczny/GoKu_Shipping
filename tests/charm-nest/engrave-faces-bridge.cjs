@@ -294,14 +294,14 @@ const shape = j => { const o = {}; for (const k of Object.keys(j).sort()) if (k 
     const one2 = mk(BASE.two, undefined), h4 = harness([one2]); const j4 = JSON.parse(JSON.stringify(c3)); j4.row = one2; h4.jobs.set(j4.key, j4); assert.equal(h4.ctx.relinkAll(), 0); assert.equal(j4.row, one2);
   });
   await t('6l EngraveLink.resolve: a piece with a front opens the face asked for; without a face, the one still to settle, else the back; a key ending ~front names the front; a back-only piece resolves as it did', async () => {
-    const run = (jobsList, q, rows) => { const items = new Map(jobsList.map(j => [j.key, j])), win = { Engrave: { items: () => items }, Orders: { rows: () => rows || [] } }; vm.createContext(win); win.window = win; vm.runInContext(fs.readFileSync(path.join(root, 'charm-nest-engrave-link.js'), 'utf8'), win); return win.EngraveLink.resolve(q); };
+    const run = (jobsList, q, rows) => { const items = new Map(jobsList.map(j => [j.key, j])), win = { Engrave: { items: () => items }, Orders: { rows: () => rows || [] }, CharmNestEngraveFaces: require(path.join(root, 'charm-nest-engrave-faces.js')) }; vm.createContext(win); win.window = win; vm.runInContext(fs.readFileSync(path.join(root, 'charm-nest-engrave-link.js'), 'utf8'), win); return win.EngraveLink.resolve(q); };
     const row = mk(BASE.one, BOTH), h = harness([row]); const [fr, bk] = h.ctx.ensureJobs(row); const rid = row.order.receiptId, pid = row.poolIds[0];
     for (const j of [fr, bk]) { j.row.order = row.order; }
     fr.state = 'review'; bk.state = 'approved';
     assert.equal(run([fr, bk], { rid, poolId: pid }).job, fr, 'the face still to settle'); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'back' }).job, bk); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'front' }).job, fr);
     assert.equal(run([fr, bk], { rid, poolId: pid, face: 'back' }).tab, 'done'); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'front' }).tab, 'place');
     fr.state = 'approved'; assert.equal(run([fr, bk], { rid, poolId: pid }).job, bk, 'both decided: the back'); assert.equal(run([fr, bk], { rid, key: row.key + '~front' }).job, fr); assert.equal(run([fr, bk], { rid, key: row.key, face: 'front' }).job, fr); assert.equal(run([fr, bk], { rid, key: row.key }).job, bk);
-    assert.equal(run([bk], { rid, poolId: pid, face: 'front' }).job, null, 'no front job: the back is never put in its place');
+    assert.equal(run([bk], { rid, poolId: pid, face: 'front' }).job, bk, 'no front job (not made yet, or taken out): the piece\'s one job opens, the same piece');
     const one = mk(BASE.two, undefined), h2 = harness([one]), j2 = h2.ctx.ensureJobs(one)[0]; j2.row.order = one.order; j2.state = 'review'; assert.equal(run([j2], { rid: one.order.receiptId, poolId: one.poolIds[0] }).job, j2); assert.equal(run([j2], { rid: one.order.receiptId, key: one.key }).job, j2);
   });
   /* 7 ── looked at again */
