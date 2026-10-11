@@ -11077,7 +11077,7 @@ const CustomSheet = window.CustomSheet = (() => {
         const ctx = {
           rid: String(row.order.receiptId), listingId: String(line.listingId || ""), title: txt(line.title || ""),
           line: { sku: txt(line.sku || ""), productId: line.productId != null ? line.productId : line.product_id != null ? line.product_id : null, variations: Array.isArray(line.variations) ? line.variations : [], listingId: String(line.listingId || "") },
-          listingKind: spc.own ? "own" : "", own: !!spc.own, special: spc, F, charm: charms[0], parsed, sandbox: !!WORKSPACE_SANDBOX,
+          listingKind: ((B.maps && B.maps.aliases && B.maps.aliases[String(line.listingId || "")]) || {}).listingKind || undefined, own: !!spc.own, special: spc, F, charm: charms[0], parsed, sandbox: !!WORKSPACE_SANDBOX,
           S, O, Sku: window.CharmNestSku || null, Master, aliases: (B.maps && B.maps.aliases) || {}, tableFor: id => ((B.maps && B.maps.listingSkus) || {})[String(id)] || null,
           api, lock: RLock(), now: () => Date.now()
         };
@@ -11107,8 +11107,10 @@ const CustomSheet = window.CustomSheet = (() => {
     const sv = o.saved;
     if (sv && sv.sku) {
       K.sku = txt(sv.sku); const es = sv.etsy || {}, linked = es.state === "linked";
-      K.rows.sku = { state: "done", text: K.sku }; K.rows.repo = { state: "done", text: sv.reused ? `Already in the repository as ${K.sku}` : "Saved to the repository" };
-      K.rows.etsy = linked ? { state: "done", text: "Linked on Etsy" } : { state: "failed", text: txt(es.text || es.reason || "") || "Etsy not updated", retry: true };
+      // (what the record says of Etsy: linked; refused or not confirmed, with its words; not tried yet; or a write that was cut off, which Retry reads before it writes)
+      const etsyWhy = txt(es.text || "") || (es.state === "failed" || es.state === "unverified" ? txt(es.reason || "") : "") || (es.state === "writing" ? "the last change was not confirmed" : "not set on Etsy yet");
+      const mine = { sku: { state: "done", text: K.sku }, repo: { state: "done", text: sv.reused ? `Already in the repository as ${K.sku}` : "Saved to the repository" }, etsy: linked ? { state: "done", text: "Linked on Etsy" } : { state: "failed", text: etsyWhy, retry: true } };
+      for (const r of ["sku", "repo", "etsy"]) if (!(K.seen && K.seen[r]) || (r === "etsy" && !linked && K.rows.etsy.state !== "failed")) K.rows[r] = mine[r];   // (the engine paints a saved record's rows itself while it opens: its words stand; an Etsy step not yet done always gets its Retry)
       K.final = { done: linked ? "linked" : "saved", sku: K.sku, text: "" }; K.phase = K.final.done; K.fromRecord = true; return;
     }
     const pref = keepPref(); K.on = pref === null ? !keepLocked(K) : pref; K.phase = K.on ? "ready" : "off";
@@ -11123,6 +11125,7 @@ const CustomSheet = window.CustomSheet = (() => {
       paintKeep(); keepAfter(K); return;
     }
     const r = ev.row; if (!K.rows[r]) return;
+    (K.seen = K.seen || {})[r] = true;
     K.rows[r] = { state: String(ev.state || "idle"), text: txt(ev.text || ""), retry: ev.retry };
     if (r === "sku" && ev.state === "done" && ev.text) K.sku = txt(ev.text);
     paintKeep();

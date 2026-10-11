@@ -36,7 +36,7 @@ const order = (rid, listing, sku, title) => ({ receiptId: String(rid), orderNumb
 function fakeKeep() {
   const W = window.__kw = { calls: [], made: [], steps: null, retrySteps: null, open: {}, settledAsked: [], openGap: 0, early: false, needToken: true, log: [] };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  window.CharmNestKeep = {
+  const FAKE = {
     make(ctx) {
       const L = [], sku = () => W.sku || 'ACORN_LEAF_4821';
       const emit = ev => { W.log.push(ev); for (const f of L) try { f(ev); } catch (_) {} };
@@ -67,6 +67,8 @@ function fakeKeep() {
       return k;
     }
   };
+  // (the page now loads the real charm-nest-keep.js too: the fake answers for the page unless a scene asks for the real one)
+  W.real = null; Object.defineProperty(window, 'CharmNestKeep', { configurable: true, get: () => (W.noEngine ? undefined : W.useReal ? W.real : FAKE), set: v => { W.real = v; } });
 }
 const steps = {
   linked: [{ row: 'sku', state: 'work', text: 'Choosing a SKU…' }, 260, { row: 'sku', state: 'done', text: 'ACORN_LEAF_4821' }, { row: 'repo', state: 'work', text: 'Saving ACORN_LEAF_4821.ai…' }, 420,
@@ -397,6 +399,66 @@ async function main() {
       await w.close();
     }
 
+    /* ── J · the real engine (charm-nest-keep.js, real charm-nest-sku.js, the stand-in's real handlers over in-memory Firestore): Etsy is a stand-in answer, nothing leaves this machine ── */
+    if (want('J')) {
+      const w = await mk({ locked: false }); const { page, srv } = w;
+      await seed(page, [FRESH(4196630701)]); await startRun(page); await tabCustom(page);
+      await page.evaluate(() => { __kw.useReal = true; window.__etsy = []; const real = window.api; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') { window.__etsy.push(Object.keys(body).sort().join()); return { ok: true, state: 'linked' }; } return real.apply(this, arguments); }; });
+      await dropDesign(page, '4196630701'); await ready(page, 'ready'); await settle(page);
+      let s = await strip(page);
+      const skuShown = (/New SKU (\S+) /.exec(s.preview) || [])[1] || '';
+      ok(s.shown && s.on && s.phase === 'ready' && !!skuShown, 'the real engine offers the save for a custom design: ' + s.preview);
+      await shot(page, '2b-offered-real');
+      await trace(page);
+      await press(page);
+      await page.waitForFunction(() => ['linked', 'saved', 'held'].includes(document.getElementById('cuKeep').dataset.phase), null, { timeout: 60000 });
+      const end = await page.evaluate(() => document.getElementById('cuKeep').dataset.phase);
+      await winClosed(page, 30000);
+      const tr = await traced(page);
+      s = null;
+      ok(end === 'linked', 'the real engine, all four steps: the strip ends "' + end + '" (' + JSON.stringify(tr.filter(f => f.ph !== 'ready').slice(0, 14).map(f => f.rows)) + ')');
+      ok(await page.evaluate(() => window.__etsy.length === 1 && window.__etsy[0] === 'op,rid'), 'the Etsy step was asked once with the order\'s number alone (op, rid)');
+      const keep = await page.evaluate(() => CustomSheet.keepOf(Object.keys(CustomSheet.entries())[0]));
+      const idx = srv.st.list('Charm_Master_Index').map(e => e._id);
+      ok(keep && keep.sku && idx.includes(keep.sku), 'the design is in the (in-memory) master index under ' + (keep && keep.sku) + ' (' + idx.length + ' SKUs in all)');
+      await w.close();
+    }
+
+    /* ── J2 · the real engine, Etsy refusing, a reload, and Retry: the saved record decides what the strip says, and nothing is saved twice ── */
+    if (want('J2')) {
+      const w = await mk({ locked: false }); const { page, srv } = w;
+      const ORD = [FRESH(4196630702)];
+      const rig = async answer => page.evaluate(answer => { __kw.useReal = true; window.__calls = []; window.__answer = answer; if (!window.__rigged) { window.__rigged = true; const real = window.api; window.api = async function (fn, body, o) { const op = body && body.op; if (/^custom(SaveCommit|SkuCheck|EtsySkuWrite|SaveGet)$/.test(op || '')) window.__calls.push(op); if (op === 'customEtsySkuWrite') return window.__answer; return real.apply(this, arguments); }; } }, answer);
+      await seed(page, ORD); await startRun(page); await tabCustom(page);
+      await rig({ ok: false, state: 'failed', reason: 'scope', retry: true });
+      await dropDesign(page, '4196630702'); await ready(page, 'ready'); await settle(page);
+      await press(page);
+      await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'saved', null, { timeout: 60000 });
+      await winClosed(page, 30000);
+      let calls = await page.evaluate(() => window.__calls.join());
+      ok(/customSaveCommit/.test(calls) && (calls.match(/customEtsySkuWrite/g) || []).length === 1 && (calls.match(/customSaveCommit/g) || []).length === 1, 'Etsy refused: the repository was saved once, Etsy asked once: ' + calls);
+      const tt1 = await toasts(page);
+      ok(tt1.some(t => /saved to the repository\. Etsy not updated: Etsy refused the change\. Paul needs to re-authorise Etsy with listings_w\. Open the order to retry\./.test(t)), 'the toast says why (the engine\'s words): ' + tt1.slice(-1)[0].slice(0, 150));
+      // a reload: the page has forgotten everything but the cloud
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && CN.S.cloud.ok === true, null, { timeout: 60000 });
+      await seed(page, ORD); await startRun(page);
+      await rig({ ok: true, state: 'linked' });
+      await page.waitForFunction(() => Object.keys(CustomSheet.entries()).length > 0, null, { timeout: 20000 }); await page.waitForTimeout(300);
+      await openWin(page, '4196630702');
+      await ready(page, 'saved', 20000); await settle(page);
+      let s = await strip(page);
+      ok(s.steps && s.rows[1].s === 'done' && s.rows[2].s === 'done' && s.rows[3].s === 'failed' && s.rows[3].b.join() === 'Retry' && s.rows[1].b.length === 0 && s.rows[2].b.length === 0 && s.line && /Etsy not updated/.test(s.line.main), 'after a reload the record says it: saved, SKU done, Etsy not updated with Retry on that row only: ' + JSON.stringify(s.rows.map(r => r.s + ':' + r.t)));
+      await shot(page, '13-saved-after-reload');
+      await page.click('#cuKeep [data-k-retry="etsy"]');
+      await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'linked', null, { timeout: 30000 });
+      calls = await page.evaluate(() => window.__calls.join());
+      ok(!/customSaveCommit/.test(calls) && /customEtsySkuWrite/.test(calls), 'Retry after the reload asked Etsy again and saved nothing a second time: ' + calls);
+      await page.waitForFunction(() => document.querySelector('#cuKeep .cuKeepLine') && !document.querySelector('#cuKeep .cuKeepLine').hidden && /^Linked · /.test(document.querySelector('#cuKeep .cuKeepLine b').textContent), null, { timeout: 8000 });
+      ok(true, 'and the rows fold into one "Linked · SKU" line');
+      await w.close();
+    }
+
     /* ── R · the save under way, the window waiting for it (the picture of "running"; the window stays for the save, up to 20 s) ── */
     if (want('R')) {
       const w = await mk({ locked: false }); const { page } = w;
@@ -467,13 +529,9 @@ async function main() {
         if (extra) await extra(s);
       };
       // two designs
-      if (process.env.DBG) console.log('DBG E start');
       await dropDesign(page, '4196630561');
-      if (process.env.DBG) console.log('DBG E dropped');
       await page.evaluate(async dxf => { const it = Review.customItemFor(Object.keys(Object.fromEntries(B.orders.byKey)).find(k => k.startsWith('4196630561_'))); const r = await CharmNestDXF.toPdf(new TextEncoder().encode(dxf), 'x.dxf'); CustomSheet.add(it, [new File([r.bytes], 'Second_Charm.ai')]); }, LEAF_DXF.replace('0.9', '1.4'));
-      if (process.env.DBG) console.log('DBG E second added');
       await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile').length >= 2, null, { timeout: 30000 });
-      if (process.env.DBG) console.log('DBG E two files');
       await quiet('4196630561', 'Saving works for one design at a time.', 'two designs', async () => { await shot(page, '8-quiet'); });
       await closeWin(page);
       // the listing takes the buyer's own design (the engine's code, then its own sentence)
@@ -499,12 +557,12 @@ async function main() {
       await page.evaluate(() => { CN.S.cloud.ok = true; });
       await closeWin(page);
       // the engine is not on the page: the window is exactly as it was
-      await page.evaluate(() => { window.__lib = window.CharmNestKeep; window.CharmNestKeep = undefined; });
+      await page.evaluate(() => { __kw.noEngine = true; });
       await dropDesign(page, '4196630566');
       await page.waitForTimeout(400);
       const s = await strip(page);
       ok(!s.shown && s.phase === '', 'no engine on the page: no strip, the window is as it was');
-      await page.evaluate(() => { window.CharmNestKeep = window.__lib; });
+      await page.evaluate(() => { __kw.noEngine = false; });
       await w.close();
     }
 
