@@ -2,11 +2,16 @@
  *  ═══════════════════════════════════════════════════════════════════════
  *  The sandbox's order source (Paul, 10 Oct 2026: "when in the Sandbox mode always pull the 250 newest orders from etsy.
  *  Never retain previous or old orders from prior Sandbox runs/testing."). Op sandboxPullOrders (charmNestLibrary.js)
- *  calls pull() below, which
+ *  calls pull() below. HOW MANY (Paul, 11 Oct 2026: "adjust the # of newest listings the Sandbox test pulls from Etsy"): the
+ *  number is a setting, 250 until it is changed, kept in the ONE document config/charmNestSandboxPull (not sandbox data: no
+ *  wipe touches it), read once per pull (readLimit) and held to 10..500 by the server (clampWant). Op sandboxPullLimitSet
+ *  writes it behind the Charm repo password door (_charmNestRepoAuth.js, need "modify"); reading it is free (sandboxStatus).
+ *  Each page of up to 100 orders is one Etsy call, so 250 is 3 calls and 500 is 5; the daily caps below are unchanged. pull()
  *    1. checks the daily budget and the retry marker in ONE transaction (Charm_Sandbox/pulls: counts and start ids only),
  *    2. discards the previous order set (Charm_Sandbox/current, the old file under charmnest/sandbox/orders-pull/, and the
  *       stream that was playing it) BEFORE asking Etsy, so any failure leaves the sandbox empty, never the old orders,
- *    3. reads the newest 250 receipts, with their transactions, from Etsy: 3 calls (pages of 100, 100 and 50), with the
+ *    3. reads the newest receipts (250 unless the setting says otherwise), with their transactions, from Etsy: one call per
+ *       100 (250 is 3 calls: pages of 100, 100 and 50), with the
  *       OAuth token and request headers the inbox and the receipts mirror already use (_etsyMailEtsy.js),
  *    4. stores them as one JSON file and the pointer document Charm_Sandbox/current, which etsySandbox.js serves and
  *       the stream (charmNestLibrary sandboxStream) plays,
@@ -25,9 +30,12 @@ const FV = admin.firestore.FieldValue;
 const SANDBOX = "Charm_Sandbox";
 const DIR = "charmnest/sandbox/orders-pull/";
 const SOURCE = "etsy-pull";
-const WANT = 250;                 // the newest receipts kept
-const PAGES = [[0, 100], [100, 100], [200, 50]];   // [offset, limit]: 3 calls
-const MAX_PULLS = 6;              // sandbox starts per UTC day (Etsy's day): 6 x 3 = 18 calls
+const WANT = 250;                 // the newest receipts kept until the setting says otherwise (Paul, 10 Oct)
+const MIN_WANT = 10, MAX_WANT = 500;   // what the setting may be (Paul, 11 Oct): 500 is 5 Etsy calls, and the 20-call day below still allows 4 such pulls
+const PAGE = 100;                 // Etsy's receipts page: one call per 100 orders
+const LIMIT_DOC = "config/charmNestSandboxPull";   // the setting: ONE document, a setting and not sandbox data (the wipe never touches config)
+const limitRef = () => db.collection("config").doc("charmNestSandboxPull");
+const MAX_PULLS = 6;              // sandbox starts per UTC day (Etsy's day): 6 x 3 = 18 calls at 250
 const MAX_CALLS = 20;             // and never more than this many sandbox receipt calls in a day
 const CLAIM_MS = 90000;           // a pull that did not finish releases its claim after this
 const FETCH_MS = 6000;            // one Etsy call may take this long
@@ -60,6 +68,42 @@ const budget = led => ({ day: led.day, pullsToday: led.pulls, cap: MAX_PULLS, ca
 async function readBudget(now) {
   const s = await ledgerRef().get();
   return budget(fresh(s.exists ? s.data() : null, dayOf(now || Date.now())));
+}
+
+/* ── how many of the newest orders a pull brings: Paul's number (config/charmNestSandboxPull { v, limit, by, at }) ── */
+const pagesFor = n => Math.ceil(n / PAGE);
+/** The Etsy pages for the newest `n` receipts: [[offset, limit]…] (250 → [0,100] [100,100] [200,50]). */
+const planFor = n => Array.from({ length: pagesFor(n) }, (_, i) => [i * PAGE, Math.min(PAGE, n - i * PAGE)]);
+/** A number as the setting may hold it: { value, clamped } held to MIN_WANT..MAX_WANT, or null when it is not a number at all. */
+function clampWant(x) {
+  if (typeof x === "string" && x.trim()) x = Number(x.trim());
+  if (typeof x !== "number" || !Number.isFinite(x)) return null;
+  const v = Math.round(x);
+  return v < MIN_WANT ? { value: MIN_WANT, clamped: true } : v > MAX_WANT ? { value: MAX_WANT, clamped: true } : { value: v, clamped: false };
+}
+/** The one plain line when a number had to be held: what the limit is and why. */
+const clampLine = value => (value <= MIN_WANT
+  ? `Held to ${MIN_WANT}: the fewest one pull may bring.`
+  : `Held to ${MAX_WANT}: the most one pull may bring (${pagesFor(MAX_WANT)} Etsy calls, and the sandbox may use ${MAX_CALLS} a day).`);
+/** What the browser shows for a number: the limits and what a pull costs (about: a token refresh can add one call). */
+function limitInfo(value, o) {
+  const pages = pagesFor(value);
+  return Object.assign({ limit: value, def: WANT, min: MIN_WANT, max: MAX_WANT, perPage: PAGE, callsPerPull: pages, pullsPerDay: Math.max(1, Math.min(MAX_PULLS, Math.floor(MAX_CALLS / pages))), callsCap: MAX_CALLS, pullsCap: MAX_PULLS,
+    isDefault: value === WANT, isSet: false, setBy: null, setAt: null }, o || {});
+}
+/** The number now (one read of one document): 250 when nothing was ever set, a stored number held to the limits whatever was written. */
+async function readLimit() {
+  const s = await limitRef().get(), d = s.exists ? s.data() || {} : null, c = d ? clampWant(d.limit) : null;
+  return limitInfo(c ? c.value : WANT, c ? { isSet: true, setBy: String(d.by || "").slice(0, 80) || null, setAt: +d.at || null } : {});
+}
+/** Changes the number (the caller has passed the Charm repo door: op sandboxPullLimitSet needs a repoToken). The server holds it to the limits. */
+async function setLimit(b) {
+  b = b || {};
+  const c = clampWant(b.limit);
+  if (!c) return { ok: false, error: `Type a whole number from ${MIN_WANT} to ${MAX_WANT}.`, reason: "bad", status: 400 };
+  const by = String(b.by || "").slice(0, 80), at = Date.now();
+  await limitRef().set({ v: 1, limit: c.value, by, at, updatedAt: FV.serverTimestamp() });
+  return Object.assign({ ok: true, clamped: c.clamped, note: c.clamped ? clampLine(c.value) : "" }, limitInfo(c.value, { isSet: true, setBy: by || null, setAt: at }));
 }
 
 const fail = (reason, error, status, extra) => Object.assign({ ok: false, error, reason, empty: reason !== "busy" && reason !== "bad", status }, extra || {});
@@ -127,8 +171,8 @@ async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline
     return data.results;
   } finally { clearTimeout(timer); }
 }
-/** The newest 250 receipts: page one first (a failure there costs one call), then the other two together. */
-async function readNewest(deps, tally, now) {
+/** The newest `want` receipts (`plan`: their Etsy pages): page one first (a failure there costs one call), then the others together. */
+async function readNewest(deps, tally, now, want, plan) {
   const deadline = Date.now() + WORK_MS;
   const env = etsyEnv();
   if (!env.shop || !env.id || !env.secret) throw new EtsyError("token", "The server has no Etsy settings, so the sandbox is empty.");
@@ -137,10 +181,10 @@ async function readNewest(deps, tally, now) {
   let token;
   try { token = await deps.token(); tally.refreshes = due.due ? 1 : 0; }
   catch (e) { tally.refreshes = due.due ? 1 : 0; console.warn("[sandboxPull] Etsy token not available:", (e && e.message || "").slice(0, 200)); throw new EtsyError("token", "The server's Etsy sign-in is not working, so the sandbox is empty."); }
-  const first = await page(deps.fetch, deps.meter, env, token, PAGES[0], tally, deadline);
+  const first = await page(deps.fetch, deps.meter, env, token, plan[0], tally, deadline);
   let rest = [];
-  if (first.length >= PAGES[0][1]) {
-    const more = await Promise.allSettled(PAGES.slice(1).map(p => page(deps.fetch, deps.meter, env, token, p, tally, deadline)));
+  if (plan.length > 1 && first.length >= plan[0][1]) {
+    const more = await Promise.allSettled(plan.slice(1).map(p => page(deps.fetch, deps.meter, env, token, p, tally, deadline)));
     const bad = more.find(r => r.status === "rejected");
     if (bad) throw bad.reason;
     rest = more.flatMap(r => r.value);
@@ -149,7 +193,7 @@ async function readNewest(deps, tally, now) {
   const seen = new Set(), list = [];
   for (const r of first.concat(rest)) { const id = r && String(r.receipt_id); if (!id || !/^\d+$/.test(id) || seen.has(id)) continue; seen.add(id); list.push(r); }
   list.sort((a, b) => createdMs(b) - createdMs(a) || Number(b.receipt_id) - Number(a.receipt_id));
-  return list.slice(0, WANT);
+  return list.slice(0, want);
 }
 
 const defaults = () => ({
@@ -161,7 +205,7 @@ const safeId = s => (typeof s === "string" && /^[A-Za-z0-9_.:-]{8,80}$/.test(s) 
 
 /** The answer for a set that stands. */
 function setAnswer(cur, led, extra) {
-  return Object.assign({ ok: true, already: false, startId: cur.startId, source: SOURCE, label: cur.label || `${cur.count} newest Etsy orders`, count: cur.count, open: cur.open, closed: cur.closed, closedBy: cur.closedBy || {},
+  return Object.assign({ ok: true, already: false, startId: cur.startId, source: SOURCE, label: cur.label || `${cur.count} newest Etsy orders`, count: cur.count, want: cur.want || WANT, open: cur.open, closed: cur.closed, closedBy: cur.closedBy || {},
     pulledAt: cur.pulledAt, newestAt: cur.newestAt || null, oldestAt: cur.oldestAt || null, calls: 0, tokenRefreshes: 0 }, budget(led), { path: cur.path }, extra || {});
 }
 async function startStream(ctx, b) {
@@ -179,6 +223,9 @@ async function pull(b, ctx, deps) {
   if (!startId) return fail("bad", "The pull needs a startId of 8 to 80 plain characters, one per sandbox start.", 400);
   deps = Object.assign(defaults(), deps || {});
   const now = Date.now(), day = dayOf(now);
+  // how many of the newest orders this pull brings: Paul's setting (one read), 250 when nothing was set or the setting cannot be read
+  let lim; try { lim = await readLimit(); } catch (e) { console.warn("[sandboxPull] pull number not read, using", WANT + ":", e && e.message); lim = limitInfo(WANT); }
+  const want = lim.limit, plan = planFor(want);
   // the retry marker, the claim and the budget: one transaction
   const gate = await db.runTransaction(async tx => {
     const [ls, cs] = await Promise.all([tx.get(ledgerRef()), tx.get(currentRef())]);
@@ -187,7 +234,7 @@ async function pull(b, ctx, deps) {
     if (led.claim && now - (+led.claim.at || 0) < CLAIM_MS) return { kind: "busy", led };
     const mine = led.starts.find(x => x.id === startId);
     if (mine && mine.ok) return { kind: "startUsed", led };
-    if (led.pulls >= MAX_PULLS || led.calls + PAGES.length > MAX_CALLS) return { kind: "cap", led };
+    if (led.pulls >= MAX_PULLS || led.calls + plan.length > MAX_CALLS) return { kind: "cap", led, byPulls: led.pulls >= MAX_PULLS };
     const next = Object.assign({}, led, { pulls: led.pulls + 1, claim: { startId, at: now } });
     tx.set(ledgerRef(), Object.assign({}, next, { updatedAt: FV.serverTimestamp() }));
     return { kind: "go", led: next };
@@ -201,9 +248,10 @@ async function pull(b, ctx, deps) {
   try {
     await discard();
     if (gate.kind === "cap") {
-      return fail("cap", `Today's ${MAX_PULLS} sandbox pulls from Etsy are used up, so the sandbox stays empty until tomorrow (UTC midnight).`, 429, Object.assign({ calls: 0, tokenRefreshes: 0, resetAt: new Date(nextDay(now)).toISOString() }, base));
+      return fail("cap", gate.byPulls ? `Today's ${MAX_PULLS} sandbox pulls from Etsy are used up, so the sandbox stays empty until tomorrow (UTC midnight).`
+        : `Today's ${MAX_CALLS} Etsy calls for the sandbox are used up (a pull of ${want} orders needs ${plan.length}), so the sandbox stays empty until tomorrow (UTC midnight).`, 429, Object.assign({ calls: 0, tokenRefreshes: 0, resetAt: new Date(nextDay(now)).toISOString() }, base));
     }
-    const list = await readNewest(deps, tally, now);
+    const list = await readNewest(deps, tally, now, want, plan);
     if (!list.length) throw new EtsyError("etsy", "Etsy sent no orders, so the sandbox is empty. Press Start to try again.");
     const closedBy = { shipped: 0, canceled: 0, unpaid: 0 };
     let open = 0;
@@ -212,7 +260,7 @@ async function pull(b, ctx, deps) {
     const body = Buffer.from(JSON.stringify({ at: now, count: list.length, source: SOURCE, startId, receipts: list }));
     const file = admin.storage().bucket().file(path);
     await file.save(body, { resumable: false, contentType: "application/json", metadata: { cacheControl: "no-store" } });
-    const doc = { path, source: SOURCE, startId, count: list.length, open, closed: list.length - open, closedBy, at: now, pulledAt: now, newestAt: createdMs(list[0]) || null, oldestAt: createdMs(list[list.length - 1]) || null,
+    const doc = { path, source: SOURCE, startId, count: list.length, want, open, closed: list.length - open, closedBy, at: now, pulledAt: now, newestAt: createdMs(list[0]) || null, oldestAt: createdMs(list[list.length - 1]) || null,
       takenBy: String(b.by || "").slice(0, 80) || null, label: `${list.length} newest Etsy orders`, calls: tally.pages, tokenRefreshes: tally.refreshes, bytes: body.length, note: null };
     try { await currentRef().set(Object.assign({}, doc, { updatedAt: FV.serverTimestamp() })); }
     catch (e) { await file.delete({ ignoreNotFound: true }).catch(() => {}); throw e; }
@@ -232,4 +280,4 @@ async function pull(b, ctx, deps) {
   }
 }
 
-module.exports = { pull, readBudget, isOpen, SOURCE, WANT, MAX_PULLS, MAX_CALLS, DIR };
+module.exports = { pull, readBudget, readLimit, setLimit, clampWant, planFor, pagesFor, isOpen, SOURCE, WANT, MIN_WANT, MAX_WANT, MAX_PULLS, MAX_CALLS, LIMIT_DOC, DIR };

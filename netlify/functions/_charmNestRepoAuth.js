@@ -38,7 +38,7 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
 const warn = (what, e) => { try { console.warn("[repoAuth] " + what + ":", String((e && (e.message || e.code)) || e).slice(0, 160)); } catch (_) {} };
 
 /* ── what needs a token ── */
-const LIBRARY = { masterPutIndex: "upload", masterPutFile: "upload", startMaster: "upload", masterPatch: "modify", masterRemoveFile: "delete-file", masterRemoveSku: "delete-sku", masterDownload: "download" };
+const LIBRARY = { masterPutIndex: "upload", masterPutFile: "upload", startMaster: "upload", masterPatch: "modify", masterRemoveFile: "delete-file", masterRemoveSku: "delete-sku", masterDownload: "download", sandboxPullLimitSet: "modify" };   // (sandboxPullLimitSet: Settings → how many newest Etsy orders the sandbox pulls; a setting, 11 Oct 2026)
 const MASTER_PATH = /^charmnest\/(?:sandbox\/)?master\//, MASTER_FILE_PATH = /^charmnest\/(?:sandbox\/)?master\/files\//;
 /** What an HTTP call to function `fn` with this op and body needs: { op, need } or null (free). Pure. */
 function requirement(fn, op, body) {

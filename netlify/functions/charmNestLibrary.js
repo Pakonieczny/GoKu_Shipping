@@ -1594,7 +1594,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "listingSkus", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
-  "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
+  "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -1662,18 +1662,22 @@ async function readOrderPieces(rd, ids, sheetIds) {
    charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
 const SANDBOX = "Charm_Sandbox";
 /* The Sep 17 style snapshot (the sorter uploaded a copy of the open orders and recorded it here) is retired as a source (Paul,
-   10 Oct 2026): the sandbox always pulls the 250 newest Etsy orders (sandboxPullOrders, _charmNestSandboxPull.js), a pull
+   10 Oct 2026): the sandbox always pulls the newest Etsy orders (250 unless the setting below says otherwise; sandboxPullOrders, _charmNestSandboxPull.js), a pull
    replaces the previous set completely, and only a pointer written by a pull (source "etsy-pull") is ever served or played. */
 const SandboxPull = require("./_charmNestSandboxPull");
 const pulled = d => (d && d.source === SandboxPull.SOURCE ? d : null);   // a pointer that is not a pull (an old snapshot) is no set
 async function op_sandboxPut() {
-  return { ok: false, error: "The sandbox snapshot is retired: the sandbox pulls the 250 newest Etsy orders each time it starts (op sandboxPullOrders).", reason: "retired", status: 410 };
+  return { ok: false, error: "The sandbox snapshot is retired: the sandbox pulls the newest Etsy orders each time it starts (op sandboxPullOrders).", reason: "retired", status: 410 };
 }
-/** The sandbox pulls the 250 newest Etsy receipts (see _charmNestSandboxPull.js and plans/sandbox-wipe-1010/ETSYPULL-contract.md). */
+/** The sandbox pulls the newest Etsy receipts, 250 unless Paul's number says otherwise (see _charmNestSandboxPull.js and plans/sandbox-wipe-1010/ETSYPULL-contract.md). */
 async function op_sandboxPullOrders(b) {
   if (!PREFIX) return { ok: false, error: "The order pull exists only in the sandbox.", reason: "bad", empty: false, status: 403 };
   return SandboxPull.pull(b, { stream: op_sandboxStream });
 }
+/** Paul's number (Settings, 11 Oct 2026): how many of the newest Etsy orders each sandbox pull brings. A SETTING, not sandbox data: it lives in
+    config/charmNestSandboxPull, which no wipe touches (charm-nest-sandbox-families.js protected()). The HTTP door asks for the Charm repo
+    password's token first (_charmNestRepoAuth.js LIBRARY: need "modify"); the server then holds the number to 10..500. Reading it is free: sandboxStatus. */
+async function op_sandboxPullLimitSet(b) { return SandboxPull.setLimit(b); }
 const Families = require("../../charm-nest-sandbox-families.js");   // the ONE list of what a sandbox run leaves behind: the status below, the wipe after it and tests/charm-nest/sandbox-wipe-guard.cjs all read it
 /** The id that ends a prefix range: "olsb_" → "olsb`" (the character after the last one), as the wipe has always asked it. */
 const idAfter = p => p.slice(0, -1) + String.fromCharCode(p.charCodeAt(p.length - 1) + 1);
@@ -1690,6 +1694,7 @@ async function op_sandboxStatus(b) {
   // each count is asked on its own and all at once; one that cannot be read is null (the page says so), never the whole answer lost
   const ask = (into, key, fn) => jobs.push(Promise.resolve().then(fn).then(n => { into[key] = n; }, e => { console.warn("[charmNestLibrary] sandbox count of", key, "failed:", e && e.message); into[key] = null; }));
   const budget = SandboxPull.readBudget().catch(() => null);   // (one read of Charm_Sandbox/pulls, the pull budget ledger)
+  const pullLimit = SandboxPull.readLimit().catch(() => null); // (one read of config/charmNestSandboxPull: Paul's number of newest orders per pull; the page reads it here once, no poll)
   for (const f of Families.server()) {
     if (f.store === "firestore") ask(counts, f.key, () => count(db.collection("Sandbox_" + f.key)));
     else if (f.store === "shared" && f.idPrefix) ask(counts, f.key, () => { const id = admin.firestore.FieldPath.documentId(); return count(db.collection(f.collection).where(id, ">=", f.idPrefix).where(id, "<", idAfter(f.idPrefix))); });
@@ -1703,7 +1708,7 @@ async function op_sandboxStatus(b) {
   ask(kept, "efficiencyDays", () => count(db.collection("Efficiency_Daily")));                 // employee efficiency: one daily rollup per person per day
   ask(kept, "efficiencySandboxDays", () => count(db.collection("Sandbox_Efficiency_Daily")));  // the same, as the sandbox's stations wrote them (kept too)
   await Promise.all(jobs);
-  return { ok: true, snapshot: set, budget: await budget, records: counts, recordsCapped: capped, kept };
+  return { ok: true, snapshot: set, budget: await budget, pullLimit: await pullLimit, records: counts, recordsCapped: capped, kept };
 }
 /* THE ONE WIPE of everything a sandbox run leaves behind (Paul, 10 Oct 2026: "completely wipe ALL sandbox data and order info; the
    only thing that remains is the employee efficiency and the Charm repo"). Reset sandbox records, Reset the sandbox... and Purge
@@ -1859,7 +1864,7 @@ async function op_sandboxStream(b) {
     const was = cur.exists ? cur.data() : null, set = pulled(snap.exists ? snap.data() : null), path = set ? set.path : null;
     if (action === "get") return { ok: true, stream: was };
     if (action === "off") { if (was && was.on) t.set(ref, Object.assign({}, was, { on: false })); return { ok: true, stream: null }; }
-    if (!path) return { error: "no sandbox orders yet: the sandbox pulls the 250 newest Etsy orders when it starts (sandboxPullOrders)", status: 409 };
+    if (!path) return { error: "no sandbox orders yet: the sandbox pulls the newest Etsy orders when it starts (sandboxPullOrders)", status: 409 };
     const now = Date.now(), speed = Math.max(1, Math.min(1000, Math.round(num(b.speed)) || 50));
     const mine = !!was && was.snapshotPath === path && was.v === STREAM_V;
     let s = mine ? Object.assign({}, was, { on: true, speed }) : null;
@@ -3507,7 +3512,7 @@ function cancelCopy(r) {
 }
 const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
-  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
+  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
