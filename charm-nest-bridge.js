@@ -5127,16 +5127,22 @@ const Engrave = window.Engrave = (() => {
   async function ensureJobFont(job) {
     if (!job) return null;
     if (!job.fontKey || !(job.fit || job.fontLocked || job.writtenFit)) {
-      let p = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job));
+      let p = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job), job.face);   // (job.face: front + back engraving, a face may name its own font word)
       // a font the buyer wrote in the note ("font: Pristina", "Angelina font") is read like a drop-down word when no drop-down or listing rule settled the font (spelling and case aside)
       const noted = !p.mapped && job.requests && job.requests.font ? O.fontOfPhrase(job.requests.font) : "";
       if (noted) p = { id: noted, asked: String(job.requests.font), mapped: true, listing: false, source: "note" };
       job.fontKey = p.id; job.fontAsked = p.asked; job.fontMapped = p.mapped; job.fontListing = p.listing; job.fontFromNote = p.source === "note";
     }
+    const askedKey = job.fontKey;   // (the font the piece asks for, before a load failure can swap it)
     if (job.fontKey !== O.DEFAULT_FONT) {
       const set = await loadFontSet(job.fontKey);
       if (!set || !set.ok) { job.fontFallback = `${(O.fontById(job.fontKey) || {}).name || job.fontKey} could not be loaded`; job.fontKey = O.DEFAULT_FONT; }
       else delete job.fontFallback;
+    }
+    // a font with no lowercase (Ace, the Mini Tag font that says "NO LOWERCASE"): the piece's words are engraved in capitals, "w" as "W", kept in what is saved too (lines, lineInput, text)
+    if (O.fontCaps(askedKey)) {
+      const up = t => O.capsText(t, askedKey), lines = (job.lines || []).map(up);
+      if (lines.some((l, i) => l !== job.lines[i]) || up(job.text) !== job.text) { job.lines = lines; job.text = up(job.text); if (Array.isArray(job.lineInput)) job.lineInput = job.lineInput.map(up); job.fontCapsApplied = true; }
     }
     job.fontName = (O.fontById(job.fontKey) || O.fontById(O.DEFAULT_FONT)).name;
     job.font = { asked: job.fontAsked || "", id: job.fontKey, name: job.fontName, source: "font-map" };   // (what the piece is engraved in: the piece switch and the per-piece records read it)

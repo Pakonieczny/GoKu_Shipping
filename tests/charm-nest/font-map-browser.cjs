@@ -1,6 +1,8 @@
 // FONTMAP in the real page (the second of the two suites; the first is font-map.cjs). Headless Chromium against the local fake site (bridge-server.cjs, nothing live, no Etsy, no AI):
 // a real master file, a real Auto run over five orders, each with a different font, up to the Engraving card, and then the first one approved:
-//   · Mini Tag listing 1714117116, "Font Choice (see listing photo for choices): Vibur"  -> Playwrite US Modern (the listing's one font)
+//   · Mini Tag listing 1714117116, "Font Choice (see listing photo for choices): Vibur"  -> Vibur itself (ENGFONT, 11 Oct: the buyer's word wins on the Mini Tag family)
+//   · Mini Tag add-on 4458930445, "Font Choice: Ace", the words typed in lowercase       -> Jost Slashed Zero, the words engraved in CAPITALS
+//   · Mini Tag add-on 4458930445, "Font Choice: Britannic Bold"                          -> Libre Franklin (Bold + ExtraBold)
 //   · listing 234758391, "Font: Stylish"                                               -> Playwrite US Trad
 //   · listing 1008014571, "Fonts: 16"/ Typewriter"                                      -> Crimson Text (two weights: Semibold under 2.2 mm)
 //   · a listing with "Font: Cooper Black" (a word the shop does not offer)              -> Source Sans 3, "Requested font: Cooper Black"
@@ -18,7 +20,9 @@ const tx = (rid, i, listing, sku, vars, text) => ({ transaction_id: Number(`${ri
   variations: [{ formatted_name: 'Metal', formatted_value: 'Sterling Silver' }].concat(vars, [{ formatted_name: 'Personalization', formatted_value: text || 'CARLA' }]) });
 const receipt = (rid, txs) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs });
 const SCENES = [
-  { rid: '3521300001', listing: 1714117116, name: 'Font Choice (see listing photo for choices)', value: 'Vibur', font: 'playwrite-us-modern', fontName: 'Playwrite US Modern', card: /Font\s+Vibur → Playwrite US Modern \(this listing engraves in one font\)/i, shot: 'tag-vibur' },
+  { rid: '3521300001', listing: 1714117116, name: 'Font Choice (see listing photo for choices)', value: 'Vibur', font: 'vibur', fontName: 'Vibur', card: /Font\s+Vibur → Vibur(?! \()/i, shot: 'tag-vibur' },
+  { rid: '3521300006', listing: 4458930445, name: 'Font Choice', value: 'Ace', text: 'carla', words: 'CARLA', font: 'jost-ace', fontName: 'Jost Slashed Zero', card: /Font\s+Ace → Jost Slashed Zero · capitals only/i, shot: 'tag-ace' },
+  { rid: '3521300007', listing: 4458930445, name: 'Font Choice', value: 'Britannic Bold', font: 'libre-franklin', fontName: 'Libre Franklin', card: /Font\s+Britannic Bold → Libre Franklin/i, shot: 'tag-britannic' },
   { rid: '3521300002', listing: 234758391, name: 'Font', value: 'Stylish', font: 'playwrite-us-trad', fontName: 'Playwrite US Trad', card: /Font\s+Stylish → Playwrite US Trad/i, shot: 'disc-stylish' },
   { rid: '3521300003', listing: 1008014571, name: 'Fonts', value: '16"/ Typewriter', font: 'crimson-text', fontName: 'Crimson Text', card: /Font\s+Typewriter → Crimson Text/i, shot: 'disc-typewriter' },
   { rid: '3521300004', listing: 1999000111, name: 'Font', value: 'Cooper Black', font: 'source-sans-3', fontName: 'Source Sans 3', card: /Requested font: Cooper Black \(engraved in Source Sans 3\)/, shot: 'unknown-cooper' },
@@ -70,19 +74,21 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
       if (Date.now() - t0 > 300000) throw new Error('the run never reached the engraving review: ' + JSON.stringify([r, jobs]));
       await page.waitForTimeout(500);
     }
-    const info = await page.evaluate(keys => keys.map(k => { const j = Engrave.items().get(k); return j && { state: j.state, reason: j.reason, fontKey: j.fontKey, fontName: j.fontName, fontAsked: j.fontAsked, fallback: j.fontFallback || null, ok: !!(j.fit && j.fit.ok), weight: j.fit && j.fit.weight, capMm: j.fit && j.fit.capMm, cmds: j.fit && j.fit.cmds && j.fit.cmds.length, sig: j.fit && JSON.stringify(j.fit.cmds).length, specFont: j.row.spec.font && j.row.spec.font.id }; }), SCENES.map(keyOf));
+    const info = await page.evaluate(keys => keys.map(k => { const j = Engrave.items().get(k); return j && { state: j.state, reason: j.reason, text: j.text, fontKey: j.fontKey, fontName: j.fontName, fontAsked: j.fontAsked, fallback: j.fontFallback || null, ok: !!(j.fit && j.fit.ok), weight: j.fit && j.fit.weight, capMm: j.fit && j.fit.capMm, cmds: j.fit && j.fit.cmds && j.fit.cmds.length, sig: j.fit && JSON.stringify(j.fit.cmds).length, specFont: j.row.spec.font && j.row.spec.font.id }; }), SCENES.map(keyOf));
     SCENES.forEach((s, i) => {
       const j = info[i]; check(!!j, `${s.rid}: an engraving job exists`); if (!j) return;
       check(j.state === 'review' && j.ok, `${s.rid} (${s.value}): placed and waiting in the engraving review, not blocked (state ${j.state}${j.reason ? ': ' + j.reason : ''})`);
       check(j.fontKey === s.font && j.fontName === s.fontName && !j.fallback, `${s.rid}: engraves in ${s.fontName} (job font ${j.fontName})`);
+      if (s.words) check(j.text === s.words, `${s.rid}: the words are engraved as ${s.words} (job text ${JSON.stringify(j.text)})`);
     });
     // the drawn words are the font's own: the same text in different fonts is a different drawing
-    check(new Set(info.slice(0, 4).map(j => j.sig)).size === 4, 'the fonts give different drawings of the same word CARLA: ' + info.slice(0, 4).map(j => j.cmds + ' segments').join(', '));
-    check(info[0].weight === 'Regular', 'Playwrite US Modern has one weight: the record says Regular (' + info[0].weight + ')');
-    check(info[2].weight === (info[2].capMm < 2.2 ? 'Semibold' : 'Regular'), 'Crimson Text follows the weight rule (Semibold under 2.2 mm cap height): ' + info[2].weight + ' at cap ' + (info[2].capMm || 0).toFixed(2) + ' mm');
+    check(new Set(info.slice(0, 5).map(j => j.sig)).size === 5, 'the fonts give different drawings of the same word CARLA: ' + info.slice(0, 5).map(j => j.cmds + ' segments').join(', '));
+    check(info[0].weight === 'Regular', 'Vibur has one weight: the record says Regular (' + info[0].weight + ')');
+    check(info[1].weight === (info[1].capMm < 2.2 ? 'Semibold' : 'Regular') && info[2].weight === (info[2].capMm < 2.2 ? 'Semibold' : 'Regular'), 'Jost Slashed Zero and Libre Franklin follow the weight rule (Semibold / ExtraBold under 2.2 mm): ' + info[1].weight + ', ' + info[2].weight);
+    check(info[4].weight === (info[4].capMm < 2.2 ? 'Semibold' : 'Regular'), 'Crimson Text follows the weight rule (Semibold under 2.2 mm cap height): ' + info[4].weight + ' at cap ' + (info[4].capMm || 0).toFixed(2) + ' mm');
     const got = [...new Set(fontGets)]; console.log('    font files fetched by the page: ' + got.join(', '));
-    check(['PlaywriteUSModern-Regular.ttf 200', 'PlaywriteUSTrad-Regular.ttf 200', 'CrimsonText-Regular.ttf 200', 'CrimsonText-SemiBold.ttf 200'].every(f => got.includes(f)) && !got.some(f => / (4|5)\d\d$/.test(f)), 'the fonts the pieces needed were served (200)');
-    check(got.includes('MarckScript-Regular.ttf 200') && !got.some(f => /^(Mynerve|Jost|AlegreyaSans)/.test(f)), 'Marck Script (the note) was served too; the fonts no piece uses were not downloaded');
+    check(['Vibur-Regular.ttf 200', 'PlaywriteUSTrad-Regular.ttf 200', 'CrimsonText-Regular.ttf 200', 'CrimsonText-SemiBold.ttf 200', 'JostSlashedZero-Regular.ttf 200', 'LibreFranklin-Bold.ttf 200'].every(f => got.includes(f)) && !got.some(f => / (4|5)\d\d$/.test(f)), 'the fonts the pieces needed were served (200)');
+    check(got.includes('MarckScript-Regular.ttf 200') && !got.some(f => /^(Mynerve|Jost-|AlegreyaSans|PlaywriteUSModern)/.test(f)), 'Marck Script (the note) was served too; the fonts no piece uses (the old first matches included) were not downloaded');
 
     // the card of each piece says which font it is engraved in
     for (const s of SCENES) {
@@ -97,7 +103,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     const ap = await page.evaluate(async k => { const j = Engrave.items().get(k); try { await Engrave.approve(j, 'Test Operator'); } catch (e) { return { error: String(e && e.message || e) }; } return { state: j.state, back: (j.backs || []).map(b => ({ font: b.font, fontKey: b.fontKey, weight: b.weight })), reason: j.reason }; }, keyOf(SCENES[0]));
     console.log('    approval: ' + JSON.stringify(ap));
     if (ap.error) check(false, 'approving the Vibur tag: ' + ap.error);
-    else check(['approved', 'written'].includes(ap.state) && ap.back.length ? ap.back.every(b => b.font === 'Playwrite US Modern' && b.fontKey === 'playwrite-us-modern') : ['approved', 'written'].includes(ap.state), 'the approved back record names its font: ' + JSON.stringify(ap.back));
+    else check(['approved', 'written'].includes(ap.state) && ap.back.length ? ap.back.every(b => b.font === 'Vibur' && b.fontKey === 'vibur') : ['approved', 'written'].includes(ap.state), 'the approved back record names its font: ' + JSON.stringify(ap.back));
     check(errors.length === 0, 'no page errors: ' + errors.slice(0, 2).join(' | '));
   } finally { await browser.close(); srv.close(); }
   if (fails.length) { console.error('\n' + fails.length + ' failed:\n - ' + fails.join('\n - ')); process.exit(1); }
