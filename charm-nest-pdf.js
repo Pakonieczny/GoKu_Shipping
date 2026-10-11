@@ -1968,7 +1968,7 @@
        angleDeg                                    rotation applied AFTER the mirror, about (cx, cy), CCW y-up
        padPt                                       page margin around the piece (5 mm by default)
        glyphs: [{ cmds:[{type:"M"|"L"|"C"|"Q"|"Z", x, y, x1, y1, x2, y2}] }]   text outlines, back-frame pt, origin at (cx, cy), y-up
-       view: "asSeenFromBack" | "frontCoordinates" title, meta
+       view: "asSeenFromBack" | "frontCoordinates" | "asSeenFromFront" title, meta
        face: "front" (absent = "back": today's file, byte for byte)   a FRONT engraving (front + back engraving, 11 Oct 2026, CONTRACT section 9 and 11): the same builder
              with the mirror step skipped. The charm is drawn as it is, not turned over (M = identity), turned hoop-up by `angleDeg` (the caller's
              CharmNestGeom.backView(charm, { face: "front" }) already has no mirror), the words are in the front frame, and the file says so:

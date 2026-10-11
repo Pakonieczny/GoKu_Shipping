@@ -9,21 +9,25 @@
     const byId = new Map((sheet.charms || []).map(c => [c.id, c.poolId]));
     return new Set((sheet.placements || []).map(p => byId.get(p.id) || p.poolId).filter(Boolean));
   }
+  /* FACES (plans/front-back-1011): a piece may have a FRONT record beside its back, flat in the same list, told by `face:'front'` (absent = back). The key of a record is its poolId for a
+     back (what it always was) and "<poolId>~front" for a front, so a back and a front of one piece are two records, each the newest of its own face. */
+  const recKey = (poolId, face) => String(poolId) + (face === 'front' ? '~front' : '');
+  const keyOf = b => recKey(b && b.poolId, b && b.face);
   function forSheet(sheet, records) {
     const ids = placedIds(sheet), id = sheet.sheetId || sheet.id;
     const found = new Map();
     for (const b of records || []) {
       if (!b.poolId || !ids.has(b.poolId) || b.invalidated) continue;
-      const prev = found.get(b.poolId);
+      const k = keyOf(b), prev = found.get(k);
       if (!prev || (+b.approvedAt || 0) >= (+prev.approvedAt || 0))
-        found.set(b.poolId, Object.assign({}, b, {sheetId:id, setId:sheet.setId || null}));
+        found.set(k, Object.assign({}, b, {sheetId:id, setId:sheet.setId || null}));
     }
-    return [...found.values()].sort((a,b) => String(a.poolId).localeCompare(String(b.poolId), undefined, {numeric:true}));
+    return [...found.values()].sort((a,b) => String(a.poolId).localeCompare(String(b.poolId), undefined, {numeric:true}) || (a.face === 'front' ? 0 : 1) - (b.face === 'front' ? 0 : 1));
   }
   const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const safeUrl = v => /^(https?:\/\/|data:image\/png;base64,)/i.test(v || '') ? v : '';
   const previewCache = new Map(), previewRequests = new Map();
-  const previewKey = b => [b.sheetId, b.poolId, +b.approvedAt || 0].join('|');
+  const previewKey = b => [b.sheetId, b.poolId, +b.approvedAt || 0].concat(b.face === 'front' ? ['front'] : []).join('|');
   async function recoverPreview(identity, resolve) {
     const key = previewKey(identity);
     if (previewCache.has(key)) return previewCache.get(key);
@@ -80,10 +84,12 @@
     const angleDeg = back.upAngle == null ? 0 : 90 - +back.upAngle;                 // backView step 6
     const a = -angleDeg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
     // back frame → the charm's own frame: turn back, then mirror back about x = cx
-    const toFront = (x, y) => { const dx = x - cx, dy = y - cy; return [2 * cx - (cx + dx * ca - dy * sa), cy + dx * sa + dy * ca]; };
+    // (a FRONT record's file is the charm as it is, only turned hoop-up: nothing to mirror back)
+    const mirror = back.face !== 'front';
+    const toFront = (x, y) => { const dx = x - cx, dy = y - cy, X = cx + dx * ca - dy * sa; return [mirror ? 2 * cx - X : X, cy + dx * sa + dy * ca]; };
     const c = Array.isArray(back.centre) && back.centre.length === 2 ? [+back.centre[0], +back.centre[1]] : [cx, cy];
     const size = +back.sizePt || 0, PT = 72 / 25.4;
-    const out = { poolId: back.poolId || null, text: lines.join('\n'), lines, size, capPt: +back.capMm > 0 ? +back.capMm * PT : size * 0.66,
+    const out = { poolId: back.poolId || null, ...(back.face === 'front' ? { face: 'front' } : {}), text: lines.join('\n'), lines, size, capPt: +back.capMm > 0 ? +back.capMm * PT : size * 0.66,
       centre: toFront(c[0], c[1]), angleDeg, approvedAt: +back.approvedAt || 0, glyphs: null };
     const G = opts.geom || (typeof CharmNestGeom !== 'undefined' ? CharmNestGeom : typeof window !== 'undefined' ? window.CharmNestGeom : null);
     const font = opts.font || null;
@@ -124,8 +130,8 @@
     return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
       const png = previewCache.get(previewKey(b)) || previewUrl(b.preview || b.outputs?.png?.url || b.png);
       const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}${pieceWords(b) ? ' · ' + pieceWords(b) : ''}`;
-      const dims = dimensions(b), label = 'Back: ' + (b.text || '') + ' — ' + identity;
-      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-approved-at="${+b.approvedAt || 0}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt=""></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
+      const front = b.face === 'front', dims = dimensions(b), label = (front ? 'Front: ' : 'Back: ') + (b.text || '') + ' — ' + identity + (front ? ' · front' : '');
+      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-approved-at="${+b.approvedAt || 0}" data-rid="${esc(b.order)}" ${front ? 'data-face="front" ' : ''}${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt=""></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
 
     }).join('')}</div></section>`;
   }
@@ -192,7 +198,7 @@
       const note = thumb.querySelector('.backPending') || document.createElement('span');
       note.className = 'backPending'; note.textContent = 'Loading preview…'; thumb.appendChild(note);
       try {
-        const src = await recoverPreview({sheetId:fig.dataset.sheetId, poolId:fig.dataset.poolId, approvedAt:+fig.dataset.approvedAt || 0}, id => window.Engrave.loadBackPreview(id));
+        const src = await recoverPreview({sheetId:fig.dataset.sheetId, poolId:fig.dataset.poolId, approvedAt:+fig.dataset.approvedAt || 0, ...(fig.dataset.face === 'front' ? {face:'front'} : {})}, id => window.Engrave.loadBackPreview(id));
         if (!img.isConnected) return;
         img.src = src; img.hidden = false; delete thumb.dataset.previewFailed; note.remove(); schedule();
       } catch (_) { thumb.dataset.previewFailed = '1'; note.textContent = 'Retry preview'; }
@@ -218,7 +224,7 @@
       if (zoom.showPopover) { if (!zoom.matches(':popover-open')) zoom.showPopover(); } else zoom.hidden = false;
       requestAnimationFrame(() => { if (active === thumb) zoom.classList.add('visible'); });
     }
-    document.addEventListener('click', e => {const t=e.target.closest?.('.backThumb'); if(!t) return; e.preventDefault();e.stopPropagation();hide();if(t.dataset.previewFailed){recover(t.querySelector('img'),true);return;}const f=t.closest('figure');window.Engrave?.openBack(f.dataset.poolId,f.dataset.sheetId);},true);
+    document.addEventListener('click', e => {const t=e.target.closest?.('.backThumb'); if(!t) return; e.preventDefault();e.stopPropagation();hide();if(t.dataset.previewFailed){recover(t.querySelector('img'),true);return;}const f=t.closest('figure');window.Engrave?.openBack(f.dataset.poolId,f.dataset.sheetId,f.dataset.face === 'front' ? 'front' : undefined);},true);
     document.addEventListener('pointerover', e => { const t=e.target.closest?.('.backThumb'); if(t && e.pointerType !== 'touch') show(t); });
     document.addEventListener('pointerout', e => { if(active && active.contains(e.target) && !active.contains(e.relatedTarget)) hide(); });
     document.addEventListener('focusin', e => { const t=e.target.closest?.('.backThumb'); if(t) show(t); });
@@ -235,5 +241,5 @@
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
   }
-  return {placedIds, forSheet, markup, pieceWords, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave};
+  return {recKey, placedIds, forSheet, markup, pieceWords, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave};
 });

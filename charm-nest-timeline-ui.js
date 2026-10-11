@@ -662,7 +662,7 @@
   const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "prepared", engraveApproved: "engraving", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
   function faceModel(e) {
     const printed = !!e.print || isPrint(e), plain = isPlainDecision(e), at = +(plain ? e.data.decidedAt ?? e.at : e.at) || 0, family = printed ? "prepared" : FAMILY_BY_TYPE[e.type] || "exceptions";
-    const action = plain ? "CUT PLAIN" : printed ? "QR LABEL PRINTED" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();
+    const action = plain ? "CUT PLAIN" : printed ? "QR LABEL PRINTED" : e.type === "engraveApproved" && e.data && e.data.face === "front" ? "FRONT ENGRAVING" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();
     return { family, action, icon: plain ? "plain" : CANONICAL_ICON[e.type], path: plain || CANONICAL_ICON[e.type] ? undefined : ICON[printed ? "qr" : kindOf(e.type).ic] || ICON.dot, date: at ? dateOf(at) : "", time: at ? timeOf(at) : "", by: e.ghost || (!at && !String(e.by || "").trim()) ? "" : personOf(e), at };
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
