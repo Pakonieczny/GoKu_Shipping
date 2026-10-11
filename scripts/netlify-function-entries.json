@@ -185,6 +185,7 @@
     "_charmNestMaster.js",
     "_charmNestPdf.js",
     "_charmNestPlacement.js",
+    "_charmNestRepoAuth.js",
     "_charmNestSolver.js",
     "_charmNestRoseStock.js",
     "_charmNestRemnants.js",

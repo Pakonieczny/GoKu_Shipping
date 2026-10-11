@@ -3473,7 +3473,7 @@ async function api(fn, body, opts = {}) {
     const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     let data = null, page = false; try { data = JSON.parse(txt); } catch (_) { page = true; data = { error: txt.trim() ? cloudWords(txt, res.status).slice(0, 200) : "" }; }
-    if (res.status === 401) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }
+    if (res.status === 401 && !(data && data.error === "repo-locked")) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }   // (a Charm Repo "repo-locked" 401 is not the cloud passcode: it throws below with its answer in e.data, and the cloud stays unlocked)
     // such a page, a 5xx or a timeout passes by itself (e.transient): whoever asked tries again and holds nothing over it
     if (!res.ok) throw Object.assign(new Error(page ? data.error || cloudWords("", res.status) : cloudWords(String((data && data.error) || `HTTP ${res.status}`), res.status)), { status: res.status, data, transient: page || res.status >= 500 || res.status === 408 || res.status === 429 });
     // a 2xx that is not the function's JSON (an empty body, a proxy's or the edge's page) is no answer either: it was
