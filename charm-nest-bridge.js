@@ -1409,7 +1409,7 @@ const Orders = window.Orders = (() => {
      again when its order (a new copy, update time or note), its line, a person's override, the option maps (a new object,
      see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
   const readAs = new WeakMap();
-  const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
+  const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) || (O.knownName ? O.knownName(sku) : "") : "");   // (the one known typo, KNOWN_SKU_TYPOS, or a SKU Paul named as a design, KNOWN_SKU_NAMES, in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
@@ -1744,7 +1744,7 @@ const Orders = window.Orders = (() => {
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
           const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
-          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && oldSpec.designSku !== r.spec.designSku;
+          const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && !O.sameDesign(oldSpec.designSku, r.spec.designSku, sku => Master.entryFor(sku));   // (the same drawing under another of its names is no change: a design the library keeps under two spellings)
           const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
           // An update that changes nothing this line is made from (Etsy moves an order's update time for an address, a
           // gift note, a shipping upgrade, or a change to one of its other lines) is taken as it is. Every such update

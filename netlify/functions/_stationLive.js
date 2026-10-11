@@ -228,7 +228,7 @@ const httpsOnly = u => (/^https:\/\/[^\s"<>]{8,1900}$/.test(String(u || "")) ? S
 let ordersLib;
 function designKey(sku) {
   const s = String(sku || "").toUpperCase();
-  try { ordersLib = ordersLib || require("../../charm-nest-orders.js"); return (ordersLib.knownTypo && ordersLib.knownTypo(s)) || s; } catch (_) { return s; }
+  try { ordersLib = ordersLib || require("../../charm-nest-orders.js"); return (ordersLib.knownTypo && ordersLib.knownTypo(s)) || (ordersLib.knownName && ordersLib.knownName(s)) || s; } catch (_) { return s; }
 }
 /** the vector-design thumbnail of each SKU (Charm_Master_Index/{SKU}: thumbUrl, per size when it has sizes) → Map sku → { thumbUrl, sizes:{S:url} } */
 async function masters(ctx, skus) {
