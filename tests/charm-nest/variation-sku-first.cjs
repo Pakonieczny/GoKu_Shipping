@@ -176,11 +176,11 @@ async function part2() {
   r = await T.lookup(['9000004'], env({ fetchInventory: gone, now: now + 20 * 86400000 })); assert.equal(r.tables['9000004'].gone, true); assert.equal(r.pending.length, 0);
   ok('cloud: a refused ask is not stored and not repeated; a deleted listing is remembered for the week');
 
-  // the sandbox and a cache-only request never call Etsy
+  // a cache-only request never calls Etsy
   calls = []; r = await T.lookup(['9100001', '9100002'], env({ cacheOnly: true })); assert.equal(calls.length, 0); assert.equal(r.etsyCalls, 0); assert.equal(r.why, 'cache'); assert.equal(r.pending.length, 2);
   // bad ids are dropped
   calls = []; r = await T.lookup(['x', '', '12', "9'; drop"], env()); assert.equal(calls.length, 0); assert.deepEqual(r.tables, {});
-  ok('cloud: the sandbox and cache-only requests make no Etsy call; ids that are not listing ids are dropped');
+  ok('cloud: a cache-only request makes no Etsy call; ids that are not listing ids are dropped');
 }
 
 /* ── part 3 · the op itself (charmNestLibrary) with fakes: the sandbox does not call Etsy, production does ── */
@@ -198,15 +198,15 @@ async function part3() {
     delete process.env.EDIT_PASSCODE;
     const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
     const post = body => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body) }).then(r => JSON.parse(r.body || '{}'));
-    let r = await post({ op: 'listingSkus', listingIds: ['1538136106'], sandbox: true });
-    assert.equal(etsyCalls, 0, 'the sandbox asks Etsy nothing: ' + JSON.stringify(r).slice(0, 200)); assert.deepEqual(r.pending, ['1538136106']); assert.equal(r.why, 'cache');
+    let r = await post({ op: 'listingSkus', listingIds: ['1538136106'], sandbox: true, cacheOnly: true });
+    assert.equal(etsyCalls, 0, 'a cacheOnly ask costs Etsy nothing: ' + JSON.stringify(r).slice(0, 200)); assert.deepEqual(r.pending, ['1538136106']); assert.equal(r.why, 'cache');
     r = await post({ op: 'listingSkus', listingIds: ['1538136106'] });
     assert.equal(etsyCalls, 1, JSON.stringify(r).slice(0, 300)); assert.equal(r.tables['1538136106'].products.length, 2);
     r = await post({ op: 'listingSkus', listingIds: ['1538136106'] });
     assert.equal(etsyCalls, 1, 'the second ask is answered from the stored table'); assert.equal(r.etsyCalls, 0);
     r = await post({ op: 'listingSkus', listingIds: ['1538136106'], sandbox: true });
     assert.equal(r.tables['1538136106'].products.length, 2, 'the sandbox reads what production stored'); assert.equal(etsyCalls, 1);
-    ok('op: production asks Etsy once per listing a week; the sandbox reads the stored table and never asks');
+    ok('op: Etsy is asked once per listing a week; the sandbox reads the stored table (and asks Etsy itself only for a listing nothing stored: table-load.cjs)');
   } finally { Module._load = realLoad; }
 }
 

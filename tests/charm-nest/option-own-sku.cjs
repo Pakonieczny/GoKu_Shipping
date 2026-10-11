@@ -3,6 +3,8 @@
 //   4197589560  ZODIAC_CONSTE_GEM-7  listing 1160815385  Necklace      Metal Colour Silver + Zodiac Sign Scorpio
 //   4195168363  ZODIAC_EARRINGS-3    listing 856808566   Stud earrings Metal Choice "Gold - Pair" + Zodiac Sign Cancer
 //   4194545985  LETTER_EARRING-19    listing 883649717   Stud earrings Color Sterling Silver + Letter T
+// Paul's later rows of the same kind (12:55 UTC): 4199773250 ZODIAC_EARRINGS-1 listing 1717684561 ("Metal? Single earring or a Pair?" RoseGold - Pair + Zodiac Sign Taurus) and
+// 4196676605 RUNE_EARRING_CHARM-0 listing 1726076665 (Metal Choice Sterling Silver + Rune Symbol "Fehu - Luck/Success"): both clear the same way.
 // The cause (charm-nest-orders.js interpretLine): each transaction already carried the product's OWN master SKU (the -7 / -3 / -19 is the index of the sign or letter, which is why
 // the right thumbnail was chosen), so resolveSku returned it. But an option was only ever ANSWERED by a SKU through the listing's inventory table (tiesToOption), which the page does
 // not hold until a line waits and Etsy has been asked; with no table the option fell through every rule to the generic "not mapped" hold, with inventoryWhy's "list ... not loaded
@@ -17,7 +19,7 @@ const step = name => console.log('  ✓', name);
 // the master: numbered families the way the live index holds them (zodiac 0-11, letters 0-25, runes 0-23, birth flowers 0-11, goddesses 0-4) and a few single designs
 const lib = new Map();
 const family = (base, count, sep = '-') => { for (let i = 0; i < count; i++) lib.set(base + sep + i, { sku: base + sep + i }); };
-family('ZODIAC_CONSTE_GEM', 12); family('ZODIAC_EARRINGS', 12); family('ZODIAC_NECKLACE_CHARM', 12); family('LETTER_EARRING', 26); family('RUNE_NECKLACE_CHARM', 24);
+family('ZODIAC_CONSTE_GEM', 12); family('ZODIAC_EARRINGS', 12); family('ZODIAC_NECKLACE_CHARM', 12); family('LETTER_EARRING', 26); family('RUNE_NECKLACE_CHARM', 24); family('RUNE_EARRING_CHARM', 24);
 family('BIRTHFLOWER_EARRINGS', 12); family('GREEKGODDESS_EARRING', 5, '_'); family('INITIAL_NECKLACE_SCRIPT', 26);
 for (const s of ['KEY_5598', 'GREEK GODDESS', 'PISCES_68933', 'ARIES_1', 'TAURUS_2', 'MAPLE_8065', 'ZODIAC_EARRINGS-LONE', 'LONE_DESIGN-7', 'TWO_DESIGN-0', 'TWO_DESIGN-1', 'TWO_DESIGN-5', 'ZODIAC_ICONS_LIBRA']) lib.set(s, { sku: s });
 const loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; }
@@ -34,9 +36,13 @@ const R1 = ['4197589560', line('1160815385', 'ZODIAC_CONSTE_GEM-7', 'Zodiac Cons
 const R2 = ['4195168363', line('856808566', 'ZODIAC_EARRINGS-3', 'Zodiac Stud Earrings, Astrology Earrings', [['Metal Choice :', 'Gold - Pair', '513', '102'], ['Zodiac Sign', 'Cancer', '514', '202']])];
 const R3 = ['4194545985', line('883649717', 'LETTER_EARRING-19', 'Initial Letter Stud Earrings, Personalized Letter Earrings', [['Color', 'Sterling Silver', '513', '103'], ['Letter', 'T', '514', '203']])];
 
+// Paul's two later rows (the metal option is Etsy's "Metal? Single earring or a Pair?": a metal option, never the charm-picking one)
+const R4 = ['4199773250', line('1717684561', 'ZODIAC_EARRINGS-1', 'Zodiac Stud Earrings, Astrology Earrings', [['Metal? Single earring or a Pair?', 'RoseGold - Pair', '513', '104'], ['Zodiac Sign', 'Taurus', '514', '204']])];
+const R5 = ['4196676605', line('1726076665', 'RUNE_EARRING_CHARM-0', 'Viking Rune Stud Earrings, Elder Futhark Rune Earrings', [['Metal Choice', 'Sterling Silver', '513', '105'], ['Rune Symbol', 'Fehu - Luck/Success', '514', '205']])];
+
 /* ── 1 · the cause: with no table the three rows asked, and said "not loaded yet" (the line's own SKU was already the right charm) ── */
 function cause() {
-  for (const [rid, l] of [R1, R2, R3]) {
+  for (const [rid, l] of [R1, R2, R3, R4, R5]) {
     // what the OLD reading did, reproduced: the same line with the new rule switched off (a SKU that is no numbered family member), and the same ids so inventoryWhy speaks
     const off = JSON.parse(JSON.stringify(l)); off.sku = 'ZODIAC_EARRINGS-LONE'; off.variations = l.variations;
     const sp = read(rid, off, { listingSkus: {} }), q = open(sp)[0];
@@ -48,21 +54,21 @@ function cause() {
 
 /* ── 2 · the three rows now settle by themselves: no hold, no "not mapped" line, no question ── */
 function threeRows() {
-  const want = { '4197589560': ['ZODIAC_CONSTE_GEM-7', 'silver'], '4195168363': ['ZODIAC_EARRINGS-3', 'gold'], '4194545985': ['LETTER_EARRING-19', 'silver'] };
-  for (const [rid, l] of [R1, R2, R3]) {
+  const want = { '4197589560': ['ZODIAC_CONSTE_GEM-7', 'silver'], '4195168363': ['ZODIAC_EARRINGS-3', 'gold'], '4194545985': ['LETTER_EARRING-19', 'silver'], '4199773250': ['ZODIAC_EARRINGS-1', 'gold'], '4196676605': ['RUNE_EARRING_CHARM-0', 'silver'] };
+  for (const [rid, l] of [R1, R2, R3, R4, R5]) {
     for (const extra of [{}, { listingSkus: {} }, { listingSkus: { [l.listingId]: undefined } }]) {   // (no table at all, an empty store, a store with no table for the listing: the same)
       const sp = read(rid, l, extra);
       eq(sp.problems, [], rid + ': no problem of any kind: ' + JSON.stringify(sp.problems));
       eq(sp.designSku, want[rid][0], rid + ': the charm is the line\'s own SKU'); eq(sp.skuSource, 'transaction', rid);
       eq(sp.material, want[rid][1], rid + ': the metal still comes from its own option');
-      const opt = sp.options.find(o => !/metal|colou?r|choice/i.test(o.name));
+      const opt = sp.options.find(o => !/metal|colou?r|choice/i.test(o.name)); eq(sp.options.length, 1, rid + ': the metal option is not a charm-picking option: ' + JSON.stringify(sp.options));
       ok(opt && opt.mapped && opt.mapped.field === 'design' && opt.mapped.value === want[rid][0] && opt.mapped.source === 'sku:index', rid + ': the option is answered by the SKU: ' + JSON.stringify(opt));
       ok(!sp.noDesign && !sp.special, rid);
     }
   }
-  step('Paul\'s three rows: ZODIAC_CONSTE_GEM-7 / ZODIAC_EARRINGS-3 / LETTER_EARRING-19 read with no problem, no table, the metal from its own option');
+  step('Paul\'s five rows: ZODIAC_CONSTE_GEM-7 / ZODIAC_EARRINGS-3 / LETTER_EARRING-19 / ZODIAC_EARRINGS-1 / RUNE_EARRING_CHARM-0 read with no problem, no table, the metal from its own option');
   // the rows that were flagged clear themselves: a row held for the old question, read again, is a line to make up again (no re-save by anybody)
-  for (const [rid, l] of [R1, R2, R3]) {
+  for (const [rid, l] of [R1, R2, R3, R4, R5]) {
     const old = JSON.parse(JSON.stringify(read(rid, Object.assign({}, l, { sku: 'ZODIAC_EARRINGS-LONE' })))), fresh = read(rid, l);
     const row = { state: 'held', hold: null, poolIds: [], spec: fresh, problems: [], reason: 'option "x" not mapped' };
     ok(O.questionGone(row, old), rid + ': a row held for the old "not mapped" question goes back to the intake when it reads clean');
@@ -115,6 +121,9 @@ function stillAsks() {
   ok(!sp.designSku && sp.problems.length > 0, 'a blank SKU waits');
   // (f) two options nothing else reads: one SKU cannot say which of them picks the charm, a person says
   asks('4100000005', line('900000003', 'ZODIAC_EARRINGS-3', 'Zodiac Stud Earrings', [['Metal Choice', 'Gold - Pair'], ['Zodiac Sign', 'Cancer', '514', '202'], ['Birth Month', 'June', '515', '302']]));
+  // (f2) a yes / no answer is no choice of charm: an unrelated "Gift Wrap: Yes" on a numbered-SKU line is still asked
+  asks('4100000009', line('900000007', 'ZODIAC_EARRINGS-3', 'Zodiac Stud Earrings', [['Metal Choice', 'Gold - Pair'], ['Gift Wrap', 'Yes']]));
+  eq(read('4100000009', line('900000007', 'ZODIAC_EARRINGS-3', 'Zodiac Stud Earrings', [['Metal Choice', 'Gold - Pair'], ['Rune Symbol', 'Nobility']])).problems, [], 'a value that merely starts with "no" is a value');
   // (g) a numbered SKU of another family than the line (a necklace pendant on an earrings line) is never cut as it stands
   asks('4100000006', line('900000004', 'ZODIAC_NECKLACE_CHARM-3', 'Zodiac Stud Earrings', [['Metal Choice', 'Gold - Pair'], ['Zodiac Sign', 'Cancer', '514', '202']]));
   // (h) a person's saved pick for the option stands over everything (and a person's pick still names the design as before)
@@ -189,6 +198,26 @@ function unchanged() {
   step('lines that never asked read the same; the SKU settles only an option nothing else read');
 }
 
-const run = [cause, threeRows, allFamilies, stillAsks, seen, withTable, unchanged]; let failed = 0;
+/* ── 8 · FLAGAUDIT's 211 cases (plans/flag-fix-1011/FLAGAUDIT-cases.json, with the real master list), when the files are there: every "clear" row has no option question with no table,
+      every "ask" / "wait" row still has one, the design is unchanged. The key listing's letters (KEY_5598, one design SKU, not a numbered family) are KEYLETTER's, not this rule's. ── */
+function audit() {
+  const dir = '/mnt/project-files/plans/flag-fix-1011/', fs = require('fs');
+  if (!fs.existsSync(dir + 'FLAGAUDIT-cases.json') || !fs.existsSync(dir + 'master-skus-1011.json')) { console.log('  - audit cases not present here: skipped'); return; }
+  const D = JSON.parse(fs.readFileSync(dir + 'FLAGAUDIT-cases.json', 'utf8')), M = new Map(JSON.parse(fs.readFileSync(dir + 'master-skus-1011.json', 'utf8')).map(e => [e.sku.toUpperCase(), e]));
+  const lo = {}; for (const k of M.keys()) { const l = O.looseKey(k); lo[l] = l in lo ? '' : k; }
+  const c = { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [] }, listingSkus: {}, masterEntry: s => M.get(String(s).toUpperCase()) || null, masterLoose: s => lo[O.looseKey(s)] || '' };
+  let rows = 0, skipped = 0;
+  for (const r of D.cases) {
+    if (r.id === 'C208') { skipped++; continue; }
+    const l = { transactionId: 'T1', listingId: r.listingId, productId: r.productId, sku: r.sku, title: r.title, quantity: 1, metalKey: 'gold', metalLabel: '', personalization: [], buyerMessage: '',
+      variations: [{ name: r.metalField, value: r.metalValue, propertyId: r.metalPropertyId || null, valueId: r.metalValueId || null }, { name: r.optionField, value: r.optionValue, propertyId: r.optionPropertyId || null, valueId: r.optionValueId || null }] };
+    const sp = O.interpretLine({ receiptId: 'R1', updateTs: 1 }, l, c), asks = sp.problems.some(p => p.kind === 'needsMapping' && p.optionName === r.optionField);
+    if (r.optional === 'yes') continue;
+    eq(asks, r.expected !== 'clear', r.id + ' ' + r.sku + ' ' + r.optionField + ': ' + r.optionValue + ' (expected ' + r.expected + ')'); eq(sp.designSku || '', r.designNow || '', r.id + ': the design is unchanged'); rows++;
+  }
+  step(`FLAGAUDIT: ${rows} cases (clear ${D.cases.filter(r => r.expected === 'clear').length - skipped}, ask / wait ${D.cases.filter(r => r.expected !== 'clear' && r.optional !== 'yes').length}) behave as expected with no table; KEY_5598 left to the letter mapping`);
+}
+
+const run = [cause, threeRows, allFamilies, stillAsks, seen, withTable, unchanged, audit]; let failed = 0;
 for (const f of run) { try { f(); } catch (e) { failed++; console.log('  ✗ ' + f.name + ': ' + (e && e.stack ? e.stack.split('\n').slice(0, 6).join('\n') : e)); } }
 console.log(failed ? `option-own-sku: ${failed} failed` : `option-own-sku: all passed (${n} checks)`); process.exit(failed ? 1 : 0);

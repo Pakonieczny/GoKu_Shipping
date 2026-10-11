@@ -8,8 +8,11 @@
  *  Cost, exactly:
  *    · Etsy: one GET /listings/{id}/inventory for a listing the sorter asks about whose table is not stored or is older than
  *      7 days; never per order, never for a listing no line waits on. At most 6 a request and 60 a day for the whole shop
- *      (Charm_Listing_Skus/_budget). A rate-limited or failed call is not stored and not repeated in the same request. The
- *      sandbox never calls Etsy: it reads what production stored.
+ *      (Charm_Listing_Skus/_budget). A rate-limited or failed call is not stored and not repeated in the same request.
+ *      The sandbox asks Etsy the same way, for the same listings, from the same stored tables and the same 60 a day, and at most
+ *      30 of those 60 (FLAGLOAD, 11 Oct 2026): it used to read the cache only, and nothing but a production page ever filled it,
+ *      so a listing only the sandbox's own newest orders carried stayed "not loaded yet" for ever (Review rows: Zodiac Sign
+ *      Scorpio, Cancer, Letter T). A table the sandbox stores is the shop's table: production finds it and asks Etsy nothing.
  *    · Firestore: one read per listing asked about (plus one for the day's budget), one write per listing fetched (plus one
  *      for the budget). The page asks only for listings with a line that waits on its SKU and keeps the answers for 7 days.
  *  A table is { at, n, uni } when every product of the listing has the one SKU (or none), else { at, n, products: [{ id,
@@ -25,6 +28,7 @@
 
 const COLL = "Charm_Listing_Skus", BUDGET_ID = "_budget";
 const TTL_MS = 7 * 86400000, DAY_CAP = 60, CALL_CAP = 6, MAX_ASK = 25, MAX_PRODUCTS = 1500;
+const SANDBOX_CAP = 30;   // of the day's DAY_CAP: what the sandbox may spend, so the production page always has at least half of them
 
 const sku = v => String(v == null ? "" : v).trim().slice(0, 80);
 const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
@@ -81,11 +85,13 @@ function compact(inv, now) {
 }
 
 /**
- * ids: listing ids asked for. env: { db, fetchInventory(id) → Etsy's inventory, now?, cacheOnly? }.
- * → { tables: { id: table }, pending: [id], why, etsyCalls, cap: { used, max } }. A listing with a stored table older than the
- * ttl is answered with that table if Etsy cannot be asked now (it is also listed in `pending`). why says why some are pending:
- * "batch" (this request's 6 are used: ask again soon), "day" (the day's 60 are used), "error" (Etsy refused or failed),
- * "cache" (the sandbox, or a request that asked for no Etsy call).
+ * ids: listing ids asked for, most wanted first. env: { db, fetchInventory(id) → Etsy's inventory, now?, cacheOnly?, sandbox? }.
+ * → { tables: { id: table }, pending: [id], why, etsyCalls, cap: { used, max }, sandboxCap?: { used, max } }. A listing with a
+ * stored table older than the ttl is answered with that table if Etsy cannot be asked now (it is also listed in `pending`).
+ * Etsy is asked in this order: listings with no table at all, then those whose table lacks the value names a line needs, then
+ * those whose table is a week old (inside each group, the order the page gave). why says why some are pending:
+ * "batch" (this request's 6 are used: ask again soon), "day" (the day's 60 are used), "sandbox" (the sandbox's 30 of the
+ * day's 60 are used), "error" (Etsy refused or failed), "cache" (a request that asked for no Etsy call).
  */
 async function lookup(ids, env) {
   const db = env.db, now = env.now || Date.now(), coll = db.collection(COLL);
@@ -96,19 +102,22 @@ async function lookup(ids, env) {
   if (!want.length) return out;
   const snaps = await db.getAll(...want.map(id => coll.doc(id)), coll.doc(BUDGET_ID));
   const bd = snaps[want.length].exists ? snaps[want.length].data() || {} : {};
-  let used = bd.day === dayOf(now) ? Math.max(0, +bd.n || 0) : 0;
+  const today = bd.day === dayOf(now), sandbox = !!env.sandbox;
+  let used = today ? Math.max(0, +bd.n || 0) : 0, usedSb = today ? Math.max(0, +bd.sb || 0) : 0;   // (sb: how many of the day's calls the sandbox made)
   const stale = [];
   want.forEach((id, i) => {
     const s = snaps[i], t = s.exists ? s.data() : null;
     const noNames = !!t && needNames.has(id) && Array.isArray(t.products) && !Array.isArray(t.nm);   // (stored before the names were kept)
     if (t && now - (+t.at || 0) < TTL_MS && !noNames) out.tables[id] = fromStored(t);
-    else { if (t) out.tables[id] = fromStored(t); stale.push(id); }
+    else { if (t) out.tables[id] = fromStored(t); stale.push({ id, rank: !t ? 0 : noNames ? 1 : 2 }); }
   });
+  stale.sort((a, b) => a.rank - b.rank);   // (stable: inside a group, the page's order, oldest waiting order first)
   let attempts = 0, stop = !!env.cacheOnly;
   if (stop && stale.length) out.why = "cache";
-  for (const id of stale) {
-    if (stop || attempts >= CALL_CAP || used >= DAY_CAP) { out.pending.push(id); if (!out.why) out.why = used >= DAY_CAP ? "day" : "batch"; continue; }
-    attempts++; used++;
+  for (const { id } of stale) {
+    const dayFull = used >= DAY_CAP, sbFull = sandbox && usedSb >= SANDBOX_CAP;
+    if (stop || attempts >= CALL_CAP || dayFull || sbFull) { out.pending.push(id); if (!out.why) out.why = dayFull ? "day" : sbFull ? "sandbox" : "batch"; continue; }
+    attempts++; used++; if (sandbox) usedSb++;
     try {
       const table = compact(await env.fetchInventory(id), now);
       await coll.doc(id).set(toStored(table));
@@ -123,8 +132,9 @@ async function lookup(ids, env) {
   }
   out.etsyCalls = attempts;
   out.cap = { used, max: DAY_CAP };
-  if (attempts) await coll.doc(BUDGET_ID).set({ day: dayOf(now), n: used, at: now });
+  if (sandbox) out.sandboxCap = { used: usedSb, max: SANDBOX_CAP };
+  if (attempts) await coll.doc(BUDGET_ID).set({ day: dayOf(now), n: used, sb: usedSb, at: now });
   return out;
 }
 
-module.exports = { lookup, compact, toStored, fromStored, packNames, unpackNames, COLL, TTL_MS, DAY_CAP, CALL_CAP, MAX_ASK };
+module.exports = { lookup, compact, toStored, fromStored, packNames, unpackNames, COLL, TTL_MS, DAY_CAP, CALL_CAP, SANDBOX_CAP, MAX_ASK };

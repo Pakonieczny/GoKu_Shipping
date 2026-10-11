@@ -6,7 +6,8 @@
 //  what the data showed (so the test says it again, line by line):
 //   · every one of these transactions carries the LISTING's shared SKU ("Viking Rune", "Greek Goddess", "Zodiac REVAMP", "Birth_6106"…),
 //     never the option's: only the listing's inventory knows the SKU Etsy keeps for the option bought (step 2 of Paul's order);
-//   · the sandbox never asks Etsy and production had stored nothing for these listings, so the page had no table and every row waited;
+//   · the sandbox then read the cache only and production had stored nothing for these listings, so the page had no table and every row waited
+//     (since FLAGLOAD, 11 Oct 2026, the sandbox asks Etsy for the listings it waits on, inside the same 60 a day: tests/charm-nest/table-load.cjs);
 //   · with the table, the code already named the charm for 13 lines; one more is fixed here: Greek Goddess EARRINGS (Etsy's SKU for Vesta is
 //     the NECKLACE pendant GREEKGODDESS_NECKLACE_4, the earring is GREEKGODDESS_EARRING_4: the listing's five SKUs all have an earring twin,
 //     so each is read as its twin) and the listing's umbrella design "GREEK GODDESS" is in the master, so the inventory was never asked
@@ -60,7 +61,7 @@ function noTable() {
   ok('no table: each of the 14 lines waits on its option, and its row says "Etsy\'s SKU list is not loaded yet"');
 }
 
-/* ── 2 · the cloud: production asks Etsy once per listing, stores each table (no array in an array), the sandbox only reads ── */
+/* ── 2 · the cloud: Etsy is asked once per listing, each table is stored (no array in an array) and read back the same by either side ── */
 const rawOf = (t, base = 1) => t.products
   ? { products: t.products.map(p => { const by = {}; for (const [a, b] of p.pv) (by[a] = by[a] || []).push(+b); return { product_id: +p.id, sku: p.sku, is_deleted: !!p.d, property_values: Object.entries(by).map(([k, v]) => ({ property_id: +k, value_ids: v, values: ['x'] })) }; }) }
   : { products: Array.from({ length: t.n }, (_, i) => ({ product_id: base + i, sku: t.uni, is_deleted: false, property_values: [{ property_id: 513, value_ids: [i + 1], values: ['x'] }] })) };
@@ -80,21 +81,23 @@ async function cloud() {
     const post = body => lib2.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body) }).then(r => JSON.parse(r.body || '{}'));
     const get = qs => lib2.handler({ httpMethod: 'GET', headers: {}, queryStringParameters: qs }).then(r => JSON.parse(r.body || '{}'));
     const ids = Object.keys(DATA.tables);
-    // the sandbox (where Paul's rows are) reads only what production stored: nothing yet, no Etsy call
-    let r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
+    // a request that says cacheOnly asks Etsy nothing (the sandbox no longer reads the cache only: FLAGLOAD, 11 Oct 2026, see table-load.cjs)
+    let r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true, cacheOnly: true });
     assert.equal(asked.length, 0); assert.equal(r.why, 'cache'); assert.equal(r.pending.length, ids.length); assert.deepEqual(r.tables, {});
-    // production: 6 a request at most, one per listing, 10 listings = 10 calls in all
-    r = await post({ op: 'listingSkus', listingIds: ids });
+    // the sandbox (where Paul's rows are) asks like production: 6 a request at most, one per listing, 10 listings = 10 calls in all, inside the shop's 60 a day
+    r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
     assert.equal(r.etsyCalls, 6); assert.equal(r.why, 'batch'); assert.equal(asked.length, 6);
+    r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
+    assert.equal(r.etsyCalls, 4); assert.equal(asked.length, 10); assert.equal(new Set(asked).size, 10, 'each listing exactly once'); assert.deepEqual(r.cap, { used: 10, max: 60 }); assert.deepEqual(r.sandboxCap, { used: 10, max: 30 });
     r = await post({ op: 'listingSkus', listingIds: ids });
-    assert.equal(r.etsyCalls, 4); assert.equal(asked.length, 10); assert.equal(new Set(asked).size, 10, 'each listing exactly once'); assert.deepEqual(r.cap, { used: 10, max: 60 });
+    assert.equal(r.etsyCalls, 0); assert.equal(asked.length, 10, 'production finds the tables the sandbox stored: a stored table is not asked of Etsy again');
     r = await get({ op: 'listingSkus', listingIds: ids.join(','), cacheOnly: '1' });
     assert.equal(r.etsyCalls, 0); assert.equal(asked.length, 10, 'a stored table is not asked of Etsy again');
-    ok('cloud: production asks Etsy once per listing (6 + 4 calls for the 10 listings, cap 60 a day); a second ask costs none');
+    ok('cloud: the sandbox asks Etsy once per listing (6 + 4 calls for the 10 listings, cap 60 a day); a second ask, from either side, costs none');
     // every stored document passed the no-array-in-array check (the fake refuses it); what the page reads has the shape it always had
     for (const [k, v] of store) refuseNestedArrays(v, k);
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
-    assert.equal(asked.length, 10, 'the sandbox never asks Etsy'); assert.deepEqual(r.pending, []);
+    assert.equal(asked.length, 10, 'a stored table costs the sandbox no Etsy call'); assert.deepEqual(r.pending, []);
     tables = r.tables;
     const norm = t => { const x = clone(t); delete x.at; delete x.names; delete x.props; if (x.products) for (const p of x.products) p.pv.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])); return x; };   // (the order of a product's pairs says nothing)
     for (const id of ids) assert.deepEqual(norm(tables[id]), norm(DATA.tables[id]), 'the sandbox reads the table exactly as Etsy gave it: ' + id);
