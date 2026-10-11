@@ -13,6 +13,53 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  /* ═══ 0 · Etsy's HTML-escaped text ═════════════════════════════════════
+     Etsy hands text over HTML-escaped: the shop's SKU "ACORN'S LEAF" arrives as "ACORN&#39;S LEAF" and no master file holds that
+     (Paul, 11 Oct 2026, order 4196630529: "Unknown SKU: SKU ACORN&#39;S LEAF"). decodeEntities is the ONE decoder: the standard
+     entities (&#39; &apos; &amp; &quot; &lt; &gt;) and the numeric (&#39;) and hex (&#x27;) forms, as many passes as it takes (Etsy
+     double-escapes some text, "&amp;#39;"; every pass that changes the text shortens it), so a text that is already decoded is never
+     changed and decoding twice is the same as decoding once. cleanLine / cleanOrders decode a line's SKU, title and option names and values
+     where the sorter takes the Etsy orders in (DesignLink, charm-nest-bridge.js) and where it reads a stored line back
+     (rowFromRecord); cleanMaps does the same for the SKUs a person's saved answers are keyed by. upSku, norm and bySkuOf below read
+     the decoded form too, so a SKU that carries no entity resolves exactly as it did, and one that does resolves as its decoded self.
+     The customer's own words (personalisation, buyer message, notes) are NOT touched here. */
+  const ENTITY = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|apos|quot|lt|gt));/g;
+  const NAMED_ENTITY = { amp: "&", apos: "'", quot: '"', lt: "<", gt: ">" };
+  const decodeEntities = v => {
+    let s = v == null ? "" : String(v);
+    while (s.indexOf("&") >= 0) {   // (each pass that changes anything makes the text shorter, so this ends)
+      const was = s;
+      s = s.replace(ENTITY, (m, dec, hex, name) => {
+        if (name) return NAMED_ENTITY[name];
+        const cp = dec != null ? parseInt(dec, 10) : parseInt(hex, 16);
+        return cp >= 32 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF) ? String.fromCodePoint(cp) : m;   // (a control code or a number that is no character stays as written)
+      });
+      if (s === was) break;
+    }
+    return s;
+  };
+  /** A line as the Etsy transaction gave it, with its SKU, title and the names and values of its options decoded; the line itself is changed (it is a fresh copy the station sent, or one the page built) and answered. */
+  function cleanLine(line) {
+    if (!line || typeof line !== "object") return line;
+    for (const k of ["sku", "title"]) if (typeof line[k] === "string" && line[k].indexOf("&") >= 0) line[k] = decodeEntities(line[k]);
+    if (Array.isArray(line.variations)) for (const v of line.variations) if (v && typeof v === "object") for (const k of ["name", "value", "formatted_name", "formatted_value"]) if (typeof v[k] === "string" && v[k].indexOf("&") >= 0) v[k] = decodeEntities(v[k]);
+    return line;
+  }
+  /** What the station answers to an orders call ({ orders: [...] } or { order }): every line of every order, decoded. */
+  function cleanOrders(res) {
+    if (!res || typeof res !== "object") return res;
+    for (const o of Array.isArray(res.orders) ? res.orders : res.order ? [res.order] : []) if (o && Array.isArray(o.lines)) o.lines.forEach(cleanLine);
+    return res;
+  }
+  /** One of the maps a person's answers are saved in (aliases: { listingId: { bySku, pairBySku, ... } }; noDesign: { skus } ), read with its SKUs decoded: a key saved while the SKU still carried an entity is read under the decoded spelling (a
+   *  decoded key already there wins); nothing is dropped. Answers the same objects when nothing in them carries an entity. */
+  function cleanMaps(aliases, noDesign) {
+    const keyed = m => { if (!m || typeof m !== "object" || !Object.keys(m).some(k => k.indexOf("&") >= 0)) return m; const out = {}; for (const k of Object.keys(m)) { const d = decodeEntities(k).trim().toUpperCase(); if (!(d in out) || d === k) out[d] = m[k]; } return out; };
+    if (aliases && typeof aliases === "object") for (const id of Object.keys(aliases)) { const a = aliases[id]; if (!a || typeof a !== "object") continue; const b = keyed(a.bySku), p = keyed(a.pairBySku); if (b !== a.bySku || p !== a.pairBySku) aliases[id] = Object.assign({}, a, b ? { bySku: b } : {}, p ? { pairBySku: p } : {}); }
+    if (noDesign && Array.isArray(noDesign.skus) && noDesign.skus.some(x => String(x).indexOf("&") >= 0)) noDesign.skus = noDesign.skus.map(x => decodeEntities(x));
+    return [aliases, noDesign];
+  }
+
   /* ═══ 1 · material: the station's metal key → the sorter's card ═══════ */
   const METAL_TO_CARD = { gold: "gold", silver: "silver", rose: "rose", "10k": "gold10k", "14k": "gold14k" };
   const CARD_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
@@ -22,7 +69,7 @@
      Charm_Option_Map/{listingId or "*"} = { optionName: { value: { field, value } } }. Names and values are matched
      after normalisation (lower-case, trimmed, single spaces). The built-in "*" map below covers the plain literal
      values the shop's listings use; anything else is a "Needs mapping" review item until a person maps it once. */
-  const norm = s => String(s == null ? "" : s).replace(/&quot;/g, "\"").toLowerCase().replace(/\s+/g, " ").trim();
+  const norm = s => decodeEntities(s).toLowerCase().replace(/\s+/g, " ").trim();   // (decoded: an option map saved under "women&#39;s" still meets "women's")
   // Display-only order details. Never alter fulfilment mapping or infer a
   // purchased variant from a design SKU (the same charm can be sold many ways).
   const optionText = value => String(value ?? "").replace(/&(?:quot|amp|apos|lt|gt|#39|#34);/g, entity => ({"&quot;":'"',"&amp;":"&","&apos;":"'","&#39;":"'","&#34;":'"',"&lt;":"<","&gt;":">"}[entity])).trim();
@@ -279,8 +326,8 @@
   /* ═══ 3 · SKUs that are not charms ═════════════════════════════════════ */
   /** noDesign = { patterns: [regex source strings], skus: [strings] } — Charm_Sku_NoDesign flattened. */
   function isNoDesign(sku, noDesign) {
-    const s = String(sku || "").trim().toUpperCase(); if (!s) return false;
-    if ((noDesign && noDesign.skus || []).some(x => String(x).trim().toUpperCase() === s)) return true;
+    const s = upSku(sku); if (!s) return false;
+    if ((noDesign && noDesign.skus || []).some(x => upSku(x) === s)) return true;
     for (const p of (noDesign && noDesign.patterns) || []) { try { if (new RegExp(p, "i").test(s)) return true; } catch (_) { /* a bad pattern never matches */ } }
     return false;
   }
@@ -308,7 +355,7 @@
   const HUGGIE_SET = /\bhuggie\s+charms?\s+set\b/i;
   const huggieSet = line => (line.variations || []).some(v => HUGGIE_SET.test(String(v.value != null ? v.value : v.formatted_value || "")));
   // (a real SKU that ends in "-CO", one the master already loaded holds itself or as a huggie, keeps its "-CO")
-  const huggieSku = (raw, masterEntry) => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
+  const huggieSku = (raw, masterEntry) => { const s = upSku(raw).replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
     const base = variationBase(s), real = !!base && !!masterEntry && !!(masterEntry(s) || masterEntry(s + " (HUGGIE)")); return (base && !real ? base : s) + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
   /* The SKU Etsy keeps for the variation bought comes before anything else (Paul, 9 Oct: a listing whose drop-down options
@@ -321,7 +368,9 @@
        and it outranks a charm a person picked for that option: tied means the inventory never gives that SKU to another
        value of the option (a SKU shared by every sign says nothing about which sign was bought, so the option is still asked);
      · a SKU no master file holds waits for a person, as before, and never becomes a sibling's design. */
-  const upSku = s => String(s == null ? "" : s).trim().toUpperCase();
+  const upSku = s => decodeEntities(s).trim().toUpperCase();   // (decoded before the capitals: "&#x27;" must not become "&#X27;")
+  /** The answer a person saved under a SKU in a map keyed by SKU (aliases bySku, pairBySku): under the SKU itself, else under a key that is the same SKU saved while it still carried an entity. */
+  const bySkuOf = (map, sku) => { if (!map || typeof map !== "object" || !sku) return undefined; if (map[sku] !== undefined) return map[sku]; for (const k of Object.keys(map)) if (k.indexOf("&") >= 0 && upSku(k) === sku) return map[k]; return undefined; };
   /** A SKU without its spacing and punctuation: the key under which two spellings of one SKU meet. */
   const looseKey = s => upSku(s).replace(/[^A-Z0-9]+/g, "");
   /* KNOWN_SKU_TYPOS: the ONE definition of a SKU Etsy carries misspelled that Paul named as an exception to "never a look-alike" (10 Oct 2026:
@@ -605,10 +654,10 @@
     return [...found.values()].sort((a, b) => a.rank - b.rank || (a.rank ? bad(a.sku) - bad(b.sku) : 0) || a.sku.length - b.sku.length || a.sku.localeCompare(b.sku)).slice(0, max).map(x => ({ sku: x.sku, why: x.why }));
   }
   function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
-    const raw = String(line.sku || "").trim().toUpperCase();
+    const raw = upSku(line.sku);
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
     // (the listing's answer is its necklace charm's: never a huggie set's, which has its own for a line with no SKU)
-    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
+    const own = raw && a && a.bySku ? up(bySkuOf(a.bySku, raw)) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
     // a blocked SKU's card offers "Use this charm" too: the answer for that SKU is its design (the blocked entry beat it)
     const held = raw && masterEntry ? masterEntry(raw) : null;
     if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
@@ -743,7 +792,7 @@
    */
   function specialOf(line, opts) {
     line = line || {}; opts = opts || {};
-    const raw = String(line.sku || "").trim().toUpperCase(), sku = String(opts.sku || raw).trim().toUpperCase();
+    const raw = upSku(line.sku), sku = upSku(opts.sku || raw);
     const known = !!(sku && opts.masterEntry && opts.masterEntry(sku));
     const title = String(line.title || ""), lower = title.toLowerCase();
     const vars = (line.variations || []).map(v => ({ name: String(v.name != null ? v.name : v.formatted_name || ""), value: String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim() })).filter(v => v.name && v.value);
@@ -1202,7 +1251,7 @@
 
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
   function pairLinkOf(line, aliases) {
-    const a = aliases && line && aliases[String(line.listingId)], raw = String(line && line.sku || "").trim().toUpperCase(), k = a && a.pairBySku && raw && a.pairBySku[raw];
+    const a = aliases && line && aliases[String(line.listingId)], raw = upSku(line && line.sku), k = a && a.pairBySku && raw && bySkuOf(a.pairBySku, raw);
     return k && typeof k === "object" && k.L && k.R ? { L: upSku(k.L), R: upSku(k.R) } : null;
   }
   /** The two designs of a mismatched pair a line names, when both are in the master: [{ side: "L", sku }, { side: "R", sku }] or null.
@@ -1467,7 +1516,7 @@
       }
     }
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
-    const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : String(line.sku || "").trim().toUpperCase();
+    const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
     if (viaInventory && skuSource !== "alias") skuSource = "inventory";
     // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
@@ -2020,7 +2069,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar,
