@@ -46,7 +46,7 @@ function cause() {
     // what the OLD reading did, reproduced: the same line with the new rule switched off (a SKU that is no numbered family member), and the same ids so inventoryWhy speaks
     const off = JSON.parse(JSON.stringify(l)); off.sku = 'ZODIAC_EARRINGS-LONE'; off.variations = l.variations;
     const sp = read(rid, off, { listingSkus: {} }), q = open(sp)[0];
-    ok(q && /SKU list for listing \d+ is not loaded yet/.test(q.why), rid + ': a SKU nothing says is the option\'s own still asks, with the plain reason: ' + JSON.stringify(sp.problems));
+    ok(q && (/SKU list for listing \d+ is not loaded yet/.test(q.why) || (q.letter && q.why === 'no master design for letter T on this listing')), rid + ': a SKU nothing says is the option\'s own still asks, with the plain reason (a letter option on a design that is no letter\'s says so in KEYLETTER\'s one line): ' + JSON.stringify(sp.problems));
     ok(sp.designSku === 'ZODIAC_EARRINGS-LONE', 'resolveSku already returned the line\'s own SKU');
   }
   step('cause: the transaction SKU was already the line\'s master design; only the option was left "not mapped" (no table to tie it to the option)');
