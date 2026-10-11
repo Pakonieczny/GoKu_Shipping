@@ -31,19 +31,19 @@ const asks = sp => sp.problems.filter(p => p.kind === 'needsMapping');
 const withRule = (v, fn) => { const keep = O.FONT_RULES.unknownHolds; O.FONT_RULES.unknownHolds = v; try { return fn(); } finally { O.FONT_RULES.unknownHolds = keep; } };
 
 // ── 1 · the app's fonts ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-eq(O.ENGRAVING_FONTS.map(f => [f.id, f.name]), [['source-sans-3', 'Source Sans 3'], ['playwrite-us-trad', 'Playwrite US Trad'], ['marck-script', 'Marck Script'], ['mynerve', 'Mynerve'], ['crimson-text', 'Crimson Text'], ['playwrite-us-modern', 'Playwrite US Modern'], ['jost', 'Jost'], ['alegreya-sans', 'Alegreya Sans']], 'the engraving fonts: Source Sans 3 and the seven open-source lookalikes (weight picked by size)');
+eq(O.ENGRAVING_FONTS.map(f => [f.id, f.name]), [['source-sans-3', 'Source Sans 3'], ['playwrite-us-trad', 'Playwrite US Trad'], ['marck-script', 'Marck Script'], ['mynerve', 'Mynerve'], ['crimson-text', 'Crimson Text'], ['playwrite-us-modern', 'Playwrite US Modern'], ['jost', 'Jost'], ['alegreya-sans', 'Alegreya Sans'], ['vibur', 'Vibur'], ['jost-ace', 'Jost Slashed Zero'], ['libre-franklin', 'Libre Franklin']], 'the engraving fonts: Source Sans 3 and ten open-source fonts (weight picked by size); the first Vibur / Ace / Britannic Bold matches stay for saved backs');
 eq(O.FONT_RULES, { unknownHolds: false }, 'the rule: a font the app does not have is carried to the engraving, it does not hold the line');
 { const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
   ok(/font: ?job\.fontName \|\| "Source Sans 3"/.test(bridge), 'every saved back says the name of the font it was engraved in (Source Sans 3 when the job has none)');
   const files = fs.readdirSync(path.join(root, 'vendor/fonts')).filter(f => /\.(otf|ttf)$/i.test(f)).sort();
-  eq(files, ['AlegreyaSans-Bold.ttf', 'AlegreyaSans-ExtraBold.ttf', 'CrimsonText-Regular.ttf', 'CrimsonText-SemiBold.ttf', 'Jost-Regular.ttf', 'Jost-SemiBold.ttf', 'MarckScript-Regular.ttf', 'Mynerve-Regular.ttf', 'NotoEmoji-Regular.ttf', 'PlaywriteUSModern-Regular.ttf', 'PlaywriteUSTrad-Regular.ttf', 'SourceSans3-Regular.otf', 'SourceSans3-Semibold.otf'], 'the shipped font files'); }
+  eq(files, ['AlegreyaSans-Bold.ttf', 'AlegreyaSans-ExtraBold.ttf', 'CrimsonText-Regular.ttf', 'CrimsonText-SemiBold.ttf', 'Jost-Regular.ttf', 'Jost-SemiBold.ttf', 'JostSlashedZero-Regular.ttf', 'JostSlashedZero-SemiBold.ttf', 'LibreFranklin-Bold.ttf', 'LibreFranklin-ExtraBold.ttf', 'MarckScript-Regular.ttf', 'Mynerve-Regular.ttf', 'NotoEmoji-Regular.ttf', 'PlaywriteUSModern-Regular.ttf', 'PlaywriteUSTrad-Regular.ttf', 'SourceSans3-Regular.otf', 'SourceSans3-Semibold.otf', 'Vibur-Regular.ttf'], 'the shipped font files'); }
 
 // ── 2 · reading one option ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 { const R = (name, value) => O.fontRead(name, value), parts = (name, value) => { const r = R(name, value); return r && [r.asked, r.chain, r.align, r.id]; };
   eq(parts('Font', 'Stylish'), ['Stylish', '', '', 'playwrite-us-trad'], 'a plain font word');
   eq(parts('Fonts', '16"/ Typewriter'), ['Typewriter', '16"', '', 'crimson-text'], 'the length is split off: 16" and Typewriter');
-  eq(parts('Font Choice', 'Vibur'), ['Vibur', '', '', 'playwrite-us-modern'], 'Font Choice');
-  eq(parts('Font Choice (see listing photo for choices)', 'Vibur'), ['Vibur', '', '', 'playwrite-us-modern'], 'Font Choice (see listing photo for choices)');
+  eq(parts('Font Choice', 'Vibur'), ['Vibur', '', '', 'vibur'], 'Font Choice');
+  eq(parts('Font Choice (see listing photo for choices)', 'Vibur'), ['Vibur', '', '', 'vibur'], 'Font Choice (see listing photo for choices)');
   eq(parts('Typeface', 'Script'), ['Script', '', '', ''], 'Typeface is a font option');
   eq(parts('Lettering', '18 inch / Comic'), ['Comic', '18 inch', '', 'source-sans-3'], 'Lettering, a length written in words');
   eq(parts('Font', '16"·PRISTINA·Center'), ['PRISTINA', '16"', 'Center', 'marck-script'], 'length, font and alignment');
@@ -75,11 +75,11 @@ eq([fontLines.length, lengthLines.length], [5, 12], '5 lines whose option is nam
 eq(new Set(fontLines.concat(lengthLines).map(l => l.name + ' || ' + l.value)).size, 15, '15 distinct option/value pairs');
 const words = new Map(); for (const l of fontLines.concat(lengthLines)) { const k = l.p.words.join(' / ').toLowerCase(); words.set(k, (words.get(k) || 0) + 1); }
 eq([...words].sort(), [['comic', 1], ['pristina', 3], ['stylish', 4], ['typewrite', 4], ['typewriter', 2], ['vibur', 3]], '6 distinct font words and how many lines each has (case and punctuation folded)');
-eq([...words.keys()].map(w => O.fontRead('Font', w).id).sort(), ['crimson-text', 'crimson-text', 'marck-script', 'playwrite-us-modern', 'playwrite-us-trad', 'source-sans-3'], 'every one of the 6 is an installed font now');
+eq([...words.keys()].map(w => O.fontRead('Font', w).id).sort(), ['crimson-text', 'crimson-text', 'marck-script', 'playwrite-us-trad', 'source-sans-3', 'vibur'], 'every one of the 6 is an installed font now');
 for (const l of fontLines) {
   const sp = read(l.x), o = opt(sp, l.name);
-  const tag = !!O.fontListing(lineOf(l.x), l.x.sku), id = tag ? 'playwrite-us-modern' : O.fontOfPhrase(l.p.words.join(' / '));
-  eq([asks(sp).filter(p => p.optionName === l.name).length, o.mapped.field, o.mapped.value, o.mapped.source, sp.font.asked, sp.font.id], [0, 'font', id, tag ? 'rule:font-listing' : 'rule:font', l.p.words.join(' / '), id], `${l.x.rid} ${l.name}: ${l.value}: read as the font asked for and the installed font it is, nothing held`);
+  const id = O.fontOfPhrase(l.p.words.join(' / '));   // (ENGFONT: the Mini Tag listings' Vibur is read like any other word: the buyer's choice wins)
+  eq([asks(sp).filter(p => p.optionName === l.name).length, o.mapped.field, o.mapped.value, o.mapped.source, sp.font.asked, sp.font.id], [0, 'font', id, 'rule:font', l.p.words.join(' / '), id], `${l.x.rid} ${l.name}: ${l.value}: read as the font asked for and the installed font it is, nothing held`);
   if (!sp.options.some(q => q.name !== l.name && q.mapped && q.mapped.field === 'chain')) eq(sp.chain, l.p.chain || null, `${l.x.rid}: the length it came with is the chain`);   // (a line with a length option of its own keeps that one: the first read)
 }
 for (const l of lengthLines) {
@@ -102,7 +102,7 @@ withRule(true, () => {
     eq(asks(sp).filter(p => !p.font && p.optionName === name).length, 0, 'and no generic "not mapped" for it');
     const p = a[0]; eq([p.optionName, p.optionValue, p.font.asked, p.font.chain, p.font.raw], [name, asked, asked, chain, value], 'it names the font alone, the length is read apart');
     ok(p.font.why.includes('“' + p.font.asked + '”') && p.font.why.includes('Source Sans 3') && p.font.why.includes('Crimson Text') && !/\n/.test(p.font.why), 'ONE plain line naming the font and the installed fonts: ' + p.font.why);
-    eq(p.font.pick.length, 8, 'the installed fonts to pick from');
+    eq(p.font.pick.length, 11, 'the installed fonts to pick from');
     eq(opt(sp, name).mapped, null, 'the option is unmapped');
   }
   // the shop's own words never hold, whatever the switch says (they are installed fonts)
