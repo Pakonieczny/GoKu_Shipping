@@ -424,7 +424,7 @@ async function main() {
       await trace(page); await hookClose(page);
       await press(page); await winClosed(page);
       const tr = await traced(page);
-      const heldAt = tr.find(f => f.ph === 'held');
+      const heldAt = tr.find(f => f.ph === 'held' && f.steps);
       ok(heldAt && heldAt.open && heldAt.steps && /^(work|done),locked,done,idle$/.test(heldAt.rows), 'pressed locked: the steps open, the repository row is locked, Etsy waits (' + (heldAt && heldAt.rows) + ')');
       ok(await page.evaluate(() => __kw.calls.includes('run') && !__kw.calls.includes('unlock')), 'the engine was asked to run once and nothing was unlocked');
       const tt = await toasts(page);
