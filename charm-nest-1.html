@@ -6303,7 +6303,7 @@ function drawRecalled(sh, cv) {
   const ctx = cv.getContext("2d"); ctx.fillStyle = sw < w - 1 || sh2 < h - 1 ? TRAY : "#fff"; ctx.fillRect(0, 0, w, h); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, sw, sh2);
   // turned over: not the saved picture (that is its front) but each charm from behind, with its own words (12b)
   if (faceOf(cv) === "back" && cardBack()) return drawRecalledBack(sh, cv, ctx, w / f.fw, sw, sh2);
-  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); return; }
+  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); recalledFront(sh, ctx, w / f.fw); return; }
   if (!sh._img || sh._imgSource !== r.previewSrc) {
     r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.previewAt || r.createdAt || r.updatedAt || 0) : "");
     const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img; sh._imgSource=r.previewSrc;
@@ -6363,6 +6363,7 @@ function paintPreview(cv, sh, clean, R) {
   // turned over (12b): the sheet mirrored about its own middle, as it lies under the laser — each charm keeps its place on
   // the metal, and is drawn from behind with its own words; never in the files' pictures or Claude's
   const back = !clean && !sh._forClaude && faceOf(cv) === "back" && !!cardBack(), backs = back ? liveBacks(sh) : null;
+  const frontMap = !back && !clean && !sh._forClaude ? frontOf(sh) : null;   // (the FRONT words of a sheet that has a front engraving; null for every other sheet)
   const behind = (c, p, fill) => cardBack().piece(ctx, pieceOf(c, p, sh), backs, k, { dpr: devicePixelRatio, fill });
   if (back) { ctx.translate(W, 0); ctx.scale(-1, 1); }
   // inset guide
@@ -6397,6 +6398,7 @@ function paintPreview(cv, sh, clean, R) {
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
     }
     CharmNestPDF.drawCharm(ctx, c, tx, k);
+    if (frontMap) cardBack().front(ctx, pieceOf(c, p, sh), frontMap, k);
     if (!clean && c.custom) customRing(ctx, c, tx, k);
     if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
@@ -6484,15 +6486,38 @@ function liveBacks(sh) {
     // (the words fade in as they land, once the card has come round on its plain back: Motion.landIn)
     if (jobs.length) { sh._backWait = (sh._backWait || 0) + 1; Promise.all(jobs).then(() => { sh._backWait--; sh._backs = null; if (sh.el) landWords(sh); }); }
   }
-  const b = sh._backs; if (b && now - b.at < 1000 && b.pool === sh.backPool) return b.map;
+  return backsMap(sh);
+}
+/** The backs a page knows (its own, Engrave's, and the saved ones once read), worked out again at most once a second. */
+function backsMap(sh) {
+  const CB = cardBack(), now = Date.now(), b = sh._backs; if (b && now - b.at < 1000 && b.pool === sh.backPool) return b.map;
   sh._backs = { at: now, pool: sh.backPool, map: CB.ofPage(sh, sh._backList) };
   return sh._backs.map;
+}
+/** The words on the FRONT of a card's charms: only for a sheet that has a front engraving (CharmNestEngraveFaces; a saved front record, a decision with a front, or a front job on one of its pieces). Nothing
+    is read for it (the front records are in the page's own backs); the engraving font is asked for once and the card drawn again when it lands. Null for any other sheet: its card is drawn as it always was. */
+function frontOf(sh) {
+  const CB = cardBack(); if (!CB || !CB.front || !CB.hasFront) return null;
+  const now = Date.now(); let h = sh._frontHas; if (!h || now - h.at > 1000) h = sh._frontHas = { at: now, v: !!CB.hasFront(sh) };
+  if (!h.v) return null;
+  if (!sh._frontFont) { sh._frontFont = true; const f = CB.font(); if (f) f.then(() => { sh._backs = null; if (sh.el) drawPreview(sh); }); }
+  return backsMap(sh);
+}
+/** What a recalled card does as its saved sheet (designs, backs, font) fills in: drawn again, and the words land once it is complete. */
+function backStep(sh) { return sh._onBack || (sh._onBack = b => { if (!sh.el) return; if (b && b.done && !b._landed) { b._landed = true; landWords(sh); } else drawPreview(sh); }); }
+/** A recalled sheet's FRONT words over its saved picture: only for a sheet whose record carries a front engraving. Its pieces' designs are read as the Back view reads them (SheetWin.cardBack.sheet, kept) and the
+    words are drawn on each charm as it lies, not turned over. A sheet with no front engraving is drawn as it always was, and nothing is read for it. */
+function recalledFront(sh, ctx, k) {
+  const CB = cardBack(), r = sh.recalled; if (!CB || !CB.front || !CB.hasFront || !r || !CB.hasFront(r)) return;
+  const B = sh._backSheet = CB.sheet(sh.sheetId || r.id, backStep(sh));
+  if (!B.pieces) return;
+  for (const x of B.pieces) { const p = x.p; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); CB.front(ctx, x, B.backs, k); ctx.restore(); }
 }
 /** A recalled sheet turned over: its saved record's pieces (their designs read as the window reads them) and its saved
     backs, at true scale in the card's frame. Until the record is read, the bare sheet; each design is drawn as it comes. */
 function drawRecalledBack(sh, cv, ctx, k, sw, sh2) {
   const CB = cardBack(), id = sh.sheetId || sh.recalled.id;
-  const B = sh._backSheet = CB.sheet(id, sh._onBack || (sh._onBack = b => { if (!sh.el) return; if (b && b.done && !b._landed) { b._landed = true; landWords(sh); } else drawPreview(sh); }));
+  const B = sh._backSheet = CB.sheet(id, backStep(sh));
   sh._backView = { k, sw };
   ctx.save(); ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, sw - 1, sh2 - 1);
   if (B.pieces) {
