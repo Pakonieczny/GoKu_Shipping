@@ -182,6 +182,7 @@
     "_charmNestAuth.js",
     "_charmNestCustomRead.js",
     "_charmNestListingSkus.js",
+    "_charmNestSkuCheck.js",
     "_charmNestMaster.js",
     "_charmNestPdf.js",
     "_charmNestPlacement.js",
