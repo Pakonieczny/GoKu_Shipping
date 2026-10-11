@@ -4608,8 +4608,11 @@ function buildJob(sh) {
     // an order turned away from a sheet with room left lifts the few newest charms near the bottleneck and seats them again beside it ("making room"; Rose Gold never, see the solver's unjam)
     // (a sheet whose attempts found no arrangement tries less each time, and not at all after three)
     unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 15000 } : {}),
-    // Rose Gold, 10K and 14K (the metals with a green line) go on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS)
-    block: careful && (sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
+    // every metal goes on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS): Rose Gold, 10K and 14K
+    // (the metals with a green line) since September, Gold-filled and Sterling Silver since 11 Oct (Paul: "nest the pieces in a somewhat straight
+    // vertical line front exactly like we already do with the RG 14/20 sheet"); a sheet already saved keeps its charms, and its holes are filled first.
+    // Gold and Silver cut nothing, so the block's price for growing the front eases off over the second half of the sheet (blockEase in the solver)
+    block: careful, ...(careful && ["gold", "silver"].includes(sh.metal) ? { blockEase: { from: .45, to: .7, scale: .25 } } : {}),
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     // filling its gaps, a sheet takes any later order that fits, not only the oldest
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin), ...(typeof CharmNestSolver !== "undefined" && CharmNestSolver.pairFields ? CharmNestSolver.pairFields(c) : {}) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin; pairFields: the group, side and "seat near its mate" of a pair's pieces, nothing for any other charm)

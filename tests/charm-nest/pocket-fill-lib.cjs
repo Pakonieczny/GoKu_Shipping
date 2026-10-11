@@ -78,6 +78,8 @@ function pageRules(root, ctl) {
 /* ── one sheet's search, as the page builds the job (buildJob) and finishes it (finishNest) ───────────────────────── */
 const CAREFUL_ANGLES = Array.from({ length: 180 }, (_, i) => i * 2);
 const CUT_METALS = ['rose', 'gold10k', 'gold14k'];
+/** What the page asks of the solver for a Gold-filled or Sterling Silver block (buildJob in charm-nest-1.html: job.blockEase; nest-front.cjs checks they agree). */
+const BLOCK_EASE = { from: .45, to: .7, scale: .25 };
 
 /**
  * A stream of orders onto sheets of one metal, the way the sorter does it: each update brings `batch` orders to the sheet
@@ -89,7 +91,7 @@ async function runStream(opts) {
   const root = opts.root || REPO, S = solverOf(root), metal = opts.metal || 'gold14k', cut = CUT_METALS.includes(metal), fast = ['gold', 'silver'].includes(metal);
   const ctl = { pages: [], work: [], moved: [], overflow: null, ms: 0, searches: [], roomWrong: [] };
   const ctx = pageRules(root, ctl);
-  const stock = opts.sheet, newPage = () => ({ metal, runId: 'run-1', page: ctl.pages.length + 1, charms: [], placements: [], rejects: [], status: 'ready', intakePhase: 'fill', log: [], movedFrom: [], searches: 0, ms: 0 });
+  const stock = opts.sheet, newPage = () => ({ metal, runId: opts.runId === undefined ? 'run-1' : opts.runId, page: ctl.pages.length + 1, charms: [], placements: [], rejects: [], status: 'ready', intakePhase: 'fill', log: [], movedFrom: [], searches: 0, ms: 0 });
   const closed = p => !!p.releaseFull;
   const pageIndex = p => ctl.pages.indexOf(p);
   ctl.overflow = sh => {
@@ -116,7 +118,7 @@ async function runStream(opts) {
     sheet: { wPt: stock.wPt, hPt: stock.hPt, insetPt: 1.5, ...(stock.remnant ? { remnant: stock.remnant } : {}) },
     clearancePt: -.5, angles: CAREFUL_ANGLES, fineRes: 2, coarseRes: .5, timeBudgetMs: 180000, fullBudget: false, stallMs: 60000, maxTrials: 2000, seed: opts.seed || 1,
     lockedPlacements: sh.appendOnly ? sh.nestInitial || sh.placements : sh.nestInitial?.length ? sh.nestInitial : null,
-    careful: true, roomCheck: fast, block: cut, initialLayout: sh.nestInitial || null, maxFill: .8, nearFullContact: !cut,
+    careful: true, roomCheck: fast, block: opts.block !== undefined ? !!opts.block : cut || fast, ...((opts.block !== undefined ? opts.block : fast) && fast ? { blockEase: BLOCK_EASE } : {}), initialLayout: sh.nestInitial || null, maxFill: .8, nearFullContact: !cut,
     ...(opts.unjam !== false && metal !== 'rose' ? { unjam: true, ...(opts.unjamMs ? { unjamMs: opts.unjamMs } : {}) } : {}),   // the page's own job (buildJob); the older solver of a BEFORE run ignores it
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : (+c.orderDate || 0), pinned: c.pinned ? { ...c.pinned } : null })),
     ...(opts.job || {}),
@@ -153,17 +155,22 @@ async function runStream(opts) {
     if (sh.rejects.length && sh.endedBy !== 'stopped') ctl.overflow(sh);
     ctx.feedOn(sh);
   }
-  ctl.pages.push(newPage());
+  // (`start`: a sheet already saved, { charms, placements }: the stream is appended to it, its charms staying where they are)
+  const first = newPage();
+  if (opts.start) { first.charms = opts.start.charms.map(c => ({ ...c, pinned: null })); first.placements = opts.start.placements.map(p => ({ ...p })); first.appendOnly = true; }
+  ctl.pages.push(first);
   const t00 = Date.now();
-  for (let i = 0; i < opts.orders.length; i += opts.batch || 3) {
-    const batch = opts.orders.slice(i, i + (opts.batch || 3));
+  // (`batch` is how many orders come in an update: a number, or a list of numbers taken in turn, e.g. [2, 3, 5, 4] for the trickle of a day)
+  const sizes = Array.isArray(opts.batch) ? opts.batch : [opts.batch || 3];
+  for (let i = 0, k = 0; i < opts.orders.length; k++) {
+    const batch = opts.orders.slice(i, i + sizes[k % sizes.length]); i += batch.length;
     let page = intakePage();
     if (!page) { page = newPage(); ctl.pages.push(page); }
     page.appendOnly = page.placements.length > 0;
     for (const o of batch) for (const c of o.pieces) page.charms.push({ ...c, pinned: null });
     ctl.work.push(page);
     while (ctl.work.length) { const sh = ctl.work.shift(); await nest(sh); }
-    if (opts.progress) opts.progress(i + batch.length, opts.orders.length, ctl);
+    if (opts.progress) opts.progress(i, opts.orders.length, ctl);
   }
   ctl.ms = Date.now() - t00;
   return Object.assign(ctl, { S, ctx, closed });
@@ -245,4 +252,4 @@ function measure(run, stock, opts = {}) {
   return out;
 }
 
-module.exports = { envelopeOf, fitsInside, REPO, MM, PT, rng, solverOf, charm, square, mm2, leftover, SCREENSHOT_STEPS, makeOrders, pageRules, runStream, gridOf, fitsAnywhere, measure, CAREFUL_ANGLES };
+module.exports = { BLOCK_EASE, envelopeOf, fitsInside, REPO, MM, PT, rng, solverOf, charm, square, mm2, leftover, SCREENSHOT_STEPS, makeOrders, pageRules, runStream, gridOf, fitsAnywhere, measure, CAREFUL_ANGLES };

@@ -52,7 +52,14 @@ const CUT = ['rose', 'gold10k', 'gold14k'], PLAIN = ['gold', 'silver'];
       assert.equal(job.careful, true, metal + ': one charm at a time');
       assert.equal(job.angles.length, 180, metal + ': at 2° steps');
     }
-    for (const metal of PLAIN) assert.equal(jc.buildJob({ metal, runId: 'run-1', charms: [{ id: 'a', order: 'o', orderDate: 1 }], placements: [] }).block, false, metal + ' is not a block');
+    // Gold-filled and Sterling Silver are blocks too since 11 Oct (Paul: "nest the pieces in a somewhat straight vertical line front exactly like we
+    // already do with the RG 14/20 sheet", see nest-front.cjs); they still take their orders three at a time, and are still built by the contacts near full
+    for (const metal of PLAIN) {
+      const job = jc.buildJob({ metal, runId: 'run-1', charms: [{ id: 'a', order: 'o', orderDate: 1 }], placements: [] });
+      assert.equal(job.block, true, metal + ': the same block weights as Rose Gold');
+      assert.equal(job.nearFullContact, true, metal + ': near full the contact builds are still used');
+      assert.equal(jc.buildJob({ metal, runId: 'run-1', nestFlow: 'learned', charms: [{ id: 'a', order: 'o', orderDate: 1 }], placements: [] }).block, false, metal + ': the learned flow is not a block');
+    }
   }
 
   /* 3. The solver, one released batch of nine orders (more than the three the old feed took): 10K and 14K come out exactly as
@@ -70,5 +77,5 @@ const CUT = ['rose', 'gold10k', 'gold14k'], PLAIN = ['gold', 'silver'];
     for (const metal of CUT) { assert(runs[metal].pages.every(p => !p.placements.length || p.verification.ok), metal + ': every sheet verified'); assert.equal(runs[metal].pages[0].placements.length, 9, metal + ': the batch is whole on the sheet'); }
   }
 
-  console.log('Gold block alignment OK: feedTurn places a whole batch of 10K or 14K (as Rose Gold) and still feeds Gold and Silver three orders at a time; buildJob marks the three green-line metals as blocks; a released batch lies on 10K and 14K exactly as on Rose Gold');
+  console.log('Gold block alignment OK: feedTurn places a whole batch of 10K or 14K (as Rose Gold) and still feeds Gold and Silver three orders at a time; buildJob marks every careful sheet (the three green-line metals, Gold and Silver) as a block; a released batch lies on 10K and 14K exactly as on Rose Gold');
 })().catch(e => { console.error(e); process.exitCode = 1; });
