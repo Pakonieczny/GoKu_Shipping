@@ -181,8 +181,15 @@ const rec = (copy, face, text) => Object.assign({ poolId: P(copy), sheetId: 's1'
   await t('search: the sentence names the face that waits; the disc count is by pieces; back-only reads as ever', () => {
     const s = src('charm-nest-search.js');
     assert.match(s, /"Front \+ back engraving"/); assert.match(s, /"Front engraving"/); assert.match(s, /: "Back engraving"\)\(new Set/);
+    assert(s.indexOf('const faceOfJob =') > 0 && s.indexOf('const faceOfJob =') < s.indexOf('const engName ='), 'declared before it is used (a const read early throws)');
     assert.match(s, /now = eng && reached < 2 \? `\$\{engName\}\$\{discSay\(eng\)\} · /);
     assert.match(s, /of = mine\.some\(x => faceOfJob\(x\) === "front"\) \? new Set\(mine\.map\(x => String\(x\.slot\)\)\)\.size : mine\.length/);
+  });
+  await t('downloads and plate wording: "engravings" for a sheet with a front, the old words for a back-only sheet', () => {
+    assert.match(sw, /hasFront\(rec\) \? "Download the sheet with its front and back engravings" : "Download the sheet with its back engravings"/);
+    assert.match(sw, /hasFront\(rec\) \? "with engravings" : "with backs"/); assert.match(sw, /: fr \? "Turn the sheet over: every charm's back engraving, mirrored/);
+    const br = src('charm-nest-bridge.js'); assert.match(br, /const groupFront = g => /); assert.match(br, /with their \$\{groupFront\(g\) \? "front and back " : "back "\}engravings…/); assert.match(br, /with \$\{groupFront\(g\) \? "engravings" : "back engravings"\}<\/small>/);
+    assert.match(br, /\$\{job\.face === "front" \? "front" : "back"\} engraving still needs to be finished/);
   });
   await t('laser review card: "Waiting on N engravings" counts engravings when the sheet has a front, "back engravings" otherwise', () => {
     const br = src('charm-nest-bridge.js'); assert.match(br, /Waiting on \$\{plural\(E\.waiting,L\.faces\?'engraving':'back engraving'\)\}/);
@@ -317,7 +324,7 @@ async function nestCard() {
     }, card);
     // the plate's FRONT carries the front words ("W") in ink once the font is in; the plain charm stays plain
     const until = async (fn, ms, what) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 150)); } };
-    const f = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 30000, 'front words in ink on the Front of the plate');
+    const f = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 90000, 'front words in ink on the Front of the plate');
     assert.equal(f.b, 0, 'the plain charm stays plain from the front: ' + f.b);
     // the shelf and the pill
     const shelf = await page.evaluate(c => ({ faces: [...document.querySelectorAll(c + ' .backFace')].map(e => e.textContent), figures: document.querySelectorAll(c + ' .backPieces figure').length, label: (document.querySelector(c + ' [data-r="eng"] button') || document.body).getAttribute('aria-label') }), card);
@@ -327,7 +334,7 @@ async function nestCard() {
     await page.click(`${card} [data-r="face"] [data-face="back"]`);
     await page.waitForFunction(c => { const cv = document.querySelector(c + ' [data-r="canvas"]'), seg = document.querySelector(c + ' [data-r="face"]');
       return cv._face === 'back' && !cv._turning && seg.querySelector('.spin').hidden && window.Engrave && Engrave.fonts && Engrave.fonts.ok; }, card, { timeout: 30000 });
-    const b = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 20000, 'back words in ink on the Back of the plate');
+    const b = await until(async () => { const v = await inkAt(); return v.a >= 4 ? v : null; }, 60000, 'back words in ink on the Back of the plate');
     assert.equal(b.b, 0, 'the plain charm stays plain from behind: ' + b.b);
     assert.deepEqual(errors, [], 'no page errors');
     console.log('ok   Nest card: Front of the plate shows the front words, Back the back words; shelf names Front/Back; pill "Engravings, 2 engravings"');

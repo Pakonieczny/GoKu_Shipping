@@ -214,9 +214,9 @@
           // one piece listed by two saved sheets would be cut twice: the order waits until a person takes it off one of them (the sheets are the ones already read: no read of its own)
           else if(on.length>1)block={key:'doubled',why:`${whoOf(l,pid,'this order')} is listed on both ${on.map(sheetLabel).join(' and ')}, so it would be cut twice`};
           else if(!on.some(s=>+s.laserDoneAt>0 || phys.get(s).ok)){
-            const s=on.find(x=>!phys.get(x).ok) || on[0],stage=phys.get(s).stage;
+            const s=on.find(x=>!phys.get(x).ok) || on[0],stage=phys.get(s).stage,fr=stage==='backs' && !!sheet(s).faces;   // (fr: that sheet's engraving has a front, so its words say "engraving", not "back engraving")
             // (the sets its holders are in: forSheet drops this wait for a sheet of the very same set, where it is the set's wait, not the order's)
-            block={key:'otherSheetNotReady',stage,why:`${s.metalLabel || s.metal || 'Sheet'}: ${STAGE_WORDS[stage] || (stage==='held'?'held back from Laser cutting':stage==='included'?'not in a set yet':'not ready for laser cutting')}`,setId:phys.get(s).set,setLabel:phys.get(s).setLabel,setIds:on.map(x=>phys.get(x).set)};
+            block={key:'otherSheetNotReady',stage,...(fr?{fr:true}:{}),why:`${s.metalLabel || s.metal || 'Sheet'}: ${fr?'engraving files are not saved':STAGE_WORDS[stage] || (stage==='held'?'held back from Laser cutting':stage==='included'?'not in a set yet':'not ready for laser cutting')}`,setId:phys.get(s).set,setLabel:phys.get(s).setLabel,setIds:on.map(x=>phys.get(x).set)};
           }
           const at=on.length?on[0]:null;
           if(block)block.side=sideOfCopy(l,pid);
@@ -509,7 +509,7 @@
       for(const b of blockers)for(const p of b.pieces)if(p.kind==='otherSheetNotReady' && p.sheetId && p.sheetId!==id && !seen.has(p.sheetId)){
         seen.add(p.sheetId);
         const n=blockers.filter(x=>x.pieces.some(y=>y.sheetId===p.sheetId && y.kind==='otherSheetNotReady')).length;
-        items.orders.push({kind:'sheet',id:p.sheetId,label:p.sheetLabel,why:`Holds ${count(n,'order')} of this sheet back: ${p.noSet && p.stage!=='included'?'it is in no set, and ':''}${MISSING[p.stage] || 'it is not ready'}`});
+        items.orders.push({kind:'sheet',id:p.sheetId,label:p.sheetLabel,why:`Holds ${count(n,'order')} of this sheet back: ${p.noSet && p.stage!=='included'?'it is in no set, and ':''}${p.fr?'its engraving files are not saved':MISSING[p.stage] || 'it is not ready'}`});
       }
       if(blockers.length>LISTED)items.orders.push({kind:'sheet',id,label,why:`${count(blockers.length-LISTED,'more order')} also wait for other pieces`});
       if(blockers.length)hard.orders=true;
@@ -553,7 +553,7 @@
   function orderIssue(id,r,ctx,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me)),ns=!sp && bs.find(b=>noSetFrom(b,me));
     return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
+      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
       why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:ns?{noSet:true}:{})};
   }
   // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)

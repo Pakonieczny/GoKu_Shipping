@@ -8119,7 +8119,7 @@ const Sets = window.Sets = (() => {
       if (!labelsReady(sh, set)) throw pendingRelease(`${sh.fileBase}: QR labels are missing or out of date`);
       const placed = new Set(sh.placements.map(p => sh.charms.find(c => c.id === p.id)?.poolId).filter(Boolean));
       for (const job of Engrave.items().values()) {
-        if (job.row?.state !== "gone" && job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: back engraving still needs to be finished`);
+        if (job.row?.state !== "gone" && job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: ${job.face === "front" ? "front" : "back"} engraving still needs to be finished`);
       }
       for (const row of Orders.rows()) {
         if (!row.engrave?.needed || row.state === "gone") continue;
@@ -8127,7 +8127,7 @@ const Sets = window.Sets = (() => {
           const back = (sh.backPool || []).find(b => b.poolId === poolId);
           const eng = row.engrave.pieces && typeof row.engrave.pieces[poolId] === "object" && row.engrave.pieces[poolId] || row.engrave;   // (a line that splits its engraving per ear: this piece's own decision)
           if (eng.needed === false) continue;
-          if (!eng.approved || eng.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: back engraving is not approved and saved`);
+          if (!eng.approved || eng.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: ${eng.faces ? "engraving" : "back engraving"} is not approved and saved`);
         }
       }
     }
@@ -15783,10 +15783,12 @@ const RunHistory = window.RunHistory = (() => {
     note(g, null); H.back = false; close(true);
     RunCtl.resumeRun(g.runId).catch(err => toast(err.message, "bad", 7000));
   }
+  /** Does any sheet of this group carry a FRONT engraving record? Then its downloads say "engravings", not "back engravings" (a back-only group says what it always said). */
+  const groupFront = g => (g.sheets || []).some(s => s && (s.backPool || s.backs || []).some(b => b && b.face === "front" && !b.invalidated));
   async function exportAs(g, format) {
     const ids = [...new Set((g.sheets || []).map(idOf).filter(Boolean))]; if (!ids.length) return;
     if (!window.ProductionExports) { note(g, "The download tools are still loading. Try again in a moment.", "bad"); return; }
-    busy(g, `Preparing ${n(ids.length, "sheet")} as .${format}${ids.length > 1 ? ", in one .zip" : ""}, with their back engravings…`, format);
+    busy(g, `Preparing ${n(ids.length, "sheet")} as .${format}${ids.length > 1 ? ", in one .zip" : ""}, with their ${groupFront(g) ? "front and back " : "back "}engravings…`, format);
     const was = toastsNow();
     try { await ProductionExports.run(ids, format); } finally { busy(g, null); }
     const said = saidSince(was); said.drop();
@@ -15839,7 +15841,7 @@ const RunHistory = window.RunHistory = (() => {
     if (!spec) { m.hidden = true; m.innerHTML = ""; return; }
     const g = groupByKey(spec.key); if (!g) { H.menu = null; m.hidden = true; return; }
     const count = (g.sheets || []).length, isSet = !!(g.setId && !g.draft && !g.standalone), labelled = (g.sheets || []).some(s => s.label && (s.label.files || []).length);
-    m.innerHTML = `<button type="button" role="menuitem" data-m="ai">${ICON.file}<span>Download .ai</span><small>${count > 1 ? `all ${count} sheets in one .zip` : "the sheet"} · with back engravings</small></button>`
+    m.innerHTML = `<button type="button" role="menuitem" data-m="ai">${ICON.file}<span>Download .ai</span><small>${count > 1 ? `all ${count} sheets in one .zip` : "the sheet"} · with ${groupFront(g) ? "engravings" : "back engravings"}</small></button>`
       + `<button type="button" role="menuitem" data-m="dxf">${ICON.file}<span>Download .dxf</span><small>millimetres · original colours and layers</small></button>`
       + (isSet ? `<button type="button" role="menuitem" data-m="qr">${ICON.qr}<span>QR labels PDF</span><small>${labelled ? "one page for each sheet's label" : "made when the set is labelled"}</small></button>` : "")
       + `<div class="sep"></div><button type="button" role="menuitem" data-m="copy">${ICON.copy}<span>Copy order numbers</span><small>${n(ordersCount(g), "order")}, one per line</small></button>`;
