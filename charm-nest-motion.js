@@ -320,7 +320,7 @@
       if (!model.date && +model.at > 0) model.date = dateOf(model.at);
       if (!model.time && +model.at > 0) model.time = timeOf(model.at);
       const f=FAMILY[model.family] || FAMILY.received, ink=opts.ghost?'#92968f':f.ink;
-      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=(['BACK ENGRAVING','ORDER RECEIVED','ORDER COMPLETE'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
+      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=(['BACK ENGRAVING','FRONT ENGRAVING','ORDER RECEIVED','ORDER COMPLETE'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
       const serifFree='system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif';
       const txt=(value,y,size,weight=700,color=ink)=>`<text x="60" y="${y}" text-anchor="middle" fill="${color}" stroke="none" font-family="${serifFree}" font-size="${size}" font-weight="${weight}" letter-spacing="0">${esc(value)}</text>`;
       // Explicit typographic widths keep every glyph inside the actual family silhouette,
@@ -429,7 +429,7 @@
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? 'BACK ENGRAVING' : st.how === 'engravePlain' ? 'CUT PLAIN' : 'QR LABEL PRINTED';
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (st.face === 'front' ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? 'CUT PLAIN' : 'QR LABEL PRINTED';
       const icon = st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       return { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
     }

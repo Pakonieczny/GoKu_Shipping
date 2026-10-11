@@ -1968,7 +1968,8 @@
        angleDeg                                    rotation applied AFTER the mirror, about (cx, cy), CCW y-up
        padPt                                       page margin around the piece (5 mm by default)
        glyphs: [{ cmds:[{type:"M"|"L"|"C"|"Q"|"Z", x, y, x1, y1, x2, y2}] }]   text outlines, back-frame pt, origin at (cx, cy), y-up
-       view: "asSeenFromBack" | "frontCoordinates" title, meta
+       view: "asSeenFromBack" | "frontCoordinates" | "asSeenFromFront" title, meta
+       face: "front"                               the FRONT engraving's file (plans/front-back-1011): the same builder with no mirror, glyphs in the front view's frame; view "asSeenFromFront"
      }
      The CUT OUTLINE (reference) layer carries the ORIGINAL cut bytes under a mirror·rotate·translate matrix whenever
      the cut members are whole top-level segments of the source (nothing redrawn); when a cut line shares a form
@@ -1977,7 +1978,7 @@
   async function buildBackFile(spec) {
     const { PDFDocument, PDFName, PDFString, PDFOperator, PDFOperatorNames, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject, endMarkedContent, moveTo, lineTo, appendBezierCurve, closePath, fill, setFillingRgbColor, setStrokingRgbColor, setLineWidth, stroke } = L();
     const c = spec.charm, parsed = spec.parsed, cut = spec.cutMembers, cx = spec.cx, cy = spec.cy, th = (spec.angleDeg || 0) * Math.PI / 180, pad = spec.padPt == null ? 5 / MMPT : spec.padPt;
-    const M = [-1, 0, 0, 1, 2 * cx, 0];
+    const M = spec.face === "front" ? [1, 0, 0, 1, 0, 0] : [-1, 0, 0, 1, 2 * cx, 0];   // (spec.face "front": the FRONT file, the charm as it is, nothing turned over)
     const R = [Math.cos(th), Math.sin(th), -Math.sin(th), Math.cos(th), cx - cx * Math.cos(th) + cy * Math.sin(th), cy - cx * Math.sin(th) - cy * Math.cos(th)];
     const MR = mul(M, R);                                          // mirror first, then rotate
     const back = cut.map(m => transformSegment(m, MR));
