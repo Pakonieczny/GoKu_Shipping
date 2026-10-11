@@ -1392,6 +1392,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       guessed from the ear (a sheet cut before this was never mirrored). null when its own body cannot be made: the piece then shows as an outline, never from the wrong body or the wrong way. */
   async function pieceBase(g, x) {
     const base = g && g.base;
+    // (a piece with no ear whose record's charm hash is ONE body's, not the design's whole charm's: a line that made one charm of a design drawn twice, Paul 11 Oct 2026; an old record holds the whole charm's hash and is drawn whole)
+    if (base && g.src && x.hash && !(x.side === "L" || x.side === "R") && window.Pool && typeof Pool.soloBase === "function") {
+      try { return (await Pool.soloBase(g.src, { hash: x.hash })) || base; } catch (e) { console.warn("sheet window: piece geometry", x.poolId, e); return base; }
+    }
     if (!base || !g.src || !(x.side === "L" || x.side === "R") || x.bodyIndex == null || !Number.isInteger(+x.bodyIndex) || !window.Pool || typeof Pool.ensureBase !== "function") return base;
     try { return (await Pool.ensureBase(g.src, { side: x.side, bodyIndex: +x.bodyIndex, mirror: x.mirror === true })) || null; }
     catch (e) { console.warn("sheet window: piece geometry", x.poolId, e); return null; }
@@ -4505,7 +4509,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return piecesOf(rec).filter(x => x.rid === String(rid)).map(x => x.poolId || x.id).sort().join(",");
   }
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, ...(pg.page ? { page: pg.page } : {}), ...(pg.draft !== undefined ? { draft: !!pg.draft } : {}), ...(pg.setId !== undefined ? { setId: pg.setId || null } : {}), placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
-    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "",
+    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "", ...(c.oneBody != null && c.hash ? { hash: c.hash } : {}),
       // (an earring pair's piece keeps its ear on the record this page makes of its own sheet, as the saved descriptor does)
       ...(c.side === "L" || c.side === "R" ? { side: c.side, mirror: c.mirror === true, ...(c.bodyIndex != null ? { bodyIndex: c.bodyIndex } : {}), ...(c.groupKey ? { groupKey: c.groupKey } : {}), ...(c.groupSize ? { groupSize: c.groupSize } : {}) } : {}) })) });
   async function attachGeom(x, g, rec) {

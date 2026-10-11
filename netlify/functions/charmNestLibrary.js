@@ -3974,8 +3974,13 @@ exports.handler = async (event) => {
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   DONE_TOUCH = false;
+  // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
+  // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
+  const RepoAuth = require("./_charmNestRepoAuth");
+  if (RepoAuth.owns(body.op)) return RepoAuth.handle(db, event, body);
   const fn = OPS[body.op];
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
+  { const need = RepoAuth.requirement("charmNestLibrary", body.op, body); if (need) { const no = await RepoAuth.authorize(db, need, body, event); if (no) return json(no.status, no.body); } }
   try {
     const out = await fn(body);
     await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)

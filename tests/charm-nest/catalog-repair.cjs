@@ -11,7 +11,7 @@
 //   7. restore puts the backed-up files and records back.
 //   node tests/charm-nest/catalog-repair.cjs
 const fs = require('fs'), path = require('path'), assert = require('assert'), os = require('os'), crypto = require('crypto');
-const { start } = require('./bridge-server.cjs');
+const { start, REPO_TEST } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 const IM = require('../../scripts/index-master.cjs');
 const CR = require('../../scripts/catalog-repair.cjs');
@@ -25,6 +25,8 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   await buildMaster(file, { count: 8, edge: true });
   const srv = await start({ receipts: [] });
   const { st, sorterOrigin } = srv;
+  // the Charm Repo's password door is REAL here: the scripts unlock with Paul's (throwaway) password from the environment; the unlock itself is not one of the repair's calls
+  st.repoStrict = true; process.env.CHARM_REPO_PASSWORD = REPO_TEST.password;
   const lines = []; const log = l => { lines.push(String(l)); if (process.env.CN_VERBOSE) console.log(l); };
   // a stored link points at Google's host: answer it from the in-memory bucket, and count it (a Storage GET, not a Netlify call)
   let storageGets = 0; const realFetch = global.fetch;
@@ -37,7 +39,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   const calls = (from, name, op) => st.calls.slice(from).filter(c => (!name || c.name === name) && (!op || c.op === op)).length;
   const idx = sku => st.docs.get('Charm_Master_Index/' + sku);
   const urlOf = p => `https://firebasestorage.googleapis.com/v0/b/test-bucket/o/${encodeURIComponent(p)}?alt=media&token=t`;
-  const by2 = from => { const o = {}; for (const c of st.calls.slice(from)) { const k = c.name + ':' + c.op; o[k] = (o[k] || 0) + 1; } return o; };
+  const by2 = from => { const o = {}; for (const c of st.calls.slice(from)) { if (c.op === 'repoUnlock') continue; const k = c.name + ':' + c.op; o[k] = (o[k] || 0) + 1; } return o; };
   const run = (mod, args) => mod.main(['node', 'x', ...args], log);
 
   // ── the library as it stands: the whole fixture indexed, then one design made stale ──
@@ -98,7 +100,8 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
   c0 = st.calls.length; const reads0 = st.reads || 0; const touched = []; st.tick = async what => { touched.push(what); };   // (what each Firestore read and commit touched)
   const rep = await run(IM, [file, '--only', path.join(stage, 'changed-skus.json'), '--origin', sorterOrigin]); st.tick = null;
   assert.strictEqual(rep.written, 1, 'one SKU written: ' + rep.written);
-  const by = {}; for (const c of st.calls.slice(c0)) { const k = c.name + ':' + c.op; by[k] = (by[k] || 0) + 1; }
+  const by = {}; for (const c of st.calls.slice(c0)) { if (c.op === 'repoUnlock') continue; const k = c.name + ':' + c.op; by[k] = (by[k] || 0) + 1; }
+  assert(calls(c0, 'charmNestLibrary', 'repoUnlock') <= 1, 'at most one unlock for the whole repair (an upload token covers the file put and the index write)');
   assert.deepStrictEqual(by, { 'charmNestLibrary:masterGetMany': 2, 'charmNestLibrary:masterListFiles': 1, 'charmNestOutput:put': 1, 'charmNestLibrary:masterPutIndex': 1 },
     'the calls of a one-SKU repair: ' + JSON.stringify(by));   // (masterGetMany: the pre-read and the read-back)
   assert(!by['charmNestLibrary:masterList'] && !by['charmNestLibrary:masterPutFile'], 'no full index read, no file-record write');
