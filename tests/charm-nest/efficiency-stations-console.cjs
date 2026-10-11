@@ -26,6 +26,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       if (u.pathname.endsWith('/employeeEfficiency')) { let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {} const r = fx.answer(b, route.request().headers()); if (fx.delay) await sleep(fx.delay); try { return await route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(r.json) }); } catch (_) { return; } }
       return route.continue();
     });
+    await require('./master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.prompt = () => null; });
     const page = await ctx.newPage(), errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push('console: ' + m.text()); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
