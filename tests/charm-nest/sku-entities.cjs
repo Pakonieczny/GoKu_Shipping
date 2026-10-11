@@ -134,4 +134,30 @@ step('an option value Etsy escaped ("Necklace &amp; Charm") reads as the form it
   ok(/O\.bySkuOf\(a\.pairBySku,/.test(src), "the re-read signature reads a pair link by the same keys"); }
 step('charm-nest-bridge.js: DesignLink, rowFromRecord and loadMaps call the decoder');
 
-console.log(`sku-entities: all passed (${n} checks)`);
+// ── 8 · the master write: the app's own masterPutIndex puts ACORN'S LEAF under LEAF_1972 (offline, a fake index; nothing live) ─────────────────────────
+// How a SKU sits under a charm: Charm_Master_Index holds one document per SKU, keyed by the SKU; the SKUs of one design carry the very same aiPath / thumbPath / charmHash /
+// masterHash / geometry (ACORN_3012, ACORN_5207 and ACORN_7971 are three under one charm; the Library draws one tile per aiPath and lists them all). The indexer writes each
+// further line under a charm as a copy of the charm's entry with only the sku changed (charm-nest-bridge.js writeIndex), one masterPutIndex. Nothing else adds one.
+(async () => {
+  const Master = require(path.join(root, 'netlify/functions/_charmNestMaster.js'));
+  const FV = { serverTimestamp: () => 'TS', delete: () => 'DEL' };
+  const stored = new Map([['LEAF_1972', Object.assign({}, LEAF, { masterPath: '', indexedAt: 1791425701542, engravableBy: 'index', hashSource: 'browser' })]]), writes = [];
+  const db = { collection: name => ({ doc: id => ({ id, path: name + '/' + id }) }),
+    getAll: async (...refs) => refs.filter(r => r && r.path).map(r => ({ exists: stored.has(r.id), data: () => stored.get(r.id) })),
+    batch: () => ({ set: (ref, doc, o) => writes.push({ id: ref.id, path: ref.path, doc, o }), commit: async () => {} }) };
+  const entry = { sku: "ACORN'S LEAF", charmHash: LEAF.charmHash, widthPt: LEAF.widthPt, heightPt: LEAF.heightPt, areaPt2: LEAF.areaPt2, members: LEAF.members, holes: LEAF.holes, engravable: true, upAngle: LEAF.upAngle, upSource: LEAF.upSource,
+    aiPath: LEAF.aiPath, thumbPath: LEAF.thumbPath, aiUrl: 'https://example.invalid/leaf.ai', thumbUrl: 'https://example.invalid/leaf.png', open: false, labelSource: 'text', backKeepOut: [] };
+  const r = await Master.putIndex(db, FV, { entries: [entry], masterHash: LEAF.masterHash, masterPath: null, masterName: LEAF.masterName, hashSource: 'browser', replaces: [] });
+  eq([r.written, r.blocked, r.sizeMoved, r.pairKept], [1, [], [], []], 'masterPutIndex of the one entry: one written; no duplicate across master files, no size move, no pair held');
+  eq(writes.map(w => w.path), ["Charm_Master_Index/ACORN'S LEAF"], 'one document, keyed by the SKU, written; LEAF_1972 is not written');
+  const d = writes[0].doc, l = stored.get('LEAF_1972');
+  for (const k of ['masterHash', 'masterName', 'charmHash', 'widthPt', 'heightPt', 'areaPt2', 'members', 'holes', 'aiPath', 'thumbPath', 'upAngle', 'upSource', 'engravable', 'labelSource', 'open']) eq(d[k], l[k], `the new document's ${k} is LEAF_1972's`);
+  eq([d.sku, d.masterPath, d.conflict, d.blocked, d.sizeMoved], ["ACORN'S LEAF", '', 'DEL', 'DEL', 'DEL'], 'its own SKU; no conflict, not blocked, no size move');
+  ok(!('sizes' in d) && !('pair' in d), 'a plain one-body design like LEAF_1972: no sizes, no pair');
+  // the page then reads it as a second SKU of the same charm (the Library groups by aiPath)
+  const slim = Master.slimEntry(Object.assign({}, d, { indexedAt: { toMillis: () => 1 } })), slimLeaf = Master.slimEntry(l);
+  ok(slim.aiPath === slimLeaf.aiPath && slim.thumbPath === slimLeaf.thumbPath && slim.masterHash === slimLeaf.masterHash, "slimEntry: the same file and picture as LEAF_1972's (one tile, two SKUs)");
+  ok(Master.isSku("ACORN'S LEAF") && Master.isSku("ACORN'S LEAF".toUpperCase()), "ACORN'S LEAF is an index SKU (the apostrophe is allowed)");
+  step("masterPutIndex of one entry under LEAF_1972's file: one new document, nothing else written, nothing duplicated or blocked");
+  console.log(`sku-entities: all passed (${n} checks)`);
+})().catch(e => { console.error(e); process.exit(1); });
