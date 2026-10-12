@@ -943,57 +943,65 @@
       if (e.type === "scan" ? SCAN_STEP[e.station] === s.k : quiet.includes(e.type) && STOP_OF[e.type] == null)
         facts.push(`${titleOf(e, 70)}${e.type === "scan" ? " · " + whoOf(e) : ""} · ${shortWhen(e.at)}`);
     }
-    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6), fenced, was: wasNote });
+    /* The rows of a card: only what holds THIS ORDER back, said about its own pieces (Paul, 12 Oct 2026: "the order doesn't care about what is happening with the sheet. The only thing that
+       should be shown ... is the information about any issues or missing requirements that are holding back that particular order from moving forward"). A piece held, with no charm or
+       design, too big, not on a sheet yet (and why it waits), an engraving of its own still to approve, the order's own QR label, the order cancelled: those. Nothing about a sheet's own work
+       (its layout, its files, its QR labels, the engravings of the other orders on it, its Cut Sheet, its set): the context's `sheets` are not read here at all. A piece completed by hand, a
+       piece no longer open, and every piece of a cancelled order owe nothing. Rows come out in the order a person needs them: a person first, then waits, then stops, then the label. */
+    const ROW_RANK = { person: 0, wait: 1, was: 1, stop: 2, label: 3 };
+    const ranked = () => need.map((n, j) => [n, j]).sort((a, b) => (own(ROW_RANK, a[0].kind) ? ROW_RANK[a[0].kind] : 4) - (own(ROW_RANK, b[0].kind) ? ROW_RANK[b[0].kind] : 4) || a[1] - b[1]).map(x => x[0]);
+    const live = D.cancelled ? [] : lines.filter(l => l && !l.hand && l.state !== "gone");
+    // (a card says "No issues or missing requirements" for the step it is at, but only once the order's own pieces are known: no claim about pieces nobody has looked for)
+    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need: ranked(), facts: facts.slice(-6), fenced, was: wasNote, clear: state === "now" && !need.length && live.length > 0 });
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
     // completed by hand (Complete Order): nothing is owed, and who completed it and when is said
     if (state === "skipped") { done.push({ t: "Not needed: the order was completed by hand", sub: [shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand)] : []).join(" · "), key: D.hand.key }); return out(); }
-    const noLabel = () => { if (s.k === "sorted" && !labels.length) add("label", "Label not printed yet"); };
+    // (the order's own QR label, printed at Sorting: it is the order's, not a sheet's. It is missing once Sorted is reached or being worked on, never before)
+    const noLabel = () => { if (s.k === "sorted" && !labels.length && !D.cancelled && state !== "later") add("label", "Label not printed yet"); };
     const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
+    // (a hold: the pieces of the order named when only some are held; the order's own words when all of them are, or when the page does not know the pieces)
+    const held = live.filter(l => l.hold), allHeld = held.length > 0 && held.length === live.length;
+    const holdRows = named => {
+      if (held.length && (named || !allHeld)) { for (const l of held) add("person", `${name(l)} is held${l.reason ? ": " + l.reason : ""}. Release it in Review`); return; }
+      if (allHeld || D.hold) { const r = (D.hold && (reasonOf(D.hold) || D.hold.text)) || (held[0] && held[0].reason) || ""; add("person", `On hold${r ? ": " + String(r).slice(0, 120) : ""}. Release it in Review`); }
+    };
     // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
     // under Nested even once another piece of the order is nested
     const loose = () => {
-      for (const l of lines) {
-        if (l.onSheet || l.hand || l.state === "gone") continue;   // (hand: completed by hand, a piece that needs no sheet)
-        if (l.hold) add("person", `${name(l)} is held${l.reason ? ": " + l.reason : ""}. Release it in Review`);
-        else if (l.state === "unmatched") add("person", `${name(l)} has no charm${l.reason ? " (" + l.reason + ")" : ""}; pick it in Review`);
+      for (const l of live) {
+        if (l.onSheet || l.hold) continue;   // (a held piece is said by holdRows; hand and gone are not in `live`)
+        if (l.state === "unmatched") add("person", `${name(l)} has no charm${l.reason ? " (" + l.reason + ")" : ""}; pick it in Review`);
         else if (l.problem) add("person", `${name(l)}: ${l.problem}; decide it in Review`);
         else if (l.state === "noDesign") add("person", `${name(l)} has no design${l.special ? " (" + l.special + ")" : ""}; finish it under Custom Orders`);
         else if (l.state === "oversize") add("person", `${name(l)} is too big for the plate; resize it in Review`);
         else if (l.wait && l.wait.kind === "slow") add("wait", `${metalWord(l.wait.material)} goes to the laser ${dayWord(l.wait.until)}; slow metals go every few days`);
         else if (l.wait) add("wait", `the ${metalWord(l.wait.material)} pieces waiting fill ${Math.round(+l.wait.pct || 0)}% of a sheet; a sheet is made when it is full, or sooner for a piece due to ship within 2 days`);
         else if (l.reason) add("wait", `${name(l)}: ${l.reason}`);
+        else if (l.onSheet === false && !need.some(n => n.t === "Not on a sheet now")) add("wait", `${name(l)} is not on a sheet yet`);   // (the order says "Not on a sheet now" once when no piece of it is on one)
       }
     };
-    if (state === "done") { if (s.k === "sheet") loose(); noLabel(); return out(); }
-    if (fenced && s.k === "sheet") { add(D.hold ? "person" : "wait", "Not on a sheet now"); if (wasNote) add("was", wasNote); }
-    if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
+    // the order's own engravings still to approve, each named with its own words and the face (or faces) still to approve: "the front engraving", "the front and back engraving";
+    // a back-only line says "the back engraving", as it always did. A sheet's other orders have nothing to do with it.
+    const engRows = () => {
+      for (const l of live) if (l.engrave && l.engrave.needed && !l.engrave.approved) {
+        const fs = facesOf(l), todo = fs ? fs.filter(f => !(l.engraveDone && l.engraveDone[f])) : null;
+        add("person", `Approve the ${todo && todo.length ? todo.join(" and ") : "back"} engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
+      }
+    };
+    if (state === "done") { if (D.cancelled) return out(); if (s.k === "sheet") { if (held.length) holdRows(true); loose(); } noLabel(); return out(); }
+    if (fenced && s.k === "sheet" && !live.some(l => l.onSheet)) { add(D.hold ? "person" : "wait", "Not on a sheet now"); if (wasNote) add("was", wasNote); }   // (some piece on a sheet: the ones that are not are named below)
+    holdRows();
     if (state === "now" && s.k !== "sheet") loose();
     if (s.k === "arrived") add("wait", HOW.arrived);
     else if (s.k === "sheet") loose();
     else if (s.k === "engraved") {
       const eng = lines.filter(l => l.engrave && l.engrave.needed);
       if (lines.length && !eng.length && lines.every(l => l.engrave || l.engraveCandidate === false)) facts.push("Nothing to engrave on this order");
-      // (a line engraved on the front too names the face still to approve: "the front engraving", "the front and back engraving"; a back-only line says "the back engraving", as it always did)
-      for (const l of eng) if (!l.engrave.approved) {
-        const fs = facesOf(l), todo = fs ? fs.filter(f => !(l.engraveDone && l.engraveDone[f])) : null;
-        add("person", `Approve the ${todo && todo.length ? todo.join(" and ") : "back"} engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
-      }
-      for (const x of sheets) if (x.required > 0 && x.saved < x.required) add("wait", `${x.name} has ${x.saved} of ${x.required} back files saved`);
+      engRows();
     } else if (s.k === "laser" || s.k === "approved") {
-      for (const x of sheets) {
-        if (x.cut) continue;
-        const g = x.stages || {};
-        if (x.placed != null) facts.push(`${x.name} holds ${x.placed} piece${x.placed === 1 ? "" : "s"}${x.pct ? ` · ${Math.round(x.pct)}% full` : ""}`);
-        // (a Rose Gold sheet's newest charms wait for its Cut Sheet press: said by name, with what to press)
-        if (x.uncut > 0) add("person", `${x.name} has ${x.uncut} charm${x.uncut === 1 ? "" : "s"} not cut yet: press Cut Sheet`);
-        else if (g.layout === false) add("wait", `${x.name}'s layout is checked and saved`);
-        if (g.front === false) add("wait", `${x.name}'s front cut file is saved`);
-        if (g.approval === false) add("person", `${x.name}: ${x.waiting || "some"} engraving${x.waiting === 1 ? "" : "s"} still to approve in Review`);
-        if (g.backs === false && g.approval !== false) add("wait", `${x.name} has ${x.saved || 0} of ${x.required || 0} back files saved`);
-        if (g.qr === false) add("person", `Print the QR labels for ${x.name}`);
-      }
+      if (state === "now") engRows();   // (only at the step itself: an engraving still to approve is the Engraved step's row until then)
     }
     noLabel();
     return out();
@@ -1014,7 +1022,9 @@
     const need = q.need.slice(0, 4).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span>${REQ_WORD[n.kind] ? `<em>${esc(REQ_WORD[n.kind])}</em>` : ""}${esc(cap1(n.t))}</span></li>`);
     const more = q.need.length > 4 ? `<li class="rq more"><span>${q.need.length - 4} more</span></li>` : "";
     if (q.state === "none") return `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(q.facts[0] || "Not needed")}</span></li></ul>`;
-    return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>`;
+    // (the step the order is at, with nothing of its own holding it: said once, quietly, so an empty card is never a doubt)
+    const calm = q.clear ? `<li class="rq clear"><span>No issues or missing requirements</span></li>` : "";
+    return `<ul class="tlReq">${done.join("")}${need.join("")}${more}${calm}</ul>`;
   }
   /** The small card under a hovered step: its name, a word only when the step is done, stopped, skipped or not needed (never "Next" or "To come"), and its lines.
    *  Nothing about where the step sits ("Step 3 of 6") nor what a press does: the rail says the first, the dot (a button with its own label) the second. */
@@ -1243,6 +1253,7 @@
 .tlReq .rq.ok>i{border:0;background:var(--sage,#6f8d6a);color:#fff}.tlReq .rq.ok>i svg{width:9px;height:9px}
 .tlReq .rq.person>i{border-color:#c79a3a}.tlReq .rq.stop>i{border-color:var(--clay,#b0563f)}
 .tlReq .rq.was>i{border-style:dotted}.tlReq .rq.was span{color:var(--ink45)}
+.tlReq .rq.clear{grid-template-columns:minmax(0,1fr)}.tlReq .rq.clear span{color:var(--ink45)}
 .tlReq .rq span{min-width:0;overflow-wrap:anywhere}
 .tlReq .rq.ok span{color:var(--ink)}
 .tlReq .rq small{display:block;font:10px var(--mono,monospace);color:var(--ink45);margin-top:1px}
