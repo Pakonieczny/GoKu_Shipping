@@ -2153,13 +2153,14 @@
   const E_ENG = "(?:engrav\\w*|engr\\b|etch\\w*|inscri\\w*|writing|handwrit\\w*|personali[sz]\\w*|monogram\\w*)";
   const E_SIDE = "(?:[\\s-]*side)?", E_JOIN = "(?:\\+|&|\\/|,|\\band\\b|\\bplus\\b)";
   const E_RX = s => new RegExp(s, "i");
-  const FB_BOTH = [E_RX(`\\bfront${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?back\\b`), E_RX(`\\bback${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?front\\b`), /\bboth[\s-]*(?:sides?|faces?)\b/i, /\b(?:two|2|double|dual|dbl|dble)[\s-]*(?:sided|sides|faces?)\b/i];
+  const FB_SIDES_2 = /\b(?:two|2|double|dual|dbl|dble)(?:\s*x)?[\s-]*(?:sided|sides?|faces?)\b|\bboth[\s-]*(?:sides?|faces?)\b/i, FB_SIDES_1 = /\b(?:one|1|single|sgl)(?:\s*x)?[\s-]*(?:sided|sides?|faces?)\b|\b(?:flower|bloom|design|art|artwork|picture|image|symbol|motif)s?[\s-]*only\b/i;   // (the number of engraved sides a value names: "Gold - 16\" - 2 sides", "single sided", "2x sided", "1side", "one side only", "flower only")
+  const FB_BOTH = [E_RX(`\\bfront${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?back\\b`), E_RX(`\\bback${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?front\\b`), /\bboth[\s-]*(?:sides?|faces?)\b/i, /\b(?:two|2|double|dual|dbl|dble)(?:\s*x)?[\s-]*(?:sided|sides?|faces?)\b/i];
   const FB_BOTH_ENG = [E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+)?both\\b`)];
   const FB_FRONT = [E_RX(`\\bfront${E_SIDE}\\s*[-–:()]*\\s*(?:only\\b|${E_ENG})`), E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+|to\\s+|for\\s+|in\\s+)?(?:the\\s+)?front\\b`)];
   const FB_BACK = [E_RX(`\\bback${E_SIDE}\\s*[-–:()]*\\s*(?:only\\b|${E_ENG})`), E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+|to\\s+|for\\s+|in\\s+)?(?:the\\s+)?back\\b`)];
   const FB_NONE = /\bno[\s-]*engrav\w*|\bwithout\s+(?:any\s+)?engrav\w*|\bengrav\w*\s*[:\-]?\s*(?:none|no)\b|\bnot\s+engraved\b|\bno\s+personali[sz]ation\b/i;
   const FB_NEAR = new RegExp(E_ENG, "i");
-  const FB_QUICK = /front|back|both|sided|faces?\b|\bsides?\b|blank/i;
+  const FB_QUICK = /front|back|both|sided|faces?\b|sides?\b|only\b|blank/i;
   const FB_BLANK = /(?:^|[\s·|\-–+\/,])blank(?:$|[\s·|\-–+\/,])/i;   // a bar's "GOLD · Blank" / "Blank- SILVER": the buyer chose no engraving
   const FB_VALUE = /^\s*(?:the\s+)?(front|back|both)(?:[\s-]*sides?)?(?:\s+only)?\s*$/i, FB_NAME = /engrav|side|face|where|position|placement|location|inscri|writing|monogram|etch|personali[sz]/i;
   const FB_YES = /^\s*(?:yes|y|true|included?|add(?:ed)?|\+|1)\s*$/i, FB_NO = /^\s*(?:no|none|n\/a|false|0|-)\s*$/i;
@@ -2179,6 +2180,38 @@
     if (!m && FB_NAME.test(n)) for (const seg of v.split(/\s*[·|]\s*/)) { const f = FB_VALUE.exec(seg); if (f) { m = f[1].toLowerCase(); break; } }   // ("GOLD·Front" under "Metal/Both Sides Engraved? (Front/Back)")
     if (!m && FB_YES.test(v)) m = engravingModeIn(n, false);
     return m;
+  }
+  /** SIDES (BFSIDES, Paul 12 Oct 2026, order 4200828980: Birth Flower necklace "Gold - 16\" - 2 sides"): the number of engraved sides an option VALUE names, 2 / 1 / 0 (none named). Any option, any case, with
+   *  metal and length words around it ("Silver- 16\"- 2 sides", "GOLD·DOUBLE SIDED", "one-sided", "single side", "both sides"). A value that also names a face ("Tag1 (front+back) 2 sided") says its faces itself, so it is no side count. */
+  function sidesOfValue(value) {
+    const v = decodeEntities(value == null ? "" : value).replace(/&nbsp;|\u00a0/gi, " ").trim(); if (!v) return 0;
+    const two = FB_SIDES_2.test(v), one = FB_SIDES_1.test(v);
+    if (two === one) return 0;   // (none, or both at once ("1 side / 2 sides"): the value does not say, nothing is guessed)
+    const rest = v.replace(new RegExp(FB_SIDES_2.source, "ig"), " ").replace(new RegExp(FB_SIDES_1.source, "ig"), " ");
+    return engravingModeIn(rest, false, true) || FB_NONE.test(rest) ? 0 : two ? 2 : 1;
+  }
+  /** THE POLICY for the two readings a person might want the other way round (BFSIDES, 12 Oct 2026; each is read when a line is read, so one line here flips it for every order, nothing else changes):
+   *    oneSideWithWords  "skip" (default): "1 side" on a design with its own front art engraves nothing of the buyer's even when words were written: ONE calm line "Buyer chose 1 side; words not engraved: ...", the order is never held.
+   *                      "ask": the same, and a person is asked (reviewKind "conflict"). "back": the words are engraved on the back anyway, as for 2 sides.
+   *    twoSidesUnlabelled "back" (default): 2 sides on such a design puts the buyer's unlabelled words on the BACK, no question. "ask": the words are suggested for the back and a person confirms.
+   *  Labelled words ("back: ...") are the back's in both; words the buyer labelled "front:" / "back:" against the side count are always a question for a person. */
+  const SIDES_POLICY = { oneSideWithWords: "skip", twoSidesUnlabelled: "back" };
+  /** A listing whose pictures or handwriting come from the buyer (a photo, a drawing, a signature): its design is only a blank carrier and its sides are the buyer's, whatever the master draws. */
+  const SIDES_PICT_TITLE = /\b(?:hand[\s-]?writ\w*|photos?|photographs?|pictures?|drawings?|sketch\w*|logos?|fingerprints?)\b/i;
+  /** Does a master design carry its own engraved front art (a flower, a sign, a picture) that the buyer's words only sit beside? { front: true | false | null, art, long, how }.
+   *  An entry counts its members: the outline, the hanging holes (entry.holes), the BACK KEEP-OUT layers (entry.backKeepOut), and what is left is the design's artwork. A LONG design (a bar, a plate, a tag:
+   *  its long side is LONG_ASPECT = 1.4 times its short side, as charm-nest-geom lies it flat) is a carrier of words whatever drawing it holds, so it never counts as art-first. (BFSIDES checked it on the 1,907 designs of the library
+   *  index of 9 Oct 2026 against their real drawings: with the long-design guard it says "has art" wrongly for 6, and misses 27 that have some; a miss only leaves the line read as before.) An explicit entry.frontArt (a person's patch,
+   *  a later index) wins over the count. null = the entry is not known or counts nothing: the line is read as before. */
+  function frontArtOf(entry, title) {
+    if (!entry || typeof entry !== "object") return { front: null, art: 0, long: false, how: "" };
+    const w = +entry.widthPt, h = +entry.heightPt, long = w > 0 && h > 0 && Math.max(w, h) / Math.min(w, h) >= 1.4;
+    if (typeof entry.frontArt === "boolean") return { front: entry.frontArt, art: entry.frontArt ? 1 : 0, long, how: "flag" };
+    if (title && SIDES_PICT_TITLE.test(decodeEntities(String(title)))) return { front: false, art: 0, long, how: "kind" };   // (a handwriting / photo / drawing listing: the buyer's picture is the art, read as before)
+    const m = Math.floor(+entry.members), n = Math.floor(+entry.holes);
+    if (!(m >= 1) || !(n >= 0)) return { front: null, art: 0, long, how: "" };
+    const art = m - 1 - n - (Array.isArray(entry.backKeepOut) ? entry.backKeepOut.length : 0);
+    return { front: art > 0 && !long, art: Math.max(0, art), long, how: "index" };
   }
 
   /* ── the words of each face ─────────────────────────────────────────────────────────────────────────────────────────── */
@@ -2327,8 +2360,8 @@
   /** What the buyer chose and wrote about the faces of ONE line (the CONTRACT's spec.engraving, plans/front-back-1011/CONTRACT.md section 2). line: the Etsy line (variations, title,
    *  personalization); spec: its reading (personalization, buyerMessage, staffNote, messages, font, pair, pieceCount). null when the line has no face word anywhere: such a line has no
    *  `spec.engraving`, which the faces model reads as today's default (the back, as the engraving reader always read it). Never a person's word: that is row.engravingOverride. */
-  function engravingOf(line, spec) {
-    line = line || {}; spec = spec || {};
+  function engravingOf(line, spec, art) {
+    line = line || {}; spec = spec || {}; art = art || { front: null };
     // a rework / modification fee line ("Re-work: $5 back engraving fee") and any line with no design of its own is never an engraving of its own
     if (spec.noDesign || /\b(?:re-?work|modifications?)\b/i.test(String(line.title || ""))) return null;
     const opts = (line.variations || []).map(v => { const id = idOf(v && (v.valueId != null ? v.valueId : v.value_id)); return { name: decodeEntities(lvName(v)).trim(), value: decodeEntities(lvValue(v)).trim(), drop: !!id && id !== "0" }; }).filter(v => v.name || v.value);
@@ -2357,7 +2390,15 @@
     const said = new Map();
     for (const o of spec.options || []) if (o && o.mapped && /^(?:front|both|back)$/.test(String(o.mapped.engrave || ""))) said.set(decodeEntities(String(o.name || "")).trim() + "\n" + decodeEntities(String(o.value == null ? "" : o.value)).trim(), o.mapped.engrave);
     const hits = [];
-    for (const v of opts) { if (free(v) || !v.value) continue; const mode = said.get(v.name + "\n" + v.value) || engravingModeOfOption(v.name, v.value); if (mode) hits.push({ mode, name: v.name, value: v.value, from: `${v.name}: ${v.value}` }); }
+    for (const v of opts) {
+      if (free(v) || !v.value) continue;
+      const asked = said.get(v.name + "\n" + v.value); let mode = asked || engravingModeOfOption(v.name, v.value), side = 0;
+      // SIDES (BFSIDES): a value that only counts sides ("Gold - 16\" - 2 sides") on a design that already carries its own front art (a birth flower, a zodiac sign, a disc with a picture) engraves the BUYER'S words on the
+      // back for 2 sides (the front is the design's art, untouched) and nothing of the buyer's for 1 side. A design with no art of its own (a tag, a bar, a plain disc) keeps both faces as buyer text, as before;
+      // a person's saved answer for the value (`said`) and a value that names its faces stay above this.
+      if (!asked && art.front === true) { const n = sidesOfValue(v.value); if (n) { side = n; mode = n === 2 ? "back" : "none"; } }
+      if (mode) hits.push({ mode, name: v.name, value: v.value, from: `${v.name}: ${v.value}`, side });
+    }
     const noneOpt = opts.find(v => !free(v) && v.value && (FB_NONE.test(v.value) || (/engrav/i.test(v.name) && FB_NO.test(v.value))));
     const blankOpt = !noneOpt && !hits.length && pers.length ? opts.find(v => !free(v) && v.value && FB_BLANK.test(v.value)) : null;
     const titleMode = engravingModeIn(title, true);
@@ -2419,6 +2460,10 @@
     }
     if (!mode) return null;
     const optHit = source === "option" ? (hits.length ? { name: hits[0].name, value: hits[0].value } : noneHit ? { name: noneHit.name, value: noneHit.value } : null) : null;
+    const sideN = source === "option" && hits.length && hits[0].side && !conflict ? hits[0].side : 0;   // (a side count read on a design with its own front art: the buyer's words on the back, or none)
+    const sideWords = sideN === 1 ? persText.trim() : "", oneWay = sideWords ? String(SIDES_POLICY.oneSideWithWords || "skip") : "";   // (1 side and words anyway: see SIDES_POLICY)
+    const sideBack = sideN === 2 || (sideN === 1 && oneWay === "back"), sideNone = sideN === 1 && !sideBack;
+    if (sideN === 1 && sideBack) mode = "back";
 
     // ── the texts: what goes on each face ──
     const eng = { v: 1, mode, source, front: null, back: null, textSource: "none", needsPerson: false, confidence: 0.5, why: "", option: optHit };
@@ -2426,7 +2471,7 @@
     const flag = (kind, reason, partial) => { if (!review) review = { kind, reason: clip(reason, 170), partial: !!partial }; };
     const raw = (pers.length ? pers.join("\n") : [staff, buyer, msgs.join("\n")].filter(Boolean).join("\n")).slice(0, 300);
     const modeWords = { front: "front", back: "back", both: "front and back", none: "no engraving" }[mode];
-    const fromWhat = source === "option" ? `the option “${clip(modeFrom, 50)}”` : source === "title" ? "the listing title" : modeFrom;
+    const fromWhat = source === "option" ? `the option “${clip(sideN ? hits[0].value : modeFrom, 50)}”` : source === "title" ? "the listing title" : modeFrom;
     const hand = source === "option" && /hand\s*writ|writing/i.test(modeFrom);
     const picture = PICT.test(raw) || hand;
     let single = false, quoted = false;
@@ -2451,7 +2496,7 @@
       }
       else if (mode === "front" && has("back")) flag("conflict", `front engraving chosen but the words are labelled back${has("front") ? " too" : ""}: a person says which face`);
       else if (mode === "back" && has("front")) flag("conflict", `back engraving chosen but the words are labelled front${has("back") ? " too" : ""}: a person says which face`);
-      else if (mode === "none") flag("conflict", "the option says no engraving, but the buyer labelled front / back words: a person decides");
+      else if (mode === "none") flag("conflict", sideNone ? "1 side was chosen (the design's own art only), but the buyer labelled front / back words: a person decides" : "the option says no engraving, but the buyer labelled front / back words: a person decides");
       else if (mode === "front" && !allHave("front")) flag("texts", `front engraving, but ${pieceName((fsets.find(x => !x.front) || {}).slot)} has no words: a person says what goes on it`);
       if (odd.length) flag("texts", `the words include instructions or notes (${odd.slice(0, 2).map(x => `“${clip(x.text, 30)}”`).join(", ")}): a person writes exactly what is engraved`);
       if (!review || review.partial) {
@@ -2484,9 +2529,18 @@
       else if (picture && !labelled.length) flag("texts", "front and back engraving, but the writing comes as pictures or handwriting: a person handles it");
       else if (!pers.length && !staff) flag("texts", "front and back engraving; the words are only in a note, not in the personalisation box: a person says what goes on each face");
       else flag("texts", "front and back engraving, but the words do not say which go on the front and which on the back: a person decides");
-    } else if (mode === "none" && pers.length) flag("conflict", "the option says blank (no engraving), but the buyer wrote words: a person decides");
-    if (mode === "none" && !review) return null;
-    if (mode === "back") { eng.front = null; eng.back = null; }   // (back only: the engraving reader reads the words as it always did)
+    } else if (mode === "none" && pers.length && !sideNone) flag("conflict", "the option says blank (no engraving), but the buyer wrote words: a person decides");
+    else if (sideNone && sideWords && oneWay === "ask") flag("conflict", `1 side was chosen (the design's own art only), but the buyer wrote words (“${clip(sideWords.replace(/\s*\n+\s*/g, " / "), 40)}”): a person says whether they go on the back`);
+    // SIDES: 2 sides on a design with its own front: the words are the BACK's (labelled "back: ..." or one plain block), no guess is needed because the front is the art. Words that are no plain inscription
+    // (a request, a long note) are left to the engraving reader, as every back line is; no words at all is asked of a person.
+    if (sideBack && !review) {
+      const lab = pick && !pick.problems.length && pick.back && ["personalization", "staffNote"].includes(pick.k) ? pick.back : null, own = lab ? lab.text : persText.trim();
+      if (!own) { if (!buyer && !staff && !msgs.length) flag("nowords", "2 sides were chosen (the design's own art on the front, the buyer's words on the back), but no words were written"); }
+      else if (plainInscription(own)) { eng.back = faceOut({ text: own, own: lab && lab.own }); single = !lab; if (!lab && sideN === 2 && SIDES_POLICY.twoSidesUnlabelled === "ask") flag("texts", `2 sides were chosen (the design's own art on the front), and the words are not labelled: a person confirms they go on the back`, true); }
+      else { const q = quotedOne(own); if (q && plainInscription(q)) { eng.back = faceOut({ text: q }); single = quoted = true; if (sideN === 2 && SIDES_POLICY.twoSidesUnlabelled === "ask") flag("texts", `2 sides were chosen (the design's own art on the front), and the words are not labelled: a person confirms they go on the back`, true); } }
+    }
+    if (mode === "none" && !review && !sideNone) return null;
+    if (mode === "back" && !sideBack) { eng.front = null; eng.back = null; }   // (back only: the engraving reader reads the words as it always did)
     // ── the plain line, the confidence and what a person is asked ──
     const fw = eng.front && eng.front.fontWord, bw = eng.back && eng.back.fontWord, lineFont = !fw && !bw && spec.font && spec.font.asked ? String(spec.font.asked) : "";
     // (the message's font, when no face and no option names one: "· font Courier New → Crimson Text (from the message)")
@@ -2502,9 +2556,12 @@
       const sure = source === "option" ? 0.95 : source === "title" ? 0.7 : 0.6;
       if (mode === "both") { eng.why = `front and back from ${fromWhat}: front ${sayFace(eng.front)}, back ${sayFace(eng.back)}${fontSay}`; eng.confidence = sure; }
       else if (mode === "front") { eng.why = `front only from ${fromWhat}: ${sayFace(eng.front)} goes on the front${fontSay}`; eng.confidence = quoted ? Math.min(sure, 0.8) : Math.min(sure, 0.9); }
+      else if (sideBack) { eng.why = clip(`${sideN} side${sideN === 1 ? "" : "s"} from ${fromWhat}: the design's own art is the front, the words go on the back${eng.back ? `: ${sayFace(eng.back)}` : " (read from the note)"}${fontSay}`, 200); eng.confidence = Math.min(art.how === "flag" ? 0.95 : 0.9, quoted ? 0.8 : 1); }
+      else if (sideNone) { eng.why = sideWords ? clip(`Buyer chose 1 side; words not engraved: “${clip(sideWords.replace(/\s*\n+\s*/g, " / "), 90)}”`, 200) : clip(`1 side from ${fromWhat}: only the design's own art is engraved`, 200); eng.confidence = art.how === "flag" ? 0.95 : 0.9; }
       else { eng.why = `back only from ${fromWhat}: read as before`; eng.confidence = source === "option" ? 0.95 : 0.8; }
       if (source !== "option" && (mode === "front" || mode === "both")) eng.why = clip(`${eng.why} · the listing has no such option: a person confirms`, 200);
     }
+    if (sideN) eng.sides = { n: sideN, art: art.how };   // (the side count that was read, and how the design's own front art was known: "index" counted from the library entry, "flag" a person's / the index's word)
     return eng;
   }
   engravingOf.faceParse = faceParse; engravingOf.modeIn = engravingModeIn; engravingOf.modeOfOption = engravingModeOfOption;
@@ -2789,7 +2846,8 @@
     // word is never here (it is row.engravingOverride). Nothing else of the spec is touched, engraveCandidate included: a front / both-faces line with no words says so in its reading
     // (needsPerson, reviewKind "nowords") and the engraving pass (the faces model) raises it; here it is still cut plain exactly as before.
     try {
-      const eng = engravingOf(line, spec);
+      const me2 = spec.designSku && me ? me(spec.designSku) : null;   // (the design's own front art, when its library entry says so: "1 side / 2 sides" options read by it)
+      const eng = engravingOf(line, spec, frontArtOf(me2, line.title));
       if (eng) spec.engraving = eng;
     } catch (_) { /* a reading that fails leaves the line as it always was */ }
     // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
@@ -3170,7 +3228,7 @@
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
   return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
-    engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
+    engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,

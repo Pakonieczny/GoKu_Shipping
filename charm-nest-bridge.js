@@ -5711,7 +5711,8 @@ const Engrave = window.Engrave = (() => {
     const F = FACES(); if (!F) return null;
     const setup = F.setupOf(row);
     // (a reading the intake marked for a person goes to the cards for a person too: the paid reader never decides it)
-    return jobs.some(isFront) || setup.faces.includes("front") || (setup.edited && setup.faces.includes("back") && setup.back) || setup.needsPerson ? setup : null;
+    // (BFSIDES: a back line whose words the intake itself read, "2 sides" on a design with its own front art, is read from the setup too: no paid reading, nothing guessed)
+    return jobs.some(isFront) || setup.faces.includes("front") || (setup.faces.includes("back") && setup.back && (setup.edited || setup.sides)) || setup.needsPerson ? setup : null;
   }
   /** engraveCandidate is the intake's word about WORDS ("something is written to engrave"). A line the buyer asked to engrave on a face without writing any (the intake's reading: needsPerson, "nowords"), or
    *  that a person set up with faces, is raised here so a person is asked rather than the line being cut plain. Custom, add-on and no-design lines are never raised. In memory only: it is read again on every pull. */
@@ -5725,7 +5726,7 @@ const Engrave = window.Engrave = (() => {
   /** What a face job starts with from the setup, or null. A back line the intake read as "back" with nothing a person said keeps the old reader: no seed. */
   function seedOf(setup, job) {
     const F = FACES(); if (!F || !setup) return null;
-    if (setup.mode === "back" && !setup.edited) return null;
+    if (setup.mode === "back" && !setup.edited && !(setup.sides && setup.back)) return null;   // (a back line the intake read as "back" with no words of its own keeps the reader; "2 sides" on a design with its own front art carries the back's words)
     return F.seedFor(setup, faceOf(job), job.slot || null);   // (the ear's own words when the buyer gave different words for each ear or disc)
   }
   /** The words of each face job of a line that has a front or a person's own words: from the setup, no paid reading, nothing guessed. A face with no words goes to a person with the buyer's own words
@@ -5740,7 +5741,7 @@ const Engrave = window.Engrave = (() => {
       j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
       if (seed && !setup.needsPerson) {
         delete j.seededFrom;
-        Object.assign(j, { text: seed.text, lines: seed.lines.slice(), source: seed.source, quote, confidence: seed.confidence, questions: [], claudeReasoning: null, requests: { side: face, font: seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed.fontWord || null });
+        Object.assign(j, { text: seed.text, lines: seed.lines.slice(), source: seed.source, quote, confidence: seed.confidence, questions: [], claudeReasoning: null, requests: { side: face, font: seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed.fontWord || null, ...(seed.how === "single" ? { wordsHow: "single" } : {}) });
         agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${j.slot ? " · " + SIDES().earOf(j.slot) : ""} · ${face}: "${seed.text.replace(/\n/g, " / ")}" taken from ${seed.how === "person" ? "the person's setup" : "the order"} (${setup.why || setup.mode}), no paid reading`);
         await setReady(j);
       } else {
@@ -5762,6 +5763,8 @@ const Engrave = window.Engrave = (() => {
     // a person said "no engraving" for this line: it stays so (never the paid reader again)
     const said = FACES() ? FACES().setupOf(row) : null;
     if (said && said.edited && said.mode === "none") { for (const j of jobs) setNone(j, `no engraving — decided by ${said.by || "a person"}`); return job; }
+    // "1 side" on a design with its own front art (the intake's reading, no person's word against it): only the art is engraved, the buyer's words are not; the card says so, nothing is paid for or asked
+    if (said && !said.edited && said.mode === "none" && said.sides && !said.needsPerson) { for (const j of jobs) setNone(j, said.why || "1 side: only the design's own art is engraved"); return job; }
     // a line with a front (or a person's own words for a face, or a reading marked for a person): each face job takes its words from the line's setup, no paid reading (charm-nest-engrave-faces.js)
     const faceSetup = facedSetup(row, jobs); if (faceSetup) return classifyFaces(row, jobs, faceSetup);
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
