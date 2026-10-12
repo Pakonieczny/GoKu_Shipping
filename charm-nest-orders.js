@@ -1209,6 +1209,56 @@
     for (let n = 0; n <= 12; n++) for (const sep of [" ", "-", "_", ""]) add(base + sep + n + (want === "huggie" ? " (HUGGIE)" : ""), n, `numbered version ${n} of ${base}`);
     return out.sort((a, b) => a.n - b.n || a.sku.localeCompare(b.sku)).slice(0, 12);
   }
+  /* ═══ 3b · LOOKALIKE NAMES (LOOKALIKE, 12 Oct 2026) ══════════════════════════════════════════════════════════════════════
+     Four times on 12 Oct an exact SKU match put the wrong drawing on an order and Paul found it by eye. The one that this rule is for: the master holds TWO drawings whose names read alike once spaces, dashes,
+     case and punctuation are dropped (CELESTIAL3-COMET and "CELESTIAL 3 - COMET": 138 such name groups), one a stud-size design with NO hanging hole (holes 0) and one the necklace charm with its ring. The Etsy SKU
+     "Celestial3-Comet" equals the loop-less entry exactly, so the exact name won, silently, on a NECKLACE listing (the Running Shoe, Playing Cards, Mouse, Megaphone and Sheep necklaces of the sandbox pool were
+     the same). A necklace hangs from a chain: a drawing with no hole cannot.
+     THE RULE (measured on every stored / fixture line first: plans/lookalike-1012/LOOKALIKE-findings.md): a line whose FORM is "necklace" (the form guard above: necklace words, a chain length option, the
+     listing's title family) that matched a master drawing with 0 holes by the exact name (or its -CO base, or Etsy's inventory SKU), while another master entry of the same name once spacing and punctuation are
+     set aside is a DIFFERENT drawing (another design file and charm) with at least one hole, a box at least 1.2 times as big (NECKLACE_SIZE: the ring is part of it) and is not blocked, is NOT pooled. It waits with ONE plain line naming the drawings and, in the Review row, one tap for
+     each; the tap is the person's saved link for this listing and this SKU (the same "Use this charm" answer, aliasPut bySku), which beats every automatic match, so the rule never asks that listing and SKU again.
+     It is silent, and reads exactly as before, when: a person's answer exists for the listing and SKU (a link, a saved pair, a listing-wide answer, an option's pick); the two names are one drawing file;
+     either entry is blocked; either entry has no hole count or size; the ringed entry is not clearly the bigger one (Playing Cards and Megaphone: see below); the line is not a necklace; the matched drawing already has a hole (a necklace line on the ringed entry is right). Two names that differ in no way the
+     form can judge (both loop-less, both ringed) are NOT stopped: the master keeps many such pairs on purpose (a necklace listing and an add-on listing writing the SKU two ways for two sizes), so an
+     exact name that is not demonstrably wrong still wins. When the form AGREES with the exact name and a lookalike of the other kind exists (a necklace line on the ringed entry, a pair of earrings on the loop-less
+     one), the reading says so in one plain line (spec.lookalike.state "agrees") and nothing waits. Needs ctx.masterLike (sku → the master SKUs that read alike); without it nothing changes. */
+  const LOOK_AUTO = new Set(["transaction", "variation", "inventory"]);   // (an exact master name picked by the SKU as written; a person's answer, a spelling, a typo or a named design is never in this list)
+  const holesOf = e => (e && !(e.sizes && Object.keys(e.sizes).length) && e.holes != null && e.holes !== "" && Number.isFinite(+e.holes) ? Math.max(0, Math.floor(+e.holes)) : null);
+  const mmWords = e => (e && Number.isFinite(+e.widthPt) && Number.isFinite(+e.heightPt) ? `${(+e.widthPt * 0.352778).toFixed(1)} × ${(+e.heightPt * 0.352778).toFixed(1)} mm` : "");
+  const boxOf = e => (e && Number.isFinite(+e.widthPt) && Number.isFinite(+e.heightPt) ? +e.widthPt * +e.heightPt : 0);
+  const looseDrawing = (x, y) => { const a = designFile(x), b = designFile(y); return !!a && a === b; };
+  // The shop's pairs are a STUD-size drawing (no hanging hole) and the NECKLACE-size drawing of the same design (a ring, so a bigger box): in the master 150 of its 156 such pairs have the ringed drawing at least 1.2 times
+  // the box of the loop-less one. A pair where the ringed one is NOT clearly the bigger (4 pairs are smaller, 2 within 1.2: the master draws or names them the other way round, a hole count the picture does not
+  // bear out) is no stud / necklace pair: nothing here can say which is right, so the exact name stands as it always did and the findings list them for Paul.
+  const NECKLACE_SIZE = 1.2;
+  /** The lookalike reading of a design a line matched by its exact name. x: the matched master SKU; lf: the line's form ({ form } from lineForm); ctx: { masterEntry, masterLike (sku → the master SKUs that read the same
+   *  once spacing and punctuation are set aside), guardCtx? }. → null (nothing to say) | { state: "held" | "agrees", design, others: [{ sku, holes, mm, ring }], candidates (held: the matched design first), reason | note } */
+  function lookalikeRead(x, lf, ctx) {
+    ctx = ctx || {}; const me = ctx.masterEntry, like = ctx.masterLike, form = lf && typeof lf === "object" ? lf.form : lf;
+    if (typeof me !== "function" || typeof like !== "function" || !x) return null;
+    const xe = me(x); if (!xe || xe.blocked) return null;
+    const xh = holesOf(xe), xb = boxOf(xe); if (xh == null || !xb) return null;
+    const row = (k, e) => ({ sku: k, holes: holesOf(e), mm: mmWords(e), ring: holesOf(e) > 0 });
+    const big = [], small = [];   // big: ringed drawings clearly bigger than a loop-less x; small: loop-less drawings clearly smaller than a ringed x
+    for (const k0 of like(x) || []) {
+      const k = upSku(k0), e = k && k !== x ? me(k) : null; if (!e || e.blocked) continue;
+      const h = holesOf(e), b = boxOf(e); if (h == null || !b) continue;
+      if (looseDrawing(xe, e) || (xe.charmHash && e.charmHash && String(xe.charmHash) === String(e.charmHash))) continue;   // (one drawing under two names: nothing to choose)
+      if (formClash(form, masterForm(k, ctx.guardCtx || { masterEntry: me }))) continue;   // (a huggie design is the form guard's, not this rule's)
+      if (xh === 0 && h > 0 && b >= NECKLACE_SIZE * xb) big.push(row(k, e));
+      else if (xh > 0 && h === 0 && xb >= NECKLACE_SIZE * b) small.push(row(k, e));
+    }
+    const mine = row(x, xe), name = o => `${o.sku} (${o.ring ? "with ring" : "no loop"}${o.mm ? ", " + o.mm : ""})`;
+    if (form === "necklace" && big.length) {
+      const cands = [mine].concat(big).slice(0, 4);
+      const list = cands.map(name), words = list.length === 2 ? list.join(" and ") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+      return { state: "held", design: x, others: big, candidates: cands, reason: `This SKU matches ${cands.length === 2 ? "two" : cands.length} different drawings: ${words}, and this listing is a necklace, which a drawing with no loop cannot hang on. Pick the right one.` };
+    }
+    if (form === "necklace" && small.length) return { state: "agrees", design: x, others: small, note: `“${x}” has a look-alike, ${name(small[0])}, which is a different drawing; this listing is a necklace, so it keeps ${x} (with ring)` };
+    if (form === "earring" && big.length) return { state: "agrees", design: x, others: big, note: `“${x}” has a look-alike, ${name(big[0])}, which is a different drawing; this listing is a pair of earrings, so it keeps ${x} (no loop)` };
+    return null;
+  }
   const ZODIAC_AUTO = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory"]);   // (ZODSIGN: the automatic sources a shared zodiac SKU may be read again from)
   const FORM_AUTO = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory", "letter"]);   // (a person's answer, "alias" / "option" / a saved pair, is never in this list)
   const FORM_THIS = { huggie: "a huggie design", earring: "an earring design", necklace: "a necklace design" }, FORM_LINE = { huggie: "huggie hoops", earring: "a pair of earrings", necklace: "a necklace" };
@@ -3086,6 +3136,16 @@
         if (FORM_AUTO.has(skuSource) || named) for (const d of named ? members.members.map(m => m.sku) : [sku]) { if (!me(d)) continue; const f = masterForm(d, guardCtx); if (formClash(lf, f)) { formHold = { design: d, df: f }; break; } }
       }
     } catch (_) { formHold = null; }
+    // LOOKALIKE (section 3b): a NECKLACE line that matched a loop-less drawing by its exact name while a differently drawn lookalike with a ring exists waits for a person. A person's answer for this listing and SKU
+    // (a link, a saved pair, a listing-wide answer) silences it for good; the one-word note ("agrees") is the reading when the form fits the exact name.
+    let look = null;
+    try {
+      if (!quiet && !set && me && sku && !viaPick && !viaLetter && !members && !formHold && !(zodiac && zodiac.hold) && LOOK_AUTO.has(skuSource) && typeof ctx.masterLike === "function") {
+        const a1 = ctx.aliases && ctx.aliases[String(line.listingId)], keys = [upSku(line.sku), txSku].filter(Boolean);
+        const saidWord = !!a1 && (keys.some(r => (a1.bySku && bySkuOf(a1.bySku, r) !== undefined) || (a1.pairBySku && bySkuOf(a1.pairBySku, r) !== undefined)) || (!!a1.sku && !a1.v));
+        if (!saidWord) look = lookalikeRead(sku, lf, { masterEntry: me, masterLike: ctx.masterLike, guardCtx });
+      }
+    } catch (_) { look = null; }
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
     if (!quiet && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
@@ -3244,6 +3304,8 @@
       spec.zodiacSign = { sign: zodiac.sign, from: zodiac.from, word: zodiac.word, typo: !!zodiac.typo, text: zodiac.text, textOnly: !!zodiac.textOnly, family: zodiac.family, design: zodiac.pick ? zodiac.pick.sku : null, how: zodiac.pick ? zodiac.pick.how : "", held: zodiac.hold ? zodiac.hold.kind : "", note: zodiac.note };
       spec.pair.notes.push(zodiac.note);
     }
+    // LOOKALIKE: the form fits the exact name and a lookalike of the other kind exists (a necklace line on the ringed entry, a pair of earrings on the loop-less one): said once in the reading, nothing waits
+    if (look && look.state === "agrees") { spec.lookalike = { state: "agrees", design: look.design, others: look.others }; spec.pair.notes.push(look.note); }
     /* SCHROLINK (Paul, 12 Oct 2026): a pair of designs a person saved for this listing and SKU whose designs are NOT both in the master any more (renamed, deleted, blocked out of the index) must never let
        a necklace fall back, in silence, to one piece of the SKU's own design (that was the mistake: the huggie skull cat for a necklace of two cats). On a line that is not a single earring it waits for a
        person, with the reason (an earring line that says two different designs keeps its own question, asked above). It ends by itself when both designs are in the master again. */
@@ -3299,6 +3361,13 @@
       spec.formHold = { sku: spec.boughtSku, design: "", lineForm: lf.form, designForm: df.form, reason, siblings: [], zodiac: zodiac.hold.kind, sign: zodiac.sign || "" };
       spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
       problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, zodiac: zodiac.hold.kind + ":" + (zodiac.sign || ""), lineForm: lf.form, designForm: df.form, siblings: [] });
+    } else if (look && look.state === "held") {
+      // LOOKALIKE: the exact name is a drawing with no hanging hole, the listing is a necklace and a differently drawn lookalike with a ring exists: no design is on the row and nothing is pooled (the form guard's
+      // own hold, makePool); ONE plain line names the drawings and the Review row offers each as a tap (problem.candidates). The decision is per LISTING and SKU (problem.lookalike): the tap is that listing's saved link.
+      spec.formHold = { sku: spec.boughtSku, design: look.design, lineForm: lf.form, designForm: df.form, reason: look.reason, siblings: [], lookalike: true, candidates: look.candidates };
+      spec.lookalike = { state: "held", design: look.design, others: look.others }; spec.siblings = [];
+      spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason: look.reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, lookalike: String(line.listingId || "?"), candidates: look.candidates, lineForm: lf.form, designForm: df.form, siblings: [] });
     } else if (skuSource === "generic" && !quiet && me && spec.designSku) {
       // CHAMMAP: the SKU is the shop's shared charm-only placeholder (genericSku) and this listing has no saved answer for it: the master label of that name is on some other design (the astronaut), so no design is on
       // the row and nothing is pooled; the line waits for a person with ONE plain line (the form guard's own hold, makePool). The decision is per LISTING (problem.generic): one listing's answer is never another's.
@@ -3682,7 +3751,7 @@
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     noSkuRead, noSkuLine, noSkuShort, designWordsOf, titleIndexFor, buildTitleIndex,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
-    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead,
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
