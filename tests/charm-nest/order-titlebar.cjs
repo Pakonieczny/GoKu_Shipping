@@ -59,7 +59,7 @@ async function main() {
   assert(/--owHeadH:79px/.test(css) && /height:var\(--owHeadH\)/.test(css), 'one height for the card in the CSS');
   assert(!/\.owNowCard \.row|\.owNowCard \.shs|\.owNowCard \.btn/.test(html), 'no rule is left for the card\'s button row, its shortcut column or its buttons');
   assert(!/\.owShItem|\.owShMore/.test(html), 'no rule is left for the shortcut boxes');
-  assert(/\.owShChip\{display:flex/.test(html) && /\.owPcRow \.pcSt\{/.test(html), 'the chip style stays: a piece\'s status chip is built on it');
+  assert(/\.owShChip\{display:flex/.test(html) && /(\.owPcRow|:is\(\.owPcRow,\.owPcSub\)) \.pcSt\{/.test(html), 'the chip style stays: a piece\'s status chip is built on it (the row\'s and, since ONEROW, its drawer lines\')');
   assert(!/@media[^{]*\{[^}]*\.owNowCard,\.owNowCard\.sealed/.test(html), 'the card does not stack under 900 px any more (it has no column of shortcuts to drop under it)');
   const tag = (html.match(/<script src="charm-nest-bridge\.js(\?v=[^"]*)"/) || [])[1] || '';
   assert(/-sui1(?:-[a-z0-9]+)*-tb1/.test(tag), 'the bridge token keeps its earlier suffixes and appends tb1');

@@ -840,6 +840,7 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcSubName:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
 .owPcSubTag{font-weight:600;color:var(--ink);cursor:inherit}
 .owPcSub .steps{justify-self:end}
+@container (min-width:471px){.owPcSub{padding-right:42px}}   /* (a line's dots sit in the very column the row's dots do: the row's padding, gap and chevron) */
 @media (prefers-reduced-motion:reduce){.owPcX svg,.owPcMoreBtn,.owPcSub{transition:none}.owPcMenu{animation:none}}
 @container (max-width:470px){
   .owPcSum .owPcRow.owPcMulti{grid-template-columns:8px minmax(0,1fr) auto 22px;row-gap:3px}
@@ -851,7 +852,7 @@ dialog.phv.layer.phvIn{background:transparent}
   .owPcMulti .pcAct{grid-column:2 / -1;grid-row:3;justify-content:flex-start}
   .owPcMulti .owPcTools{grid-column:4;grid-row:1}
   .owPcSub{grid-template-columns:34px auto minmax(0,1fr);row-gap:2px}
-  .owPcSub .steps{grid-column:2 / -1}
+  .owPcSub .steps{grid-column:2 / -1;justify-self:start}   /* (narrow: a line's dots under its tag and status, not at the far edge) */
 }
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
