@@ -39,10 +39,54 @@
   function css() {
     const d = doc(); if (!d || d.getElementById('owEngCss')) return;
     const s = d.createElement('style'); s.id = 'owEngCss';
-    s.textContent = '.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}';
+    // (.engSaid: the customer's own words under the cards, one quiet block: a hairline at its left, small mono labels in front of each part, no box and no title)
+    s.textContent = '.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}'
+      + '.engSaid{margin:8px 0 0;padding:1px 0 1px 9px;border-left:2px solid var(--line);min-width:0;font:13px/1.45 var(--serif);color:var(--ink);overflow-wrap:anywhere}.engSaid[hidden]{display:none}'
+      + '.engSaid .esName{font:700 9.5px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-top:6px}.engSaid .esName:first-child{margin-top:0}'
+      + '.engSaid .esRow{min-width:0}.engSaid .esFaces{font:12.5px/1.45 var(--sans);color:var(--ink70)}'
+      + '.engSaid i{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-right:2px}.engSaid .esSep{margin:0 3px;color:var(--ink45)}';
     (d.head || d.documentElement).appendChild(s);
   }
   const waitNode = text => { const n = doc().createElement('div'); n.className = 'owEngWait'; n.setAttribute('role', 'status'); n.setAttribute('aria-live', 'polite'); n.innerHTML = `<span class="owSpin" aria-hidden="true"></span><span>${esc(text)}</span>`; return n; };
+
+  /* ── what the customer wrote for the engraving, ONE quiet block under the cards (Paul, 12 Oct 2026, round 2: "in the detailed order modal I don't see the customers message for the back engraving") ──
+   * Per engraved line: the customer's own words as they wrote them (the personalisation box, the buyer's message, the staff note) and the engraving choices among their options (front / back, the font), each under its
+   * small label, and, only when the piece has BOTH faces, which words are engraved on which: "Front W  Back Name One". Nothing for a line the customer wrote and chose nothing for; no title, no sentence, no percentage.
+   * The words and the options are read by charm-nest-engrave-said.js (the Engrave tab's box reads the same); when that file is not on the page the three plain parts are read here. */
+  const oneLine = t => String(t == null ? '' : t).split(/\r?\n/).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' / ');
+  function saidRows(row) {
+    const S = root.CharmNestEngraveSaid, L = (row && row.parentRow) || row || {}, sp = L.spec || {}, line = L.line || {}, O = root.CharmNestOrders;
+    let rows = S && S.rowsOf ? tryDo(() => S.rowsOf(L), null) : null;
+    if (!Array.isArray(rows)) {
+      const vis = x => String(O && O.visible ? O.visible(x) : x == null ? '' : x).trim(); rows = [];
+      const pers = (sp.personalization && sp.personalization.length ? sp.personalization : line.personalization || []).map(vis).filter(Boolean);
+      if (pers.length) rows.push(['Personalisation', pers.join('\n')]);
+      if (vis(sp.buyerMessage)) rows.push(['Buyer message', vis(sp.buyerMessage)]);
+      if (vis(sp.staffNote)) rows.push(['Staff note', vis(sp.staffNote)]);
+    }
+    return rows.map(([k, v]) => [String(k), k === 'Options' ? String(v).split(/\r?\n/).map(x => x.trim()).filter(Boolean).join(' \u00b7 ') : oneLine(v)]).filter(([, v]) => v);
+  }
+  /** The block's data: one entry per line that has a card, { name, rows: [[label, text]], faces: [['Front', words], ['Back', words]] | null }; the lines the customer wrote and chose nothing for are left out. */
+  function saidOf(rows, pieces) {
+    const out = [], seen = new Set();
+    for (const row of rows || []) {
+      const line = (row && row.parentRow) || row; if (!line || seen.has(line.key)) continue;
+      const mine = (pieces || []).filter(p => p && p.lineKey === line.key); if (!mine.length) continue;   // (a line with nothing to engrave has no card and no words here)
+      seen.add(line.key);
+      const parts = saidRows(line), one = mine.length === 1 ? mine[0] : null, f = one && one.faces || {};
+      const faces = f.front && f.back && f.front.text && f.back.text && !f.front.plain && !f.back.plain ? [['Front', oneLine(f.front.text)], ['Back', oneLine(f.back.text)]] : null;
+      if (!parts.length) continue;   // (the customer wrote and chose nothing: nothing is said, whatever the faces read)
+      out.push({ name: mine[0].name || '', rows: parts, faces });
+    }
+    return out;
+  }
+  function saidHtml(entries) {
+    const many = entries.length > 1, row = ([k, v]) => `<div class="esRow" data-said="${esc(k)}"><i>${esc(k)}</i> ${esc(v)}</div>`;
+    return entries.map(e => (many && e.name ? `<div class="esName">${esc(e.name)}</div>` : '')
+      + e.rows.filter(r => r[0] !== 'Options').map(row).join('')
+      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')
+      + e.rows.filter(r => r[0] === 'Options').map(row).join('')).join('');
+  }
 
 
   /* ── what a piece's back engraving is, as the card shows it ── */
@@ -278,6 +322,16 @@
       return { rows, pieces, loading: rows.some(r => r && r.loading) };
     }
     const keyOf = p => p.pieceKey + '|' + p.rid + '|' + p.lineKey;
+    /** The customer's words block: the host's next sibling inside the section (never a child of the host: the host's children are the cards). Drawn again only when what it says changes. */
+    let saidEl = null, saidSig = '';
+    function paintSaid(r) {
+      const entries = r && !r.loading ? tryDo(() => saidOf(r.rows, r.pieces), []) || [] : [];
+      if (!saidEl && entries.length && host.parentNode) { saidEl = doc().createElement('div'); saidEl.className = 'engSaid'; saidEl.id = 'owEngSaid'; saidEl.setAttribute('role', 'group'); saidEl.setAttribute('aria-label', 'What the customer wrote'); saidEl.hidden = true; host.parentNode.insertBefore(saidEl, host.nextSibling); }
+      if (!saidEl) return;
+      const sig = JSON.stringify(entries);
+      if (sig !== saidSig) { saidSig = sig; saidEl.innerHTML = entries.length ? saidHtml(entries) : ''; }
+      saidEl.hidden = !entries.length;
+    }
     /** A press on a face: that piece and that face open in the Engrave tab (EngraveLink, the order window closes as it opens). */
     function openEngrave(face, key, btn, piece) {
       const cur = last.get(keyOf(piece)) || piece, fj = cur.faces[face] && cur.faces[face].job, any = fj || cur.jobs[0] || null, link = root.EngraveLink;
@@ -343,6 +397,7 @@
       attached = true;
       const C = CARD(); if (!C) return;
       const r = read(), vis = visible();
+      paintSaid(r);
       // (this card's own approval is on its way: its card is left as it is until the approval stands, i.e. the stamp has landed)
       const stamping = r.pieces.some(p => p.jobs.some(j => j.stamping));
       for (const p of r.pieces) last.set(keyOf(p), p);
@@ -386,6 +441,7 @@
     function reset() {
       busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; loading = false; told0 = null; kindsSeen = ''; seenAt = Date.now();
       host.replaceChildren(); host.hidden = true;
+      saidSig = ''; if (saidEl) { saidEl.innerHTML = ''; saidEl.hidden = true; }
     }
     const handle = {
       el: host, mode,
@@ -399,6 +455,7 @@
         if (gone) return; gone = true; live.delete(handle); disarm();
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }
         host.replaceChildren(); host.hidden = true; if (host._orderEngraving === handle) delete host._orderEngraving;
+        if (saidEl) { tryDo(() => saidEl.remove()); saidEl = null; }
       },
       _tick() {
         // (a host taken out of the page takes the cards with it; one not put in yet is waited for)
@@ -441,6 +498,7 @@
     unmount: host => { if (host && host._orderEngraving) host._orderEngraving.destroy(); },
     engOf: ctx => engOf(ctx || {}, 0),
     cycleOf, discLines, faceCell, foldSlots, bothFor, approveFaces, backOf,
-    version: 4
+    said: { of: saidOf, rows: saidRows, html: saidHtml },   // (the customer's words block as data: saidOf(rows, pieces) -> [{ name, rows: [[label, text]], faces: [['Front', w], ['Back', w]] | null }])
+    version: 5
   };
 })(typeof window !== 'undefined' ? window : globalThis);
