@@ -14400,20 +14400,23 @@ const OrderWin = window.OrderWin = (() => {
    *  Engrave's jobs and the order's timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
   function paintEng(r) {
     const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;
-    const rid = String(r.order.receiptId), ps = W.pieces || [], multi = ps.length > 1, all = multi && !W.piece;
+    const rid = String(r.order.receiptId), ps = W.pieces || [], multi = ps.length > 1;
     const meta = p => tryDo(() => pieceMeta(p)) || "";
     // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
     const sheetEngOf = x => () => { const m = SV.info && (SV.info.mine || []).find(y => y.poolId && (x.poolIds || []).includes(y.poolId)); return (m && m.eng) || null; };
-    const here = multi && !all ? ps.find(p => p.key === r.key) : null;
     // (an earring pair: which pool piece is the Left and which the Right, and which is the mirror image, for a card that engraves each ear on its own; none for any other line)
     const earsOf = x => { const sd = tryDo(() => pairSides(x)) || []; return sd.length ? sd.map(c => ({ poolId: String(c.poolId || c.key), side: c.side, mirror: !!c.mirror })) : undefined; };
-    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r, ears: earsOf(r), label: here ? here.name : "", meta: here ? meta(here) : "",
+    // The Engraving section (CONTRACT.md B; Paul, 12 Oct 2026) shows EVERY piece of the order side by side, whichever piece the switcher has picked: it never follows the switcher. So the same ctx for every order:
+    //   rows()    every line of the order, in listed order        nameOf(line)  a line's piece name        (what the cards read)
+    //   pieces    the same lines, one entry each, for an order of several (what OrderEngraving.mount drew its list from, and still does until its cards are rewritten)
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: r.key, row: r, ears: earsOf(r), label: "", meta: "",
+      rows: () => linesOf(r), nameOf: pieceName,
       events: () => (W.evFor === rid ? W.events : null),
       sheetEng: sheetEngOf(r),
-      pieces: all ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, ears: earsOf(x), label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean).sort((a, b) => (b.key === r.key) - (a.key === r.key)) : undefined,   // (the line the order was opened on first)
+      pieces: multi ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, ears: earsOf(x), label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean) : undefined,
       // (an approval made elsewhere, or here: what hangs on it is drawn again: the Engraving cell, the Sheet tab)
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
-    if (W.engCard && W.engCard.el === host && W.engCard.mode === (all ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
+    if (W.engCard && W.engCard.el === host && W.engCard.mode === (multi ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
   }
   /** BFREAL: what the intake read of the line's engraving from the ORDER ITSELF (a side-count option, labelled words, the title, a person's saved setup), said in the facts at once, for a
    *  line Engrave holds no engraving record for yet (or cut plain): { chip, html }. Order 4200828980 ("Gold - 18\" - 2 sides" on a flower disc) showed no engraving anywhere until a job existed.
