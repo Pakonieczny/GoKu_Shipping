@@ -153,7 +153,7 @@
 .engp[hidden]{display:none!important}
 .engpMode{display:flex;flex-wrap:nowrap;gap:2px;padding:2px;min-width:0;border:1px solid var(--line,#e4ddd0);border-radius:9px;background:var(--paper2,#ebe5d9)}
 .engpSeg{flex:1 1 auto;min-width:0;white-space:nowrap;padding:5px 8px;border:0;border-radius:7px;background:transparent;font:600 11px var(--sans,system-ui);color:inherit;cursor:pointer}
-.engpSeg[aria-checked=true]{background:var(--card,#fffefb);box-shadow:0 0 0 1px var(--line2,#d5cdbf)}
+.engpSeg[aria-checked=true]{background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(28,26,23,.42)}
 .engpSeg:disabled{opacity:.55;cursor:default}
 @container (max-width:239px){.engpSeg{padding:5px 4px;font-size:10.5px}}
 .engpFace{display:grid;gap:8px;min-width:0}
