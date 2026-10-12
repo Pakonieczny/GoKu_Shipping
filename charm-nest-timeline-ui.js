@@ -365,9 +365,7 @@
     }
     if (hold) return { label: "On hold", text: str((hold.data && (hold.data.reason || hold.data.why)) || hold.text || "Waiting to be let go", 220), at: hold.at, by: whoOf(hold) };
     const q = [...need.values()].pop();
-    // (NOSKU: a listing with no SKU on Etsy says what the page reads NOW in plain words, not the sentence an older version wrote: "Unknown SKU: SKU ?: no SKU on the transaction ...")
-    const now = q && q.lineKey && q.data && q.data.kind === "unmatchedSku" && live && typeof live.text === "function" ? live.text(String(q.lineKey), "unmatchedSku") : "";
-    if (q) return { label: "Needs a decision", text: str(now || q.text || (q.data && (q.data.why || q.data.reason)) || "Someone has to decide before this order can go on", 220), at: q.at, by: whoOf(q) };
+    if (q) return { label: "Needs a decision", text: str(q.text || (q.data && (q.data.why || q.data.reason)) || "Someone has to decide before this order can go on", 220), at: q.at, by: whoOf(q) };
     return null;
   }
   const typeInfo = t => { try { const T = root.OrderTimeline && root.OrderTimeline.TYPES; return (T && T[t]) || null; } catch (_) { return null; } };

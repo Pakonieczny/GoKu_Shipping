@@ -233,8 +233,7 @@
     const seals = j && S ? tryDo(() => S.list(j).map(s => s.id).join(','), '') : e.saved && S ? tryDo(() => S.list({ seals: e.saved.seals || [], approvedAt: e.saved.approvedAt, approvedBy: e.saved.approvedBy, state: e.saved.state }).map(s => s.id).join(','), '') : '';
     return JSON.stringify([e.kind, e.text, e.note, !!e.working, e.by, +e.at || 0, !!e.foreign, j && j.state, j && +j.approvedAt || 0, j && j.backPending || '', seals, j && idOf(j.fit), j && idOf(j.view),
       e.back && (e.back.approvedAt || '') + (e.back.png || (e.back.outputs && e.back.outputs.png && e.back.outputs.png.url) || e.back.preview || ''),
-      r.cycle && [r.cycle.key, r.cycle.pieces.map(p => [p.key, p.state, p.words, p.font.name, p.stage])], j && faceOf(j) === 'front' ? 'front' : 0, r.both ? [!!r.both.ok, r.both.why] : 0,
-      root.CharmNestEngraveSetup ? tryDo(() => root.CharmNestEngraveSetup.sig(j ? j.row : r.row), '') : '']);   // (the line's engraving setup changed somewhere else: its control is drawn again)
+      r.cycle && [r.cycle.key, r.cycle.pieces.map(p => [p.key, p.state, p.words, p.font.name, p.stage])], j && faceOf(j) === 'front' ? 'front' : 0, r.both ? [!!r.both.ok, r.both.why] : 0]);
   }
 
   /* ── the card on a page ── */
@@ -288,8 +287,6 @@
       host.replaceChildren(card);
       // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again; each disc its own)
       S.wirePanel(card, shownEng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), approveBoth: b => approveBoth(b), open: b => openEngrave(b), stale: () => refresh(true, true), pick: k => pickDisc(k), zoom: { id: 'ow:eng', key: ident(ctx) + (r.cycle ? '|' + r.cycle.key : '') } });
-      // (the line's engraving setup: None / Front only / Back only / Front + back, each face's words and font; one control for every card, charm-nest-engrave-setup.js)
-      if (root.CharmNestEngraveSetup && (r.job || r.row)) { const su = doc().createElement('div'); su.className = 'owEngSetup'; card.appendChild(su); tryDo(() => root.CharmNestEngraveSetup.mount(su, r.job ? r.job.row : r.row, { compact: true })); }
       // every wait is said: the picture still coming, the words still being read
       const pv = card.querySelector('.pv'), im = pv && pv.querySelector('img');
       if (im && !im.complete) {
