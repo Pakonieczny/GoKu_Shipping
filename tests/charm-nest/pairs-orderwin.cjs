@@ -204,7 +204,7 @@ async function partB() {
       return page.evaluate(() => {
         const txt = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : '';
         return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), mirror: !!r.querySelector('.owSidePic[data-pc-mirror]'), name: txt(r.querySelector('.owPcName')) })),
-          head: txt(document.getElementById('owPcSum')?.querySelector('.owPcHd')), sub: txt(document.getElementById('owSub')), sku: txt(document.getElementById('owSku')), meta: txt(document.getElementById('owMeta')), split: txt(document.querySelector('#owNowCard .owSplit')), chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(txt),
+          head: txt(document.getElementById('owPcSum')?.querySelector('.owPcHd')), sub: txt(document.getElementById('owSub')), sku: txt(document.getElementById('owSku')), meta: txt(document.getElementById('owMeta')), split: txt(document.querySelector('#owNowCard .owSplit')), cardControls: document.querySelectorAll('#owNowCard button, #owNowCard a[href], #owNowCard .shs, #owNowCard .owShChip, #owNowCard .owShItem, #owNowCard [data-go], #owNowCard [data-pc]').length, cardH: Math.round(document.getElementById('owNowCard').getBoundingClientRect().height * 100) / 100,
           caption: [...document.querySelectorAll('#owPhoto, .owPics figcaption')].map(txt).join('|') };
       });
     };
@@ -216,13 +216,14 @@ async function partB() {
     assert.ok(sides.every(r => r.dots >= 4 && r.thumb), 'each side has its own dots and its own picture box');
     assert.equal(w.head, 'Its pieces'); assert.match(w.sub, /2 pieces/); assert.equal(w.sku, 'SKU: MISMATCHED_7134'); assert.ok(!/Left \+ Right/.test(w.sku), 'the Vector design panel line is the SKU alone: ' + w.sku); assert.match(w.meta, /Pair.*Mismatched/); assert.match(w.meta, /Left GF Sheet 1 · Right GF Sheet 2/);
     assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B1 a split pair: a row for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
-    assert.deepEqual(w.chips.filter(c => /Left|Right/.test(c)).length, 2, 'a box for each side'); ok('B1b the Where-it-is-now boxes name the sides');
+    // (the head card has no sheet boxes any more, Paul 12 Oct 2026: nothing to press on it, one height; the pair's sentence above is its one quiet line, the rows name the sides)
+    assert.equal(w.cardControls, 0, 'no box or button on the head card'); assert.equal(w.cardH, 79, 'one height, split sentence or not'); ok('B1b the head card has no boxes for the sides: the split sentence is its one quiet line, the rows name the sides');
     // the Copy button beside that line copies the SKU alone (no side words)
     const copied = await page.evaluate(async () => { let got = null; try { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async t => { got = t; } }, configurable: true }); } catch (_) {} document.getElementById('owCopy').click(); await new Promise(r => setTimeout(r, 150)); return got; });
     assert.equal(copied, 'MISMATCHED_7134', 'Copy copies the SKU only: ' + copied); ok('B1c the Vector design panel line reads "SKU: <sku>" with no "Left + Right", and Copy copies the SKU only');
     // 2 · both on one sheet
     w = await open(Q, Q.tx);
-    assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 1']], JSON.stringify(w)); assert.equal(w.split, ''); assert.match(w.chips.join('|'), /Left \+ Right/); ok('B2 a pair on one sheet: both rows say GF Sheet 1, nothing says it is split, one box for the pair');
+    assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 1']], JSON.stringify(w)); assert.equal(w.split, ''); assert.equal(w.cardControls, 0); ok('B2 a pair on one sheet: both rows say GF Sheet 1, nothing says it is split, no box on the head card');
     // 3 · a pair plus another line, the Right not placed yet
     w = await open(R, R.tx);
     assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'Waiting for a sheet']], JSON.stringify(w));

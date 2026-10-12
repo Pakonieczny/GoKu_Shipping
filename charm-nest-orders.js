@@ -157,6 +157,27 @@
   // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
   // length written that way fell through as an unmapped option and held the line.
   const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*("|''|\u201d|\u2033|in\b|inch|cm\b|mm\b)/i.test(String(v || "")) || /^\s*\d{1,2}(\.\d)?\s*$/.test(String(v || ""));
+  /* BFWHY (Paul, 12 Oct 2026, order 4200828980, BIRTHFLOWER_NECKLACE_DISC-9, "Birth Flower: Marigold"): the line's other drop-down has values like Gold - 16" - 2 sides, Silver- 18"- 1 side,
+     Rose- 17"- 2 sides. Whatever the shop calls it, an option whose VALUE is only a metal, a chain length and / or a number of sides (with "pair" / "single" beside them) is the shop's metal / length option, never a
+     choice of charm. It is read like a metal option (named Metal / Colour / Finish), so it is no "unread option" that makes a second one ask. The station already reads the metal from such a
+     value whatever the option is called (design-1.html metalKeyForTx step 2); this is the same reading for the options. A metal word alone ("Rose" is also the June flower) or a length alone is
+     NOT enough: it takes a metal AND a length or a number of sides, and nothing else in the value. Never reads what the value MEANS (sides = back engraving is the engraving reading's). */
+  const SPEC_LENGTH = /(^|[^\p{L}\p{N}])\d{1,2}(?:\.\d)?\s*(?:"|''|\u201d|\u2033|in\b|inch(?:es)?\b|cm\b)/giu;
+  const SPEC_SIDES = /(^|[^\p{L}\p{N}])(?:[12]|one|two|single|double|both)[\s-]*sid(?:ed|es?)(?![\p{L}\p{N}])/giu;
+  const SPEC_METAL_WORD = /^(?:gold|silver|silvr|sterling|rose|rosegold|yellow|solid|filled|fill|gf|karat|\d{1,2}kt?|\d{1,2}karat)$/;
+  const SPEC_FILLER_WORD = /^(?:pair|pairs|single|chain|only|and|with)$/;   // (words that may stand beside a metal and a length / sides; "Gold Filled - Single" alone is not enough)
+  function metalSpecValue(value) {
+    let extent = 0, metal = 0;
+    const t = " " + decodeEntities(value == null ? "" : value).toLowerCase() + " ";
+    const rest = t.replace(SPEC_LENGTH, (m, a) => { extent++; return a + " "; }).replace(SPEC_SIDES, (m, a) => { extent++; return a + " "; });
+    for (const w of rest.split(/[^\p{L}\p{N}]+/u).filter(Boolean)) {
+      if (SPEC_METAL_WORD.test(w)) metal++;
+      else if (!SPEC_FILLER_WORD.test(w)) return false;
+    }
+    return metal > 0 && extent > 0;
+  }
+  /** An option that carries the metal (and length, sides…): by its NAME (Metal / Colour / Finish / Plating) or by its VALUE (metalSpecValue). */
+  const isMetalVariation = (name, value) => isMetalOption(name) || metalSpecValue(value);
   const bareValue = v => norm(String(v || "").replace(/[^\w\s.+&-]+/g, " ")).split(/[\s+&]+/).filter(w => w && !FORM_FILLER.has(w)).join(" ");
   const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?( us)?)$/i.test(bareValue(v));
   // a made-to-order listing prices each order with an option of its own ("Price: 28"): it says what was paid, never what
@@ -2025,7 +2046,7 @@
       // product's own) is never read differently.
       const old = !!tx && listing.by !== "listing" && Array.isArray(table.products) && names(tx) && !table.products.some(p => p && !p.d && upSku(p.sku) === tx) && !isNoDesign(listing.sku, ctx.noDesign) &&
         (line.variations || []).some(v => { const nm = v.name || v.formatted_name, val = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
-          return !!nm && !!val && !isMetalOption(nm) && !isPersonalisation(nm) && !optionLookup(ctx.optionMaps, line.listingId, nm, val) && tiesToOption(table, v, listing.sku); });
+          return !!nm && !!val && !isMetalVariation(nm, val) && !isPersonalisation(nm) && !optionLookup(ctx.optionMaps, line.listingId, nm, val) && tiesToOption(table, v, listing.sku); });
       if (listing.sku !== tx && (names(listing.sku) ? (!tx || !names(tx) || wide || old) : (wide && !names(tx)))) {
         // Etsy's SKU for the option must also be the right kind of design for the line. A necklace SKU on an earrings listing is read as its
         // earring twin only when the whole listing's SKUs have one (listingTwin) and nobody has picked a charm for the option; else the line waits
@@ -2058,7 +2079,7 @@
     if (!viaPick && !huggieSet(line)) {
       for (const v of line.variations || []) {
         const nm = lvName(v), val = lvValue(v).trim();
-        if (!nm || !val || isMetalOption(nm) || isPersonalisation(nm) || isSizeOption(nm) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
+        if (!nm || !val || isMetalVariation(nm, val) || isPersonalisation(nm) || isSizeOption(nm) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
         const r = letterRead(nm, val, sku, me, ctx.optionMaps && ctx.optionMaps[String(line.listingId)]); if (r) letters.set(v, Object.assign(r, { name: nm, value: val }));
       }
       if (letters.size > 1) letters.clear();                                    // (two letter options may be two charms: a person says, as before)
@@ -2138,7 +2159,7 @@
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
       if (name && value && !spec.font) { const fm = fontInMetal(name, value, fx); if (fm) spec.font = fontSpecOf(fm, fm.listing ? "rule:font-listing" : "rule:font-in-metal"); }   // ("Metal? Font Choice?": the metal is read as before, the font from the same value)
-      if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
+      if (!name || !value || isMetalVariation(name, value) || isPersonalisation(name)) continue;   // (BFWHY: a value that is only a metal / length / sides is the metal option whatever it is called)
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       let mapped = hit ? Object.assign({ field: hit.field, value: hit.value, source: hit.source }, hit.engrave ? { engrave: hit.engrave } : {}) : null;
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
@@ -2617,7 +2638,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
