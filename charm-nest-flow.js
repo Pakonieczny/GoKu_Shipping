@@ -71,6 +71,8 @@
   // a sheet is included unless it is a draft or left out of its set (Readiness.sheet reads the same fields); it is in a set when it also has one
   const joined = s => !!s && !s.draft && s.solidIncluded !== false;
   const inSet = s => !!(s && s.setId && joined(s));
+  // an uncommitted set of the run still being made: the newest one (dispatchSetId) or, when the run holds several, any of them (live.openSetIds, SetWhy 12 Oct: a drop on an older formed open set works)
+  const isOpenSet = (live, id) => !!live && !!id && (live.dispatchSetId === id || (Array.isArray(live.openSetIds) && live.openSetIds.includes(id)));
   const SN = () => root.CharmNestSheetName || (typeof require === 'function' ? require('./charm-nest-sheet-name.js') : null);   // the one name and number rule
   const sheetName = s => SN() ? SN().name(s) : `${CODE[s.metal] || s.metalLabel || ''} Sheet ${s.sheetIndex || s.page || 1}`.trim();
   const setName = d => d && (d.seq || d.setSeq) ? `Set ${d.seq || d.setSeq}` : (d && d.name) || 'This set';
@@ -408,7 +410,7 @@
     if (run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
     if (!live) { need('fixedSet', `${v.label} is closed`, 'Its run is finished, so it stays as it is.'); return finish(plan); }
     const open = live.dispatchSetId || null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
-    if (to.set && T.setId !== open) need('notOpenSet', `${setName(T)} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
+    if (to.set && !isOpenSet(live, T.setId)) need('notOpenSet', `${setName(T)} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
     else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `Drop the sheet on ${openName}.`);
     else if (live.can && live.can.ok === false) need('include', 'Not ready to join a set', live.can.reason || 'Nest and verify it first.');
     else if (s.metal === 'rose' ? env.canRose === false : env.canJoin === false) need('join', 'Joining a set is not available here', s.metal === 'rose' ? 'Open the sheet on the Nest tab and press Cut Sheet there.' : 'Open the sheet and use Include or Make QR label.');
@@ -455,7 +457,7 @@
     if (!T) return { kind: 'none' };
     if (committedSet(T)) return { kind: 'committed' };
     const run = (state.runs || {})[s.runId] || (state.runs || {})[T.runId] || null, live = (state.live || {})[v.id] || null;
-    if (run && run.open) return live && live.runHere !== false && live.dispatchSetId && live.dispatchSetId === T.setId ? { kind: 'run', live, runId: s.runId || T.runId } : { kind: 'elsewhere', runId: s.runId || T.runId };
+    if (run && run.open) return live && live.runHere !== false && isOpenSet(live, T.setId) ? { kind: 'run', live, runId: s.runId || T.runId } : { kind: 'elsewhere', runId: s.runId || T.runId };
     return { kind: 'server' };
   }
   // a drop on In progress takes the sheet out of its set: always for a committed set, and for a set that waits in In progress (a sheet of a ready set going back is a hold, as before)
@@ -601,7 +603,7 @@
     if (how.kind === 'run' && (to.newSet || (T && T.setId === from.setId))) { plan.noop = true; plan.notes.push(`${name} is already in ${fromName}, the set the run is making.`); return finish(plan); }
     // (the way in first, then what it leaves behind; the cardinal rule's reason, when there is one, is told first)
     if (!live) need('fixedSet', `Only a sheet of the open run can join a set that is still being made`, `${name} is not on a page of the open run on this screen.`);
-    else if (to.set && T.setId !== open) need('notOpenSet', `${toName} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
+    else if (to.set && !isOpenSet(live, T.setId)) need('notOpenSet', `${toName} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
     else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `Drop the sheet on ${openName}.`);
     else if (!(live.runHere || live.sent)) need('include', 'Not ready to join a set', (live.can && live.can.reason) || 'Nest and verify it first.');
     else if (live.can && live.can.ok === false && !live.sent) need('include', 'Not ready to join a set', live.can.reason || 'Nest and verify it first.');
@@ -793,12 +795,12 @@
         // a set that is still being made takes a sheet only as the open run's one open set: a draft sheet of the open run, or a sheet that left its set to join it
         if (!why && !committedSet(st) && (leaving || (live && live.draft))) {
           if (leaving && !live) why = `Only a sheet of the open run can join ${setName(st)}, which is still being made.`;
-          else if (live && st.setId !== live.dispatchSetId) { const open = live.dispatchSetId ? all.find(x => x && x.setId === live.dispatchSetId) : null; why = `${setName(st)} is not the open set. ${live.dispatchSetId ? `Drop it on ${open ? setName(open) : 'the open set'}.` : 'Drop it on New set.'}`; }
+          else if (live && !isOpenSet(live, st.setId)) { const open = live.dispatchSetId ? all.find(x => x && x.setId === live.dispatchSetId) : null; why = `${setName(st)} is not the open set. ${live.dispatchSetId ? `Drop it on ${open ? setName(open) : 'the open set'}.` : 'Drop it on New set.'}`; }
           else if (leaving && live && !joinable) why = (live.can && live.can.reason) || 'It cannot join a set from here.';
         }
         out.push({ set: st.setId, name: setName(st), ok: !why, reason: why });
       }
-      const blocked = !!(live && live.can && live.can.ok === false && !live.sent), ownSet = leaving && live && live.dispatchSetId && live.dispatchSetId === own;
+      const blocked = !!(live && live.can && live.can.ok === false && !live.sent), ownSet = leaving && live && isOpenSet(live, own);
       let nreason = '';
       if (done) nreason = 'Move it back to Laser cutting first.';
       else if (engWhy) nreason = engWhy;

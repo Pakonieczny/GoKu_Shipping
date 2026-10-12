@@ -376,6 +376,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     // a cut sheet in no set may join the open set (nothing says "already cut" any more); one that is in a set stays
     mk('j-o-cut', { metal: 'gold14k', draft: true, runId: 'run-live', roseStockId: 'stock-k6', rosePlanHash: 'hk', roseCutAt: now - 900, liveLines: true }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
     LF.configure({ live: id => id === 'j-o-cut' ? open() : null }); p = await LF.plan({ kind: 'sheet', id: 'j-o-cut', to: { set: 'set-3' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []); assert.deepEqual(p.steps.map(x => x.type), ['include']);
+    // a run that holds several open sets (SetWhy, 12 Oct): the drop works on any of them, not only the newest; the dock says the same
+    mkSet('set-5', ['opn-1'], { status: 'open', runId: 'run-live' });
+    LF.configure({ live: id => id === 'j-o-cut' ? open({ openSetIds: ['set-3', 'set-5'] }) : null, sets: () => [{ setId: 'set-3', seq: 3 }, { setId: 'set-5', seq: 5, status: 'open' }], areaOf: () => 'progress', setOf: () => null, rec: null });
+    p = await LF.plan({ kind: 'sheet', id: 'j-o-cut', to: { set: 'set-5' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.equal(p.steps.find(x => x.type === 'include').setId, 'set-5', 'the older open set is the target');
+    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-o-cut' }).find(x => x.set === 'set-5').ok, true);
+    LF.configure({ live: id => id === 'j-o-cut' ? open() : null }); p = await LF.plan({ kind: 'sheet', id: 'j-o-cut', to: { set: 'set-5' } }); assert(p.needs.some(x => x.key === 'notOpenSet'), 'a page that does not list the open sets says what it always said');
     LF.configure({ cuts: null, rose: () => null, roseJoin: null, areaOf: null, sets: null, setOf: null, rec: null }); LF.hooks.cuts = null;
 
     console.log('PASS: library flow: plan/commit forwards and backwards, holds keep every seal, a sheet into a set, Rose Gold only on its press, hard blockers, idempotent repeat, failed writes change nothing');
