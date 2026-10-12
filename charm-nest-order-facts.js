@@ -8,7 +8,10 @@
         icon turns into a check), the buyer, when it was bought ("Today 11:02 AM"), when it must ship (the one urgent fact: a quiet green
         chip with the days left, amber from the day before, red only when it is late), the metal with its colour dot, then only when there
         is something to say: the pairs and counts, a custom order, the engraving, a message from the buyer (with the unread dot of the
-        Customer tab); at the right end the state as one small pill and the Details drop-down.
+        Customer tab); the Details drop-down sits on the first line, directly after the metal (Paul, 12 Oct 2026: "always be on the first
+        line to the right side of the SS sheet button"): the order, the buyer, the time, the ship-by, the metal and Details are one row that
+        never breaks inside (the buyer and the ship-by are shortened with an ellipsis before anything wraps; the order number, the time and the metal never are); the chips
+        after it flow behind it and are the ones that wrap; a state that needs a look is one small pill at the right end.
      2  A chip rests 350 ms under the pointer, or is pressed / tapped / reached with the keyboard, and opens ONE small card anchored to it
         inside the window (never a pop-up, never over another one): the full date, the order's listing and its full title (with copies),
         the metal choice, "Matching: the Right is the mirror of the Left", the quantity, the engraving's words and seals, the message.
@@ -153,6 +156,20 @@
       (c.copy ? `<span class="owfCp" aria-hidden="true"><span class="cp">${ic('copy', { size: 13 })}</span><span class="ck">${ic('check', { size: 13, weight: 2.2 })}</span></span>` : '') + `</button>`;
   };
   const stateHtml = s => `<button type="button" class="owfChip owfState ${esc(s.tone || 'neutral')}" data-owf-chip="state" data-owf-item aria-haspopup="true" aria-expanded="false" aria-label="State: ${esc(s.text)}" tabindex="-1"><i class="owfSdot" aria-hidden="true"></i><span class="owfTx">${esc(s.text)}</span></button>`;
+  const moreHtml = rove => `<button type="button" class="owfMore" data-owf-item aria-expanded="false" aria-controls="owfDetails" tabindex="${rove ? 0 : -1}"><span>Details</span>${ic('chevron-down', { size: 14, weight: 2 })}</button>`;
+  /** The first row of the glance line. The chips that tell which order it is (order, buyer, time, ship-by, metal) are ONE row and Details is its last item, right after the
+   *  metal (after the last of them when there is no metal chip): the toggle always sits on the line of that chip, never alone on the next. The row does not break inside while
+   *  the buyer and the ship-by can give way (see .owfCore in charm-nest-1.html); the chips that come later (pairs, a custom order, engraving, message) follow it
+   *  and are the ones that wrap. A state that needs a look is the pill at the right end. DOM order is the visual order, so the Tab and arrow keys walk the line as it reads. */
+  const CORE = ['order', 'buyer', 'purchased', 'ship', 'metal'];
+  function barHtml(chips, f) {
+    const left = chips.filter(c => !c.right), core = left.filter(c => CORE.includes(c.id)), later = left.filter(c => !CORE.includes(c.id));
+    const last = core.pop(), has = (f.cells || []).length > 0;
+    let h = '';
+    if (last || has) h += '<span class="owfCore">' + core.map((c, i) => chipHtml(c, i === 0)).join('') + '<span class="owfTail">' + (last ? chipHtml(last, !core.length) : '') + (has ? moreHtml(!last) : '') + '</span></span>';
+    h += later.map(c => chipHtml(c, false)).join('');
+    return h + (f.state ? '<span class="owfEnd">' + stateHtml(f.state) + '</span>' : '');
+  }
   const copyBtn = (v, label) => `<button type="button" class="owfCopy" data-copy="${esc(v)}" aria-label="${esc(label || 'Copy')}" title="${esc(label || 'Copy')}"><span class="cp">${ic('copy', { size: 13 })}</span><span class="ck">${ic('check', { size: 13, weight: 2.2 })}</span></button>`;
   const cellHtml = c => {
     const cls = 'm' + (c.wide ? ' wide' : '') + (c.block ? ' block' : '') + (c.mono ? ' mono' : '');
@@ -286,6 +303,10 @@
     } else d.hidden = true;
   }
 
+  /** A chip shortened with an ellipsis (a long buyer name, or the ship-by on a tight line) says its full text in its title; it is set when the pointer or the focus
+   *  reaches the chip, so a chip that fits has none (its card is how everyone reads it). */
+  const titleIfCut = chip => { const t = chip.querySelector('.owfTx'); if (!t) return; if (t.scrollWidth > t.clientWidth + 1) chip.title = (t.textContent || '').replace(/\s+/g, ' ').trim(); else chip.removeAttribute('title'); };
+
   function wire(host) {
     const s = S_OF(host); if (s.wired) return; s.wired = true;
     const idOf = n => { const c = n && n.closest && n.closest('[data-owf-chip]'); return c && host.contains(c) ? c : null; };
@@ -296,6 +317,7 @@
       if (e.pointerType === 'touch') return;
       if (e.target.closest && e.target.closest('.owfPop')) { kill(s, 'leave'); return; }
       const chip = idOf(e.target); if (!chip || (e.relatedTarget && chip.contains(e.relatedTarget))) return;
+      titleIfCut(chip);
       kill(s, 'leave'); kill(s, 'rest');
       const id = chip.dataset.owfChip; if (s.open === id || s.by === 'pin') return;
       s.timers.rest = setTimeout(() => { s.timers.rest = 0; if (host.isConnected) openCard(host, id, 'hover'); }, s.open ? BEAT : REST);
@@ -324,6 +346,7 @@
     host.addEventListener('focusin', e => {
       const chip = idOf(e.target);
       if (chip) {
+        titleIfCut(chip);
         host.querySelectorAll('[data-owf-item]').forEach(n => { n.tabIndex = n === chip ? 0 : -1; });
         if (kbdNow() && !s.rendering && s.by !== 'pin') openCard(host, chip.dataset.owfChip, 'focus');
         return;
@@ -358,7 +381,7 @@
     s.on = (f && f.on) || {};
     const chips = f.loading ? [] : chipsOf(f, f.now == null ? now : f.now);
     // (the line says a day, never a minute: it is drawn again when the day changes, not every minute)
-    const bar = JSON.stringify([f.loading, f.key, chips.map(c => [c.id, c.text, c.tone, c.dot, c.gift, c.aria, c.copy, c.late]), f.state, (f.loading && f.order) || 0, (f.loading && f.buyer) || 0]);
+    const bar = JSON.stringify([f.loading, f.key, chips.map(c => [c.id, c.text, c.tone, c.dot, c.gift, c.aria, c.copy, c.late]), f.state, (f.cells || []).length > 0, (f.loading && f.order) || 0, (f.loading && f.buyer) || 0]);
     const popSig = JSON.stringify(chips.map(c => c.pop));
     const list = JSON.stringify(f.cells || []);
     const sig = bar + '|' + popSig + '|' + list;
@@ -388,8 +411,7 @@
           h = known.join('') + '<span class="owfSk owSk" aria-hidden="true"></span><span class="owfSk owSk" aria-hidden="true"></span><span class="owfSk owSk short" aria-hidden="true"></span>';
           if (f.order && f.order.id) s.chips.set('order', { id: 'order', pop: { title: 'Order', icon: 'order', rows: [row('Order number', f.order.id, { mono: 1, copy: f.order.id, copyLabel: 'Copy the order number' })] } });
         } else {
-          h = chips.filter(c => !c.right).map((c, i) => chipHtml(c, i === 0)).join('') + '<span class="owfEnd">' + (f.state ? stateHtml(f.state) : '') +
-            ((f.cells || []).length ? `<button type="button" class="owfMore" data-owf-item aria-expanded="false" aria-controls="owfDetails" tabindex="-1"><span>Details</span>${ic('chevron-down', { size: 14, weight: 2 })}</button>` : '') + '</span>';
+          h = barHtml(chips, f);
         }
         host.querySelector('.owfBar').innerHTML = h;
         host.querySelector('.owfBar').after(s.live);

@@ -504,6 +504,18 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
    Overview's own pill (.owName: card, hairline, 999px), a tone is the pills' own colours, the card is the dot cards' (.railTip), the dot is .owDot. ── */
 .owMeta{position:relative;display:block;container:owf/inline-size;margin-top:2px}
 .owfBar{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+/* Details on the first line, right after the metal chip (Paul, 12 Oct 2026: "always be on the first line to the right side of the SS sheet button"). The chips that say which order it is
+   (order, buyer, time, ship by, metal) and Details are ONE row (.owfCore) that does not break inside: the metal chip and Details are glued (.owfTail), and before anything wraps the
+   buyer and the ship-by give way (an ellipsis; the full text in the title); the order number, the time and the metal are never cut. The chips that come later
+   (pairs, engraving, message...) follow the row on its line when they fit and wrap below it when they do not. In a strip too narrow for even the shortened row (a phone) the chips
+   wrap as whole chips, Details still glued beside the metal. */
+.owfCore{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%}
+.owfTail{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%}
+.owfCore>.owfChip{flex:none}
+.owfCore>.owfChip[data-owf-chip=buyer]{flex:1 1 64px;max-width:max-content}
+.owfCore>.owfChip[data-owf-chip=buyer] .owfTx{max-width:190px}
+.owfCore>.owfChip[data-owf-chip=ship]{flex:1 1 88px;max-width:max-content}
+@container owf (max-width:580px){.owfCore{display:contents}.owfCore>.owfChip[data-owf-chip=buyer],.owfCore>.owfChip[data-owf-chip=ship]{flex-basis:auto}}
 .owfChip{position:relative;display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;height:28px;padding:0 11px 0 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);font:500 12.5px/1 var(--sans);white-space:nowrap;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .12s cubic-bezier(.2,.8,.2,1),border-color .12s,box-shadow .12s,background-color .12s,color .12s}
 .owfChip:hover,.owfChip[aria-expanded=true]{border-color:var(--goldLine);box-shadow:0 6px 16px rgba(20,16,10,.08);transform:translateY(-1px)}
 .owfChip[aria-expanded=true]{background:var(--card2)}
@@ -7548,7 +7560,7 @@ boot();
 <script src="charm-nest-sku.js?v=20261011-sv1"></script>
 <script src="charm-nest-keep.js?v=20261011-sv1"></script>
 <!-- the order window's facts (charm-nest-order-facts.js: OrderFacts.paint): a glance line of icon chips, a small card on each, one Details drop-down; the bridge gathers them (OrderWin.factsOf) -->
-<script src="charm-nest-order-facts.js?v=20261012-fa1-ns1"></script>
+<script src="charm-nest-order-facts.js?v=20261012-fa1-ns1-dp1"></script>
 <script src="charm-nest-siblings.js?v=20261012-sg1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
