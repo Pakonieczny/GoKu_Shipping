@@ -108,7 +108,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const P = '.pvSetup';
     const ovOf = () => page.evaluate(KEY => { const o = B.orders.byKey.get(KEY).engravingOverride; return o ? JSON.parse(JSON.stringify(o)) : null; }, KEY);
     const prompt = () => page.evaluate(() => { const w = document.querySelector('.pvSetup .engpWhy'); if (!w) return null; const r = e => e.getBoundingClientRect(); const chips = [...w.querySelectorAll('.engpChip')], inp = w.querySelector('.engpWhyText'), bs = [...w.querySelectorAll('.engpWhyRow button')]; const p = document.querySelector('.pvSetup .engp');
-      return { chips: chips.map(c => c.textContent.trim()), codes: chips.map(c => c.dataset.code), input: !!inp, ph: inp && inp.placeholder, btns: bs.map(b => b.textContent.trim()), mainActs: !!p.querySelector('.engpActs [data-engp=save]'), text: w.textContent.replace(/\s+/g, ' '), w: r(w).width, over: chips.concat(inp ? [inp] : [], bs).some(e => r(e).right > r(p).right + 0.5), inView: r(w).bottom <= innerHeight }; });
+      return { chips: chips.map(c => c.textContent.trim()), codes: chips.map(c => c.dataset.code), input: !!inp, ph: inp && inp.placeholder, btns: bs.map(b => b.textContent.trim()), mainActs: !!p.querySelector('.engpActs [data-engp=save]'), text: w.textContent.replace(/\s+/g, ' '), w: r(w).width, over: chips.concat(inp ? [inp] : [], bs).some(e => r(e).right > r(p).right + 0.5), inView: r(w).bottom <= innerHeight, bottom: Math.round(r(w).bottom), winH: innerHeight }; });
 
     // ═══ 6a · the OLD way (what the panel did before this change: the patch alone, no reason): the write count to match ═══
     await reset();
@@ -131,7 +131,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(pr && pr.chips.length >= 3 && pr.chips.length <= 4, 'changing the system\'s words and pressing Save asks "Why change it?" with 3-4 quick buttons, in the panel: ' + JSON.stringify(pr && pr.chips));
     check(pr.input && /else/i.test(pr.ph) && pr.btns.join('|') === 'Save|Cancel', 'one small text box ("' + pr.ph + '") with its own Save and a Cancel: ' + pr.btns.join('|'));
     check(!pr.mainActs && /^Why change it\?/.test(pr.text), 'the prompt replaces the Save / Cancel row (no pop-up): "' + pr.text + '"');
-    check(!pr.over && pr.inView, 'it fits the panel\'s width: nothing sticks out' );
+    check(!pr.over && pr.inView, 'it fits the panel\'s width: nothing sticks out (over ' + pr.over + ', in view ' + pr.inView + ', bottom ' + pr.bottom + ' / window ' + pr.winH + ')');
     check((await ovOf()) === null && srv.st.calls.slice(a.calls).filter(c => c.op === 'runPut').length === 0, 'nothing is saved while the prompt is open');
     if (shots) await page.locator(P + ' .engp').screenshot({ path: path.join(shots, 'why-prompt.png') });
 

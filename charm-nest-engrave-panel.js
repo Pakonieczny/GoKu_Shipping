@@ -432,6 +432,7 @@
       if (ch && ch.any && !d.why) {   // (asked once: the answer stays with the draft until the person edits again)
         d.ask = d.ask || { text: '' }; d.confirm = ''; d.error = ''; draw();
         const first = el.querySelector('[data-engp="why"]'); if (first) tryDo(() => first.focus({ preventScroll: true }));
+        const box = el.querySelector('.engpWhy'); if (box && box.scrollIntoView) tryDo(() => box.scrollIntoView({ block: 'nearest' }));   // (the question is taller than the row it replaces: bring all of it into view)
         return;
       }
       if (cons && !confirmed && cons.plain.length) { d.confirm = 'save'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return; }
