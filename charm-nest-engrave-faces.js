@@ -74,12 +74,24 @@
     return { text: ls.join('\n'), lines: ls, fontWord: fw || null };
   }
   const validMode = m => MODES.includes(m);
+  /** NO EARRING IS EVER ENGRAVED (ZODNOBACK, Paul 12 Oct 2026; the one rule is charm-nest-orders.js section 3d, earringNeverBackEngraves). The intake wrote its verdict on the line's spec (spec.engraveNever:
+   *  { rule, form, why, note }); everything else in the app asks THIS, never the buyer's words or the form again. `x` is a row, a spec or a bare reading. → the verdict or null. */
+  function neverOf(x) {
+    const row = x && typeof x === 'object' ? (x.parentRow || x) : null;
+    const spec = row && row.spec && typeof row.spec === 'object' ? row.spec : row;
+    const n = spec && spec.engraveNever;
+    return n && typeof n === 'object' && n.rule ? n : null;
+  }
+  const NEVER_REASON = "Earrings are never engraved (the shop's rule)";
   /** The line's effective engraving setup: spec.engraving (the intake's reading) under the row's engravingOverride (a person's word, which always wins).
    *  `x` is a row ({ spec, engravingOverride }), a spec ({ engraving, engraveCandidate }) or a bare engraving object. No reading at all: today's setup (back when the line has
    *  anything to engrave, none otherwise). */
   function setupOf(x, override) {
     const row = x && typeof x === 'object' ? x : {};
     const spec = row.spec && typeof row.spec === 'object' ? row.spec : (row.engraving !== undefined || row.engraveCandidate !== undefined ? row : null);
+    // an earring is never engraved, whatever the reading says and whatever a person picked later: the pick is not in force (it is kept as it was saved, never rewritten), nothing asks
+    const never = neverOf(spec ? { spec } : null);
+    if (never) return { v: 1, mode: 'none', faces: [], front: null, back: null, needsPerson: false, source: 'rule', edited: false, multi: false, pieces: null, reviewKind: null, raw: '', textSource: 'none', confidence: 1, why: str(never.why) || NEVER_REASON, option: null, sides: null, by: '', at: 0, never: true };
     let base = spec && spec.engraving && typeof spec.engraving === 'object' ? spec.engraving : (!spec && validMode(row.mode) ? row : null);
     if (base && !validMode(base.mode)) base = null;
     const ov0 = override !== undefined ? override : row.engravingOverride;
@@ -268,5 +280,5 @@
 
   return { FRONT, BACK, FACES, MODES, SUFFIX, STATE_ORDER, DECIDED, faceOf, isFront, label, title, tag, jobKey, parseKey, pieceKeyOf, recKey, parseRecKey, recKeyOf,
     normFace, setupOf, modeLabel, describe, seedFor, planFaces, reconcile, pieceCount, faceJobs, groupPieces, slotLabel, faceStatus, bothFacesDone, bothFacesWritten, combine,
-    approveAllGate, dedupe, pickRecord, recordsOf, panelRows, isDecided, review };
+    approveAllGate, dedupe, pickRecord, recordsOf, panelRows, isDecided, review, neverOf, NEVER_REASON };
 });
