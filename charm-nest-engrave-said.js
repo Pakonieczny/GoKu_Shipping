@@ -57,7 +57,7 @@
   /** The box: a title that says plainly what it is, then each part under its small label (the look of the order window's "What the customer wrote"). "" when there is nothing to show. */
   function html(row, o) {
     const rows = rowsOf(row); if (!rows.length) return '';
-    const box = `<div class="owSaid">${rows.map(([k, v]) => `<span class="lbl">${esc(k)}</span>${esc(v)}`).join('')}</div>`;
+    const box = `<div class="owSaid">${rows.map(([k, v]) => `<span class="lbl">${esc(k)}</span> ${esc(v)}`).join('')}</div>`;
     return `<section class="pvSec pvSaid" data-said>${o && o.bare ? '' : '<h4 class="pvH">What the customer wrote</h4>'}${box}</section>`;
   }
 
