@@ -269,6 +269,17 @@ function patchLeavesThreadAsIs(prev, patch) {
 // pictures by updatedAt after 90 days, and the Inbox lists threads by it.
 const QUIET_BUMP_MS = 6 * 3600 * 1000;
 
+// The link's consistency check (_etsyMailLinkConsistency.js) marks a conversation whose stored messages fall short of its record:
+// thread.fullReread = { atMs, jobId }. While the mark is fresh (3 days) the extension is asked for a COMPLETE read of the Etsy
+// conversation (threadExists says "not known"; a scrape that was not a full one is answered needsFullScrape). The complete read
+// that follows clears the mark and leaves thread.readComplete = { atMs, reqAtMs, pageMessages, inserted }: proof that every
+// message on Etsy's page is stored, which is how the check tells a lost message from a counter that was merely off.
+const FULL_REREAD_TTL_MS = 3 * 24 * 3600 * 1000;
+function fullRereadWanted(thread) {
+  const f = thread && thread.fullReread;
+  return !!f && typeof f === "object" && typeof f.atMs === "number" && Date.now() - f.atMs < FULL_REREAD_TTL_MS;
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
@@ -318,8 +329,9 @@ exports.handler = async (event) => {
     if (!convId) return bad("threadExists requires etsyConversationId");
     const threadId = `etsy_conv_${convId}`;
     try {
-      // FC13b: only messageCount is used, and the thread document is about 12 KB (two search texts): read the one field.
-      const [tSnap] = await db.getAll(db.collection(THREADS_COLL).doc(threadId), { fieldMask: ["messageCount"] });
+      // FC13b: only messageCount is used, and the thread document is about 12 KB (two search texts): read the one field
+      // (and fullReread, the mark the link's consistency check puts on a conversation it wants read from Etsy in full).
+      const [tSnap] = await db.getAll(db.collection(THREADS_COLL).doc(threadId), { fieldMask: ["messageCount", "fullReread"] });
       if (!tSnap.exists) return json(200, { exists: false });
       const data = tSnap.data() || {};
       const mc = typeof data.messageCount === "number" ? data.messageCount : null;
@@ -327,6 +339,9 @@ exports.handler = async (event) => {
       if (mc === 0 || mc === null) {
         return json(200, { exists: false, reason: "thread_doc_present_but_empty" });
       }
+      // A conversation the link check found short: not "known", so the scraper scrolls the whole history (nothing is deleted or
+      // duplicated by that: the ingest below matches every message already stored by order and content)
+      if (fullRereadWanted(data)) return json(200, { exists: false, reason: "full_reread_requested" });
       return json(200, { exists: true });
     } catch (err) {
       console.error("threadExists failed:", err);
@@ -637,7 +652,8 @@ exports.handler = async (event) => {
     // A partial scrape that shares nothing with what is stored: messages
     // above the visible part may be missing. The extension answers with a
     // full scrape.
-    const needsFullScrape = aligned.gap && scrapeMode !== "full";
+    const rereadWanted = threadExisted && fullRereadWanted(prevThread);
+    const needsFullScrape = (aligned.gap || rereadWanted) && scrapeMode !== "full";
 
     // ─── 3) Update thread tail timestamps + message count ───
     if (writtenCount > 0) {
@@ -798,6 +814,22 @@ exports.handler = async (event) => {
       } catch (e) {
         console.warn("orderLink hook failed (non-fatal):", e.message);
       }
+    }
+
+    // ─── 3b) A complete read that the link's consistency check asked for ───
+    // Only for a conversation carrying the mark (rare), so an ordinary scrape costs nothing more. A full scrape that read cleanly
+    // (not signed out, messages with their text and times) has seen every message on Etsy's page and stored what was missing:
+    // the mark goes and the proof stays. Any other scrape leaves the mark for the full one that answers needsFullScrape.
+    if (rereadWanted) {
+      try {
+        const complete = scrapeMode === "full" && !scrapeIssue && messages.length > 0 && !(session && session.etsyLoggedIn === false);
+        if (complete) {
+          await tRef.set({
+            fullReread: FV.delete(),
+            readComplete: { atMs: Date.now(), reqAtMs: prevThread.fullReread.atMs, pageMessages: messages.length, inserted: writtenCount }
+          }, { merge: true });
+        }
+      } catch (e) { console.warn("[snapshot] complete-read mark not written:", e.message); }
     }
 
     // ─── 4) Session / login-required detection ───
