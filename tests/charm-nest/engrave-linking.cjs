@@ -86,7 +86,7 @@ const slotsOf = h => line => [...new Set(h.ctx.jobsOf(line).map(j => j.slot || n
 function env(h, log) {
   return { who: () => 'Paul', now: () => 7, store: (l, ov) => { if (ov) l.engravingOverride = ov; else delete l.engravingOverride; }, jobsOf: l => h.ctx.jobsOf(l), ensureJobs: l => h.ctx.ensureJobs(l), slots: l => slotsOf(h)(l),
     remove: j => { h.jobs.delete(j.key); }, skip: async j => { j.state = 'skipped'; }, setNone: j => { j.state = 'none'; }, reopen: j => j,
-    seed: async (j, seed) => { log.push(j.key); j.text = seed.text; j.lines = seed.lines.slice(); j.fontAsked = seed.fontWord || null; }, changed() {} };
+    seed: async (j, seed) => { log.push(j.key); j.text = seed.text; j.lines = seed.lines.slice(); j.fontAsked = seed.fontWord || null; j.faceFontWord = seed.fontWord || null; }, changed() {} };
 }
 const words = (h, row) => Object.fromEntries(h.ctx.jobsOf(row).map(j => [j.key.slice(row.key.length) || '(line)', j.text]));
 const PERSON_BACK = (text, extra) => Object.assign({ mode: 'back', back: { text }, by: 'Paul', at: 1 }, extra || {});   // (an OLD record: line-level only, no `pieces`)
