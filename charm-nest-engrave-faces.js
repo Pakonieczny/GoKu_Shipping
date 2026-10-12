@@ -107,7 +107,7 @@
     }
     return { v: 1, mode, faces, front, back, needsPerson, source, edited: !!ov, multi: faces.length > 1, pieces, reviewKind: base && base.reviewKind ? str(base.reviewKind) : null, raw: base && base.raw ? str(base.raw) : '',
       textSource: base ? str(base.textSource) || 'none' : 'none', confidence: base && Number.isFinite(+base.confidence) ? +base.confidence : (base ? 0.5 : 1),
-      why: ov ? `Set by ${str(ov.by) || 'a person'}` : base ? str(base.why) : '', option: base && base.option ? base.option : null, by: ov ? str(ov.by) : '', at: ov ? +ov.at || 0 : 0 };
+      why: ov ? `Set by ${str(ov.by) || 'a person'}` : base ? str(base.why) : '', option: base && base.option ? base.option : null, sides: base && base.sides && typeof base.sides === 'object' ? base.sides : null, by: ov ? str(ov.by) : '', at: ov ? +ov.at || 0 : 0 };
   }
   const modeLabel = mode => ({ none: 'No engraving', front: 'Front only', back: 'Back only', both: 'Front + back' }[mode] || '');
   const joinWords = f => (f && f.lines ? f.lines.join(' / ') : '');
