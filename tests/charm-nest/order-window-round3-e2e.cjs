@@ -155,13 +155,14 @@ async function main() {
     await page.evaluate(() => { window.__cur = () => document.querySelector('#owEng .engCard[data-key="' + (window.OrderWin ? OrderWin.key() : '') + '"]'); window.__backWords = e => { const t = e && e.querySelector('.engFace[data-face=back] .engTxt'); return t ? (t.getAttribute('title') || t.textContent || '') : ''; }; });
     const sel = async inner => '#owEng .engCard[data-key="' + (await page.evaluate(() => OrderWin.key())) + '"] ' + inner;
     const backThumb = '.engFace[data-face=back] .engThumb';
+    // (under: ENGLAYOUT puts the section directly under the chip strip)
     const card = () => page.evaluate(() => {
       const h = document.getElementById('owEng'), e = window.__cur(), q = s => (s === '.owEngWait' ? h : e) && (s === '.owEngWait' ? h : e).querySelector(s);
       const seals = e ? [...e.querySelectorAll('.egButtonSeal .seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } }) : [];
       const r = h.getBoundingClientRect(), meta = document.getElementById('owMeta').getBoundingClientRect();
       return { hidden: !e, state: e ? e.dataset.state : '', words: window.__backWords(e), n: h.querySelectorAll('.engCard').length, labels: [...h.querySelectorAll('.engCard .engName')].map(n => n.textContent), approve: !!q('[data-e=approve]'), btn: !!q('.egApproveButton'), disabled: !!(q('.egApproveButton') || {}).disabled,
         back: !!q('.engFace[data-face=back] .engThumb'), preview: !!q('.engFace[data-face=back] .engThumb .engpv, .engFace[data-face=back] .engThumb canvas, .engFace[data-face=back] .engThumb img, .engFace[data-face=back] .engThumb svg'), seals, wait: (q('.owEngWait') || {}).textContent || '', red: (document.getElementById('orderWin').textContent.match(/still to be settled/gi) || []).length,
-        under: r.height > 0 && r.top >= meta.bottom - 1 && r.left >= meta.left - 2,   // (ENGLAYOUT: the section sits directly under the chip strip) w: Math.round(r.width), h: Math.round(r.height), lid: document.getElementById('owPhoto').dataset.lid || '', key: OrderWin.key() };
+        under: r.height > 0 && r.top >= meta.bottom - 1 && r.left >= meta.left - 2, w: Math.round(r.width), h: Math.round(r.height), lid: document.getElementById('owPhoto').dataset.lid || '', key: OrderWin.key() };
     });
     // the zoom of a picture, read from the picture itself (data-scale: the state; the transition on its way is not waited for), and what could have opened
     const zoomOf = sel => page.evaluate(sel => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m ? { s: +(m.dataset.scale || 1), src: decodeURIComponent(m.currentSrc || m.src || '').slice(0, 300), nat: [m.naturalWidth || m.width, m.naturalHeight || m.height], ox: +(m.dataset.offsetX || 0), oy: +(m.dataset.offsetY || 0) } : null; }, sel);

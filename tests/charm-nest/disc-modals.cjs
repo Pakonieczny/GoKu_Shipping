@@ -99,8 +99,11 @@ async function main() {
     await page.waitForSelector(`#ordItems [data-key="${keyOf(D)}"]`);
 
     const shot = async (name, sel) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { recursive: true }); try { const h = sel ? await page.$(sel) : null; if (h) await h.screenshot({ path: path.join(SHOTS, name) }); else await page.screenshot({ path: path.join(SHOTS, name) }); } catch (e) { console.log('  – shot ' + name + ' failed: ' + e.message); } };
-    const OV = '#orderWin .owVInfo .owEng', TAB = '#owSheetPanel [data-engraving-panel]', WIN = '[data-r2=eng]';
+    const OV = '#owEng', TAB = '#owSheetPanel [data-engraving-panel]', WIN = '[data-r2=eng]';
     const waitCard = (sel, state, ms = 8000) => page.waitForFunction(({ sel, state }) => { const e = document.querySelector(sel + ' .swEng'); return e && (e.offsetParent || e.getClientRects().length) && (!state || e.dataset.state === state); }, { sel, state }, { timeout: ms }).then(() => true, () => false);
+    // (ENGCARD, 12 Oct 2026: the Overview's Engraving section is a card for EACH disc, side by side: they are found by their job key)
+    const waitEngCard = (key, state, ms = 8000) => page.waitForFunction(({ key, state }) => { const e = document.querySelector(`#owEng .engCard[data-piece="${key}"]`); return e && (e.offsetParent || e.getClientRects().length) && (!state || e.dataset.state === state); }, { key, state }, { timeout: ms }).then(() => true, () => false);
+    const cards = sel => page.evaluate(sel => [...document.querySelectorAll(sel + ' .engCard')].filter(e => e.offsetParent || e.getClientRects().length).map(e => { const t = e.querySelector('.engFace[data-face=back] .engTxt'), b = e.querySelector('.egApproveButton'); return { key: e.dataset.piece, state: e.dataset.state, name: (e.querySelector('.engName') || {}).textContent || '', words: t ? (t.getAttribute('title') || t.textContent || '') : '', seals: e.querySelectorAll('.seal').length, button: b ? { text: b.textContent.trim(), disabled: b.disabled } : null, switch: !!document.querySelector('#owEng .egEarSwitch, #owEng [data-a="discPrev"], #owEng [data-a="discNext"]') }; }), sel);
     const closeWin = async () => { await page.evaluate(() => { const o = document.getElementById('orderWin'); if (o && o.open) document.getElementById('owClose').click(); }); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 5000 }).catch(() => {}); await page.waitForTimeout(300); };
     // what the engraving area of a host shows, as a person reads it
     const area = sel => page.evaluate(sel => {
@@ -112,7 +115,7 @@ async function main() {
         switchShown: !!(sw && (sw.offsetParent || sw.getClientRects().length)), tabs: tabs.map(t => ({ key: t.dataset.ear, on: t.getAttribute('aria-pressed') === 'true', text: t.textContent.replace(/\s+/g, ' ').trim() })),
         nav: [...host.querySelectorAll('[data-a="discPrev"],[data-a="discNext"]')].map(n => ({ a: n.dataset.a, disabled: n.disabled })), engrave: !!(e && e.querySelector('[data-e=engrave]')) };
     }, sel);
-    const probe = { shot, OV, TAB, WIN, waitCard, closeWin, area };
+    const probe = { shot, OV, TAB, WIN, waitCard, waitEngCard, cards, closeWin, area };
     module.exports.__probe = probe;
     await require('./disc-modals-run.cjs')({ page, check, probe, srv, D, E, S1, pool, keyOf, dKeys, eKeys, sKeys, qKeys, Q3, errors });
   } finally { await browser.close(); srv.close(); }

@@ -1,43 +1,27 @@
 module.exports = async function run({ page, check, probe, srv, D, E, S1, Q3, pool, keyOf, dKeys, eKeys, sKeys, qKeys, errors }) {
-  const { shot, OV, TAB, WIN, waitCard, closeWin, area } = probe;
+  const { shot, OV, TAB, WIN, waitCard, waitEngCard, cards, closeWin, area } = probe;
   const tabText = (a, i) => (a.tabs[i] || {}).text || '';
-  // ── 1 · order window, Overview ──
+  let a;
+  // ── 1 · order window, Overview (ENGCARD, 12 Oct 2026: a card for EACH disc, side by side; no Disc switch, no Back / Next) ──
   await page.evaluate(k => OrderWin.open(k), keyOf(D));
   await page.waitForFunction(() => OrderWin.isOpen());
-  check(await waitCard(OV, 'approve'), 'Overview of the 2-disc order: a card (To approve)');
+  check(await waitEngCard(dKeys[0], 'approve') && await waitEngCard(dKeys[1], 'approve'), 'Overview of the 2-disc order: a card for each disc (To approve)');
   await page.waitForTimeout(500);
-  let a = await area(OV);
-  check(a.cards === 1 && a.switchShown && a.tabs.length === 2 && a.tabs[0].on && !a.tabs[1].on, 'ONE card with the Disc 1 | Disc 2 switch, Disc 1 shown: ' + JSON.stringify(a.tabs));
-  check(/DISC 1 of 2/i.test(tabText(a, 0)) && /DISC 2 of 2/i.test(tabText(a, 1)) && /J/.test(tabText(a, 0)) && /Q/.test(tabText(a, 1)) && /Typewriter/.test(tabText(a, 0)) && /Typewriter/.test(tabText(a, 1)), 'each disc button carries its tag, its words and its font by name: ' + tabText(a, 0) + ' | ' + tabText(a, 1));
-  check(a.words === 'J' && a.state === 'approve' && a.nav.length === 2, 'the card is Disc 1\'s: words J, Back and Next present: ' + JSON.stringify([a.words, a.state, a.nav]));
+  let cs = await cards(OV);
+  check(cs.length === 2 && cs[0].key === dKeys[0] && cs[1].key === dKeys[1] && !cs[0].switch, 'TWO cards side by side, Disc 1 then Disc 2, and no Disc switch or Back / Next in the Overview: ' + JSON.stringify(cs.map(c => [c.key.slice(-3), c.name])));
+  check(/Disc 1/.test(cs[0].name) && /Disc 2/.test(cs[1].name) && cs[0].words === 'J' && cs[1].words === 'Q' && cs.every(c => c.state === 'approve'), 'each card names its disc and has its own words (J, Q): ' + JSON.stringify(cs.map(c => [c.name, c.words, c.state])));
   await shot('disc-overview-disc1.png', '#orderWin');
-  // Disc 2 by the switch
-  await page.click(`${OV} .egEarTab[data-ear="${dKeys[1]}"]`);
-  await page.waitForFunction(sel => { const e = document.querySelector(sel + ' .words'); return e && e.textContent.trim() === 'Q'; }, OV, { timeout: 5000 }).catch(() => {});
-  a = await area(OV);
-  check(a.words === 'Q' && !a.tabs[0].on && a.tabs[1].on && a.cards === 1, 'a press on Disc 2: its own card, words Q: ' + JSON.stringify([a.words, a.tabs.map(t => t.on)]));
-  // Next wraps to Disc 1, Back goes to Disc 1 as well (two discs)
-  await page.click(`${OV} [data-a=discNext]`);
-  await page.waitForFunction(sel => (document.querySelector(sel + ' .words') || {}).textContent === 'J', OV, { timeout: 5000 }).catch(() => {});
-  a = await area(OV); check(a.words === 'J' && a.tabs[0].on, 'Next from Disc 2 goes round to Disc 1');
-  await page.click(`${OV} [data-a=discPrev]`);
-  await page.waitForFunction(sel => (document.querySelector(sel + ' .words') || {}).textContent === 'Q', OV, { timeout: 5000 }).catch(() => {});
-  a = await area(OV); check(a.words === 'Q' && a.tabs[1].on, 'Back from Disc 1 goes round to Disc 2');
-  // Fix in Engraving asks for the disc shown
-  await page.click(OV + ' [data-e=engrave]'); await page.waitForFunction(() => window.__links.length >= 1);
+  // a press on Disc 2's Back picture asks Engrave for Disc 2 (the card is not left)
+  await page.click(`${OV} .engCard[data-piece="${dKeys[1]}"] .engFace[data-face=back] .engThumb`); await page.waitForFunction(() => window.__links.length >= 1);
   let l = await page.evaluate(() => __links[__links.length - 1]);
-  check(l && String(l.rid) === D.rid && l.key === dKeys[1], 'Fix in Engraving asks EngraveLink for Disc 2\'s job: ' + JSON.stringify(l));
-  // approve Disc 2 only: one approval, one seal on its button; Disc 1 is still to approve
-  await page.click(OV + ' [data-e=approve]');
-  check(await waitCard(OV, 'approved'), 'Disc 2 approved here reads approved');
+  check(l && String(l.rid) === D.rid && l.key === keyOf(D) && l.piece === dKeys[1] && l.poolId === pool(D, 2) && l.face === 'back', 'the Back picture of Disc 2 asks EngraveLink for the line, Disc 2\'s piece, its charm and the back: ' + JSON.stringify(l));
+  // approve Disc 2 only: one approval, one seal where its button was; Disc 1 is still to approve
+  await page.click(`${OV} .engCard[data-piece="${dKeys[1]}"] [data-e=approve]`);
+  check(await waitEngCard(dKeys[1], 'approved', 15000), 'Disc 2 approved here reads approved');
   await page.waitForTimeout(500);
-  a = await area(OV);
-  check(a.seals === 1 && a.button && a.button.disabled && (await page.evaluate(() => __approves.map(x => x.key))).join() === dKeys[1], 'one approval (Disc 2), one seal on its disabled button: ' + JSON.stringify([a.seals, a.button]));
-  check(/Approved/.test(tabText(a, 1)) && /Placement to check/.test(tabText(a, 0)), 'the switch says where each disc stands: ' + tabText(a, 0) + ' | ' + tabText(a, 1));
-  await page.click(`${OV} .egEarTab[data-ear="${dKeys[0]}"]`);
-  await page.waitForFunction(sel => { const e = document.querySelector(sel + ' .swEng'); return e && e.dataset.state === 'approve'; }, OV, { timeout: 5000 }).catch(() => {});
-  a = await area(OV);
-  check(a.state === 'approve' && a.words === 'J' && a.seals === 0 && a.button && !a.button.disabled, 'Disc 1 is still to approve, no seal, enabled button (Disc 2\'s approval did not reach it): ' + JSON.stringify([a.state, a.seals, a.button]));
+  cs = await cards(OV);
+  check(cs[1].seals === 1 && !cs[1].button && (await page.evaluate(() => __approves.map(x => x.key))).join() === dKeys[1], 'one approval (Disc 2), one seal where its button was, no button: ' + JSON.stringify([cs[1].seals, cs[1].button]));
+  check(cs[0].state === 'approve' && cs[0].words === 'J' && cs[0].seals === 0 && cs[0].button && !cs[0].button.disabled, 'Disc 1 is still to approve, no seal, enabled button (Disc 2\'s approval did not reach it): ' + JSON.stringify([cs[0].state, cs[0].seals, cs[0].button]));
   // the Engraving cell: every disc's seal, disc by disc
   const cell = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => x.querySelector('i') && x.querySelector('i').textContent === 'Engraving'); return m ? { text: m.querySelector('span').textContent.replace(/\s+/g, ' ').trim(), seals: m.querySelectorAll('.seal').length } : null; });
   check(cell && /Disc 1 · J/.test(cell.text) && /Disc 2 · Q/.test(cell.text) && cell.seals >= 1, 'the Engraving cell says it disc by disc, with the approved disc\'s seal: ' + JSON.stringify(cell));
@@ -107,16 +91,16 @@ module.exports = async function run({ page, check, probe, srv, D, E, S1, Q3, poo
   // a single charm keeps its card, with no switch
   await page.evaluate(k => OrderWin.open(k), keyOf(S1));
   await page.waitForFunction(() => OrderWin.isOpen());
-  check(await waitCard(OV, 'review') || await waitCard(OV, 'approve'), 'a single charm: its card');
-  a = await area(OV);
-  check(a.cards === 1 && !a.switchShown && a.nav.length === 0 && a.words === 'GOOD // LUCK', 'no switch, no Back/Next on a single: ' + JSON.stringify([a.switchShown, a.nav, a.words]));
+  check(await waitEngCard(sKeys[0], 'review') || await waitEngCard(sKeys[0], 'approve'), 'a single charm: its card');
+  cs = await cards(OV);
+  check(cs.length === 1 && !cs[0].switch && cs[0].words.replace(/\n/g, ' // ') === 'GOOD // LUCK', 'one card, no switch, no Back/Next on a single: ' + JSON.stringify([cs.length, cs[0] && cs[0].switch, cs[0] && cs[0].words]));
   await closeWin();
   // a plain quantity-3 line (three of one charm): one card as ever, no disc switch
   await page.evaluate(k => OrderWin.open(k), keyOf(Q3));
   await page.waitForFunction(() => OrderWin.isOpen());
-  check(await waitCard(OV, 'review') || await waitCard(OV, 'approve'), 'a plain quantity-3 line: its card');
-  a = await area(OV);
-  check(!a.switchShown && a.nav.length === 0 && a.words === 'LOVE' && qKeys.length === 1, 'no disc switch, no Back/Next on a plain quantity-3 line: ' + JSON.stringify([a.cards, a.switchShown, a.nav, a.words, qKeys]));
+  check(await waitEngCard(qKeys[0], 'review') || await waitEngCard(qKeys[0], 'approve'), 'a plain quantity-3 line: its card');
+  cs = await cards(OV);
+  check(cs.length === 1 && !cs[0].switch && cs[0].words === 'LOVE' && qKeys.length === 1, 'one card, no disc switch, no Back/Next on a plain quantity-3 line: ' + JSON.stringify([cs.length, cs[0] && cs[0].switch, cs[0] && cs[0].words, qKeys]));
   const qcell = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => x.querySelector('i') && x.querySelector('i').textContent === 'Engraving'); return m ? m.querySelector('span').textContent.replace(/\s+/g, ' ').trim() : null; });
   check(!/Disc/.test(qcell || ''), 'its Engraving cell (if shown) says no disc: ' + qcell);
   await closeWin();

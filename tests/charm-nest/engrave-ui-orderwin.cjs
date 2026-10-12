@@ -29,7 +29,7 @@ const okA = (name, fn) => later.push([name, fn]);
 const dom = new JSDOM('<body><div id="host"></div></body>', { runScripts: 'outside-only', pretendToBeVisual: true });
 const w = dom.window, d = w.document;
 w.matchMedia = () => ({ matches: true });
-for (const f of ['charm-nest-motion.js', 'charm-nest-engrave-faces.js', 'charm-nest-engrave-sides.js', 'charm-nest-engrave-rows.js', 'charm-nest-piece-switch.js', 'charm-nest-engraving-seals.js', 'charm-nest-order-engraving.js', 'charm-nest-engrave-link.js']) w.eval(src(f));
+for (const f of ['charm-nest-motion.js', 'charm-nest-engrave-faces.js', 'charm-nest-engrave-sides.js', 'charm-nest-engrave-rows.js', 'charm-nest-piece-switch.js', 'charm-nest-engraving-seals.js', 'charm-nest-engrave-card.js', 'charm-nest-order-engraving.js', 'charm-nest-engrave-link.js']) w.eval(src(f));
 const F = w.CharmNestEngraveFaces, PS = w.CharmNestPieceSwitch, S = w.CNEngravingSeals, OE = w.OrderEngraving;
 
 /* ── contract-shaped lines and jobs ─────────────────────────────────────────── */
@@ -356,25 +356,24 @@ ok('a front seal keeps its face through merge, list and the timeline\'s events',
   });
 }
 
-/* 8c ── the card mounted in a host: no line editor under it (ENGMODAL: the menu is only in the Engraving tab) ──────────── */
-okA('mount: a faced card with its Front | Back switch; no engraving menu under the card, even with the component on the page', async () => {
+/* 8c ── the card mounted in a host (ENGCARD, 12 Oct 2026: ONE card for each PIECE, its Front and its Back side by side, no Front | Back switch, no line editor under it) ──────────── */
+okA('mount: one card for a faced piece with its Front and Back side by side; no engraving menu under it, even with the component on the page', async () => {
   reset(); w.Element.prototype.getClientRects = function () { return [{}]; };   // (jsdom has no layout: a card is drawn only where it can be seen)
   const host = d.createElement('div'); d.body.appendChild(host);
-  const h = OE.mount(host, { rid: '4195966039', key: charm.key, poolId: 'p1', row: charm });
+  const h = OE.mount(host, { rid: '4195966039', key: charm.key, poolId: 'p1', row: charm, rows: () => [charm], nameOf: () => 'CHARM' });
   await new Promise(r => setTimeout(r, 30));
-  const card = host.querySelector('.owEngCard');
-  assert(card, 'the card is drawn'); assert.equal(host.querySelectorAll('.egEarSwitch.egFaces .egEarTab').length, 2, 'with the Front | Back switch');
-  assert.equal(card.querySelector('.swEng').dataset.face, 'front', 'on the face still to settle');
-  assert.equal(host.querySelector('.owEngSetup'), null, 'no editor while the component is not on the page');
+  const card = host.querySelector('.engCard');
+  assert(card, 'the card is drawn'); assert.equal(host.querySelectorAll('.engCard').length, 1, 'ONE card for the piece');
+  assert.equal(card.querySelectorAll('.engFace').length, 2, 'its Front and its Back'); assert(card.querySelector('.engFace[data-face="front"]') && card.querySelector('.engFace[data-face="back"]'), 'both faces are on the card');
+  assert.equal(host.querySelectorAll('.egEarSwitch').length, 0, 'no Front | Back switch: both faces are on the one card'); assert.equal(host.querySelector('.swEng'), null, 'the old long card is gone');
   w.eval(src('charm-nest-engrave-setup.js'));   // (the real component, ENGSETUP's: mounted by its one call under every card)
   h.refresh(true, true); await new Promise(r => setTimeout(r, 30));
   assert.equal(host.querySelectorAll('.owEngSetup, .egSetup, textarea, select').length, 0, 'the order window card carries no engraving menu (it lives only in the Engraving tab)');
-  // a list of cards (a pair: a card for each ear), each with its Front | Back
+  // a counted line (three discs): a card for each disc, each with its own Front and Back
   const lh = d.createElement('div'); d.body.appendChild(lh);
-  const ps = [{ key: earLF.key, slot: 'L', poolId: 'pL', row: earLF.row }, { key: earRF.key, slot: 'R', poolId: 'pR', row: earRF.row }];
-  const lst = OE.mount(lh, { rid: '4195966040', pieces: ps }); await new Promise(r => setTimeout(r, 30));
-  assert.equal(lh.querySelectorAll('.owEngCard').length, 2, 'a card for each ear');
-  lh.querySelectorAll('.owEngCard').forEach(c => assert.equal(c.querySelectorAll('.egEarSwitch.egFaces .egEarTab').length, 2, 'each ear has its Front | Back'));
+  const lst = OE.mount(lh, { rid: '4195966040', key: neck.key, row: neck, rows: () => [neck], nameOf: () => 'DISC' }); await new Promise(r => setTimeout(r, 30));
+  assert.equal(lh.querySelectorAll('.engCard').length, 3, 'a card for each disc');
+  lh.querySelectorAll('.engCard').forEach(c => assert.equal(c.querySelectorAll('.engFace').length, 2, 'each disc has its Front and its Back'));
   delete w.CharmNestEngraveSetup; lst.destroy(); h.destroy(); host.remove(); lh.remove(); reset();
 });
 
