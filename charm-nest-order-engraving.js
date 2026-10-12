@@ -39,9 +39,9 @@
   function css() {
     const d = doc(); if (!d || d.getElementById('owEngCss')) return;
     const s = d.createElement('style'); s.id = 'owEngCss';
-    // (.engSaid: the customer's own words under the cards, one quiet block: a hairline at its left, small mono labels in front of each part, no box and no title)
+    // (.engSaid: the customer's own words under the cards, one quiet block: a hairline at its left, small mono labels in front of each part, no box and no title; a very long message scrolls inside it like the Engrave tab's box, it never pushes the window)
     s.textContent = '.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}'
-      + '.engSaid{margin:8px 0 0;padding:1px 0 1px 9px;border-left:2px solid var(--line);min-width:0;font:13px/1.45 var(--serif);color:var(--ink);overflow-wrap:anywhere}.engSaid[hidden]{display:none}'
+      + '.engSaid{margin:8px 0 0;padding:1px 0 1px 9px;border-left:2px solid var(--line);min-width:0;font:13px/1.45 var(--serif);color:var(--ink);overflow-wrap:anywhere;max-height:min(20vh,150px);overflow:auto}.engSaid[hidden]{display:none}'
       + '.engSaid .esName{font:700 9.5px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-top:6px}.engSaid .esName:first-child{margin-top:0}'
       + '.engSaid .esRow{min-width:0}.engSaid .esFaces{font:12.5px/1.45 var(--sans);color:var(--ink70)}'
       + '.engSaid i{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-right:2px}.engSaid .esSep{margin:0 3px;color:var(--ink45)}';
