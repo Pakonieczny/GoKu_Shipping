@@ -221,6 +221,8 @@ const ListMedia = (() => {
   const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
   // (a line of a SET of two designs a person saved for a listing that is not earrings, SIBLINGS: a necklace of SCHRODINGER CAT 1 and 2: its picture is the two designs side by side, plain, no Left or Right chip; the designs' SKUs, else [])
   const setOf = row => { try { const sp = row && !row.spec?.noDesign && !row.spec?.ownDesign ? row.spec : null, pr = sp && sp.pair, d = pr && !pr.glued && !pr.legacy && !pr.earring && pr.set && Array.isArray(pr.set.designs) ? pr.set.designs.map(String) : null; return d && d.length >= 2 && d.every(Boolean) ? d : []; } catch (_) { return []; } };
+  // (is this design one of the set a person saved for the line: asked for by one piece's picture, opts.design)
+  const inSet = (row, design) => setOf(row).some(k => k.toUpperCase() === String(design || '').toUpperCase());
   function pair(row) {
     return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
@@ -314,7 +316,7 @@ const ListMedia = (() => {
         if(es.every(Boolean))return await Pool.masterSet(es,row.spec?.size,px);
       }catch(_){/* the one picture the line always had */}
     }
-    const own=opts?earDesign(row,opts.side):'';
+    const own=opts?(opts.design && inSet(row,opts.design)?String(opts.design).toUpperCase():earDesign(row,opts.side)):'';   // (one piece of a set of designs: its own design, as drawn)
     const charm=(pairRow(row) || sideOne || both || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
     let ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
@@ -347,7 +349,7 @@ const ListMedia = (() => {
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
   function vectorKey(row,opts) {
     if(!row || row.spec?.noDesign || row.spec?.ownDesign)return '';
-    const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
+    const sku=String((opts?(opts.design && inSet(row,opts.design)?opts.design:earDesign(row,opts.side)):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
     if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():setOf(row).length?'|set:'+setOf(row).join('+').toUpperCase():''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
@@ -1467,7 +1469,7 @@ const Orders = window.Orders = (() => {
       const s = row.spec; if (!s) return;
       const qs = (s.problems || []).map(p => p.kind), sig = [s.designSku, s.material, s.form, s.size, s.chain, s.quantity, s.special ? s.special.kind : "", s.noDesign ? "nd" : "", qs.slice().sort().join("+")].join("|");
       if (readSaid.get(row.key) === sig) return; readSaid.set(row.key, sig);
-      const what = s.noDesign ? `not cut (${s.noDesignWhy || "no design"})` : [s.designSku || "no SKU", s.material ? labelOf(s.material) : "metal not read", s.form, s.size].filter(Boolean).join(" · ");
+      const what = s.noDesign ? `not cut (${s.noDesignWhy || "no design"})` : [(O.setDesignsOf(s) || []).join(" + ") || s.designSku || "no SKU", s.material ? labelOf(s.material) : "metal not read", s.form, s.size].filter(Boolean).join(" · ");
       TL.line(row, "interpreted", { id: row.key + "." + TL.hash(sig), once: true, text: `Read as ${what}${qs.length ? ` · ${qs.length} question${qs.length === 1 ? "" : "s"}` : ""}`.slice(0, 200),
         data: { sku: s.designSku || null, material: s.material || null, form: s.form || null, size: s.size || null, chain: s.chain || null, quantity: s.quantity || 1, special: s.special ? s.special.kind : null, noDesign: !!s.noDesign, questions: qs } });
     } catch (_) {}
@@ -3275,10 +3277,34 @@ const Pool = window.Pool = (() => {
     if (live.length) { const g = Math.max(0, ...live.map(r => +r.groupSize || 0)); if (g > 1) row.groupSize = g; else delete row.groupSize; }
     // a line pooled before one body was made of a design drawn twice (a live pool row of it holds the folded charm's hash) is the whole charm it was cut as: the intake's words about one body are taken back
     if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), g = e && sizeEntry(e, sp.size), whole = String((g && g.charmHash) || (e && e.charmHash) || ""); if (whole && live.some(r => String(r.charmHash) === whole)) O.solo(sp, null); }
+    if (live.length) noticeSet(row, live);
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
     const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
     if (had) O.pinPieces(sp, had);
+  }
+  /* SCHROLINK (Paul, 12 Oct 2026, order 4198409468): a person saved the listing's pair of designs (aliasPut pair), so the line now reads as a NECKLACE of TWO charms, but its pieces were made up before, from
+     the SKU alone (one piece of another design). The pooled pieces are not what the line is read as, and nothing else would ever tell a person: this is the "Order changed" card the Review tab already has for a
+     line Etsy changed, with its one answer, Accept the new order, which takes the old pieces off the sheet they are on and makes the line up again (repoolLine). Only a line whose pieces are ALL on sheets that are
+     still open (a draft, or a sheet not yet released, cut or put in a set that is on its way to the laser) is offered it; a piece on a sheet that was released or cut is never touched: the line is left as it was
+     and the log says so once. Nothing is written here: the flag is the row's own (changePending, repoolChanged), the card is Review's. Idempotent: asked again it adds nothing. */
+  const setToldFixed = new Set();
+  function noticeSet(row, live) {
+    try {
+      const sp = row.spec, want = O.setDesignsOf(sp);
+      if (!want || ["gone", "committed"].includes(row.state) || row.hold) return;
+      if (row.changePending && row.repoolChanged && ((B.review && B.review.items) || []).some(x => x.key === "chg:" + row.key)) return;   // (already offered: the card stands until a person answers it)
+      const units = Math.max(1, Math.round(+sp.quantity || 1)), expect = []; for (let u = 0; u < units; u++) for (const d of want) expect.push(d.toUpperCase());
+      const made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
+      if (made.length === expect.length && made.every((s, i) => s === expect[i])) return;   // (already made as the link says)
+      const ids = new Set(row.poolIds || []), cut = sh => !!sh.roseCutAt || Sets.ofRun(sh.runId).some(s => s.committedAt && s.sheetIds.includes(sh.sheetId));
+      const fixed = allSheets().filter(sh => (cut(sh) || sh.releaseFull || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c => ids.has(c.poolId)));
+      if (fixed.length) { if (!setToldFixed.has(row.key)) { setToldFixed.add(row.key); agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this line a set of charms (${want.join(" + ")}), but its piece is on ${fixed.map(sh => sh.fileBase || sh.sheetId).join(", ")}, released or cut: left as it was`); } return; }
+      row.changePending = true; row.repoolChanged = true;
+      const was = made.length ? made.join(" + ") : "nothing yet";
+      Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
+        why: `Now ${want.length === 2 ? "two" : want.length} charms, ${want.join(" + ")} (a saved link). Accept the new order to make it up again as ${expect.length} pieces: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
+    } catch (e) { console.warn("[bridge] saved two-charm link not noticed:", e && e.message); }
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
@@ -12137,6 +12163,16 @@ const Review = window.Review = (() => {
     if (skuListFor === B.master.entries && dl.childElementCount === B.master.entries.size) return;
     skuListFor = B.master.entries; dl.innerHTML = [...B.master.entries.keys()].sort().map(s => `<option value="${esc(s)}">`).join("");
   }
+  /** "Accept the new order" on an Order changed item (an order Etsy changed after the pull, or a line a saved link now reads another way): the answer is recorded, the item leaves Review, and the line is made up again at
+   *  what it reads as now (repool: its old pieces come off the open sheet they are on; a piece on a sheet already released or cut is held for a person instead, never touched). The one routine behind the card's button
+   *  and the button on the item's row in the Review tab. */
+  async function acceptChange(it) {
+    const r = it && it.row, sp = r && r.spec; if (!r || !sp) return;
+    answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending = false;
+    if (r.repoolChanged) { await repool(r); RunCtl.poke(); return; }
+    if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true, seals: CNEngravingSeals.merge(r.engrave) }; } else await repool(r);
+    RunCtl.poke();
+  }
   function card(it) {
     const c = el("div", "rvItem hoverItem"); c.dataset.kind = it.kind; if (it.row) { c.dataset.row = it.row.key; c.dataset.rid = String(it.row.order.receiptId); }
     const r = it.row, sp = r && r.spec, p = it.problem || {};
@@ -12342,8 +12378,8 @@ const Review = window.Review = (() => {
     } else if (it.kind === "placement") {
       return Engrave.placementCard(it.job, 1);
     } else if (it.kind === "orderChanged") {
-      c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${sp.designSku} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
-      c.querySelector("[data-a=accept]").onclick = async () => { answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending=false; if(r.repoolChanged){await repool(r);RunCtl.poke();return;} if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(r.engrave) }; } else await repool(r); RunCtl.poke(); };
+      c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${(O.setDesignsOf(sp) || [sp.designSku]).join(" + ")} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.querySelector("[data-a=accept]").onclick = () => acceptChange(it);
     } else if (it.kind === "heldOrder") {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the piece</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
@@ -12605,7 +12641,7 @@ const Review = window.Review = (() => {
     const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&it.kind==='unmatchedSku'?siblingOffer(row,pk,group):null;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
     if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
     if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
@@ -12613,6 +12649,7 @@ const Review = window.Review = (() => {
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
+    { const ab=node.querySelector('[data-rv-accept]'); if(ab)ab.onclick=async e=>{e.stopPropagation();ab.disabled=true;try{await acceptChange(it);}finally{ab.disabled=false;}}; }   // (Order changed: the card's own answer, on the item's row)
     const rid=String(rec?.receiptId || it.rid || '').replace(/\D/g,'');
     if(!row&&rid&&window.OrderWin){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.openOrder(rid,{from:node});
@@ -13939,7 +13976,7 @@ const OrderWin = window.OrderWin = (() => {
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
     wireZoom();
-    byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
+    byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const input = byId("owInput");
     input.oninput = () => { grow(); TeamMail.setDraft(W.rid, input.value); };
@@ -14227,7 +14264,7 @@ const OrderWin = window.OrderWin = (() => {
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
-    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—");   // (a necklace of saved charms names them all)
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
@@ -14395,7 +14432,8 @@ const OrderWin = window.OrderWin = (() => {
      A piece shows only its own steps and stamps (and its photo and details on the Overview); all of them show the order where its
      slowest piece is, each step saying how many pieces reached it. One piece: one row, nothing to pick. OrderWin.selectPiece(key|null)
      and OrderWin.selectedPiece() are the same thing for other code. */
-  const pieceName = x => String((x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
+  const pieceName = x => { const set = O.setDesignsOf(x && x.spec);   // (a necklace of saved charms is named by all of them: SCHRODINGER CAT 1 + SCHRODINGER CAT 2)
+    return String(set ? set.join(" + ") : (x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, set ? 80 : 32); };
   const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? (p.counted ? ` · ${p.qty} pieces` : ` · ×${p.qty}`) : "");   // (a counted line, "2 Disc", says "2 pieces": ×2 reads as two copies of one charm)
   /** The Left and the Right of a MISMATCHED pair line (OrderPieces entries that carry a side), [] for every other line: a single, a matching pair, discs, an old glued record. */
   function pairSides(x) {

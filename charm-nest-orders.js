@@ -1412,6 +1412,7 @@
       const la = has(link.L), lb = has(link.R);
       if (la && lb && la !== lb) return { members: [{ side: "L", sku: la }, { side: "R", sku: lb }], source: "alias" };
       const miss = [!la ? link.L : "", !lb ? link.R : ""].filter(Boolean);
+      rep.link = { L: link.L, R: link.R, miss };   // (SCHROLINK: a line that is not an earring pair is held on this, never made as one piece of the SKU's own design)
       rep.why = `the pair saved for this listing and SKU names ${link.L} (Left) and ${link.R} (Right), but ${miss.length ? `${miss.join(" and ")} ${miss.length > 1 ? "are" : "is"} not in any master file` : "both are the same design"}: name the designs again, or say it is the same on both ears`;
     }
     const parts = splitSkus(line.sku);
@@ -1586,14 +1587,22 @@
    *  matching or mismatched (bodyIndex 0 then 1 for a mismatched design's own bodies); a single earring has the side its line names, or null;
    *  a glued mismatched copy, discs, letters and charms: no side. A piece an old line already has carries no side. */
   function piecesOf(x) {
-    const p = pairOf(x), total = pieceCountOf(x), units = unitsOf(x), per = Math.max(1, Math.round(total / units)), natural = total === units * perUnitOf(p), out = [];
+    const p = pairOf(x), total = pieceCountOf(x), units = unitsOf(x), per = Math.max(1, Math.round(total / units)), natural = total === units * perUnitOf(p), out = [], set = natural ? setDesignsOf(p) : null;
     for (let i = 0; i < total; i++) {
       let side = null, bodyIndex = 0;
       if (natural && p.earring && !p.glued && per % 2 === 0) { side = i % 2 === 0 ? "L" : "R"; if (p.mismatched) bodyIndex = i % 2; }
       else if (natural && p.single && (units === 1 || p.sideBy === "listing")) side = p.sideSaid || null;
-      out.push({ n: i + 1, of: total, unit: Math.floor(i / per) + 1, side, bodyIndex });
+      // (a set of designs a person saved for a line that is not earrings, SCHROLINK: piece 1 of each unit is the first design, piece 2 the second; no side, nothing mirrored)
+      out.push(set ? { n: i + 1, of: total, unit: Math.floor(i / per) + 1, side, bodyIndex, sku: set[i % set.length] } : { n: i + 1, of: total, unit: Math.floor(i / per) + 1, side, bodyIndex });
     }
     return out;
+  }
+  /** The designs of a SET a person saved for a line that is not an earring pair (spec.pair.set, pairInfo; [first, second]), as flat SKUs, else null: the line is not one, an earring pair, glued or an old line.
+   *  Accepts the spec, its pair facts, or a row. */
+  function setDesignsOf(x) {
+    const p = x && x.spec && x.spec.pair ? x.spec.pair : x && x.pair && typeof x.pair === "object" ? x.pair : x;
+    const d = p && !p.earring && !p.glued && !p.legacy && p.set && Array.isArray(p.set.designs) ? p.set.designs.map(v => String(v || "")) : null;
+    return d && d.length >= 2 && d.every(Boolean) && new Set(d).size === d.length ? d : null;
   }
   const sidesOf = x => piecesOf(x).map(p => p.side);
   /** A mismatched pair whose two bodies the pool could not tell apart is made as the ONE glued copy per unit the app always made (both ears in one
@@ -2244,6 +2253,11 @@
     spec.pieceCount = pieceCountOf(spec);
     spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.sides = sidesOf(spec);
+    /* SCHROLINK (Paul, 12 Oct 2026): a pair of designs a person saved for this listing and SKU whose designs are NOT both in the master any more (renamed, deleted, blocked out of the index) must never let
+       a necklace fall back, in silence, to one piece of the SKU's own design (that was the mistake: the huggie skull cat for a necklace of two cats). On a line that is not a single earring it waits for a
+       person, with the reason (an earring line that says two different designs keeps its own question, asked above). It ends by itself when both designs are in the master again. */
+    if (!quiet && report.link && report.link.miss.length && !members && !spec.pair.single && !spec.pair.second)
+      problems.push({ kind: "unmatchedSku", reason: `a person saved this listing and SKU as two charms, ${report.link.L} and ${report.link.R}, but ${report.link.miss.join(" and ")} ${report.link.miss.length > 1 ? "are" : "is"} not in any master file: the line waits (it is never made as one piece of ${sku || "its SKU"}); put the design back in the master or save the link again`, sku: sku || upSku(line.sku), listingId: String(line.listingId || ""), title: line.title || "", savedPair: true });
     // a count the options cannot settle waits for a person: one plain question per option, like an unmatched SKU
     if (!quiet) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && (p.count || p.earWords))) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "" }, a.rule === "ear:words" ? { earWords: { why: a.why } } : { count: { guess: a.guess || 0, why: a.why, rule: a.rule } }));
     // a person said this listing's words are a pair of earrings: the form it is (what an answered option does too)
@@ -2638,7 +2652,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
