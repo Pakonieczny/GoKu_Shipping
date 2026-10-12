@@ -65,8 +65,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(m.panel.w >= 232 - 1, `${w}px: the panel is at least 232px wide: ${Math.round(m.panel.w)}px`);
       check(m.taW >= 200 && m.ta.w >= 200, `${w}px: the text area is a normal width: ${Math.round(m.ta.w)}px (computed ${Math.round(m.taW)})`);
       check(m.sel.t >= m.ta.b - 0.5 && m.sel.w >= 200, `${w}px: the font drop-down is under the text area, full width, touching nothing: select top ${Math.round(m.sel.t)} >= text bottom ${Math.round(m.ta.b)}, width ${Math.round(m.sel.w)}`);
-      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back)$/.test(b));
-      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons: ${acts.join(' | ')}`);
+      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back|Emoji)$/.test(b));   // (Emoji is Paul's own picker button, beside the words)
+      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons (besides the quiet Emoji button): ${acts.join(' | ')}`);
       check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
       if (shots) await page.screenshot({ path: path.join(shots, `panel-${w}.png`) });
     }
@@ -95,6 +95,22 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
     check(odd.locked.words && odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.pos, 'an approved face is locked (words, font, position off) and says by whom: ' + JSON.stringify(odd.locked));
+
+    // ── the Engrave detail itself: the Emoji button is there, and a staged edit stops Approve from approving the OLD words ──
+    await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
+    await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
+    const em = await page.evaluate(() => ({ btn: document.querySelectorAll('.pvSetup [data-emoji]').length, picker: !!window.CNEmojiPicker, approve: !!document.querySelector('[data-a=approve]') }));
+    check(!em.picker || em.btn === 1, 'one quiet Emoji button beside the words (the page\'s own picker, attached to the panel\'s text box): ' + JSON.stringify(em));
+    if (em.approve) {
+      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), t = c.querySelector('.pvH'); let hit = 0; const f = () => { hit++; }; t.addEventListener('keydown', f); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })); t.removeEventListener('keydown', f); return { hit, dis: c.querySelector('[data-a=approve]').disabled, title: c.querySelector('[data-a=approve]').title }; });
+      const before = await probe();
+      await page.fill('.pvSetup .engpWords', 'Name Three');
+      const staged = await probe();
+      check(staged.dis && /Save or Cancel/.test(staged.title) && staged.hit === 0, 'with words staged and not saved, Approve is dimmed ("Save or Cancel the edit first") and the A key never reaches the card: ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify({ hit: before.hit, dis: before.dis }) + ')');
+      await page.click('.pvSetup [data-engp=cancel]');
+      const after = await probe();
+      check(after.dis === before.dis && after.title === before.title && after.hit === before.hit, 'after Cancel Approve and the A key are as they were: ' + JSON.stringify({ hit: after.hit, dis: after.dis }));
+    }
 
     // ── 7a · in the Engrave detail itself, with the card's Front / Back thumbnails (when this build has the card): a click on a thumbnail picks the face the panel edits ──
     const hasCard = await page.evaluate(() => !!(window.CharmNestEngraveCard && CharmNestEngraveCard.mountPiece));

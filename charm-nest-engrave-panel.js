@@ -121,7 +121,7 @@
 
   function faceHtml(vm, d, face, id, slot) {
     const cur = vm.rows.find(r => r.face === face), x = d.faces[face] || { text: '', font: '' }, locked = !!(cur && cur.locked), per = !!(cur && cur.perPiece), dis = d.busy ? ' disabled' : '';
-    const words = `<textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>`;
+    const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>${locked || per ? '' : `<button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji${d.busy ? ' disabled' : ''} title="Choose an emoji the laser can engrave and put it in the words">Emoji</button>`}</div>`;
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
     const job = faceJobOf(vm, face, slot), P = Pos();
     const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
@@ -162,7 +162,9 @@
 @container (max-width:239px){.engpSeg{padding:5px 4px;font-size:10.5px}}
 .engpFace{display:grid;gap:8px;min-width:0}
 .engpWords,.engpFont{display:block;width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line,#e4ddd0);border-radius:8px;background:var(--card,#fffefb);color:inherit}
-.engpWords{min-height:56px;resize:none;padding:6px 8px;font:13px/1.4 var(--sans,system-ui);overflow-y:auto}
+.engpBox{position:relative;min-width:0}
+.engpWords{min-height:64px;resize:none;padding:6px 8px 26px;font:13px/1.4 var(--sans,system-ui);overflow-y:auto}
+.engpEmoji{position:absolute;right:5px;bottom:5px;padding:2px 8px}
 .engpFont{padding:6px 8px;font:13px var(--sans,system-ui)}
 .engpWords:disabled,.engpFont:disabled{background:var(--paper2,#ebe5d9);color:var(--ink70,#5b554c)}
 .engpPos{display:grid;gap:4px}
@@ -219,6 +221,23 @@
       tryDo(() => P.update(host, part));
     };
     const paintAll = (vm, d) => { for (const f of ['front', 'back']) paint(vm, d, f); };
+    /* While words, font or mode are staged and not saved, the card's Approve buttons (and its A key) must not approve the OLD fitted words: they are dimmed with a title and a press is stopped before the card sees it. */
+    const GATE = '[data-a="approve"],[data-a="approveBoth"],[data-a="approveFaces"]', GATE_WHY = 'Save or Cancel the edit first';
+    let gateCard = null, gateOn = false;
+    const blockClick = e => { if (gateOn && e.target && e.target.closest && e.target.closest(GATE)) { e.preventDefault(); e.stopImmediatePropagation(); } };
+    const blockKey = e => { if (gateOn && e.key && e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey && e.target && e.target.closest && !e.target.closest('input,textarea,select,[contenteditable]')) { e.preventDefault(); e.stopImmediatePropagation(); } };
+    const hookCard = () => {
+      const card = el.closest ? el.closest('.rvItem') : null; if (!card || card === gateCard) return;
+      if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); }
+      card.addEventListener('click', blockClick, true); card.addEventListener('keydown', blockKey, true); gateCard = card;
+    };
+    const applyGate = on => {
+      gateOn = !!on; hookCard(); if (!gateCard) return;
+      for (const b of gateCard.querySelectorAll(GATE)) {
+        if (on) { if (!b.dataset.engpWas) b.dataset.engpWas = JSON.stringify([b.disabled, b.title]); b.disabled = true; b.title = GATE_WHY; }
+        else if (b.dataset.engpWas) { const [dis, ttl] = tryDo(() => JSON.parse(b.dataset.engpWas), [b.disabled, b.title]); delete b.dataset.engpWas; b.disabled = !!dis; b.title = ttl; }
+      }
+    };
     const draw = () => {
       if (dead) return;
       const m = model(), fs = focusState();
@@ -228,6 +247,9 @@
       el.innerHTML = html(vm, d, { slot, faceSwitch: !!opts.faceSwitch });
       const ta = el.querySelector('.engpWords'); if (ta) growBox(ta);
       { const fs = el.querySelector('.engpFont'); if (fs && fs.selectedOptions[0] && fs.selectedOptions[0].style.fontFamily) fs.style.fontFamily = fs.selectedOptions[0].style.fontFamily; }
+      { const eb = el.querySelector('[data-emoji]'), tb = el.querySelector('.engpWords'), CE = el.ownerDocument.defaultView && el.ownerDocument.defaultView.CNEmojiPicker;   // (Paul's own Emoji button, as the words box of the card had it: it types into the box, so the panel sees an ordinary input)
+        if (eb && !(CE && tb && tryDo(() => CE.attach({ textarea: tb, button: eb, key: 'engp:' + key + ':' + d.face }), false))) eb.remove(); }
+      hookCard(); applyGate(hasPatch(Setup().patchOf(vm, d)));
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
       restoreFocus(want);
@@ -300,6 +322,7 @@
       d.dirty = true; d.confirm = ''; d.error = ''; d.noRoom = {};
       const S = Setup(), p = S.patchOf(vm, d), sv = el.querySelector('[data-engp="save"]'), cn = el.querySelector('[data-engp="cancel"]');
       if (sv) sv.disabled = !hasPatch(p) && !d.posTouched;
+      applyGate(hasPatch(p));
       if (cn) cn.disabled = false;
       if (t.dataset.engp === 'font' && t.tagName === 'SELECT') t.style.fontFamily = (t.selectedOptions[0] && t.selectedOptions[0].style.fontFamily) || '';
       paint(vm, d, f); changed(t.dataset.engp, f);
@@ -315,7 +338,7 @@
     const ev = [['click', click], ['input', input], ['change', input], ['keydown', key_], ['focusin', focusin], ['focusout', focusout]];
     for (const [t, f] of ev) el.addEventListener(t, f);
     // the first paint of the thumbnails: the face's own words and position (the card drew them from the job; this makes them the staged ones)
-    return { draw, refresh: draw, setFace, destroy() { dead = true; untrack(); for (const [t, f] of ev) el.removeEventListener(t, f); }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
+    return { draw, refresh: draw, setFace, destroy() { dead = true; untrack(); for (const [t, f] of ev) el.removeEventListener(t, f); gateOn = false; if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
   }
 
   const BOUND = new WeakMap();
