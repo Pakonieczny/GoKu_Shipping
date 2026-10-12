@@ -6315,13 +6315,17 @@ const Engrave = window.Engrave = (() => {
   /** A person's words for an existing, undecided job (the setup editor): the words are theirs and settled (no paid reading), the placement is made again. */
   async function seedWords(job, seed) {
     const row = job.row, by = seed.by || employeeName() || "", face = (window.CharmNestEngraveFaces && CharmNestEngraveFaces.faceOf(job)) || "back", was = job.text;
+    const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;   // (a position a person set stays through new words or a new font, as fitNewWords keeps it)
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.fit = null;
     Object.assign(job, { text: seed.text, lines: seed.lines.slice(), source: "person", quote: null, confidence: 1, questions: [], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false },
-      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" } });
+      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
     if (seed.fontWord) job.fontAsked = seed.fontWord;
     wordsEvent(job, by, was, "words"); Review.remove("eng:" + job.key);
     await setReady(job);
-    if (job.state === "ready" && canFit(job)) fitJob(job).catch(() => {});   // (drawn by the card as it fits)
+    if (job.state === "ready" && canFit(job)) fitJob(job).then(() => {   // (drawn by the card as it fits)
+      if (!keep || !job.fit || job.state !== "review") return;
+      if (refit(job, keep)) { Session.schedule(); refresh(job); } else { job.nudged = false; toast("The new words do not fit where they had been moved, so they were placed again", "", 6000); }
+    }).catch(() => {});
     return job;
   }
   function setupEnv() {
