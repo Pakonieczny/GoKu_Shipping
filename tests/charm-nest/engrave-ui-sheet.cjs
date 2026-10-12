@@ -265,10 +265,9 @@ async function browser() {
     assert.match(card, /W/, 'the card shows the front words first: ' + card);
     await page.evaluate(() => { const b = [...document.querySelectorAll('[data-r2=eng] .egEarTab')].find(x => /back/i.test(x.innerText)); b.click(); });
     await until(() => page.evaluate(() => /1\. 27\. 24/.test((document.querySelector('[data-r2=eng]') || {}).innerText || '')), 10000, 'the back words after pressing Back');
-    const setup = await page.evaluate(() => { const e = document.querySelector('[data-r2=eng] .swEngSetup'); return e ? e.innerText.replace(/\s+/g, ' ').trim() : null; });
-    assert(setup !== null, 'the line\'s Engraves editor (ENGSETUP\'s one component) is mounted under the card');
-    if (setup) assert.match(setup, /Front \+ back/i, 'it says Front + back for 4195966039: ' + setup);
-    console.log('ok   piece card: Front | Back switch; Front shows W, Back shows 1. 27. 24; the line\'s Engraves editor is mounted under it');
+    const menu = await page.evaluate(() => !!document.querySelector('[data-r2=eng] .swEngSetup, [data-r2=eng] .egSetup, [data-r2=eng] textarea, [data-r2=eng] select'));
+    assert.equal(menu, false, 'the sheet window\'s card carries no engraving menu (it lives only in the Engraving tab)');
+    console.log('ok   piece card: Front | Back switch; Front shows W, Back shows 1. 27. 24; no engraving menu under it');
     // the plate turned over: every engraved charm's back, no page error
     await page.evaluate(() => document.querySelector('[data-r2=face]').click());
     await until(async () => /Back side, mirrored/.test(await strip()), 15000, 'the plate on its back');

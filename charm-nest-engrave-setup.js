@@ -3,21 +3,21 @@
  *
  * ONE small control for the whole app. It says what the system decided for a LINE: "Engraves: Front + back" (None / Front only / Back only / Front + back), the words of each
  * face (seeded from spec.engraving, with the system's one plain "why" line, where it came from and how sure it is), the font of each face (the line's font unless a face names
- * its own) and, when a person has edited it, "Undo my edit - back to the system's reading". Every edit is saved as row.engravingOverride (by = the signed-in login, never
+ * its own). Every edit is saved as row.engravingOverride (by = the signed-in login, never
  * typed) and always wins over the reading. It is drawn INLINE in a card (never a pop-up; a question is a plain line inside the card), a wait is a small labelled spinner,
  * a failure is one plain line.
  *
  *   mount(slot, row, opts?)         THE ONE-LINE MOUNT: draws the control into `slot` for the line of `row` (the line row or any side row / job.row of it) and wires it; safe to call
  *                                   again after every redraw of the host (the staged edit, whether it is open, and the caret come back). Draws nothing when the line has nothing to say.
- *                                   opts: { compact, open, onSaved(result), jobs(), save(patch), undo() }  -> { destroy(), refresh() }
- *   html(row, opts) / bind(el, row, handlers)   the same in two steps (el holds ONLY the control). handlers: { save(patch), undo(), jobs() } (defaults: the bridge's Engrave.saveSetup /
- *                                   undoSetup / jobsOf)
+ *                                   opts: { compact, open, onSaved(result), jobs(), save(patch) }  -> { destroy(), refresh() }
+ *   html(row, opts) / bind(el, row, handlers)   the same in two steps (el holds ONLY the control). handlers: { save(patch), jobs() } (defaults: the bridge's Engrave.saveSetup /
+ *                                   jobsOf)
  *   read(row, { jobs })             pure view model of the control (setup, per-face rows, why, source, edited, raw words, locks)
  *   setupFor(row, noOverride)       the line's effective setup (CharmNestEngraveFaces.setupOf over the reading, TAGSKU's tag option when the intake has not read the line yet, and the override)
  *   buildOverride(line, patch, by, now)   pure: the row.engravingOverride of CONTRACT 3 (merges the previous one; a face the mode does not engrave is dropped)
  *   sig(row)                        what the control would show, as a short string (a host that caches its card draws it again when this changes)
  *   consequences(line, jobs, nextSetup, prevSetup)   pure: what a save does to the jobs, in plain lines + the jobs it removes / cuts plain / opens / adds
- *   apply(line, patch, env, opts)   the save path (name -> override -> ensureJobs -> reconcile -> seed), all side effects through `env` (the bridge's Engrave.saveSetup builds it); opts.undo removes the override
+ *   apply(line, patch, env)   the save path (name -> override -> ensureJobs -> reconcile -> seed), all side effects through `env` (the bridge's Engrave.saveSetup builds it)
  *   labelled(text)                  the words of each face found by its label in the buyer's note ("front - W" / "back - 1. 27. 24")
  *
  * Pure but for mount / html / bind (DOM). Loads in the page (window.CharmNestEngraveSetup) and in node. */
@@ -183,17 +183,17 @@
    *    who() -> name | Promise<name> ('' = put away: nothing happens)   now()   store(line, override|null) (sets/deletes line.engravingOverride and persists)
    *    jobsOf(line)   ensureJobs(line)   slots(line)   remove(job)   skip(job, by) (cut plain + seal)   setNone(job, why)   reopen(job)   seed(job, seed)   changed(line, result)
    *  Returns { ok, cancelled?, message?, pending?, removed, plain, none, reopened, seeded, added }. A decided face is NEVER deleted; nothing asks Etsy or the paid reader. */
-  async function apply(line, patch, env, o) {
-    const F = Faces(); o = o || {};
+  async function apply(line, patch, env) {
+    const F = Faces();
     const res = { ok: false, removed: [], plain: [], none: [], reopened: [], seeded: [], added: [], pending: false };
     if (!line || !line.spec) { res.message = 'This line is not loaded.'; return res; }
     if (line.state === 'gone') { res.message = 'This order has left the pull, so its engraving is not changed here.'; return res; }
-    // NO EARRING IS EVER ENGRAVED (charm-nest-orders.js section 3d): a person's pick for an earring is dropped quietly (nothing is stored, no job is made, nothing asks); only taking an old pick back is allowed
-    if (F.neverOf && F.neverOf(line) && !o.undo) { res.ok = true; res.never = true; return res; }
+    // NO EARRING IS EVER ENGRAVED (charm-nest-orders.js section 3d): a person's pick for an earring is dropped quietly (nothing is stored, no job is made, nothing asks)
+    if (F.neverOf && F.neverOf(line)) { res.ok = true; res.never = true; return res; }
     let by = env.who(); if (by && typeof by.then === 'function') by = await by;
     by = str(by).trim(); if (!by) { res.cancelled = true; return res; }
     const prev = line.engravingOverride || null, now = env.now ? env.now() : Date.now();
-    const override = o.undo ? null : buildOverride(line, patch, by, now);
+    const override = buildOverride(line, patch, by, now);
     // a decided face on a line that is already cut stays as it is: the check is made on the setup this change would give, before anything is stored
     const next = F.setupOf({ spec: (() => { const r = readingOf(line); return r && r !== line.spec.engraving ? Object.assign({}, line.spec, { engraving: r }) : line.spec; })() }, override);
     const before = setupFor(line), pre = consequences(line, env.jobsOf(line), next, before);
@@ -262,7 +262,6 @@
 .egSuNote{display:grid;gap:2px;font-size:11.5px;color:var(--ink70,#5b554c)}
 .egSuNote.warn{color:var(--clay,#b0563f)}
 .egSuActs{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
-.egSuActs .sp{flex:1 1 auto}
 .egSuStat{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink70,#5b554c)}
 .egSuErr{font-size:11.5px;color:var(--clay,#b0563f)}
 .egSuCompact .egSuWhy{font-size:10.5px}`;
@@ -323,11 +322,10 @@
     const ask = vm.prompt ? `<div class="egSuAsk" role="status">${esc(vm.prompt)}</div>${vm.raw ? `<div class="egSuRaw" aria-label="The buyer's own words">${esc(vm.raw)}</div>` : ''}` : '';
     const whyBits = vm.edited ? `<div class="egSuWhy">${esc(vm.why)}${vm.reading ? ` <small>The system read: ${esc(vm.reading)}</small>` : ''}</div>` : (vm.why || vm.from) ? `<div class="egSuWhy">${esc(vm.why)}${vm.from ? ` <small>${vm.why ? '· ' : ''}${esc(vm.from)}</small>` : ''}</div>` : '';
     const edit = vm.cut ? '' : `<button type="button" class="btn ghost xs" data-su="edit">${vm.needsPerson ? 'Say which' : 'Edit'}</button>`;
-    const undo = vm.edited && !vm.cut ? `<button type="button" class="btn ghost xs" data-su="undo" title="Remove my edit; the system's own reading comes back">Undo my edit</button>` : '';
-    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span> <b class="egSuMode">${esc(vm.modeLabel)}</b> ${edit} ${undo} ${statusHtml(d)}</div>${faces}${ask}${whyBits}${confirmHtml(d)}${noteHtml(vm)}`;
+    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span> <b class="egSuMode">${esc(vm.modeLabel)}</b> ${edit} ${statusHtml(d)}</div>${faces}${ask}${whyBits}${confirmHtml(d)}${noteHtml(vm)}`;
   }
   const statusHtml = d => (d && d.busy ? `<span class="egSuStat" role="status"><span class="owSpin" aria-hidden="true"></span>${esc(d.busy)}</span>` : '');
-  const confirmHtml = d => (d && d.error ? `<div class="egSuErr" role="alert">${esc(d.error)}</div>` : '') + (d && d.confirmLines && d.confirmLines.length && d.confirm ? `<div class="egSuNote warn" role="status">${d.confirmLines.map(t => `<span>${esc(t)}</span>`).join('')}<span class="egSuActs"><button type="button" class="btn gold xs" data-su="${d.confirm === 'undo' ? 'undoYes' : 'saveYes'}"${d.busy ? ' disabled' : ''}>${d.confirm === 'undo' ? 'Undo and cut it plain' : 'Cut it plain and save'}</button><button type="button" class="btn ghost xs" data-su="keep">Keep it as it is</button></span></div>` : '');
+  const confirmHtml = d => (d && d.error ? `<div class="egSuErr" role="alert">${esc(d.error)}</div>` : '') + (d && d.confirmLines && d.confirmLines.length && d.confirm ? `<div class="egSuNote warn" role="status">${d.confirmLines.map(t => `<span>${esc(t)}</span>`).join('')}<span class="egSuActs"><button type="button" class="btn gold xs" data-su="saveYes"${d.busy ? ' disabled' : ''}>Cut it plain and save</button><button type="button" class="btn ghost xs" data-su="keep">Keep it as it is</button></span></div>` : '');
   const noteHtml = vm => { const n = NOTES.get(vm.key); return n ? `<div class="egSuNote" role="status">${esc(n)}</div>` : ''; };
   function editHtml(vm, d) {
     const dis = d.busy ? ' disabled' : '', id = 'egSu' + (++uid), next = facesOf(d.mode);
@@ -343,8 +341,7 @@
     const lines = cons && !d.confirm ? cons.lines.filter(l => !/already (approved|approved and saved)/.test(l)) : [];
     const warn = cons && cons.blocked ? `<div class="egSuErr" role="alert">${esc(cons.blocked)}</div>` : '';
     const why = vm.why || vm.from ? `<div class="egSuWhy">${esc(vm.edited ? vm.reading ? 'The system read: ' + vm.reading : '' : vm.why)}${!vm.edited && vm.from ? ` <small>${vm.why ? '· ' : ''}${esc(vm.from)}</small>` : ''}</div>` : '';
-    const undo = vm.edited ? `<button type="button" class="btn ghost xs" data-su="undo"${dis} title="Remove my edit; the system's own reading comes back">Undo my edit — back to the system's reading</button>` : '';
-    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span><span class="egEarSwitch egMany" role="group" aria-label="What this line engraves">${tabs}</span>${statusHtml(d)}</div><div class="egSuEdit">${prompt}${faces}</div>${why}${lines.length ? `<div class="egSuNote">${lines.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}${warn}${confirmHtml(d)}<div class="egSuActs"><button type="button" class="btn gold xs" data-su="save"${dirty && !d.busy && !(cons && cons.blocked) ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-su="cancel"${dis}>Cancel</button><span class="sp"></span>${undo}</div>`;
+    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span><span class="egEarSwitch egMany" role="group" aria-label="What this line engraves">${tabs}</span>${statusHtml(d)}</div><div class="egSuEdit">${prompt}${faces}</div>${why}${lines.length ? `<div class="egSuNote">${lines.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}${warn}${confirmHtml(d)}<div class="egSuActs"><button type="button" class="btn gold xs" data-su="save"${dirty && !d.busy && !(cons && cons.blocked) ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-su="cancel"${dis}>Cancel</button></div>`;
   }
   /** The control as a string (the line's `row`). opts: { compact, open, vm, draft } */
   function html(row, opts) {
@@ -357,7 +354,6 @@
 
   /* ── wiring ─────────────────────────────────────────────────────────────────── */
   const hostSave = (line, patch) => (root.Engrave && root.Engrave.saveSetup ? root.Engrave.saveSetup(line, patch) : Promise.resolve({ ok: false, message: 'The engraving is not loaded yet.' }));
-  const hostUndo = line => (root.Engrave && root.Engrave.undoSetup ? root.Engrave.undoSetup(line) : Promise.resolve({ ok: false, message: 'The engraving is not loaded yet.' }));
   const resultNote = res => {
     const parts = [];
     if (res.plain && res.plain.length) parts.push(`${res.plain.length === 1 ? 'One face was' : res.plain.length + ' faces were'} cut plain`);
@@ -372,7 +368,7 @@
     ensureCss(el.ownerDocument);
     handlers = handlers || {}; opts = opts || {};
     const line = lineOf(row);
-    const H = { save: handlers.save || (p => hostSave(line, p)), undo: handlers.undo || (() => hostUndo(line)), jobs: handlers.jobs || (() => (root.Engrave && root.Engrave.jobsOf ? root.Engrave.jobsOf(line) : [])) };
+    const H = { save: handlers.save || (p => hostSave(line, p)), jobs: handlers.jobs || (() => (root.Engrave && root.Engrave.jobsOf ? root.Engrave.jobsOf(line) : [])) };
     let dead = false;
     const me = { el, key: '', draw: null };
     const untrack = () => { if (!me.key) return; const set = LIVE.get(me.key); if (set) { set.delete(me); if (!set.size) LIVE.delete(me.key); } me.key = ''; };
@@ -405,9 +401,9 @@
       try { if (target) target.dispatchEvent(new (target.ownerDocument.defaultView.CustomEvent)('cn-engrave-setup', { bubbles: true, detail: { key, result: res } })); } catch (_) { /* a host that does not listen */ }
       try { if (typeof opts.onSaved === 'function') opts.onSaved(res); } catch (_) { /* the host's own */ }
     };
-    const run = async (m, kind, patch) => {
-      m.d.error = ''; m.d.confirm = ''; m.d.busy = kind === 'undo' ? 'Undoing…' : 'Saving…'; NOTES.delete(m.vm.key); draw();
-      let res; try { res = kind === 'undo' ? await H.undo() : await H.save(patch); } catch (e) { res = { ok: false, message: `Not saved: ${e && e.message ? e.message : e}` }; }
+    const run = async (m, patch) => {
+      m.d.error = ''; m.d.confirm = ''; m.d.busy = 'Saving…'; NOTES.delete(m.vm.key); draw();
+      let res; try { res = await H.save(patch); } catch (e) { res = { ok: false, message: `Not saved: ${e && e.message ? e.message : e}` }; }
       done(m, res);
     };
     const click = e => {
@@ -428,12 +424,7 @@
         const cons = consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup);
         if (cons.blocked) { d.error = cons.blocked; draw(); return; }
         if (a === 'save' && cons.plain.length) { d.confirm = 'save'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return; }
-        run(m, 'save', patch);
-      } else if (a === 'undo' || a === 'undoYes') {
-        const cons = consequences(vm.line, vm.jobs, vm.base, vm.setup);
-        if (cons.blocked) { d.error = cons.blocked; draw(); return; }
-        if (a === 'undo' && cons.plain.length) { d.confirm = 'undo'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return; }
-        run(m, 'undo');
+        run(m, patch);
       } else if (a === 'keep') { d.confirm = ''; d.confirmLines = null; draw(); }
     };
     const input = e => {
@@ -465,7 +456,7 @@
       if (!slot || typeof slot.addEventListener !== 'function' || !lineOf(row)) return none;
       const was = BOUND.get(slot); if (was) was.destroy();
       opts = opts || {};
-      const b = bind(slot, row, { save: opts.save, undo: opts.undo, jobs: opts.jobs }, opts);
+      const b = bind(slot, row, { save: opts.save, jobs: opts.jobs }, opts);
       BOUND.set(slot, b); b.draw();
       return b;
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving setup', e); return none; }
