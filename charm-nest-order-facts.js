@@ -81,8 +81,7 @@
   /* ── the chips: what the glance line says and what each one's card holds ──
      facts = { loading, key, order:{id, num}, purchased:{ts, label}, buyer:{name, gift}, ship:{by, quiet}, metal:{label, color, none, choices:[{name,value}]},
                qty:{n, pieces, pair, mismatched, counted:{total, noun}, notes:[]}, custom:{label, note}, engraving:{chip, html, approved},
-               message:{buyer, gift, unread, bad}, listing:{id, title}, state:{tone, text, sheet}, cells:[…], on:{customer, otherCharm},
-               titleMatch:{sku, why} (NOSKU: a listing with no SKU on Etsy whose charm the app took from the words of its title) } */
+               message:{buyer, gift, unread, bad}, listing:{id, title}, state:{tone, text, sheet}, cells:[…], on:{customer} } */
   const row = (k, v, o) => Object.assign({ k, v: String(v) }, o || {});
   function chipsOf(f, now) {
     now = now == null ? nowMs() : now;
@@ -128,8 +127,6 @@
     }
     const c = f.custom;
     if (c && c.label) out.push({ id: 'custom', icon: 'custom', text: c.label, aria: 'Custom order: ' + c.label, pop: { title: 'Custom order', icon: 'custom', rows: [row('Kind', c.label)].concat(c.note ? [row('Reading', c.note)] : []) } });
-    const tm = f.titleMatch;
-    if (tm && tm.sku) out.push({ id: 'titlematch', icon: 'title', text: 'Matched by title', aria: 'This listing has no SKU on Etsy; its charm ' + tm.sku + " was matched by the listing's title", pop: { title: "Matched by the listing's title", icon: 'title', rows: [row('Charm', tm.sku, { mono: 1, copy: tm.sku, copyLabel: 'Copy the charm SKU' }), row('Why', tm.why || "its title names this charm and no other")], note: "This listing has no SKU on Etsy. Nothing was saved: a person's choice, once made, always wins.", action: f.on && f.on.otherCharm ? { id: 'otherCharm', label: 'Use another charm' } : null } });
     const e = f.engraving;
     if (e) out.push({ id: 'engraving', icon: 'engrave', text: e.chip || 'Engraving', tone: e.approved ? 'ok' : '', aria: 'Engraving: ' + (e.chip || 'needed') + (e.approved ? ', approved' : ''), pop: { title: 'Engraving', icon: 'engrave', html: e.html || '' } });
     const g = f.message;
