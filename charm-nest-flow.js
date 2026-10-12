@@ -48,6 +48,14 @@
  * Rose Gold: a move NEVER adds a green dash line by itself. A Rose Gold sheet without one that the move needs gets the
  * confirm key `roseLine`; commit calculates it (LibraryFlowRose.calculate, the Cut Sheet path) only when `confirmed` holds
  * that key, and does not move anything without it.
+ * 10K, 14K and Rose Gold sheets in a set (Paul, 12 Oct): such a sheet joins a set (open or committed, in progress, engraving or Laser
+ * cutting) with exactly two conditions and no other restriction of its own: (a) its green dash line is already cut, or the person
+ * says yes in the Cut Sheet window at the drop (confirm key `roseLine`: that yes IS the press, step `cutSheet` after the sheet is in,
+ * through the one cut writer roseRecordCut; a sheet whose line is cut only joins, no second cut), and (b) its back engraving is
+ * approved (need key `backsNotApproved`, ONE plain line, nothing is written). Kept, as physical or integrity rules: a sheet in a set
+ * whose cut is recorded stays in that set; a completed sheet; a set is never emptied; a multi-piece order is never split over two
+ * sets (a gold sheet that shares an order comes with the group); the set principle (a completed GF and a completed SS; gold never
+ * counts toward it). The engraving rule is SetEdit.engravingGap, shared with the server.
  * Restart-safe: commit reads the records again and plans again before it writes; every step is idempotent; a hold or a
  * release that a later step makes pointless is undone; a failed commit changes nothing. No Etsy calls anywhere here. */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.LibraryFlow = api; })(typeof self !== 'undefined' ? self : this, function (root) {
@@ -78,6 +86,10 @@
   const needsCutLine = s => { const f = shared('owesLine'); return f ? !!f(s) : !!s && cuts(s.metal) && !s.roseCutAt && !s.rosePlanHash; };
   const lineHeld = s => { const f = shared('holdsLine'); return f ? !!f(s) : needsCutLine(s) && !!s.roseStockId; };
   const needsRoseLine = needsCutLine;       // (the old name: the rest of this file and its tests use it)
+  /* Paul, 12 Oct 2026: a 10K, 14K or Rose Gold sheet that is in no set joins one when (a) its green line is cut, or the person says yes to the Cut Sheet press at the drop, and
+     (b) its back engraving is approved. (b) is this: null, or the one plain refusal {key:'backsNotApproved', label, detail}; charm-nest-set-edit.js engravingGap is the one rule
+     (the server's setMember step reads it too). A record without a readiness report is never refused here (the plan, made from the live read, has the report). */
+  const backsGap = s => { try { const E = SE(); return E && typeof E.engravingGap === 'function' ? E.engravingGap(s, { cuts }) : null; } catch (_) { return null; } };
 
   /* ── reading the records ────────────────────────────────────────────────────────────────────────────────────────
    * state = { sheets:{id:record}, sets:{id:setRecord}, runs:{runId:{open}}, live:{sheetId:{…}} }: what op flowState
@@ -310,7 +322,9 @@
     return true;
   }
   const joinNames = l => l.length <= 1 ? l[0] || '' : l.slice(0, -1).join(', ') + ' and ' + l[l.length - 1];
-  function roseConfirm(plan, mine, env) {
+  /* `opt.press`: the sheets join a COMMITTED set first (the set edit, op flowApply setMember) and the Cut Sheet press follows (step `cutSheet`: the line drawn and dated, the cut recorded
+     through the one writer, roseRecordCut), because the press puts a sheet in the OPEN run's set when it is in none. The yes is the same key: `roseLine`. */
+  function roseConfirm(plan, mine, env, opt) {
     const want = mine.filter(needsRoseLine);
     if (!want.length) return;
     const R = roseAnswer(env);
@@ -323,22 +337,23 @@
     }
     if (roseBlocked(plan, ask, env)) return;               // (pressing could only be refused: no yes is asked for)
     plan.confirm.push(roseLineConfirm(ask, env));
-    plan.steps.push({ type: 'roseLine', item: plan.move ? { kind: plan.move.kind, id: plan.move.id } : null, sheetIds: ask.map(sid), key: 'roseLine', label: 'Green dash line calculated' });
+    if (opt && opt.press) plan.steps.push({ type: 'cutSheet', sheetIds: ask.map(sid), key: 'cutSheet', label: 'Green dash line drawn and the cut recorded' });
+    else plan.steps.push({ type: 'roseLine', item: plan.move ? { kind: plan.move.kind, id: plan.move.id } : null, sheetIds: ask.map(sid), key: 'roseLine', label: 'Green dash line calculated' });
   }
   /* A Rose Gold sheet into a set (Paul: "dragging and dropping a rose gold sheet between sets"). Joining a set IS the Cut Sheet
      press for it (RoseStock.record: the sheet joins the set, its green dash line is drawn and dated when it has none, and the
      cut is recorded, which is permanent), so it asks for its own yes (`roseSet`) and, when a line is still to be added, the
      line's yes (`roseLine`). Neither is ever assumed: commit runs it only when both were given. */
   function roseJoin(plan, v, s, T, to, live, env) {
-    const R = roseAnswer(env), full = !!(live.rose && live.rose.full), line = !full && needsRoseLine(s) && !(R && R.needsLine === false);
+    const R = roseAnswer(env), cutDone = !!s.roseCutAt, full = !cutDone && !!(live.rose && live.rose.full), line = !full && !cutDone && needsRoseLine(s) && !(R && R.needsLine === false);
     if (line && roseBlocked(plan, [s], env)) return;
     const name = sheetName(s), target = to.newSet ? 'a new set' : setName(T);
-    plan.auto.push({ key: 'membership', label: `${name} added to ${target}`, detail: full ? 'This sheet is full: it takes the rest of the metal whole, so it gets no green dash line and no cut is recorded.' : `Joining a set is the Cut Sheet press: ${line ? 'its green dash line is drawn and dated, and ' : ''}the cut is recorded, and a recorded cut is permanent.` });
+    plan.auto.push({ key: 'membership', label: `${name} added to ${target}`, detail: cutDone ? 'Its green line is already cut: it only joins, and no second cut is recorded.' : full ? 'This sheet is full: it takes the rest of the metal whole, so it gets no green dash line and no cut is recorded.' : `Joining a set is the Cut Sheet press: ${line ? 'its green dash line is drawn and dated, and ' : ''}the cut is recorded, and a recorded cut is permanent.` });
     plan.auto.push({ key: 'qrLabel', label: `QR label made for ${target}`, detail: 'The label names the set and the sheet, and covers every order on it.', stamp: true });
     plan.notes.push('Rose Gold joins a set by metal, as Cut Sheet does: every Rose Gold sheet of this run joins the same set (their own green lines are not added).');
-    plan.confirm.push({ key: 'roseSet', label: `Add ${name} to ${target}?`, detail: full ? 'Rose Gold joins a set the way Cut Sheet does. This sheet is full, so no green dash line is added and no cut is recorded.' : 'Rose Gold joins a set the way Cut Sheet does, with its green dash line. The cut is recorded with it, and a recorded cut is permanent.' });
+    plan.confirm.push({ key: 'roseSet', label: `Add ${name} to ${target}?`, detail: cutDone ? 'Rose Gold joins a set by metal. Its green line is already cut, so no line is added and no cut is recorded.' : full ? 'Rose Gold joins a set the way Cut Sheet does. This sheet is full, so no green dash line is added and no cut is recorded.' : 'Rose Gold joins a set the way Cut Sheet does, with its green dash line. The cut is recorded with it, and a recorded cut is permanent.' });
     if (line) plan.confirm.push(roseLineConfirm([s], env));
-    plan.steps.push({ type: 'roseJoin', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, line, full, key: 'membership' });
+    plan.steps.push({ type: 'roseJoin', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, line, full, ...(cutDone ? { joinOnly: true } : {}), key: 'membership' });
   }
   function addMark(plan, v, env) {
     plan.auto.push({ key: 'mark', label: `Marked completed by ${nameOf(env)}`, detail: 'The completed seal is stamped with your name and the time, and its orders get their milestone.', stamp: true, seal: { how: 'laserDone' }, ...(env.by ? { by: env.by } : {}) });
@@ -379,8 +394,10 @@
     if (to.set && !T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
     if (T) plan.to = { area: null, setId: T.setId, label: setName(T) };
     if (T && inSet(s) && T.setId === s.setId) { plan.noop = true; plan.notes.push(`${v.label} is already in ${setName(T)}.`); return finish(plan); }
-    if (s.roseCutAt) { need('sheetCut', `${v.label} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); return finish(plan); }
+    // (a recorded cut keeps a sheet in the set it was cut in; a cut sheet that is in NO set may join one: its green line is cut, Paul 12 Oct)
+    if (s.roseCutAt && inSet(s)) { need('sheetCut', `${v.label} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); return finish(plan); }
     if (+s.laserDoneAt > 0) { need('sheetCompleted', `${v.label} is completed`, 'It keeps its cut record and set until it is moved back to Laser cutting.'); return finish(plan); }
+    if (!(s.metal === 'rose' && (env.also || []).length)) { const g = backsGap(s); if (g) { need(g.key, g.label, g.detail); return finish(plan); } }       // (b) its back engraving is approved, or the one plain line (a Rose Gold sheet dropped on a sheet is refused below, whatever its backs)
     // a committed set takes and gives sheets (Paul, 7 Oct), and any sheet of a set moves by the rules of set-edit (Paul, 10 Oct): its own plan, below
     if (T && committedSet(T)) return committedMembership(state, v, to, plan, env);
     if (inSet(s) && !state.sets[s.setId]) { need('set', `The set of ${v.label} could not be read`, 'Refresh the Library and try again.'); return finish(plan); }
@@ -404,7 +421,7 @@
     const target = to.newSet ? 'a new set' : setName(T);
     plan.auto.push({ key: 'membership', label: `${v.label} added to ${target}`, detail: live.can && live.can.byHand ? 'Released as it stands, with the QR label of its orders.' : 'Included in the set by its own Include switch.' });
     plan.auto.push({ key: 'qrLabel', label: `QR label made for ${target}`, detail: 'The label names the set and the sheet, and covers every order on it.', stamp: true });
-    roseConfirm(plan, [s], env);
+    roseConfirm(plan, [s].concat(mates.map(c => state.sheets[c.sheetId]).filter(Boolean)), env);       // (a sheet dropped on that owes its green line is asked for with this one: the same yes)
     plan.steps.push({ type: 'include', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
     // a sheet that was taken out of a set (the hold that says so) is put back by this drop: the hold taking it out made is lifted once it is in; a person's own hold stays
     if (held(s) && /^Taken out of /.test(String(s.laserHold.note || ''))) { plan.auto.push({ key: 'release:' + v.id, label: `${v.label} released from its hold`, detail: 'The hold that taking it out made is lifted: it is in a set again.' }); plan.steps.push({ type: 'release', sheetIds: [v.id], joined: true, key: 'release:' + v.id }); }
@@ -500,7 +517,7 @@
     if (!T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
     if (+T.laserDoneAt > 0) need('setCompleted', `${toName} is completed`, 'A completed set takes no more sheets.');
     else if (/superseded/.test(String(T.status || ''))) need('setClosed', `${toName} was replaced`, 'Drop it on a current set.');
-    else if (s.metal === 'rose' && !from) need('roseSet', `${name} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press, so it cannot be added to a committed set from here.');
+    // (a Rose Gold sheet joins a committed set like any sheet, Paul 12 Oct: no `roseSet` refusal; its green line is the Cut Sheet press below, asked for with its own yes)
     if (plan.needs.length) return finish(plan);
     const run = (state.runs || {})[s.runId] || null, live = (state.live || {})[v.id] || null;
     if (!from && run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
@@ -522,6 +539,8 @@
       need('sharedOrders', 'Orders shared with another sheet', `${SEd ? SEd.sharedWords(items, 'they go into one set together') : 'Sheets that share an order go into one set.'} ${stuck[0].label} cannot come: ${fixedOf.get(stuck[0].id) || 'it is in another set'}.`, items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })));
       return finish(plan);
     }
+    // (b) for the sheets that come with it (Paul, 12 Oct): every 10K, 14K or Rose Gold sheet that goes in has its back engraving approved; the one plain line names the sheet
+    for (const m of mates) { const g = backsGap(state.sheets[m.id]); if (g) need(g.key, g.label, g.detail); }
     // a set is never emptied, and a move may not take a set's only completed GF or SS sheet away (Paul, 10 Oct)
     if (from && v.members.filter(m => sid(m) !== v.id).length === 0) need('lastSheet', `${name} is all that is in ${fromName}`, how && how.kind === 'committed' ? `A set keeps at least one sheet: press Undo set on ${fromName}'s card to take it apart.` : 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.');
     if (from) principleNeeds(v, from, plan);
@@ -554,6 +573,10 @@
     }
     plan.steps.push({ type: 'setMember', moves, expect: Object.fromEntries(moves.map(m => [m.sheetId, { setId: m.sheetId === v.id && from && !fromRun ? from.setId : null }])), key: 'membership' });
     plan.steps.push({ type: 'relabel', sheetIds: moves.map(m => m.sheetId), setId: T.setId, key: 'qrLabel' });
+    // (a) a sheet that owes its green line (and the ones that come with it): the person's yes at the drop IS the Cut Sheet press, which follows the membership (the press puts a sheet in
+    // the OPEN run's set when it is in none, so a committed set takes the sheet first) and nothing is drawn before that yes
+    roseConfirm(plan, (from ? [] : [s]).concat(mates.map(m => state.sheets[m.id]).filter(Boolean)), env, { press: true });       // (a sheet already in a set that moves to another keeps what it had: no new yes)
+    if (plan.needs.length) return finish(plan);
     plan.steps.push({ type: 'setFiles', setId: T.setId, key: 'setFiles' });
     if (from && how.kind === 'committed') plan.steps.push({ type: 'setFiles', setId: from.setId, key: 'setFiles:' + from.setId });
     return finish(plan);
@@ -615,7 +638,7 @@
       if (bv.error) { need('noSheet', 'That sheet could not be found', 'Refresh the Library and try again.'); continue; }
       if (bv.id === v.id) continue;
       const b = bv.sheet, B = bv.label, bl = (state.live || {})[bv.id] || null, brun = (state.runs || {})[b.runId] || null;
-      if (b.roseCutAt) { need('sheetCut', `${B} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); continue; }
+      if (b.roseCutAt && inSet(b)) { need('sheetCut', `${B} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); continue; }
       if (+b.laserDoneAt > 0) { need('sheetCompleted', `${B} is completed`, 'It keeps its cut record and set until it is moved back to Laser cutting.'); continue; }
       if (inSet(b)) {
         if (T && b.setId === T.setId) continue;               // (already in the set: nothing to add)
@@ -623,6 +646,7 @@
         need('alsoInSet', `${B} is already in ${bs}`, `A sheet in a set cannot be moved to another one: drop ${v.label} on ${bs} instead.`); continue;
       }
       if (b.metal === 'rose' || (bl && bl.rose)) { need('roseCombine', `${B} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press and its own yes: drop it on the set, not the other way round.'); continue; }
+      { const g = backsGap(b); if (g) { need(g.key, g.label, g.detail); continue; } }       // (b) for the sheet dropped on, as for the one moved
       if (brun && brun.open && !(bl && bl.runHere)) { need('runElsewhere', `${B}: its run is open on another screen`, 'Move it from that screen, so the two do not undo each other.'); continue; }
       if (!bl) { need('fixedSet', `${B} is closed`, 'Its run is finished, so it stays as it is.'); continue; }
       if (bl.can && bl.can.ok === false) { need('include', `${B} is not ready to join a set`, bl.can.reason || 'Nest and verify it first.'); continue; }
@@ -665,6 +689,19 @@
     }
     return { ...env, sharedItems: [...by.values()].sort(byOrderId), group: mem.size ? { members: [...mem.values()] } : env.group };
   }
+  /* A Rose Gold partner that joins with the sheet moved (the cardinal rule: sheets that share an order go into one set), by its own Cut Sheet press: its own yes (`roseSet`), the line's yes
+     (`roseLine`, one for every sheet that owes a line) and a `roseJoin` step collected in `press` (the caller puts them before the include). Nothing is added without those two keys. */
+  function roseMate(plan, state, m, target, env, press) {
+    const rec = state.sheets[m.id] || { id: m.id, metal: 'rose' }, l = joinableNow(m.id) || {}, R = roseAnswer(env), e = R && (R.sheets || []).find(x => x && x.sheetId === m.id);
+    const cutDone = !!rec.roseCutAt, full = !cutDone && !!(l.rose && l.rose.full), line = !full && !cutDone && needsRoseLine(rec) && !(R && !(e && e.needsLine));
+    if (line && roseBlocked(plan, [rec], env)) return;
+    plan.confirm.push({ key: 'roseSet', label: `Add ${m.label} to ${target}?`, detail: cutDone ? `${m.label} shares an order with the sheet you moved, so it joins too. Rose Gold joins a set by metal; its green line is already cut.` : full ? `${m.label} shares an order with the sheet you moved, so it joins too. It is full, so no green dash line is added and no cut is recorded.` : `${m.label} shares an order with the sheet you moved, so it joins too, the way Cut Sheet does: with its green dash line, and the cut is recorded (it is permanent).` });
+    if (line) {
+      const c = plan.confirm.find(x => x.key === 'roseLine'), more = roseLineConfirm([rec], env);
+      if (c) { c.sheetIds = [...new Set((c.sheetIds || []).concat(more.sheetIds))]; c.count = c.sheetIds.length; if (more.sheets) c.sheets = (c.sheets || []).concat(more.sheets); } else plan.confirm.push(more);
+    }
+    press.push({ type: 'roseJoin', sheetId: m.id, setId: null, newSet: false, line, full, ...(cutDone ? { joinOnly: true } : {}), mate: true, key: 'membership:' + m.id });
+  }
   function withCardinal(state, v, to, plan, env) {
     if (v.kind !== 'sheet' || plan.noop || plan.committed) return plan;       // (a committed set's edit carries its own rule: planLeave, committedMembership)
     const items = env.sharedItems || [], group = env.group || null, id = v.id, dest = to.set ? String(to.set) : 'new', T = to.set ? state.sets[to.set] : null;
@@ -681,15 +718,25 @@
     const orderWords = items.length ? `${items.slice(0, 4).map(i => 'Order ' + i.orderId).join(', ')}${items.length > 4 ? ' and more' : ''}` : 'Orders they share';
     const leaving = inSet(v.sheet), names = [v.label].concat(mates.map(m => m.label));
     const live = mates.map(m => ({ m, l: joinableNow(m.id) }));
-    const stuck = live.filter(x => !(x.l && x.l.runHere && x.l.draft && !x.l.rose && (!x.l.can || x.l.can.ok !== false)));
-    const joining = !leaving && plan.steps.some(x => x.type === 'include') && plan.needs.length === 0;
+    // a partner that is Rose Gold comes by its own Cut Sheet press (Paul, 12 Oct: it is added with the group, with its own yes), when this page can press it
+    const roseOk = x => !!(x.l && x.l.rose && typeof hooks.roseJoin === 'function' && env.canRose !== false);
+    const stuck = live.filter(x => !(x.l && x.l.runHere && x.l.draft && (!x.l.rose || roseOk(x)) && (!x.l.can || x.l.can.ok !== false)));
+    const joining = !leaving && plan.steps.some(x => x.type === 'include' || x.type === 'roseJoin') && plan.needs.length === 0;
     plan.shared = items; plan.group = names;
+    // (b) for the partners that come with it (Paul, 12 Oct): a 10K, 14K or Rose Gold partner's back engraving is approved, or the one plain line says which sheet's is not
+    if (joining) { for (const x of live) { const g = backsGap(state.sheets[x.m.id]); if (g) { plan.needs.unshift({ key: g.key, label: g.label, detail: g.detail, items: [] }); return finish(plan); } } }
     if (joining && !stuck.length) {
       plan.confirm = plan.confirm.filter(c => c.key !== 'splitOrders');
       plan.confirm.push({ key: 'together', label: mates.length === 1 ? `${mates[0].label} joins ${target} with ${together}` : mates.length <= 3 ? `${mates.slice(0, -1).map(m => m.label).join(', ')} and ${mates[mates.length - 1].label} join ${target} with ${together}` : `${count(mates.length, 'sheet')} join ${target} with ${together}`,
         detail: items.length === 1 && items[0].words ? `Order ${items[0].orderId} ${items[0].words}, so they go in together.` : `${orderWords} ${items.length === 1 ? 'has' : 'have'} pieces on ${mates.length === 1 ? 'both sheets' : 'these sheets'}, so they go in together.` });
       for (const m of mates) plan.auto.push({ key: 'membership:' + m.id, label: `${m.label} added to ${target}`, detail: `It shares ${items.length === 1 ? 'an order' : 'orders'} with ${v.label}, so it joins with it, with its QR label.` });
-      const st = plan.steps.find(x => x.type === 'include'); if (st) st.with = mates.map(m => m.id);
+      const roseMates = live.filter(x => x.l && x.l.rose).map(x => x.m), plain = mates.filter(m => !roseMates.includes(m));
+      const st = plan.steps.find(x => x.type === 'include'); if (st) st.with = plain.map(m => m.id);
+      // the Rose Gold partners are pressed FIRST: joining the set brings the other partners with them (the run's cardinal rule), so the include that follows finds them in
+      const press = []; for (const m of roseMates) { roseMate(plan, state, m, target, env, press); if (plan.needs.length) return finish(plan); }
+      if (press.length) { const at = plan.steps.findIndex(x => x.type === 'include'); plan.steps.splice(at < 0 ? plan.steps.length : at, 0, ...press); }
+      // a Rose Gold sheet that was moved has no include to carry its other partners: each of them joins right after it, by its own include
+      if (!st) for (const m of plain) plan.steps.push({ type: 'include', sheetId: m.id, setId: T ? T.setId : null, newSet: false, also: true, key: 'membership:' + m.id });
       return finish(plan);
     }
     const lockedWhy = id => { for (const i of items) { const l = (i.locked || []).find(z => z.sheetId === id); if (l) return l.why; } return ''; };
@@ -735,10 +782,13 @@
       if (leaving && (committedSet(mine) || cur === 'progress')) { const z = zoneOf('progress'); z.leaveSet = true; z.sub = `out of ${setName(mine)}`; z.ok = !exit; z.reason = exit; }
       const live = page.live ? page.live(it.id) : null;
       const joinable = !!live && (live.runHere !== false || !!live.sent);
+      // (b) Paul, 12 Oct: a 10K, 14K or Rose Gold sheet in no set joins one once its back engraving is approved: the one plain line, at every place a set can be made or joined
+      let engWhy = ''; try { const rec = !own && page.rec ? page.rec(it.id) : null, g = rec ? backsGap(rec) : null; engWhy = g ? g.label : ''; } catch (_) { engWhy = ''; }
       for (const st of all) {
         if (!st || !st.setId) continue;
         if (st.setId === own) { out.push({ set: st.setId, name: setName(st), ok: false, reason: `It is already in ${setName(st)}.` }); continue; }
         let why = done ? 'Move it back to Laser cutting first.' : +st.laserDoneAt > 0 ? `${setName(st)} is completed.` : /superseded/.test(String(st.status || '')) ? `${setName(st)} was replaced.` : '';
+        if (!why && engWhy) why = engWhy;
         if (!why && leaving && exit) why = exit;
         // a set that is still being made takes a sheet only as the open run's one open set: a draft sheet of the open run, or a sheet that left its set to join it
         if (!why && !committedSet(st) && (leaving || (live && live.draft))) {
@@ -751,6 +801,7 @@
       const blocked = !!(live && live.can && live.can.ok === false && !live.sent), ownSet = leaving && live && live.dispatchSetId && live.dispatchSetId === own;
       let nreason = '';
       if (done) nreason = 'Move it back to Laser cutting first.';
+      else if (engWhy) nreason = engWhy;
       else if (leaving && exit) nreason = exit;
       else if (ownSet) nreason = `It is already in ${setName(mine)}, the set the run is making.`;
       else if (!live) nreason = 'Only a sheet of the open run can start a new set.';
@@ -776,6 +827,7 @@
     if (!la.draft) return no(`${a} is already in a set: drop ${b} on that set to add it.`);
     if (!lb) return no(`Only sheets of the open run can be combined: ${b} is not on this page.`);
     if (!lb.draft) return no(`${b} is already in a set: drop ${a} on that set to add it.`);
+    { let ga = null, gb = null; try { ga = page.rec ? backsGap(page.rec(it.id)) : null; gb = page.rec ? backsGap(page.rec(oid)) : null; } catch (_) { /* nothing known */ } if (ga || gb) return no((ga || gb).label + '.'); }
     if (la.rose) return no(`${a} is Rose Gold: it joins a set by its own Cut Sheet press, so drop it on the set.`);
     if (lb.rose) return no(`${b} is Rose Gold: it joins a set by its own Cut Sheet press, so drop it on the set.`);
     if (la.runHere === false) return no(`${a} is not on a page of the open run.`);
@@ -828,6 +880,13 @@
     if (hooks.live) for (const id of Object.keys(state.sheets)) { let l = null; try { l = hooks.live(id); } catch (_) { /* not live */ } if (l) state.live[id] = l; }
     return state;
   }
+  /* The records of the partners that come with a sheet (one small read of the Library's live state, only when a partner has a green line): they join `state` like the sheet's own. */
+  async function readMates(state, ids) {
+    try {
+      const r = answer(await cloud({ op: 'flowState', sheetIds: ids.slice(0, 20), setIds: [] }));
+      for (const x of r.sheets || []) { state.sheets[sid(x)] = x; if (hooks.live) { let l = null; try { l = hooks.live(sid(x)); } catch (_) { /* not live */ } if (l) state.live[sid(x)] = l; } }
+    } catch (_) { /* a partner that cannot be read is checked by the server when the move is made */ }
+  }
   const itemOf = req => ({ kind: req.kind === 'set' ? 'set' : 'sheet', id: String(req.id || '') });
   async function plan(req) {
     req = req || {};
@@ -843,12 +902,17 @@
     let env = { by: req.by || hooks.employee(), rows: hooks.rows(), canRelabel: typeof hooks.remakeLabel === 'function', canJoin: typeof hooks.include === 'function', canRose: typeof hooks.roseJoin === 'function', together, ...(also.length ? { dest } : {}) };
     if (joining || leaving) env = { ...env, ...sharedEnv(item, leaving ? { leave: true } : dest, state, together) };
     if (also.length) env = alsoEnv(env, also, dest, together);
+    // the partners that come with the sheet (the cardinal rule): one with a green line (10K, 14K, Rose Gold) is read too, for its own line and its back engraving (Paul, 12 Oct)
+    if (joining && env.group && Array.isArray(env.group.members)) {
+      const mates = env.group.members.filter(m => m && m.id && m.id !== item.id && !state.sheets[m.id] && (m.metal ? cuts(m.metal) : /^(RG|10K|14K)\b/.test(String(m.label || '')))).map(m => String(m.id));
+      if (mates.length) await readMates(state, mates);
+    }
     let p = planMove(state, { ...item, to, ...(together ? { together: true } : {}) }, env);
     const M = hooks.rose();
-    if (p.steps.some(x => x.type === 'roseLine' || x.type === 'roseJoin') && M && typeof M.check === 'function') {
+    if (p.steps.some(x => x.type === 'roseLine' || x.type === 'roseJoin' || x.type === 'cutSheet') && M && typeof M.check === 'function') {
       // The check reads EVERY sheet the move carries that owes a line, not only the one dragged: a sheet of a set moves with its set (GF1).
       // (one sheet and nothing else: the item itself, as before)
-      const ids = [...new Set(p.steps.filter(x => x.type === 'roseLine').flatMap(x => x.sheetIds || []))];
+      const ids = [...new Set(p.steps.flatMap(x => x.type === 'roseLine' || x.type === 'cutSheet' ? x.sheetIds || [] : x.type === 'roseJoin' && x.line ? [x.sheetId] : []))];
       const ask = item.kind === 'set' ? (ids.length ? [item, ...ids.map(id => ({ kind: 'sheet', id }))] : item)
         : ids.length === 1 && ids[0] === item.id || !ids.length ? item : ids.map(id => ({ kind: 'sheet', id }));
       try { const c = await M.check(ask); if (c && typeof c === 'object') { env = { ...env, rose: c }; p = planMove(state, { ...item, to, ...(together ? { together: true } : {}) }, env); } } catch (_) { /* the fallback confirm stands */ }
@@ -881,7 +945,7 @@
     // the green dash line and a Rose Gold sheet's join are checked first: if they cannot be done here, or were not asked for
     // with a yes, nothing else of the move has been done yet
     const joinStep = todo.find(s => s.type === 'roseJoin'), yes = k => (o.confirmed || []).includes(k);
-    if (todo.some(s => s.type === 'roseLine') || (joinStep && joinStep.line)) {
+    if (todo.some(s => s.type === 'roseLine' || s.type === 'cutSheet') || todo.some(s => s.type === 'roseJoin' && s.line)) {
       if (!yes('roseLine')) throw new Error('The green dash line is only added when you press its button');
       const M = hooks.rose();
       if (!M || typeof M.calculate !== 'function') throw new Error('The green dash line cannot be calculated from here: open the sheet on the Nest tab and press Cut Sheet there');
@@ -915,10 +979,19 @@
           label = got.length ? `Green dash line added to ${got.join(', ')}` : 'Green dash line already there';
         } else if (s.type === 'roseJoin') {
           // the Cut Sheet press for this sheet (never anything else): joins the set, draws the dated line when `line`, records the cut
-          const r = await hooks.roseJoin(s.sheetId, { by, line: s.line, full: s.full, onStep: x => { try { o.onStep && o.onStep({ ...x, key: x.key || 'roseJoin' }); } catch (_) { /* never stops it */ } } });
+          const r = await hooks.roseJoin(s.sheetId, { by, line: s.line, full: s.full, ...(s.joinOnly ? { joinOnly: true } : {}), onStep: x => { try { o.onStep && o.onStep({ ...x, key: x.key || 'roseJoin' }); } catch (_) { /* never stops it */ } } });
           if (!r || r.ok === false) throw new Error((r && r.error) || 'The Rose Gold sheet could not be added to the set: open it on the Nest tab and press Cut Sheet there');
           for (const x of r.sheets || []) { if (x && x.lineAdded && !x.skipped) extra.push({ key: 'roseLine', label: `Green dash line added to ${x.label}`, detail: 'Dated, and saved with the sheet.' }); if (x && x.cut) extra.push({ key: 'roseCut', label: `Cut recorded for ${x.label}`, detail: 'A recorded cut is permanent.' }); }
           for (const w of r.warnings || []) warnings.push(w);
+        } else if (s.type === 'cutSheet') {
+          // the Cut Sheet press for the sheets that have just joined a committed set (the person's yes at the drop; cutLine below is the one press): the line drawn and dated, the cut recorded through
+          // roseRecordCut. The membership is saved and stays: a press that cannot be completed is said as a warning (the sheet is in the set, uncut), never an undo of the membership
+          const ids = s.sheetIds || [];
+          const r = await cutLine({ kind: 'sheet', id: ids[0], sheetIds: ids, by, onStep: x => { try { o.onStep && o.onStep({ ...x, key: x.key || 'cutSheet' }); } catch (_) { /* never stops it */ } } });
+          if (!r || r.ok === false) { warnings.push(`${ids.length === 1 ? 'The sheet is in the set' : 'The sheets are in the set'}, but the Cut Sheet press was not completed (${(r && r.error) || 'no answer'}). Open ${ids.length === 1 ? 'it' : 'them'} on the Nest tab and press Cut Sheet there`); tell(s, label, 'error'); continue; }
+          const got = (r.sheets || []).filter(x => x && x.lineAdded && !x.skipped).map(x => x.label).filter(Boolean);
+          label = got.length ? `Green dash line added to ${got.join(', ')}` : 'Green dash line already there';
+          for (const x of r.sheets || []) if (x && x.cut) extra.push({ key: 'roseCut', label: `Cut recorded for ${x.label}`, detail: 'A recorded cut is permanent.' });
         } else if (s.type === 'seal') {
           if (o.verify) await o.verify();          // every check holds now: only then a ready seal
           await flow([{ type: 'seal', kind: s.kind, id: s.id }], by);
@@ -957,7 +1030,7 @@
         }
         applied.push(doneLine(s.key, label)); kept.push(s);
         if (s.type === 'include' && s.with && s.with.length) for (const a of p.auto.filter(x => /^membership:/.test(x.key))) applied.push(doneLine(a.key, a.label));
-        if ((s.type === 'include' || s.type === 'roseJoin') && p.auto.some(a => a.key === 'qrLabel')) applied.push(doneLine('qrLabel', (p.auto.find(a => a.key === 'qrLabel') || {}).label || 'QR label made'));
+        if ((s.type === 'include' || s.type === 'roseJoin') && p.auto.some(a => a.key === 'qrLabel') && !applied.some(a => a.key === 'qrLabel')) applied.push(doneLine('qrLabel', (p.auto.find(a => a.key === 'qrLabel') || {}).label || 'QR label made'));
         for (const x of extra.splice(0)) applied.push(x);
         tell(s, label, 'done');
       } catch (e) {
@@ -1110,7 +1183,7 @@
       if (sh._roseAction) return { ok: false, error: `${name} is busy with another action: try again in a moment` };
       sh._roseAction = true; sh._roseError = null;
       try {
-        if (o.full) {
+        if (o.full || o.joinOnly) {          // (a full sheet has no cut to record; a sheet whose green line is already cut only joins: no second cut, Paul 12 Oct)
           if (!G || !G.changeMembership) throw new Error('Sets are not loaded yet · try again in a moment');
           await G.changeMembership('rose', true);
           if (!inSetNow()) throw new Error('Not added: ' + ((G.policy && G.policy(sh) && G.policy(sh).reason) || 'this sheet is not in a set yet'));
