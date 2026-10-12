@@ -257,6 +257,14 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'all-day', group:'dispatch', after:firstSet.setId }); assert(r.body.existing && r.body.setId === nextSet.setId, 'asked again, the same next set');
   assert(store.get('Charm_Nest_Sets/' + firstSet.setId).committedAt, 'the committed set keeps its record');
   r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'another-run', group:'dispatch', after:firstSet.setId }); assert.strictEqual(r.status, 400, 'another run cannot follow it');
+  // Paul, 12 Oct: a set that has formed (it holds sheets) is closed to automatic joining and the run's next completed sheets form the NEXT set, committed or not; an empty set is not followed
+  r = await post(lib, { op:'setAllocate', day:'2026-09-13', runId:'formed-run', group:'dispatch' }); const formed = r.body; assert.strictEqual(formed.seq, 1);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-13', runId:'formed-run', group:'dispatch', after:formed.setId }); assert.strictEqual(r.status, 400, 'a set with no sheet has not formed: nothing follows it');
+  r = await post(lib, { op:'setUpdate', setId:formed.setId, patch:{ sheetIds:['formed-gf', 'formed-ss'] } }); assert(r.body.ok);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-13', runId:'formed-run', group:'dispatch', after:formed.setId }); const following = r.body; assert.strictEqual(following.seq, 2, 'the following set is the next number: ' + JSON.stringify(following)); assert(!following.existing);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-13', runId:'formed-run', group:'dispatch', after:formed.setId }); assert(r.body.existing && r.body.setId === following.setId, 'asked again, the same following set');
+  r = await post(lib, { op:'setAllocate', day:'2026-09-13', runId:'formed-run', group:'dispatch', after:following.setId }); assert.strictEqual(r.status, 400, 'the following set is empty until its sheets join: nothing follows it yet');
+  r = await post(lib, { op:'setAllocate', day:'2026-09-13', runId:'other-run', group:'dispatch', after:formed.setId }); assert.strictEqual(r.status, 400, 'another run cannot follow it');
   // the release record is shop-wide and validated
   r = await post(lib, { op: 'releaseGet' }); assert.deepStrictEqual(r.body.lastReleased, {}, 'nothing released yet');
   r = await post(lib, { op: 'releasePut', lastReleased: { rose: '2026-09-17' }, released: { gold14k: '2026-09-18' } }); assert.strictEqual(r.body.lastReleased.rose, '2026-09-17'); assert.strictEqual(r.body.released.gold14k, '2026-09-18');

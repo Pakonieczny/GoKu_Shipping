@@ -22,6 +22,19 @@
  *   A SET is valid when its sheets hold at least 1 completed GF sheet AND at least 1 completed SS sheet. Other sheets (partial
  *   GF or SS, RG, 10K, 14K) may be in a valid set; they never count towards it and never stand in for a completed one.
  *
+ * FORMATION AND CLOSING (Paul, 12 Oct 2026, replacing the older "a set takes every full sheet until it is approved"):
+ *   "as soon as the minimum criteria is met, and none of the other stipulations are conflicting, the set should be formed and as a result all following
+ *    sheets should go into a following new set etc."
+ *   · A set FORMS the moment the sheets that can be in it hold at least 1 completed GF and 1 completed SS sheet (and the cardinal rule and the safety rules
+ *     do not forbid it). The completed sheets present at that moment form it; partial sheets never start a set by themselves and wait.
+ *   · A set that has formed is CLOSED to automatic joining (closed(), the ONE place that says so; CLOSING.afterFormation flips it): the completed sheets that
+ *     come after it form the NEXT set (Set 2, Set 3, ...) when THEIR own minimum is met. A person can still drag any sheet in or out of any set, and the sheets
+ *     that share a multi-piece order with a sheet of a closed set still join THAT set (the cardinal rule outranks the closing).
+ *   · Back engraving is NOT a criterion for any of this (it only gates approving a set for laser cutting).
+ *   · A sheet that shares an order with a sheet that cannot join yet (Rose Gold before its Cut Sheet press, a sheet still being saved) no longer holds the group
+ *     out: the set forms with the sheets that can be in it, says plainly which partner sheet to add (cardinalWait, derived by the page, never saved), and cannot be
+ *     approved for laser cutting until that sheet is in it (gate()).
+ *
  * Pure: no cloud, no page state. window.CharmNestSetRules in pages; module.exports in node and netlify functions
  * (charmNestLibrary.js requires this file, like charm-nest-set-edit.js).
  *
@@ -41,6 +54,11 @@
  *                                                  Station, completed or replaced (they were made under older rules and are never blocked
  *                                                  retroactively) and when the records carry no completion mark at all (releaseFull) to read.
  *   exempt(set)                                 -> true for those committed / completed / replaced sets
+ *   closed(members)                             -> true when a set holding `members` has formed and takes no sheet on its own any more (THE closing rule)
+ *   form(lastMembers, free, hasLast, lastName)  -> { where:'last'|'new'|null, join:[sheet], wait:[{sheet, why}], valid, closed }  where the free (completed, not in a set) sheets go NOW:
+ *                                                  into the newest open set while it has not formed, into a NEW set when there is none or it is closed, nowhere while
+ *                                                  they cannot make a valid set (they wait, each with the reason)
+ *   partnerWords(labels)                        -> "orders shared with RG Draft 1: add that sheet to this set"
  *   enforce(false)                              -> for an offline suite about something else whose fixture sets predate the principle: gate() then reads applies:false
  */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestSetRules = api; })(typeof self !== 'undefined' ? self : this, function (root) {
@@ -111,6 +129,35 @@
     return { formed: have.length > 0, join: [], wait: want.map(sheet => ({ sheet, why: waitWords(valid.missing) })), valid };
   }
 
+  /* ── THE CLOSING RULE (Paul, 12 Oct 2026) ───────────────────────────────────────────────────────────────────────────────────────────────────
+     "as soon as the minimum criteria is met ... the set should be formed and as a result all following sheets should go into a following new set".
+     READING (SETWHY): a set CLOSES to AUTOMATIC joining the moment it has formed, that is, as soon as it holds at least 1 completed GF and 1 completed SS sheet.
+     The completed sheets that come after it do not join it on their own; they wait outside every set and form the next set (Set 2, then Set 3, ...) when their own
+     minimum is met. Closed means closed to AUTOMATIC joining only: a person's drag still puts any sheet in or out, and a sheet that shares a multi-piece order
+     with a sheet of the closed set still goes into THAT set (the cardinal rule is Paul's most important one and outranks the closing).
+     To read it the other way (a set keeps taking every following completed sheet until a person approves it, as before) set CLOSING.afterFormation to false:
+     this constant and closed() are the only two places that say it. */
+  const CLOSING = { afterFormation: true };
+  /** True when a set holding `members` has formed and takes no sheet on its own any more. An empty set, or one short of a completed GF or SS, is still forming. */
+  const closed = members => CLOSING.afterFormation && validSet(list(members).filter(Boolean)).ok;
+
+  /** The one plain line a set gives for partner sheets that cannot join yet: "orders shared with RG Draft 1: add that sheet to this set". */
+  const partnerWords = labels => { const l = list(labels).map(str).filter(Boolean); return `orders shared with ${l.join(' and ')}: add ${l.length > 1 ? 'those sheets' : 'that sheet'} to this set`; };
+
+  /** What a completed sheet that waits for the NEXT set is told when the newest set has formed already. */
+  const nextSetWords = (setName, missing) => `${setName || 'The set'} has formed, so this sheet waits for the next set: ${waitWords(missing).replace(/^Waits for /, 'it needs ').replace(/: a set needs.*$/, '')} with it`;
+
+  /** Where the free sheets (completed, in no set, wanting in) go NOW. `lastMembers`: the sheets of the run's newest open set (hasLast: there is one). A set forms from the
+      completed sheets present at that moment; the newest open set takes them only while it has not formed; once it has (closed) they form the NEXT set. A batch that cannot
+      make a valid set waits, each sheet with its reason. */
+  function form(lastMembers, free, hasLast, lastName) {
+    const have = list(lastMembers).filter(Boolean), want = list(free).filter(Boolean);
+    if (hasLast && !closed(have)) { const s = settle(have, want); return { where: s.join.length ? 'last' : null, join: s.join, wait: s.wait, valid: s.valid, closed: false }; }
+    const s = settle([], want);   // (no open set, or the newest has formed: a following set forms when THESE sheets meet the minimum on their own)
+    const wait = hasLast && s.wait.length ? s.wait.map(w => ({ sheet: w.sheet, why: nextSetWords(lastName, s.valid.missing) })) : s.wait;
+    return { where: s.join.length ? 'new' : null, join: s.join, wait, valid: s.valid, closed: !!hasLast };
+  }
+
   /** A set committed to the Design Station, completed or replaced was made under the older rules: the principle never blocks it afterwards. */
   const exempt = set => !!set && (+set.committedAt > 0 || +set.laserDoneAt > 0 || /^complete|superseded/.test(str(set.status)));
 
@@ -123,13 +170,18 @@
   function gate(set, sheets) {
     const members = list(sheets).filter(s => s && !s.archived);
     const none = { applies: false, ok: true, missing: [], reason: '', short: '', line: '', have: { GF: 0, SS: 0 } };
-    if (!enforcing || !members.length || exempt(set) || !members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return none;
+    if (!enforcing || !members.length || exempt(set)) return none;
+    // (Paul, 12 Oct) a set formed with the sheets that could join while a partner that shares its orders cannot yet (Rose Gold before its Cut Sheet press, a sheet still being
+    //  saved): the page says which sheets (set.cardinalWait: derived from the sheets each time, never saved). Orders are never spread over two sets when a set advances.
+    const partners = list(set && set.cardinalWait).map(w => str(w && (w.label || w))).filter(Boolean);
+    const partnerGate = have => { const w = partnerWords(partners); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners }; };
+    if (!members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return partners.length ? partnerGate(none.have) : none;
     const v = validSet(members);
-    if (v.ok) return Object.assign({}, none, { applies: true, have: v.have });
+    if (v.ok) return partners.length ? partnerGate(v.have) : Object.assign({}, none, { applies: true, have: v.have });
     const need = `a completed ${v.missing.join(' sheet and a completed ')} sheet`;
     return { applies: true, ok: false, missing: v.missing, reason: v.reason, short: `needs ${need}`,
       line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have };
   }
 
-  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, CODE };
+  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, closed, partnerWords, nextSetWords, CLOSING, CODE };
 });

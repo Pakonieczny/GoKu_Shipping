@@ -11,14 +11,14 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   const srv = await start({ receipts: [] }), { st } = srv, now = Date.now(), ts = { toMillis: () => now }, day = '2026-10-03';
   const post = async body => { const r = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, ...await r.json() }; };
   const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20"/></svg>');
-  const lines = {};
+  const lines = {}, liveLines = {};
   let n = 0;
   // a sheet of one order, ready for Laser cutting unless `extra` says otherwise
   const mk = (id, extra = {}, order) => {
     order = order || String(3800000000 + ++n);
     const pool = order + '_1_1';
-    lines[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [pool], ...(extra.needsBack ? { engrave: { needed: true, state: 'review', approved: false } } : extra.unsavedBack ? { engrave: { needed: true, state: 'written', approved: true } } : { engraveCandidate: false }) };
-    const { needsBack, unsavedBack, noLabel, ...rest } = extra;
+    (extra.liveLines ? liveLines : lines)[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [pool], ...(extra.needsBack ? { engrave: { needed: true, state: 'review', approved: false } } : extra.unsavedBack ? { engrave: { needed: true, state: 'written', approved: true } } : { engraveCandidate: false }) };
+    const { needsBack, unsavedBack, noLabel, liveLines: _l, ...rest } = extra;
     st.put(S, id, { id, runId: 'run-x', metal: 'gold', day, status: 'complete', placedCount: 1, charmCount: 1, density: .7, stock: { wIn: 6, hIn: 4.5 }, poolIds: [pool], orders: [order], verification: { ok: true }, ...(unsavedBack ? { backPool: [{ poolId: pool, sheetId: id, approvedAt: now, approvedBy: 'Paul' }] } : {}),
       outputs: { ai: { path: id + '.ai', url: srv.sorterOrigin + '/' + id + '.ai' }, preview: { path: id + '.png', url: image } },
       ...(noLabel ? {} : { label: { files: [{ path: id + '-qr.png', url: image, payload: order, orders: [order] }], orders: [order] } }), sheetIndex: 1, updatedAt: ts, createdAt: ts, ...rest });
@@ -34,12 +34,13 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   mk('rose', { metal: 'rose', roseStockId: 'stock-1', noLabel: false });
   mk('live1', { draft: true, runId: 'run-live' });
   mk('opn-1', { setId: 'set-3', setSeq: 3, runId: 'run-live' });
-  mk('rg-new', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true });                       // no line yet
-  mk('rg-line', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, rosePlanHash: 'h-1' });   // has its line
-  mk('rg-full', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, rosePlanHash: 'h-2' });   // full: no line, no cut
+  // (the Rose Gold sheets of the open run have their back engravings approved: Paul, 12 Oct, a sheet with a green line joins a set once they are; the run holds their order lines)
+  mk('rg-new', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, liveLines: true });                       // no line yet
+  mk('rg-line', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, rosePlanHash: 'h-1', liveLines: true });   // has its line
+  mk('rg-full', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, rosePlanHash: 'h-2', liveLines: true });   // full: no line, no cut
   mk('rg-cut', { metal: 'rose', setId: 'set-1', setSeq: 1, roseStockId: 'stock-1', roseCutAt: now - 5000, rosePlanHash: 'h-3' });
   mkSet('set-4', ['cmt-2'], { status: 'complete', committedAt: now - 2000 }); mk('cmt-2', { setId: 'set-4', setSeq: 4, runId: 'run-live' });   // committed, not cut, its run still open
-  st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: {} });
+  st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
 
   const labels = [], joins = [], roseCalls = [], marks = [];
   LF.configure({
@@ -278,6 +279,110 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     p = await LF.plan({ kind: 'sheet', id: 'cmt-1', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'fixedSet' && /Only a sheet of the open run/.test(x.label)), 'a sheet of a committed set of a finished run: the plain reason, no "committed" word');
     p = await LF.plan({ kind: 'sheet', id: 'rg-cut', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCut' && /permanent/.test(x.detail) && /stays in the set it was cut in/.test(x.detail)), JSON.stringify(p.needs));
     st.put(S, 'solo', { laserDoneAt: now - 100 }); p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCompleted' && /cut record/.test(x.detail)), JSON.stringify(p.needs)); st.doc(S, 'solo').laserDoneAt = undefined;
+
+    // ── J. SETGOLD (Paul, 12 Oct): a 10K, 14K or Rose Gold sheet joins a set (a committed one, or the open one) provided (a) its green line is cut, or the person presses Cut Sheet right at the drop,
+    //      and (b) its back engraving is approved. Nothing else stops it; nothing is drawn before the yes; a refusal is ONE plain line and writes nothing. ──
+    const jlog = [];
+    LF.configure({ cuts: m => ['rose', 'gold10k', 'gold14k'].includes(m), employee: () => 'Paul' });
+    const idsOf = item => (Array.isArray(item) ? item : [item]).map(x => x.id);
+    const jrose = (o = {}) => ({
+      check: async item => ({ needsLine: true, sheets: idsOf(item).map(id => ({ sheetId: id, label: id, needsLine: true, source: 'live', blocked: '' })), confirm: { key: 'roseLine', label: 'Add the green dash line?', detail: 'This calculates the cut contour' } }),
+      calculate: async (item, x) => { const ids = idsOf(item); jlog.push(`calculate:${ids.join('+')}:recordCut=${!!x.recordCut}:in=${ids.map(i => st.doc(S, i).setId || '-').join('+')}`); if (o.fail) return { ok: false, error: o.fail, sheets: [] }; return { ok: true, sheets: ids.map(id => ({ sheetId: id, label: id, lineAdded: true, lines: 1, cut: !!x.recordCut })), warnings: [] }; }
+    });
+    LF.configure({ rose: () => jrose(), relabelSet: async s => { jlog.push('relabel:' + s.sheetIds.join('+')); }, setFiles: async s => { jlog.push('files:' + s.setId); }, applyMembership: async () => {}, live: id => null });
+    mk('j-rose', { metal: 'rose', draft: true, roseStockId: 'stock-j1' });                                                          // partial, owes its line, back approved
+    mk('j-rose-bad', { metal: 'rose', draft: true, roseStockId: 'stock-j2', needsBack: true });                                    // its back engraving waits for approval
+    mk('j-14k-cut', { metal: 'gold14k', draft: true, roseStockId: 'stock-j3', rosePlanHash: 'hj', roseCutAt: now - 3000 });        // its green line is cut, in no set
+    mk('j-14k-bad', { metal: 'gold14k', draft: true, roseStockId: 'stock-j4', rosePlanHash: 'hj2', roseCutAt: now - 3000, needsBack: true });
+    mk('j-rose2', { metal: 'rose', draft: true, roseStockId: 'stock-j6' }); mk('j-gf', { metal: 'gold', draft: true, needsBack: true });
+    st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines });
+    // the places a sheet may be dropped (the dock): a sheet whose back is not approved is refused at EVERY place, with the same one line; an approved one goes
+    const fsj = await post({ op: 'flowState', sheetIds: ['j-rose', 'j-rose-bad', 'j-14k-cut', 'j-14k-bad', 'j-gf'], setIds: [] }); const recsJ = Object.fromEntries(fsj.sheets.map(x => [x.id, x]));
+    assert.equal(recsJ['j-rose-bad'].laser.stages.approval, false); assert.equal(recsJ['j-rose'].laser.stages.approval, true);
+    LF.configure({ areaOf: () => 'progress', sets: () => [{ setId: 'set-2', seq: 2, status: 'complete', committedAt: 1 }, { setId: 'set-3', seq: 3 }], setOf: () => null, rec: id => recsJ[id] || null });
+    let zj = LF.explainTargets({ kind: 'sheet', id: 'j-rose-bad' });
+    for (const z of zj.filter(x => x.set || x.newSet)) { assert.equal(z.ok, false, JSON.stringify(z)); assert.equal(z.reason, 'RG Draft 1: back engraving not approved yet (0 of 1 approved)', 'one plain line at the place'); }
+    assert(zj.find(x => x.area === 'laser').reason !== 'RG Draft 1: back engraving not approved yet (0 of 1 approved)', 'the other places say what they always said');
+    zj = LF.explainTargets({ kind: 'sheet', id: 'j-rose' }); assert.equal(zj.find(x => x.set === 'set-2').ok, true); assert.equal(zj.find(x => x.set === 'set-2').reason, '');
+    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-14k-cut' }).find(x => x.set === 'set-2').ok, true, 'a 14K sheet whose line is cut and whose back is approved');
+    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-14k-bad' }).find(x => x.set === 'set-2').ok, false);
+    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-gf' }).find(x => x.set === 'set-2').ok, true, 'a GF sheet is not asked for backs');
+    // (b) refused: ONE plain line, no yes asked, nothing written
+    const dbJ = () => JSON.stringify(st.list(S).map(d => [d._id, d.setId || null, d.draft, d.roseCutAt || null, d.rosePlanHash || null])), snapJ = dbJ(), callsJ = st.calls.length;
+    p = await LF.plan({ kind: 'sheet', id: 'j-rose-bad', to: { set: 'set-2' } });
+    assert.equal(p.ok, false); assert.equal(p.needs.length, 1, JSON.stringify(p.needs)); assert.equal(p.needs[0].key, 'backsNotApproved'); assert.equal(p.needs[0].label, 'RG Draft 1: back engraving not approved yet (0 of 1 approved)'); assert.deepEqual(p.confirm, []); assert.deepEqual(p.steps, []);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, false); assert(/back engraving not approved yet/.test(r.error));
+    p = await LF.plan({ kind: 'sheet', id: 'j-14k-bad', to: { set: 'set-2' } }); assert.equal(p.needs.length, 1); assert.equal(p.needs[0].label, '14K Sheet 1: back engraving not approved yet (0 of 1 approved)');
+    assert.equal(dbJ(), snapJ, 'nothing was written'); assert(!jlog.length, 'nothing was calculated or drawn'); assert.equal(st.calls.filter((c, i) => i >= callsJ && /flowApply/.test(c.op)).length, 0);
+    // (a) a Rose Gold sheet with no line joins a COMMITTED set: Rose Gold is not refused for being Rose Gold; the one yes is the Cut Sheet press, which follows the membership
+    p = await LF.plan({ kind: 'sheet', id: 'j-rose', to: { set: 'set-2' } });
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(c => c.key), ['roseLine']); assert.deepEqual(p.steps.map(x => x.type), ['setMember', 'relabel', 'cutSheet', 'setFiles']);
+    assert(!p.needs.some(x => x.key === 'roseSet'));
+    r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false); assert(/yes first/.test(r.error)); r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet'] }); assert.equal(r.ok, false, 'only the line\'s own yes lets the press run');
+    assert.equal(dbJ(), snapJ); assert(!jlog.length, 'no line is drawn before the yes');
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'] }); assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(st.doc(S, 'j-rose').setId, 'set-2'); assert.equal(st.doc(S, 'j-rose').draft, false);
+    assert.deepEqual(jlog, ['relabel:j-rose', 'calculate:j-rose:recordCut=true:in=set-2', 'files:set-2'], 'in the set first, labelled, THEN the press (the one writer of a cut), then the set\'s files');
+    assert(r.applied.some(a => a.key === 'roseCut' && /Cut recorded for j-rose/.test(a.label)) && r.applied.some(a => /Green dash line added to j-rose/.test(a.label)), JSON.stringify(r.applied));
+    jlog.length = 0; r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'] }); assert.equal(r.noop, true); assert(!jlog.length, 'asked twice, done once');
+    // a green line that is already cut: no yes, no press, the cut record untouched
+    p = await LF.plan({ kind: 'sheet', id: 'j-14k-cut', to: { set: 'set-2' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []); assert.deepEqual(p.steps.map(x => x.type), ['setMember', 'relabel', 'setFiles']);
+    r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(st.doc(S, 'j-14k-cut').setId, 'set-2'); assert.equal(st.doc(S, 'j-14k-cut').roseCutAt, now - 3000); assert(!jlog.some(x => /calculate/.test(x)));
+    // a cut sheet that is IN a set stays in it (the recorded cut is permanent): unchanged
+    p = await LF.plan({ kind: 'sheet', id: 'j-14k-cut', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCut'), JSON.stringify(p.needs));
+    // the press cannot be completed (the sheet is not open on this page, say): the membership stays, and it is said plainly
+    jlog.length = 0; LF.configure({ rose: () => jrose({ fail: 'j-rose2 is not open on this page' }) });
+    p = await LF.plan({ kind: 'sheet', id: 'j-rose2', to: { set: 'set-2' } }); r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'] });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(st.doc(S, 'j-rose2').setId, 'set-2'); assert(r.warnings && /Cut Sheet press was not completed.*not open on this page.*Nest tab/.test(r.warnings.join(' ')), JSON.stringify(r.warnings));
+    LF.configure({ rose: () => jrose() });
+    // a group: a 10K sheet and its Rose Gold partner (they share an order) go into the committed set together, with ONE yes for the line of each
+    const orderJ = '3899000001'; mk('j-m10k', { metal: 'gold10k', draft: true, roseStockId: 'stock-j7' }, orderJ); mk('j-mrose', { metal: 'rose', draft: true, roseStockId: 'stock-j8' }, '3899000002'); mk('j-mbad', { metal: 'rose', draft: true, roseStockId: 'stock-j9', needsBack: true }, '3899000003');
+    for (const [id, pc] of [['j-mrose', orderJ + '_2_1'], ['j-mbad', orderJ + '_3_1']]) { st.put(S, id, { poolIds: [pc], orders: [orderJ] }); lines[orderJ + '_' + pc.split('_')[1]] = { orderId: orderJ, state: 'written', quantity: 1, poolIds: [pc], ...(id === 'j-mbad' ? { engrave: { needed: true, state: 'review', approved: false } } : { engraveCandidate: false }) }; }
+    st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines });
+    p = await LF.plan({ kind: 'sheet', id: 'j-m10k', to: { set: 'set-2' } });
+    assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'backsNotApproved' && /^RG Draft 1: back engraving not approved yet/.test(x.label)), 'the partner\'s back is named: ' + JSON.stringify(p.needs));
+    st.put(S, 'j-mbad', { poolIds: [], orders: [] }); delete lines[orderJ + '_3']; st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines });    // (the unapproved partner is out of the picture)
+    p = await LF.plan({ kind: 'sheet', id: 'j-m10k', to: { set: 'set-2' } });
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert(p.confirm.some(c => c.key === 'together' && /RG Draft 1 joins Set 2 with/.test(c.label)), JSON.stringify(p.confirm)); const cl = p.confirm.find(c => c.key === 'roseLine'); assert(cl && cl.sheetIds.length === 2, JSON.stringify(p.confirm));
+    assert.deepEqual(p.steps.map(x => x.type), ['setMember', 'relabel', 'cutSheet', 'setFiles']); assert.deepEqual(p.steps[0].moves.map(m => m.sheetId), ['j-m10k', 'j-mrose']); assert.deepEqual(p.steps[2].sheetIds.sort(), ['j-m10k', 'j-mrose']);
+    jlog.length = 0; r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'together'] }); assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(st.doc(S, 'j-m10k').setId, 'set-2'); assert.equal(st.doc(S, 'j-mrose').setId, 'set-2'); assert.equal(jlog.filter(x => /calculate/.test(x)).length, 1, 'one press for the group'); assert(/recordCut=true:in=set-2\+set-2$/.test(jlog.find(x => /calculate/.test(x))), jlog.join());
+    // the OPEN set: a 10K sheet that owes its line, with its Rose Gold partner that is outside: one drag, the partner is pressed first, the 10K sheet follows; both keys of the yes
+    mk('j-o-gold', { metal: 'gold10k', draft: true, runId: 'run-live', roseStockId: 'stock-k1', liveLines: true }, '3899000010'); mk('j-o-rose', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-k2', liveLines: true }, '3899000011');
+    st.put(S, 'j-o-rose', { poolIds: ['3899000010_2_1'], orders: ['3899000010'] }); liveLines['3899000010_2'] = { orderId: '3899000010', state: 'written', quantity: 1, poolIds: ['3899000010_2_1'], engraveCandidate: false };
+    st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
+    const open = (extra = {}) => ({ runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true }, split: [], ...extra });
+    joins.length = 0; jlog.length = 0;
+    LF.configure({ include: async (id, o) => { jlog.push('include:' + id); joins.push({ id, ...o }); st.put(S, id, { draft: false, setId: 'set-3', setSeq: 3 }); }, roseJoin: async (id, o) => { jlog.push(`roseJoin:${id}:line=${!!o.line}`); st.put(S, id, { draft: false, setId: 'set-3', setSeq: 3 }); return { ok: true, sheets: [{ sheetId: id, label: id, lineAdded: !!o.line, lines: 1, cut: true }], warnings: [] }; },
+      live: id => id === 'j-o-gold' ? open() : id === 'j-o-rose' ? open({ rose: { full: false } }) : id === 'live1' ? open({ can: { ok: true, byHand: true } }) : /^rg-(new|line)$/.test(id) ? open({ rose: { full: false } }) : id === 'opn-1' ? { runHere: true, draft: false, dispatchSetId: 'set-3', can: { ok: true } } : null });
+    p = await LF.plan({ kind: 'sheet', id: 'j-o-gold', to: { set: 'set-3' } });
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(c => c.key).sort(), ['roseLine', 'roseSet', 'together']); assert.deepEqual(p.steps.map(x => x.type), ['roseLine', 'roseJoin', 'include']);
+    assert.equal(p.steps[1].sheetId, 'j-o-rose'); assert.equal(p.steps[1].line, true); assert.deepEqual(p.steps[2].with, []); assert.deepEqual(p.confirm.find(c => c.key === 'roseLine').sheetIds.sort(), ['j-o-gold', 'j-o-rose']);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['together'] }); assert.equal(r.ok, false); assert(!jlog.length, 'no line without its yes');
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(jlog, ['calculate:j-o-gold:recordCut=false:in=-', 'roseJoin:j-o-rose:line=true', 'include:j-o-gold'], jlog.join());
+    // the same drag with the partner\'s back not approved: the one line names the partner, nothing is drawn
+    mk('j-o-gold2', { metal: 'gold10k', draft: true, runId: 'run-live', roseStockId: 'stock-k3', liveLines: true }, '3899000020'); mk('j-o-bad', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-k4', needsBack: true, liveLines: true }, '3899000021');
+    st.put(S, 'j-o-bad', { poolIds: ['3899000020_2_1'], orders: ['3899000020'] }); liveLines['3899000020_2'] = { orderId: '3899000020', state: 'written', quantity: 1, poolIds: ['3899000020_2_1'], engrave: { needed: true, state: 'review', approved: false } }; st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
+    LF.configure({ live: id => id === 'j-o-gold2' ? open() : id === 'j-o-bad' ? open({ rose: { full: false } }) : null }); jlog.length = 0;
+    p = await LF.plan({ kind: 'sheet', id: 'j-o-gold2', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'backsNotApproved'); assert(/^RG Draft 1: back engraving not approved yet/.test(p.needs[0].label), p.needs[0].label); r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, false); assert(!jlog.length, 'a refused plan draws nothing and joins nothing');
+    // a Rose Gold sheet moved with a partner that is not Rose Gold: the Rose sheet is pressed, the partner joins right after it
+    mk('j-o-rose3', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-k5', liveLines: true }, '3899000030'); mk('j-o-gf', { metal: 'gold', draft: true, runId: 'run-live', liveLines: true }, '3899000031');
+    st.put(S, 'j-o-gf', { poolIds: ['3899000030_2_1'], orders: ['3899000030'] }); liveLines['3899000030_2'] = { orderId: '3899000030', state: 'written', quantity: 1, poolIds: ['3899000030_2_1'], engraveCandidate: false }; st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
+    LF.configure({ live: id => id === 'j-o-rose3' ? open({ rose: { full: false } }) : id === 'j-o-gf' ? open() : null }); jlog.length = 0;
+    p = await LF.plan({ kind: 'sheet', id: 'j-o-rose3', to: { set: 'set-3' } });
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.steps.map(x => x.type), ['roseJoin', 'include']); assert.equal(p.steps[1].sheetId, 'j-o-gf'); assert.deepEqual(p.confirm.map(c => c.key).sort(), ['roseLine', 'roseSet', 'together']);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(jlog, ['roseJoin:j-o-rose3:line=true', 'include:j-o-gf'], jlog.join());
+    // a cut sheet in no set may join the open set (nothing says "already cut" any more); one that is in a set stays
+    mk('j-o-cut', { metal: 'gold14k', draft: true, runId: 'run-live', roseStockId: 'stock-k6', rosePlanHash: 'hk', roseCutAt: now - 900, liveLines: true }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
+    LF.configure({ live: id => id === 'j-o-cut' ? open() : null }); p = await LF.plan({ kind: 'sheet', id: 'j-o-cut', to: { set: 'set-3' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []); assert.deepEqual(p.steps.map(x => x.type), ['include']);
+    // a run that holds several open sets (SetWhy, 12 Oct): the drop works on any of them, not only the newest; the dock says the same
+    mkSet('set-5', ['opn-1'], { status: 'open', runId: 'run-live' });
+    LF.configure({ live: id => id === 'j-o-cut' ? open({ openSetIds: ['set-3', 'set-5'] }) : null, sets: () => [{ setId: 'set-3', seq: 3 }, { setId: 'set-5', seq: 5, status: 'open' }], areaOf: () => 'progress', setOf: () => null, rec: null });
+    p = await LF.plan({ kind: 'sheet', id: 'j-o-cut', to: { set: 'set-5' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.equal(p.steps.find(x => x.type === 'include').setId, 'set-5', 'the older open set is the target');
+    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-o-cut' }).find(x => x.set === 'set-5').ok, true);
+    LF.configure({ live: id => id === 'j-o-cut' ? open() : null }); p = await LF.plan({ kind: 'sheet', id: 'j-o-cut', to: { set: 'set-5' } }); assert(p.needs.some(x => x.key === 'notOpenSet'), 'a page that does not list the open sets says what it always said');
+    LF.configure({ cuts: null, rose: () => null, roseJoin: null, areaOf: null, sets: null, setOf: null, rec: null }); LF.hooks.cuts = null;
 
     console.log('PASS: library flow: plan/commit forwards and backwards, holds keep every seal, a sheet into a set, Rose Gold only on its press, hard blockers, idempotent repeat, failed writes change nothing');
   } finally { srv.close(); }

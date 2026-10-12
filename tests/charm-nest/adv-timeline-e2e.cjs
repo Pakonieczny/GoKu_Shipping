@@ -103,14 +103,15 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
           const el = window.__el, exp = el.querySelector('.tlExp'), e = exp.getBoundingClientRect(), hov = [...el.querySelectorAll(sel)].find(x => x.matches(':hover'));
           const sealEl = hov && (hov.querySelector('.tlSeal') || hov), dot = sealEl && sealEl.getBoundingClientRect(), base = hov && hov.getBoundingClientRect();
           return { sel, stage: hov && (hov.dataset.stage || hov.dataset.key.split('~')[0]), card: getComputedStyle(exp).display === 'block' && +getComputedStyle(exp).opacity > .9, head: exp.querySelector('.xh') ? exp.querySelector('.xh').textContent : '',
-            lines: exp.querySelectorAll('.rq').length, below: dot ? e.top >= dot.bottom - 1 || e.left >= dot.right || e.right <= dot.left : false,
+            lines: exp.querySelectorAll('.rq').length, chip: exp.querySelector('.xs') ? exp.querySelector('.xs').textContent : '', foot: [...exp.querySelectorAll('.xf')].map(x => x.textContent).filter(t => !/^(Then, for the order to move on|Order completed by hand)/.test(t)).length, words: [...exp.querySelectorAll('.rq em')].map(e => e.textContent), below: dot ? e.top >= dot.bottom - 1 || e.left >= dot.right || e.right <= dot.left : false,
             grown: !!(sealEl && sealEl.dataset.sealZoom) && dot.width >= Math.min(sealEl.offsetWidth * 1.15, 72) - .5, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), apart: !!dot && (dot.bottom <= e.top + 1 || dot.top >= e.bottom - 1 || dot.right <= e.left + 1 || dot.left >= e.right - 1),
             inView: !!dot && dot.left >= 0 && dot.right <= innerWidth && dot.top >= 0, done: hov && (hov.classList.contains('d') || !!hov.dataset.key) };
         }, sel);
         cards.push(r);
       }
     }
-    const bad = cards.filter(r => !r.card || !r.lines || !r.head || !r.below || r.copy || (r.done && !(r.grown && r.apart && r.inView)));
+    // (12 Oct 2026: a step with nothing wrong says only its name; never what is next, where it sits or what a press does)
+    const bad = cards.filter(r => !r.card || !r.head || r.foot || /^(Next|To come)$/.test(r.chip) || !r.words.every(w => /^(Waiting|Needs a person|Stopped)$/.test(w)) || !r.below || r.copy || (r.done && !(r.grown && r.apart && r.inView)));
     if (process.env.E2E_DEBUG) console.log(JSON.stringify(cards));
     assert.deepEqual(bad, [], 'every step shows its card under the dot, and a done one its seal grown in place, clear of the card, in the view, with no second seal');
     // the pointer moves from the dot onto its card: only the seal itself owns the hover (Paul), so the card and the grown seal go; a fresh rest brings them back

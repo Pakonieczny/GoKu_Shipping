@@ -2099,7 +2099,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (sh && busy(sh)) return null;
     const openRun = !!sh && !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status) && !sh.recalled && !sentToStation(sh);
     if (openRun) {
-      if (!sh.placements.length || !sh.verification?.ok || !sh.persistedDone || sh.roseCutAt || sh.laserDoneAt || sh.metal === "rose") return null;
+      if (!sh.placements.length || !sh.verification?.ok || !sh.persistedDone || (sh.roseCutAt && sh.setId && !sh.draft) || sh.laserDoneAt || sh.metal === "rose") return null;   // (a cut sheet that is in a set stays in it; one in NO set may join one, Paul 12 Oct)
       if (sh.setId && !sh.draft) return { kind: "relabel", note: "Its set has no label for it yet", title: "Make this sheet's QR label for the orders on it again" };
       if (["gold", "silver"].includes(sh.metal)) {
         const gap = sh.topup && !sh.topup.closedAt;
@@ -2128,13 +2128,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* What Make QR label does, without the window: the button's own path, and the Library's moves' (SheetWin.remakeLabel,
      joinSet). It puts back what it changed, and throws, when no label was made. */
   async function doLabel(plan, rec, sh, sheets, run) {
-    const reason = () => { const set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); return set ? Gate.policy(sh, set.seq).reason : "there is no open set to join"; };
+    // (the reason a sheet that did not join gives: its own, which is "Waits for a completed SS sheet..." for a full sheet no set can form with yet, Paul 12 Oct)
+    const reason = () => { const set = Gate.newestOpenOf ? Gate.newestOpenOf(run.runId) : Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); return Gate.policy(sh, set ? set.seq : 0).reason; };
     let undo = null;
     try {
       if (plan.kind === "release") {
         const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null;
+        const wasFull = !!sh.releaseFull;       // (a sheet that was full already stays full when it cannot join: pressing this must never un-complete it, Paul 12 Oct)
         sh.releaseFull = true; if (topup) { topup.closedAt = nowT(); topup.byHand = true; }
-        undo = () => { if (!sh.draft) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); };
+        undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); };
         await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: sh.topup || null } }, { quiet: true });
         await Gate.assemble(run);
         if (sh.draft) throw new Error(reason());
@@ -5087,17 +5089,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function joinInfo(id) {
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
     if (!sh || !run || !window.Gate) return null;
-    const openSet = window.Sets && Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), rose = sh.metal === "rose", plan = rose ? null : labelPlanOf({}, id);
+    const openSet = window.Sets && (Gate.newestOpenOf ? Gate.newestOpenOf(run.runId) : Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt)), rose = sh.metal === "rose", plan = rose ? null : labelPlanOf({}, id);
     const runOpen = sh.runId === run.runId && !["complete", "abandoned"].includes(run.status) && Gate.modern(run.runId) && !sh.recalled, sent = runOpen && sentToStation(sh), runHere = runOpen && !sent;
     // a Rose Gold sheet joins a set by its own Cut Sheet press (the Library asks for its yes first); it is ready for that when its layout is saved and verified
     // (a sheet of a committed set was sent to the station: it joins the open run's set only after the Library took it out of its set. Then it is as ready as any other sheet that is full and saved: this is that test, ahead of the leaving)
     const spare = sent && !rose && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && ["gold", "silver", "gold10k", "gold14k"].includes(sh.metal);
-    const ok = rose ? runHere && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : spare || (!!plan && (plan.kind === "release" || plan.kind === "include"));
-    const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.roseCutAt || sh.laserDoneAt ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
+    const ok = rose ? runHere && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : spare || (!!plan && (plan.kind === "release" || plan.kind === "include"));
+    const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.laserDoneAt || (sh.roseCutAt && sh.setId && !sh.draft) ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
     const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: window.CharmNestSheetName ? CharmNestSheetName.name(x.sheet) : `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, orders: x.orders })) : [];
     // (a full Rose Gold sheet takes the rest of the metal whole: no Cut Sheet button, no line, no cut)
     const full = ok && rose ? !!(window.RoseStock && RoseStock.full ? RoseStock.full(sh) : sh.rosePlan && sh.rosePlan.full) : false;
-    return { runHere, ...(sent ? { sent: true } : {}), draft: !!sh.draft, dispatchSetId: openSet ? openSet.setId : null, can: { ok, byHand: ok && !!plan && plan.kind === "release", reason: why }, split, ...(rose ? { rose: { full } } : {}) };
+    return { runHere, ...(sent ? { sent: true } : {}), draft: !!sh.draft, dispatchSetId: openSet ? openSet.setId : null, ...(Gate.openSets ? { openSetIds: Gate.openSets(run.runId).map(x => x.setId) } : {}), can: { ok, byHand: ok && !!plan && plan.kind === "release", reason: why }, split, ...(rose ? { rose: { full } } : {}) };
   }
   /** " (order 4181…: its Right piece is on GF Sheet 2)": which sheets, which orders and which ears a refused join is about ("" when nothing says). */
   function splitSay(partners) {
@@ -5118,7 +5120,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // sheets that share an order go into the same set (Paul, 5 Oct): the sheets it shares one with come in with it, or none does
     const partners = plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true) : [];
     if (partners.length && o.split !== "all") throw new Error(`An order on this sheet is also on a sheet that is not in the set${splitSay(partners)}: the sheets of one order go into the set together, so it needs all of them`);
-    await doLabel(plan, null, sh, [sh, ...partners.map(x => x.sheet)], run);
+    // (Paul, 12 Oct: a run holds several open sets, the ones that have formed beside the one that is forming: the set a person drops the sheet on takes it, formed or not; a New set drop is left to the run's assembly)
+    const hand = !o.newSet && o.setId && Gate.openSets ? Gate.openSets(run.runId).find(x => x.setId === String(o.setId)) : null;
+    if (hand) sh.handSet = hand.setId;
+    try { await doLabel(plan, null, sh, [sh, ...partners.map(x => x.sheet)], run); } finally { delete sh.handSet; }
   }
   /** Take an order's pieces off its sheets with no window drawn (the shared-orders window calls this through
    *  SharedOrders.removeFromSheet; Paul, 5 Oct: an order that ties two sheets together can be put on hold or cancelled from

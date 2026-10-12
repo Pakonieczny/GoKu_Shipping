@@ -1,7 +1,7 @@
 // The cardinal rule inside the set assembly (Gate.assemble, charm-nest-bridge.js; Paul, 5 Oct: every sheet that shares a multi-piece
 // order with another is in the SAME set). The real Gate over fake pages, no cloud and no browser (as solid-per-sheet.cjs):
-//   a partner that cannot release by itself is pulled into the set with its mate · both wait while one is still nesting · a set
-//   already started takes what can come and says what cannot · Rose Gold is never pulled by itself · a partner in a committed set is
+//   a partner that cannot release by itself is pulled into the set with its mate · a partner still nesting (or Rose Gold before its Cut Sheet press) no longer holds the
+//   other sheets out (Paul, 12 Oct): the set forms, every sheet says which partner to add · a set already started takes what can come and says what cannot · Rose Gold is never pulled by itself · a partner in a committed set is
 //   named, nothing is held for it · removing the order lets the pulled sheet go again · untick of Include moves the group together
 //   or says why not · a pulled solid sheet is written without its own tick and never reloads as ticked.
 const assert = require('node:assert/strict'), fs = require('fs'), vm = require('vm'), Ops = require('../../charm-nest-operations.js'), O = require('../../charm-nest-orders.js');
@@ -37,23 +37,26 @@ const gold = (n, keys, extra) => sheet('gold', n, keys, extra), silver = (n, key
   // ── 2. the order comes off the silver sheet: nothing ties them, the silver sheet goes back out of the set ──
   s1.charms = s1.charms.filter(c => c.order !== '1001'); s1.placements = s1.placements.filter(p => s1.charms.some(c => c.id === p.id));
   await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1'], 'once the order is off, the partial sheet is not pulled any more'); assert.equal(s1.draft, true); assert(!s1.cardinalPull);
-  // ── 3. both wait while the partner is still being nested: nobody starts a split ──
+  // ── 3. the partner is still being nested (Paul, 12 Oct: it no longer holds the full sheet out): the set forms with the sheet that can join, the card names the partner to add, the partner joins that set once it is saved ──
   const g2 = gold(1, ['2001_1_1'], { releaseFull: true }), s2 = silver(1, ['2001_2_1'], { status: 'nesting', persistedDone: false });
   reset([g2, s2]);
-  await Gate.assemble(run); assert.deepEqual(inSet(), [], 'the full sheet waits for its mate'); assert.equal(sets.length, 0, 'no set was started for it');
-  assert(/Waits for SS Sheet 1 \(it is still being nested or saved\).*order 2001/.test(Gate.policy(g2, 1).reason), Gate.policy(g2, 1).reason); assert.equal(Gate.policy(g2, 1).include, false);
+  await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1'], 'the full sheet is not held for its mate'); assert.equal(sets.length, 1, 'its set formed');
+  assert.equal(Gate.policy(g2, 1).include, true); assert(!g2.cardinalHold, 'no hold');
+  assert(/^Order 2001 shared with SS Sheet 1: add that sheet to this set \(it is still being nested or saved\)$/.test(g2.cardinalNote), g2.cardinalNote);
+  assert.equal(Gate.cardinalSplit(sets[0])[0].orderId, '2001', 'the set cannot go to laser cutting while the mate is outside it');
   s2.status = 'complete'; s2.persistedDone = true; await Gate.assemble(run);
-  assert.deepEqual(inSet(), ['GF1', 'SS1'], 'the mate is saved: both come in together'); assert(!g2.cardinalHold);
+  assert.deepEqual(inSet(), ['GF1', 'SS1'], 'the mate is saved: it joins the set its mate is in'); assert(!g2.cardinalNote && !g2.cardinalHold); assert.deepEqual(Gate.cardinalSplit(sets[0]), []);
   // ── 4. the set is started: a new partner that cannot join yet is told about, the sheets already in stay ──
   const g3 = gold(2, ['2001_1_2', '2005_1_1'], { status: 'nesting', persistedDone: false });
   pages.push(g3); await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'SS1'], 'nothing is thrown out of the set for it');
-  assert(/also on GF Sheet 2, which cannot join the set yet: it is still being nested or saved/.test(g2.cardinalNote), g2.cardinalNote);
+  assert(/^Order 2001 shared with GF Sheet 2: add that sheet to Set 1 \(it is still being nested or saved\)$/.test(g2.cardinalNote), g2.cardinalNote);
   const split = Gate.cardinalSplit(sets[0]); assert.deepEqual(split.map(i => i.orderId), ['2001']); assert.deepEqual(split[0].there, ['GF Draft 2'], 'the set cannot be released while it is outside');
   g3.status = 'complete'; g3.persistedDone = true; await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'GF2', 'SS1'], 'saved: it joins'); assert.deepEqual(Gate.cardinalSplit(sets[0]), []);
   // ── 5. Rose Gold is never pulled in by itself ──
   const g5 = gold(1, ['5001_1_1'], { releaseFull: true }), r5 = sheet('rose', 1, ['5001_2_1']);
   reset([g5, r5]); run.solidIncluded.rose = false; await Gate.assemble(run);
-  assert.deepEqual(inSet(), [], 'the gold sheet waits: its Rose Gold mate joins only by its own Cut Sheet press'); assert(/Waits for RG Sheet 1 \(a Rose Gold sheet joins a set only by its own Cut Sheet press\)/.test(Gate.policy(g5, 1).reason), Gate.policy(g5, 1).reason);
+  assert.deepEqual(inSet(), ['GF1'], 'the gold sheet is not held for its Rose Gold mate (Paul, 12 Oct): the set forms, the mate joins only by its own Cut Sheet press'); assert(!g5.cardinalHold);
+  assert(/^Order 5001 shared with RG Sheet 1: add that sheet to this set \(a Rose Gold sheet joins a set only by its own Cut Sheet press\)$/.test(g5.cardinalNote), g5.cardinalNote); assert(!r5.cardinalPull, 'Rose Gold is never pulled by itself');
   run.solidIncluded.rose = true; await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'RG1'], 'selected (as the press does): both come in'); run.solidIncluded.rose = false;
   // ── 6. a mate in a committed set: named with the exact reason, nothing is held back for it ──
   const g6 = gold(1, ['6001_1_1'], { releaseFull: true }), c6 = gold(2, ['6001_1_2'], { setId: 'set-c', draft: false, seq: 2, releaseFull: true, sheetId: 'gold-c' });
@@ -84,7 +87,7 @@ const gold = (n, keys, extra) => sheet('gold', n, keys, extra), silver = (n, key
   assert(/Shares order 9001 \(its left and right earrings\) with GF Sheet 1/.test(Gate.policy(pr, 1).reason), Gate.policy(pr, 1).reason);
   // the right earring's sheet is still being nested: the full sheet waits, and the line says it is the pair
   const wl = sideOn(gold(1, ['9101_1_1'], { releaseFull: true }), 0, 'L'), wr = sideOn(gold(2, ['9101_1_2'], { status: 'nesting', persistedDone: false }), 0, 'R');
-  reset([wl, wr]); await Gate.assemble(run); assert.deepEqual(inSet(), [], 'the full sheet waits for the sheet with the other earring');
-  assert(/Waits for GF Sheet 2 \(it is still being nested or saved\).*order 9101 \(its left and right earrings\)/.test(Gate.policy(wl, 1).reason), Gate.policy(wl, 1).reason);
-  console.log('PASS: cardinal rule in the set assembly: partner pulled in, both wait while one nests, a started set takes what can come and says what cannot, Rose Gold never pulled, committed mate named, order off lets it go, 10K/14K chain moves together or says why not');
+  reset([wl, wr]); await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1'], 'the full sheet is not held out for the sheet with the other earring: the set forms and names it');
+  assert(/^Order 9101 \(its left and right earrings\) shared with GF Sheet 2: add that sheet to this set \(it is still being nested or saved\)$/.test(wl.cardinalNote), wl.cardinalNote);
+  console.log('PASS: cardinal rule in the set assembly: partner pulled in, a partner still nesting or Rose Gold before its press holds nobody out (the set forms and names it), a started set takes what can come and says what cannot, Rose Gold never pulled by itself, committed mate named, order off lets it go, 10K/14K chain moves together or says why not');
 })().catch(e => { console.error(e); process.exit(1); });

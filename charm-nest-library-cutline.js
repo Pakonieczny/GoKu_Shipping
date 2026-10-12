@@ -12,6 +12,9 @@
      LibraryCutLine.guess(item, to, here)   -> null | {ids, hits}   sync, from the page's own records: a sheet of a metal that gets a green line, not cut,
                                                with no line yet, going forward to Laser cutting (or Completed). Only a hint that the plan is worth reading
                                                first; the plan (LibraryFlow.plan) has the last word.
+                                               Also a 10K, 14K or Rose Gold sheet that is in NO set dropped on a set or on New set (Paul, 12 Oct: it joins a set
+                                               when its green line is cut, or the person approves the cut right at the drop, and its back engraving is approved):
+                                               the same window, the same yes. {set:true} then: the press itself follows the membership, at the commit.
      LibraryCutLine.ask(item, confirm, {from, dest, fromName, what}) -> Promise<true|false|null>
                                                the window (SharedOrdersModal.ask: the very same component and look as the shared-orders window) that says the
                                                system will generate the green dash line that completes the partial sheet: how many charms, what share of the sheet,
@@ -56,6 +59,10 @@
   }
   function guess(item, to, here) {
     try {
+      if (item && to && item.kind === 'sheet' && (to.set || to.newSet)) {       // a sheet with a green line, in no set, dropped on a set: the plan says whether a yes is asked (a partner may owe a line too)
+        const r = rowOf(item.id) || liveOf(item.id), cuts = W.LibraryFlow && W.LibraryFlow.core && W.LibraryFlow.core.cuts;
+        return r && !inSet(r) && typeof cuts === 'function' && cuts(r.metal) ? { ids: [item.id], hits: [item.id], set: true } : null;
+      }
       if (!item || !to || here !== 'progress' || (to.area !== 'laser' && to.area !== 'completed')) return null;
       const needs = W.LibraryFlow && W.LibraryFlow.core && W.LibraryFlow.core.needsCutLine;
       if (typeof needs !== 'function') return null;
@@ -204,7 +211,7 @@
           : `${o.what ? o.what + ' has' : 'These are'} partial sheets. To move ${o.what ? 'it' : 'them'} to ${dest}, the system will generate the green dash line that completes each one.`,
         chips: names.slice(0, 5).map(l => ({ label: l, here: true })).concat([{ label: dest }]),
         count: plural(n, 'sheet'), cards,
-        note: `Cancel changes nothing: ${n === 1 ? names[0] + ' stays' : 'the sheets stay'} in ${from}.`,
+        note: `Cancel changes nothing: ${n === 1 ? names[0] + ' stays' : 'the sheets stay'} in ${from}.${o.also ? ' ' + o.also : ''}`,
         yes: n === 1 ? 'Generate the green dash line' : 'Generate the green dash lines', no: 'Cancel', from: o.from || undefined
       });
     } catch (e) { try { console.warn('[cut line window]', e && e.message || e); } catch (_) { /* quiet */ } return null; }
