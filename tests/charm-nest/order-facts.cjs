@@ -153,7 +153,11 @@ ok('C1 the line is a toolbar of whole chips with an icon each, the state pill an
   assert.equal(bar().getAttribute('role'), 'toolbar');
   const cs = [...bar().querySelectorAll('[data-owf-chip]')].map(c => c.dataset.owfChip); assert.deepEqual(cs, ['order', 'buyer', 'purchased', 'ship', 'metal', 'qty', 'state']);
   for (const id of ['order', 'buyer', 'purchased', 'ship', 'metal', 'qty']) assert(chipEl(id).querySelector('svg.ic'), id + ' has its icon');
-  assert(bar().querySelector('.owfEnd [data-owf-chip=state]') && bar().querySelector('.owfEnd .owfMore'), 'state and Details at the end');
+  // (Paul, 12 Oct 2026: Details sits right after the metal chip on the first line, the chips that come later follow it, the state pill stays the right end)
+  const seq = [...bar().querySelectorAll('[data-owf-item]')].map(c => c.dataset.owfChip || (c.classList.contains('owfMore') ? 'details' : '?'));
+  assert.deepEqual(seq, ['order', 'buyer', 'purchased', 'ship', 'metal', 'details', 'qty', 'state'], 'Details is right after the metal chip, the later chips behind it, the state pill last');
+  assert(bar().querySelector('.owfEnd [data-owf-chip=state]') && !bar().querySelector('.owfEnd .owfMore'), 'the state pill is the right end, Details is not');
+  assert(bar().querySelector('.owfCore > .owfTail > [data-owf-chip=metal] + .owfMore'), 'metal and Details are glued in one tail of the first row');
   assert.equal(pop().hidden, true); assert.equal(chipEl('order').getAttribute('aria-expanded'), 'false'); assert.equal(chipEl('order').getAttribute('aria-haspopup'), 'true');
   assert.equal(chipEl('ship').className.includes('ok'), true); assert.equal(chipEl('metal').querySelector('.owfDotM').getAttribute('style'), '--mc:#c8a24e');
   assert.equal(chipEl('order').getAttribute('aria-label'), 'Order 4195000012, press to copy the number');
@@ -196,8 +200,11 @@ ok('C4 the keyboard: the arrows walk the line (one Tab stop), a focused chip ope
   const first = chipEl('order'); first.focus();
   assert.equal(openId(), 'order', 'keyboard focus opens the card'); assert.equal(host.querySelector('[data-owf-item][tabindex="0"]'), first);
   kd(first, 'ArrowRight'); assert.equal(d.activeElement, chipEl('buyer')); assert.equal(openId(), 'buyer'); assert.equal(chipEl('buyer').tabIndex, 0); assert.equal(first.tabIndex, -1);
-  kd(d.activeElement, 'End'); assert.equal(d.activeElement.classList.contains('owfMore'), true); kd(d.activeElement, 'Home'); assert.equal(d.activeElement, first);
-  kd(d.activeElement, 'ArrowLeft'); assert.equal(d.activeElement.classList.contains('owfMore'), true, 'it wraps round');
+  const items = [...host.querySelectorAll('.owfBar [data-owf-item]')], lastItem = items[items.length - 1];
+  kd(d.activeElement, 'End'); assert.equal(d.activeElement, lastItem); kd(d.activeElement, 'Home'); assert.equal(d.activeElement, first);
+  kd(d.activeElement, 'ArrowLeft'); assert.equal(d.activeElement, lastItem, 'it wraps round');
+  chipEl('metal').focus(); kd(chipEl('metal'), 'ArrowRight'); assert.equal(d.activeElement.classList.contains('owfMore'), true, 'the arrow after the metal chip is Details, as it reads');
+  kd(d.activeElement, 'ArrowRight'); assert.equal(d.activeElement, chipEl('qty'), 'and the one after Details is the chip that comes later'); kd(d.activeElement, 'Home');
   chipEl('ship').focus(); chipEl('ship').click(); assert.equal(openId(), 'ship'); kd(chipEl('ship'), 'Escape'); assert.equal(openId(), ''); assert.equal(d.activeElement, chipEl('ship'), 'Esc gives the focus back to the chip');
   chipEl('ship').blur();
 });
