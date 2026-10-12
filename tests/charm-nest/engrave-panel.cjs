@@ -81,6 +81,28 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     check(ear.html === '' && ear.hidden && ear.modes === 0, 'an earring (spec.engraveNever) draws no panel at all, so it has no Back choice: ' + JSON.stringify(ear));
 
+    // ── 7b · the REAL preview component (charm-nest-engrave-preview.js): typing and picking a font change what the thumbnail draws, at once ──
+    const real = await page.evaluate(async KEY => {
+      const P = window.CharmNestEngravePreview; if (!P) return { skipped: true };
+      const row = B.orders.byKey.get(KEY), th = {}, box = document.createElement('div'); box.style.cssText = 'position:fixed;left:300px;top:40px;width:260px;z-index:99998';
+      for (const f of ['front', 'back']) { const t = document.createElement('div'); t.className = 'engThumb'; t.style.cssText = 'width:120px;height:120px;display:inline-block'; box.appendChild(t); th[f] = t; P.render(t, { row, text: f === 'front' ? 'W' : '1. 27. 24', face: f, fontId: P.fontIdOf(row, f, '') }); }
+      document.body.appendChild(box);
+      const s = document.createElement('div'); s.style.cssText = 'position:fixed;left:20px;top:40px;width:232px;z-index:99999'; document.body.appendChild(s);
+      CharmNestEngravePanel.DRAFTS.clear();
+      const h = CharmNestEngravePanel.mount(s, row, { job: Engrave.jobOf(row, null, 'back'), face: 'back', thumb: f => th[f] }); h.setFace('front');
+      const ta = s.querySelector('.engpWords'), sel = s.querySelector('.engpFont'), txt = f => th[f].querySelector('.engpvText');
+      ta.value = 'Name Two'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+      const typed = { front: txt('front') && txt('front').textContent, back: txt('back') && txt('back').textContent };
+      sel.value = 'Pristina'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const fam = { front: txt('front') && getComputedStyle(txt('front')).fontFamily, back: txt('back') && getComputedStyle(txt('back')).fontFamily, select: sel.style.fontFamily };
+      const out = { typed, fam, id: P.fontIdOf(row, 'front', 'Pristina') };
+      h.destroy(); s.remove(); box.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
+    }, KEY);
+    if (!real.skipped) {
+      check(/name two/i.test(real.typed.front || '') && !/name two/i.test(real.typed.back || ''), 'the real preview: the typed words (capitals: the line font is Ace) are on the FRONT thumbnail at once, the back still shows its own: ' + JSON.stringify(real.typed));
+      check(real.id && new RegExp('CNEng ' + real.id).test(real.fam.front || '') && !new RegExp('CNEng ' + real.id).test(real.fam.back || ''), 'and the picked font (Pristina -> ' + real.id + ') is the front thumbnail\'s font family, not the back\'s: ' + JSON.stringify(real.fam));
+    } else console.log('  (no CharmNestEngravePreview in this build: live-preview check skipped)');
+
     // ── 5-7 · faces, position and the live thumbnails, in a slot 232px wide ──
     await page.evaluate(KEY => {
       document.getElementById('__slot')?.remove(); const s = document.createElement('div'); s.id = '__slot'; s.style.cssText = 'position:fixed;left:20px;top:40px;width:232px;background:#fffefb;padding:0;z-index:99999;max-height:90vh;overflow:auto'; document.body.appendChild(s);
