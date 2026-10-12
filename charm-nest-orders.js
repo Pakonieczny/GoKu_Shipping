@@ -1470,6 +1470,12 @@
       const named = info.source !== "design" && info.source !== "name";   // (two designs the line names, not one design file that draws two bodies)
       info.mismatched = false; info.source = null; info.members = null; if (named) info.twoNamed = true; else info.twoBodies = true;
     }
+    /* A SET OF TWO DESIGNS (SIBLINGS, Paul, 12 Oct 2026: a necklace whose listing wears two different charms, "SCHRODINGER CAT 1" and "SCHRODINGER CAT 2"): the pair of designs a PERSON
+       saved for this listing and SKU (the saved pair link, source "alias", charm-nest-siblings.js suggests it) on a line that is not an earring pair is two pieces of ONE order line, each
+       its own design, no Left and Right, nothing mirrored, counted like any other multi-piece line (units times two). Never read from words: a SKU or title that names two designs
+       on a necklace is still one piece of the first design (twoNamed above), and an earring line keeps the Left and Right it always had. */
+    const aliasSet = o.members && o.members.source === "alias" && Array.isArray(o.members.members) && o.members.members.length === 2 ? o.members.members.map(m => upSku(m && m.sku)) : null;
+    if (aliasSet && aliasSet[0] && aliasSet[1] && aliasSet[0] !== aliasSet[1] && !info.earring && soldAs !== "single") { delete info.twoNamed; delete info.twoBodies; info.set = { designs: aliasSet, source: "alias" }; }
     if (earForm) info.earForm = earForm;
     if (askWords && !earForm && !(ansWords && ansWords.field === "ignore")) info.asks.push({ name: EARS_OPT, value: askWords.value, guess: 0, why: askWords.why, rule: "ear:words" });
     // a line that says two different designs but names ONE waits for a person (never guessed): the second design, or "the same on both ears" (the answer under SECOND_OPT)
@@ -1495,6 +1501,7 @@
     else if (info.mismatched && info.earring) { if (PIECE_RULES.mismatchedMakesTwo) info.perUnit = 2; else info.glued = true; }
     else if (info.earring && PIECE_RULES.pairFormsMakeTwo) info.perUnit = 2;
     else if (!info.earring && !info.single && PIECE_RULES.optionCountsMake && cr.certain && cr.n > 1) info.perUnit = cr.n;
+    if (info.set) info.perUnit = info.set.designs.length;   // (a set of two designs: two pieces for each unit bought, whatever a count option says)
     // what a person should see, plainly
     if (info.asks.some(a => a.rule === "ear:words")) info.notes.push("it waits until a person says whether this is a pair of earrings (" + askWords.why + ")");
     else if (earForm) info.notes.push("a person said this listing is " + (earForm === "huggie" ? "huggie hoops" : "a pair of earrings"));
@@ -1503,6 +1510,7 @@
     if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the line says two different designs: ${info.second.why}` : "the line says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
+    if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order line, no Left or Right, nothing mirrored`);
     // (the same outline twice, two keys or two mittens, on a line that is not an earring pair: ONE charm. A single earring that names no ear is such a line too.)
     if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) info.oneBody = { index: 0, count: 2, rule: "the left body" };
     if (info.oneBody) info.notes.push(ONE_WORDS(info.oneBody.index, info.oneBody.count, "the same outline twice"));

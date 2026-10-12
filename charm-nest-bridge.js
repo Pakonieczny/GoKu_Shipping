@@ -219,6 +219,8 @@ const ListMedia = (() => {
   /** Is the Right ear of this line's design cut turned over, the one word charm-nest-pair.js gives (a design that faces the other way is not; letters and numbers are mirrored like any other): for a picture of ONE ear that has no piece record (the efficiency order tiles). False when the master design is not known here. */
   const earMirror = (row, side) => { try { const e = Master.entryFor(row?.spec?.designSku || row?.line?.sku || ''); return !!(e && (side === 'L' || side === 'R') && earTurn(row, side, e)); } catch (_) { return false; } };
   const matchPair = row => { try { return !!row && !row.spec?.noDesign && !pairRow(row) && !earDesign(row, "L") && earPairRow(row); } catch (_) { return false; } };
+  // (a line of a SET of two designs a person saved for a listing that is not earrings, SIBLINGS: a necklace of SCHRODINGER CAT 1 and 2: its picture is the two designs side by side, plain, no Left or Right chip; the designs' SKUs, else [])
+  const setOf = row => { try { const sp = row && !row.spec?.noDesign && !row.spec?.ownDesign ? row.spec : null, pr = sp && sp.pair, d = pr && !pr.glued && !pr.legacy && !pr.earring && pr.set && Array.isArray(pr.set.designs) ? pr.set.designs.map(String) : null; return d && d.length >= 2 && d.every(Boolean) ? d : []; } catch (_) { return []; } };
   function pair(row) {
     return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
@@ -303,6 +305,15 @@ const ListMedia = (() => {
         if(el && er)return await Pool.masterTwo(el,er,row.spec?.size,px,earTurn(row,'R',er));
       }catch(_){/* the one picture the line always had */}
     }
+    // (a line of a SET of two designs, asked for as the line: the two designs side by side, plain; if either cannot be had the line falls back to the one picture it had)
+    const st=!(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true))?setOf(row):[];
+    if(st.length){
+      try{
+        const entryOf=async k=>{let e=Master.entryFor(k);if(!e){if(!catalog.has(k))catalog.set(k,Master.fetchEntry(k).finally(()=>catalog.delete(k)));e=await catalog.get(k);}return e;};
+        const es=await Promise.all(st.map(entryOf));
+        if(es.every(Boolean))return await Pool.masterSet(es,row.spec?.size,px);
+      }catch(_){/* the one picture the line always had */}
+    }
     const own=opts?earDesign(row,opts.side):'';
     const charm=(pairRow(row) || sideOne || both || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
@@ -339,15 +350,15 @@ const ListMedia = (() => {
     const sku=String((opts?earDesign(row,opts.side):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():setOf(row).length?'|set:'+setOf(row).join('+').toUpperCase():''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
-    const both=matchPair(row),two=twoOf(row),one=oneRow(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(one>=0?['one',one]:[])));
+    const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -3161,6 +3172,28 @@ const Pool = window.Pool = (() => {
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
   }
+  /** The picture of a line of a SET of two designs (SIBLINGS: a necklace of SCHRODINGER CAT 1 and SCHRODINGER CAT 2, charm-nest-orders.js spec.pair.set): each design drawn plain, as the order lists draw one design
+   *  (white, a 3 mm margin), at ONE scale so the two keep their true proportion, side by side on one white picture. No Left or Right chip and nothing turned over (a necklace has neither).
+   *  A data address (never a canvas, so one picture can be shown in two places), kept in memory under both files. */
+  async function masterSet(entries,size,px) {
+    const paths=entries.map(e=>sizeEntry(e,size)?.aiPath);
+    if(!paths.length || paths.some(x=>!x))throw new Error("No design file");
+    const side=px || 220,key="set:"+side+":"+paths.join("|");
+    if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
+    const task=(async()=>{
+      const charms=await Promise.all(entries.map(async(e,i)=>{const cached=B.pool.sources.get(paths[i]);return cached?cached.charms[0]:(await readMasterCharm(e,size)).charm;}));
+      const pad=3*PT,gapPt=Math.max(...charms.map(c=>c.bbox[2]-c.bbox[0]))*0.12+pad,wide=charms.reduce((a,c)=>a+(c.bbox[2]-c.bbox[0])+2*pad,0)+gapPt*(charms.length-1),tall=Math.max(...charms.map(c=>c.bbox[3]-c.bbox[1]+2*pad)),k=Math.min(side/wide,side/tall);
+      const shots=await Promise.all(charms.map(c=>{const w=c.bbox[2]-c.bbox[0]+2*pad,h=c.bbox[3]-c.bbox[1]+2*pad,own=Math.max(16,Math.round(k*Math.max(w,h)));return P.frontPreview?P.frontPreview(c,own):Engrave.renderFront(c,own);}));
+      const imgs=await Promise.all(shots.map(async r=>{if(r && r.nodeType)return r;const img=new Image();img.decoding="async";img.src=String(r);await img.decode();return img;}));
+      const W=Math.max(8,Math.round(imgs.reduce((a,im)=>a+(im.naturalWidth||im.width),0)+gapPt*k*(imgs.length-1))),H=Math.max(8,Math.max(...imgs.map(im=>im.naturalHeight||im.height))),cv=document.createElement("canvas");
+      cv.width=W;cv.height=H;const ctx=cv.getContext("2d");ctx.fillStyle="#fff";ctx.fillRect(0,0,W,H);
+      let x=0;for(const im of imgs){const w=im.naturalWidth||im.width,h=im.naturalHeight||im.height;ctx.drawImage(im,Math.round(x),Math.round((H-h)/2),w,h);x+=w+gapPt*k;}
+      return cv.toDataURL("image/png");
+    })();
+    masterPreviewCache.set(key,task);
+    while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
+    try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
+  }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
     const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
@@ -3293,6 +3326,23 @@ const Pool = window.Pool = (() => {
       ear2 = { entry: entry2, src: src2, sku: two.R };
     }
     const earOf = p => (ear2 && p && p.side === "R" ? ear2 : { entry, src, sku: sp.designSku });
+    /* A SET OF TWO DESIGNS on a line that is not an earring pair (SIBLINGS, Paul, 12 Oct 2026: a necklace with SCHRODINGER CAT 1 and SCHRODINGER CAT 2, the pair of designs a person saved
+       for the listing and SKU, spec.pair.set): two pieces for each unit, the first piece the first design, the second piece the second, alternating; every piece its own charm, never a Left or a
+       Right, never mirrored; one group (the line). A design the master cannot give holds the line, as the second design of an earring pair does: never made as the first alone. */
+    const setSkus = memberSet(sp); let setDs = null;
+    if (setSkus && setSkus[0] === sp.designSku) {
+      setDs = [{ entry, src, sku: sp.designSku }];
+      for (const k of setSkus.slice(1)) {
+        const e2 = Master.entryFor(k) || await Master.fetchEntry(k), hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: ${why}`); return null; };
+        if (!e2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: k, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: not in any master file`); return null; }
+        if (e2.blocked) return hold(`SKU blocked: ${e2.blocked}`, { kind: "blockedSku", reason: e2.blocked, sku: k });
+        if (e2.sizes && Object.keys(e2.sizes).length && !(sp.size && e2.sizes[sp.size])) return hold(`no design for size ${sp.size || "(none)"}`, { kind: "missingSize", sku: k, size: sp.size, available: Object.keys(e2.sizes) });
+        const s2 = await masterCharm(e2, sp.size);
+        if (s2.bodies) return hold(`${k} draws two bodies: it cannot be one piece of a set of two designs`);
+        setDs.push({ entry: e2, src: s2, sku: k });
+      }
+      if (src.bodies) { row.state = "held"; row.reason = `${sp.designSku} draws two bodies: it cannot be one piece of a set of two designs`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.reason}`); return null; }
+    }
     /* An earring pair (Paul, 9 Oct 2026, amendment 2: stud, hoop or huggie; matching or mismatched) makes a LEFT and a RIGHT piece per unit, copies
        alternating L, R, all of one group (the line). Each piece carries its side and `mirror` (the Right is the mirror image of the Left, so each
        ear faces its own side); a mismatched pair's two pieces are also cut from two different bodies of the design, each its own charm with its own
@@ -3310,7 +3360,7 @@ const Pool = window.Pool = (() => {
     // ONE body (Paul, 11 Oct 2026: "This listing is not an earring so it should NOT have duplicate charms"): a line that is not an earring pair, of a design that draws the SAME outline twice, is cut from one body of it
     // (the left one, charm-nest-pair.js soloOf): one piece per unit, no side, nothing mirrored, nothing glued. A line pooled before this (its pool rows hold the folded charm), an old glued line and a design whose
     // two bodies are different charms keep what they made. The piece's stored charm hash is that body's: the only mark it carries (soloBase reads it back).
-    const one = !plan && !ear2 ? await soloFor(row, src) : null, cutBase = one ? one.charm : base;
+    const one = !plan && !ear2 && !setDs ? await soloFor(row, src) : null, cutBase = one ? one.charm : base;
     if (one) O.solo(sp, one); else if (sp.pair && sp.pair.oneBody) O.solo(sp, null);   // (the intake said one body from the master entry; the geometry says it is not: the old words)
     if (!plan && !one && sp.pair && sp.pair.mismatched && !sp.pair.glued) O.glue(sp);   // (a mismatched pair whose two bodies could not be told apart is the one glued piece per unit it always was, never two copies of the folded charm)
     const fixed = Number.isInteger(+sp.pieceCount) && +sp.pieceCount >= 1 && +sp.pieceCount <= PoolPieces.MAX_PIECES ? +sp.pieceCount : 0;   // (the count the intake set for a line that is not an earring pair: charm-nest-pair.js pieceCountOf)
@@ -3320,7 +3370,7 @@ const Pool = window.Pool = (() => {
     const grouped = !!(Pair && Pair.isGroupLine && Pair.isGroupLine(pairLine(row), base)), loose = grouped && !plan && count >= 2 && count <= PoolPieces.MAX_PIECES;
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
-    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : [cutBase]) {
+    for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : setDs ? setDs.map(d => d.src.charms[0]) : [cutBase]) {
       if (b.areaPt2 > usable || Math.min(b.widthPt, b.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(b.widthPt * MM).toFixed(1)} × ${(b.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: b.widthPt * MM, heightMm: b.heightPt * MM, material: sp.material }); return null; }
     }
     // a Right piece is drawn the other way round (its mirror image); a line whose mirrored charm cannot be made is held, never drawn the wrong way
@@ -3330,8 +3380,8 @@ const Pool = window.Pool = (() => {
       const poolId = O.poolId(row.order, row.line, copy), pp = plan ? plan[copy - 1] : null;
       // (an ear piece of a line that is not a group, a single earring that names its ear: a group of ONE, however many are bought; discs, letters, charms of a counted necklace: group fields, no ear)
       const mine = pp ? PoolPieces.fieldsOf(grouped ? pp : Object.assign({}, pp, { groupSize: 1 })) : loose ? PoolPieces.cleanGroupFields({ poolId, groupSize: count }) : null;
-      const ear = earOf(pp), cut = ear.src;   // (the ear's own design: the line's one design for every piece but the Right of a pair of two designs)
-      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : one ? cloneCharm(cutBase, `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
+      const ear = setDs && !pp ? setDs[(copy - 1) % setDs.length] : earOf(pp), cut = ear.src;   // (the ear's own design: the line's one design for every piece but the Right of a pair of two designs; a set of two designs: piece 1 the first design, piece 2 the second, alternating)
+      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : setDs ? cloneCharm(cut.charms[0], `${cut.id}:${poolId}`) : one ? cloneCharm(cutBase, `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
       charm.name = `${row.order.receiptId} · ${ear.sku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
@@ -3349,6 +3399,11 @@ const Pool = window.Pool = (() => {
     const one = Pair.soloOf(pairLine(row), whole); if (!one) return null;
     const bodies = await soloBodies(src), charm = bodies && bodies[one.index];
     return charm ? Object.assign({}, one, { charm }) : null;
+  }
+  /** The designs of a SET a person saved for a line that is not an earring pair (spec.pair.set, charm-nest-orders.js; ["SCHRODINGER CAT 1", "SCHRODINGER CAT 2"]), or null: a line that is not one, an earring pair, a glued or an old line. */
+  function memberSet(sp) {
+    const pr = sp && sp.pair, d = pr && !pr.glued && !pr.legacy && !pr.earring && pr.set && Array.isArray(pr.set.designs) ? pr.set.designs.map(x => String(x || "")) : null;
+    return d && d.length >= 2 && d.every(x => x) && new Set(d).size === d.length ? d : null;
   }
   /** The two master designs of a mismatched pair named by two SKUs ({ L, R }), or null: a line made of one design, a mismatched design of two bodies, a glued or an old line. */
   function memberSkus(sp) {
@@ -3644,7 +3699,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -11979,9 +12034,9 @@ const Review = window.Review = (() => {
   const by = () => employeeName() || askEmployee();
   /** A decision saved to the library holds the card's buttons while it saves, and a failed save says so and leaves the
    *  card as it was, to press again. It used to fail in silence: the card stayed and nothing said why. */
-  const saving = (c, fn) => async () => {
+  const saving = (c, fn, sel) => async () => {
     if (c.dataset.saving) return;
-    const bs = [...c.querySelectorAll(".fixes button")]; c.dataset.saving = "1"; bs.forEach(b => { b.disabled = true; });
+    const bs = [...c.querySelectorAll(sel || ".fixes button")]; c.dataset.saving = "1"; bs.forEach(b => { b.disabled = true; });
     try { await fn(); }
     catch (e) { toast("Could not save that: " + e.message, "bad", 7000); }
     finally { delete c.dataset.saving; bs.forEach(b => { b.disabled = false; }); c.querySelectorAll("[data-f]").forEach(f => f.dispatchEvent(new Event("change"))); }
@@ -12019,6 +12074,60 @@ const Review = window.Review = (() => {
   function optionCharms(p, row) {
     // what Etsy's inventory gives the product bought comes first, then the master SKUs named like the value (charm-nest-orders.js suggestCharms)
     return CharmNestOrders.suggestCharms({ value: p.optionValue, line: row && row.line, picks: p.picks, skus: B.master.entries.keys() });
+  }
+  /** The "use both" offer for an unmatched line (charm-nest-siblings.js; the numbered designs come from the form guard's own list, problem.siblings / spec.siblings, else a plain scan of the master): null when
+   *  the line is not a necklace (or two charms), has fewer than two numbered designs, or has no listing number to keep the answer under.
+   *  An unknown SKU is ONE card for every order that bought it (decisionKey), whatever the listing: the offer is drawn from the line the card shows, and it covers (`rows`) only the lines of that card
+   *  that are offered the very same pair, so the tap never links an earring or huggie listing that happens to carry the same SKU. */
+  let sibIx = { entries: null, size: -1, map: null };
+  /** The master's numbered designs by name, listed once and again when the library held is replaced or grows (a plain scan of thousands of SKUs for every unknown-SKU line on every draw was too much). */
+  function sibIndex() { const e = B.master.entries; if (sibIx.entries !== e || sibIx.size !== e.size) sibIx = { entries: e, size: e.size, map: window.CharmNestSiblings.index(e.keys()) }; return sibIx.map; }
+  function siblingOffer(row, p, group) {
+    try {
+      const S = window.CharmNestSiblings; if (!S || !row || !row.line) return null;
+      const blocked = k => { const e = Master.entryFor(k); return !!(e && e.blocked); };
+      const ask = (x, own) => { if (!x || !x.line || !/^\d+$/.test(String(x.line.listingId || ""))) return null; return S.suggest(x.line, { spec: x.spec, siblings: own && p && Array.isArray(p.siblings) ? p.siblings : undefined, index: sibIndex(), base: p && p.sku || undefined, blocked }); };
+      const lead = ask(row, true); if (!lead) return null;
+      const rows = (group && group.length ? group : [row]).filter(x => x === row || (() => { const o = ask(x, false); return !!o && o.pair.L === lead.pair.L && o.pair.R === lead.pair.R; })());
+      return Object.assign({}, lead, { rows });
+    } catch (_) { return null; }
+  }
+  /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
+  const answerKeysOf = (it, rows) => new Map((rows || rowsOf(it)).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
+  /** "Use this charm" for an unmatched SKU: the saved alias, for every listing the card covers (kept for good, aliasPut), then the lines are read again. */
+  async function saveCharm(it, p, sku, rows) {
+    sku = String(sku || "").trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return;
+    if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
+    const lids = [...new Set((rows || rowsOf(it)).map(x => String(x.line.listingId)))];
+    for (const q of answerKeysOf(it, rows).values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title });
+    answered(rows ? { kind: it.kind, rows } : it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
+    await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
+    for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr);
+  }
+  /** "Use both: X 1 + X 2" (SIBLINGS, 12 Oct 2026): the page's saved pair link (aliasPut with pair, kept per listing and per transaction SKU under Charm_Sku_Aliases/{listing}.pairBySku), so this
+   *  listing's next order is already linked with no question; the line then reads as two pieces of one group (charm-nest-orders.js pairInfo, source "alias"), never mirrored. A person tapped it. */
+  async function saveBoth(it, p, sib) {
+    const L = sib.pair.L, R = sib.pair.R; if (!B.master.entries.has(L) || !B.master.entries.has(R)) { toast(`${B.master.entries.has(L) ? R : L} is not in the master index`, "bad"); return; }
+    const who = by(); if (!who) return; const pairs = [...answerKeysOf(it, sib.rows).values()], lids = [...new Set(pairs.map(q => q.lid))];
+    if (pairs.some(q => !q.from || !/^\d+$/.test(q.lid))) { toast("This line has no listing number or SKU, so both charms cannot be kept for it", "bad", 7000); return; }
+    for (const q of pairs) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, fromSku: q.from, pair: { L, R }, by: who, title: q.title });
+    answered({ kind: it.kind, rows: sib.rows }, "decided", `Use both: ${L} + ${R}`, { pair: { L, R }, from: p.sku || null }, who);
+    await Orders.loadMaps(true); toast(`${p.sku || "This SKU"} → ${L} + ${R} remembered for ${lids.length > 1 ? lids.length + " listings" : "this listing"}`, "ok");
+    for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr);
+  }
+  /** The choices of an offer: ONE "Use both" button with the two designs' thumbnails (the master's own picture tag, the SKU picker's `dsPick` button), then each numbered design as a single choice. */
+  function sibButtons(sib) {
+    const pic = k => (Master.pictureTag(Master.entryFor(k)) || "");
+    return `<button type="button" class="btn ghost sm dsPick" data-both="1" title="${esc(`two pieces for each ${sib.noun}, one of each design; kept for this listing, so its next order is already linked`)}">${pic(sib.pair.L)}${pic(sib.pair.R)}Use both: ${esc(sib.pair.L)} + ${esc(sib.pair.R)}</button>`
+      + sib.siblings.slice(0, 8).map(x => `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(`use only ${x.sku} for this listing`)}">${pic(x.sku)}${esc(x.sku)}</button>`).join("")
+      + (sib.siblings.length > 8 ? `<span class="dsFor">and ${sib.siblings.length - 8} more: pick them in the master index</span>` : "");
+  }
+  /** What the offer is drawn from (a row or card redraws when it changes: the designs it names and their pictures, which arrive with the library). */
+  const siblingStamp = it => { if (it.kind !== "unmatchedSku" || it.done || it.decided) return ""; const row = it.row || rowsOf(it)[0], s = row ? siblingOffer(row, it.problem || {}, rowsOf(it)) : null; return s ? [s.pair.L, s.pair.R, s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask] : ""; };
+  /** The two kinds of button an offer has, wired: `guard` wraps a save so the buttons hold while it saves and a failure says so. */
+  function wireSib(host, it, p, sib, guard) {
+    host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = guard(() => saveCharm(it, p, b.dataset.dsku, sib && sib.rows)); });
+    const both = host.querySelector("[data-both]"); if (both) both.onclick = guard(() => saveBoth(it, p, sib));
   }
   /** One list of the master's SKUs for every field that picks a charm, made again when the index changes. */
   let skuListFor = null;
@@ -12172,16 +12281,18 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); answered(it, "decided", `“${p.optionValue}” changes nothing (ignored)`, { option: p.optionName, value: p.optionValue, field: "ignore" }, who); await Orders.loadMaps(true); await repoolAll(it); });
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
-      c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>
+      /* SIBLINGS (Paul, 12 Oct 2026, order 4198409468, SKU "SCHRODINGER CAT" on a necklace of two cats): when the SKU names no design but the library holds its numbered designs and the line is a necklace
+         (or says two charms), ONE quiet tap offers both ("Use both: X 1 + X 2", their two thumbnails) beside each design as a single choice. Only a suggestion: a person taps, never automatic
+         (a number after a name is often an alternative, not a set). The tap saves the pair for this listing and SKU for good (the saved pair link, aliasPut pair) and the line then makes two pieces of one group. */
+      const sib = it.kind === "unmatchedSku" ? siblingOffer(r, p, group) : null;
+      const sibHtml = sib ? `<div class="ask">${esc(sib.ask)}</div>
+        <div class="fixes pick sibs">${sibButtons(sib)}</div>` : "";
+      c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>${sibHtml}
         <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every piece of this listing with this SKU uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this piece never needs a design — remembered, so it stops asking">Nothing to cut</button><button class="btn ghost sm" data-a="hold" title="hold the whole order until someone sorts it out">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
+      if (sib) Master.mountPictures(c);
       bindNeeds(c, "alias", "sku"); CustomRead.wire(c, group);
-      c.querySelector("[data-a=alias]").onclick = saving(c, async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(rowsOf(it).map(x => String(x.line.listingId)))];
-        // for the listing and the SKU each line came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each
-        // have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace
-        const pairs = new Map(rowsOf(it).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
-        for (const q of pairs.values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title });
-        answered(it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
-        await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); });
+      c.querySelector("[data-a=alias]").onclick = saving(c, () => saveCharm(it, p, c.querySelector("[data-f=sku]").value));
+      wireSib(c, it, p, sib, fn => saving(c, fn));
       // "Nothing to cut" with no SKU is a title rule; a no-SKU huggie set's matches only "<title> (HUGGIE)", never its necklace
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: p.huggie ? "^" + String(r.line.title).slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\(HUGGIE\\)$" : "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: p.huggie ? "by title · Huggie CHARM SET" : "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); await repoolAll(it); });
       const mb = c.querySelector("[data-a=master]");
@@ -12320,7 +12431,7 @@ const Review = window.Review = (() => {
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),holdStamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),holdStamp(row),siblingStamp(it)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -12490,9 +12601,14 @@ const Review = window.Review = (() => {
       :(cu?CustomPrint.failNote(it):'')
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
+    // SIBLINGS (Paul, 12 Oct 2026): an unknown SKU whose numbered designs sit in the library, on a necklace (or two charms): ONE quiet tap, "Use both", with the two thumbnails, and each design as a single choice, in the row itself
+    const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&it.kind==='unmatchedSku'?siblingOffer(row,pk,group):null;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
+    if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
+    if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
