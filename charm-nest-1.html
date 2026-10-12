@@ -2026,7 +2026,9 @@ details.masterHist>summary{white-space:nowrap}
 .rvItem .fixes.other.hidden{display:none}
 /* Options: the option picks the charm itself (a zodiac sign, a birthstone): the master's SKUs the value names, with their pictures */
 .rvItem .fixes.design.hidden{display:none}.rvItem .fixes.design .dsFor{font-size:12px;color:var(--ink70)}
-.rvItem .dsPick{display:inline-flex;align-items:center;gap:6px}.rvItem .dsPick img{width:22px;height:22px;object-fit:contain;border-radius:4px;background:var(--paper2)}
+.rvItem .dsPick,.sibOffer .dsPick{display:inline-flex;align-items:center;gap:6px}.rvItem .dsPick img,.sibOffer .dsPick img{width:22px;height:22px;object-fit:contain;border-radius:4px;background:var(--paper2)}
+/* SIBLINGS (12 Oct 2026): the "use both" offer inside a Review row (under the reason): its question, then the picker buttons as the SKU picker draws them */
+.sibOffer{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;margin:3px 0 2px;min-width:0}.sibOffer .sibAsk{font:600 12.5px/1.45 var(--sans);color:var(--ink);overflow-wrap:anywhere}.sibOffer .sibPicks{display:flex;flex-wrap:wrap;gap:6px;min-width:0}.sibOffer .dsPick{white-space:normal;text-align:left;justify-content:flex-start;max-width:100%;min-width:0;line-height:1.3;overflow-wrap:anywhere}.sibOffer .dsPick img{width:30px;height:30px;flex:none}.sibOffer [data-both]{flex:1 1 100%}.sibOffer .dsFor{font:11px/1.4 var(--sans);color:var(--ink70);align-self:center}
 .rvItem .scopeOne{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink45)}
 .rvItem[data-kind=needsMapping] .rh .sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 220px}
 .rvItem .fixes input,.rvItem .fixes select,.rvItem .fixes textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card)}
@@ -3314,11 +3316,11 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-setup.js?v=20261011-su1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
@@ -7389,9 +7391,10 @@ boot();
 <!-- save a custom design to the charm repository and link its listing (Paul, 11 Oct 2026): the SKU rule (charm-nest-sku.js) and the save engine (charm-nest-keep.js), which the designs window's save strip drives (charm-nest-bridge.js, CustomSheet) -->
 <script src="charm-nest-sku.js?v=20261011-sv1"></script>
 <script src="charm-nest-keep.js?v=20261011-sv1"></script>
+<script src="charm-nest-siblings.js?v=20261012-sg1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>

@@ -2099,7 +2099,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (sh && busy(sh)) return null;
     const openRun = !!sh && !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status) && !sh.recalled && !sentToStation(sh);
     if (openRun) {
-      if (!sh.placements.length || !sh.verification?.ok || !sh.persistedDone || sh.roseCutAt || sh.laserDoneAt || sh.metal === "rose") return null;
+      if (!sh.placements.length || !sh.verification?.ok || !sh.persistedDone || (sh.roseCutAt && sh.setId && !sh.draft) || sh.laserDoneAt || sh.metal === "rose") return null;   // (a cut sheet that is in a set stays in it; one in NO set may join one, Paul 12 Oct)
       if (sh.setId && !sh.draft) return { kind: "relabel", note: "Its set has no label for it yet", title: "Make this sheet's QR label for the orders on it again" };
       if (["gold", "silver"].includes(sh.metal)) {
         const gap = sh.topup && !sh.topup.closedAt;
@@ -5094,8 +5094,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // a Rose Gold sheet joins a set by its own Cut Sheet press (the Library asks for its yes first); it is ready for that when its layout is saved and verified
     // (a sheet of a committed set was sent to the station: it joins the open run's set only after the Library took it out of its set. Then it is as ready as any other sheet that is full and saved: this is that test, ahead of the leaving)
     const spare = sent && !rose && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && ["gold", "silver", "gold10k", "gold14k"].includes(sh.metal);
-    const ok = rose ? runHere && !sh.roseCutAt && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : spare || (!!plan && (plan.kind === "release" || plan.kind === "include"));
-    const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.roseCutAt || sh.laserDoneAt ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
+    const ok = rose ? runHere && !sh.laserDoneAt && !busy(sh) && !sh.dirty && !!sh.persistedDone && sh.verification?.ok === true && (sh.placements || []).length > 0 && (!sh.setId || !!sh.draft) : spare || (!!plan && (plan.kind === "release" || plan.kind === "include"));
+    const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.laserDoneAt || (sh.roseCutAt && sh.setId && !sh.draft) ? "It is already cut." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone || sh.dirty ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
     const split = ok && plan && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: window.CharmNestSheetName ? CharmNestSheetName.name(x.sheet) : `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, orders: x.orders })) : [];
     // (a full Rose Gold sheet takes the rest of the metal whole: no Cut Sheet button, no line, no cut)
     const full = ok && rose ? !!(window.RoseStock && RoseStock.full ? RoseStock.full(sh) : sh.rosePlan && sh.rosePlan.full) : false;
