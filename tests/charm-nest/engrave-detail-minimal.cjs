@@ -4,7 +4,8 @@
 // Real charm-nest-1.html in headless Chromium over the fake loopback site (bridge-server.cjs): no Etsy, no paid reading, no live write. Names are made up.
 //   1  a settled read (97%, personalisation box, no staff note), the detail at 1280x720: ABSENT: the "Words on the ..." box and its "Use these words", the "Front/Back . reference" picture (when the card's thumbnails are on
 //      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, Save, Cancel, ONE Emoji button), Approve, "No engraving", the big picture, Open order
-//   2  an unsettled read (45%, or words still to decide) keeps ONE quiet box of the buyer's own words (Personalization / Buyer's note / Staff note, no title, no "Reading", no "Font", no "Decided by"); a staff note keeps it too
+//   2  the customer's own words are ALWAYS in the detail (ENGNOTE, Paul round 2 point 6: "I didn't ask for you to remove that"): ONE box titled "What the customer wrote" (charm-nest-engrave-said.js), settled read or not, a
+//      staff note or not; it holds no "Reading", no "Font", no "Decided by". Its own checks (every part, nothing when the customer wrote nothing, the decided row, the Review tab) are in engrave-customer-note.cjs
 //   3  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, one "No engraving" button
 //   4  the Review tab's placement card (no panel there) is untouched: its words box and its pill are still drawn
 //   5  a decided row's opened detail does not repeat the words or who decided (the row and its seals say it), and keeps the size, the file and the pieces
@@ -59,7 +60,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();
       const c = document.querySelector('#egQueue .rvItem[data-kind=placement]');
       const q = s => c ? c.querySelectorAll(s).length : -1, txt = c ? c.innerText.replace(/\s+/g, ' ') : '';
-      const out = { has: !!c, text: txt, words: q('.pvWords'), oldBox: q('textarea[data-f=words]'), use: [...(c ? c.querySelectorAll('[data-a=usewords]') : [])].map(b => b.textContent.trim()), order: q('.pvOrder'), orderText: c && c.querySelector('.pvOrder') ? c.querySelector('.pvOrder').textContent.replace(/\s+/g, ' ') : '',
+      const out = { has: !!c, text: txt, words: q('.pvWords'), oldBox: q('textarea[data-f=words]'), use: [...(c ? c.querySelectorAll('[data-a=usewords]') : [])].map(b => b.textContent.trim()), order: q('.pvOrder'), orderText: c && c.querySelector('[data-said]') ? c.querySelector('[data-said]').textContent.replace(/\s+/g, ' ') : '', said: q('[data-said]'),
         orderTitle: q('.pvOrder .pvH'), conf: q('.rh .conf'), ref: q('.pvRef'), mainTitle: q('.pvMain > .pvH'), checkTitle: q('.pvCheck .pvH'), faceSw: q('.rh .egFaces'), headSw: q('.rh .egEarSwitch'), textareas: q('textarea:not(.owCompLine textarea):not(.cmLine textarea)'),   // (the team-message boxes are the order chat's, not the engraving's)
         panel: q('.engp'), seg: [...(c ? c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg') : [])].map(b => b.textContent.trim()).join('|'), panelWords: q('.engp .engpWords'), font: q('.engp .engpFont'), save: q('.engp [data-engp=save]'), cancel: q('.engp [data-engp=cancel]'),
         emoji: q('[data-emoji]'), approve: q('[data-a=approve]'), skip: q('[data-a=skip]'), skipText: c && c.querySelector('[data-a=skip]') ? c.querySelector('[data-a=skip]').textContent.replace(/\s+/g, ' ').trim() : '', backHost: q('.backHost'), openOrder: q('[data-open-order]'), noBack: [...(c ? c.querySelectorAll('.noBack') : [])].map(n => n.textContent.trim()), why: q('.pvSide .why'),
@@ -74,7 +75,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.has && d.panel === 1, 'the Engrave detail is open and carries the options panel');
     check(d.words === 0 && d.oldBox === 0 && d.use.length === 0 && d.textareas === 1 && d.panelWords === 1, 'no second words box: no "Words on the ..." box, no "Use these words"; the panel\'s box is the one text area of the detail: ' + JSON.stringify({ words: d.words, oldBox: d.oldBox, use: d.use, textareas: d.textareas }));
     check(!/Words on the|Use these words|Engrave these words/i.test(d.text), 'and none of those words are on the detail');
-    check(d.order === 0 && !/From the order|Reading|Decided by|Personalization|Buyer's note|Staff note/.test(d.text), 'no "From the order" list (a settled read, no staff note): ' + d.order);
+    check(d.order === 0 && !/From the order|Reading|Decided by|Personalization\b|Buyer's note/.test(d.text), 'no "From the order" list, no Reading / Decided by rows: ' + d.order);
+    check(d.said === 1 && /front - W/.test(d.orderText) && /Please put the date/.test(d.orderText), 'the customer\'s own words are there on a settled read (97%), as ONE box (ENGNOTE): "' + d.orderText + '"');
     check(d.conf === 0 && !/\d+\s*%\s*sure|\bsure\b/i.test(d.text), 'no "NN% sure" pill, no percentage');
     check(d.checkTitle === 0 && d.orderTitle === 0 && !/To check with the buyer/.test(d.text), 'no "To check with the buyer" / "From the order" titles');
     check(d.faceSw === 0, 'the head draws no Front | Back switch (the panel picks the face: ' + (d.thumbs ? 'the card\'s thumbnails' : 'its own switch ' + d.faceSwitchOfPanel) + ')');
@@ -87,26 +89,26 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.approve === 1 && d.skip === 1 && /^No back engraving/.test(d.skipText) && d.backHost === 1 && d.openOrder === 1, 'Approve, the one "No engraving" button, the big picture and Open order stay: ' + JSON.stringify({ approve: d.approve, skip: d.skip, skipText: d.skipText, backHost: d.backHost, openOrder: d.openOrder }));
     if (shots) await page.screenshot({ path: path.join(shots, 'detail-settled.png') });
 
-    // ── 2 · an unsettled read keeps ONE quiet box of the buyer's own words; a staff note keeps it too ──
+    // ── 2 · the customer's words are always there (ENGNOTE; the quiet box ENGTRIM kept for an uncertain read is this one box now, for every read) ──
     d = await detail({ confidence: 0.45 }, {});
-    check(d.order === 1 && d.orderTitle === 0 && /Personalization/.test(d.orderText) && /front - W/.test(d.orderText) && /Buyer's note/.test(d.orderText) && /Please put the date/.test(d.orderText), 'a 45% read: one quiet box of the buyer\'s own words, no title: "' + d.orderText + '"');
-    check(!/Reading|Font|Decided by/.test(d.orderText) && d.conf === 0 && !/%/.test(d.text), 'it carries no "Reading", no "Font", no "Decided by" and no percentage');
+    check(d.said === 1 && /front - W/.test(d.orderText) && /Please put the date/.test(d.orderText), 'a 45% read: the one box of the customer\'s own words: "' + d.orderText + '"');
+    check(!/Reading|Font:|Decided by/.test(d.orderText) && d.conf === 0 && !/%/.test(d.text), 'it carries no "Reading", no "Font", no "Decided by" and no percentage');
     d = await detail({ source: 'buyerMessage' }, {});
-    check(d.order === 1, 'a read taken from the buyer\'s message (not the personalisation box) keeps the box as well');
+    check(d.said === 1, 'a read taken from the buyer\'s message (not the personalisation box): the box as well');
     d = await detail({}, { staffNote: 'Name Two asked to change the date' });
-    check(d.order === 1 && /Staff note/.test(d.orderText) && /change the date/.test(d.orderText), 'a staff note keeps the box even on a settled read: "' + d.orderText + '"');
+    check(d.said === 1 && /Staff note/i.test(d.orderText) && /change the date/.test(d.orderText), 'a staff note is in the box: "' + d.orderText + '"');
     d = await detail({ confidence: 0.45, decision: { by: 'Name One', at: Date.now(), text: '1. 27. 24', note: 'confirmed' } }, {});
-    check(d.order === 0, 'a read a person has decided on is settled: no box');
+    check(d.said === 1, 'a read a person has decided on: the box is still there (it is the customer\'s, not the system\'s)');
 
     // ── 3 · words still to decide ──
     d = await detail({ state: 'words', reason: 'Say what to engrave on the back', fit: null, view: null }, {});
     check(d.use.length === 1 && d.use[0] === 'Engrave these words' && d.words === 0 && d.oldBox === 0 && d.textareas === 1, 'words still to decide: ONE small "Engrave these words" button and still no second words box: ' + JSON.stringify({ use: d.use, words: d.words, textareas: d.textareas }));
     check(d.noBack.length === 1 && d.noBack[0] === 'Say what to engrave on the back' && d.why === 0, 'the reason is said once, in the empty picture, not again under a box: ' + JSON.stringify({ noBack: d.noBack, why: d.why }));
-    check(d.skip === 1 && d.order === 1, 'one "No engraving" button (it used to be drawn twice), and the buyer\'s own words in the one quiet box');
+    check(d.skip === 1 && d.said === 1, 'one "No engraving" button (it used to be drawn twice), and the customer\'s own words in the one box');
     d = await detail({ state: 'classify', fit: null, view: null }, {});
     check(d.noBack.length === 1 && /Processing stopped before these words were read\.$/.test(d.noBack[0]) && !/below/.test(d.noBack[0]), 'a stopped read says so without pointing at a box "below": "' + d.noBack[0] + '"');
     d = await detail({ state: 'fitting', fit: null, view: null }, {});
-    check(d.use.length === 0 && d.order === 0, 'a placement being prepared offers no confirm button and no box');
+    check(d.use.length === 0 && d.order === 0, 'a placement being prepared offers no confirm button and no "From the order" list');
 
     // ── 4 · the Review tab's card is untouched ──
     const rv = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back'), c = Engrave.placementCard(j, 1); return { words: c.querySelectorAll('.pvWords').length, box: c.querySelectorAll('textarea[data-f=words]').length, use: [...c.querySelectorAll('[data-a=usewords]')].map(b => b.textContent.trim()), conf: c.querySelectorAll('.rh .conf').length, panel: c.querySelectorAll('.engp').length, order: c.querySelectorAll('.pvOrder').length }; }, KEY);
