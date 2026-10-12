@@ -14498,12 +14498,12 @@ const OrderWin = window.OrderWin = (() => {
       const now = x.steps.find(t => !pdotOn(x, t));
       const ask = () => {
         const q = tryDo(() => UI.requirementsOf(i, { events: x.events, cancelled: W.cancelled, stages: x.steps, context: pdotContext(rid, key), place: x._pl || undefined }));
-        const need = (q && q.need) || [], pick = ["person", "wait", "next", "after"].map(k => need.find(n => n.kind === k && !/^Not on a sheet now$/i.test(n.t))).find(Boolean) || need.find(n => !/^Not on a sheet now$/i.test(n.t) && n.kind !== "was");
+        const need = (q && q.need) || [], pick = ["person", "wait"].map(k => need.find(n => n.kind === k && !/^Not on a sheet now$/i.test(n.t))).find(Boolean) || need.find(n => !/^Not on a sheet now$/i.test(n.t) && n.kind !== "was");
         if (!pick) return "";
         const t = String(pick.t).replace(/\s+/g, " ").trim(), u = t.charAt(0).toUpperCase() + t.slice(1);
         return u.length > 150 ? u.slice(0, 147).trimEnd() + "…" : u;
       };
-      if (now && now !== s) line = `After ${now.l}`;   // (a step further on waits for the one before it: that is the one with something to do)
+      if (now && now !== s) line = "";   // (a step further on has nothing to say of its own: no "After Nested", no "Next": where the piece is, the dots show; Paul, 12 Oct 2026)
       else if (s.k === "sheet" && pdotFenced(x)) {
         // (the piece is on no sheet now, whatever its history says: said so, then where it was, or why it is not, or what it waits on. The history's seal stays: see the seal slot)
         const pl = x._pl, w = pl.wasOn || null;
@@ -14518,7 +14518,7 @@ const OrderWin = window.OrderWin = (() => {
     // come, nothing for a step that has none. The words beside it are this card's own (who, where, when), so the seal's caption is off.
     const ps = window.PieceSeals;
     const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p], place: x._pl || undefined }), { done: st.done, caption: false, size: 40 })) : null;
-    return { name: s.l, state: st.word, line, by, seal: seal || null };
+    return { name: s.l, state: st.word === "Not yet" ? "" : st.word, line, by, seal: seal || null };   // ("Not yet" is the hollow dot's to say, as "To come" is the rail's: the card names a state only when it is Done, Skipped or Won't happen)
   }
   { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)
   /** A redraw of the rows keeps the keyboard where it was: the dot that has it, found again by its order, piece and step. */
