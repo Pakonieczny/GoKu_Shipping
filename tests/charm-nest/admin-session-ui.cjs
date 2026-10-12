@@ -41,7 +41,9 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   });
   const logs = [], errors = [];
   const watch = p => { p.on('pageerror', e => errors.push('pageerror: ' + e.message)); p.on('console', m => logs.push(m.text())); };
-  const ready = async p => { await p.goto(`${sorterOrigin}/charm-nest-1.html`); await p.waitForFunction(() => window.CN && window.CN.S && window.CharmNestRepoLock && CN.S.cloud.ok !== null, null, { timeout: 60000 }); await p.evaluate(() => { const s = CN.S.settings; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.runMode = 'manual'; }); };
+  // (after a reload the page restores the saved workspace first, and that restore ends with setMode(), which closes the Workspace menu; Session.ready() is true only once the
+  //  restore is over, so a menu opened before it was shut again under the click: wait for it, as the sandbox tests do)
+  const ready = async p => { await p.goto(`${sorterOrigin}/charm-nest-1.html`); await p.waitForFunction(() => window.CN && window.CN.S && window.CharmNestRepoLock && window.Session && Session.ready() && CN.S.cloud.ok !== null, null, { timeout: 60000 }); await p.evaluate(() => { const s = CN.S.settings; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.runMode = 'manual'; }); };
   const openSettings = async p => { await p.evaluate(() => { const m = document.getElementById('moreMenu'); if (m) m.open = true; }); await p.click('#btnSettings'); };
   const settingsOpen = p => p.evaluate(() => !!document.querySelector('#dlgSettings[open]'));
   const lockDlg = p => p.evaluate(() => { const d = document.querySelector('dialog.repoDlg[open]'); return d ? d.dataset.repoAction : ''; });
