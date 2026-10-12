@@ -5715,7 +5715,9 @@ const Engrave = window.Engrave = (() => {
     for (const pg of allSheets()) {
       if (!pg.recalled) continue;
       for (const bk of pg.backPool || []) {
-        const row = rows.find(r => (bk.poolId && r.poolIds.includes(bk.poolId)) || (String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)));
+        // (the piece's own pool id names its line first; only a record whose piece is in no line is matched by its order and SKU, and then only when ONE line fits: two lines of one SKU in an order are never taken for each other)
+        const mine = rows.filter(r => String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)), byTx = bk.transactionId ? mine.filter(r => String(r.line.transactionId) === String(bk.transactionId)) : [];
+        const row = (bk.poolId && rows.find(r => r.poolIds.includes(bk.poolId))) || (byTx.length === 1 ? byTx[0] : mine.length === 1 ? mine[0] : null);
         if (!row) continue;
         const j = jobForRecord(row, bk);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
@@ -5951,7 +5953,7 @@ const Engrave = window.Engrave = (() => {
     by = by || employeeName() || await needEmployee("Kept with your decision on these words."); if (!by) return;      // (put away: calm, nothing happens, nothing typed is lost)
     const wasText = job.text;
     if (none) { setNone(job, `no ${facedJob(job) ? faceWord(job) + " " : ""}engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, wasText, "none"); Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
-    job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: "back", font: null, handwriting: false, image: false }; job.confidence = 1;
+    job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: faceOf(job), font: null, handwriting: false, image: false }; job.confidence = 1;   // (the face this job is: a front's confirmed words never say "back")
     if (!job.editingBack && !facedJob(job) && job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: words decided by ${by}: "${job.text.replace(/\n/g, " / ")}"`); wordsEvent(job, by, wasText, "words");
     Review.remove("eng:" + job.key);

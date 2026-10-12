@@ -154,7 +154,7 @@
     // a reading the intake marked for a person (an unlabelled "both", a conflict, one set of words for each ear) stays so until a person speaks; a person who changed only the mode keeps the flag for a face still without words;
     // for ONE piece it clears when that piece (or the whole line) has words from a person
     const spoken = personalWords || pieceEdited;
-    const needsPerson = !!(base && base.needsPerson) && !spoken && (!ov || lacking) ? true : false;
+    const needsPerson = !!(base && base.needsPerson) && !spoken && (!ov || lacking || (hasPieceWords && !personalWords)) ? true : false;   // (another piece's words from a person do not settle this piece's question)
     const source = ov ? 'person' : base ? str(base.source) || 'default' : 'default';
     return { v: 1, mode, faces, front: frontS, back: backS, needsPerson, source, edited: !!ov, multi: faces.length > 1, pieces, reviewKind: base && base.reviewKind ? str(base.reviewKind) : null, raw: base && base.raw ? str(base.raw) : '',
       textSource: base ? str(base.textSource) || 'none' : 'none', confidence: base && Number.isFinite(+base.confidence) ? +base.confidence : (base ? 0.5 : 1),

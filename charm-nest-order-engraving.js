@@ -77,11 +77,13 @@
   function jobFor(row, poolId, key) {
     const E = root.Engrave; if (!E || !E.items) return null;
     // one ear (or one disc) of a pair, or the front of a charm, has its own job: the key it was asked by, else its piece, before the line's
-    if (key) { const pk = parseKey(key); if (pk.slot || pk.face === 'front') { const own = tryDo(() => E.items().get(String(key)), null); if (own) return own; } }
+    // (a key that IS a job's key names that job and no other face of the piece: a back card asked by its own plain key is never shown the piece's front because the front is the one still to settle)
+    if (key) { const own = tryDo(() => E.items().get(String(key)), null); if (own && !own.editingBack) return own; }
     const hit = row && E.jobOf ? tryDo(() => (poolId ? E.jobOf(row, poolId) : E.jobOf(row)), null) : null; if (hit) return hit;
     if (!poolId) return null;
-    for (const j of E.items().values()) if (!j.editingBack && (j.copies || []).includes(poolId)) return j;
-    return null;
+    // (the piece's other face is a different engraving: the face the key names, else the one still to settle, else the back; never just the first job that holds the copy)
+    const held = [...E.items().values()].filter(j => !j.editingBack && (j.copies || []).includes(poolId)), want = key && parseKey(key).face === 'front' ? 'front' : '';
+    return held.find(j => want && faceOf(j) === want) || (want ? null : held.find(j => OPEN_STATES.includes(j.state)) || held.find(j => faceOf(j) === 'back') || held[0]) || null;
   }
   /** The counted discs of one line, one at a time (Paul, 10 Oct 2026: "cycle through all the chosen discs one by one ... everywhere the engraving option is presented"): the line's jobs
    *  as the Engrave tab's own switch component tells them (charm-nest-piece-switch.js: each disc's words, font by name and state), and the disc shown. null for every other line (a single, a pair,
