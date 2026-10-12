@@ -18,6 +18,7 @@
 //   (h) a card is at most 212 px tall (CONTRACT B: the height the 1280x720 arithmetic leaves)
 //   (x) one or two pieces: the card is as wide as in the 3-piece order and at most a third of the grid (never stretched)
 //   (i) an earring pair gets no card and no Back slot (CONTRACT: no earring is ever engraved), printed only
+//   (j) nothing inside a card spills sideways out of it, printed only
 // WHICH checks fail the run is the table GATE below (CONTRACT G: hard at 1280x720 and 1440x900; at 1024x768 the 3-in-a-row and the widths are hard, the below-the-fold
 // result for orders of several lines is PRINTED, since only 171 px are free there). The checker itself is proved first on a small synthetic page (a good layout passes; one
 // mutant per check fails), so a pass on the real page is not "the check cannot fail".
@@ -40,7 +41,7 @@ const SEL = {
   scroller: ['#orderWin .owVInfo .owMain', '#orderWin .owMain'],          // the scroll area of the Overview (it scrolls: the test sets it to the top)
   column: ['#orderWin .owInfoMain'],                                      // the centre column of the Overview
   strip: ['#owMeta'],                                                     // the head chip strip: order number, buyer, time, ship by, metal, Details (OrderFacts)
-  section: ['#owEngSec', '[data-engraving-section]', '#owEngraving', '#owEng'],   // the section = rule + title + cards (ENGLAYOUT: #owEngSec; #owEng is main's old left-column host)
+  section: ['#owEngSec', '.engSec', '[data-engraving-section]', '#owEngraving', '#owEng'],   // the section = rule + title + cards (ENGLAYOUT: <section class="engSec" id="owEngSec">); #owEng is the cards' grid host, and main's old left-column host
   grid: ['#owEng.owEngGrid', '.engGrid', '[data-eng-grid]', '#owEng'],    // the cards' grid host (children = cells); else found by its CSS
   card: ['.engCard', '[data-eng-card]', '.owEngCard'],                    // one card of one piece (ENGCARD: article.engCard); when none match, the grid's children are the cards
   titleText: /^engraving:?$/i,                                            // the title's words
@@ -68,7 +69,7 @@ const GATE = {
   '1024x768': 'a b c e f g h x',   // d, d2, d6 printed: two-line orders have only 171 px free at 1024x768 (CONTRACT B)
 };
 const gated = (size, k) => (GATE[size] || 'a b c d d2 e f g h x').split(' ').includes(k);
-const LABEL = { a: 'section directly below the chip strip', b: 'thin divider and "Engraving" title at the top-left', c: 'first row holds 3+ cards side by side, wide enough', d: 'first row fully on screen, no scrolling (3 pieces)', d2: 'first row fully on screen, no scrolling (2 lines)', d6: 'first row fully on screen, no scrolling (6 pieces)', e: 'no horizontal scrollbar', f: '6 pieces: the second row wraps correctly', g: 'no text of the deleted list', h: `card at most ${T.CARD_MAX_H}px tall`, x: '1 or 2 pieces: card not stretched', i: 'earring pair: no card, no Back slot' };
+const LABEL = { a: 'section directly below the chip strip', b: 'thin divider and "Engraving" title at the top-left', c: 'first row holds 3+ cards side by side, wide enough', d: 'first row fully on screen, no scrolling (3 pieces)', d2: 'first row fully on screen, no scrolling (2 lines)', d6: 'first row fully on screen, no scrolling (6 pieces)', e: 'no horizontal scrollbar', f: '6 pieces: the second row wraps correctly', g: 'no text of the deleted list', h: `card at most ${T.CARD_MAX_H}px tall`, x: '1 or 2 pieces: card not stretched', i: 'earring pair: no card, no Back slot', j: 'nothing inside a card spills out of it' };
 
 /* ═══════════════════════════ the measurement (runs in the page) ═══════════════════════════ */
 // Pure reading of the page: no judgement. `cfg` = { SEL (selectors), titleSrc, titleFlags }. Returns plain JSON. Must stay self-contained (it is serialised into the page).
@@ -129,13 +130,12 @@ function measureInPage(cfg) {
   out.cardsBy = cards.length ? 'selector' : 'grid children';
   if (!cards.length && grid) cards = [...grid.children].filter(vis);
   if (grid) { const cs = getComputedStyle(grid); out.grid = { sel: nameOf(grid), display: cs.display, cols: cs.gridTemplateColumns, colGap: parseFloat(cs.columnGap) || 0, rowGap: parseFloat(cs.rowGap) || 0, inner: +(grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)).toFixed(2), r: R(grid) };
-    // the CSS rule that sets the grid's columns (for the numbers: repeat(3, minmax(0, 1fr)) ...)
-    out.declared = null; try { for (const ss of document.styleSheets) { let rules; try { rules = ss.cssRules; } catch (_) { continue; } const walk = rs => { for (const r of rs) { if (r.cssRules && !r.selectorText) { if (!r.media || matchMedia(r.media.mediaText).matches) walk(r.cssRules); continue; } if (r.style && r.style.gridTemplateColumns && r.selectorText) { let hit = false; try { hit = grid.matches(r.selectorText); } catch (_) {} if (hit) out.declared = r.style.gridTemplateColumns + '  /* ' + r.selectorText + ' */'; } } }; walk(rules); } } catch (_) {}
   }
   out.cards = cards.map(c => { const r = c.getBoundingClientRect(); const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     const inBox = (x, y) => { if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null; const t = document.elementFromPoint(x, y); return !!t && (c === t || c.contains(t)); };
     const attrs = [c, ...c.querySelectorAll('*')].map(e => ['title', 'aria-label', 'alt', 'placeholder'].map(a => e.getAttribute && e.getAttribute(a) || '').join(' ')).join(' ');
     return { l: +r.left.toFixed(2), t: +r.top.toFixed(2), r: +r.right.toFixed(2), b: +r.bottom.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2), centreHit: inBox(cx, cy), footHit: inBox(cx, Math.min(r.bottom - 3, innerHeight - 1)),
+      spill: [...c.querySelectorAll('*')].filter(e => vis(e) && (e.getBoundingClientRect().right > r.right + 1.5 || e.getBoundingClientRect().left < r.left - 1.5)).slice(0, 3).map(e => nameOf(e) + ' ' + Math.round(Math.max(e.getBoundingClientRect().right - r.right, r.left - e.getBoundingClientRect().left)) + 'px'),
       text: (c.innerText || '').replace(/\s+/g, ' ').trim(), all: (c.textContent || '').replace(/\s+/g, ' ').trim() + ' ' + attrs, thumbs: c.querySelectorAll('.engThumb, [data-face]').length }; });
   // ── the sideways scroll: anything wider than the window, the scroll area, the section ──
   const de = document.documentElement;
@@ -188,7 +188,7 @@ const judge = {
     const minW = widths.length ? Math.min(...widths) : 0, why = [];
     if (n < 3) { const gap = g ? g.colGap : 0; why.push(`only ${n} card(s) in the first row; 3 cards need ${px(3 * min + 2 * gap)} at the ${min}px minimum, the grid is ${g ? px(g.inner) : px(m.section.w)} wide${m.column ? ', the centre column ' + px(m.column.w) : ''}`); }
     if (n >= 3 && minW < min) why.push(`narrowest card ${px(minW)} < minimum ${min}px`);
-    return { ok: why.length === 0, say: `${n} card(s) in the first row of ${m.cards.length}, widths [${widths.map(w => Math.round(w)).join(', ')}] (minimum ${min}px)${g ? `, grid ${px(g.inner)} wide, gap ${g.colGap}px, columns "${g.cols}"` : ', no grid found'}${m.declared ? ', css ' + m.declared : ''}${why.length ? ' => ' + why.join('; ') : ''}` };
+    return { ok: why.length === 0, say: `${n} card(s) in the first row of ${m.cards.length}, widths [${widths.map(w => Math.round(w)).join(', ')}] (minimum ${min}px)${g ? `, grid ${px(g.inner)} wide, gap ${g.colGap}px, columns "${g.cols}"` : ', no grid found'}${why.length ? ' => ' + why.join('; ') : ''}` };
   },
   d(m) {
     if (m.noSection) return noSec;
@@ -196,8 +196,8 @@ const judge = {
     if (!first.length) return { ok: false, say: 'no cards' };
     const bottom = Math.max(...first.map(c => c.b)), top = Math.min(...first.map(c => c.t)), limit = m.visibleBottom - T.SAFE_BOTTOM, need = bottom - limit;
     const covered = first.filter(c => c.centreHit === false || c.footHit === false).length, off = first.filter(c => c.centreHit === null || c.footHit === null).length;
-    const ok = bottom <= limit && top >= m.visibleTop - 1 && covered === 0 && off === 0 && first.length >= 3;
-    return { ok, say: `first row of ${first.length}: top ${px(top)}, bottom ${px(bottom)}; the window shows down to ${px(m.visibleBottom)} (viewport ${m.vh}, scroll area bottom ${m.scroller ? px(m.scroller.b) : '?'}), minus ${T.SAFE_BOTTOM}px margin = ${px(limit)} => ${need > 0 ? px(need) + ' BELOW the fold (scroll needed)' : px(-need) + ' to spare'}; room for a card ${px(limit - top)} (${m.strip ? px(top - m.strip.b) + ' of rule, title and gaps sit between the chip strip and the cards, ' : ''}tallest card ${px(Math.max(...first.map(c => c.h)))})${first.length < 3 ? '; fewer than 3 cards' : ''}${covered ? '; ' + covered + ' card(s) covered by something else' : ''}${off ? '; ' + off + ' card(s) cut off by the window' : ''}; scroll tops ${JSON.stringify(m.scrollTops)}, the scroll area could scroll ${m.scrollerScrollable}px` };
+    const want = Math.min(3, m.cards.length), ok = bottom <= limit && top >= m.visibleTop - 1 && covered === 0 && off === 0 && first.length >= want;
+    return { ok, say: `first row of ${first.length}: top ${px(top)}, bottom ${px(bottom)}; the window shows down to ${px(m.visibleBottom)} (viewport ${m.vh}, scroll area bottom ${m.scroller ? px(m.scroller.b) : '?'}), minus ${T.SAFE_BOTTOM}px margin = ${px(limit)} => ${need > 0 ? px(need) + ' BELOW the fold (scroll needed)' : px(-need) + ' to spare'}; room for a card ${px(limit - top)} (${m.strip ? px(top - m.strip.b) + ' of rule, title and gaps sit between the chip strip and the cards, ' : ''}tallest card ${px(Math.max(...first.map(c => c.h)))})${first.length < want ? '; fewer than ' + want + ' cards in the first row' : ''}${covered ? '; ' + covered + ' card(s) covered by something else' : ''}${off ? '; ' + off + ' card(s) cut off by the window' : ''}; scroll tops ${JSON.stringify(m.scrollTops)}, the scroll area could scroll ${m.scrollerScrollable}px` };
   },
   e(m) {
     if (m.noSection) return noSec;
@@ -232,6 +232,12 @@ const judge = {
     if (!m.cards.length) return { ok: false, say: 'no cards' };
     const hs = m.cards.map(c => c.h), mx = Math.max(...hs);
     return { ok: mx <= T.CARD_MAX_H + 0.5, say: `card heights [${hs.map(Math.round).join(', ')}], limit ${T.CARD_MAX_H}px` };
+  },
+  /** nothing inside a card spills sideways out of it (a 122px card at 1024 is cramped, not broken) */
+  j(m) {
+    if (m.noSection) return noSec;
+    const bad = m.cards.map((c, i) => c.spill.length ? `card ${i + 1}: ${c.spill.join(', ')}` : '').filter(Boolean);
+    return { ok: bad.length === 0, say: bad.length ? 'spills out of its card: ' + bad.join('; ') : `nothing spills out of ${m.cards.length} card(s)` };
   },
   /** one and two pieces (m1, m2) against the three-piece order (m3): the same card width, at most a third of the grid */
   x(m1, m2, m3) {
@@ -423,7 +429,7 @@ async function main() {
         await page.screenshot({ path: path.join(shots, `NOSCROLL-${size}.png`), ...(clip && clip.width > 20 && clip.height > 20 ? { clip } : {}) }); await page.screenshot({ path: path.join(shots, `NOSCROLL-${size}-window.png`) }); }
       const m2 = await get(fx.two), m6 = await get(fx.six), m1 = await get(fx.one), me = await get(fx.ear);
       if (debug) console.log(JSON.stringify(m6.cards.map(c => [c.l, c.t, c.w, c.h])));
-      const r = { a: judge.a(m3), b: judge.b(m3), c: judge.c(m3, x), d: judge.d(m3), d2: judge.d(m2), e: judge.e(m3), f: judge.f(m6), g: judge.g(m3), h: judge.h(m3), d6: judge.d(m6), x: judge.x(m1, m2, m3), i: judge.i(me, earring) };
+      const r = { a: judge.a(m3), b: judge.b(m3), c: judge.c(m3, x), d: judge.d(m3), d2: judge.d(m2), e: judge.e(m3), f: judge.f(m6), g: judge.g(m3), h: judge.h(m3), d6: judge.d(m6), x: judge.x(m1, m2, m3), i: judge.i(me, earring), j: judge.j(m3) };
       r.c6 = judge.c(m6, x); r.f.ok = r.f.ok && r.c6.ok; if (!r.c6.ok) r.f.say += ' | first row of 6: ' + r.c6.say;
       for (const k of Object.keys(r)) t[k] = r[k].ok;
       const fb = m3.cards.length ? Math.max(...firstRow(m3).map(c => c.b)) : null, fb6 = m6.cards.length ? Math.max(...firstRow(m6).map(c => c.b)) : null;
@@ -431,7 +437,7 @@ async function main() {
       numbers.push(`${size}: free space between the chip strip and the window's foot: 1 piece ${free(m1)}, 2 lines ${free(m2)}, 3 lines ${free(m3)}, 6 lines ${free(m6)} (the section's own overhead is about 45px)`);
       numbers.push(`${size}: centre column ${m3.column ? px(m3.column.w) : '?'} wide; section ${m3.section ? px(m3.section.w) + ' at top ' + px(m3.section.t) : 'none'}; chip strip bottom ${m3.strip ? px(m3.strip.b) : '?'}; first row bottom: 3 pieces ${fb == null ? '-' : px(fb)}, 2 lines ${m2.cards.length ? px(Math.max(...firstRow(m2).map(c => c.b))) : '-'}, 6 pieces ${fb6 == null ? '-' : px(fb6)}; the window shows down to ${px(m3.visibleBottom)}; card widths (3 pieces) [${m3.cards.map(c => Math.round(c.w)).join(', ')}], heights [${m3.cards.map(c => Math.round(c.h)).join(', ')}]`);
       console.log(`\n  ── ${size} ──`);
-      for (const k of ['a', 'b', 'c', 'd', 'd2', 'e', 'f', 'g', 'h', 'd6', 'x', 'i']) { if (k === 'i') { say(null, `${size} (${k}) ${LABEL[k]}: ${r[k].say}`); continue; } const hard = gated(size, k); say(hard ? r[k].ok : null, `${size} (${k}) ${LABEL[k]}${hard ? '' : ` [printed only: ${r[k].ok ? 'would pass' : 'would FAIL'}]`}: ${r[k].say}`); }
+      for (const k of ['a', 'b', 'c', 'd', 'd2', 'e', 'f', 'g', 'h', 'd6', 'x', 'i', 'j']) { if (k === 'i' || k === 'j') { say(null, `${size} (${k}) ${LABEL[k]}: ${r[k].say}`); continue; } const hard = gated(size, k); say(hard ? r[k].ok : null, `${size} (${k}) ${LABEL[k]}${hard ? '' : ` [printed only: ${r[k].ok ? 'would pass' : 'would FAIL'}]`}: ${r[k].say}`); }
     }
     if (!w.errors.length) say(true, 'no script error on the page throughout'); else { say(false, 'script errors: ' + w.errors.slice(0, 3).join(' | ')); failed++; }
   } finally { await w.close(); }
