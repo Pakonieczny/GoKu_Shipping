@@ -214,9 +214,12 @@ async function partB() {
     const sides = w.rows.filter(r => r.side);
     assert.deepEqual(sides.map(r => r.tag), ['Left', 'Right'], JSON.stringify(w)); assert.deepEqual(sides.map(r => r.st), ['GF Sheet 1', 'GF Sheet 2'], JSON.stringify(w));
     assert.ok(sides.every(r => r.dots >= 4 && r.thumb), 'each side has its own dots and its own picture box');
-    assert.equal(w.head, 'Its pieces'); assert.match(w.sub, /2 pieces/); assert.match(w.sku, /Left \+ Right/); assert.match(w.meta, /Pair.*Mismatched/); assert.match(w.meta, /Left GF Sheet 1 · Right GF Sheet 2/);
+    assert.equal(w.head, 'Its pieces'); assert.match(w.sub, /2 pieces/); assert.equal(w.sku, 'SKU: MISMATCHED_7134'); assert.ok(!/Left \+ Right/.test(w.sku), 'the Vector design panel line is the SKU alone: ' + w.sku); assert.match(w.meta, /Pair.*Mismatched/); assert.match(w.meta, /Left GF Sheet 1 · Right GF Sheet 2/);
     assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B1 a split pair: a row for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
     assert.deepEqual(w.chips.filter(c => /Left|Right/.test(c)).length, 2, 'a box for each side'); ok('B1b the Where-it-is-now boxes name the sides');
+    // the Copy button beside that line copies the SKU alone (no side words)
+    const copied = await page.evaluate(async () => { let got = null; try { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async t => { got = t; } }, configurable: true }); } catch (_) {} document.getElementById('owCopy').click(); await new Promise(r => setTimeout(r, 150)); return got; });
+    assert.equal(copied, 'MISMATCHED_7134', 'Copy copies the SKU only: ' + copied); ok('B1c the Vector design panel line reads "SKU: <sku>" with no "Left + Right", and Copy copies the SKU only');
     // 2 · both on one sheet
     w = await open(Q, Q.tx);
     assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 1']], JSON.stringify(w)); assert.equal(w.split, ''); assert.match(w.chips.join('|'), /Left \+ Right/); ok('B2 a pair on one sheet: both rows say GF Sheet 1, nothing says it is split, one box for the pair');
@@ -237,7 +240,7 @@ async function partB() {
     const es = w.rows.filter(r => r.side);
     assert.deepEqual(es.map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 2']], JSON.stringify(w));
     assert.deepEqual(es.map(r => r.mirror), [false, true], 'the Right picture is the one turned over');
-    assert.match(w.sub, /2 pieces/); assert.match(w.sku, /Left \+ Right/); assert.match(w.meta, /Pair.*Matching/); assert.ok(!/Mismatched/.test(w.meta));
+    assert.match(w.sub, /2 pieces/); assert.equal(w.sku, 'SKU: HEART_STUD'); assert.ok(!/Left \+ Right/.test(w.sku), 'the Vector design panel line is the SKU alone: ' + w.sku); assert.match(w.meta, /Pair.*Matching/); assert.ok(!/Mismatched/.test(w.meta));
     assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B5 a matching earring pair: a Left and a Right row, the Right drawn turned over, the pair said to be matching');
     // 6 · the run banner counts PIECES: a pair is two (PAIRFLOW's hand-over), a charm or a disc line as many as it always counted
     const ban = await page.evaluate(() => ({ pull: RunCtl.stepDetail({ step: 'pull' }), pool: RunCtl.stepDetail({ step: 'pool' }), lines: Orders.rows().filter(x => x.state !== 'gone').length, per: Orders.rows().map(x => [x.key, x.state, RunCtl.bannerPieces(x), x.spec && x.spec.form]) }));
