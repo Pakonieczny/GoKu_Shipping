@@ -136,12 +136,14 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       const disc = await page.evaluate(KEY => {
         const row = B.orders.byKey.get(KEY), mk = (slot, text) => ({ key: KEY + '#' + slot, slot, row, state: 'review', text, lines: [text], fit: { centre: [0, 0], angle: 0, size: 10, weight: 'Regular' } }), jobs = [mk('D1', 'Name One'), mk('D2', 'Name Two')];
         const out = {}; let got = null;
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // (a textarea of the Engrave tab still has focus and a typed value: leaving it fires its native change event, which would make a line draft)
         CharmNestEngravePanel.DRAFTS.clear();
         const s = document.createElement('div'); document.body.appendChild(s);
         const h = CharmNestEngravePanel.mount(s, row, { jobs: () => jobs, job: jobs[1], face: 'back', save: async p => { got = p; return { ok: true }; } });
         const ta = s.querySelector('.engpWords'); out.text = ta && ta.value; out.disabled = !!(ta && ta.disabled); out.keys = [...CharmNestEngravePanel.DRAFTS.keys()];
         ta.value = 'Name Three'; ta.dispatchEvent(new Event('input', { bubbles: true }));
         s.querySelector('[data-engp=save]').click();
+        out.asked = !!s.querySelector('.engpWhy'); s.querySelector('[data-engp=why]').click();   // (words that differ from the system's ask "Why change it?" first, ENGWHY: a quick button answers)
         out.patch = got && JSON.parse(JSON.stringify(got));
         out.override = got && JSON.parse(JSON.stringify(CharmNestEngraveSetup.buildOverride(row, got, 'Name One', 0)));
         // disc 1 has a draft of its own
@@ -247,6 +249,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     // 5 · editing the Front and saving never changes the Back
     await page.evaluate(() => __h.setFace('front')); await page.fill(S + ' .engpWords', 'Name One');
     await page.click(S + ' [data-engp=save]');
+    await page.click(S + ' [data-engp=why]');   // (the front words differ from the system's: "Why change it?", the first quick button answers; ENGWHY)
     await page.waitForFunction(KEY => !!B.orders.byKey.get(KEY).engravingOverride, KEY, { timeout: 15000 });
     const after = await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), ov = row.engravingOverride, f = Engrave.jobOf(row, null, 'front'), b = Engrave.jobOf(row, null, 'back'); return { ov, front: f && f.lines, back: b && b.lines, by: ov && ov.by, setupBack: CharmNestEngraveSetup.setupFor(row).back && CharmNestEngraveSetup.setupFor(row).back.text, setupFront: CharmNestEngraveSetup.setupFor(row).front && CharmNestEngraveSetup.setupFor(row).front.text }; }, KEY);
     check(after.ov && after.ov.front && after.ov.front.text === 'Name One' && after.by === 'Test Operator' && !after.ov.back, 'saved as row.engravingOverride by the signed-in login: only the front is in it: ' + JSON.stringify(after.ov));

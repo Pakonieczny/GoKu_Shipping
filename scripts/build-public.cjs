@@ -147,6 +147,7 @@ const assets = [
   "charm-nest-engrave-rows.js",
   "charm-nest-engrave-setup.js",
   "charm-nest-engrave-panel.js",
+  "charm-nest-engrave-why.js",
   "charm-nest-engrave-preview.js",
   "charm-nest-piece-switch.js",
   "charm-nest-engraving-toggle.js",
