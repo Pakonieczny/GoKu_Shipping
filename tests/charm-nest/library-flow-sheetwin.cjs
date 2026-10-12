@@ -62,6 +62,9 @@ const plain = x => JSON.parse(JSON.stringify(x));   // (objects made inside the 
   c.setSheets(c.getSheets().concat([sheet({ sheetId: 'rose-full', metal: 'rose', page: 3, rosePlan: { full: true } })])); i = joinInfo('rose-full'); assert.deepEqual(plain(i.rose), { full: true });
   c.setSheets(c.getSheets().concat([sheet({ sheetId: 'rose-cut', metal: 'rose', roseCutAt: 5, draft: false, setId: 'set-9' }), sheet({ sheetId: 'rose-dirty', metal: 'rose', dirty: true }), sheet({ sheetId: 'rose-bare', metal: 'rose', verification: null })]));
   i = joinInfo('rose-cut'); assert.equal(i.can.ok, false); assert(/already cut/.test(i.can.reason), i.can.reason);
+  // (SETGOLD, Paul 12 Oct: a cut sheet that is in NO set may join one: its green line is cut. One that is in a set stays: the line above)
+  c.setSheets(c.getSheets().concat([sheet({ sheetId: 'rose-cut-free', metal: 'rose', roseCutAt: 5, rosePlan: { full: false } })]));
+  i = joinInfo('rose-cut-free'); assert.equal(i.can.ok, true, i.can.reason); assert.equal(i.draft, true);
   i = joinInfo('rose-dirty'); assert.equal(i.can.ok, false); assert(/still being saved/.test(i.can.reason), i.can.reason); assert.equal(i.rose.full, false);
   i = joinInfo('rose-bare'); assert.equal(i.can.ok, false); assert(/not been verified/.test(i.can.reason), i.can.reason);
   i = joinInfo('in-set'); assert.equal(i.can.ok, false); assert.equal(i.draft, false); assert(/already in a set/.test(i.can.reason), i.can.reason);

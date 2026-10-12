@@ -52,7 +52,17 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   mk('d-cut', 'gold', ['5100000032_1_1'], { laserDoneAt: now - 100, laserDoneBy: 'Ben' });             // completed
   mk('d-rose', 'rose', ['5100000033_1_1'], { roseStockId: 'stock-2' });
   mk('d-held', 'gold', ['5100000037_1_1'], { laserHold: { at: now - 700, by: 'Zed', note: 'wait for the glue' } });   // a person's own hold
-  st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines: {} }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: {} });
+  // SETGOLD (Paul, 12 Oct): a 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved. Set 9 (committed, Laser cutting) and the sheets that go into it; the run holds
+  // the order lines (engraveCandidate:false = nothing to engrave, approved; 'review' = a back waits for approval)
+  const runLines = {}, line = (order, approved) => { runLines[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [order + '_1_1'], ...(approved ? { engraveCandidate: false } : { engrave: { needed: true, state: 'review', approved: false } }) }; return [order + '_1_1']; };
+  mkSet('set-9', ['g9-a']); mk('g9-a', 'gold', ['5100000100_1_1'], { setId: 'set-9', setSeq: 9, sheetIndex: 1, ...seal });
+  mk('k-rose', 'rose', line('5100000101', true), { roseStockId: 'stock-3' });                                                    // partial, no green line yet, back approved
+  mk('k-rose-bad', 'rose', line('5100000102', false), { roseStockId: 'stock-4' });                                              // back engraving waits for approval
+  mk('k-14k', 'gold14k', line('5100000103', true), { roseStockId: 'stock-5', rosePlanHash: 'h-k', roseCutAt: now - 4000 });      // its green line is cut, and it is in no set
+  mk('k-14k-bad', 'gold14k', line('5100000104', false), { roseStockId: 'stock-6', rosePlanHash: 'h-k2', roseCutAt: now - 4000 }); // cut, but the back is not approved
+  mk('k-10k', 'gold10k', line('5100000105', true), { roseStockId: 'stock-7' });                                                  // partial, owes its line, back approved
+  mk('k-gf', 'gold', line('5100000106', false));                                                                                 // a GF sheet: no rule of backs for it
+  st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines: runLines }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: {} });
 
   // what must never change by an edit: every seal, approval and cut record, of every sheet and set
   const PERMANENT = ['processSeals', 'processReady', 'laserDoneAt', 'laserDoneBy', 'roseCutAt', 'roseStockId', 'committedAt', 'status'];
@@ -118,7 +128,9 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.deepEqual(s2.processSeals, [{ how: 'approved', by: 'Ann', at: s2.processSeals[0].at }]); assert.equal(s2.committedAt, set('set-2').committedAt);
     // refused: a completed sheet, a Rose Gold sheet, a completed set, an open set
     await refused('add: completed sheet', [['d-cut', 'set-2']], /GF Sheet 1 is completed/);
-    await refused('add: Rose Gold sheet', [['d-rose', 'set-2']], /Rose Gold sheet.*Cut Sheet press/);
+    // (a Rose Gold sheet is no longer refused for being Rose Gold, Paul 12 Oct: this one waits for its back engraving to be approved, which is the only thing said)
+    r = await refused('add: Rose Gold sheet, back not approved', [['d-rose', 'set-2']], /^RG Draft 1: back engraving not approved yet \(0 of 1 approved\)\. A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved\.$/);
+    assert.equal(r.reasons.length, 1); assert.equal(r.reasons[0].key, 'backsNotApproved');
     await refused('add: completed set', [['d-free', 'set-3']], /Set 3 is completed.*takes no more sheets/);
     await refused('add: open set', [['d-free', 'set-8']], /Set 8 is still being made by its run/);
     await refused('add: unknown set', [['d-free', 'set-404']], /could not be found/);
@@ -198,6 +210,21 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     // the words alone (the page's rule and the server's are the one file)
     const v = SE.verifyMoves({ moves: [{ id: 'x', to: null }], recs: { x: { id: 'x', metal: 'gold', setId: 'set-1', draft: false, laserDoneAt: 5 } }, sets: { 'set-1': { doc: { setId: 'set-1', seq: 1, committedAt: 1 }, members: [{ id: 'x' }, { id: 'y' }] } } });
     assert.equal(v.ok, false); assert.equal(v.reasons[0].key, 'sheetCompleted'); assert.equal(SE.sayWhy(v), 'GF Sheet 1 is completed. It keeps its cut record and set until it is moved back to Laser cutting.');
+    // ═══ K. SETGOLD (Paul, 12 Oct): a 10K, 14K or Rose Gold sheet joins a set (here a committed one in Laser cutting) provided its green line is cut (or the person presses Cut Sheet) and its back engraving is approved ═══
+    await refused('K: 14K sheet, line cut, back not approved', [['k-14k-bad', 'set-9']], /^14K Sheet 1: back engraving not approved yet \(0 of 1 approved\)\. A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved\.$/);
+    await refused('K: Rose Gold, back not approved', [['k-rose-bad', 'set-9']], /RG Draft 1: back engraving not approved yet \(0 of 1 approved\)/);
+    await refused('K: a cut sheet that is in a set stays in it', [['rg-1', 'set-9']], /RG Sheet 1 was already cut/);
+    await refused('K: a completed sheet still takes no move', [['d-cut', 'set-9']], /is completed/);
+    const kPerm = permanent();
+    r = await edit([['k-14k', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r));
+    assert.equal(sheet('k-14k').setId, 'set-9'); assert.equal(sheet('k-14k').draft, false); assert.equal(sheet('k-14k').roseCutAt, now - 4000, 'its recorded cut is untouched'); assert.equal(sheet('k-14k').rosePlanHash, 'h-k');
+    assert.equal(sheet('k-14k').solidIncluded, true); assert(set('set-9').sheetIds.includes('k-14k'));
+    r = await edit([['k-rose', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(sheet('k-rose').setId, 'set-9'); assert(!sheet('k-rose').roseCutAt, 'a join writes no cut: the Cut Sheet press is the page\'s, after the yes');
+    r = await edit([['k-10k', 'set-9'], ['k-gf', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(sheet('k-gf').setId, 'set-9', 'a GF sheet with unapproved backs joins as it always did');
+    assert.equal(kPerm.length > 0, true); assert.deepEqual(['k-14k', 'k-rose'].map(i => sheet(i).processSeals), [undefined, undefined], 'no seal or approval is added');
+    // a cut sheet may not leave (rule B stays), and the one that joined is a member like any other
+    await refused('K: it cannot leave again', [['k-14k', null]], /was already cut/);
+
     console.log('PASS: committed sets take and give sheets by rule A (no order split) and rule B (not completed / cut); a refusal says which order and sheets and writes nothing; seals and cut records are never touched; the server re-checks inside its transaction; the set files follow; stale pages cannot undo it');
   } finally { await srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
