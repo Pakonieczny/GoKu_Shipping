@@ -13808,7 +13808,7 @@ const OrderWin = window.OrderWin = (() => {
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
     // (a picture zoomed in place goes back whole first: that press does not close the window)
-    W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else if (!(window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(W.dlg)))) shut(); });
+    W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else if (window.OrderFacts && tryDo(() => OrderFacts.escape(W.dlg))) return; else if (!(window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(W.dlg)))) shut(); });   // (a fact's card that is open goes first, as a zoomed picture does)
     // the number is the view's search too (design spec 7)
     byId("owTitle").addEventListener("click", e => { if (e.target.closest(".num")) focusSearch(); });
     // images waiting beside the message box stay with their order for when it is opened again
@@ -13818,11 +13818,14 @@ const OrderWin = window.OrderWin = (() => {
       if (W.dlg.open) return; tryDo(() => window.CNLive && CNLive.close("sorter")); tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
+      W.engHist = null; tryDo(() => window.OrderFacts && OrderFacts.collapse(byId("owMeta")));   // (the next order opens with the facts calm: its card put away, Details shut)
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
     wireZoom();
+    // the buyer's message chip carries the Customer tab's own unread dot: it follows that dot (the mail module sets it as threads change)
+    tryDo(() => { const dot = W.dlg.querySelector('[data-ow-tab="customer"] .owDot'); if (dot && window.MutationObserver) new MutationObserver(() => { const r = W.dlg.open && !W.closing && rowOf(W.key); if (r && !r.loading) paintFacts(r); }).observe(dot, { attributes: true, attributeFilter: ["hidden", "class"] }); });
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const input = byId("owInput");
@@ -14088,6 +14091,72 @@ const OrderWin = window.OrderWin = (() => {
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
     if (W.engCard && W.engCard.el === host && W.engCard.mode === (all ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
   }
+  /** The order's facts, gathered for OrderFacts (charm-nest-order-facts.js), from the very data the grid always read (Paul, 12 Oct 2026: "a mush of stuff": a glance line,
+   *  a small card on each chip, and one Details drop-down). `cells` is the old grid, cell by cell, in its old order and its old words: the Details list draws them, so every
+   *  fact it ever showed is still there (its number and the order's, when it was bought and by whom, quantity, pair, the intake's piece notes, metal, state, sheet, ship by,
+   *  form, size, chain, the engraving, everything picked at the purchase, listing, title). Nothing here reads a record or the network. */
+  function factsOf(r) {
+    const sp = r.spec || {}, rid = String(r.order.receiptId), onum = String(r.order.orderNumber || ""), buyer = r.order.buyer && r.order.buyer.name ? String(r.order.buyer.name) : "";
+    const on = { customer: () => tryDo(() => window.CustomerMail && CustomerMail.setTab && CustomerMail.setTab("customer", true)) };
+    // (an order still being read: its number and what is known of it; the rest is a skeleton where it is coming)
+    if (r.loading) return { key: r.key, loading: true, order: { id: rid, num: "" }, buyer: { name: buyer, gift: false }, cells: [], on };
+    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], sheetCell = sheetCellOf(r);
+    // the order itself (its number, when it was bought and by whom) and everything that was picked at the purchase, not
+    // only the options the sorter could map: a custom order is read from exactly these
+    const placed = (+r.order.createTs || 0) * 1000, bought = tryDo(() => O.purchaseOptions(r.line, sp)) || [], sides = pairSides(r), qty = +(sp.quantity || r.line.quantity || 1) || 1;
+    const pnotes = [sp.pieceNote].concat(sp.pair && Array.isArray(sp.pair.notes) ? sp.pair.notes : []).filter(x => typeof x === "string" && x.trim());
+    const cells = [], cell = (label, text, o) => cells.push(Object.assign({ label, text: String(text) }, o || {}));
+    cell("Order", rid + (onum && onum !== rid ? " · #" + onum : ""), { copy: rid, mono: 1 });
+    if (placed) cell("Purchased", when(placed)); else if (r.arrivedAt) cell("Arrived", when(r.arrivedAt));
+    if (buyer) cell("Buyer", buyer + (r.order.isGift ? " · gift" : "")); else if (r.order.isGift) cell("Gift", "yes");
+    if (sp.special) cell("Custom order", sp.special.label + (sp.special.read && !sp.special.decided ? ` · Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "") + (sp.special.why ? " · " + sp.special.why : ""), { wide: 1 });
+    else if (sp.customDone) cell("Custom order", sp.customDone.category || "completed");
+    const qn = sp.quantity || r.line.quantity || 1;
+    cell("Quantity", sides.length ? `${qn} pair${qn > 1 ? "s" : ""} · ${sides.length} pieces: Left and Right` : String(qn) + O.countedFact(r));
+    if (sides.length) cell("Pair", ListMedia.pairRow(r) ? "Mismatched: the Left and the Right are different charms of one listing" : "Matching: the Right is the Left turned over (its mirror image)", { wide: 1 });
+    // (what the intake says of the piece count in plain words: an old line already pooled keeps its pieces and the note says what the rule gives now; the pair's own notes)
+    if (pnotes.length) cell("Pieces", pnotes.join(" "), { wide: 1 });
+    cell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none"));
+    cell("State", st[1]);
+    if (sheetCell) cell("Sheet", sheetCell);
+    cell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—");
+    if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size); if (sp.chain) cell("Chain", sp.chain);
+    // the engraving: the line's state and words, its seals (an approval made elsewhere is merged in by paintNow: W.engHist)
+    const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
+    const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));
+    const engHtml = hasEng ? hist || engCellHtml(r, "waiting") : "";
+    if (hasEng) cells.push({ label: "Engraving", html: engHtml, wide: 1, block: 1 });
+    if (bought.length) bought.forEach(o => cell(o.name || "Option", o.value)); else (sp.options || []).filter(o => o.mapped).forEach(o => cell(o.name, o.value));
+    cell("Listing", String(r.line.listingId || "—"), r.line.listingId ? { copy: String(r.line.listingId), mono: 1 } : { mono: 1 });
+    cell("Title", r.line.title || "—", { wide: 1 });
+    // the glance: what matters at a glance, and for each the card it opens
+    const quiet = /cancel|gone|complete/i.test(st[1]) || r.state === "gone";   // (a cancelled or finished order is told its date, never alarmed by it)
+    const engMode = tryDo(() => window.CharmNestEngraveFaces && CharmNestEngraveFaces.setupOf(r).mode) || "", news = tryDo(() => window.CustomerMail && CustomerMail.tabNews && CustomerMail.tabNews(rid)) || null;
+    const bm = O.visible(sp.buyerMessage).trim(), gm = O.visible(r.order.giftMessage).trim();   // (the customer's own words, in full in "What the customer wrote": the card shows them again)
+    const counted = tryDo(() => O.countedPieces(r)) || null;
+    return {
+      key: r.key, loading: false, on, cells,
+      order: { id: rid, num: onum },
+      buyer: { name: buyer, gift: !!r.order.isGift },
+      purchased: placed ? { ts: placed, label: "Purchased" } : r.arrivedAt ? { ts: +r.arrivedAt, label: "Arrived" } : null,
+      ship: r.order.shipBy ? { by: +r.order.shipBy, quiet } : null,
+      metal: { label: r.material ? labelOf(r.material) : (sp.materialLabel || ""), none: !r.material && !sp.materialLabel, color: r.material ? colorOf(r.material) : "", choices: bought.filter(o => /metal|material/i.test(o.name || "")).map(o => ({ name: o.name, value: o.value })) },
+      qty: { n: qn, pieces: sides.length, pair: sides.length > 0, mismatched: sides.length > 0 && !!ListMedia.pairRow(r), counted: counted ? { total: counted.total, noun: counted.noun } : null, notes: pnotes },
+      custom: sp.special ? { label: sp.special.label, note: [sp.special.read && !sp.special.decided ? `Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "", sp.special.why || ""].filter(Boolean).join(" · ") } : sp.customDone ? { label: "Custom: " + (sp.customDone.category || "completed"), note: "" } : null,
+      engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : null,
+      message: bm || gm || (news && (news.unread || news.bad)) ? { buyer: bm, gift: gm, unread: news && news.unread ? 1 : 0, bad: !!(news && news.bad) } : null,
+      listing: { id: String(r.line.listingId || ""), title: String(r.line.title || "") },
+      state: { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }
+    };
+  }
+  /** The facts drawn into #owMeta: nothing is touched when nothing changed (OrderFacts compares), so a card and the focus stay where they are across the window's many repaints. */
+  function paintFacts(r) {
+    const host = byId("owMeta"); if (!host || !r) return;
+    const f = factsOf(r);
+    if (window.OrderFacts && tryDo(() => (OrderFacts.paint(host, f), true))) return;
+    // (the module did not load: the grid as it always was)
+    host.innerHTML = f.loading ? '<div class="m"><i>Order</i><span>' + esc(f.order.id) + '</span></div>' : f.cells.map(c => '<div class="m"><i>' + esc(c.label) + '</i>' + (c.html != null ? c.html : '<span>' + esc(c.text) + '</span>') + '</div>').join("");
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -14127,32 +14196,8 @@ const OrderWin = window.OrderWin = (() => {
     notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? '<span class="owSk" aria-hidden="true"></span><span class="owSk short" aria-hidden="true"></span>' : r.said || "— the customer wrote nothing —";
     if (r.loading) notes.setAttribute("aria-label", "Reading the order…"); else notes.removeAttribute("aria-label");
     const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
-    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], sheetCell = sheetCellOf(r);
-    const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
-    // the order itself (its number, when it was bought and by whom) and everything that was picked at the purchase, not
-    // only the options the sorter could map: a custom order is read from exactly these
-    const placed = (+r.order.createTs || 0) * 1000, rid = String(r.order.receiptId), onum = String(r.order.orderNumber || "");
-    const bought = tryDo(() => O.purchaseOptions(r.line, sp)) || [];
-    // (an order still being read: its number, what is known, and a skeleton block for each field still coming)
-    const skel = lbl => '<div class="m sk"><i>' + esc(lbl) + '</i><span class="owSk" aria-hidden="true"></span></div>';
-    byId("owMeta").innerHTML = r.loading ? mcell("Order", rid) + (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name) : skel("Buyer")) + ["Purchased", "Quantity", "Metal", "State", "Ship by", "Listing", "Title"].map(skel).join("") :
-      mcell("Order", rid + (onum && onum !== rid ? " · #" + onum : "")) +
-      (placed ? mcell("Purchased", when(placed)) : r.arrivedAt ? mcell("Arrived", when(r.arrivedAt)) : "") +
-      (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name + (r.order.isGift ? " · gift" : "")) : r.order.isGift ? mcell("Gift", "yes") : "") +
-      (sp.special ? mcell("Custom order", sp.special.label + (sp.special.read && !sp.special.decided ? ` · Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "") + (sp.special.why ? " · " + sp.special.why : "")) : sp.customDone ? mcell("Custom order", sp.customDone.category || "completed") : "") +
-      mcell("Quantity", pairSides(r).length ? `${sp.quantity || r.line.quantity || 1} pair${(sp.quantity || r.line.quantity || 1) > 1 ? "s" : ""} · ${pairSides(r).length} pieces: Left and Right` : String(sp.quantity || r.line.quantity || 1) + O.countedFact(r)) +
-      (pairSides(r).length ? mcell("Pair", ListMedia.pairRow(r) ? "Mismatched: the Left and the Right are different charms of one listing" : "Matching: the Right is the Left turned over (its mirror image)") : "") +
-      // (what the intake says of the piece count in plain words: an old line already pooled keeps its pieces and the note says what the rule gives now; the pair's own notes)
-      (() => { const notes = [sp.pieceNote].concat(sp.pair && Array.isArray(sp.pair.notes) ? sp.pair.notes : []).filter(x => typeof x === "string" && x.trim()); return notes.length ? mcell("Pieces", notes.join(" ")) : ""; })() +
-      mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
-      mcell("State", st[1]) +
-      (sheetCell ? mcell("Sheet", sheetCell) : "") +
-      mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
-      (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
-      (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i>${engCellHtml(r, "waiting")}</div>` : "") +
-      (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
-      mcell("Listing", String(r.line.listingId || "—")) +
-      mcell("Title", r.line.title || "—");
+    // the facts: a glance line, a card for each, and the Details drop-down with the whole grid (charm-nest-order-facts.js; factsOf says what it holds)
+    paintFacts(r);
     // no decision box: a line's question (a custom order's, an option to map, an unknown SKU) is asked nowhere, in this
     // window or in Review (Paul, 28 Sep 16:45: "remove this from the UI ... move up everything that is below to fill up
     // the empty space"; 29 Sep 01:01: "Remove this from the UI and the review tab, from all pop-up modals"): its Review
@@ -14815,15 +14860,8 @@ const OrderWin = window.OrderWin = (() => {
     if (labels.length) return labels.join(" + ");
     const where = tryDo(() => Orders.placeOf(r)); return where ? (where.set ? where.set + " · " : "") + (where.sheet || "") : "";
   }
-  /** The grid's Sheet cell redrawn alone when the sheets' records land (the grid is drawn once, as the order opens). */
-  function paintSheetCell(r) {
-    const meta = byId("owMeta"); if (!meta || !r || r.loading) return;
-    const cells = [...meta.querySelectorAll(".m")], mine = cells.find(m => m.querySelector("i") && m.querySelector("i").textContent === "Sheet"), text = sheetCellOf(r);
-    if (!text) { if (mine) mine.remove(); return; }
-    if (mine) { const sp = mine.querySelector("span"); if (sp && sp.textContent !== text) sp.textContent = text; return; }
-    const at = cells.find(m => m.querySelector("i") && m.querySelector("i").textContent === "State"), cell = el("div", "m"); cell.innerHTML = "<i>Sheet</i><span>" + esc(text) + "</span>";
-    if (at) at.after(cell); else meta.appendChild(cell);
-  }
+  /** The facts redrawn when the sheets' records land (the Sheet cell of the Details list, the state's card): the same paint as the window's, which touches nothing that has not changed. */
+  function paintSheetCell(r) { if (!r || r.loading) return; paintFacts(r); }
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
@@ -14835,10 +14873,9 @@ const OrderWin = window.OrderWin = (() => {
     if(historical.length){
       r.engrave ||= {};r.engrave.seals=CNEngravingSeals.merge(r.engrave,{seals:historical});
       const job=Engrave.jobOf(r);if(job)CNEngravingSeals.keep(job);
-      const meta=byId('owMeta');
-      let cell=meta && [...meta.querySelectorAll('.m')].find(m=>m.querySelector('i')?.textContent==='Engraving');
-      if(meta && !cell){cell=el('div','m');meta.appendChild(cell);}
-      if(cell){const markup=`<i>Engraving</i>${engCellHtml(r,'Approval history',job,historical)}`;if(cell._history!==markup){cell.innerHTML=markup;cell._history=markup;}}
+      // (the Engraving cell of the facts, and the engraving chip's card: drawn from the permanent timeline's seals; OrderFacts touches nothing when this is what it already shows)
+      const html=engCellHtml(r,'Approval history',job,historical);
+      if(!W.engHist||W.engHist.key!==r.key||W.engHist.html!==html){W.engHist={key:r.key,html};paintFacts(r);}
     }
     const n = nowOf(r), pill = byId("owNow");
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);

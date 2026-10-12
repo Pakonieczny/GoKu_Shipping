@@ -130,8 +130,13 @@ function fixture({ MAIN, CX, D }) {
       assert.equal(rail.fs, '8.5px', 'the header rail reads at 8.5px'); assert.deepEqual(rail.clipped, [], 'no step name is cut at 1280');
       await page.waitForFunction(() => !!document.querySelector('#owNowCard .tlNowSeal, #owNowCard .who i svg'), null, { timeout: 5000 });
       assert(await page.evaluate(() => !(document.querySelector('#owNowCard .tlNowSeal') && document.querySelector('#owNowCard .who'))), 'with a seal, no who · time line beside it (the seal says it)');
-      const purchased = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => /Purchased/i.test(x.querySelector('i').textContent)); const s = m.querySelector('span'); return s.getClientRects().length === 1 ? s.getBoundingClientRect().height : 99; });
-      assert(purchased < 22, 'the purchase date reads on one line: ' + purchased);
+      // the facts are a glance line now (Paul, 12 Oct): the purchase time reads on one line in its chip, and in the Details list once that is open
+      const purchased = await page.evaluate(() => { const s = document.querySelector('#owMeta [data-owf-chip="purchased"] .owfTx'); return s && s.getClientRects().length === 1 ? s.getBoundingClientRect().height : 99; });
+      assert(purchased < 22, 'the purchase time reads on one line in its chip: ' + purchased);
+      await page.click('#owMeta .owfMore'); await page.waitForTimeout(260);
+      const purchasedRow = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .owfDetails .m')].find(x => /Purchased/i.test(x.querySelector('i').textContent)); const s = m.querySelector('span'); return s.getClientRects().length === 1 ? s.getBoundingClientRect().height : 99; });
+      assert(purchasedRow < 22, 'and the purchase date reads on one line in the Details list: ' + purchasedRow);
+      await page.click('#owMeta .owfMore'); await page.waitForTimeout(260);
       // 2 · its Timeline: no chip in the tab row (the one quiet Stamps chip went with the detail pane, 5 Oct), no second Now and rail strip, no pane under the chart, day heads inside their columns
       await view('timeline'); await snap('normal-timeline');
       const tl = await page.evaluate(() => {
