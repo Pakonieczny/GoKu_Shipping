@@ -96,6 +96,23 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
     check(odd.locked.words && odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.pos, 'an approved face is locked (words, font, position off) and says by whom: ' + JSON.stringify(odd.locked));
 
+    // ── 7a · in the Engrave detail itself, with the card's Front / Back thumbnails (when this build has the card): a click on a thumbnail picks the face the panel edits ──
+    const hasCard = await page.evaluate(() => !!(window.CharmNestEngraveCard && CharmNestEngraveCard.mountPiece));
+    if (hasCard) {
+      await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
+      await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
+      const thumbs = await page.evaluate(() => ({ n: document.querySelectorAll('.pvSetup .engFace .engThumb').length, faceSw: !!document.querySelector('.pvSetup .engpFaceSw'), cur: document.querySelector('.pvSetup .engFace[aria-current=true]')?.dataset.face || null, face: document.querySelector('.pvSetup .engp').dataset.face }));
+      check(thumbs.n === 2 && !thumbs.faceSw, 'the card\'s two thumbnails (Front, Back) are above the panel, and the panel\'s own face switch is gone: ' + JSON.stringify(thumbs));
+      check(thumbs.cur === thumbs.face, 'the thumbnail marked current is the face the panel edits: ' + thumbs.cur + ' / ' + thumbs.face);
+      const other = thumbs.face === 'back' ? 'front' : 'back';
+      await page.click(`.pvSetup .engFace[data-face=${other}] .engThumb`);
+      await page.waitForFunction(f => document.querySelector('.pvSetup .engp') && document.querySelector('.pvSetup .engp').dataset.face === f && document.querySelector('.pvSetup .engFace[aria-current=true]')?.dataset.face === f, other, { timeout: 15000 });
+      check(true, 'a click on the ' + other + ' thumbnail switches the editor to the ' + other);
+      await page.fill('.pvSetup .engpWords', 'Name Two');
+      const live = await page.evaluate(f => { const t = document.querySelector(`.pvSetup .engFace[data-face=${f}] .engpvText`), o = f === 'front' ? 'back' : 'front', u = document.querySelector(`.pvSetup .engFace[data-face=${o}] .engpvText`); return { mine: t && t.textContent, other: u && u.textContent }; }, other);
+      check(/name two/i.test(live.mine || '') && !/name two/i.test(live.other || ''), 'typing shows on that face\'s thumbnail in the card at once, not on the other: ' + JSON.stringify(live));
+    } else console.log('  (no CharmNestEngraveCard in this build: the thumbnail checks were skipped)');
+
     // ── 7b · the REAL preview component (charm-nest-engrave-preview.js): typing and picking a font change what the thumbnail draws, at once ──
     const real = await page.evaluate(async KEY => {
       const P = window.CharmNestEngravePreview; if (!P) return { skipped: true };

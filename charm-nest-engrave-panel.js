@@ -153,6 +153,8 @@
   /* ── the look ──────────────────────────────────────────────────────────────── */
   const CSS = `.engp{display:grid;gap:10px;min-width:0;container-type:inline-size;font:12px var(--sans,system-ui);color:var(--ink,#1c1a17)}
 .engp[hidden]{display:none!important}
+.engpCard{margin-bottom:10px}
+.engpCard:empty{display:none}
 .engpMode{display:flex;flex-wrap:nowrap;gap:2px;padding:2px;min-width:0;border:1px solid var(--line,#e4ddd0);border-radius:9px;background:var(--paper2,#ebe5d9)}
 .engpSeg{flex:1 1 auto;min-width:0;white-space:nowrap;padding:5px 8px;border:0;border-radius:7px;background:transparent;font:600 11px var(--sans,system-ui);color:inherit;cursor:pointer}
 .engpSeg[aria-checked=true]{background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(28,26,23,.42)}
@@ -330,6 +332,12 @@
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel', e); return none; }
   }
 
+  /** A line's piece name, as the order window names it (a necklace of saved charms by all of them, else the design's SKU, the line's SKU or title). */
+  function lineName(x) {
+    const O = dep('CharmNestOrders', './charm-nest-orders.js'), set = O && O.setDesignsOf ? tryDo(() => O.setDesignsOf(x && x.spec), null) : null;
+    return str(set && set.length ? set.join(' + ') : (x && x.spec && x.spec.designSku) || (x && x.line && (x.line.sku || x.line.title)) || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, set && set.length ? 80 : 32);
+  }
+
   /** The slot of the Engrave detail card: the Front / Back thumbnails (when the page has CharmNestEngraveCard) above the panel, each click on a thumbnail picking the face the panel edits. */
   function mountPiece(slot, job, o) {
     const none = { destroy() {}, refresh() {}, setFace() {}, panel: null, card: null };
@@ -342,7 +350,7 @@
       slot.appendChild(cardHost); slot.appendChild(panelHost);
       const C = root.CharmNestEngraveCard; let card = null, panel = null;
       const pick = f => { if (panel) panel.setFace(f); };
-      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, onPick: pick, approve: false }), null);
+      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, onPick: pick, approve: false, nameOf: o.nameOf || lineName, isWorking: Eng() && Eng().isWorking ? Eng().isWorking : undefined }), null);
       if (!card) cardHost.remove();
       panel = mount(panelHost, line, {
         job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),
