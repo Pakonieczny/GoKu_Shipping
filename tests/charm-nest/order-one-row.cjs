@@ -218,13 +218,13 @@ async function partB() {
     await page.hover('#owPcSum > .owPcMulti .steps i:nth-child(2)'); await page.waitForFunction(() => document.querySelector('.railTip[data-on]'), null, { timeout: 15000 }); t = await tip();
     assert.deepEqual(t.pieces.map(p => [p.label, p.state]), [['Left', 'Done'], ['Right', 'Not yet']], JSON.stringify(t)); ok('2a the card says Left: Done, Right: Not yet for the step the Right has not reached'); await away();
     // an ear picked narrows the window to it: the card says where THAT ear is (the Left on its sheet, the Right on none), and the pieces say the same
-    const chips = () => page.evaluate(() => [...document.querySelectorAll('#owNowCard .owShChip')].map(c => ({ off: c.classList.contains('off'), text: c.textContent.replace(/\s+/g, ' ').trim() })));
+    const tabOf = () => page.evaluate(() => { const t = document.querySelector('.owTabsV [data-ow-view="sheet"]'); return { off: !!t && t.classList.contains('off'), count: ((document.getElementById('owShCount') || {}).textContent || '').trim() }; });   // (the head card has no sheet boxes any more: the Sheet tab is where the window says whether the picked ear is on a sheet)
     await page.click('#owPcSum > .owPcMulti .egEarTab[data-ear$="#L"]'); await page.waitForFunction(() => OrderWin.selectedSide() === 'L', null, { timeout: 15000 }); await page.waitForTimeout(500);
-    let ch = await chips(); assert.equal(ch.some(x => !x.off && /GF Sheet 1/.test(x.text)), true, 'the Left is on GF Sheet 1: ' + JSON.stringify(ch));
+    let ch = await tabOf(); assert.equal(ch.off, false, 'the Left is on GF Sheet 1, so its Sheet tab is there: ' + JSON.stringify(ch));
     await page.click('#owPcSum > .owPcMulti .egEarTab[data-ear$="#R"]'); await page.waitForFunction(() => OrderWin.selectedSide() === 'R', null, { timeout: 15000 }); await page.waitForTimeout(500);
-    ch = await chips(); assert.equal(ch.some(x => !x.off), false, 'the Right is on no sheet: ' + JSON.stringify(ch)); assert.equal(ch.some(x => x.off), true, 'it says so (a grey, inert box)');
+    ch = await tabOf(); assert.equal(ch.off, true, 'the Right is on no sheet, so its Sheet tab is greyed: ' + JSON.stringify(ch));
     await page.click('#owPcSum > .owPcMulti .egEarTab[data-ear$="#R"]'); await page.waitForFunction(() => OrderWin.selectedSide() === null, null, { timeout: 15000 }); await page.waitForTimeout(400);
-    ok('2c an ear picked narrows the window to it: the card says where that ear is (the Left on GF Sheet 1, the Right on no sheet); both again when it is let go');
+    ok('2c an ear picked narrows the window to it: the Sheet tab follows that ear (the Left is on GF Sheet 1, the Right on no sheet); both again when it is let go');
     // the drawer's own sheet button opens that sheet's view as it does today
     await page.click('#owPcSum .owPcSub[data-side="L"] button.pcSt'); await page.waitForTimeout(600);
     assert.equal(await page.evaluate(() => OrderWin.view()), 'sheet', 'the Left\'s status opens its sheet'); ok('2b the Left\'s status in the drawer opens its sheet, as it did on its own row');
