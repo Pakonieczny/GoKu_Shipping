@@ -124,7 +124,7 @@ await t('2b a pair with quantity 2, and a line with no personalisation at all: t
 });
 
 /* ═══ 3 · a person's later pick ═══ */
-await t('3 a person\'s pick on an earring is dropped quietly: the setup control is not drawn, apply() stores nothing, touches nothing, asks nobody; undoing an old pick still works', async () => {
+await t('3 a person\'s pick on an earring is dropped quietly: the setup control is not drawn, apply() stores nothing, touches nothing, asks nobody; a pick saved before the rule is kept as saved and not in force (there is no undo path any more)', async () => {
   const spec = read(CAPRICORN), line = { key: '4200256896_t1', spec, state: 'pulled', poolIds: ['p1', 'p2'] };
   assert.equal(Setup.read(line), null, 'no control');
   const touched = []; const env = new Proxy({}, { get: (_, k) => { touched.push(String(k)); return () => { throw new Error('env.' + String(k) + ' was called'); }; } });
@@ -132,11 +132,12 @@ await t('3 a person\'s pick on an earring is dropped quietly: the setup control 
     const res = await Setup.apply(line, patch, env); assert.equal(res.ok, true); assert.equal(res.never, true); assert.deepEqual([res.removed, res.added, res.reopened, res.seeded], [[], [], [], []]); assert.ok(!res.cancelled && !res.pending && !res.message);
   }
   assert.deepEqual(touched, [], 'env (the signed-in name, the store, the jobs) was never touched'); assert.equal(line.engravingOverride, undefined, 'nothing stored');
-  // taking back a pick somebody saved before the rule: allowed (the pick is kept as it was saved, never rewritten, and is not in force)
+  // a pick somebody saved before the rule is kept exactly as it was saved (never rewritten, not in force). The "Undo my edit" path is gone (ENGUNDO, point 8): apply() drops every call for an
+  // earring, an old { undo: true } included, and touches nothing
   line.engravingOverride = overrides[0]; assert.equal(Faces.setupOf(line).mode, 'none', 'a pick saved earlier is not in force');
-  const log = []; const env2 = { who: () => 'Ana_M', now: () => 5, store: (l, ov) => { log.push(['store', ov]); if (ov) l.engravingOverride = ov; else delete l.engravingOverride; }, jobsOf: () => [], ensureJobs: () => [], slots: () => [], remove() {}, skip() {}, setNone() {}, reopen() {}, seed() {}, changed() {} };
-  const res = await Setup.apply(line, null, env2, { undo: true }); assert.equal(res.never, undefined, 'an undo is not swallowed');
-  assert.equal(line.engravingOverride, undefined, 'the old pick is taken back');
+  const kept = JSON.stringify(line.engravingOverride);
+  const res = await Setup.apply(line, null, env, { undo: true }); assert.equal(res.ok, true); assert.equal(res.never, true, 'an earring is never touched, an old undo option included');
+  assert.equal(JSON.stringify(line.engravingOverride), kept, 'the old pick is kept exactly as it was saved'); assert.deepEqual(touched, [], 'env was never touched');
 });
 
 /* ═══ 4 · everything else is unchanged ═══ */
