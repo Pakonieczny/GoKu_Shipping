@@ -262,9 +262,9 @@ const OV = () => ({
   piece: [...document.querySelectorAll('#owPcSum .owPcRow.sel')].map(b => b.dataset.piece || '*').concat(document.querySelector('#owPcSum .owPcState') && !document.querySelector('#owPcSum .owPcRow.sel') ? ['*'] : []),
   pieces: ['*', ...[...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(b => b.dataset.piece)],
   swHidden: !document.querySelector('#owPcSum .owPcRow[data-piece]'),
-  chips: [...document.querySelectorAll('#owNowCard .owShChip:not(.off)')].map(b => (b.querySelector('b')?.textContent || '').trim()),
-  offChips: document.querySelectorAll('#owNowCard .owShChip.off').length,
-  sheetBtn: (b => b ? { disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true', title: b.title || '' } : null)(document.querySelector('#owNowCard [data-go="sheet"]')),
+  // (the head card has no Sheet button and no sheet chips any more, Paul 12 Oct 2026: the Sheet TAB is the button, the pieces' status chips are the chips)
+  cardControls: document.querySelectorAll('#owNowCard button, #owNowCard a[href], #owNowCard input, #owNowCard select, #owNowCard textarea, #owNowCard [role=button], #owNowCard .shs, #owNowCard .owShChip, #owNowCard [data-go], #owNowCard [data-pc]').length,
+  sheetBtn: (b => b ? { disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true', title: b.title || '' } : null)(document.querySelector('.owTabsV [data-ow-view="sheet"]')),
   sum: [...document.querySelectorAll('#owPcSum .owPcRow')].map(b => ({ key: b.dataset.piece, st: (b.querySelector('.st')?.textContent || '').trim() })),
   now: (document.getElementById('owNow')?.textContent || '').trim(),
   metaSheet: (() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => (x.querySelector('i')?.textContent || '').trim().toLowerCase() === 'sheet'); return m ? (m.querySelector('span')?.textContent || '').trim() : null; })(),
@@ -314,21 +314,23 @@ async function orderWindowProbes(page, mode, R, orders) {
         if (mine.length) R.check('A6', side, ov.metaSheet != null && mine.includes(norm(ov.metaSheet)), `the piece is on ${mine.join(' + ')} but the Overview's Sheet cell says ${JSON.stringify(ov.metaSheet)}`);
         else R.check('A6', side, ov.metaSheet == null || !/Sheet/i.test(ov.metaSheet), `the piece is on no sheet but the Overview's Sheet cell says ${JSON.stringify(ov.metaSheet)}`);
       }
-      // A4: the "Sheet" button opens THIS piece's sheet; a piece on no sheet has no pressable button (greyed out), it never opens the other piece's sheet
+      // A4: the "Sheet" tab (the old card button is gone) opens THIS piece's sheet; a piece on no sheet has no pressable tab (greyed out), it never opens the other piece's sheet
       const btn = ov.sheetBtn;
-      if (here && !mine.length && multi) R.check('A4', side, !btn || btn.disabled, `the piece is on no sheet yet and its "Sheet" button can be pressed`);
-      if (btn && !btn.disabled) await page.evaluate(() => document.querySelector('#owNowCard [data-go="sheet"]').click()); else await page.evaluate(() => OrderWin.setView('sheet'));
+      if (here && !mine.length && multi) R.check('A4', side, !btn || btn.disabled, `the piece is on no sheet yet and its "Sheet" tab can be pressed`);
+      if (btn && !btn.disabled) await page.evaluate(() => document.querySelector('.owTabsV [data-ow-view="sheet"]').click()); else await page.evaluate(() => OrderWin.setView('sheet'));
       let tab = await readSheetTab(page);
       if (btn && !btn.disabled && here) {
         const on = tab.chips.find(c => c.on);
-        if (mine.length) R.check('A4', side, !!on && mine.includes(on.label), `its "Sheet" button opens ${on ? on.label : JSON.stringify(tab.none)} (the chip lit), the piece is on ${mine.join(' + ')}`);
+        if (mine.length) R.check('A4', side, !!on && mine.includes(on.label), `its "Sheet" tab opens ${on ? on.label : JSON.stringify(tab.none)} (the chip lit), the piece is on ${mine.join(' + ')}`);
         else R.check('A4', side, !!tab.none && !tab.chips.length, `a piece on no sheet presses "Sheet" and gets ${JSON.stringify(tab.chips.map(c => c.label))}${tab.none ? '' : ' with a sheet drawn'}`);
       }
-      // A3: the sheet chips on the Overview, now that the order's sheets are known: this piece's sheets only
+      // A3: the head card has no sheet chips (Paul, 12 Oct 2026); the piece's own row names its first sheet and "+N" for the others, and the Sheet tab (A10) lists them all
       if (here && live.length > 1) {
         await page.evaluate(() => OrderWin.setView('info'));
         const o2 = await settle(page, OV, null, { max: 2500, quiet: 250 });
-        R.eq('A3', side, o2.chips.map(norm).sort(), mine, 'the sheet chips on the Overview');
+        R.check('A3', side, o2.cardControls === 0, `the head card draws ${o2.cardControls} button(s), link(s) or sheet shortcut(s): it has none`);
+        const mrow = o2.sum.find(x => x.key === l.key), more = mrow ? +((/\+(\d+)\s*$/.exec(mrow.st) || [])[1] || 0) : null;
+        if (mine.length) R.check('A3', side, !!mrow && mine.includes(norm(mrow.st.replace(/\+\d+\s*$/, ''))) && more === mine.length - 1, `the piece is on ${mine.join(' + ')} but its row's status says "${mrow && mrow.st}"`);
         await page.evaluate(() => OrderWin.setView('sheet')); tab = await readSheetTab(page);
       }
       // ── Sheet tab: every chip in turn, every piece on its row ──
