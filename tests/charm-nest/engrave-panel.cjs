@@ -81,6 +81,21 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     check(ear.html === '' && ear.hidden && ear.modes === 0, 'an earring (spec.engraveNever) draws no panel at all, so it has no Back choice: ' + JSON.stringify(ear));
 
+    // ── a face nobody could place (an unlabelled "both") asks in one line; an approved face is locked, with its position row off ──
+    const odd = await page.evaluate(KEY => {
+      const row = B.orders.byKey.get(KEY), out = {}, slot = document.createElement('div'); document.body.appendChild(slot);
+      const ask = Object.assign({}, row, { key: 'ask_1', spec: Object.assign({}, row.spec, { engraving: { v: 1, mode: 'both', source: 'note', textSource: 'unlabelled', needsPerson: true, confidence: 0.5, raw: 'Name One Name Two', front: null, back: null } }) });
+      CharmNestEngravePanel.DRAFTS.clear(); CharmNestEngravePanel.mount(slot, ask, { jobs: () => [], face: 'front' });
+      out.ask = { prompt: !!slot.querySelector('.engpAsk'), raw: (slot.querySelector('.engpRaw') || {}).textContent || '' };
+      slot.textContent = ''; CharmNestEngravePanel.DRAFTS.clear();
+      const j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy }; Object.assign(j, { state: 'approved', approvedBy: 'Name One' });
+      CharmNestEngravePanel.mount(slot, row, { job: j, face: 'back' });
+      out.locked = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, lock: (slot.querySelector('.engpLock') || {}).textContent || '', pos: [...slot.querySelectorAll('.engpPb')].every(b => b.disabled) || !slot.querySelector('.engpPb') };
+      Object.assign(j, { state: was.state, approvedBy: was.by }); slot.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
+    }, KEY);
+    check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
+    check(odd.locked.words && odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.pos, 'an approved face is locked (words, font, position off) and says by whom: ' + JSON.stringify(odd.locked));
+
     // ── 7b · the REAL preview component (charm-nest-engrave-preview.js): typing and picking a font change what the thumbnail draws, at once ──
     const real = await page.evaluate(async KEY => {
       const P = window.CharmNestEngravePreview; if (!P) return { skipped: true };
