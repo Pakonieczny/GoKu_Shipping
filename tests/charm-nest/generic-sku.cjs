@@ -80,7 +80,7 @@ const TITLE = 'Chameleon Charm Necklace';
   { const table = { at: 1, n: 1, products: [{ id: '33658953874', sku: RAW, d: 0, pv: [['514', '1501824822441'], ['513', '166994992627']] }], names: {}, props: {} };
     const sp = read({ sku: '' }, ctx({ listingSkus: { [LID]: table } })).spec; ok(sp.designSku === null && q(sp) && q(sp).generic === LID && !JSON.stringify(sp).includes('ASTRONAUT'), 'a product SKU from the listing table that is a placeholder is held too (' + sp.skuSource + ')'); }
   // no SKU at all and no table: the no-SKU question, untouched by this guard
-  { const sp = read({ sku: '' }).spec, p = q(sp); ok(p && /no SKU on Etsy yet|no SKU on the transaction/.test(p.reason) && !p.generic, 'no SKU: the old question (NOSKU: now worded "This listing has no SKU on Etsy yet ...")'); }
+  { const sp = read({ sku: '' }).spec, p = q(sp); ok(p && /no SKU on the transaction/.test(p.reason) && !p.generic, 'no SKU: the old question'); }
   // the order's other piece reads exactly as before
   { const hb = read({ transactionId: '5249047218', listingId: '1710777569', sku: 'Hummingbird Cut out', title: 'Hummingbird Earrings Gold Bird Jewelry Gift for Her Stud Earrings Bird Lover Hummingbird Charm Jewelry Bird Earrings', productId: '24791732737', personalization: [],
       variations: [V('Metal', 'Gold Filled')] }).spec;
