@@ -20,6 +20,64 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
 const TITLE = 'Chosen by the system', REASON = 'Changed: Customer asked in a message \u00b7 Name One';   // (ENGWHY\'s reader, when the page has it, adds the time after it: the checks below take the line as a prefix)
 const startsWith = (t, head) => typeof t === 'string' && (t === head || t.startsWith(head + ' \u00b7 '));
 
+/** what the marks look like on the panel at `sel` (runs in the page) */
+const MARKS_FN = sel => {
+      const p = document.querySelector(sel + ' .engp'); if (!p) return null;
+      const bg = e => e ? getComputedStyle(e).backgroundColor : '', ta = p.querySelector('.engpWords'), box = p.querySelector('.engpBox'), s = p.querySelector('.engpFont'), fb = s && s.parentElement;
+      const mk = h => { const k = h && h.querySelector(':scope > .engpSys'); return k ? { st: k.dataset.st, title: k.title, text: k.textContent } : null; };
+      return {
+        face: p.dataset.face, mode: p.dataset.mode, text: p.textContent.replace(/\s+/g, ' ').trim(),
+        seg: [...p.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => ({ m: b.dataset.mode, on: b.getAttribute('aria-checked') === 'true', sys: b.dataset.sys || '', title: b.title, mark: mk(b), bg: bg(b) })),
+        words: { sys: box ? box.dataset.sys || '' : null, mark: mk(box), bg: bg(ta), value: ta && ta.value },
+        font: { sys: fb ? fb.dataset.sys || '' : null, ghost: mk(fb), selTitle: s ? s.title : '', value: s && s.value, bg: bg(s), opts: s ? [...s.options].map(o => ({ v: o.value, text: o.text, label: o.label, star: !!o.dataset.sys })) : [] }
+      };
+};
+const onlySeg = (m, mode) => m.seg.filter(s => s.mark).map(s => s.m).join() === mode && m.seg.filter(s => s.sys).map(s => s.m).join() === mode;
+const CARD_BG = 'rgb(255, 254, 251)';
+
+/** 9 · the REAL-DRAWING world (ENGLIVE: real charm drawings, real intake / pool / classifier / fit, real fonts, offline): on each real piece the marks are exactly the system's own choice (autoChoice), untouched; an override moves the selection, not the marks */
+async function realWorld(check, shots) {
+  let R; try { R = require('./_engraveRealWorld.cjs'); } catch (_) { console.log('  (no real-drawing world in this build: the real-drawing checks were skipped)'); return; }
+  const w = await R.world({ viewport: { width: 1440, height: 900 }, shots: shots || path.join(require('os').tmpdir(), 'hilite-real-shots'), scale: shots ? 2 : 1 });
+  if (!w) { console.log('  (no playwright-core: the real-drawing checks were skipped)'); return; }
+  const PV = '.pvSetup', CLIP = { x: 350, y: 92, width: 600, height: 560 };
+  try {
+    const made = await R.build(w, ['back', 'front', 'both', 'discs']);
+    const truthOf = (name, face, slot) => w.page.evaluate(({ rid, face, slot }) => {
+      const row = Orders.rows().find(r => r.order.receiptId === rid), a = CharmNestEngraveSetup.autoChoice(row, slot || null), P = CharmNestEngravePreview, p = document.querySelector('.pvSetup .engp'), star = p && [...p.querySelectorAll('.engpFont option')].find(o => o.dataset.sys);
+      return { mode: a.mode, text: a[face] ? a[face].text : null, fontId: a[face] ? a[face].fontId : null, starId: star ? P.fontIdOf(row, face, star.value) : null, shown: p ? p.dataset.face : null };
+    }, { rid: made[name].rid, face, slot });
+    const cases = [['back', 'back', null], ['front', 'front', null], ['both', 'front', null], ['both', 'back', null], ['discs', 'back', 'D2']];
+    for (const [name, face, slot] of cases) {
+      const jk = await R.openEngraveDetail(w, name, { face, slot });
+      const tag = `${name}${slot ? ' ' + slot : ''} ${face}`;
+      if (!jk) { check(false, `9 ${tag}: the order has no engraving job to open`); continue; }
+      await w.page.waitForSelector(`${PV} .engp .engpWords`, { timeout: 20000 });
+      const m = await w.page.evaluate(MARKS_FN, PV), t = await truthOf(name, face, slot);
+      check(m.face === face && t.shown === face, `9 ${tag}: the panel is on the ${face}`);
+      check(onlySeg(m, t.mode) && m.seg.find(s => s.m === t.mode).on && m.seg.every(s => !s.mark || s.mark.title === TITLE), `9 ${tag}: the mark and the tint are on the system's mode (${t.mode}), which is the selected one`);
+      check(t.text && m.words.sys === 'same' && m.words.mark && m.words.mark.title === TITLE && m.words.bg !== CARD_BG, `9 ${tag}: the words ("${(m.words.value || '').replace(/\n/g, ' / ')}" for the system's "${t.text}") carry the mark and the tint, untouched: ` + JSON.stringify({ sys: m.words.sys }));
+      check(t.fontId && t.starId === t.fontId && m.font.opts.filter(o => o.star).length === 1 && m.font.sys === 'same' && !m.font.ghost, `9 ${tag}: the system's font (${t.fontId}) is the starred entry of the list and is selected: ` + JSON.stringify({ star: m.font.opts.filter(o => o.star).map(o => o.label), starId: t.starId }));
+      if (name === 'discs') check(m.words.value === 'B', `9 ${tag}: disc 2's own words ("${m.words.value}") are marked, not the line's`);
+      if (shots && (name === 'back' || name === 'both')) await R.shot(w, `HILITE-real-${name}-${face}-untouched`, { clip: CLIP });
+    }
+    // an override in a real order: Back instead of Front + back, other words, another font: the ring and the words move, every mark stays
+    await R.openEngraveDetail(w, 'both', { face: 'back' });
+    await w.page.waitForSelector(`${PV} .engp .engpWords`, { timeout: 20000 });
+    await w.page.click(`${PV} [data-engp=mode][data-mode=back]`); await w.page.waitForSelector(`${PV} .engp[data-mode=back]`);
+    await w.page.fill(`${PV} .engpWords`, 'Name Two'); await w.page.selectOption(`${PV} .engpFont`, 'Pristina');
+    const o = await w.page.evaluate(MARKS_FN, PV);
+    check(o.seg.find(s => s.m === 'back').on && onlySeg(o, 'both') && o.words.sys === 'changed' && o.words.mark && /^Chosen by the system: NAME \/ ONE|^Chosen by the system: Name One/.test(o.words.mark.title) && o.font.sys === 'changed' && o.font.ghost && o.font.opts.filter(x => x.star).map(x => x.v).join() === '',
+      '9 both, overridden (Back, other words, Pristina): the ring moved, every mark stayed on the system\'s choice, with its titles: ' + JSON.stringify({ seg: o.seg.filter(s => s.mark).map(s => s.m), words: o.words.mark && o.words.mark.title, ghost: o.font.ghost && o.font.ghost.title }));
+    if (shots) await R.shot(w, 'HILITE-real-both-back-overridden', { clip: CLIP });
+    await w.page.click(`${PV} [data-engp=cancel]`);
+    await w.page.waitForFunction(() => { const c = document.querySelector('.pvSetup [data-engp=cancel]'); return c && c.disabled; });
+    const c = await w.page.evaluate(MARKS_FN, PV);
+    check(c.words.sys === 'same' && c.font.sys === 'same' && c.seg.find(s => s.m === 'both').on, '9 after Cancel the real order is the system\'s choice again, every tint back');
+    check(w.errors.length === 0, '9 no page errors in the real world: ' + w.errors.join(' | ').slice(0, 300));
+  } finally { await w.close(); }
+}
+
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { console.log('engrave-highlight: playwright-core not found, skipped'); process.exit(0); } }
@@ -57,19 +115,7 @@ const startsWith = (t, head) => typeof t === 'string' && (t === head || t.starts
     }, { order: ORDER, KEY });
 
     // what the marks look like on the panel at `sel`
-    const marks = sel => page.evaluate(sel => {
-      const p = document.querySelector(sel + ' .engp'); if (!p) return null;
-      const bg = e => e ? getComputedStyle(e).backgroundColor : '', ta = p.querySelector('.engpWords'), box = p.querySelector('.engpBox'), s = p.querySelector('.engpFont'), fb = s && s.parentElement;
-      const mk = h => { const k = h && h.querySelector(':scope > .engpSys'); return k ? { st: k.dataset.st, title: k.title, text: k.textContent } : null; };
-      return {
-        face: p.dataset.face, mode: p.dataset.mode, text: p.textContent.replace(/\s+/g, ' ').trim(),
-        seg: [...p.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => ({ m: b.dataset.mode, on: b.getAttribute('aria-checked') === 'true', sys: b.dataset.sys || '', title: b.title, mark: mk(b), bg: bg(b) })),
-        words: { sys: box ? box.dataset.sys || '' : null, mark: mk(box), bg: bg(ta), value: ta && ta.value },
-        font: { sys: fb ? fb.dataset.sys || '' : null, ghost: mk(fb), selTitle: s ? s.title : '', value: s && s.value, bg: bg(s), opts: s ? [...s.options].map(o => ({ v: o.value, text: o.text, label: o.label, star: !!o.dataset.sys })) : [] }
-      };
-    }, sel);
-    const onlySeg = (m, mode) => m.seg.filter(s => s.mark).map(s => s.m).join() === mode && m.seg.filter(s => s.sys).map(s => s.m).join() === mode;
-    const CARD_BG = 'rgb(255, 254, 251)';
+    const marks = sel => page.evaluate(MARKS_FN, sel);
 
     // ── 1-4 · the Engrave tab's detail: card + panel, at 1280x720 ──
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
@@ -203,6 +249,7 @@ const startsWith = (t, head) => typeof t === 'string' && (t === head || t.starts
     check(!net.includes('notes.set') && reads.length === 0, '8 no staff note, no paid reading: calls ' + JSON.stringify(net));
     check(errors.length === 0, '8 no page errors: ' + errors.join(' | ').slice(0, 300));
   } finally { await browser.close(); srv.close && srv.close(); }
+  await realWorld(check, shots);
   if (fails.length) { console.log('engrave-highlight: ' + fails.length + ' failed'); process.exit(1); }
   console.log('engrave-highlight: ok');
 })().catch(e => { console.error(e); process.exit(1); });
