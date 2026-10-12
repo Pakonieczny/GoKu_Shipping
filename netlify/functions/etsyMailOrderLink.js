@@ -13,6 +13,8 @@
  *    pair_answer { code, approve }  (inbox)      → { ok, status }
  *    whoami, disconnect, sync, order, thread, ask, retry, cancel, copied, sent, read,
  *    resolve, reopen, lang, link_url, simulate, translate, health,
+ *    link_recheck, link_dismiss                  → the missing-messages notice's Check now / Dismiss (see _etsyMailLinkConsistency.js);
+ *                                                  they touch only the link's own bookkeeping, so they are the same in the sandbox
  *    history_info { receiptId, engagementId }    → { threads: [{ threadId, count, lastAtMs }], total }
  *    history { receiptId, threadId, after }      → { messages, next }  (the buyer's whole history, a page at a time)
  *    simulate { engagementId, text, delayMs }    (sandbox only) the customer's side: a reply now, or after delayMs (up to two minutes,
@@ -91,6 +93,8 @@ exports.handler = async (event) => {
       case "simulate":   return json(200, await link.simulateReply(body));
       case "translate":  return json(200, await link.translate(body));
       case "health":     return json(200, await link.health(body));
+      case "link_recheck": return json(200, await link.linkRecheck(station, body));
+      case "link_dismiss": return json(200, await link.linkDismiss(station, body));
       case "history_info": return json(200, await link.historyInfo(body));
       case "history":    return json(200, await link.history(body));
       case "test_info":  return json(200, await link.testInfo());

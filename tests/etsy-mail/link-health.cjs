@@ -85,6 +85,30 @@ check(r.level === "warn" && r.short === "Etsy sign-in" && /sign-in needs renewin
 check(judge({ mirror: { enabled: true, lastSyncCompletedAt: at(T0 - 2 * MIN), lastSyncErrorMsg: null } }).level === "ok", "no error recorded by the last order-data run: green");
 check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 3 } }).level === "warn", "the nightly check finding missing messages: amber");
 check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 0 } }).level === "ok", "the nightly check finding nothing: still green");
+// the open gaps (MAILMISS): the notice names the order, the counts, what the inbox does and when it tries next; it can be dismissed; it turns red only when it stays
+{
+  const gap = over => Object.assign({ o: "4174973193", k: "fewer_than_counted", c: 8, s: 5, url: true, firstAtMs: T0 - 3 * HOUR, tries: 1, reads: 1, lastTryAtMs: T0 - 10 * MIN, nextTryAtMs: T0 + 50 * MIN, pend: false }, over || {});
+  const cs = (gaps, extra) => Object.assign({ atMs: T0 - HOUR, checked: 100, mismatched: Object.keys(gaps).length, gaps }, extra || {});
+  const g1 = judge({ consistency: cs({ t1: gap() }) });
+  check(g1.level === "warn" && g1.short === "Messages missing" && g1.kind === "consistency" && g1.gap.n === 1 && /^Order 4174973193 shows 3 fewer messages in the inbox than expected \(8 expected, 5 stored\)\. The inbox last re-read it 10 min ago and it is still short; next try in about 50 min\.$/.test(g1.problem), "a gap says which order, how many short, what the inbox did and when it tries next: " + g1.problem);
+  check(g1.checks.find(c => c.id === "consistency").data.items[0].nt === T0 + 50 * MIN, "the check carries the gap as data for the sorter");
+  const g2 = judge({ consistency: cs({ t1: gap({ pend: true }), t2: gap({ o: "", pend: true }) }) });
+  check(/^2 conversations show fewer messages in the inbox than expected \(including orders 4174973193\)\. The inbox asked the Etsy helper to re-read them 10 min ago and is waiting for the helper's turn\.$/.test(g2.problem), "two gaps: counted, the order numbers that are known, waiting for the helper: " + g2.problem);
+  check(!/Ada|Byrne/.test(JSON.stringify([g1, g2])), "no buyer names");
+  const sig = g1.gap.sig;
+  const dz = judge({ consistency: cs({ t1: gap() }, { dismissed: { sig, atMs: T0 - 5 * MIN, by: "Paul" } }) });
+  check(dz.level === "ok" && dz.problem === "" && lvl(dz, "consistency") === "ok" && dz.checks.find(c => c.id === "consistency").data.dismissed === true && /Dismissed 5 min ago by Paul/.test(dz.checks.find(c => c.id === "consistency").text), "dismissed: green, and the line still says so (never silenced)");
+  check(judge({ consistency: cs({ t1: gap(), t3: gap({ o: "4170000003" }) }, { dismissed: { sig, atMs: T0 - MIN, by: "Paul" } }) }).level === "warn", "another conversation falling short is not covered by the dismissal");
+  check(judge({ consistency: cs({ t1: gap({ c: 9 }) }, { dismissed: { sig, atMs: T0 - MIN, by: "Paul" } }) }).level === "warn", "the same conversation getting worse is not covered either");
+  check(judge({ consistency: cs({ t1: gap({ c: 11, s: 8 }) }, { dismissed: { sig, atMs: T0 - MIN, by: "Paul" } }) }).level === "ok", "the same shortfall after ordinary new messages (both counts up by 3) stays dismissed");
+  const red = judge({ consistency: cs({ t1: gap({ firstAtMs: T0 - 80 * HOUR, tries: 4, reads: 2 }) }, { dismissed: { sig, atMs: T0 - MIN, by: "Paul" } }) });
+  check(red.level === "down" && red.short === "Messages still missing" && /stayed short for 3 days after 4 tries/.test(red.problem), "short for 80 hours after 4 tries and 2 finished re-reads: red, and a dismissal does not hold at that point");
+  check(judge({ consistency: cs({ t1: gap({ firstAtMs: T0 - 80 * HOUR, tries: 4, reads: 1 }) }) }).level === "warn" && judge({ consistency: cs({ t1: gap({ firstAtMs: T0 - 30 * HOUR, tries: 5, reads: 3 }) }) }).level === "warn", "fewer than 72 hours, or fewer than 2 finished re-reads: still amber");
+  check(judge({ consistency: cs({ t1: gap({ url: false }) }) }).level === "ok", "a gap in a conversation with no Etsy address cannot be re-read and is not counted (it is named in the nightly line)");
+  check(judge({ consistency: cs({}) }).level === "ok", "no open gap: green");
+  const sum = LH.summaryOf(LH.nextDoc(null, g1, T0));
+  check(sum.kind === "consistency" && sum.gap && sum.gap.sig === sig && LH.summaryOf(LH.nextDoc(null, judge({}), T0)).gap === undefined, "the sorters' summary carries the kind and the gap only while there is one");
+}
 // the helper is heard from every 30 s, but its scrape poll skips ticks at random, most of all at night: a new Etsy message may wait
 // most of an hour for its turn while the helper is well. That is slow, not stuck (and a helper nobody hears from is judged on its own)
 {

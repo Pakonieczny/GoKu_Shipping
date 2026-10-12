@@ -15,6 +15,7 @@
  */
 "use strict";
 
+const crypto = require("crypto");
 const MIN = 60 * 1000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const RANK = { ok: 0, wait: 0, warn: 1, down: 2 };
 
@@ -30,6 +31,7 @@ const T = {
   catchUpWarn: 20 * MIN, catchUpDown: 3 * HOUR,      // the reaper's order_links pass runs every 5 minutes
   mirrorWarn: 30 * MIN, mirrorDown: 6 * HOUR,        // the Etsy receipts mirror runs every ~3-13 minutes
   consistencyStale: 36 * HOUR,                       // the nightly check
+  gapRedAfter: 72 * HOUR, gapRedTries: 4, gapRedReads: 2,   // a conversation still short after this long, this many tries and this many finished re-reads: red
   pageBadRuns: 3                                     // bad page reads in a row before Etsy's page is called unreadable
 };
 
@@ -70,6 +72,61 @@ function readLimits(now, helperAlive) {
   return { warn: Math.max(T.readWarn, Math.min(HOUR, 3 * gap)), down: Math.max(T.readDown, Math.min(3 * HOUR, 8 * gap)) };
 }
 
+
+// ── the nightly check's open gaps (see _etsyMailLinkConsistency.js): one entry per conversation that shows fewer messages than expected ──
+const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
+/** A gap that has stayed open long enough, through enough finished re-reads, that a person should look (red). */
+const gapEscalated = (g, now) => !!g && now - (g.firstAtMs || now) >= T.gapRedAfter && (g.tries || 0) >= T.gapRedTries && (g.reads || 0) >= T.gapRedReads;
+/** Where a gap stands: "queue" (no re-read asked yet), "wait" (asked, the Etsy helper has not finished it), "retry" (read, still short). */
+const gapState = g => !(g.tries > 0) ? "queue" : g.pend ? "wait" : "retry";
+/**
+ * The open gaps as the sorter and the sentence need them, or null for a record from before gaps were kept.
+ * n counts the conversations a re-read can fix (those with an Etsy address); noAddr the ones with none. sig names THIS gap (which
+ * conversations, how many messages short each, whether it has turned red): a dismissal holds only while it is unchanged.
+ */
+function gapSummary(cs, now) {
+  const gaps = cs && cs.gaps && typeof cs.gaps === "object" && !Array.isArray(cs.gaps) ? cs.gaps : null;
+  if (!gaps) return null;
+  const all = Object.entries(gaps).map(([id, g]) => Object.assign({ id }, g || {}));
+  const open = all.filter(g => g.url !== false).sort((a, b) => (a.firstAtMs || 0) - (b.firstAtMs || 0) || (a.id < b.id ? -1 : 1));
+  const esc = open.some(g => gapEscalated(g, now));
+  const short = g => (g.k === "inbound_missing" ? 0 : Math.max(0, (g.c == null ? 0 : g.c) - (g.s || 0)));
+  const ov = open.length ? Math.max(0, Number(cs.overflow) || 0) : 0;   // short conversations beyond what the ledger holds: counted, never hidden (the next night finds them again once there is room)
+  const sig = open.length || ov ? crypto.createHash("sha1").update(open.map(g => `${g.id}|${g.k}|${short(g)}`).join(";") + (esc ? "|red" : "") + (ov ? "|+" + ov : "")).digest("hex").slice(0, 12) : "";
+  return {
+    n: open.length + ov, noAddr: all.length - open.length, esc, sig,
+    items: open.slice(0, 3).map(g => ({ o: g.o || "", k: g.k || "", c: g.c == null ? -1 : g.c, s: g.s || 0, st: gapState(g), lt: g.lastTryAtMs || 0, nt: g.nextTryAtMs || 0, tr: g.tries || 0, fa: g.firstAtMs || 0 })),
+    more: Math.max(0, open.length + ov - 3)
+  };
+}
+/** One conversation's gap in plain words: the order number when it is known (never a name or an address). */
+function gapOne(g) {
+  const who = g.o ? "order " + g.o : "a conversation (no order number known)";
+  if (g.k === "claimed_but_none") return `${cap1(who)} shows no messages in the inbox, but its record counts ${g.c}`;
+  if (g.k === "inbound_missing") return `${cap1(who)} may be missing the customer's newest message`;
+  const d = Math.max(1, g.c - g.s);
+  return `${cap1(who)} shows ${d} fewer ${d === 1 ? "message" : "messages"} in the inbox than expected (${g.c} expected, ${g.s} stored)`;
+}
+/** The sentence: which conversation, what the inbox is doing about it, when it last tried and when it tries again. */
+function gapText(gs, now) {
+  const first = gs.items[0];
+  let what;
+  if (gs.n === 1) what = gapOne(first);
+  else {
+    const orders = gs.items.map(g => g.o).filter(Boolean);
+    what = `${gs.n} conversations show fewer messages in the inbox than expected` + (orders.length ? ` (${orders.length === gs.items.length && !gs.more ? "orders " : "including orders "}${orders.join(", ")})` : "");
+  }
+  const retry = gs.items.filter(g => g.st === "retry").map(g => g.nt).filter(Boolean).sort((a, b) => a - b)[0];
+  const last = Math.max(0, ...gs.items.map(g => g.lt));
+  const waiting = gs.items.some(g => g.st === "wait");
+  let doing;
+  if (!last) doing = `The inbox is about to re-read ${gs.n === 1 ? "it" : "them"} from Etsy.`;
+  else if (waiting) doing = `The inbox asked the Etsy helper to re-read ${gs.n === 1 ? "it" : "them"} ${ago(now - last)} ago and is waiting for the helper's turn.`;
+  else doing = `The inbox last re-read ${gs.n === 1 ? "it" : "them"} ${ago(now - last)} ago and ${gs.n === 1 ? "it is" : "they are"} still short; next try ${retry && retry > now ? "in about " + ago(retry - now) : "any minute now"}.`;
+  const red = gs.esc ? ` It has stayed short for ${ago(now - Math.min(...gs.items.map(g => g.fa || now)))} after ${Math.max(...gs.items.map(g => g.tr))} tries: open ${gs.n === 1 ? "it" : "them"} in the inbox and compare with Etsy.` : "";
+  return `${what}. ${doing}${red}`;
+}
+
 /** The plain-words reason behind a raw error (what the person reads, never a stack or a JSON body). */
 function plainError(raw) {
   const s = String(raw == null ? "" : raw);
@@ -96,7 +153,7 @@ function evaluate(ev, now) {
   ev = ev || {};
   const ok = n => !ev.readOk || ev.readOk[n] !== false;
   const checks = [];
-  const add = (id, label, level, text, short, pri) => checks.push({ id, label, level, text, short: short || "", pri: pri == null ? 9 : pri });
+  const add = (id, label, level, text, short, pri, data) => checks.push({ id, label, level, text, short: short || "", pri: pri == null ? 9 : pri, data: data || null });
 
   const g = ev.global || {};
   const drafts = Array.isArray(ev.queuedDrafts) ? ev.queuedDrafts : null;
@@ -199,18 +256,34 @@ function evaluate(ev, now) {
     else add("monitor", "Link monitor", "ok", `Ran ${ago(mo)} ago`);
   }
   const cs = ev.consistency || null;
-  // (only mismatches not yet re-read count: one that a re-read could not fix is a count that will never match, not a lost message)
-  const open = cs ? (typeof cs.unresolved === "number" ? cs.unresolved : cs.mismatched || 0) : 0;
-  if (cs && cs.atMs && now - cs.atMs < T.consistencyStale && open > 0) {
-    const n = open;
-    add("consistency", "Nightly check", "warn", `${n} ${n === 1 ? "conversation shows" : "conversations show"} fewer messages in the inbox than expected; the inbox is re-reading ${n === 1 ? "it" : "them"}.`, "Messages missing", 9);
-  } else if (cs && cs.atMs && now - cs.atMs < T.consistencyStale) add("consistency", "Nightly check", "ok", `${cs.mismatched ? cs.mismatched + " count" + (cs.mismatched === 1 ? "" : "s") + " do not match but were re-read already; " : ""}${cs.checked || 0} conversations checked, ${ago(now - cs.atMs)} ago`);
+  const gp = gapSummary(cs, now);
+  if (gp) {
+    // the open gaps are kept between nights (a re-read that has not fixed one leaves it open, and a person can dismiss it)
+    if (gp.n > 0) {
+      const dis = cs.dismissed && cs.dismissed.sig === gp.sig ? cs.dismissed : null;
+      // (level "ok" so that nothing that lists the line's problems, the inbox's banner among them, counts it; data.dismissed lets the sorter draw its dot grey)
+      if (dis) add("consistency", "Missing messages", "ok", `${gp.n === 1 ? gapOne(gp.items[0]) : gp.n + " conversations show fewer messages in the inbox than expected"}. Dismissed ${ago(now - (dis.atMs || now))} ago${dis.by ? " by " + clean(dis.by, 40) : ""}; the inbox keeps re-reading ${gp.n === 1 ? "it" : "them"} and says so again if the gap changes.`, "Messages missing", 9, Object.assign({ dismissed: true }, gp));
+      else add("consistency", "Missing messages", gp.esc ? "down" : "warn", gapText(gp, now), gp.esc ? "Messages still missing" : "Messages missing", 9, gp);
+    } else if (cs.atMs && now - cs.atMs < T.consistencyStale) {
+      add("consistency", "Nightly check", "ok", `${cs.checked || 0} conversations checked, ${ago(now - cs.atMs)} ago${gp.noAddr ? `; ${gp.noAddr} with no Etsy address to re-read from` : ""}`, "", 9, gp);
+    }
+  } else {
+    // (a record from before gaps were kept: only mismatches not yet re-read count)
+    const open = cs ? (typeof cs.unresolved === "number" ? cs.unresolved : cs.mismatched || 0) : 0;
+    if (cs && cs.atMs && now - cs.atMs < T.consistencyStale && open > 0) {
+      const n = open;
+      add("consistency", "Nightly check", "warn", `${n} ${n === 1 ? "conversation shows" : "conversations show"} fewer messages in the inbox than expected; the inbox is re-reading ${n === 1 ? "it" : "them"}.`, "Messages missing", 9);
+    } else if (cs && cs.atMs && now - cs.atMs < T.consistencyStale) add("consistency", "Nightly check", "ok", `${cs.mismatched ? cs.mismatched + " count" + (cs.mismatched === 1 ? "" : "s") + " do not match but were re-read already; " : ""}${cs.checked || 0} conversations checked, ${ago(now - cs.atMs)} ago`);
+  }
 
   const worst = checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)[0];
   const level = worst && RANK[worst.level] ? worst.level : "ok";
+  const problem = level !== "ok";
   return {
-    at: now, level, short: level === "ok" ? "" : worst.short, problem: level === "ok" ? "" : worst.text,
-    checks: checks.map(({ id, label, level, text }) => ({ id, label, level, text }))
+    at: now, level, short: problem ? worst.short : "", problem: problem ? worst.text : "",
+    // which check the sentence is about, and its data (the open gaps: the sorter shows the conversation, the last and next try, and Dismiss)
+    kind: problem ? worst.id : "", gap: problem && worst.id === "consistency" ? worst.data : null,
+    checks: checks.map(({ id, label, level, text, data }) => (data ? { id, label, level, text, data } : { id, label, level, text }))
   };
 }
 
@@ -254,12 +327,39 @@ function nextDoc(prev, res, now) {
   const wasBad = !!(prev && prev.level && prev.level !== "ok" && prev.downSinceMs);
   const downSinceMs = bad ? (wasBad ? prev.downSinceMs : now) : 0;
   return {
-    atMs: now, level: res.level, short: res.short, problem: res.problem,
+    atMs: now, level: res.level, short: res.short, problem: res.problem, kind: res.kind || "", gap: res.gap || null,
     checks: res.checks, downSinceMs, incidentId: bad ? String(downSinceMs) : "",
     worstSinceMs: bad ? (wasBad && prev.level === res.level ? (prev.worstSinceMs || downSinceMs) : now) : 0
   };
 }
-/** The four fields every sorter reads in its sync answer. */
-const summaryOf = d => ({ level: d.level, short: d.short, problem: d.problem, atMs: d.atMs, downSinceMs: d.downSinceMs || 0, incidentId: d.incidentId || "" });
+/** The fields every sorter reads in its sync answer (kind and gap: what the sentence is about, for the conversation notice). */
+const summaryOf = d => {
+  const o = { level: d.level, short: d.short, problem: d.problem, atMs: d.atMs, downSinceMs: d.downSinceMs || 0, incidentId: d.incidentId || "" };
+  if (d.kind) o.kind = d.kind;
+  if (d.gap) o.gap = d.gap;
+  return o;
+};
 
-module.exports = { evaluate, gather, nextDoc, summaryOf, plainError, scrapeChance, readLimits, HELPER_DO, T, RANK, tsMs, ago };
+/**
+ * Judge the line now and publish it (EtsyMail_Config/linkHealth and the bell's link summary), as the 5-minute monitor does, for an
+ * action that changes what the judgement says (a dismissed notice, a re-read that found the counts equal): every sorter and the
+ * inbox's banner follow at once instead of at the monitor's next run. keepStamp keeps the monitor's own time on the document, so
+ * a monitor that has stopped still shows as stopped however many people press a button. Writes only those two documents.
+ */
+async function publish(db, now, opts = {}) {
+  now = now || Date.now();
+  const ev = opts.ev || await gather(db, { self: true });
+  const res = evaluate(ev, now);
+  let prev = null;
+  try { const s = await db.collection("EtsyMail_Config").doc("linkHealth").get(); prev = s.exists ? s.data() : null; }
+  catch (e) { console.warn("linkHealth publish: previous judgement:", e && e.message); }
+  const doc = nextDoc(prev, res, now);
+  if (opts.keepStamp && prev && prev.atMs) doc.atMs = prev.atMs;
+  const auth = opts.auth || (prev && prev.auth);
+  if (auth) doc.auth = auth;
+  await db.collection("EtsyMail_Config").doc("linkHealth").set(doc);
+  await db.collection("EtsyMail_OrderLinkMeta").doc("bell").set({ link: summaryOf(doc) }, { merge: true });
+  return { res, doc };
+}
+
+module.exports = { evaluate, gather, nextDoc, summaryOf, publish, gapSummary, gapText, gapOne, gapEscalated, plainError, scrapeChance, readLimits, HELPER_DO, T, RANK, tsMs, ago };

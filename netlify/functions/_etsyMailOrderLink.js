@@ -1569,6 +1569,37 @@ async function health(body = {}) {
   return value;
 }
 
+/* "Check now" on the missing-messages notice, and its Dismiss (the work is in _etsyMailLinkConsistency.js). Check now is the same
+   pass over the open gaps that the 5-minute monitor makes, on demand: each conversation that fell short is looked at again (the
+   stored messages against its record), what is settled closes, the next re-read is asked for where one is due (the Chrome extension
+   reads the Etsy PAGE: no Etsy API call), and the new judgement is published so every sorter and the inbox's banner follow at once.
+   Both act only on the link's own bookkeeping (EtsyMail_Config/linkConsistency and linkHealth, the bell's link summary, a scrape
+   job and its mark on the conversation): never on a customer's message, a reply box or an engagement. That is why they are the same
+   in the sandbox, whose envelope shows the real link too. Two presses within 8 seconds share one answer. */
+let _recheck = { at: 0, value: null };
+async function linkRecheck(station, body = {}) {
+  const now = Date.now();
+  if (_recheck.value && now - _recheck.at < 8000) return _recheck.value;
+  const r = await require("./_etsyMailLinkConsistency").recheck(db, { now, manual: true });
+  const pub = r.ran ? await LinkHealth.publish(db, now, { keepStamp: true }) : null;
+  const res = pub ? pub.res : await health({ fresh: true });
+  if (pub) _health = { at: now, value: pub.res };
+  const value = {
+    at: now, ran: !!r.ran, queued: r.queued || 0, gap: LinkHealth.gapSummary(r.doc, now),
+    results: (r.results || []).map(x => ({ o: x.o || "", outcome: x.outcome, c: x.c, s: x.s, tr: x.tr || 0, lt: x.lt || 0, nt: x.nt || 0, q: !!x.queuedNow })),
+    health: res, link: pub ? LinkHealth.summaryOf(pub.doc) : null
+  };
+  _recheck = { at: now, value };
+  return value;
+}
+async function linkDismiss(station, body = {}) {
+  const now = Date.now();
+  const r = await require("./_etsyMailLinkConsistency").dismiss(db, { sig: String(body.sig || "").slice(0, 40), by: station && station.name, now });
+  const pub = await LinkHealth.publish(db, now, { keepStamp: true });
+  _health = { at: now, value: pub.res }; _recheck = { at: 0, value: null };
+  return { ok: !!r.ok, changed: !!r.changed, nothing: !!r.nothing, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
+}
+
 // ─── testing the line with an Etsy account of our own ───────────────────
 
 /* "Send a test" goes through every real part (this server, the inbox, the Etsy helper, Etsy, the Gmail watcher and the
@@ -1913,8 +1944,8 @@ module.exports = {
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
+  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
-  _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView }
+  _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView, resetRecheck: () => { _recheck = { at: 0, value: null }; } }
 };

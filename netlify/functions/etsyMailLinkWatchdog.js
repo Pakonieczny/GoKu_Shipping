@@ -8,7 +8,8 @@
  *         EtsyMail_Config/linkHealth       the inbox's banner reads this (one small document, once a minute per computer)
  *         EtsyMail_OrderLinkMeta/bell.link  a four-field summary every sorter receives in the sync answer it already makes
  *       with the time the trouble began (downSinceMs / incidentId) so the apps can alert once per incident.
- *    3. Once a night, the consistency check (_etsyMailLinkConsistency.js) when it exists in this build.
+ *    3. Once a night, the consistency check (_etsyMailLinkConsistency.js) when it exists in this build; and on every run, a fresh
+ *       look at the conversations that check found short (its re-reads, and the notice clearing by itself when the counts agree).
  *  A reader treats a judgement older than 12 minutes as "the monitor stopped" (amber), so this function failing is itself shown.
  *
  *  Cost: about 12 reads and 2 writes a run (about 0.12 M operations a month). No Etsy call, no AI, nothing sent to a customer.
@@ -45,26 +46,22 @@ async function run({ now = Date.now(), reconcile } = {}) {
     } catch (e) { out.catchUp = { ran: true, error: String(e && e.message).slice(0, 120) }; console.warn("linkWatchdog catch-up:", e && e.message); }
   }
 
-  // 3. the nightly consistency check, when this build has it
+  // 3. the nightly consistency check, when this build has it, and a fresh look at the gaps it left open (they clear by themselves)
   try {
     let Consistency = null;
     try { Consistency = require("./_etsyMailLinkConsistency"); } catch (e) { if (!/Cannot find module/.test(String(e && e.message))) throw e; }
     if (Consistency) {
       out.consistency = await Consistency.maybeRun(db, { now });
       if (out.consistency && out.consistency.ran) ev.consistency = out.consistency.doc;
+      if (typeof Consistency.tick === "function") {
+        const t = await Consistency.tick(db, { now, prev: ev.consistency });
+        if (t && t.ran && t.doc) { ev.consistency = t.doc; out.gapsLooked = true; }
+      }
     }
-  } catch (e) { out.consistency = { error: String(e && e.message).slice(0, 120) }; console.warn("linkWatchdog consistency:", e && e.message); }
+  } catch (e) { out.consistency = Object.assign({}, out.consistency, { error: String(e && e.message).slice(0, 120) }); console.warn("linkWatchdog consistency:", e && e.message); }
 
-  // 2. judge and publish
-  const res = LinkHealth.evaluate(ev, now);
-  let prev = null;
-  try { const s = await db.collection("EtsyMail_Config").doc("linkHealth").get(); prev = s.exists ? s.data() : null; }
-  catch (e) { console.warn("linkWatchdog previous judgement:", e && e.message); }
-  const doc = LinkHealth.nextDoc(prev, res, now);
-  // whether the inbox's shared secret is configured on the server: booleans only, never the value
-  doc.auth = { secretSet: !!process.env.ETSYMAIL_EXTENSION_SECRET, context: String(process.env.CONTEXT || "").slice(0, 20) };
-  await db.collection("EtsyMail_Config").doc("linkHealth").set(doc);
-  await db.collection("EtsyMail_OrderLinkMeta").doc("bell").set({ link: LinkHealth.summaryOf(doc) }, { merge: true });
+  // 2. judge and publish (whether the inbox's shared secret is configured on the server goes with it: booleans only, never the value)
+  const { doc } = await LinkHealth.publish(db, now, { ev, auth: { secretSet: !!process.env.ETSYMAIL_EXTENSION_SECRET, context: String(process.env.CONTEXT || "").slice(0, 20) } });
   out.level = doc.level; out.short = doc.short;
   return out;
 }
