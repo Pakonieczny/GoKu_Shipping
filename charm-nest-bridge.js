@@ -16561,6 +16561,8 @@ const OrderWin = window.OrderWin = (() => {
       // (the clip alone: an opacity on the full-screen surface as well made every frame of the close a repaint)
       d.style.willChange = "clip-path";
       A.push(d.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)" }, { clipPath: clipOf(r) }], { duration: 420, easing: GROW, fill: "forwards" }));
+      // (into a card drawn behind the view (ENGANIM): the view's last 160 ms dissolve into it, so the card is not swapped in blank-to-full on the frame the view closes)
+      if (into && from === into) A.push(d.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, delay: 260, easing: "ease-in", fill: "forwards" }));
     } else A.push(d.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: still() ? "none" : "scale(.985)" }], { duration: still() ? 110 : 170, easing: "ease", fill: "forwards" }));
     W.anims.push(...A);
     // (a hidden tab draws no frames: the close never waits on them)

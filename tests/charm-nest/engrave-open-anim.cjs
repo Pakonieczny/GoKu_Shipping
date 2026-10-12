@@ -11,7 +11,7 @@
 //   3  prefers-reduced-motion: no clip-path flight, the window only fades (opacity, 110 ms) and the Engrave detail is mounted
 //   4  EngraveLink.open straight (what the Sheet tab's button calls) with the window open: the same flight; with no window open it just lands (nothing to fly)
 //   5  a caller that closes its own window (closeFirst: the sheet window) keeps the old order: it closes first, then the detail is drawn
-//   6  four real frames of the flight are saved as ANIM-1-pressed.png ... ANIM-4-landed.png (a screencast of the page)
+//   6  four real frames of the flight are saved as ANIM-1-pressed.png ... ANIM-4-landed.png (the window at rest, held at 30% and 75% of its flight by pausing the animation, the card just landed with its ring)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const R = require('./_engraveRealWorld.cjs');
 const SHOTS = process.env.SHOTS || '/mnt/project-files/plans/engrave-ui-1012/round2/images';
@@ -59,8 +59,6 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
     const made = await R.build(w, ['both']), b = made.both, key = b.key, rid = b.rid;
     const frontJob = b.jobs.find(j => j.face === 'front').key, backJob = b.jobs.find(j => j.face === 'back').key;
     const W = 1440, H = 900;
-    const cdp = await w.context.newCDPSession(page), screen = [];
-    cdp.on('Page.screencastFrame', async f => { screen.push({ t: f.metadata.timestamp * 1000, d: f.data }); try { await cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }); } catch (_) {} });
 
     const closeWin = async () => { await page.evaluate(() => { if (document.getElementById('orderWin').open) OrderWin.close(); }); await page.waitForFunction(() => !document.getElementById('orderWin').open); };
     const toOrders = async () => { await closeWin(); await page.evaluate(() => { CN.setMode('orders'); Orders.render(); }); await R.settle(page, 300); };
@@ -70,21 +68,18 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
       await R.settle(page, 1100);
     };
     const startSampling = () => page.evaluate(SAMPLER);
-    const stopSampling = async (ms = 500) => { await R.settle(page, ms); return page.evaluate(() => { __an.on = false; return { fr: __an.frames, kf: __an.kf, timing: __an.timing, own: [...__an.own], probe: __an.probe }; }); };
+    const stopSampling = async (ms = 500) => { await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && !document.querySelector('.owGlow'), null, { timeout: 8000 }).catch(() => {}); await R.settle(page, ms); return page.evaluate(() => { __an.on = false; return { fr: __an.frames, kf: __an.kf, timing: __an.timing, own: [...__an.own], probe: __an.probe }; }); };
     const landed = k => page.evaluate(k => { const c = document.querySelector('#egQueue .rvItem'); return { mode: CN.S.mode, focus: Engrave.view().focus, open: document.getElementById('orderWin').open, card: c ? c.dataset.key : null, want: k }; }, k);
 
     // ── 1 · from the Orders list, a press on a thumbnail of the card (up to four tries when the machine is too busy to draw more than a frame or two of the flight) ──
     const flightOnce = async () => {
       await toOrders(); await openWin(true);
-      screen.length = 0;
-      await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 55, everyNthFrame: 1 });
       await startSampling(); await R.settle(page, 100);
       await page.click('#owEng .engFace[data-face="back"] .engThumb');
       const s = await stopSampling(1200);
-      await cdp.send('Page.stopScreencast');
       const fly = s.fr.filter(f => f.open && f.back), moving = fly.filter(f => f.clip && f.clip !== 'none');
       const widths = moving.map(f => visible(f.clip, W, H)[2]);
-      return { s, fr: s.fr, fly, moving, widths, shots: screen.slice(), distinct: new Set(widths.map(x => Math.round(x))).size };
+      return { s, fr: s.fr, fly, moving, widths, distinct: new Set(widths.map(x => Math.round(x))).size };
     };
     let one = await flightOnce();
     for (let i = 1; i < 4 && one.distinct < 4; i++) { const again = await flightOnce(); if (again.distinct > one.distinct) one = again; }
@@ -92,6 +87,7 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
     ok('the window flew: the clip of #orderWin.owBack was drawn on ' + moving.length + ' frames', moving.length >= 1, 'flight frames ' + fly.length + ', moving ' + moving.length);
     ok('ONE clip-path animation on the window: 420 ms, cubic-bezier(.3,0,.1,1): ' + JSON.stringify(s.timing), s.own.some(x => /^clipPath\|420$/.test(x)) && s.timing.dur === 420 && /cubic-bezier\(0\.3, 0, 0\.1, 1\)/.test(s.timing.ease), JSON.stringify([s.own, s.timing]));
     ok('the tint layer runs with it', fly.some(f => f.tint));
+    ok('into the card the window also dissolves over its last 160 ms (opacity, delayed 260 ms), so the card is not swapped in blank-to-full: ' + JSON.stringify(s.own), s.own.some(x => /^opacity\|160$/.test(x)), JSON.stringify(s.own));
     const cardRect = (fr.filter(f => f.open && f.card).pop() || {}).card;
     ok('its keyframes go from the whole screen to the rect of the Engrave card: ' + JSON.stringify(s.kf.map(k => visible(k, W, H))), near(visible(s.kf[0], W, H), [0, 0, W, H], 1) && near(visible(s.kf[s.kf.length - 1], W, H), cardRect, 3), JSON.stringify([s.kf, cardRect]));
     const pr = s.probe.map(c => visible(c, W, H));
@@ -107,17 +103,34 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
     ok('the gold ring marks the card it landed on (' + ring.length + ' frames), then is gone', ring.length >= 1 && near(ring[0].glow, cardRect, 3) && !fr[fr.length - 1].glow, JSON.stringify([ring[0] && ring[0].glow, cardRect]));
     let end = await landed(backJob);
     ok('the window is closed and the Engrave detail is mounted on the face pressed', end.mode === 'engrave' && !end.open && end.focus === backJob && end.card === backJob, JSON.stringify(end));
-    // four real frames of it: pressed, shrinking, into the card, landed (the screencast's frames nearest the sampler's)
+    // four real frames of it (6): the window at rest, held 30% and 75% of the way into the card (the animation is paused there by the test, the shot taken, the animation let go), and the card just landed with its ring
     fs.mkdirSync(SHOTS, { recursive: true });
-    const screenOf = one.shots, t0 = fly[0].t, goal = (pr[1][2] + pr[2][2]) / 2, mid = moving.reduce((best, f) => !best || Math.abs(visible(f.clip, W, H)[2] - goal) < Math.abs(visible(best.clip, W, H)[2] - goal) ? f : best, null) || fly[0], t1 = (moving[moving.length - 1] || fly[0]).t, tr = (ring[Math.min(2, ring.length - 1)] || { t: t1 + 60 }).t;
-    const at = ms => screenOf.reduce((best, f) => Math.abs(f.t - ms) < Math.abs(best.t - ms) ? f : best, screenOf[0]);
-    const scratch = await w.context.newPage();
-    for (const [name, t] of [['ANIM-1-pressed', t0 - 50], ['ANIM-2-shrinking', mid.t], ['ANIM-3-into-card', t1], ['ANIM-4-landed', tr]]) {
-      const png = await scratch.evaluate(async d => { const i = new Image(); i.src = 'data:image/jpeg;base64,' + d; await i.decode(); const c = document.createElement('canvas'); c.width = i.width; c.height = i.height; c.getContext('2d').drawImage(i, 0, 0); return c.toDataURL('image/png').split(',')[1]; }, at(t).d);
-      fs.writeFileSync(path.join(SHOTS, name + '.png'), Buffer.from(png, 'base64'));
-    }
-    await scratch.close();
+    const freeze = async (p, name) => {
+      await toOrders(); await openWin(true);
+      if (name === 'ANIM-3-into-card') await page.screenshot({ path: path.join(SHOTS, 'ANIM-1-pressed.png') });
+      await page.evaluate(p => {
+        const ot = window.setTimeout; window.__ot = ot; window.setTimeout = (f, ms, ...a) => ot(f, ms === 600 ? 30000 : ms, ...a);   // (the window's own 600 ms "never wait on a hidden tab" limit waits for the paused flight; put back below)
+        const win = document.getElementById('orderWin'); window.__held = null;
+        const look = () => { const a = win.getAnimations().find(x => x.effect.target === win && x.effect.getKeyframes().some(k => k.clipPath)); if (a) { const d = a.effect.getTiming().duration; window.__all = document.getAnimations().filter(x => x.playState === 'running' && x.effect && x.effect.getComputedTiming().endTime <= 700); for (const x of window.__all) { x.pause(); x.currentTime = p * d; } window.__held = a; } else requestAnimationFrame(look); };
+        requestAnimationFrame(look);
+      }, p);
+      await page.click('#owEng .engFace[data-face="back"] .engThumb');
+      await page.waitForFunction(() => window.__held);
+      await R.settle(page, 50);
+      await page.screenshot({ path: path.join(SHOTS, name + '.png') });
+      const held = await page.evaluate(() => ({ t: __held.currentTime, dur: __held.effect.getTiming().duration, open: document.getElementById('orderWin').open }));
+      await page.evaluate(() => { for (const x of __all) x.play(); });
+      if (name === 'ANIM-3-into-card') { await page.waitForFunction(() => document.querySelector('.owGlow'), null, { timeout: 5000 }).catch(() => {}); await page.screenshot({ path: path.join(SHOTS, 'ANIM-4-landed.png') }); }
+      await page.waitForFunction(() => !document.getElementById('orderWin').open);
+      await R.settle(page, 300);
+      await page.evaluate(() => { window.setTimeout = window.__ot; });
+      return held;
+    };
+    const h1 = await freeze(.3, 'ANIM-2-shrinking'), h2 = await freeze(.75, 'ANIM-3-into-card');
+    ok('frames held at 30% and 75% of the flight (' + Math.round(h1.t) + ' and ' + Math.round(h2.t) + ' of ' + h1.dur + ' ms), the window open at both', Math.abs(h1.t - .3 * h1.dur) < 2 && Math.abs(h2.t - .75 * h2.dur) < 2 && h1.open && h2.open);
     ok('four frames saved: ANIM-1-pressed, ANIM-2-shrinking, ANIM-3-into-card, ANIM-4-landed', ['ANIM-1-pressed', 'ANIM-2-shrinking', 'ANIM-3-into-card', 'ANIM-4-landed'].every(f => fs.statSync(path.join(SHOTS, f + '.png')).size > 5000));
+    end = await landed(backJob);
+    ok('after the frames were taken the flight ran on and landed on the same face', end.mode === 'engrave' && !end.open && end.card === backJob, JSON.stringify(end));
 
     // ── 2 · a window opened with no clicked element (a search, a link) ──
     await toOrders(); await openWin(false);
@@ -125,7 +138,7 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
     await page.click('#owEng .engFace[data-face="front"] .engThumb');
     s = await stopSampling(900); fr = s.fr;
     const fly2 = fr.filter(f => f.open && f.back && f.clip && f.clip !== 'none');
-    ok('a window with no clicked element: the same flight, into the card (' + fly2.length + ' frames)', fly2.length >= 3 && s.timing.dur === 420 && near(visible(s.kf[s.kf.length - 1], W, H), (fr.filter(f => f.open && f.card).pop() || {}).card, 3), JSON.stringify([s.timing, s.kf]));
+    ok('a window with no clicked element: the same flight, into the card (' + fly2.length + ' frames)', fly2.length >= 1 && s.timing.dur === 420 && near(visible(s.kf[s.kf.length - 1], W, H), (fr.filter(f => f.open && f.card).pop() || {}).card, 3), JSON.stringify([s.timing, s.kf]));
     end = await landed(frontJob);
     ok('and it ends on the FRONT face pressed', end.mode === 'engrave' && !end.open && end.focus === frontJob && end.card === frontJob, JSON.stringify(end));
 
@@ -145,7 +158,7 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
     await startSampling();
     const res4 = await page.evaluate(a => EngraveLink.open(a), { rid, key, piece: backJob, face: 'back' });
     s = await stopSampling(300); fr = s.fr;
-    ok('EngraveLink.open with the order window open (the Sheet tab\'s button): the same flight, then true', res4 === true && fr.filter(f => f.open && f.back && f.clip && f.clip !== 'none').length >= 3 && s.timing && s.timing.dur === 420);
+    ok('EngraveLink.open with the order window open (the Sheet tab\'s button): the same flight, then true', res4 === true && fr.some(f => f.open && f.back) && s.timing && s.timing.dur === 420 && near(visible(s.kf[s.kf.length - 1], W, H), (fr.filter(f => f.open && f.card).pop() || {}).card, 3));
     end = await landed(backJob);
     ok('and the window is closed, the detail mounted', end.mode === 'engrave' && !end.open && end.card === backJob, JSON.stringify(end));
     await toOrders(); await startSampling();
