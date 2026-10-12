@@ -870,7 +870,9 @@
      `where` (this component's), and what the host already holds of the order (opts.context(): its lines' states, holds,
      waits and engraving, and the readiness of the sheets they sit on). No Etsy calls, no server calls.
        step  a STAGES entry, its key ("laser") or its index      data { events, where, cancelled, D?, context?, stages? }
-       →     { k, label, i, n, of, state: done|now|later|stopped|gone|none, done:[{t,sub}], need:[{kind:wait|person|next|after|stop, t}], facts:[t] }
+       →     { k, label, i, n, of, state: done|now|later|stopped|gone|none, done:[{t,sub}], need:[{kind:wait|person|stop|label|was, t}], facts:[t] }
+     Only what holds the order back is a need (Paul, 12 Oct 2026: "I don't need any of the information about what is next since that
+     is what the timeline bar is for"): there is no "next" row and no "after" row (the steps before this one are the bar's to show).
      The steps are the order's (or a piece's) own rail: D.rail when D is given (the component's), else stagesFor's list in
      data.stages (keepDone: a step with an event of its own stays). i is the step's place in STAGES; n and of count it on
      that rail. A step the rail leaves out (Welded for a necklace, Engraved for a plain piece) is "none": nothing to do.
@@ -888,16 +890,8 @@
   };
   // a scan is a quiet fact of its own station's step ("Seen at Welding" under Welded), never of every station's
   const SCAN_STEP = { sorting: "sorted", qr: "sorted", welding: "welded", assembly: "assembled", shipping: "shipped" };
-  const HOW = {     // how a step gets done, when nothing more precise is known
-    arrived: "Etsy's order record is read every few minutes",
-    sheet: "the sorter nests it on a sheet at its next pass",
-    engraved: "its back engraving is read, fitted and approved in Review, then its back file is saved",
-    laser: "its set is committed and the sheet is cut on the laser",
-    sorted: "scan its QR label at the Sorting station",
-    welded: "weld the studs, then scan at the Welding station",
-    assembled: "assemble it, then scan at the Assembly station",
-    shipped: "pack it, print the label and scan at the Shipping station",
-    approved: "its sheet's set is committed", completed: "Etsy marks the order complete"
+  const HOW = {     // what an order not yet in waits for (the only step with a line of this kind: every other step says only what holds the order back)
+    arrived: "Etsy's order record is read every few minutes"
   };
   const metalWord = m => ({ gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" }[m] || String(m || ""));
   const dayWord = d => { const t = Date.parse(String(d || "") + "T12:00:00"); return t ? new Date(t).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : String(d || ""); };
@@ -973,15 +967,12 @@
       }
     };
     if (state === "done") { if (s.k === "sheet") loose(); noLabel(); return out(); }
-    if (state === "later") { const cp = R.findIndex(r => r.i === D.cur); add("after", `${STAGES[Math.max(0, D.cur)].l}${cp >= 0 && cp < pos - 1 ? " and the steps between" : ""}`); }
     if (fenced && s.k === "sheet") { add(D.hold ? "person" : "wait", "Not on a sheet now"); if (wasNote) add("was", wasNote); }
     if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
     if (state === "now" && s.k !== "sheet") loose();
     if (s.k === "arrived") add("wait", HOW.arrived);
-    else if (s.k === "sheet") {
-      loose();
-      add("next", HOW.sheet);
-    } else if (s.k === "engraved") {
+    else if (s.k === "sheet") loose();
+    else if (s.k === "engraved") {
       const eng = lines.filter(l => l.engrave && l.engrave.needed);
       if (lines.length && !eng.length && lines.every(l => l.engrave || l.engraveCandidate === false)) facts.push("Nothing to engrave on this order");
       // (a line engraved on the front too names the face still to approve: "the front engraving", "the front and back engraving"; a back-only line says "the back engraving", as it always did)
@@ -990,9 +981,7 @@
         add("person", `Approve the ${todo && todo.length ? todo.join(" and ") : "back"} engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
       }
       for (const x of sheets) if (x.required > 0 && x.saved < x.required) add("wait", `${x.name} has ${x.saved} of ${x.required} back files saved`);
-      if (!need.some(n => n.kind !== "after")) add("next", HOW.engraved);
     } else if (s.k === "laser" || s.k === "approved") {
-      if (!sheets.length && D.step < 1) add("after", "It is nested on a sheet first");
       for (const x of sheets) {
         if (x.cut) continue;
         const g = x.stages || {};
@@ -1004,18 +993,17 @@
         if (g.approval === false) add("person", `${x.name}: ${x.waiting || "some"} engraving${x.waiting === 1 ? "" : "s"} still to approve in Review`);
         if (g.backs === false && g.approval !== false) add("wait", `${x.name} has ${x.saved || 0} of ${x.required || 0} back files saved`);
         if (g.qr === false) add("person", `Print the QR labels for ${x.name}`);
-        if (x.ready) add("next", `${x.name} is ready: commit its set and cut it`);
       }
-      if (!evs.some(e => e.type === "setCommitted")) add("next", "its set is committed once every sheet in it is ready");
-      add("next", "the laser cuts the sheet and marks it cut");
-    } else add("next", HOW[s.k] || `${s.l.toLowerCase()} at its station`);
+    }
     noLabel();
     return out();
   }
-  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "", was: "" };   // (was: what the history says, in the past tense: never a step to do)
+  const REQ_WORD = { wait: "Waiting", person: "Needs a person", stop: "Stopped", label: "", was: "" };   // (was: what the history says, in the past tense: never a step to do)
   // (a label not printed yet is said, but a step that is done stays done: only a real need makes it "Part done")
   const partDone = q => q.state === "done" && q.need.some(n => n.kind !== "label");
-  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
+  // (no word for the step the order is going to, "now", nor for one further on, "later": where the order is, is the bar's to say, never the card's; Paul, 12 Oct 2026)
+  const STATE_WORD = { done: "Done", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
+  const stateWord = q => partDone(q) ? "Part done" : STATE_WORD[q.state] || "";
   const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
   const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
   /** A step's lines: what is done with a check, what is missing with an open circle (the last two done, the first four missing). */
@@ -1028,9 +1016,11 @@
     if (q.state === "none") return `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(q.facts[0] || "Not needed")}</span></li></ul>`;
     return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>`;
   }
-  /** The small card under a hovered step; open: what a click on it does ("click to open it on the Timeline" on the header rail), none when it does nothing. */
-  const reqCard = (q, open) => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q)}` +
-    `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${open ? " · " + esc(open) : ""}</div>`;
+  /** The small card under a hovered step: its name, a word only when the step is done, stopped, skipped or not needed (never "Next" or "To come"), and its lines.
+   *  Nothing about where the step sits ("Step 3 of 6") nor what a press does: the rail says the first, the dot (a button with its own label) the second. */
+  const reqCard = q => { const w = stateWord(q); return `<div class="xh"><b>${esc(q.label)}</b>${w ? `<span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(w)}</span>` : ""}</div>${reqLines(q)}`; };
+  /** Whether the card says anything besides the step's name. */
+  const cardSays = q => !!(stateWord(q) || q.need.length || q.done.length || q.state === "none");
   /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it (and beside seal,
    *  the zoomed seal's rect in the view, when one is open). → the animation. */
   function placeExp(card, html, dot, whole, seal) {
@@ -1069,7 +1059,7 @@
     css();
     const card = doc.createElement("div"); card.className = "tlExp"; card.setAttribute("role", "tooltip");
     (host.closest && host.closest("dialog") || doc.body).appendChild(card);
-    let on = null, a = null, cur = null;
+    let on = null, a = null;
     const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
     const stepOf = b => {
       const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
@@ -1080,15 +1070,14 @@
       if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
       return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context, place: g.place || null }) : null;
     };
-    const foot = () => { const f = card.querySelector(".xf"); if (f && cur) f.textContent = `${cur.n ? `Step ${cur.n} of ${cur.of}` : "Not a step of this order"}${typeof host._tlExpPin === "function" ? " · click seal to open on the Timeline" : ""}`; };
     const show = (b, kb) => {
       const q = stepOf(b); if (!q) return false;
       if (a) { try { a.cancel(); } catch (_) {} }
-      on = b; cur = q;
+      on = b;
       // the seal grows where it stands; the card goes under what it has grown to, never over it
       if (b.matches(".tlNowSeal, .tlMini")) zoomOn(b, kb);
       const zr = zoomRect(b), whole = zr ? withZoom(b, b) : b;
-      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, whole, zr && { left: zr.left, right: zr.right }); card.classList.add("on"); foot();
+      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, whole, zr && { left: zr.left, right: zr.right }); card.classList.add("on");
       return true;
     };
     const hide = now => {
@@ -1147,8 +1136,6 @@
 .tlStop.f .tlSeal{opacity:.45}
 .tlStop.x>span{color:#8a3a26}
 .tlStop.gone{opacity:.45}.tlStop.gone>span{text-decoration:line-through}
-.tlStop .tlCnt{position:absolute;top:-5px;left:calc(50% + 9px);font:700 8px/1 var(--mono);letter-spacing:.02em;font-style:normal;padding:2px 5px;border-radius:999px;background:var(--goldSoft,#f6eedc);color:#7a5a1d;box-shadow:0 0 0 1px var(--goldLine,#e3cf9f);white-space:nowrap;pointer-events:none;z-index:2;animation:tlCntIn .36s var(--tlSpring) both}
-@keyframes tlCntIn{from{opacity:0;transform:scale(.6)}}
 @keyframes tlRing{0%{transform:scale(.85);opacity:.85}70%,100%{transform:scale(1.4);opacity:0}}
 .tlCxStamp{position:absolute;left:50%;top:50%;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));cursor:pointer;z-index:3;transform:translate(-50%,-50%) rotate(-6deg)}
 .tlCxStamp svg{display:block;width:100%;height:100%;mix-blend-mode:multiply;opacity:.93}
@@ -1216,7 +1203,6 @@
 .tlUI.compact .tlTop{border-bottom:0;padding:0;flex:1 1 auto;align-items:center;flex-wrap:nowrap}
 .tlUI.compact .tlRail{flex:1 1 auto;max-width:none;margin:0}
 .tlUI.compact .tlStops{grid-template-columns:repeat(var(--n,9),minmax(0,1fr))!important;row-gap:0}
-.tlUI.compact .tlStop .tlCnt{top:3px;left:calc(50% + 13px);font-size:7.5px;padding:1.5px 4px}
 .tlUI.compact .tlTrack,.tlUI.compact .tlFill{display:block;top:calc(var(--seal-fit,var(--seal-size,84px)) / 2)}
 .tlUI.compact .tlStop{gap:2px}
 .tlUI.compact .tlStop .tlSeal{width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
@@ -1244,6 +1230,7 @@
 .tlExp::before{content:"";position:absolute;left:var(--ax,50%);top:-6px;width:10px;height:10px;margin-left:-5px;background:inherit;border-left:1px solid var(--line,#e7e1d6);border-top:1px solid var(--line,#e7e1d6);transform:rotate(45deg)}
 .tlExp.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
 .tlExp .xh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:7px}
+.tlExp .xh:last-child{margin-bottom:0}
 .tlExp .xh b{font:500 15px/1.2 var(--serif,Georgia,serif);color:var(--ink)}
 .tlExp .xs{flex:none;font:700 8.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);border-radius:999px;padding:2px 7px;background:var(--card2,#f6f2ea)}
 .tlExp .xs.done{color:#3c5a39;background:var(--sageSoft,#e8efe3)}
@@ -1255,7 +1242,7 @@
 .tlReq .rq>i{width:14px;height:14px;margin-top:1px;border-radius:50%;border:1.5px solid var(--ink25,#c4bdb0);display:grid;place-items:center}
 .tlReq .rq.ok>i{border:0;background:var(--sage,#6f8d6a);color:#fff}.tlReq .rq.ok>i svg{width:9px;height:9px}
 .tlReq .rq.person>i{border-color:#c79a3a}.tlReq .rq.stop>i{border-color:var(--clay,#b0563f)}
-.tlReq .rq.after>i,.tlReq .rq.next>i{border-style:dashed}.tlReq .rq.was>i{border-style:dotted}.tlReq .rq.was span{color:var(--ink45)}
+.tlReq .rq.was>i{border-style:dotted}.tlReq .rq.was span{color:var(--ink45)}
 .tlReq .rq span{min-width:0;overflow-wrap:anywhere}
 .tlReq .rq.ok span{color:var(--ink)}
 .tlReq .rq small{display:block;font:10px var(--mono,monospace);color:var(--ink45);margin-top:1px}
@@ -1841,24 +1828,21 @@
       const wrap = $(".tlStops"), rail = $(".tlRail"), R = D.rail || STAGES.map((s, i) => ({ s, i }));
       // (the steps of the piece shown, or of all of them: drawn again when they change)
       const keys = R.map(r => r.s.k).join(" ");
-      if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span><em class="tlCnt" hidden></em></button>`).join(""); }
+      if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span></button>`).join(""); }
       fitRail(rail, S.M);
       const nodes = [...wrap.children], presses = [];
-      // all pieces (Paul, 5 Oct: "only show it above the next unfinished milestone"): the count of a step some pieces reached and others
-      // not yet ("2 of 6") is drawn on the next unfinished step alone, the first one, in rail order, that not every piece has reached;
-      // a later step, a done step and a cancelled order show none (the step explainer and the aria-label still say how many are there)
+      // (all pieces: how many have reached a step is said in the step's aria-label below; no "2 of 6" is drawn over the rail any more, Paul, 12 Oct 2026: "this 1 of 3 is confusing in the UI ... I would just remove it")
       const sumOf = i => D.sum && D.sum.rail.find(r => r.i === i);
-      const next = !S.loaded || D.cancelled || D.hand ? -1 : R.findIndex(r => { const q = sumOf(r.i); return r.i > D.step && !(q && q.of > 0 && q.n >= q.of); });
       R.forEach(({ s, i }, j) => {
         const n = nodes[j], st = D.stages[i];
-        const sr = sumOf(i), part = j === next && sr && sr.n > 0 && sr.n < sr.of ? `${sr.n} of ${sr.of}` : "";
+        const sr = sumOf(i);
         let c;
         if (!S.loaded) c = "f";
         else if (D.cancelled) c = i < D.stop ? "d" : i === D.stop ? "x" : "f gone";
         else c = i <= D.step ? "d" : i === D.cur ? "c" : D.hand ? "f gone" : "f";   // (completed by hand: the rest skipped)
         // a step passed with no event of its own (an older order, or one done off the record) still shows as done
         const ev = c === "d" ? st.first : null;
-        const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part + "|" + (sr ? sr.n + "/" + sr.of : "");
+        const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + (sr ? sr.n + "/" + sr.of : "");
         if (n.dataset.sig === sig) return;
         n.dataset.sig = sig;
         n.className = "tlStop " + c + (c === "c" && D.hold ? " paused" : "");
@@ -1867,7 +1851,6 @@
         seal.innerHTML = c === "d" ? stampSvg(ev || { key: "d-" + s.k, type: s.kind, at: 0 }, !!ev) : c === "x" ? stampSvg({ key: "x-" + s.k, type: D.cancelled.source === "etsy" ? "etsyCancelled" : "cancelled", at: D.cancelled.at, by: D.cancelled.by }, true)
           : stampSvg({ key: "g-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
-        const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
         // (who did it and where: "Welded · Marco R. · Welding · done Tuesday, Sep 29, 2026 · 10:15 AM")
         const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : D.hand ? `${s.l}: skipped, the order was completed by hand` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
         n.setAttribute("aria-label", say); n.removeAttribute("title");   // the step explainer (below) replaces the dark tooltip
@@ -2113,11 +2096,11 @@
       if (expA) { try { expA.cancel(); } catch (_) {} expA = null; }
       // an event that is not a step of its own says what it is first, then what the order needs to move on
       const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null, hand = lone && S.D.hand;
-      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 ${hand ? 0 : 9}px">${hand ? (hand === e ? "Order completed by hand · nothing more to do" : `Order completed by hand · ${esc(shortWhen(hand.at))}${personOf(hand) ? " · " + esc(personOf(hand)) : ""}`) : "Then, for the order to move on"}</div>` : "";
+      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul>${hand || cardSays(q) ? `<div class="xf" style="margin:8px 0 ${hand ? 0 : 9}px">${hand ? (hand === e ? "Order completed by hand · nothing more to do" : `Order completed by hand · ${esc(shortWhen(hand.at))}${personOf(hand) ? " · " + esc(personOf(hand)) : ""}`) : "Then, for the order to move on"}</div>` : ""}` : "";
       expFor = b;
       // the seal has grown where it stands: the card goes under what it has grown to (and, in a short view, beside it), never over it
       const sealEl = liftOf(b), zr = zoomRect(sealEl), whole = zr ? withZoom(b, sealEl) : b;
-      expA = placeExp(exp, hand ? head : head + reqCard(q, compact ? "click to open it on the Timeline" : ""), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, zr && { left: zr.left, right: zr.right });
+      expA = placeExp(exp, hand ? head : head + (lone && !cardSays(q) ? "" : reqCard(q)), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, zr && { left: zr.left, right: zr.right });
       exp.classList.add("on");
     }
     function hideExp(now) {

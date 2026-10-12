@@ -100,7 +100,7 @@ async function partB() {
       });
     });
     const state = () => page.evaluate(() => ({ side: OrderWin.selectedSide(), piece: OrderWin.selectedPiece(), head: (document.querySelector('#owPcSum .owPcState') || { textContent: '' }).textContent.replace(/\s+/g, ' ').trim() }));
-    const tip = () => page.evaluate(() => { const t = document.querySelector('.railTip[data-on]'); if (!t) return null; return { name: t.querySelector('.rtHead b')?.textContent, pieces: [...t.querySelectorAll('.rtPc')].map(p => ({ label: p.querySelector('.rtPcHd b')?.textContent, state: p.querySelector('.rtPcHd .rtState')?.textContent, line: p.querySelector('.rtLine')?.textContent || '', seal: !!p.querySelector('.rtSeal svg, .rtSeal .seal, .rtSeal *') })), many: t.classList.contains('rtMany') }; });
+    const tip = () => page.evaluate(() => { const t = document.querySelector('.railTip[data-on]'); if (!t) return null; return { name: t.querySelector('.rtHead b')?.textContent, pieces: [...t.querySelectorAll('.rtPc')].map(p => ({ label: p.querySelector('.rtPcHd b')?.textContent, state: p.querySelector('.rtPcHd .rtState')?.textContent || '', line: p.querySelector('.rtLine')?.textContent || '', seal: !!p.querySelector('.rtSeal svg, .rtSeal .seal, .rtSeal *') })), many: t.classList.contains('rtMany') }; });
     const away = async () => { await page.mouse.move(2, 2); await page.waitForTimeout(260); };
 
     // ── 1 · the screenshot's order: a necklace and a pair in Review ──
@@ -124,7 +124,7 @@ async function partB() {
     // the dots and the status hover on the SLOWEST piece and open the same card that lists each piece
     await page.hover('#owPcSum > .owPcMulti .steps i:nth-child(3)'); await page.waitForFunction(() => document.querySelector('.railTip[data-on]'), null, { timeout: 15000 });
     let t = await tip();
-    assert.equal(t.many, true); assert.deepEqual(t.pieces.map(p => p.label), ['Left', 'Right'], JSON.stringify(t)); assert.equal(t.name, 'Laser cut'); assert.deepEqual(t.pieces.map(p => p.state), ['Not yet', 'Not yet']);
+    assert.equal(t.many, true); assert.deepEqual(t.pieces.map(p => p.label), ['Left', 'Right'], JSON.stringify(t)); assert.equal(t.name, 'Laser cut'); assert.deepEqual(t.pieces.map(p => p.state), ['', '']);
     ok('1a the dots\' card (after the rest) names each piece\'s own state: Left, Right'); await shot('1a-dots-hover'); await away();
     await page.hover('#owPcSum > .owPcMulti :is(.st [data-pcard])'); await page.waitForFunction(() => document.querySelector('.railTip[data-on]'), null, { timeout: 15000 });
     t = await tip(); assert.equal(t.many, true); assert.deepEqual(t.pieces.map(p => p.label), ['Left', 'Right']); ok('1b the status chip opens the same card'); await away();
@@ -216,7 +216,7 @@ async function partB() {
     assert.deepEqual(R[0].drawer.subs.map(s => [s.label, s.status]), [['Left', 'GF Sheet 1'], ['Right', 'Waiting for a sheet']], 'each piece keeps its own status in the drawer'); assert.equal(R[0].drawer.subs[0].btn, true, 'a sheet\'s status is a button that opens it');
     ok('2 a mismatched pair with the Right waiting: ONE row saying Waiting for a sheet with the Right\'s dots; the drawer says Left GF Sheet 1, Right Waiting for a sheet');
     await page.hover('#owPcSum > .owPcMulti .steps i:nth-child(2)'); await page.waitForFunction(() => document.querySelector('.railTip[data-on]'), null, { timeout: 15000 }); t = await tip();
-    assert.deepEqual(t.pieces.map(p => [p.label, p.state]), [['Left', 'Done'], ['Right', 'Not yet']], JSON.stringify(t)); ok('2a the card says Left: Done, Right: Not yet for the step the Right has not reached'); await away();
+    assert.deepEqual(t.pieces.map(p => [p.label, p.state]), [['Left', 'Done'], ['Right', '']], JSON.stringify(t)); ok('2a the card says Left: Done and names the Right without a state for the step the Right has not reached (no "Not yet", Paul 12 Oct)'); await away();
     // an ear picked narrows the window to it: the card says where THAT ear is (the Left on its sheet, the Right on none), and the pieces say the same
     const tabOf = () => page.evaluate(() => { const t = document.querySelector('.owTabsV [data-ow-view="sheet"]'); return { off: !!t && t.classList.contains('off'), count: ((document.getElementById('owShCount') || {}).textContent || '').trim() }; });   // (the head card has no sheet boxes any more: the Sheet tab is where the window says whether the picked ear is on a sheet)
     await page.click('#owPcSum > .owPcMulti .egEarTab[data-ear$="#L"]'); await page.waitForFunction(() => OrderWin.selectedSide() === 'L', null, { timeout: 15000 }); await page.waitForTimeout(500);

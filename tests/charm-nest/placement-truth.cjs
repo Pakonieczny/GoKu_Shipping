@@ -112,7 +112,7 @@ function unit() {
   A(JSON.stringify(ev2) === before, 'derive never touches the events');
   const rq = UI.requirementsOf('sheet', { events: ev2, place: PP.withHistory(wait, evs) });
   A(rq.state === 'now' && rq.fenced && rq.need.some(n => n.t === 'Not on a sheet now') && /^Was on SS Sheet 1 until Paul took it off, /.test(rq.was) && rq.done.length === 0, 'the Nested card: ' + JSON.stringify([rq.state, rq.need, rq.was]));
-  const rl = UI.requirementsOf('laser', { events: ev2, place: wait }); A(rl.state === 'later' && rl.need.some(n => n.kind === 'after' && /Nested/.test(n.t)), 'the laser card waits for Nested: ' + JSON.stringify(rl.need));
+  const rl = UI.requirementsOf('laser', { events: ev2, place: wait }); A(rl.state === 'later' && !rl.need.some(n => n.kind === 'after' || n.kind === 'next'), 'the laser card names no step before or after it (Paul, 12 Oct 2026: the bar shows where the piece is): ' + JSON.stringify(rl.need));
   const sum = UI.summary(ev2, [{ key: 'a', qty: 1, line: {} }, { key: 'b', qty: 1, line: {} }], null, k => (k === 'a' ? on : wait));
   A(sum.rail.find(r => r.i === 1).n === 1 && sum.step === 0, 'summary counts a piece off its sheet as not at Nested: ' + JSON.stringify(sum.rail.map(r => r.n + '/' + r.of)));
   console.log('  ok  placement-truth: the pure answer');

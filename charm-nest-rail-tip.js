@@ -62,6 +62,7 @@
 .rtPcTx{min-width:0;flex:1 1 auto}
 .rtPcHd{display:flex;align-items:baseline;gap:6px;min-width:0}.rtPcHd b{font:600 11.5px/1.3 var(--sans,system-ui,sans-serif);color:var(--ink,#1c1a17)}
 .rtPc[data-state="Done"] .rtState{color:var(--sage,#5f7a5b)}
+.rtPc[data-state=""] .rtPcHd b{font-weight:500;color:var(--muted,#8a8378)}
 .rtPc .rtSeal{margin:0;flex:0 0 auto}
 .railTip.below .rtPc .rtSeal{order:0;margin:0}
 .railTip.below .rtSeal{order:-1;margin:1px 0 7px}
@@ -101,7 +102,7 @@
   function fill(t, d, info) {
     info = info || infoOf(d) || { name: '', state: '', line: '', by: '', seal: null };
     const node = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; n.textContent = text; return n; };
-    const head = doc.createElement('div'); head.className = 'rtHead'; head.append(node('b', '', info.name), node('span', 'rtState', info.state));
+    const head = doc.createElement('div'); head.className = 'rtHead'; head.append(...[node('b', '', info.name), info.state && node('span', 'rtState', info.state)].filter(Boolean));
     t.dataset.state = info.state; st.text = keyOf(info); st.sig = sigOf(d);
     const sealOf = from => {
       let seal = null;
@@ -120,7 +121,7 @@
     // each piece of a row that stands for several (ONEROW): its name and state, its words and time, its seal at the right
     const pcs = (info.pieces || []).map(p => {
       const box = doc.createElement('div'); box.className = 'rtPc'; box.dataset.state = p.state;
-      const hd = doc.createElement('div'); hd.className = 'rtPcHd'; hd.append(node('b', '', p.label), node('span', 'rtState', p.state));
+      const hd = doc.createElement('div'); hd.className = 'rtPcHd'; hd.append(...[node('b', '', p.label), p.state && node('span', 'rtState', p.state)].filter(Boolean));   // (a piece that has not reached the step says no state, as the card's head does: Paul, 12 Oct, no "Not yet"; its name is quieter)
       const tx = doc.createElement('div'); tx.className = 'rtPcTx'; tx.append(...[hd, p.line && node('p', 'rtLine', p.line), p.by && node('p', 'rtBy', p.by)].filter(Boolean));
       const sl = sealOf(p.seal); box.append(...[tx, sl].filter(Boolean)); if (sl) box.classList.add('hasSeal');
       return box;

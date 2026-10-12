@@ -197,16 +197,18 @@ function fixture({ MAIN, CX }) {
   await page.mouse.move(700, 880); await page.waitForTimeout(500);
   assert.equal(await page.evaluate(() => document.querySelectorAll('[data-seal-zoom]').length + ([...window.__el.querySelectorAll('.tlExp')].filter(x => getComputedStyle(x).display === 'block').length)), 0, 'the seal and its card go back');
 
-  // ── the step explainer (Paul, 28 Sep, point 5): a step to come, hovered, says below its dot what is still missing ──
+  // ── the step explainer (Paul, 28 Sep, point 5): a step to come, hovered, says below its dot what is still missing (12 Oct 2026: only what is missing, never what is next) ──
   const futs = await page.$$eval('.tlStop:not(.d)', s => s.map(n => n.dataset.stage)), futK = futs[futs.length - 1];
   await page.hover(`.tlStop[data-stage="${futK}"] .tlSeal`); await page.waitForTimeout(1500);
-  r = await page.evaluate(k => { const X = window.__el.querySelector('.tlExp'), b = X.getBoundingClientRect(), st = window.__el.querySelector(`.tlStop[data-stage="${k}"]`), d = st.querySelector('.tlSeal').getBoundingClientRect(); return { disp: getComputedStyle(X).display, text: X.textContent, need: X.querySelectorAll('.rq:not(.ok)').length, top: b.top, dot: d.bottom, title: st.getAttribute('title') }; }, futK);
+  r = await page.evaluate(k => { const X = window.__el.querySelector('.tlExp'), b = X.getBoundingClientRect(), st = window.__el.querySelector(`.tlStop[data-stage="${k}"]`), d = st.querySelector('.tlSeal').getBoundingClientRect(); return { disp: getComputedStyle(X).display, text: X.textContent, need: X.querySelectorAll('.rq:not(.ok)').length, foot: X.querySelectorAll('.xf').length, chip: X.querySelector('.xs') ? X.querySelector('.xs').textContent : '', top: b.top, dot: d.bottom, title: st.getAttribute('title') }; }, futK);
   assert.equal(r.disp, 'block', 'the step card shows');
-  assert(r.need > 0 && /Next|After|Waiting|Needs a person/.test(r.text), 'a step to come lists what is missing: ' + r.text);
+  assert(/Shipped/.test(r.text) && !/\bNext\b|\bAfter\b|To come|Step \d|click to open/i.test(r.text), 'a step to come names itself and what holds it back, never what is next: ' + r.text);
+  assert.equal(r.foot, 0, 'no "Step n of m · click to open" footer'); assert.equal(r.chip, '', 'no "Next" / "To come" chip on a step to come');
   assert(r.top >= r.dot, `the card sits below the dot (${r.top} ≥ ${r.dot})`); assert.equal(r.title, null, 'no dark tooltip on the rail');
   const ghostK = await page.$eval('.tlSt.ghost[data-stage]', g => g.dataset.stage);
   await page.hover(`.tlSt.ghost[data-stage="${ghostK}"]`); await page.waitForTimeout(1500);
-  assert(await page.evaluate(() => window.__el.querySelectorAll('.tlExp .rq:not(.ok)').length) > 0, 'a dashed stamp to come shows its missing lines');
+  { const g = await page.evaluate(() => { const X = window.__el.querySelector('.tlExp'); return { disp: getComputedStyle(X).display, text: X.textContent, rows: [...X.querySelectorAll('.rq em')].map(e => e.textContent) }; });
+    assert.equal(g.disp, 'block', 'a dashed stamp to come shows its card'); assert(!/\bNext\b|\bAfter\b|To come|Step \d|click to open/i.test(g.text), 'and it names nothing that is next: ' + g.text); assert(g.rows.every(w => /^(Waiting|Needs a person|Stopped)$/.test(w)), 'every word on its rows says what holds the order back: ' + g.rows); }
   await shot('tlui-d-step-card');
   // a click on a step to come does not pin a fuller version anywhere (the chart has no pane to pin it in): it rings that step's dashed
   // stamp on its lane, and nothing is drawn under the chart
@@ -215,7 +217,7 @@ function fixture({ MAIN, CX }) {
   assert(!pinned.pane && pinned.ghostRing.length === 1 && pinned.ghostRing[0] === futK, 'a click on a step to come rings its dashed stamp and pins nothing: ' + JSON.stringify(pinned));
   await shot('tlui-d-ringed');
   await page.mouse.move(700, 880); await page.waitForTimeout(300);
-  ok.push(`step explainer: hovering "${futK}" (to come) shows a card below its dot with ${r.need} missing line(s), no dark tooltip; a dashed stamp says the same; a click rings its dashed stamp and pins nothing`);
+  ok.push(`step explainer: hovering "${futK}" (to come) shows a card below its dot with its name and ${r.need} missing line(s), no "Next" / "To come" chip, no "Step n of m" footer, no dark tooltip; a dashed stamp says the same; a click rings its dashed stamp and pins nothing`);
 
   // ── click: the seal grows where it stands (Seal.zoom) and that is all: no detail opens under the chart, no dialog, nothing is selected ──
   const paneNow = () => page.evaluate(() => ({ pane: window.__el.querySelectorAll('.tlDetail, .tlBig, .tlAround, .tlArw, .tlPin, .tlPath2, .tlLegend, .tlChip').length, sel: window.__el.querySelectorAll('.tlSt.sel').length, lit: window.__el.querySelectorAll('.tlLane.on').length, dialogs: document.querySelectorAll('dialog[open]').length, grown: [...document.querySelectorAll('[data-seal-zoom]')].map(g => (g.closest('[data-key]') || g).dataset.key || '?') }));
@@ -371,11 +373,11 @@ function fixture({ MAIN, CX }) {
   assert.match(r.cx, /^ETSY CANCELLED \d{1,2} [A-Z]{3} \d{4} \d{1,2}:\d\d [AP]M$/, 'the cancel seal reads ETSY CANCELLED, its date and time: ' + r.cx);
   // (the card no longer plays a drop of its own on a seal it draws, 30 Sep: a new seal is pressed by the shared stamp; the cancel seal is simply there, at the shared size, at rest)
   assert.equal(r.drop, 0, 'the card plays no animation of its own on the cancel seal'); assert(r.cw > 60 && r.cw < 140, 'the cancel seal at the shared seal size: ' + r.cw);
-  // explainOn: a rested seal says what its next step needs; a click opens that step on the Timeline
+  // explainOn: a rested seal shows the card of the step the order is at (only what holds it back); a click opens that step on the Timeline
   await page.evaluate(MAIN => { const card = document.querySelector('.tlTestHost'), a = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {}); card.innerHTML = a.seal; OrderTimelineUI.explainOn(card, () => ({ events: window.__fx[MAIN].events }), st => { window.__pinned = st; }); }, MAIN);
   await page.mouse.move(0, 0); await page.hover('.tlTestHost .tlNowSeal'); await page.waitForTimeout(1500);
-  r = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return X ? { need: X.querySelectorAll('.rq:not(.ok)').length, top: X.getBoundingClientRect().top, seal: document.querySelector('.tlTestHost .tlNowSeal').getBoundingClientRect().bottom } : null; });
-  assert(r && r.need > 0 && r.top >= r.seal, 'the Overview seal shows the next step\'s missing lines below it: ' + JSON.stringify(r));
+  r = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return X ? { need: X.querySelectorAll('.rq:not(.ok)').length, text: X.textContent, foot: X.querySelectorAll('.xf').length, top: X.getBoundingClientRect().top, seal: document.querySelector('.tlTestHost .tlNowSeal').getBoundingClientRect().bottom } : null; });
+  assert(r && r.top >= r.seal && /Shipped/.test(r.text) && !r.foot && !/\bNext\b|\bAfter\b|To come|Step \d|click seal/i.test(r.text), 'the Overview seal shows the card of the step the order is at below it, nothing about what is next, no footer: ' + JSON.stringify(r));
   await page.click('.tlTestHost .tlNowSeal');
   assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click on the original seal asks for the next step on the Timeline');
   await page.evaluate(() => document.querySelector('.tlTestHost').remove());
