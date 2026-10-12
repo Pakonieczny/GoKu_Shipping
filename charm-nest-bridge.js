@@ -16241,7 +16241,6 @@ const OrderWin = window.OrderWin = (() => {
       if(i>=0){SV.at=i;SV.focus=pid;sheetDraw();return;}
       SV.disc={key:k,focus:SV.focus};paintPanel(SV.info);
     };
-    { const sec = panel.querySelector('[data-engraving-panel]'), su = sec && document.createElement('div'); if (su && window.CharmNestEngraveSetup) { su.className = 'owEngSetup'; sec.appendChild(su); CharmNestEngraveSetup.mount(su, (eng.job && eng.job.row) || lr, { compact: true }); } }   // (the line's engraving setup, one control: charm-nest-engrave-setup.js)
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
       imageUrl:url=>/^https?:/.test(url)?cors(url):url,pick:pickDisc,
       // "Approve both faces": the ordinary approval of the charm's Front, then its Back (two approvals, two seals, two back files); only when the model's gate allows it

@@ -4,7 +4,7 @@
 //   2  Engrave.saveSetup stores row.engravingOverride on the LINE with the signed-in name, lineRecord keeps it and rowFromRecord brings it back, a fresh pull (Carry.adopt) keeps it
 //   3  an undecided job takes the person's new words (no paid call), the control says it was edited and offers no Undo (point 8); saving the reading's own words is how a person gets them back
 //   4  a DECIDED face is never deleted: mode "none" cuts it plain through the page's own skip (a "cut plain" seal by the person), the job and its seals stay
-//   5  the control is mounted in the Engrave tab's card and in the order window's engraving card (the sheet window's is the same call; its own tests run it)
+//   5  the control is mounted in the Engrave tab's card ONLY: the order window's card and the sheet window's card carry none (ENGMODAL, Paul 12 Oct 2026: "it should only be part of the detailed Engraving modal popup within the Engraving tab")
 //   6  nothing asked Etsy or the reader: the fake site saw no engraveIntent call and no notes.set
 //   SHOTS=<dir> node tests/charm-nest/engrave-setup-page.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path');
@@ -106,30 +106,31 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(dec.same && dec.kept && dec.state === 'skipped' && dec.seals.includes('engraveApproved|Cy') && dec.seals.some(s => s.startsWith('engravePlain|Test Operator')), 'the job and its approval seal stay, a cut-plain seal by the signed-in person is added: ' + JSON.stringify(dec.seals));
     check(dec.eng === 'skipped', 'the line says skipped');
 
-    // ── 5 · the control is in the Engrave tab's card and in the order window's engraving card ──
+    // ── 5 · the control is in the Engrave tab's card, and NOT in the order window's engraving card ──
     const hosts = await page.evaluate(async ({ KEY, RID }) => {
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back');
       Object.assign(j, { state: 'review', approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null }); Object.assign(row.engrave, { state: 'review', approved: false, needed: true }); delete row.engravingOverride; CharmNestEngraveSetup.DRAFTS.clear();
       const card = Engrave.placementCard(j, 1), engTab = !!card.querySelector('[data-engsetup] .egSetup');
       const box = document.createElement('div'); document.body.appendChild(box); box.className = 'owEng'; OrderEngraving.mount(box, { rid: RID, key: KEY, compact: false });
       await new Promise(r => setTimeout(r, 400));
-      return { engTab, tabText: card.querySelector('[data-engsetup]').textContent.replace(/\s+/g, ' ').trim(), ow: !!box.querySelector('.owEngSetup .egSetup'), owText: (box.querySelector('.owEngSetup') || { textContent: '' }).textContent.replace(/\s+/g, ' ').trim() };
+      return { engTab, tabText: card.querySelector('[data-engsetup]').textContent.replace(/\s+/g, ' ').trim(), ow: !!box.querySelector('.owEngSetup .egSetup'), owAny: !!box.querySelector('.egSetup, .owEngSetup, textarea, select') };
     }, { KEY, RID }).catch(e => ({ err: String(e.message || e) }));
     check(hosts.engTab, 'the Engrave tab\'s card carries the control: ' + (hosts.tabText || hosts.err || '').slice(0, 120));
-    check(hosts.ow, 'the order window\'s engraving card carries it: ' + (hosts.owText || hosts.err || '').slice(0, 120));
+    check(hosts.ow === false && hosts.owAny === false, 'the order window\'s engraving card carries no engraving menu: ' + JSON.stringify({ ow: hosts.ow, any: hosts.owAny, err: hosts.err })); 
 
-    // ── 5b · and in the sheet window's engraving card ──
+    // ── 5b · and NOT in the sheet window's engraving card ──
     const sw = await page.evaluate(async ({ POOLID }) => {
       try {
         await SheetWin.open('gold-su-1', { select: POOLID });
         const until = async (f, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = f(); if (v) return v; await new Promise(r => setTimeout(r, 100)); } return null; };
-        const slot = await until(() => document.querySelector('[data-r2=eng] .swEngSetup .egSetup'), 15000);
+        const card = await until(() => document.querySelector('[data-r2=eng] .swEng'), 15000);
+        await new Promise(r => setTimeout(r, 400));
         const host = document.querySelector('[data-r2=eng]');
-        return { has: !!slot, text: slot ? slot.textContent.replace(/\s+/g, ' ').trim() : '', card: !!(host && host.querySelector('.swEng')), shape: slot ? [...document.querySelectorAll('[data-r2=eng] .swEngSetup')].length : 0 };
+        return { card: !!card, has: !!(host && host.querySelector('.egSetup, .swEngSetup, textarea, select')) };
       } catch (e) { return { err: String(e && e.message || e) }; }
     }, { POOLID });
     if (shots) await page.screenshot({ path: path.join(shots, 'sheetwin.png') });
-    check(sw.has && sw.shape === 1, 'the sheet window\'s engraving card carries it (once): ' + (sw.text || sw.err || JSON.stringify(sw)).slice(0, 120));
+    check(sw.card && sw.has === false, 'the sheet window\'s engraving card is drawn and carries no engraving menu: ' + (sw.err || JSON.stringify(sw)).slice(0, 120));
 
     // ── 6 · no Etsy, no reader ──
     const net = await page.evaluate(() => __calls.slice());
