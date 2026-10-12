@@ -341,18 +341,26 @@
     return stampSvg(plain, true, opts);
   }
   const printTitle = e => `QR label printed · Print Nº ${e.print.n} · ${e.print.where}`;
-  /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
-  function blockerOf(events) {
-    let hold = null; const need = new Map(), byHand = new Map();
+  /* A question the line raised is on the order's timeline for good (needsDecision, written once), and only a person's answer closes it (decided, skipped). A question that went away by
+     itself, because the intake read the line again and no longer asks (BFREAL, 12 Oct 2026: order 4200828980, "option Birth Flower: Marigold not mapped, Etsy's SKU list ... is not
+     loaded yet", cleared by BFWHY after the order was read), left no answer, so the head card went on saying "Needs a decision" with the old sentence, a hard reload or not.
+     `live` is the page's own reading of the order's lines now, { asks(lineKey, kind) -> true | false | null } (null: not known, the record stands). A question of a kind the intake
+     derives itself (LIVE_ASKS) that its line no longer raises is not a blocker. Everything else (a hold, a question of the engraving or of a custom order, a line this page does not
+     hold) reads exactly as before. */
+  const LIVE_ASKS = new Set(["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize"]);
+  /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered (live: the questions its lines still raise, optional). */
+  function blockerOf(events, live) {
+    let hold = null; const need = new Map(), byHand = new Map(), dropped = new Set();
+    const gone = e => { const d = e.data || {}; return !!live && typeof live.asks === "function" && !!e.lineKey && !d.custom && LIVE_ASKS.has(String(d.kind || "")) && live.asks(String(e.lineKey), String(d.kind)) === false; };
     for (const e of events || []) {
       // a line completed with Complete Order, or with its QR label printed, answers its question (a person finished it by hand); a Reopen asks it again
       const op = handStepOf(e), l = e.lineKey;
       if (op && l) { const [a, b] = op === "complete" ? [need, byHand] : [byHand, need]; if (a.has(l)) { b.set(l, a.get(l)); a.delete(l); } continue; }
       if (e.type === "held") hold = e;
       else if (e.type === "released" || e.type === "restored" || e.type === "cancelRestored") hold = null;
-      else if (e.type === "needsDecision") need.set(e.lineKey || e.id, e);
+      else if (e.type === "needsDecision") { if (gone(e)) dropped.add(String(e.lineKey)); else need.set(e.lineKey || e.id, e); }
       else if (e.type === "decided" || e.type === "customDecided" || e.type === "skipped") {
-        if (e.lineKey && need.has(e.lineKey)) need.delete(e.lineKey); else need.clear();
+        if (e.lineKey && (need.has(e.lineKey) || dropped.has(String(e.lineKey)))) { need.delete(e.lineKey); dropped.delete(String(e.lineKey)); } else need.clear();   // (an answer to a question this page no longer asks still belongs to its line: it clears no other line's)
       }
     }
     if (hold) return { label: "On hold", text: str((hold.data && (hold.data.reason || hold.data.why)) || hold.text || "Waiting to be let go", 220), at: hold.at, by: whoOf(hold) };
@@ -2287,7 +2295,7 @@
     const seals = sealsOf(evs), hand = o.hand ? handSealOf(norm(o.hand)) : null, asked = hand || (o.ev && norm(o.ev));
     const liveKeys = hand ? null : new Set([...handLive(evs)].map(e => e.key)), pool = liveKeys && liveKeys.size ? seals.filter(e => !liveKeys.has(e.key)) : seals;
     const last = (hand || (asked && sealed(asked) && !(liveKeys && liveKeys.has(asked.key)) ? asked : pool[pool.length - 1])) || null;
-    const blocker = c ? null : blockerOf(evs);
+    const blocker = c ? null : blockerOf(evs, o.live);
     let seal = "";
     if (c) {
       const etsy = c.type === "etsyCancelled" || c.source === "etsy" || /^etsy$/i.test(c.by || "");

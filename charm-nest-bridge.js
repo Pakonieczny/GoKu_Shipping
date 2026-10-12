@@ -14344,6 +14344,21 @@ const OrderWin = window.OrderWin = (() => {
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
     if (W.engCard && W.engCard.el === host && W.engCard.mode === (all ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
   }
+  /** BFREAL: what the intake read of the line's engraving from the ORDER ITSELF (a side-count option, labelled words, the title, a person's saved setup), said in the facts at once, for a
+   *  line Engrave holds no engraving record for yet (or cut plain): { chip, html }. Order 4200828980 ("Gold - 18\" - 2 sides" on a flower disc) showed no engraving anywhere until a job existed.
+   *  A line that reads as the plain default back (no word of its own) stays as quiet as it always was: null. Nothing here reads a record or the network. */
+  function engReadingOf(r) {
+    const F = window.CharmNestEngraveFaces; if (!F || !F.setupOf || !F.describe || !r || !r.spec) return null;
+    const st = F.setupOf(r), n = st && st.sides && +st.sides.n || 0;
+    const faced = !!st && st.faces.length > 0 && st.source !== "default", plain = !!st && !st.faces.length && st.mode === "none" && n === 1 && !st.edited;   // ("1 side": the design's own art only)
+    if (!faced && !plain) return null;
+    const one = x => String(x || "").replace(/\s+/g, " ").trim().slice(0, 160), lines = [faced ? F.describe(st) : "No engraving"];
+    if (faced) lines.push(tryDo(() => O.fontLine(r.spec)) || "");
+    if (n) lines.push(n === 1 ? "1 side chosen: only the design's own art is engraved" : `${n} sides chosen: the design's own art is the front`);
+    if ((faced && st.needsPerson) || (plain && /words not engraved/.test(st.why || "")) || (!n && st.why)) lines.push(one(st.why));
+    if (!r.engrave) lines.push("Waiting for the Engrave tab");
+    return { chip: st.mode === "both" ? "Front + back" : st.mode === "front" ? "Front only" : st.mode === "back" ? "Back engraving" : "No engraving", html: `<span>${lines.filter((x, i) => x && lines.indexOf(x) === i).map(esc).join("<br>")}</span>` };
+  }
   /** The order's facts, gathered for OrderFacts (charm-nest-order-facts.js), from the very data the grid always read (Paul, 12 Oct 2026: "a mush of stuff": a glance line,
    *  a small card on each chip, and one Details drop-down). `cells` is the old grid, cell by cell, in its old order and its old words: the Details list draws them, so every
    *  fact it ever showed is still there (its number and the order's, when it was bought and by whom, quantity, pair, the intake's piece notes, metal, state, sheet, ship by,
@@ -14378,7 +14393,8 @@ const OrderWin = window.OrderWin = (() => {
     const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
     const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));
     const engHtml = hasEng ? hist || engCellHtml(r, "waiting") : "";
-    if (hasEng) cells.push({ label: "Engraving", html: engHtml, wide: 1, block: 1 });
+    const read = hasEng ? null : tryDo(() => engReadingOf(r));   // (BFREAL: what the order itself says, while Engrave holds nothing for it)
+    if (hasEng) cells.push({ label: "Engraving", html: engHtml, wide: 1, block: 1 }); else if (read) cells.push({ label: "Engraving", html: read.html, wide: 1, block: 1 });
     if (bought.length) bought.forEach(o => cell(o.name || "Option", o.value)); else (sp.options || []).filter(o => o.mapped).forEach(o => cell(o.name, o.value));
     cell("Listing", String(r.line.listingId || "—"), r.line.listingId ? { copy: String(r.line.listingId), mono: 1 } : { mono: 1 });
     cell("Title", r.line.title || "—", { wide: 1 });
@@ -14396,7 +14412,7 @@ const OrderWin = window.OrderWin = (() => {
       metal: { label: r.material ? labelOf(r.material) : (sp.materialLabel || ""), none: !r.material && !sp.materialLabel, color: r.material ? colorOf(r.material) : "", choices: bought.filter(o => /metal|material/i.test(o.name || "")).map(o => ({ name: o.name, value: o.value })) },
       qty: { n: qn, pieces: sides.length, pair: sides.length > 0, mismatched: sides.length > 0 && !!ListMedia.pairRow(r), counted: counted ? { total: counted.total, noun: counted.noun } : null, notes: pnotes },
       custom: sp.special ? { label: sp.special.label, note: [sp.special.read && !sp.special.decided ? `Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "", sp.special.why || ""].filter(Boolean).join(" · ") } : sp.customDone ? { label: "Custom: " + (sp.customDone.category || "completed"), note: "" } : null,
-      engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : null,
+      engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : read ? { chip: read.chip, html: read.html, approved: false } : null,
       message: bm || gm || (news && (news.unread || news.bad)) ? { buyer: bm, gift: gm, unread: news && news.unread ? 1 : 0, bad: !!(news && news.bad) } : null,
       listing: { id: String(r.line.listingId || ""), title: String(r.line.title || "") },
       state: { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }
@@ -15198,6 +15214,21 @@ const OrderWin = window.OrderWin = (() => {
    *  (Paul, 5 Oct 2026: the card said 12:41 PM, its seal 10:57 AM). One helper from the Timeline (OrderTimelineUI.whenOf / timeOf). */
   const shopWhen = t => { const U = window.OrderTimelineUI; return U && U.whenOf ? U.whenOf(t) : new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }); };
   const shopTime = t => { const U = window.OrderTimelineUI; return U && U.timeOf ? U.timeOf(t) : new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
+  /** What this page's own reading says each line of the order still asks of a person, for the head card (OrderTimelineUI.blockerOf). A question a line no longer raises (the intake read
+   *  it again, as BFWHY did for "option not mapped") is not what holds the order up, whatever the timeline once recorded: nothing answered it, so the record alone never lets go.
+   *  asks(lineKey, kind): true or false, or null when this page cannot tell (the line is not held here, not read yet, the library not loaded: the record stands). */
+  function liveAsks(r) {
+    if (!r || r.loading || !B.master.entries.size) return null;
+    const rid = String(r.order.receiptId), mine = new Map();
+    for (const x of [r].concat(tryDo(() => Orders.rows()) || [])) if (x && x.order && String(x.order.receiptId) === rid && x.spec && !x.loading && Array.isArray(x.spec.problems) && !mine.has(x.key)) mine.set(String(x.key), x);
+    return { asks: (lineKey, kind) => {
+      const x = mine.get(String(lineKey)); if (!x || x.state === "gone") return null;
+      const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
+      if (x.materialOverride) kinds.delete("needsMaterial");
+      if (x.sizeOverride) kinds.delete("missingSize");
+      return kinds.has(kind);
+    } };
+  }
   function nowOf(r) {
     const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? shownEvents() : null;
     const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
@@ -15288,7 +15319,7 @@ const OrderWin = window.OrderWin = (() => {
     // Timeline's shared seal: the current milestone of this order or piece, using the standard responsive size.
     // What is holding it up (a decision nobody made, a hold nobody let go) is said in
     // plain words instead.
-    const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null, hand: n.hand || null })) : null;
+    const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null, hand: n.hand || null, live: tryDo(() => liveAsks(r)) })) : null;
     const bl = (st && st.blocker) || null;
     // (a piece's row under this card draws no seal this card draws: it is told which one, and repaints if that changes)
     const sealNow = sealKeyOf(st && st.seal);
