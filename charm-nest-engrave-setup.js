@@ -93,6 +93,84 @@
     return F.setupOf({ spec }, noOverride ? null : (line.engravingOverride || null), slot || null);
   }
 
+  /* ── the system's own choice (ENGAUTO, Paul 12 Oct 2026, point 5) ───────────────────────────────────────────────────────────────────────
+   * "All of these options default state is to be dynamically auto-selected intelligently by the system based on the rules of the system, order details, inclusive of customer
+   * instructions and choices made by the customer." autoChoice is that choice, ignoring what any person saved (row.engravingOverride) or decided at a card (job.decision):
+   * the intake's reading (spec.engraving: the sides policy, the front / back words, the option, the title, the notes, the font reader), the Mini Tag option, the earring rule, and, for a
+   * back the intake leaves to the reader, the reader's own words (a job nobody edited), else the buyer's own one inscription. */
+  const slotIx = slot => { const m = /^D(\d{1,2})$/.exec(str(slot)); return m ? +m[1] - 1 : null; };
+  /** The installed font id a face is engraved in: the shop's word for it (fontWord), else the line's font for that face (the same rule as CharmNestEngravePreview.fontIdOf). Pure. */
+  function fontIdOf(row, face, fontWord, slot) {
+    const O = Orders(), line = lineOf(row); let id = '';
+    try { if (fontWord && O && O.fontOfPhrase) id = O.fontOfPhrase(fontWord) || ''; } catch (_) { /* below */ }
+    if (!id && O && O.pieceFont && line && line.spec) { try { id = O.pieceFont(line.spec, slotIx(slot || (row && row.slot)), face === 'front' ? 'front' : 'back').id || ''; } catch (_) { /* the app's own font */ } }
+    return id || (O && O.DEFAULT_FONT) || '';
+  }
+  const fontNameOf = id => { const O = Orders(); try { const f = O && O.fontById && id ? O.fontById(id) : null; return f ? f.name : ''; } catch (_) { return ''; } };
+  /** A system job: its words came from the reader or the intake, not from a person (seedWords marks source "person" and a decision; decideWords and a person's "no engraving" a decision). */
+  const systemJob = j => !!j && !j.decision && j.source !== 'person' && !j.editingBack;
+  /** The words ONE face has from the reader (the jobs of that face and piece nobody edited), as lines; null when there are none or they differ from piece to piece. */
+  function readerLines(face, slot, jobs) {
+    const mine = (jobs || []).filter(j => j && faceOfJob(j) === face && (!slot || slotOfJob(j) === slot) && systemJob(j)), words = [...new Set(mine.map(wordsOfJob).filter(Boolean))];
+    return words.length === 1 ? words[0].split('\n') : null;
+  }
+  /** One plain inscription in the buyer's own box (what the reader will give back for a back nobody labelled): a line or three, short, no instruction in it, font requests taken out. */
+  function plainOwnWords(line) {
+    const raw = rawOf(line); if (!raw) return null;
+    const O = Orders(); let ls = linesOf(raw);
+    try { const fr = O && O.fontReadText ? O.fontReadText(raw, { cueOnly: true }) : null; if (fr && fr.changed) ls = linesOf(fr.lines || []); } catch (_) { /* the words as written */ }
+    if (!ls.length || ls.length > 3 || ls.some(l => l.length > 40 || /[()\[\]]/.test(l))) return null;
+    if (/\b(?:please|pls|thanks?|thank\s*you|capital|capitals|uppercase|lowercase|all\s*caps|cent(?:er|re)d?|font|typeface|size|bold|italics?|cursive|script|engrav\w*|hello|hi|hey|dear|would\s+like|i\s+want|i'd\s+like|make\s+it|same\s+as|front|back|both|sides?)\b/i.test(ls.join(' '))) return null;
+    return ls;
+  }
+  /** `{ mode, faces, front, back, position:'auto', source, why, needsPerson, never, confidence, slot, option, textFrom }`: the choice of the SYSTEM for a line (and one piece of it: `slot` 'L' | 'R' | 'D2'), whatever a person saved.
+   *    mode      'none' | 'front' | 'back' | 'both'
+   *    front/back  { text, lines, fontWord (the face's own font word or null), fontId (the installed font it is engraved in), fontName, provisional? } or null (the face is not engraved, or its words are not known)
+   *    source    which rule decided the mode: 'rule' (an earring is never engraved), 'option' (a listing option: "Tag1 (front+back)", "Both Sides", "Blank"), 'sides' (a side count on a design with its own front art),
+   *              'tag' (the Mini Tag choice read before the intake), 'title' (the listing title), 'note' (labels or a phrase in the personalisation / a message / the staff note), 'reader' (the reader found no engraving),
+   *              'default' (no front / back word anywhere: the back, as every line always was)
+   *    why       the intake's one plain line (the words it read, where from, the font); needsPerson: the system could not tell which words go where (a person is asked).
+   *  o: { jobs } (default Engrave.jobsOf(line) in the page): the reader's words for a back the intake leaves to it. Pure; compare fonts by fontId, never by fontWord. */
+  function autoChoice(row, slot, o) {
+    const F = Faces(), line = lineOf(row); if (!F || !line || !line.spec) return null;
+    const sl = slot && SLOT_RX.test(String(slot)) ? String(slot) : null;
+    const setup = setupFor(line, sl, true); if (!setup) return null;
+    const out = { mode: setup.mode, faces: setup.faces.slice(), front: null, back: null, position: 'auto', source: '', why: str(setup.why), needsPerson: !!setup.needsPerson, never: !!setup.never, confidence: setup.confidence, slot: sl, option: setup.option || null, textFrom: '' };
+    if (setup.never) { out.source = 'rule'; return out; }
+    const jobs = ((o && o.jobs) || (root.Engrave && root.Engrave.jobsOf ? root.Engrave.jobsOf(line) : []) || []).filter(Boolean);
+    const rd = readingOf(line), own = line.spec.engraving;
+    out.source = setup.sides ? 'sides' : rd && rd !== own ? 'tag' : ['option', 'title', 'note'].includes(setup.source) ? setup.source : 'default';
+    // the reader found nothing to engrave (a job it put away as "no engraving", nobody decided otherwise): the system's choice is none
+    const mineJobs = jobs.filter(j => j && (!sl || slotOfJob(j) === sl));
+    if (!rd && mineJobs.length && mineJobs.every(j => j.state === 'none' && !j.decision)) { out.mode = 'none'; out.faces = []; out.source = 'reader'; out.why = str(mineJobs[0].reason) || 'The reader found no engraving'; return out; }
+    for (const face of out.faces) {
+      const w = setup[face]; let lines = w && w.lines && w.lines.length ? w.lines.slice() : null, provisional = false, from = lines ? 'intake' : '';
+      if (!lines && !setup.needsPerson && face === 'back') {
+        lines = readerLines(face, sl, jobs); if (lines) from = 'reader';
+        else if (setup.mode === 'back') { lines = plainOwnWords(line); if (lines) { provisional = true; from = 'personalization'; } }
+      }
+      const fontWord = (w && w.fontWord) || null, id = fontIdOf(line, face, fontWord, sl);
+      out[face] = { text: lines ? lines.join('\n') : '', lines: lines || [], fontWord, fontId: id, fontName: fontNameOf(id), ...(provisional ? { provisional: true } : {}), from };
+      if (from && !out.textFrom) out.textFrom = from;
+    }
+    return out;
+  }
+  const sameText = (a, b) => linesOf(a).join('\n') === linesOf(b).join('\n');
+  /** What a person's choice `now` ({ mode, front: { text, fontWord }, back: {...} }, e.g. the panel's staged edit or a saved override) changes against the system's: { changed, parts: ['mode', 'front.text', 'back.font', ...], auto }.
+   *  Only the faces the person's mode engraves are compared; fonts by the installed font they resolve to. */
+  function diffFromAuto(row, slot, now, o) {
+    const auto = autoChoice(row, slot, o), parts = []; if (!auto || !now) return { changed: false, parts, auto };
+    const F = Faces(), faces = mode => (mode === 'both' ? ['front', 'back'] : mode === 'front' ? ['front'] : mode === 'back' ? ['back'] : []), mode = F.MODES.includes(now.mode) ? now.mode : auto.mode;
+    if (mode !== auto.mode) parts.push('mode');
+    for (const face of faces(mode)) {
+      const a = auto[face], n = now[face] || { text: '', fontWord: null }, nt = n.text != null ? n.text : n.lines, text = linesOf(nt).join('\n');
+      if (!a) { if (text) parts.push(face + '.text'); continue; }
+      if (text !== a.text && !(a.provisional && !text)) parts.push(face + '.text');
+      if (fontIdOf(row, face, n.fontWord || n.font || null, slot) !== a.fontId) parts.push(face + '.font');
+    }
+    return { changed: parts.length > 0, parts, auto };
+  }
+
   /* ── fonts ─────────────────────────────────────────────────────────────────── */
   /** The font words a face may name: the shop's own (Stylish, Pristina, ... Ace, Britannic Bold), each with the installed font it engraves in. */
   function fontChoices() {
@@ -488,5 +566,5 @@
   /** A short signature of what the control would show (hosts that cache their card draw it again when it changes). */
   const sig = (row, o) => { const vm = read(row, o); return vm ? vm.sig : ''; };
 
-  return { mount, html, bind, read, wants, sig, setupFor, buildOverride, consequences, apply, labelled, patchOf, fontChoices, derivedReading, DRAFTS, NOTES, MODE_TABS };
+  return { mount, html, bind, read, wants, sig, setupFor, buildOverride, consequences, apply, labelled, patchOf, fontChoices, derivedReading, autoChoice, diffFromAuto, fontIdOf, DRAFTS, NOTES, MODE_TABS };
 });
