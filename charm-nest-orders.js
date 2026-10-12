@@ -1382,7 +1382,8 @@
     const lid = String(line.listingId || "").replace(/\D/g, ""), lk = listingKind && typeof listingKind === "object" ? listingKind : null;
     if (lk && lk.kind) {
       if (lk.kind === "regular") return { regular: true };
-      if (KIND_WORDS_[lk.kind]) return { kind: lk.kind, why: `listing ${lid}: ${lk.by || "a person"} said every order of it is ${KIND_WORDS_[lk.kind]}` };
+      // (the person's own words for the listing, when they left some ("pre-made piece, not laser cut"), stand in the reason: the one line that says why)
+      if (KIND_WORDS_[lk.kind]) { const note = String(lk.note || "").replace(/\s+/g, " ").trim().slice(0, 90); return { kind: lk.kind, why: `listing ${lid}: ${lk.by || "a person"} said every order of it is ${KIND_WORDS_[lk.kind]}${note ? ` (${note})` : ""}` }; }
     }
     if (lid && ADDON_LISTINGS[lid]) return { kind: "custom", why: `listing ${lid} “${ADDON_LISTINGS[lid]}” is an add-on listing: a charm made to the buyer's own request, not a master design` };
     const title = String(line.title || "").replace(/&#0*39;/g, "'").replace(/&amp;/g, "&").trim(), lead = title.toLowerCase().split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+|\s+\/\s+/)[0].trim();
@@ -1459,7 +1460,7 @@
     return null;
   }
 
-  specialOf.addOn = { of: addOnOf, listings: ADDON_LISTINGS, titles: ADDON_TITLE, wait: "custom add-on listing: no master design, waits for the order's own designs (Send to Sheet) or Complete Order" };   // (for the tests and for a reader: what says a listing is an add-on listing)
+  specialOf.addOn = { of: addOnOf, listings: ADDON_LISTINGS, titles: ADDON_TITLE, wait: "custom listing: no master design, waits for the order's own designs (Send to Sheet) or Complete Order" };   // (for the tests and for a reader: what says a listing is an add-on listing)
   /* The Team's workflow stamps ("DESIGNED :)", "QA1", "QA2", "PE", "am") are on nearly every order: they say where the
      order is in the shop, never what to engrave. Counted as engraving evidence, they sent every line to the engraving
      reader and every charm of a sheet showed a back engraving (Paul, 25 Sep: "Backs 69" on a sheet of 69 charms). A Team
