@@ -442,7 +442,7 @@ async function browserChecks() {
     assert.equal(placed.open, false, 'a card sent to the sheet is no longer under Open');
     await page.click('#reviewView .rvSeg [data-cseg="done"]'); await page.waitForSelector(neck + '.doneRow');
     const dec = await page.evaluate(sel => { const n = document.querySelectorAll(sel); const c = n[0]; return { n: n.length, why: c.querySelector('.reviewReason')?.textContent, sent: !!c.querySelector('.cuDesigns.sent'), buttons: [...c.querySelectorAll('button')].map(b => b.textContent.trim()), seals: c.querySelectorAll('.sealRow .seal').length }; }, neck);
-    assert.equal(dec.n, 1, 'listed once under Completed'); assert.match(dec.why, /^Sent to Sheet · /, 'Completed says it was sent: ' + JSON.stringify(dec)); assert(dec.sent, 'the card shows its designs as sent');
+    assert.equal(dec.n, 1, 'listed once under Completed'); assert.match(dec.why, /^Sent to Sheet/, 'Completed says it was sent: ' + JSON.stringify(dec)); assert.doesNotMatch(dec.why, /\d\/5|\b(pooled|nested|written|labelled)\b/, 'and never prints the numbered stage ("2/5 nested": Paul, 12 Oct 2026): ' + JSON.stringify(dec)); assert(dec.sent, 'the card shows its designs as sent');
     for (const b of ['View designs', 'Open sheet', 'History']) assert(dec.buttons.includes(b), b + ' on its Completed card: ' + dec.buttons.join(' | '));
     assert.equal(dec.seals, 1, 'its Sent to Sheet seal');
     await page.click('#reviewView .rvSeg [data-cseg="open"]');

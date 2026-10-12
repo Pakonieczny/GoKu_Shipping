@@ -1919,7 +1919,7 @@ const Orders = window.Orders = (() => {
     }).catch(()=>{});
   }
   /* Thirteen state words in four colours said nothing about order. The five that are progress now carry their place in
-     the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
+     the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. (12 Oct 2026, Paul: that numbered text is no longer printed anywhere, see stageText; this stays the data.) */
   const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
   const nestedRow = r => { try { return !!(window.OrderPieces && OrderPieces.nestedOfRow(r)); } catch (_) { return false; } };
   /** Where this line's pieces are NOW, from the ONE answer (PiecePlacement: the cloud's sheet records and pool rows, the cancel and hand records, a hold), never from this page's own
@@ -1950,6 +1950,10 @@ const Orders = window.Orders = (() => {
     const i = PROGRESS.indexOf(state);
     return [k, i < 0 ? t : `${i + 1}/${PROGRESS.length} ${t}`];
   }
+  /** The numbered stage text ("1/5 pooled" ... "5/5 complete"): never printed (Paul, 12 Oct 2026: "Remove the 2/5 nested text from all of the UI"). The timeline bar says where an order is, each piece row its
+   *  own step; only the exceptions (held, unmatched, waiting, gone, ...) are words a person still sees: they are not numbered. stateWords itself is unchanged (the data the rest of the page and the
+   *  tests read, and the finished-order check). */
+  const stageText = t => /^\d\/\d\s/.test(String(t || ""));
   /** How the ship-by date reads today: overdue, due, or simply a date. Days are the shop's local days, the same days
    *  the date is written in: counted in UTC, from 8 pm in Toronto an order due that day showed red as overdue. */
   const shipDay = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" });   // made once, used for every line
@@ -2141,7 +2145,7 @@ const Orders = window.Orders = (() => {
       const date=dayOf(r);
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
-      const st = stateWords(r), due = dueOf(r), where = placeOf(r), fc = faceChip(r);
+      const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
@@ -2157,7 +2161,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${fc[1] ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -2322,7 +2326,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -12714,8 +12718,10 @@ const Review = window.Review = (() => {
     const by = rec && (rec.lastPrintedBy || rec.completedBy), at = rec && (rec.lastPrintedAt || rec.completedAt);
     if (done) return `QR label printed${by ? " by " + by : ""}${at ? " · " + whenOf(at) : ""}${rec && rec.prints > 1 ? ` · printed ${rec.prints}×` : ""}`;
     const sp = row.spec, spc = sp.special || { label: "Custom designs" }, mine = CustomSheet.decisionOf(row);
-    if (mine) return `Sent to Sheet · ${Orders.statePill(row)[1]}`;
-    if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser (${Orders.statePill(row)[1]})`;
+    // (the state's words, but never the numbered stage: "2/5 nested" is printed nowhere now, Paul 12 Oct 2026; an exception such as "held" still says so)
+    const said = String(Orders.statePill(row)[1] || "").replace(/^\d\/\d\s.*$/, "");
+    if (mine) return `Sent to Sheet${said ? " · " + said : ""}`;
+    if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser${said ? " (" + said + ")" : ""}`;
     // (the line's own reason, the one that says why it is custom: an add-on listing, or the listing a person flagged, with the words they left: "pre-made piece, not laser cut")
     if (sp.ownDesign) return `${spc.label} · ${spc.why || "no master design"} · Complete Order or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
@@ -14478,6 +14484,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!r.engrave) lines.push("Waiting for the Engrave tab");
     return { chip: st.mode === "both" ? "Front + back" : st.mode === "front" ? "Front only" : st.mode === "back" ? "Back engraving" : "No engraving", html: `<span>${lines.filter((x, i) => x && lines.indexOf(x) === i).map(esc).join("<br>")}</span>` };
   }
+  const stageText = t => /^\d\/\d\s/.test(String(t || ""));   // (the numbered stage "2/5 nested": printed nowhere, Paul 12 Oct 2026; the same rule as Orders.stageText)
   /** The order's facts, gathered for OrderFacts (charm-nest-order-facts.js), from the very data the grid always read (Paul, 12 Oct 2026: "a mush of stuff": a glance line,
    *  a small card on each chip, and one Details drop-down). `cells` is the old grid, cell by cell, in its old order and its old words: the Details list draws them, so every
    *  fact it ever showed is still there (its number and the order's, when it was bought and by whom, quantity, pair, the intake's piece notes, metal, state, sheet, ship by,
@@ -14504,7 +14511,7 @@ const OrderWin = window.OrderWin = (() => {
     // (what the intake says of the piece count in plain words: an old line already pooled keeps its pieces and the note says what the rule gives now; the pair's own notes)
     if (pnotes.length) cell("Pieces", pnotes.join(" "), { wide: 1 });
     cell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none"));
-    cell("State", st[1]);
+    if (!stageText(st[1])) cell("State", st[1]);   // (only an exception is a fact: the numbered stage "2/5 nested" is printed nowhere, Paul 12 Oct 2026; the Sheet cell below still says where it is)
     if (sheetCell) cell("Sheet", sheetCell);
     cell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—");
     if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size); if (sp.chain) cell("Chain", sp.chain);
@@ -14536,7 +14543,7 @@ const OrderWin = window.OrderWin = (() => {
       message: bm || gm || (news && (news.unread || news.bad)) ? { buyer: bm, gift: gm, unread: news && news.unread ? 1 : 0, bad: !!(news && news.bad) } : null,
       listing: { id: String(r.line.listingId || ""), title: String(r.line.title || "") },
       titleMatch: sp.titleMatch ? { sku: sp.titleMatch.sku, why: sp.titleMatch.why } : null,
-      state: { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }
+      state: stageText(st[1]) ? null : { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }   // (no pill for a numbered stage; an exception keeps its pill and its card)
     };
   }
   /** The facts drawn into #owMeta: nothing is touched when nothing changed (OrderFacts compares), so a card and the focus stay where they are across the window's many repaints. */
