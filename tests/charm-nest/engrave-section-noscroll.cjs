@@ -4,9 +4,10 @@
 //    cards, and the centre of this page."
 // The spec is plans/engrave-ui-1012/CONTRACT.md section B (layout, arithmetic) and G (this test); the section's markup is plans/engrave-ui-1012/INTERFACES.md (ENGLAYOUT).
 // This is the TEST only (ENGNOSCROLL). It mounts the REAL order window (charm-nest-1.html, headless Chromium over the offline fake site, bridge-server.cjs through
-// _orderFactsWorld.cjs: no Etsy, no paid call, no live write, fake buyer names only) with an order that needs engraving on THREE pieces (three different charms: front + back,
-// back only, front only), an order with SIX (the row wraps), one with TWO, one with ONE and one with a charm and an earring pair, at 1280x720, 1440x900, 1024x768 and
-// 1920x1080, the order window scrolled to its top, and checks:
+// _orderFactsWorld.cjs: no Etsy, no paid call, no live write, fake buyer names only) with orders that need engraving: a PAUL-LIKE set (a short metal chip SS and a short
+// buyer name, bought today, so the chip strip is 2 rows as in Paul's own screenshot: 1 line, 2 lines, 3 different charms with front + back / back only / front only, and SIX
+// pieces for the wrapping), a WORST-CASE set (a wide "GF 14/20" metal chip: the strip wraps to 3 rows at 1280) and a charm with an earring pair, at 1280x720, 1440x900,
+// 1356x768 (Paul's own width), 1024x768 and 1920x1080, the order window scrolled to its top, and checks:
 //   (a) the engraving section sits directly below the head chip strip (same column, after it in the DOM, not in the left pictures column)
 //   (b) a thin divider and an "Engraving" title at the section's top-left
 //   (c) the first row holds at least THREE cards side by side (same top within 2 px, every width at least the card minimum)
@@ -19,8 +20,8 @@
 //   (x) one or two pieces: the card is as wide as in the 3-piece order and at most a third of the grid (never stretched)
 //   (i) an earring pair gets no card and no Back slot (CONTRACT: no earring is ever engraved), printed only
 //   (j) nothing inside a card spills sideways out of it, printed only
-// WHICH checks fail the run is the table GATE below (CONTRACT G: hard at 1280x720 and 1440x900; at 1024x768 the 3-in-a-row and the widths are hard, the below-the-fold
-// result for orders of several lines is PRINTED, since only 171 px are free there). The checker itself is proved first on a small synthetic page (a good layout passes; one
+// WHICH checks fail the run is the table GATE below (coordinator, 12 Oct: (d) is HARD for the Paul-like orders at 1280x720, 1440x900, 1356x768 and 1920x1080; the worst-case
+// wide-chip orders and everything at 1024x768 (only ~170 px free for two lines) are PRINTED with the numbers; every other check is hard at every size). The checker itself is proved first on a small synthetic page (a good layout passes; one
 // mutant per check fails), so a pass on the real page is not "the check cannot fail".
 //
 //   node tests/charm-nest/engrave-section-noscroll.cjs
@@ -46,7 +47,7 @@ const SEL = {
   card: ['.engCard', '[data-eng-card]', '.owEngCard'],                    // one card of one piece (ENGCARD: article.engCard); when none match, the grid's children are the cards
   titleText: /^engraving:?$/i,                                            // the title's words
 };
-const SIZES = [[1280, 720], [1440, 900], [1024, 768], [1920, 1080]];     // [width, height]
+const SIZES = [[1280, 720], [1440, 900], [1356, 768], [1024, 768], [1920, 1080]];     // [width, height]; 1356 is the width of Paul's own screenshots
 const T = {
   CARD_MIN: n => +process.env.CARD_MIN || (n < 1200 ? 118 : 200),   // px, CONTRACT G: 118 at 1024 wide, 200 from 1280 (ENGLAYOUT's hard minimum is 112)
   CARD_MAX_H: 212,  // px, CONTRACT B: the card height the 1280x720 arithmetic leaves (not a CSS cap; this test asserts it)
@@ -65,11 +66,13 @@ const FORBIDDEN = [
 // which checks FAIL THE RUN, by window size (CONTRACT G). A check not listed is printed only. d = the 3-piece order's first row on screen, d2 = the same for the 2-line order,
 // d6 = the 6-piece order's first row on screen (six rows of "Its pieces" push the strip down by themselves: printed where the window is too short for that).
 const GATE = {
-  '1280x720': 'a b c d d2 e f g h x', '1440x900': 'a b c d d2 e f g x', '1920x1080': 'a b c d d2 e f g x d6',   // (h: the 212px height only binds where the window is short; a wider card has bigger square thumbnails and a taller card, printed)
-  '1024x768': 'a b c e f g h x',   // d, d2, d6 printed: two-line orders have only 171 px free at 1024x768 (CONTRACT B)
+  '1280x720': 'a b c d d1 d2 e f g h x', '1440x900': 'a b c d d1 d2 e f g x', '1356x768': 'a b c d d1 d2 e f g h x', '1920x1080': 'a b c d d1 d2 e f g x d6',
+  '1024x768': 'a b c e f g h x',   // d, d1, d2, d6 printed: two-line orders have only ~170 px free at 1024x768 (CONTRACT B)
+  // dw1 / dw3 (the worst-case fixture: a wide "GF 14/20" metal chip makes the chip strip 3 rows tall) are printed at every size and never fail the run.
 };
-const gated = (size, k) => (GATE[size] || 'a b c d d2 e f g h x').split(' ').includes(k);
-const LABEL = { a: 'section directly below the chip strip', b: 'thin divider and "Engraving" title at the top-left', c: 'first row holds 3+ cards side by side, wide enough', d: 'first row fully on screen, no scrolling (3 pieces)', d2: 'first row fully on screen, no scrolling (2 lines)', d6: 'first row fully on screen, no scrolling (6 pieces)', e: 'no horizontal scrollbar', f: '6 pieces: the second row wraps correctly', g: 'no text of the deleted list', h: `card at most ${T.CARD_MAX_H}px tall`, x: '1 or 2 pieces: card not stretched', i: 'earring pair: no card, no Back slot', j: 'nothing inside a card spills out of it' };
+const TABLE_LABEL = { d: 'first row on screen, no scrolling: 3 lines (Paul-like)', d1: 'first row on screen, no scrolling: 1 line (Paul-like)', d2: 'first row on screen, no scrolling: 2 lines (Paul-like)', d6: 'first row on screen, no scrolling: 6 pieces (Paul-like)', dw1: 'worst case (wide GF 14/20 chip): 1 line on screen', dw3: 'worst case (wide GF 14/20 chip): 3 lines on screen' };
+const gated = (size, k) => (GATE[size] || 'a b c d d1 d2 e f g h x').split(' ').includes(k);
+const LABEL = { a: 'section directly below the chip strip', b: 'thin divider and "Engraving" title at the top-left', c: 'first row holds 3+ cards side by side, wide enough', d: 'first row fully on screen, no scrolling (3 lines, Paul-like strip)', d1: 'first row fully on screen, no scrolling (1 line, Paul-like strip)', d2: 'first row fully on screen, no scrolling (2 lines, Paul-like strip)', d6: 'first row fully on screen, no scrolling (6 pieces, Paul-like strip)', dw1: 'WORST CASE (wide GF 14/20 chip: 3-row strip): 1 line on screen', dw3: 'WORST CASE (wide GF 14/20 chip: 3-row strip): 3 lines on screen', e: 'no horizontal scrollbar', f: '6 pieces: the second row wraps correctly', g: 'no text of the deleted list', h: `card at most ${T.CARD_MAX_H}px tall`, x: '1 or 2 pieces: card not stretched', i: 'earring pair: no card, no Back slot', j: 'nothing inside a card spills out of it' };
 
 /* ═══════════════════════════ the measurement (runs in the page) ═══════════════════════════ */
 // Pure reading of the page: no judgement. `cfg` = { SEL (selectors), titleSrc, titleFlags }. Returns plain JSON. Must stay self-contained (it is serialised into the page).
@@ -86,6 +89,7 @@ function measureInPage(cfg) {
   const tops = [...new Set([...scrollables, scroller].filter(Boolean))]; for (const n of tops) n.scrollTop = 0; document.scrollingElement.scrollTop = 0;
   out.scrollTops = tops.map(n => n.scrollTop);
   out.dialog = R(dialog); out.scroller = R(scroller); out.column = R(column); out.strip = R(strip); out.section = R(section);
+  if (strip) { const chips = [...strip.querySelectorAll('[data-owf-chip], .owfMore')].filter(vis).map(c => ({ t: Math.round(c.getBoundingClientRect().top), text: (c.innerText || '').replace(/\s+/g, ' ').trim() })); out.stripChips = chips; out.stripRows = new Set(chips.map(c => Math.round(c.t / 14))).size; }
   out.scrollerScrollable = scroller ? scroller.scrollHeight - scroller.clientHeight : null;
   // what the person sees: the scroll area's box, inside the dialog, inside the window
   const sc = scroller ? scroller.getBoundingClientRect() : null, dl = dialog ? dialog.getBoundingClientRect() : null;
@@ -320,8 +324,10 @@ async function selfTest(browser) {
 /* ═══════════════════════════ the fixtures: orders that need engraving ═══════════════════════════ */
 // Neutral names only. The order ships in 5 days, metal gold. `mode`: both | back | front. Words: [front, back].
 const NOW = Math.floor(Date.now() / 1000), SHIP = NOW + 5 * 86400;
-const line = (rid, n, sku, title, extra) => Object.assign({ transactionId: rid + n, listingId: '18' + rid.slice(-5) + n, sku, title, quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal choice', value: 'Gold' }], metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '' }, extra || {});
-const order = (rid, buyer, lines) => ({ receiptId: rid, orderNumber: rid, createTs: NOW - 86400, updateTs: NOW - 3600, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
+// two kinds of strip: 'paul' = what Paul's own orders look like (a short metal chip SS, a short buyer name, bought today: his strip is 2 rows), 'wide' = the worst case (a wide "GF 14/20" metal chip, bought yesterday: the strip wraps to 3 rows at 1280)
+const METAL = { paul: { variations: [{ name: 'Metal choice', value: 'Sterling Silver' }], metalKey: 'silver', metalLabel: 'SS' }, wide: { variations: [{ name: 'Metal choice', value: 'Gold' }], metalKey: 'gold', metalLabel: 'GF 14/20' } };
+const line = (rid, n, sku, title, extra, kind) => Object.assign({ transactionId: rid + n, listingId: '18' + rid.slice(-5) + n, sku, title, quantity: 1, expectedShipDate: SHIP, personalization: [], buyerMessage: '' }, METAL[kind || 'wide'], extra || {});
+const order = (rid, buyer, lines, fresh) => ({ receiptId: rid, orderNumber: rid, createTs: NOW - (fresh ? 600 : 86400), updateTs: NOW - 3600, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
 const CHARMS = [   // six different charms (SKU, listing title)
   ['LEAF_CHARM', 'Pressed leaf charm necklace in 14k gold fill'], ['ASTER_FLOWER', 'Aster flower charm necklace, birth month flower'], ['MINI_0445', 'Mini tag initial charm necklace, personalized'],
   ['PLAIN_TAG', 'Plain tag charm necklace in 14k gold fill'], ['COMEDY 89578', 'Comedy and tragedy theatre mask charm necklace'], ['DUCK 38090', 'Little duck charm necklace in 14k gold fill'],
@@ -330,15 +336,17 @@ const MODES = ['both', 'back', 'front', 'both', 'back', 'front'];
 const WORDS = [['Name One', 'Name Two'], ['', 'Name Three'], ['Name Four', ''], ['Name Five', 'Name Six'], ['', 'Name Seven'], ['Name Eight', '']];
 function fixture() {
   const said = k => [WORDS[k][0] && 'front - ' + WORDS[k][0], WORDS[k][1] && 'back - ' + WORDS[k][1]].filter(Boolean).join(' / ');   // (what the buyer typed in the personalisation box: one line, as in the real orders; a longer text pushes the chip strip down by about 20px a line)
-  const mk = (rid, buyer, idx) => { const o = order(rid, buyer, idx.map((k, i) => line(rid, i + 1, CHARMS[k][0], CHARMS[k][1], { personalization: [said(k)] }))); o.setup = idx.map(k => ({ mode: MODES[k], front: WORDS[k][0], back: WORDS[k][1] })); return o; };
+  const mk = (rid, buyer, idx, kind) => { const o = order(rid, buyer, idx.map((k, i) => line(rid, i + 1, CHARMS[k][0], CHARMS[k][1], { personalization: [said(k)] }, kind)), kind === 'paul'); o.setup = idx.map(k => ({ mode: MODES[k], front: WORDS[k][0], back: WORDS[k][1] })); return o; };
   const ear = order('4200000105', 'Name Five', [line('4200000105', 1, CHARMS[0][0], CHARMS[0][1]), line('4200000105', 2, 'MASKS HAPPY/SAD', 'Theatre Happy Sad Drama Mask Earrings in 14k Gold Fill', { variations: [{ name: 'Metal choice', value: 'Gold' }, { name: 'Style', value: 'Stud earrings' }] })]);
   ear.setup = [{ mode: 'both', front: 'Name One', back: 'Name Two' }, null];   // (the earring line is left to the real intake: it marks it never-engraved)
   return {
-    three: mk('4200000101', 'Name One', [0, 1, 2]),             // three different charms: front + back, back only, front only
-    six: mk('4200000102', 'Name Two', [0, 1, 2, 3, 4, 5]),      // six pieces: the row wraps
-    one: mk('4200000103', 'Name Three', [0]),                   // one piece
-    two: mk('4200000104', 'Name Four', [0, 2]),                 // two lines, two pieces
-    ear,                                                        // one charm and an earring pair
+    p1: mk('4200000111', 'Name One', [0], 'paul'),                   // Paul-like strip: one charm
+    p2: mk('4200000112', 'Name Two', [0, 2], 'paul'),                // two lines
+    p3: mk('4200000113', 'Name Three', [0, 1, 2], 'paul'),           // three different charms: front + back, back only, front only
+    p6: mk('4200000114', 'Name Four', [0, 1, 2, 3, 4, 5], 'paul'),   // six pieces: the row wraps
+    w1: mk('4200000101', 'Name Five', [0], 'wide'),                  // the worst case: a wide metal chip
+    w3: mk('4200000102', 'Name Six', [0, 1, 2], 'wide'),
+    ear,                                                             // one charm and an earring pair
   };
 }
 
@@ -423,27 +431,28 @@ async function main() {
   try {
     await page.waitForFunction(() => window.Engrave && window.OrderEngraving && window.CNEngravingSeals && window.OrderFacts, null, { timeout: 60000 });
     const seeded = {};
-    for (const k of ['three', 'six', 'one', 'two', 'ear']) seeded[k] = await seedOrder(page, fx[k]);
+    for (const k of Object.keys(fx)) seeded[k] = await seedOrder(page, fx[k]);
     earring = seeded.ear.find(x => !x.mode) || null;
     if (debug) console.log('  seeded: ' + JSON.stringify(seeded));
     for (const [vw, vh] of sizes) {
       const size = `${vw}x${vh}`; await page.setViewportSize({ width: vw, height: vh }); const t = table[size] = {}, x = { cardMin: T.CARD_MIN(vw) };
       const get = async o => { await openOrder(page, o.receiptId); return page.evaluate(measureInPage, cfgOf()); };
-      const m3 = await get(fx.three);
+      const m3 = await get(fx.p3);
       if (debug) console.log(JSON.stringify(m3, null, 1));
-      if (shots) { const s = m3.section; const clip = s ? { x: Math.max(0, s.l - 8), y: Math.max(0, s.t - 8), width: Math.min(vw, s.r + 8) - Math.max(0, s.l - 8), height: Math.min(vh, s.b + 8) - Math.max(0, s.t - 8) } : null;
+      if (shots) { const sc = m3.section; const clip = sc ? { x: Math.max(0, sc.l - 8), y: Math.max(0, sc.t - 8), width: Math.min(vw, sc.r + 8) - Math.max(0, sc.l - 8), height: Math.min(vh, sc.b + 8) - Math.max(0, sc.t - 8) } : null;
         await page.screenshot({ path: path.join(shots, `NOSCROLL-${size}.png`), ...(clip && clip.width > 20 && clip.height > 20 ? { clip } : {}) }); await page.screenshot({ path: path.join(shots, `NOSCROLL-${size}-window.png`) }); }
-      const m2 = await get(fx.two), m6 = await get(fx.six), m1 = await get(fx.one), me = await get(fx.ear);
+      const m1 = await get(fx.p1), m2 = await get(fx.p2), m6 = await get(fx.p6), mw1 = await get(fx.w1), mw3 = await get(fx.w3), me = await get(fx.ear);
       if (debug) console.log(JSON.stringify(m6.cards.map(c => [c.l, c.t, c.w, c.h])));
-      const r = { a: judge.a(m3), b: judge.b(m3), c: judge.c(m3, x), d: judge.d(m3), d2: judge.d(m2), e: judge.e(m3), f: judge.f(m6), g: judge.g(m3), h: judge.h(m3), d6: judge.d(m6), x: judge.x(m1, m2, m3), i: judge.i(me, earring), j: judge.j(m3) };
+      const r = { a: judge.a(m3), b: judge.b(m3), c: judge.c(m3, x), d: judge.d(m3), d1: judge.d(m1), d2: judge.d(m2), e: judge.e(m3), f: judge.f(m6), g: judge.g(m3), h: judge.h(m3), d6: judge.d(m6), x: judge.x(m1, m2, m3), i: judge.i(me, earring), j: judge.j(m3), dw1: judge.d(mw1), dw3: judge.d(mw3) };
       r.c6 = judge.c(m6, x); r.f.ok = r.f.ok && r.c6.ok; if (!r.c6.ok) r.f.say += ' | first row of 6: ' + r.c6.say;
       for (const k of Object.keys(r)) t[k] = r[k].ok;
-      const fb = m3.cards.length ? Math.max(...firstRow(m3).map(c => c.b)) : null, fb6 = m6.cards.length ? Math.max(...firstRow(m6).map(c => c.b)) : null;
-      const free = m => m.strip ? px(m.visibleBottom - m.strip.b) : '?', fo = m3.strip ? 45 : 0;
-      numbers.push(`${size}: free space between the chip strip and the window's foot: 1 piece ${free(m1)}, 2 lines ${free(m2)}, 3 lines ${free(m3)}, 6 lines ${free(m6)} (the section's own overhead is about 45px)`);
-      numbers.push(`${size}: centre column ${m3.column ? px(m3.column.w) : '?'} wide; section ${m3.section ? px(m3.section.w) + ' at top ' + px(m3.section.t) : 'none'}; chip strip bottom ${m3.strip ? px(m3.strip.b) : '?'}; first row bottom: 3 pieces ${fb == null ? '-' : px(fb)}, 2 lines ${m2.cards.length ? px(Math.max(...firstRow(m2).map(c => c.b))) : '-'}, 6 pieces ${fb6 == null ? '-' : px(fb6)}; the window shows down to ${px(m3.visibleBottom)}; card widths (3 pieces) [${m3.cards.map(c => Math.round(c.w)).join(', ')}], heights [${m3.cards.map(c => Math.round(c.h)).join(', ')}]`);
+      const fbot = m => m.cards.length ? px(Math.max(...firstRow(m).map(c => c.b))) : '-', free = m => m.strip ? px(m.visibleBottom - m.strip.b) : '?';
+      const strip = m => m.stripChips ? `${m.stripRows} row(s): ${m.stripChips.map(c => c.text.replace(/\s+/g, ' ')).join(' | ')}` : '?';
+      numbers.push(`${size}: Paul-like strip (${strip(m3)}): free height under the strip 1 line ${free(m1)}, 2 lines ${free(m2)}, 3 lines ${free(m3)}, 6 lines ${free(m6)}; the section's rule+title+gaps ${m3.cards.length ? px(Math.min(...m3.cards.map(c => c.t)) - m3.strip.b) : '?'}`);
+      numbers.push(`${size}: worst-case strip (${strip(mw3)}): free height 1 line ${free(mw1)}, 3 lines ${free(mw3)}; first row bottom ${fbot(mw3)} vs the window's ${px(mw3.visibleBottom)}`);
+      numbers.push(`${size}: centre column ${m3.column ? px(m3.column.w) : '?'} wide; section ${m3.section ? px(m3.section.w) + ' at top ' + px(m3.section.t) : 'none'}; chip strip bottom ${m3.strip ? px(m3.strip.b) : '?'}; first row bottom: 1 line ${fbot(m1)}, 2 lines ${fbot(m2)}, 3 lines ${fbot(m3)}, 6 pieces ${fbot(m6)}; the window shows down to ${px(m3.visibleBottom)}; card widths (3 lines) [${m3.cards.map(c => Math.round(c.w)).join(', ')}], heights [${m3.cards.map(c => Math.round(c.h)).join(', ')}]`);
       console.log(`\n  ── ${size} ──`);
-      for (const k of ['a', 'b', 'c', 'd', 'd2', 'e', 'f', 'g', 'h', 'd6', 'x', 'i', 'j']) { if (k === 'i' || k === 'j') { say(null, `${size} (${k}) ${LABEL[k]}: ${r[k].say}`); continue; } const hard = gated(size, k); say(hard ? r[k].ok : null, `${size} (${k}) ${LABEL[k]}${hard ? '' : ` [printed only: ${r[k].ok ? 'would pass' : 'would FAIL'}]`}: ${r[k].say}`); }
+      for (const k of ['a', 'b', 'c', 'd', 'd1', 'd2', 'e', 'f', 'g', 'h', 'd6', 'x', 'dw1', 'dw3', 'i', 'j']) { if (k === 'i' || k === 'j') { say(null, `${size} (${k}) ${LABEL[k]}: ${r[k].say}`); continue; } const hard = gated(size, k); say(hard ? r[k].ok : null, `${size} (${k}) ${LABEL[k]}${hard ? '' : ` [printed only: ${r[k].ok ? 'would pass' : 'would FAIL'}]`}: ${r[k].say}`); }
     }
     if (!w.errors.length) say(true, 'no script error on the page throughout'); else { say(false, 'script errors: ' + w.errors.slice(0, 3).join(' | ')); failed++; }
   } finally { await w.close(); }
@@ -452,9 +461,9 @@ async function main() {
   const sizesDone = Object.keys(table);
   console.log('\n  CHECK TABLE   (PASS / FAIL gating; pass / fail printed only)');
   console.log('  ' + 'check'.padEnd(66) + sizesDone.map(s => s.padEnd(11)).join(''));
-  for (const k of ['a', 'b', 'c', 'd', 'd2', 'd6', 'e', 'f', 'g', 'h', 'x']) {
+  for (const k of ['a', 'b', 'c', 'd', 'd1', 'd2', 'd6', 'e', 'f', 'g', 'h', 'x', 'dw1', 'dw3']) {
     const cells = sizesDone.map(s => { const hard = gated(s, k), ok = table[s][k]; if (hard && !ok) failed++; return (hard ? (ok ? 'PASS' : 'FAIL') : (ok ? 'pass' : 'fail')).padEnd(11); });
-    console.log('  ' + `(${k}) ${LABEL[k]}`.padEnd(66) + cells.join(''));
+    console.log('  ' + `(${k}) ${TABLE_LABEL[k] || LABEL[k]}`.padEnd(66) + cells.join(''));
   }
   console.log('\n  MEASURED');
   for (const n of numbers) console.log('  ' + n);
