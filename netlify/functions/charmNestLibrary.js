@@ -3995,6 +3995,7 @@ OPS.customSaveGet = op_customSaveGet;   // a custom design saved to the reposito
 OPS.customSaveCommit = op_customSaveCommit;   // ... and its write (repo upload token; refused in the sandbox)
 OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
 OPS.customEtsySkuWrite = require("./_charmNestEtsySku").ops.customEtsySkuWrite; NO_GEN_BUMP.add("customEtsySkuWrite");   // ETSYSKU: {rid} the last step of saving a custom design (CONTRACT section 5): the SKU on Etsy. Never in the sandbox, no token (the saved record decides). It writes Etsy and its own records, nothing a placement answer is made from, so it does not raise the placement counter
+OPS.listingEtsySkuWrite = require("./_charmNestEtsyLink").ops.listingEtsySkuWrite; NO_GEN_BUMP.add("listingEtsySkuWrite");   // SWANSKU: {listingId, sku, by} the master charm's own SKU on an existing Etsy listing (Paul, 12 Oct 2026). A repo "modify" op (the password gate, _charmNestRepoAuth.js LIBRARY), never in the sandbox; reads the live inventory first, before-copy, one PUT. Writes Etsy and its own record, nothing a placement answer is made from
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {
