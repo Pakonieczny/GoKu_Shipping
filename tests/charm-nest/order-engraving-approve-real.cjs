@@ -439,6 +439,8 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       check(wr2.length === 2 && s2.includes(poolOf(K.A)) && !s2.includes(poolOf(K.B)), 'and the cloud was written for ANNA\'s piece only');
       await page.evaluate(() => OrderWin.selectPiece(null));
       await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length >= 2, null, { timeout: 20000 });
+      // (the card turns green once the seal has landed: the page is still while a seal is pressed)
+      await page.waitForFunction(() => { const c = [...document.querySelectorAll('#owEng .engCard')]; return c.length >= 2 && c.every(e => e.dataset.state === 'approved'); }, null, { timeout: 15000 }).catch(() => {});
       await page.waitForTimeout(800);
       cards = await pieces();
       check(cards.length === 2 && cards.every(x => x.state === 'approved' && x.seals === 1 && !x.live) && (await h.read(OVB)).seals.join() === sealB.join(), 'back on "All pieces": two Approved cards, one seal each, BELLA\'s unchanged: ' + JSON.stringify(cards));
@@ -612,7 +614,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await fitAt('the failure line');
       await page.evaluate(() => { window.__idbFail = false; });
       await page.click(OV + ' [data-e=approve]');
-      let ok = await written(K.O6); await page.waitForTimeout(600);
+      let ok = await written(K.O6); await h.waitState(OV, 'approved', 15000); await page.waitForTimeout(600);
       c = await h.read(OV); j = await h.job(K.O6);
       const ap6 = (await calls()).approve.slice(c0.approve.length), pr6 = (await calls()).press.slice(c0.press.length);
       check(ok && c.state === 'approved' && c.fail === '' && c.seals.length === 1 && j.seals.length === 1 && pr6.length === 1 && timelineSeals(R.O6, poolOf(K.O6)).length === 1 && st.calls.filter(x => x.op === 'backPut' && JSON.stringify(x.body).includes(poolOf(K.O6))).length === 1, 'retried once it can be saved: approved, one seal, one stamp, one record in the cloud, the failure line gone (' + ap6.length + ' approve calls)');
@@ -645,7 +647,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await watchCard(OV);
       await page.click(OV + ' [data-e=approve]');
       await page.waitForFunction(k => { const x = Engrave.items().get(k); return x && x.backPending; }, K.O8, { timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(1500);
+      await h.waitState(OV, 'approved', 15000); await page.waitForTimeout(1500);
       c = await h.read(OV); j = await h.job(K.O8);
       check(c.state === 'approved' && c.seals.length === 1 && !!j.backPending && plain(c.text) && j.seals.length === 1 && (await calls()).press.length - c0.press.length === 1, 'no network: the approval stands on this computer, one seal, the back file waits for the cloud: ' + JSON.stringify([c.state, c.sub, c.seals, j.backPending]));
       await A.ctx.setOffline(false);
@@ -713,7 +715,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const log = await watched(), c = await h.read(OV);
       check(log[0].startsWith('words') && c.state === 'approve' && c.approve && c.approve.live && !c.approve.disabled && c.words.replace(/\s+/g, ' ') === 'WHICH ONE', 'confirmed in Engraving: the card went from Words to confirm to To approve with Approve live, with the confirmed words: ' + JSON.stringify([log.map(s => s.split(' | ')[0]), c.state, c.words]));
       await page.click(OV + ' [data-e=approve]');
-      const ok = await written(K.O3); await page.waitForTimeout(600);
+      const ok = await written(K.O3); await h.waitState(OV, 'approved', 15000); await page.waitForTimeout(600);
       const job = await h.job(K.O3), cc = await h.read(OV), cl = (await calls()).approve.slice(c0.approve.length);
       check(ok && cl.length === 1 && cl[0].key === K.O3 && job.seals.length === 1 && job.text.replace(/\s+/g, ' ') === 'WHICH ONE' && cc.state === 'approved' && cc.seals.length === 1 && cc.words.replace(/\s+/g, ' ') === 'WHICH ONE' && st.calls.filter(x => x.op === 'backPut' && JSON.stringify(x.body).includes(poolOf(K.O3))).length === 1 && timelineSeals(R.O3, poolOf(K.O3)).length === 1, 'Approve on the confirmed words: one approval, one seal, the words written are the confirmed ones, one back record, one timeline entry: ' + JSON.stringify([cl.length, job.seals, cc.state, cc.words]));
       await h.closeWin();

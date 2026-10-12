@@ -95,13 +95,14 @@ async function main() {
       return w;
     };
 
-    // ── 1 · the order window's Back engraving card (the red box that used to be a second door is gone) ──
+    // ── 1 · the order window's Engraving section: a press on a piece's Back opens it in Engraving (the red box that used to be a second door is gone; so is the old Fix in Engraving button) ──
+    const thumb = (o, i) => `#owEng .engCard[data-key="${keyOf(o, i)}"] .engFace[data-face=back] .engThumb`;
     const redBox = async (o, i) => {
       await page.evaluate(k => OrderWin.open(k), keyOf(o, i));
-      await page.waitForSelector('#owEng [data-e=engrave]', { timeout: 15000 });
+      await page.waitForSelector(thumb(o, i), { timeout: 15000 });
       const t = await page.evaluate(() => document.getElementById('orderWin').textContent);
       assert(!/still to be settled|Open it in Engraving/i.test(t), 'the red box is not in the order window: ' + t.slice(0, 200));
-      await page.click('#owEng [data-e=engrave]');
+      await page.click(thumb(o, i));
     };
     await redBox(A, 0); await lands(A, 0, 'place', 'order window card, one piece');
     await reset();
@@ -115,8 +116,8 @@ async function main() {
     await page.waitForSelector('#owPcSum .owPcRow[data-piece]', { timeout: 15000 });
     await page.click(`#owPcSum .owPcRow[data-piece="${keyOf(B, 1)}"] .dot`);
     await page.waitForFunction(k => OrderWin.key() === k, keyOf(B, 1));
-    await page.waitForSelector('#owEng [data-e=engrave]');
-    await page.click('#owEng [data-e=engrave]');
+    await page.waitForSelector(thumb(B, 1));
+    await page.click(thumb(B, 1));
     await lands(B, 1, 'place', 'order window card after choosing piece 2 on the pieces list');
     await reset();
 
@@ -177,9 +178,9 @@ async function main() {
     await page.waitForFunction(pid => { const W = SheetWin._W; return W.sel && W.sel.poolId === pid && W.view === 'piece' && !W.flip && !W.flying && W.el.detail.querySelector('[data-r2=openOrd]'); }, pool(B, 1), { timeout: 30000 });
     await page.waitForTimeout(500);
     await page.click('[data-r2=openOrd]');
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owEng [data-e=engrave]'), null, { timeout: 15000 });
+    await page.waitForFunction(k => OrderWin.isOpen() && document.querySelector(`#owEng .engCard[data-key="${k}"] .engThumb`), keyOf(B, 1), { timeout: 15000 });
     await page.waitForTimeout(600);
-    await page.click('#owEng [data-e=engrave]');
+    await page.click(thumb(B, 1));
     const w4 = await lands(B, 1, 'place', 'card of an order view opened from the Sheet window');
     check(!w4.sheetWin && !w4.orderWin, 'neither the order view nor the Sheet window it came from is left over the Engraving tab');
     await reset();

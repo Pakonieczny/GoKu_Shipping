@@ -253,7 +253,7 @@
     let ctx = Object.assign({}, ctx0), gone = false, seenAt = Date.now(), attached = false, ro = null, told0 = null;
     const cards = new Map();                 // pieceKey -> { el, sig }
     const busy = new Set(), seen = new Set(), fails = new Map();   // pieces being approved; job keys put in front of the person; the one failure line of a card
-    let last = new Map(), asking = false, waitEl = null, kindsSeen = '';
+    let last = new Map(), asking = false, waitEl = null, kindsSeen = '', loading = false;
     const mode = Array.isArray(ctx0 && ctx0.pieces) && ctx0.pieces.length > 1 ? 'list' : 'one';
     const ident = c => [c.rid, c.key].join('|');
     // (a host we hid ourselves has no box: the order window being open is what counts, as the window being drawn)
@@ -307,7 +307,9 @@
       S.busyLabel(btn);
       const wasToasts = badToasts(); let ok = true, msg = '';
       try {
-        const done = await approveFaces(jobs, who, jobs[0], btn);
+        const run = approveFaces(jobs, who, jobs[0], btn);   // (the first approval starts at once and puts "Approved" on the button: the wait is said again, with its spinner, until the stamp)
+        S.busyLabel(btn);
+        const done = await run;
         if (!done.ok) { ok = false; msg = `The ${faceOf(done.failed)} was not approved`; }
         else if (jobs.some(j => !DONE.includes(j.state))) ok = false;
         if (!ok && jobs.some(j => j.row && j.row.state === 'gone')) msg = 'This order has left the pull (cancelled or shipped)';
@@ -346,7 +348,9 @@
       for (const k of [...last.keys()]) if (!keys.includes(k)) last.delete(k);
       const sigs = new Map(r.pieces.map(p => [keyOf(p), C.sig(p)]));
       const kinds = r.pieces.map(p => keyOf(p) + ':' + p.state).join(',');
-      const changed = force || keys.join('\n') !== [...cards.keys()].join('\n') || r.pieces.some(p => (cards.get(keyOf(p)) || {}).sig !== sigs.get(keyOf(p)));
+      const loadedNow = !!r.loading !== loading;   // (the order stopped being read, or started: what is on screen is drawn again, e.g. the wait goes when the order turns out not to be there)
+      loading = !!r.loading;
+      const changed = force || loadedNow || keys.join('\n') !== [...cards.keys()].join('\n') || r.pieces.some(p => (cards.get(keyOf(p)) || {}).sig !== sigs.get(keyOf(p)));
       if (!changed && !(r.loading && !r.pieces.length && !waitEl)) { if (vis) for (const p of r.pieces) for (const j of p.jobs) seen.add(j.key); return; }
       // (something is here to show but cannot be drawn yet: the window is not on screen, or a seal is being pressed: it says so)
       const wait = () => { if (!host.firstChild && (r.pieces.length || r.loading)) { host.hidden = false; waitEl = waitNode('Reading…'); host.replaceChildren(waitEl); } };
@@ -378,7 +382,7 @@
     }
     const id0 = ++nextId;
     function reset() {
-      busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; told0 = null; kindsSeen = ''; seenAt = Date.now();
+      busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; loading = false; told0 = null; kindsSeen = ''; seenAt = Date.now();
       host.replaceChildren(); host.hidden = true;
     }
     const handle = {

@@ -156,7 +156,7 @@ function sampleAnims() {
 /** The screenshots the brief asks for, at the width of the page given: the listing photo zoomed at a corner and at the middle, the
  *  vector, the back engraving. Each is the whole viewport, so the frame is seen in its window. `tap` is a mouse click or a touch. */
 async function takeShots(page, tag, dir, tap) {
-  const PH = '#owPhoto', VE = '#owVector', EV = '#owEng .pv';
+  const PH = '#owPhoto', VE = '#owVector';
   const at = async (sel, fx, fy) => { await page.evaluate(q => document.querySelector(q).scrollIntoView({ block: 'center', inline: 'nearest' }), sel); await page.waitForTimeout(250); const g = await look(page, sel); await tap(page, g.inner.x + g.inner.w * fx, g.inner.y + g.inner.h * fy); await page.waitForTimeout(600); };
   // (put back whole by script, and let go of the focus: the shots show what a mouse or a finger leaves, not a keyboard's ring)
   const whole = () => page.evaluate(() => { CNZoomPan.resetWithin(document.getElementById('orderWin'), false); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
@@ -167,9 +167,10 @@ async function takeShots(page, tag, dir, tap) {
   await at(VE, .5, .4);
   await page.waitForFunction(() => { const m = document.querySelector('#owVector img, #owVector canvas'); return m && Math.max(m.naturalWidth || m.width, m.naturalHeight || m.height) >= 700; }, null, { timeout: 15000 }).catch(() => {});
   await snap('vector-zoomed'); await whole();
+  // (ENGCARD, 12 Oct 2026: the engraving card has no picture of its own to zoom; its Front / Back pictures open that face in Engrave. The shot shows the card as it is.)
   await pickPiece(page, 2);
-  await page.waitForFunction(() => document.querySelector('#owEng .swEng .pv canvas'), null, { timeout: 15000 });
-  await at(EV, .62, .4); await page.waitForTimeout(500); await snap('back-engraving-zoomed'); await whole();
+  await page.waitForFunction(() => document.querySelector('#owEng .engCard .engThumb'), null, { timeout: 15000 });
+  await page.waitForTimeout(500); await snap('back-engraving-card'); await whole();
 }
 
 /** A frame and its picture, as the eye reads them: the frame, the picture's own rectangle, where the drawn content lies (object-fit), the state. */
@@ -182,14 +183,19 @@ function probe(sel) {
   return Object.assign(out, { tag: m.tagName, nat: [nw, nh], src: (m.currentSrc || m.src || '').slice(0, 600), s: parseFloat(m.dataset.scale) || 1, ox: parseFloat(m.dataset.offsetX) || 0, oy: parseFloat(m.dataset.offsetY) || 0, transform: m.style.transform, transition: m.style.transition,
     el: { x: r.x, y: r.y, w: r.width, h: r.height }, content: { x: r.x + (r.width - cw) / 2, y: r.y + (r.height - ch) / 2, w: cw, h: ch }, mid: { x: I.x + I.w / 2, y: I.y + I.h / 2 } });
 }
-/** The back card drawn again for the same piece (a new frame each time) keeps the zoom and the pan it had. */
+/** The Sheet tab's back card drawn again for the same piece (a new frame each time) keeps the zoom and the pan it had.
+ *  (ENGCARD, 12 Oct 2026: the Overview's engraving card has no zoomable picture any more; the Sheet tab's card still has, and is drawn again whenever the pieces are told.) */
 async function keepsOnRedrawOn(page) {
-  await openPiece(page, 2); await unzoom(page);
-  const g = await look(page, '#owEng .pv'); await page.mouse.click(g.inner.x + g.inner.w * .7, g.inner.y + g.inner.h * .6); await page.waitForTimeout(400);
-  const a = await look(page, '#owEng .pv');
-  await page.evaluate(() => { document.getElementById('owEng')._orderEngraving.refresh(true); }); await page.waitForTimeout(400);
-  const b = await look(page, '#owEng .pv');
-  return { before: a.s, after: b.s, same: near(a.ox, b.ox, .01) && near(a.oy, b.oy, .01) };
+  await closeWin(page); await page.evaluate(k => OrderWin.open(k, { view: 'sheet' }), key(2));
+  const PV = '#owSheetPanel [data-engraving-panel] .pv';
+  await page.waitForFunction(() => OrderWin.view() === 'sheet' && document.querySelector('#owSheetPanel [data-engraving-panel] .swEng .pv canvas, #owSheetPanel [data-engraving-panel] .swEng .pv img'), null, { timeout: 25000 });
+  await settled(page);
+  const g = await look(page, PV); await page.mouse.click(g.inner.x + g.inner.w * .7, g.inner.y + g.inner.h * .6); await page.waitForTimeout(400);
+  const a = await look(page, PV);
+  await page.evaluate(sel => { document.querySelector(sel).__old = 1; window.OrderPieces.notify(); }, PV); await page.waitForTimeout(700);
+  const b = await look(page, PV), renewed = await page.evaluate(sel => !document.querySelector(sel).__old, PV);
+  await unzoom(page); await closeWin(page); await openPiece(page, 2);
+  return { before: a.s, after: b.s, same: near(a.ox, b.ox, .01) && near(a.oy, b.oy, .01), renewed };
 }
 
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
@@ -483,45 +489,34 @@ async function main() {
       await unzoom(page);
     }
 
-    /* 9 · the back engraving card: the preview zooms in its own card */
+    /* 9 · the back engraving card (ENGCARD, 12 Oct 2026): its pictures are not zoomed in the card any more; a press on the Back picture opens that face in Engrave, Approve works once */
     {
       await pickPiece(page, 2);
-      await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approve] .pv canvas'), null, { timeout: 15000 });
-      const card0 = await page.evaluate(() => { const q = s => document.querySelector('#owEng ' + s), r = e => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(); }; return { card: r(q('.swEng')), pv: r(q('.pv')), btn: r(q('.egApproveButton')), words: r(q('.words')), link: r(q('[data-e=engrave]')), text: q('.words').textContent, linkText: q('[data-e=engrave]').textContent.trim() }; });
-      const p0 = await look(page, '#owEng .pv');
-      check(p0.s === 1 && p0.role === 'button' && p0.zp === 'rest' && p0.cursor === 'zoom-in', `the back engraving preview is a frame that zooms where it lies (${[p0.zp, p0.cursor]})`);
-      const x = p0.inner.x + p0.inner.w * .62, y = p0.inner.y + p0.inner.h * .4, f0 = frac(p0, x, y);
-      await page.mouse.click(x, y); await page.waitForTimeout(450);
-      const p1 = await look(page, '#owEng .pv'), at = [p1.content.x + f0[0] * p1.content.w, p1.content.y + f0[1] * p1.content.h];
-      check(p1.s > 1.2 && near(at[0], p1.mid.x, 3) && near(at[1], p1.mid.y, 3), `a click on the preview zooms it centred on the point (off by ${(at[0] - p1.mid.x).toFixed(1)}, ${(at[1] - p1.mid.y).toFixed(1)} px, scale ${p1.s.toFixed(2)})`);
-      const card1 = await page.evaluate(() => { const q = s => document.querySelector('#owEng ' + s), r = e => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(); }; return { card: r(q('.swEng')), pv: r(q('.pv')), btn: r(q('.egApproveButton')), words: r(q('.words')), link: r(q('[data-e=engrave]')), text: q('.words').textContent, dialogs: document.querySelectorAll('dialog[open]').length, state: q('.swEng').dataset.state }; });
-      check(card1.card === card0.card && card1.pv === card0.pv && card1.btn === card0.btn && card1.words === card0.words && card1.link === card0.link, 'the card, its preview, the Approved button, the words box and the link did not move or change size');
-      check(card1.dialogs === 1 && card1.text === card0.text && card1.state === 'approve', 'no dialog; the words and the state are as they were');
-      await page.mouse.click(p1.mid.x, p1.mid.y); await page.mouse.click(p1.mid.x, p1.mid.y); await page.waitForTimeout(500);
-      await page.waitForFunction(() => window.__renderBack.some(n => n > 600), null, { timeout: 8000 }).catch(() => {});
-      const p2 = await look(page, '#owEng .pv');
-      check(p2.nat[0] > 600 && p2.s > 2.5, `the preview drawn from the fitted words is drawn again larger when the zoom settles (${p0.nat[0]} → ${p2.nat[0]} px at ${p2.s.toFixed(1)}x)`);
-      // "View in Engrave" still opens the engraving of this piece
-      await page.click('#owEng [data-e=engrave]'); await page.waitForTimeout(300);
-      const links = await page.evaluate(() => window.__links.map(l => [l.rid, l.key, l.poolId]));
-      check(links.length === 1 && links[0][0] === B.rid && links[0][1] === key(2), 'View in Engrave still asks for this order and piece: ' + JSON.stringify(links));
-      // Approved still works while the preview is zoomed: one approval, one seal on the button
-      await page.click('#owEng [data-e=approve]');
-      await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 12000 });
+      const CARD = `#owEng .engCard[data-key="${key(2)}"]`, BACK = CARD + ' .engFace[data-face=back] .engThumb';
+      await page.waitForFunction(c => document.querySelector(c + '[data-state=approve] .engFace[data-face=back] .engThumb'), CARD, { timeout: 15000 });
+      const card0 = await page.evaluate(c => { const q = s => document.querySelector(c + ' ' + s), r = e => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(); }; return { card: r(document.querySelector(c)), pic: r(q('.engFace[data-face=back] .engThumb')), btn: r(q('.egApproveButton')), text: q('.engFace[data-face=back] .engTxt').getAttribute('title') }; }, CARD);
+      // (nothing in the card zooms: a press on the Back picture asks Engrave for this order, piece and face; the window and the card stay)
+      await page.click(BACK); await page.waitForTimeout(300);
+      const links = await page.evaluate(() => window.__links.map(l => [l.rid, l.key, l.poolId, l.face]));
+      check(links.length === 1 && links[0][0] === B.rid && links[0][1] === key(2) && links[0][3] === 'back', 'the Back picture still asks for this order, piece and face: ' + JSON.stringify(links));
+      const card1 = await page.evaluate(c => { const q = s => document.querySelector(c + ' ' + s), r = e => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(); }; return { card: r(document.querySelector(c)), pic: r(q('.engFace[data-face=back] .engThumb')), btn: r(q('.egApproveButton')), text: q('.engFace[data-face=back] .engTxt').getAttribute('title'), dialogs: document.querySelectorAll('dialog[open]').length, state: document.querySelector(c).dataset.state, zoomed: CNZoomPan.zoomedWithin(document.getElementById('owEng')) }; }, CARD);
+      check(card1.card === card0.card && card1.pic === card0.pic && card1.btn === card0.btn && card1.text === card0.text && card1.dialogs === 1 && card1.state === 'approve' && !card1.zoomed, 'the card did not move, change or zoom; no dialog but the window; the words and the state are as they were');
+      // Approve works: one approval, one seal in the place of the button
+      await page.click(CARD + ' [data-e=approve]');
+      await page.waitForFunction(c => document.querySelector(c + '[data-state=approved]'), CARD, { timeout: 12000 });
       // (the card says Approved the moment the stamp lands; the order's timeline then stamps its own seal for the same approval, and a click is swallowed
       //  while any stamp is coming down - so the next click waits until none is: Seal.busy())
       await page.waitForFunction(() => !Seal.busy(), null, { timeout: 12000 });
       await page.waitForTimeout(500);
-      const ap =await page.evaluate(() => ({ approves: window.__approve.length, seals: document.querySelectorAll('#owEng .egButtonSeal .seal').length, chip: document.querySelector('#owEng .egPill')?.textContent }));
-      check(ap.approves === 1 && ap.seals === 1 && ap.chip === 'Approved', 'Approved works with the preview zoomed: ' + JSON.stringify(ap));
-      const p3 = await look(page, '#owEng .pv'); check(p3.s > 2.5, 'and the preview is still zoomed in the card that was drawn again for the approval (kept for this piece)');
-      await unzoom(page);
-      // an approved piece (a saved picture): it zooms too
+      const ap = await page.evaluate(c => ({ approves: window.__approve.length, seals: document.querySelectorAll(c + ' .egButtonSeal .seal').length, buttons: document.querySelectorAll(c + ' .egApproveButton').length, dot: document.querySelector(c + ' .engDot').dataset.s }), CARD);
+      check(ap.approves === 1 && ap.seals === 1 && ap.buttons === 0 && ap.dot === 'approved', 'Approve works once: one approval, one seal where the button was, a green dot: ' + JSON.stringify(ap));
+      // an approved piece: the same card, its picture opens the face too
       await pickPiece(page, 1);
-      await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved] .pv img'), null, { timeout: 15000 });
-      const a0 = await look(page, '#owEng .pv'); await page.mouse.click(a0.inner.x + a0.inner.w * .3, a0.inner.y + a0.inner.h * .5); await page.waitForTimeout(450);
-      const a1 = await look(page, '#owEng .pv'); check(a1.s > 1.2 && a1.tag === 'IMG', `the saved back picture zooms in its card too (${a1.s.toFixed(2)})`);
-      await unzoom(page);
+      await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved] .engFace[data-face=back] .engThumb`), key(1), { timeout: 15000 });
+      await page.evaluate(() => { window.__links.length = 0; });
+      await page.click(`#owEng .engCard[data-key="${key(1)}"] .engFace[data-face=back] .engThumb`); await page.waitForTimeout(300);
+      const l2 = await page.evaluate(() => window.__links.map(l => [l.key, l.face]));
+      check(l2.length === 1 && l2[0][0] === key(1) && l2[0][1] === 'back', 'an approved piece\'s Back picture opens its face too: ' + JSON.stringify(l2));
     }
 
     /* 11 · another piece starts whole; a redraw keeps the zoom; closing forgets it */
@@ -539,7 +534,7 @@ async function main() {
       check(a.every((g, i) => g.s > 1.2 && near(g.s, b[i].s, 1e-6) && near(g.ox, b[i].ox, 1e-6) && near(g.oy, b[i].oy, 1e-6)), `a live redraw of the window keeps the zoom and the pan of the same piece (photo ${a[0].s.toFixed(2)}→${b[0].s.toFixed(2)}, vector ${a[1].s.toFixed(2)}→${b[1].s.toFixed(2)})`);
       check(same[0] && same[1] && b[0].nat[0] === a[0].nat[0] && b[1].nat[0] === a[1].nat[0], 'and the pictures themselves, with the sharper ones swapped in, were not drawn again');
       const k = await keepsOnRedraw();
-      check(k.before > 1.2 && near(k.before, k.after, 1e-6) && k.same, `the back card drawn again for the same piece keeps its zoom (${k.before.toFixed(2)} → ${k.after.toFixed(2)})`);
+      check(k.before > 1.2 && near(k.before, k.after, 1e-6) && k.same && k.renewed, `the Sheet tab's back card drawn again (a new frame) for the same piece keeps its zoom (${k.before.toFixed(2)} → ${k.after.toFixed(2)}, frame renewed ${k.renewed})`);
       await unzoom(page);
       // the piece switcher: every frame starts whole on the next piece, and on coming back
       await pickPiece(page, 0);
@@ -770,7 +765,7 @@ async function runOn(page, which) {
   }
   if (which === 'redraw') {
     const k = await keepsOnRedrawOn(page);
-    return k.before > 1.2 && near(k.before, k.after, 1e-6) && k.same;
+    return k.before > 1.2 && near(k.before, k.after, 1e-6) && k.same && k.renewed;
   }
   if (which === 'anim') {
     const g = await look(page, PH);

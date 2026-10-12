@@ -55,7 +55,7 @@ const idle = page => page.waitForFunction(() => { const d = document.getElementB
 async function open(page, name, cards) {
   await page.evaluate(rid => OrderWin.openOrder(rid), FX[name].rid);
   await page.waitForFunction(() => document.getElementById('orderWin').open && document.querySelector('#owMeta .owfBar'), null, { timeout: 15000 });
-  if (cards) await page.waitForFunction(k => document.querySelectorAll('#owEng > * .swEng, #owEng > .owEngCard .swEng, #owEng .swEng').length >= k && !document.querySelector('#owEng .owEngWait'), cards, { timeout: 15000 });
+  if (cards) await page.waitForFunction(k => document.querySelectorAll('#owEng > * .swEng, #owEng > .owEngCard .swEng, #owEng .swEng, #owEng .engCard').length >= k && !document.querySelector('#owEng .owEngWait'), cards, { timeout: 15000 });
   await idle(page); await page.waitForTimeout(250);
 }
 const shut = async page => { await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d.open) d.dispatchEvent(new Event('cancel', { cancelable: true })); }); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 8000 }).catch(() => {}); };
