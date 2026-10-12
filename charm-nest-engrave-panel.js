@@ -347,14 +347,14 @@
       panel = mount(panelHost, line, {
         job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),
         onFace: f => {
-          if (card && card.update) tryDo(() => card.update({ face: f }));
+          if (card && card.update) { tryDo(() => card.update({ face: f })); tryDo(() => panel.paintAll()); }   // (the card draws its thumbnails from the saved jobs: the staged words go back on them)
           // the card in front is for the face being edited: another face that has its own placement is shown by the tab itself (its card is drawn again; the staged edit stays)
           const E = Eng(), other = E && E.jobsOf ? E.jobsOf(line).find(j => (slotOfJob(j) || null) === (slotOfJob(job) || null) && F && F.faceOf(j) === f) : null;
           if (other && other !== job && E.restoreView && E.render && typeof o.refocus !== 'function') { tryDo(() => { E.restoreView({ focus: other.key }); E.render(); }); }
           else if (other && other !== job && typeof o.refocus === 'function') tryDo(() => o.refocus(other));
           if (typeof o.onFace === 'function') tryDo(() => o.onFace(f));
         },
-        onChange: ev => { if (card && card.update && ev && ev.kind === 'saved') tryDo(() => card.update({ face: ev.face })); if (typeof o.onChange === 'function') tryDo(() => o.onChange(ev)); }
+        onChange: ev => { if (card && card.update && ev && (ev.kind === 'saved' || ev.kind === 'cancel')) { tryDo(() => card.update({ face: ev.face })); tryDo(() => panel.paintAll()); } if (typeof o.onChange === 'function') tryDo(() => o.onChange(ev)); }
       });
       return { destroy() { tryDo(() => panel.destroy()); if (card && card.destroy) tryDo(() => card.destroy()); }, refresh() { tryDo(() => panel.refresh()); }, setFace: f => panel.setFace(f), panel, card };
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel slot', e); return none; }

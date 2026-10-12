@@ -49,8 +49,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       window.__calls = []; const call = DesignLink.call; DesignLink.call = function (name) { __calls.push(name); return call.apply(this, arguments); };
     }, { order: ORDER, KEY });
 
-    // ── 1-3 · the panel in the Engrave tab's detail, at 1280x720 and 1024x768 ──
-    for (const [w, h] of [[1280, 720], [1024, 768]]) {
+    // ── 1-3 · the panel in the Engrave tab's detail, at 1280x720, 1100x800 (two columns) and 1024x768 (stacked) ──
+    for (const [w, h] of [[1280, 720], [1100, 800], [1024, 768]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.evaluate(() => { setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
       await page.waitForSelector('.pvSetup .engp', { timeout: 20000 });

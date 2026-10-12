@@ -2912,6 +2912,7 @@ button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:
 @container egctl (max-width:760px){.placeView .ctl:has(.spacingControl:not([hidden])) .turnDeg{display:none}}
 /* a narrower card: the front and the back side by side, the controls under both, the conversation below (the card scrolls) */
 @container (max-width:900px){.placeView{grid-template-columns:clamp(200px,28%,280px) minmax(0,1fr);grid-template-areas:"side main" "ctl ctl" "mail mail";grid-template-rows:clamp(300px,calc(100vh - 205px),680px) auto auto}}
+@container (max-width:900px){.placeView{grid-template-columns:clamp(236px,30%,280px) minmax(0,1fr)}}   /* ENGPANEL: the same column for the engraving panel in the two-column card (232px usable) */
 /* stacked on a narrow screen, the back is sized from the window (see mountBack): the rule for the full card used to keep
    its box at the minimum height, so the preview stayed thumbnail-sized there */
 @container (max-width:700px){.placeView .ctl{flex-wrap:wrap}.rvItem.full .backHost{flex:0 0 auto;min-height:0;height:auto}}
