@@ -287,17 +287,16 @@ async function smallWorld(browser, shot) {
           seen.push({ key, want, got });
           if (!i && rid === P(1)) await shot(page, 'A02-order-window-piece1');
           if (!want) {
-            // 5 · the same piece opened the ordinary way: its Sheet button, Sheet tab and sheet chip are greyed with a reason, and a click on them goes nowhere
+            // 5 · the same piece opened the ordinary way: its Sheet tab is greyed with a reason (the head card has no Sheet button or sheet chip any more, Paul 12 Oct 2026), its row's chip only says it, and a click on the tab goes nowhere
             await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* closed */ } }); await page.waitForTimeout(450);
             await page.evaluate(k => OrderWin.open(k), key);
-            await until(() => page.evaluate(() => OrderWin.isOpen() && !!document.querySelector('#owNowCard [data-go="sheet"]')), 8000, 'order window open (info view)');
+            await until(() => page.evaluate(() => OrderWin.isOpen() && !!document.querySelector('.owTabsV [data-ow-view="sheet"]') && !!document.querySelector('#owPcSum .owPcRow, #owPcSum .owPcState')), 8000, 'order window open (info view)');
             await page.waitForTimeout(2200);
             const ctl = await page.evaluate(() => {
-              const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]'), btn = q('#owNowCard [data-go="sheet"]');
+              const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]');
               const off = e => !!e && e.getAttribute('aria-disabled') === 'true';
-              return { view: OrderWin.view(), btnOff: off(btn), btnWhy: btn ? btn.dataset.why || '' : '', tabOff: off(t), chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(c => ({ t: c.textContent.replace(/\s+/g, ' ').trim(), off: off(c) })) };
+              return { view: OrderWin.view(), tabOff: off(t), tabWhy: t ? t.dataset.why || '' : '', cardControls: document.querySelectorAll('#owNowCard button, #owNowCard .owShChip, #owNowCard .shs, #owNowCard [data-go], #owNowCard [data-pc]').length, rowChips: [...document.querySelectorAll('#owPcSum .pcSt')].map(c => ({ t: c.textContent.replace(/\s+/g, ' ').trim(), button: c.tagName === 'BUTTON' })) };
             });
-            await page.click('#owNowCard [data-go="sheet"]', { force: true }).catch(() => {}); await page.waitForTimeout(700);
             await page.click('.owTabsV [data-ow-view="sheet"]', { force: true }).catch(() => {}); await page.waitForTimeout(700);
             ctl.afterClicks = await page.evaluate(() => ({ view: OrderWin.view(), sheet: !!(OrderWin._sheet && OrderWin._sheet()) }));
             seen[seen.length - 1].ctl = ctl;
@@ -314,8 +313,8 @@ async function smallWorld(browser, shot) {
     // (a piece on no sheet, opened the ordinary way: every Sheet door greyed with its reason, clicks go nowhere; opened straight onto the Sheet view
     //  with all pieces in front, the window may draw the sheets of the pieces that have one, and then its piece list says this piece is not on a sheet yet)
     const noSheet = seen.filter(s => !s.err && !s.want);
-    const notGreyed = noSheet.filter(s => !s.ctl || !(s.ctl.btnOff && s.ctl.tabOff && /not on a sheet yet/i.test(s.ctl.btnWhy) && s.ctl.chips.some(c => /not on a sheet yet/i.test(c.t) && c.off)) || s.ctl.afterClicks.view !== 'info' || s.ctl.afterClicks.sheet);
-    accept('5 · a piece that is on no sheet (unnested / no SKU): its Sheet button, Sheet tab and sheet chip are greyed with "not on a sheet yet", and clicking them goes nowhere', noSheet.length > 0 && notGreyed.length === 0, noSheet.length ? notGreyed.map(s => `${s.key}: ${JSON.stringify(s.ctl)}`).join(' | ') : 'the fixture has no piece on no sheet');
+    const notGreyed = noSheet.filter(s => !s.ctl || !(s.ctl.tabOff && /not on a sheet yet/i.test(s.ctl.tabWhy) && s.ctl.cardControls === 0 && s.ctl.rowChips.length > 0 && s.ctl.rowChips.some(c => !c.button)) || s.ctl.afterClicks.view !== 'info' || s.ctl.afterClicks.sheet);
+    accept('5 · a piece that is on no sheet (unnested / no SKU): its Sheet tab is greyed with "not on a sheet yet", the head card has no Sheet button or sheet chip, the piece row chip only says it, and clicking the tab goes nowhere', noSheet.length > 0 && notGreyed.length === 0, noSheet.length ? notGreyed.map(s => `${s.key}: ${JSON.stringify(s.ctl)}`).join(' | ') : 'the fixture has no piece on no sheet');
     const claims = noSheet.filter(s => s.got.sheet && !s.got.pieces.some(t => /not on a sheet yet/i.test(t)));
     accept('5 · the Sheet view of an order never presents the other piece\'s sheet as this piece\'s: its piece list says "not on a sheet yet" for the piece that is on none', claims.length === 0, claims.map(s => `${s.key}: shows ${s.got.sheet}, list: ${s.got.pieces.join(' / ')}`).join(' | '));
     const lies = seen.filter(s => !s.err && s.want && s.got.pieces.some(t => /not on a sheet yet/i.test(t)) && ORDERS.find(o => s.key.startsWith(o[0]))[2].every(pc => pc[2]));

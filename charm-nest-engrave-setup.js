@@ -101,7 +101,7 @@
   function faceFont(line, fontWord) {
     const O = Orders(), sp = line && line.spec;
     if (fontWord && O && O.fontOfPhrase) { const f = O.fontById && O.fontById(O.fontOfPhrase(fontWord)); return { word: fontWord, name: f ? f.name : '', own: true }; }
-    if (O && O.pieceFont && sp) { try { const p = O.pieceFont(sp, null); return { word: p.asked || '', name: p.name || '', own: false, listing: !!p.listing }; } catch (_) { /* below */ } }
+    if (O && O.pieceFont && sp) { try { const p = O.pieceFont(sp, null); return { word: p.asked || '', name: p.name || '', own: false, listing: !!p.listing, via: p.via || '', sub: !!p.substituted }; } catch (_) { /* below */ } }
     return { word: '', name: '', own: false };
   }
 
@@ -308,7 +308,7 @@
   }
 
   /** "Ace → Jost": the word the buyer picked and the installed font it engraves in (just the one when they are the same). */
-  const fontText = f => (f.word && f.name && f.word.toLowerCase() !== f.name.toLowerCase() ? `${f.word} → ${f.name}` : f.word || f.name || '');
+  const fontText = f => (f.word && f.name && f.word.toLowerCase() !== f.name.toLowerCase() ? `${f.word} → ${f.name}` : f.word || f.name || '') + (f.via === 'message' ? (f.sub ? ' (nearest we have, from the message)' : ' (from the message)') : '');
   function fontSelect(vm, face, value, disabled) {
     const list = fontChoices(), have = list.some(c => c.word === value), lf = vm.lineFont;
     const first = `The line’s font${fontText(lf) ? ` (${esc(fontText(lf))})` : ''}`;

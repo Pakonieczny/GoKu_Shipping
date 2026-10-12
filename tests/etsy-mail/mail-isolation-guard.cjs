@@ -168,6 +168,41 @@ const allowedForSandbox = p => /^EtsyMail_OrderLinks\/olsb_/.test(p) || /^EtsyMa
   check(lookalikes.every(k => store.has(k)), "the lookalikes survived: olsb_ saying sandbox:false, ol_ saying sandbox:true");
   check([...store.keys()].some(k => k.startsWith(`EtsyMail_Threads/${T1}/messages/`)) && store.has(`EtsyMail_Drafts/draft_${T1}`) && store.has("EtsyMail_Jobs/job1"), "threads, messages, the queued reply box and the scrape job are all still there");
 
+  console.log("The missing-messages notice's Check now and Dismiss (link_recheck, link_dismiss)");
+  // These two act on the link's own bookkeeping (the nightly check's record, the judgement, the bell's summary, a scrape job and the mark on the
+  // conversation that is short), never on a customer's message, a reply box or an engagement. The sandbox's envelope shows the real link, so they
+  // are the same there: allowed from a sandbox page, but only to write those places.
+  const CON = require(path.join(fnDir, "_etsyMailLinkConsistency.js"));
+  const dbx = require(path.join(fnDir, "firebaseAdmin")).firestore();
+  const T9 = "etsy_conv_999";
+  store.set(`EtsyMail_Threads/${T9}`, { status: "etsy_scraped", etsyOrderId: RID_P, customerName: "Dee Gap", etsyConversationUrl: "https://www.etsy.com/your/conversations/999", messageCount: 6, lastInboundAt: new TS(NOW - 3 * 86400e3), updatedAt: new TS(NOW - 3 * 86400e3) });
+  const nightNow = Date.now();
+  const mr = await CON.maybeRun(dbx, { now: nightNow, force: true });
+  check(mr.ran && mr.doc.gaps[T9] && mr.doc.gaps[T9].tries === 1, "a conversation that falls short is found and one re-read is asked (setup)");
+  const threadsOther = () => [...store].filter(([k]) => /^EtsyMail_(Threads|Drafts|OrderLinks|Customers|Receipts|SendQueue)/.test(k) && !k.startsWith(`EtsyMail_Threads/${T9}`)).map(([k, v]) => k + canon(v)).join("|");
+  const customersBefore = threadsOther();
+  const allowedLink = p => /^EtsyMail_Config\/(linkConsistency|linkHealth)$/.test(p) || p === "EtsyMail_OrderLinkMeta/bell" || /^EtsyMail_Jobs\/consistency_/.test(p) || p === `EtsyMail_Threads/${T9}` || /^EtsyMail_OrderLinkStations\//.test(p);
+  const sigNow = require(path.join(fnDir, "_etsyMailLinkHealth.js")).gapSummary(store.get("EtsyMail_Config/linkConsistency"), Date.now()).sig;
+  for (const world of [{ sandbox: true }, { sandbox: false }, {}]) {
+    const tag = "sandbox:" + String(world.sandbox);
+    r = await via("link_recheck", world);
+    check(r.status === 200 && r.body.ran === true && r.body.results.length === 1 && r.body.health && r.body.gap && r.body.gap.n === 1, `link_recheck (${tag}): answered with the gap, its results and the judgement`);
+    check(r.wrote.every(allowedLink), `link_recheck (${tag}): wrote only the link's bookkeeping (${[...new Set(r.wrote)].join(", ")})`);
+    require(path.join(fnDir, "_etsyMailOrderLink.js"))._internal.resetRecheck();   // (two presses within 8 seconds share one answer)
+  }
+  r = await via("link_dismiss", { sandbox: true, sig: "stale-signature" });
+  check(r.status === 200 && r.body.changed === true && r.body.ok === false && !store.get("EtsyMail_Config/linkConsistency").dismissed, "link_dismiss from the sandbox with a signature that is not on screen: refused ('changed'), nothing hidden");
+  r = await via("link_dismiss", { sandbox: true, sig: sigNow });
+  check(r.status === 200 && r.body.ok === true && store.get("EtsyMail_Config/linkConsistency").dismissed.by === "Paul", "link_dismiss with the signature on screen: accepted, by the signed-in name");
+  check(r.wrote.every(allowedLink), `link_dismiss wrote only the link's bookkeeping (${[...new Set(r.wrote)].join(", ")})`);
+  const crow = ((r.body.health || {}).checks || []).find(c => c.id === "consistency") || {};
+  check(r.body.health && r.body.health.kind !== "consistency" && (crow.data || {}).dismissed === true && r.body.link && r.body.link.kind !== "consistency" && /Dismissed/.test(crow.text), "the answer carries the new judgement: the notice is no longer the problem for any sorter (its line says it was dismissed)");
+  check(customersBefore === threadsOther(), "no other conversation, message, reply box, question, customer, receipt or send queue entry changed");
+  check(etsy.calls === 0, `still no Etsy call (${etsy.calls})`);
+  require(path.join(fnDir, "_etsyMailOrderLink.js"))._internal.resetRecheck();
+  r = await via("link_recheck", { sandbox: false });
+  check(r.status === 200 && store.get(`EtsyMail_Threads/${T9}`).messageCount === 6, "(and the conversation's own record is as it was: the mark apart, nothing counted or changed)");
+
   console.warn = realWarn; console.error = realError;
   console.log(fails.length ? `\nFAILED: ${fails.length}\n- ` + fails.join("\n- ") : "\nmail-isolation-guard OK");
   process.exit(fails.length ? 1 : 0);

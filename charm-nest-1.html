@@ -893,19 +893,34 @@ dialog.phv.layer.phvIn{background:transparent}
 .owTlNone{margin:auto;display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);padding:40px 20px}
 .owTlNone b{font:18px var(--serif);font-weight:500;color:var(--ink70)}
 #orderWin.owFull .owVSheet{display:grid;grid-template-columns:minmax(0,1fr) var(--owSide)}
-/* where it is now: the latest step, who did it, the last stamps, and the sheets it is on */
-.owNowCard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--card2);margin-bottom:20px}
+/* where it is now: the head card (Paul, 12 Oct 2026: "this title bar is too large and too crowded with needless things ... remove all buttons ...
+   including the Sheet shortcuts. Shrink the height of the remaining seal and title section by 33% and extend the title text all the way to the
+   right side"). A label, a title and the seal, nothing to press: the Timeline and Sheet tabs and the pieces' status chips open what its buttons
+   opened. ONE height for every state, 79px against the 118px of the buttons-and-shortcuts card (a third shorter); the seal (50 to 44px) and the
+   title (19 to 17px) come down with it, the title runs the whole width beside the seal and is cut on its second line, its words in the title
+   attribute. One quiet line (.sub) under a one-line title for a split pair, who did it (no seal) or a cancelled order's steps. */
+.owNowCard{--owHeadH:79px;--seal-size:44px;box-sizing:border-box;height:var(--owHeadH);display:grid;grid-template-columns:minmax(0,1fr);column-gap:16px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:0 16px;background:var(--card2);margin-bottom:14px}
 .owNowCard[hidden]{display:none}
-.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:var(--seal-base) minmax(0,1fr) auto}
-.owNowCard .k{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
-.owNowCard .t{font:19px var(--serif);margin:3px 0 6px;color:var(--ink)}
+.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:var(--seal-size) minmax(0,1fr)}
+.owNowCard .tx{min-width:0}
+.owNowCard .k{font:700 9px/12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.owNowCard .t{font:17px/1.2 var(--serif);margin:2px 0 0;color:var(--ink);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.owNowCard.hasSub .t{-webkit-line-clamp:1;line-clamp:1}
+.owNowCard .sub{display:flex;align-items:center;gap:10px;min-width:0;margin-top:3px;font:12px/17px var(--sans);color:var(--ink70);white-space:nowrap}
+.owNowCard .sub>*{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.owNowCard .sub .who{flex:none;overflow:visible}
 .owNowCard .who{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:2px 10px 2px 4px;background:var(--card);font:12px var(--sans);color:var(--ink70)}
 .owNowCard .who b{font:700 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
 .owNowCard .who i{width:20px;height:20px;border-radius:50%;background:var(--slateSoft);display:inline-grid;place-items:center;color:var(--slate);flex:none}
 .owNowCard .who i svg{width:11px;height:11px}
 .owNowCard .who i:empty{display:none}.owNowCard .who:has(>i:empty){padding-left:10px}
-.owNowCard .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
-.owNowCard .shs{display:grid;gap:8px}
+/* a cancelled order's steps (timeline-ui's cxList) on that one line, cut short at the edge; the whole story is its title and the Timeline */
+.owNowCard .sub .tlCxList{display:block;flex:1 1 auto;margin:0;font:12px/17px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owNowCard .sub .tlCxList>span{display:inline;margin-right:14px}
+.owNowCard .sub .tlCxList .s i{display:inline-block;margin-right:4px}
+.owNowCard .sub .tlCxList:has(.s) .h{display:none}   /* ("Cancelled by Paul, Mon 10:26 AM" is the title and the seal already; it shows alone when there are no steps to tell) */
+.owNowCard .sub .tlCxList small{margin-left:6px}
+.owNowCard .sub .tlBlock{display:block;flex:1 1 auto;max-width:none;padding:0;border:0;background:none;font:12px/17px var(--sans);overflow:hidden;text-overflow:ellipsis}
 .owNowCard.bad{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.35),rgba(244,227,220,.35)),var(--card)}
 .owShChip{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:6px 10px 6px 8px;font:11.5px var(--sans);text-align:left;cursor:pointer;transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s,box-shadow .18s}
 .owShChip:hover{transform:translateY(-1px);border-color:var(--goldLine);box-shadow:0 6px 16px rgba(20,16,10,.08)}
@@ -918,11 +933,6 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShChip.off i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
 .owShChip.off b{color:var(--ink45);font-weight:500}
 .owShChip:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
-.owShItem{position:relative;min-width:0}
-.owShItem>.owShChip{width:100%;padding-right:44px}
-.owShItem>.sealRow{position:absolute;right:10px;top:50%;margin:calc(var(--seal-fit,22px) * -.5) 0 0;max-width:40px}
-.owShMore{font:10.5px var(--sans);color:var(--ink45);padding-left:4px}
-.owNowCard .btn.off,.owNowCard .btn.off:hover{opacity:.45;cursor:default;background:transparent}
 .owTabsV>[role=tab].off,.owTabsV>[role=tab].off:hover{color:var(--ink25);cursor:default;transition:none}   /* (greyed the moment the order's records land, which can be while the window opens: only transform, opacity and clip-path move then) */
 .owTabsV>[role=tab].off b{font-weight:500}
 .owPlateNone .owNoneIcon{width:54px;height:54px;color:var(--ink25);margin-bottom:2px}
@@ -998,8 +1008,7 @@ dialog.phv.layer.phvIn{background:transparent}
   #orderWin.owFull .owSide{border-left:0;border-top:1px solid var(--line);overflow:visible}
   #orderWin.owFull .owSide>.owPanel{border-top:0}
   #orderWin.owFull .owSide>.owChat{flex:none;min-height:420px}
-  .owNowCard,.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:minmax(0,1fr)}
-}
+  }
 /* a phone: the tab row is 38 px high and its three tabs took 317 px of a 390 px screen, which left the live line 47 px. The tabs close up
    (their counts are on the views themselves) so the line has its room, and its lead word steps aside: "Live · last change Mon 12:44 PM · Paul"
    in three short lines at most, in the same row, at its right end */
@@ -1189,6 +1198,12 @@ dialog.phv.layer.phvIn{background:transparent}
 .cmWarn{font-size:12px;line-height:1.45;padding:6px 9px;border-radius:9px}
 .cmWarn.warn{background:#fbf1dc;color:#6f5019}
 .cmWarn.down{background:#f8e4dd;color:#7a3322}
+.cmWarn.ok{background:#e4f1e6;color:#25562f}
+/* the missing-messages notice: how a Check now or a Dismiss went, and what a person can do (charm-nest-mail.js) */
+.cmGapNote{font-size:12px;line-height:1.45;padding:5px 9px;margin:4px 0 0;border-radius:9px;background:#eef1f2;color:#4a5a60}
+.cmGapNote.ok{background:#e4f1e6;color:#25562f}.cmGapNote.warn{background:#fbf1dc;color:#6f5019}
+.cmGapHint{font-size:11px;line-height:1.4;color:var(--ink45);padding:5px 9px 2px}
+.cmWarn .cmSpin{margin-right:3px;vertical-align:-1px}
 .cmWarn .lnk,.cmLWarn .lnk{font-size:inherit}
 .cmLFoot{display:flex;align-items:flex-start;gap:8px;min-width:0}
 .cmLFoot .cmLive{margin-top:1px}
@@ -2094,7 +2109,9 @@ details.masterHist>summary{white-space:nowrap}
 .rvItem .fixes.other.hidden{display:none}
 /* Options: the option picks the charm itself (a zodiac sign, a birthstone): the master's SKUs the value names, with their pictures */
 .rvItem .fixes.design.hidden{display:none}.rvItem .fixes.design .dsFor{font-size:12px;color:var(--ink70)}
-.rvItem .dsPick{display:inline-flex;align-items:center;gap:6px}.rvItem .dsPick img{width:22px;height:22px;object-fit:contain;border-radius:4px;background:var(--paper2)}
+.rvItem .dsPick,.sibOffer .dsPick{display:inline-flex;align-items:center;gap:6px}.rvItem .dsPick img,.sibOffer .dsPick img{width:22px;height:22px;object-fit:contain;border-radius:4px;background:var(--paper2)}
+/* SIBLINGS (12 Oct 2026): the "use both" offer inside a Review row (under the reason): its question, then the picker buttons as the SKU picker draws them */
+.sibOffer{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;margin:3px 0 2px;min-width:0}.sibOffer .sibAsk{font:600 12.5px/1.45 var(--sans);color:var(--ink);overflow-wrap:anywhere}.sibOffer .sibPicks{display:flex;flex-wrap:wrap;gap:6px;min-width:0}.sibOffer .dsPick{white-space:normal;text-align:left;justify-content:flex-start;max-width:100%;min-width:0;line-height:1.3;overflow-wrap:anywhere}.sibOffer .dsPick img{width:30px;height:30px;flex:none}.sibOffer [data-both]{flex:1 1 100%}.sibOffer .dsFor{font:11px/1.4 var(--sans);color:var(--ink70);align-self:center}
 .rvItem .scopeOne{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink45)}
 .rvItem[data-kind=needsMapping] .rh .sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 220px}
 .rvItem .fixes input,.rvItem .fixes select,.rvItem .fixes textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card)}
@@ -3107,7 +3124,6 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
    ignored. --seal-size stays the Timeline's own size (charm-nest-timeline-ui.js reads it); the "Where it is now" card is on
    the Overview, so it takes the regular size here. */
 :root{--seal-base:50px}
-.owNowCard{--seal-size:var(--seal-base)}
 .sealRow{display:inline-flex;align-items:center;flex-wrap:nowrap;gap:4px;pointer-events:none;margin:calc(var(--seal-fit,var(--seal-base)) * -.30) 0 calc(var(--seal-fit,var(--seal-base)) * -.18) 22px;min-width:0;max-width:100%;flex:0 1 auto;overflow:visible}
 .sealRow .seal+.seal{margin-left:0}
 .sealRow.mini{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0 calc(var(--seal-fit,var(--seal-base)) * -.28) -12px}
@@ -3362,7 +3378,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1"></script>
@@ -3371,7 +3387,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-assets.js?v=20261007-imgcache"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1"></script>
-<script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2"></script>
+<script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1"></script>
 <script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1"></script>
@@ -3380,14 +3396,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
-<script src="charm-nest-engrave-setup.js?v=20261011-su1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2"></script>
+<script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
@@ -7460,9 +7476,10 @@ boot();
 <script src="charm-nest-keep.js?v=20261011-sv1"></script>
 <!-- the order window's facts (charm-nest-order-facts.js: OrderFacts.paint): a glance line of icon chips, a small card on each, one Details drop-down; the bridge gathers them (OrderWin.factsOf) -->
 <script src="charm-nest-order-facts.js?v=20261012-fa1"></script>
+<script src="charm-nest-siblings.js?v=20261012-sg1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-fa1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-fa1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7521,7 +7538,7 @@ try {
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <!-- the send animation, the very same file the inbox runs (SendFlight): a sent customer message flies from its box into the thread -->
 <script src="send-flight.js?v=20261010-sf1"></script>
-<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1"></script>
+<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
@@ -7541,7 +7558,7 @@ try {
 <script src="charm-nest-library-engraving.js?v=20261005-egl1-eu3"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2-eu3"></script>
-<script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1"></script>
+<script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1-tn1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1-pow1-ui2"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>

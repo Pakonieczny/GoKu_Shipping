@@ -45,7 +45,8 @@ put("EtsyMail_Config/scrapeHealth", { consecutiveBad: 0, lastOkAtMs: NIGHT - MIN
 put("EtsyMail_Config/receiptsMirrorState", { enabled: true, lastSyncCompletedAt: T(NIGHT - 2 * MIN) });
 put("EtsyMail_Config/global", {});
 
-const threadsBefore = () => [...store].filter(([k]) => k.startsWith("EtsyMail_Threads/")).map(([k, v]) => k + canon(v)).join("|");
+// (the conversations and their messages, without the one field the check is allowed to add: the fullReread mark)
+const threadsBefore = () => [...store].filter(([k]) => k.startsWith("EtsyMail_Threads/")).map(([k, v]) => { const c = JSON.parse(canon(v)); delete c.fullReread; return k + JSON.stringify(c); }).join("|");
 
 (async () => {
   const before = threadsBefore();
@@ -77,28 +78,37 @@ const threadsBefore = () => [...store].filter(([k]) => k.startsWith("EtsyMail_Th
   const j = store.get(jobs[0]);
   check(j.jobType === "scrape" && j.status === "queued" && j.payload.rescrape === true && /^https:\/\/e\//.test(j.payload.etsyConversationUrl), "the job is an ordinary queued scrape of the conversation's own address");
   check(d.repairQueued === 3, "the record says three re-reads were queued");
-  const nonCfg = writes.filter(w => !/^EtsyMail_(Config|Jobs)\//.test(w.path));
-  check(nonCfg.length === 0 && !writes.some(w => w.kind === "delete"), "it wrote only its own record and the jobs; nothing deleted, no conversation or message touched");
-  check(threadsBefore() === before, "every conversation and message is byte-identical");
+  const nonCfg = writes.filter(w => !/^EtsyMail_(Config|Jobs)\//.test(w.path) && !/^EtsyMail_Threads\/t[bcf]$/.test(w.path));
+  check(nonCfg.length === 0 && !writes.some(w => w.kind === "delete"), "it wrote only its own record, the jobs and the mark on the three conversations it asked to be re-read; nothing deleted, no message touched");
+  const marked = ["tb", "tc", "tf"].every(t => store.get("EtsyMail_Threads/" + t).fullReread && store.get("EtsyMail_Threads/" + t).fullReread.jobId.startsWith("consistency_" + t + "_"));
+  check(marked, "each of the three is marked fullReread (a complete read of Etsy's conversation is wanted), with the job's id");
+  check(threadsBefore() === before, "(the mark aside) every conversation and message is byte-identical");
   check(JSON.stringify(store.get("EtsyMail_Config/linkConsistency")).includes('"mismatched":4'), "the result is stored in EtsyMail_Config/linkConsistency");
+  check(jobs.every(k => store.get(k).payload.fullRead === true), "each job says it is a complete read");
+  const gl = d.gaps;
+  check(Object.keys(gl).length === 4 && gl.tb.tries === 1 && gl.tc.tries === 1 && gl.tf.tries === 1 && gl.th.tries === 0 && gl.th.url === false, "the ledger holds four open gaps: three asked once, the one with no address not asked: " + Object.keys(gl).join());
+  check(d.unresolved === 3 && d.noAddress === 1, "three count for the light (the one with no address cannot be re-read, so it is not counted)");
 
   console.log("Again, and the monitor");
   r = await CON.maybeRun(db, { now: NIGHT + 10 * MIN });
   check(r.ran === false, "ten minutes later: not run again");
   const forced = await CON.maybeRun(db, { now: NIGHT + 20 * MIN, force: true });
-  check(forced.ran === true && forced.doc.repairQueued === 0 && [...store.keys()].filter(k => k.startsWith("EtsyMail_Jobs/")).length === 3, "forced a second time the same day: no second job is queued for the same conversation");
+  check(forced.ran === true && forced.doc.repairQueued === 0 && [...store.keys()].filter(k => k.startsWith("EtsyMail_Jobs/")).length === 3, "forced a second time the same day: the re-reads are still waiting, so no second job is queued for the same conversation");
+  check(Object.keys(forced.doc.gaps).length === 4 && forced.doc.gaps.tb.tries === 1, "and the three open gaps are still open (a re-read that has been asked is not 'done')");
   for (const [k] of [...store]) if (k.startsWith("EtsyMail_Jobs/")) store.delete(k);
   const nextNight = await CON.maybeRun(db, { now: NIGHT + 24 * HOUR + 30 * MIN });
   const njobs = [...store.keys()].filter(k => k.startsWith("EtsyMail_Jobs/"));
-  check(nextNight.ran === true && nextNight.doc.alreadyReread === 3 && nextNight.doc.repairQueued === 1 && njobs.length === 1 && /consistency_tg_/.test(njobs[0]), "the next night the three conversations re-read yesterday are reported again but not queued again; only the one that has newly gone stale (tg) gets a re-read: " + njobs.join(", "));
+  check(nextNight.ran === true && nextNight.doc.alreadyReread === 3 && njobs.length === 4 && njobs.every(k => /^EtsyMail_Jobs\/consistency_t[bcfg]_20261012$/.test(k)), "the next night the three that are still short are asked again (their first re-read is over and its wait has passed) and the one that has newly gone stale (tg) is asked once: " + njobs.join(", "));
+  check(nextNight.doc.gaps.tb.tries === 2 && nextNight.doc.gaps.tg.tries === 1 && nextNight.doc.gaps.th.url === false, "tries are counted per conversation");
   store.delete("EtsyMail_Config/linkConsistency");
   const first = await CON.maybeRun(db, { now: NOON });
   check(first.ran === false, "the very first run waits for a night (it may queue re-reads: not in the middle of the working day)");
   store.set("EtsyMail_Config/linkConsistency", { atMs: NIGHT - 25 * HOUR, checked: 5, mismatched: 0 });
-  const res = LH.evaluate(Object.assign({ global: {}, watcher: { enabled: true }, gmail: { lastSyncCompletedAt: T(NIGHT - MIN) }, helper: { seenAtMs: NIGHT - 20e3 }, scrapeHealth: { consecutiveBad: 0 }, mirror: { enabled: true, lastSyncCompletedAt: T(NIGHT - 2 * MIN) }, bell: { reconcileAtMs: NIGHT - MIN }, monitor: { atMs: NIGHT - MIN }, queuedDrafts: [], scrapeJobs: [], readOk: {}, queue: null }, { consistency: d }), NIGHT + 20 * MIN);
-  check(d.unresolved === 3 && d.noAddress === 1 && res.level === "warn" && (res.checks.find(c => c.id === "consistency") || {}).level === "warn", "the light turns amber for the three that can be re-read (the one with no address cannot, so it is not counted): " + res.short);
-  const res2 = LH.evaluate(Object.assign({ global: {}, watcher: { enabled: true }, gmail: { lastSyncCompletedAt: T(NIGHT - MIN) }, helper: { seenAtMs: NIGHT + 20 * MIN - 20e3 }, scrapeHealth: { consecutiveBad: 0 }, mirror: { enabled: true, lastSyncCompletedAt: T(NIGHT + 19 * MIN) }, bell: { reconcileAtMs: NIGHT + 19 * MIN }, monitor: { atMs: NIGHT + 19 * MIN }, queuedDrafts: [], scrapeJobs: [], readOk: {}, queue: null }, { consistency: forced.doc }), NIGHT + 20 * MIN);
-  check(forced.doc.unresolved === 0 && (res2.checks.find(c => c.id === "consistency") || {}).level === "ok", "once they were re-read, a count that still does not match is not an alarm (the light does not stay amber for ever)");
+  const healthyEv = at => ({ global: {}, watcher: { enabled: true }, gmail: { lastSyncCompletedAt: T(at - MIN) }, helper: { seenAtMs: at - 20e3 }, scrapeHealth: { consecutiveBad: 0 }, mirror: { enabled: true, lastSyncCompletedAt: T(at - 2 * MIN) }, bell: { reconcileAtMs: at - MIN }, monitor: { atMs: at - MIN }, queuedDrafts: [], scrapeJobs: [], readOk: {}, queue: null });
+  const res = LH.evaluate(Object.assign(healthyEv(NIGHT + 20 * MIN), { consistency: d }), NIGHT + 20 * MIN);
+  const cc = res.checks.find(c => c.id === "consistency") || {};
+  check(res.level === "warn" && cc.level === "warn" && res.kind === "consistency" && res.gap && res.gap.n === 3, "the light turns amber for the three that can be re-read: " + res.short);
+  check(/^3 conversations show fewer messages in the inbox than expected \(including orders 4170000\d\d\d/.test(cc.text) || /^3 conversations show fewer messages in the inbox than expected/.test(cc.text), "the sentence names how many: " + cc.text);
 
   // the watchdog runs it by itself when it is due, and publishes the judgement
   store.set("EtsyMail_Config/linkConsistency", { atMs: NIGHT - 25 * HOUR, checked: 5, mismatched: 0 });

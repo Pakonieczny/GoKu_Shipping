@@ -110,6 +110,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(JSON.stringify(CL.guess(item, { area: 'laser' }, 'progress').hits), '["g10-new"]');
     assert.equal(CL.guess(item, { area: 'laser' }, 'laser'), null, 'only out of In progress'); assert.equal(CL.guess(item, { area: 'nowhere' }, 'progress'), null);
     assert.equal(CL.guess({ kind: 'sheet', id: 'g10-has-line' }, { area: 'laser' }, 'progress'), null, 'it has its line'); assert.equal(CL.guess({ kind: 'sheet', id: 'gf-plain' }, { area: 'laser' }, 'progress'), null, 'not a cut metal');
+    // C1b (SETGOLD, Paul 12 Oct): a sheet of a metal with a green line that is in no set, dropped on a set or on New set, gets the same window when the plan asks for the line (the plan has the last word)
+    assert.equal(JSON.stringify(CL.guess(item, { set: 'set-1' }, 'progress')), '{"ids":["g10-new"],"hits":["g10-new"],"set":true}'); assert.equal(CL.guess(item, { newSet: true }, 'progress').set, true);
+    assert.equal(!!CL.guess({ kind: 'sheet', id: 'g10-has-line' }, { set: 'set-1' }, 'progress'), true, 'a cut metal: a partner of it may still owe a line, the plan says'); assert.equal(CL.guess({ kind: 'sheet', id: 'gf-plain' }, { set: 'set-1' }, 'progress'), null, 'not a metal with a green line');
+    assert.equal(CL.guess({ kind: 'set', id: 'set-1' }, { set: 'set-2' }, 'progress'), null, 'a set is not a sheet');
     // C2: the window says what it will do
     calc.length = 0; p = await LF.plan({ kind: 'sheet', id: 'g10-new', to: { area: 'laser' } });
     let ans = null; const asked = CL.ask(item, p.confirm[0], { dest: 'Laser cutting', fromName: 'In progress' }).then(v => { ans = v; });

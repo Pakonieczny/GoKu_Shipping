@@ -157,6 +157,27 @@
   // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
   // length written that way fell through as an unmapped option and held the line.
   const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*("|''|\u201d|\u2033|in\b|inch|cm\b|mm\b)/i.test(String(v || "")) || /^\s*\d{1,2}(\.\d)?\s*$/.test(String(v || ""));
+  /* BFWHY (Paul, 12 Oct 2026, order 4200828980, BIRTHFLOWER_NECKLACE_DISC-9, "Birth Flower: Marigold"): the line's other drop-down has values like Gold - 16" - 2 sides, Silver- 18"- 1 side,
+     Rose- 17"- 2 sides. Whatever the shop calls it, an option whose VALUE is only a metal, a chain length and / or a number of sides (with "pair" / "single" beside them) is the shop's metal / length option, never a
+     choice of charm. It is read like a metal option (named Metal / Colour / Finish), so it is no "unread option" that makes a second one ask. The station already reads the metal from such a
+     value whatever the option is called (design-1.html metalKeyForTx step 2); this is the same reading for the options. A metal word alone ("Rose" is also the June flower) or a length alone is
+     NOT enough: it takes a metal AND a length or a number of sides, and nothing else in the value. Never reads what the value MEANS (sides = back engraving is the engraving reading's). */
+  const SPEC_LENGTH = /(^|[^\p{L}\p{N}])\d{1,2}(?:\.\d)?\s*(?:"|''|\u201d|\u2033|in\b|inch(?:es)?\b|cm\b)/giu;
+  const SPEC_SIDES = /(^|[^\p{L}\p{N}])(?:[12]|one|two|single|double|both)[\s-]*sid(?:ed|es?)(?![\p{L}\p{N}])/giu;
+  const SPEC_METAL_WORD = /^(?:gold|silver|silvr|sterling|rose|rosegold|yellow|solid|filled|fill|gf|karat|\d{1,2}kt?|\d{1,2}karat)$/;
+  const SPEC_FILLER_WORD = /^(?:pair|pairs|single|chain|only|and|with)$/;   // (words that may stand beside a metal and a length / sides; "Gold Filled - Single" alone is not enough)
+  function metalSpecValue(value) {
+    let extent = 0, metal = 0;
+    const t = " " + decodeEntities(value == null ? "" : value).toLowerCase() + " ";
+    const rest = t.replace(SPEC_LENGTH, (m, a) => { extent++; return a + " "; }).replace(SPEC_SIDES, (m, a) => { extent++; return a + " "; });
+    for (const w of rest.split(/[^\p{L}\p{N}]+/u).filter(Boolean)) {
+      if (SPEC_METAL_WORD.test(w)) metal++;
+      else if (!SPEC_FILLER_WORD.test(w)) return false;
+    }
+    return metal > 0 && extent > 0;
+  }
+  /** An option that carries the metal (and length, sides…): by its NAME (Metal / Colour / Finish / Plating) or by its VALUE (metalSpecValue). */
+  const isMetalVariation = (name, value) => isMetalOption(name) || metalSpecValue(value);
   const bareValue = v => norm(String(v || "").replace(/[^\w\s.+&-]+/g, " ")).split(/[\s+&]+/).filter(w => w && !FORM_FILLER.has(w)).join(" ");
   const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?( us)?)$/i.test(bareValue(v));
   // a made-to-order listing prices each order with an option of its own ("Price: 28"): it says what was paid, never what
@@ -318,11 +339,17 @@
     const own = spec && Array.isArray(spec.fontPieces) && index != null ? spec.fontPieces[index] : null;
     // a FACE that names its own font word (front + back engraving: spec.engraving[face].fontWord, CONTRACT section 8) is read like a drop-down word; every other face uses the line's font (one font per purchase line)
     const fw = faceFontWord(spec, face), fid = fw ? fontOfPhrase(fw) : "";
-    const f = fid ? { id: fid, asked: fw, source: "face" } : own || (spec && spec.font) || null, askedOnly = fw && !fid ? fw : "";
+    let f = fid ? { id: fid, asked: fw, source: "face" } : own || (spec && spec.font) || null; const askedOnly = fw && !fid ? fw : "";
+    // BFFONT: a font the buyer named in the message (spec.fontText) serves a piece that no person, no face and no font option settled: it comes after the drop-down's own font and before the listing's
+    // usual one. An exact word or a spelling of one is the shop's font (mapped); a font that is not ours, or only a kind of font, is engraved in the nearest installed one and stays a request to look at.
+    const ft = !fid && !askedOnly && spec && spec.fontText && spec.fontText.asked && !(f && f.id && !f.listing && !(FONT_MESSAGE_OVER_OPTION && spec.fontText.id)) ? spec.fontText : null;
+    if (ft) f = { id: ft.id || "", asked: ft.asked, source: "message" };
     const inst = (f && f.id && fontById(f.id)) || fontById(DEFAULT_FONT);
     const listing = !!(f && f.listing), asked = askedOnly || (f && f.asked ? String(f.asked) : "");
     // (a listing's usual font that stands in for a word the shop does not offer is still a request to look at: not "mapped")
-    return { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
+    const out = { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
+    if (ft) { const same = ft.how === "exact" || ft.how === "spelling" || ft.how === "usual"; Object.assign(out, { mapped: same && !!ft.id, via: "message", how: ft.how, style: ft.style || "", substituted: !!ft.id && !same }); }
+    return out;
   }
   /** The font word a face of a front + back line names for itself (spec.engraving[face].fontWord), "" when it names none (the line's font then serves both faces).
    *  No face means the back, as everywhere else (CONTRACT: an absent face is "back"). */
@@ -341,12 +368,392 @@
   }
   /** The one plain line the cards show: "Font: Stylish → Playwrite US Trad", or for a font the shop does not offer "Requested font: Script (engraved in Source Sans 3)"; "" when the line has no font. */
   function fontLine(spec, index, face) {
-    const f = spec && (spec.font || (spec.fontPieces && spec.fontPieces[index]) || (faceFontWord(spec, face) && {})); if (!f) return "";
+    const f = spec && (spec.font || (spec.fontPieces && spec.fontPieces[index]) || (faceFontWord(spec, face) && {}) || (spec.fontText && spec.fontText.asked && {})); if (!f) return "";
     const p = pieceFont(spec, index, face), asked = clip(p.asked, 40), caps = p.caps ? " · capitals only" : "";
+    // BFFONT: a font the buyer wrote in the message says so ("from the message"); a stand-in says which kind it is the nearest of
+    if (p.via === "message") {
+      if (p.how === "usual") return `Font: ${p.name} (the usual font; the buyer asked for “${asked}”, from the message)`;
+      if (p.mapped) return `Font: ${asked ? asked + " → " : ""}${p.name}${caps} (from the message)`;
+      const kind = fontStyleLabel(p.style);
+      return p.substituted ? `Requested font: ${asked} (engraved in ${p.name}, the nearest ${kind ? kind + " " : ""}font we have${caps}; from the message)` : `Requested font: ${asked} (engraved in ${p.name}, the usual font; from the message)`;
+    }
     if (p.listing) return asked ? `Requested font: ${asked} (engraved in ${p.name}, the usual font of this listing${caps})` : `Font: ${p.name} (the usual font of this listing: the buyer named none${caps})`;
     return p.mapped ? `Font: ${asked ? asked + " → " : ""}${p.name}${caps}` : asked ? `Requested font: ${asked} (engraved in ${p.name})` : "";
   }
   const fontWhy = fr => `font “${clip(fr.asked, 40)}” is not one of the engraving fonts (${fr.pick.length === 1 ? "the app engraves in " : "the app has "}${fr.pick.map(f => f.name).join(", ")}): a person picks`;
+
+  /* ═══ 2c · a font named in the buyer's own words (BFFONT, Paul 12 Oct 2026) ═══════════════════════════════════════════════════════════════
+     (Paul, order 4200828980, personalisation "Typewriter font" / "Georgia Andy Margot Jaarsma" / "October 26 2020": "Sometimes users will stipulate the font choice in the message, so the
+     message has to be parsed for font choices, and that has to have some flexibility for wrongly spelled fonts or similar fonts to what we have in our repository that can be substituted in
+     case of not exact match.") One reader for EVERY listing: fontReadText(text) finds the font requests in free text (the personalisation box, the buyer's message, a staff note), says which
+     lines are only a request (they are not words to engrave), and fontTextOf(spec) keeps the one reading on the line as spec.fontText. A drop-down font (spec.font) is read exactly as before.
+     THE RULE (fontScanLine). A word is a font request only beside a CUE, never because it looks like a font:
+       · label       "Font: Pristina", "font Angelina", "Font style: Stylish", "Fuente: ..."  - a line that starts with the word font / typeface / lettering is a font line, whatever follows;
+       · font cue    "Typewriter font", "the Pristina font", "font Pristina", "in the uppercase Ace font", "letra typewriter" - the name touches the word font (before or after it);
+       · style cue   "Angelina script", "Pristina Style", "Cursive text - Izzy", "block letters" - a shop font word (never Ace) or a style word before script / style / text / letters / writing;
+       · weak cue    "in Comic Sans please", "using Vibur", "Evie in cursive", "with Typewriter." - in / with / using / use / choose / pick / select + a font name, ONLY when the name ENDS the phrase (end of the
+                     line, punctuation, please / thanks / and) and is a shop word, a two-word font name (Courier New) or cursive / script / calligraphy: "in Georgia Andy" is no request;
+       · bare line   "Pristina" alone on its own line: a font ONLY when it is one of the shop's own font stems (Stylish, Pristina, Typewriter, Comic, Vibur, Britannic Bold) and other lines carry the words.
+                     Angelina and Ace are first names as often as fonts: alone on a line they stay words and ONE plain line asks a person (fontText.asks), nothing is guessed.
+       A single-word font name of someone else's (Georgia, Courier, Arial, Times) needs the word font / typeface or a label: "Georgia Andy Margot Jaarsma" has no cue, so it is the buyer's NAME.
+       A word after no / not / don't / without / never is not asked for ("No cursive pls"); a question ("Can this be in cursive?") is put to the shop, not a choice; "font #3" names a picture on the
+       listing and is asked, never guessed; the buyer's own handwriting (a photo, "in his handwriting") is no font.
+     SPELLING (fontPhrase): case, spaces, punctuation, plurals and the shop's seven Typewriter spellings are set aside (fontKey); then the stems (typewr...), Comic Sans / Comic Sans MS, and an edit distance
+       (Damerau-Levenshtein, the same first letter, 1 edit for 5-9 letters, 2 for 10+: Typewritter, Tipewriter, Pristine, Angelia, Britanic, Viber, Cursiv) - spelling is forgiven only beside a font / style
+       cue or a label, never after a bare "in" ("in pristine condition" is no font).
+     NEAREST (FONT_STYLES, ONE table of data): a font that is not ours (Courier New, Georgia, Brush Script) or only a kind of font (cursive, serif, bold, handwriting) is engraved in the first INSTALLED font
+       of its style's ordered preference list; the buyer's own words stay beside it ("Requested font: Courier New (engraved in Crimson Text, the nearest typewriter-style font we have; from the message)")
+       so a person sees it. It never holds an order. Fonts that are only a taste (nice, pretty, italic, custom) pick nothing: the usual font and the same plain line. To add a font to the app: install
+       it (ENGRAVING_FONTS) and put its id FIRST in the lists of its styles below. jost-ace is capitals only and is never a stand-in.
+     WHERE IT COUNTS (pieceFont): after a person's saved choice, a font the buyer names for that face, and the drop-down's own font (which wins when the message names another one: spec.fontText.differs says so);
+       before the listing's usual font (FONT_LISTINGS). The words of a line that is only a request are taken out of the engraved words (engravingOf, the reader's result, a reading that failed). */
+  /** WHO WINS when the order's font OPTION (the drop-down: what the buyer bought) and a font written in the MESSAGE name different fonts. The default (Paul, 12 Oct 2026, from the audit): the drop-down wins,
+   *  and the plain lines say "Buyer's message also asks for X" - never a hold. Set this to true to let a message font that is one of ours (or the nearest of a kind) win instead: it is the only place that decides. */
+  const FONT_MESSAGE_OVER_OPTION = false;
+  /** The one plain sentence for a drop-down and a message that disagree ("" when they do not). */
+  const fontDisagree = (spec, short) => { const ft = spec && spec.fontText; if (!ft || !ft.differs || faceFontWord(spec, "front") || faceFontWord(spec, "back")) return "";   // (a face that names its own font is a face font, as ever)
+    if (short) return FONT_MESSAGE_OVER_OPTION && ft.id ? `Buyer's message asks for ${ft.asked}, not the option's ${ft.differs} (the message wins)` : `Buyer's message also asks for ${ft.asked} (the font option wins)`;
+    return FONT_MESSAGE_OVER_OPTION && ft.id ? `The font option chose ${ft.differs}; the buyer's message asks for ${ft.asked} and that is what is engraved` : `Buyer's message also asks for ${ft.asked}; the font option chose ${ft.differs} and that is what is engraved`; };
+  const FONT_STYLES = [
+    // style (row order is the priority when a phrase holds several style words), label (in the plain line), prefer (installed font ids, best first), names (other people's fonts, whole names), words (kind-of-font words)
+    { style: "typewriter", label: "typewriter-style", prefer: ["crimson-text", "source-sans-3"],
+      names: ["courier", "courier new", "courier prime", "american typewriter", "special elite", "prestige elite", "lucida console", "consolas", "monaco", "menlo", "andale mono", "letter gothic", "old typewriter", "monospace", "monospaced"],
+      words: ["monospace", "monospaced", "mono"] },
+    { style: "brush", label: "brush-script", prefer: ["vibur", "marck-script", "playwrite-us-modern", "playwrite-us-trad"],
+      names: ["brush script", "brush script mt", "brush lettering", "marker felt"], words: ["brush", "brushed", "signature", "marker"] },
+    { style: "script", label: "script", prefer: ["marck-script", "playwrite-us-trad", "vibur", "playwrite-us-modern"],
+      names: ["edwardian script", "edwardian script itc", "french script", "french script mt", "freestyle script", "kunstler script", "palace script", "palace script mt", "vivaldi", "zapfino", "mistral", "lucida calligraphy",
+        "bickham script", "great vibes", "allura", "alex brush", "parisienne", "dancing script", "sacramento", "tangerine", "italianno", "pinyon script", "playlist script", "petit formal script"],
+      words: ["script", "scripted", "scripts", "calligraphy", "calligraphic", "fancy", "elegant", "formal", "wedding", "ornate", "decorative", "flourish", "swash", "scrolly"] },
+    { style: "cursive", label: "cursive", prefer: ["playwrite-us-trad", "playwrite-us-modern", "marck-script", "vibur"],
+      names: ["monotype corsiva", "snell roundhand", "apple chancery", "zapf chancery", "lucida handwriting", "segoe script", "pacifico", "lobster", "yellowtail", "kaushan script", "satisfy", "courgette"],
+      words: ["cursive", "joined", "looped", "loopy", "swirly", "wavy", "flowing", "curly", "connected", "longhand"] },
+    { style: "handwriting", label: "handwriting", prefer: ["mynerve", "vibur", "playwrite-us-modern"],
+      names: ["bradley hand", "segoe print", "kristen itc", "ink free", "chalkboard", "chalkboard se", "indie flower", "caveat", "patrick hand", "permanent marker", "shadows into light", "amatic sc", "gloria hallelujah"],
+      words: ["handwriting", "handwritten", "handlettered", "casual", "childlike", "childish"] },
+    { style: "blackletter", label: "old-style", prefer: ["crimson-text", "marck-script"],
+      names: ["old english", "old english text", "old english text mt", "blackletter", "black letter", "fraktur", "gothic script", "textura", "chancery"], words: ["blackletter", "fraktur"] },
+    { style: "slab", label: "slab-serif", prefer: ["crimson-text", "libre-franklin"],
+      names: ["rockwell", "clarendon", "roboto slab", "museo slab", "slab serif", "egyptienne"], words: ["slab"] },
+    { style: "serif", label: "serif", prefer: ["crimson-text"],
+      names: ["times", "times new roman", "georgia", "garamond", "eb garamond", "palatino", "palatino linotype", "book antiqua", "bookman", "baskerville", "libre baskerville", "bodoni", "didot", "playfair", "playfair display",
+        "cambria", "century schoolbook", "caslon", "minion", "cormorant", "merriweather", "lora", "crimson", "crimson pro", "perpetua", "goudy", "sabon", "cochin"],
+      words: ["serif", "serifs", "classic", "classical", "traditional", "oldstyle"] },
+    { style: "rounded", label: "rounded", prefer: ["jost", "source-sans-3"],
+      names: ["arial rounded", "arial rounded mt bold", "vag rounded", "varela round", "quicksand", "nunito", "comfortaa", "fredoka"], words: ["rounded", "round", "bubble", "bubbly", "balloon", "puffy"] },
+    { style: "geometric", label: "geometric sans", prefer: ["jost", "source-sans-3"],
+      names: ["futura", "century gothic", "avenir", "avenir next", "montserrat", "gotham", "poppins", "josefin sans", "josefin", "raleway", "avant garde", "itc avant garde", "league spartan", "lexend", "urbanist"], words: ["geometric"] },
+    { style: "comic", label: "comic", prefer: ["source-sans-3"], names: ["comic sans", "comic sans ms", "comic neue", "comic relief"], words: ["cartoon", "cartoony"] },
+    { style: "bold", label: "bold sans", prefer: ["libre-franklin", "alegreya-sans", "source-sans-3"],
+      names: ["impact", "arial black", "cooper black", "cooper", "bold clare", "franklin gothic", "franklin gothic heavy", "bebas neue", "anton"], words: ["bold", "bolder", "heavy", "thick", "chunky", "extrabold", "block", "blocks", "blocky"] },
+    { style: "sans", label: "sans-serif", prefer: ["source-sans-3"], usual: ["plain", "simple", "clean", "normal", "standard", "default", "regular", "basic", "minimal", "minimalist", "usual", "neutral"],
+      names: ["arial", "helvetica", "helvetica neue", "calibri", "verdana", "tahoma", "trebuchet", "trebuchet ms", "open sans", "roboto", "lato", "segoe ui", "gill sans", "myriad", "myriad pro", "noto sans", "ubuntu", "proxima nova", "lucida sans",
+        "sans serif", "sans-serif", "san serif", "sansserif"], words: ["sans", "sanserif"] },
+    // a taste, not a style: nothing is picked for these (the usual font, and the plain line says what was asked)
+    { style: "vague", label: "", prefer: [], words: ["nice", "pretty", "cute", "beautiful", "lovely", "classy", "delicate", "dainty", "pleasant", "unique", "special", "different", "custom", "personal", "artistic", "creative", "fun", "funky",
+      "funny", "playful", "cool", "italic", "italics", "light", "thin"] }
+  ];
+  /** Words that, with the word font beside them, never name a font (colours and finishes: "black font", "darkened font"). */
+  const FONT_VETO = new Set("black white gold golden silver rose red blue green pink dark darker darken darkened lighter deeper deep engraved engraving size sizes smaller bigger larger small big large tiny whole same other another next previous".split(" "));
+  /** Class words allowed after a bare in / with / using (a plain "in cursive please"); every other class word needs the word font or a style cue. */
+  const FONT_WEAK_CLASS = new Set(["cursive", "script", "scripted", "calligraphy", "calligraphic"]);
+  /** A few shop-font spellings beyond FONT_STEMS: the Comic Sans family is the shop's Comic. */
+  const FONT_ALIASES = [{ id: "source-sans-3", rx: /^comic(?:sans(?:ms)?|neue|relief|book)?$/ }];
+  /** Shop words that are first names as often as fonts: "ace" counts only beside the word font / typeface (strict), "angelina" beside any cue but never bare or after a bare in (strong). */
+  const FONT_NAMELIKE = { ace: "strict", angelina: "strong" };
+  // ── the vocabulary, folded once (fontKey: case, accents, spaces and punctuation set aside) ──
+  const EXT_NAME = new Map(), CLS_WORD = new Map(), USUAL_WORD = new Set();
+  FONT_STYLES.forEach(row => {
+    for (const n of row.names || []) { const k = fontKey(n); if (k && !EXT_NAME.has(k)) EXT_NAME.set(k, row); }
+    for (const w of row.words || []) { const k = fontKey(w); if (k && !CLS_WORD.has(k)) CLS_WORD.set(k, row); }
+    for (const w of row.usual || []) { const k = fontKey(w); if (k && !CLS_WORD.has(k)) { CLS_WORD.set(k, row); USUAL_WORD.add(k); } }
+  });
+  /** Class words allowed beside a style cue (script, style, text, letters, writing): the unambiguous kinds only ("wedding style" is no font). */
+  const FONT_CORE_CLASS = new Set("cursive script scripted scripts calligraphy calligraphic handwriting handwritten serif sans slab block blocks bold monospace monospaced brush rounded geometric blackletter fraktur".split(" "));
+  const FONT_FUZZY = [...SHOP_WORDS].filter(k => k.length >= 5 && !/lowercase|capsonly|allcaps/.test(k)).map(k => ({ key: k, id: WORD_FONT.get(k) }));
+  const CLS_FUZZY = [...CLS_WORD.keys()].filter(k => k.length >= 7 || (k.length >= 5 && FONT_CORE_CLASS.has(k)));   // (a long kind-of-font word may be one edit off; a short one only when it is a plain kind: "Sarif", "Serrif")
+  /** The fonts of a style, best first: the first INSTALLED one that is not capitals-only. The ONE place that decides "nearest". */
+  function nearestFont(style) {
+    const row = FONT_STYLES.find(r => r.style === style);
+    const id = row && (row.prefer || []).find(x => { const f = fontById(x); return f && !f.caps; });
+    return id || DEFAULT_FONT;
+  }
+  const fontStyleLabel = style => { const row = FONT_STYLES.find(r => r.style === style); return row ? row.label : ""; };
+  /** Optimal-string-alignment (Damerau-Levenshtein) distance of two folded words; max + 1 as soon as it is certain to exceed max. */
+  function damerau(a, b, max) {
+    if (a === b) return 0;
+    const la = a.length, lb = b.length; if (Math.abs(la - lb) > max) return max + 1;
+    let p2 = null, p1 = Array.from({ length: lb + 1 }, (_, j) => j);
+    for (let i = 1; i <= la; i++) {
+      const cur = [i]; let low = i;
+      for (let j = 1; j <= lb; j++) {
+        let v = Math.min(p1[j] + 1, cur[j - 1] + 1, p1[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, p2[j - 2] + 1);
+        cur[j] = v; if (v < low) low = v;
+      }
+      if (low > max) return max + 1;
+      p2 = p1; p1 = cur;
+    }
+    return p1[lb];
+  }
+  /** How many edits a word of this many letters may be off: none up to 4 letters (ace, mono), one for 5-9, two for 10 and more. */
+  const fontEdits = len => (len >= 10 ? 2 : len >= 5 ? 1 : 0);
+  /** The key with a plural or a possessive set aside ("scripts", "typewriters", "pristina's"): the key itself first. */
+  const fontForms = k => { const v = [k]; if (k.length > 3 && /s$/.test(k)) v.push(k.slice(0, -1)); if (k.length > 4 && /es$/.test(k)) v.push(k.slice(0, -2)); return v; };
+  const shopCanon = k => (/^ace/.test(k) ? "ace" : k);
+  const readOf = (id, how, canon, extra) => Object.assign({ id, how, canon: canon || "", style: "", type: "shop" }, extra || {});
+  const styleRead = (row, how, canon) => (row.style === "vague" ? { id: "", how: "vague", style: "vague", canon, type: "class" } : { id: nearestFont(row.style), how, style: row.style, canon, type: how === "near" ? "external" : "class" });
+  /** A folded phrase as one of the SHOP's font words: exact ("pristina"), a spelling of it (the typewr... stems, Comic Sans, a plural), or - when `fuzzy` - within the edit distance of one. */
+  function asShop(k, o) {
+    for (const v of fontForms(k)) {
+      const sid = SHOP_WORDS.has(v) ? WORD_FONT.get(v) : "";
+      if (sid) return readOf(sid, v === k ? "exact" : "spelling", shopCanon(v));
+      const iid = o.shopOnly ? "" : WORD_FONT.get(v);   // (the installed fonts' own names: "Jost font", "Mynerve")
+      if (iid) return readOf(iid, v === k ? "exact" : "spelling", shopCanon(v));
+      const st = stemFont(v) || (FONT_ALIASES.find(a => a.rx.test(v)) || {}).id || "";
+      if (st) return readOf(st, "spelling", shopCanon(v));
+    }
+    if (o.fuzzy && k.length >= 5) {
+      let best = null, tie = false; const max = fontEdits(k.length);
+      for (const t of FONT_FUZZY) {
+        if (t.key[0] !== k[0]) continue;
+        const d = damerau(k, t.key, max); if (d > max) continue;
+        if (!best || d < best.d) { best = { d, t }; tie = false; } else if (d === best.d && t.id !== best.t.id) tie = true;
+      }
+      if (best && !tie) return readOf(best.t.id, "spelling", shopCanon(best.t.key));
+    }
+    return null;
+  }
+  const asExternal = k => { for (const v of fontForms(k)) { const row = EXT_NAME.get(v); if (row) return styleRead(row, "near", v); } return null; };
+  function asClass(k, o) {
+    for (const v of fontForms(k)) { const row = CLS_WORD.get(v); if (row) return Object.assign(styleRead(row, USUAL_WORD.has(v) ? "usual" : "class", v), { core: FONT_CORE_CLASS.has(v), weak: FONT_WEAK_CLASS.has(v) }); }
+    if (o && o.fuzzy && k.length >= 5) {
+      let best = null, tie = false; const max = fontEdits(k.length);
+      for (const t of CLS_FUZZY) { if (t[0] !== k[0]) continue; const d = damerau(k, t, max); if (d > max) continue; if (!best || d < best.d) { best = { d, t }; tie = false; } else if (d === best.d && CLS_WORD.get(t) !== CLS_WORD.get(best.t)) tie = true; }
+      if (best && !tie) { const row = CLS_WORD.get(best.t); return Object.assign(styleRead(row, "class", best.t), { core: FONT_CORE_CLASS.has(best.t), weak: FONT_WEAK_CLASS.has(best.t) }); }
+    }
+    return null;
+  }
+  /** The reading of ONE phrase (keys: its folded words) beside a cue: { id, how: exact | spelling | near | class | usual | vague, style, canon, kind } or null.
+   *  cue: "label" | "font" (the word font touches it) | "style" (script / style / text / letters / writing after it) | "weak" (a bare in / with / using) | "bare" (the whole line). */
+  function fontName(keys, o) {
+    const k = keys.join(""); if (k.length < 3 || (keys.length === 1 && FONT_VETO.has(k))) return null;   // ("black font" is a colour; "Cooper Black" is a font)
+    const cue = o.cue, strong = cue === "label" || cue === "font", style = cue === "style";
+    let h = asShop(k, { fuzzy: (strong || style) && (keys.length === 1 || keys.every(x => x.length >= 3)), shopOnly: cue === "weak" || cue === "bare" });   // (an initial before the name is not part of it: "A Angelina font")
+    if (h) {
+      const nl = FONT_NAMELIKE[h.canon];
+      if (nl === "strict" && !strong) return null;
+      if (nl === "strong" && !(strong || style)) return null;
+      return h;
+    }
+    if (cue === "bare") return null;
+    if (strong || keys.length >= 2) { h = asExternal(k); if (h && (strong || keys.length >= 2)) return h; }
+    h = asClass(k, { fuzzy: strong });
+    if (!h) return null;
+    if (strong) return h;
+    if (h.how === "vague" || h.how === "usual") return null;
+    return cue === "weak" ? (h.weak ? h : null) : h.core ? h : null;
+  }
+  const FONT_CUE = new Set("font fonts typeface typefaces lettering letra letras fuente fuentes tipografia police schriftart schrift lettertype fonte carattere".split(" "));
+  const FONT_STYLE_CUE = new Set("script style styles text letters letter writing".split(" "));
+  const FONT_WEAK_CUE = new Set("in with using use uses choose pick select prefer".split(" "));
+  const FONT_DET = new Set("the a an my your this that those some our".split(" "));
+  const FONT_INTENSIFIER = new Set("really very so super extra quite too truly".split(" "));
+  const FONT_NEG = new Set("no not dont don never without avoid nor except instead rather non".split(" "));
+  const FONT_END = new Set("please pls plz thanks thank thx ty if for on at and but then kindly".split(" "));
+  const FONT_STOPRUN = new Set("in with using use uses choose pick select prefer is are be was want wants like need would please pls and or but so then".split(" "));
+  const FONT_SKIP_AFTER = new Set("is are called named of in a an the to be would like".split(" "));
+  const FONT_LABEL = /^\s*(?:(?:\d{1,2}\s*[.)]|[-*•])\s*)?(?:the\s+)?(font\s*(?:choice|style|name|type|selection|option)s?|fonts?|typefaces?|lettering|letra|fuente|police|schriftart)\b\s*(?:(?:is|are|will\s+be|should\s+be|to\s+be)\b)?\s*([:=#\-–—]*)\s*(.*?)\s*$/iu;
+  const FONT_TOKEN = /#?\d+|[\p{L}][\p{L}\p{N}'’]*/gu;
+  const fontTokens = line => { const out = [], re = new RegExp(FONT_TOKEN.source, "gu"); for (let m; (m = re.exec(line));) out.push({ t: m[0], k: fontKey(m[0].replace(/['’]s$/i, "")), s: m.index, e: m.index + m[0].length }); return out; };
+  const styleIx = h => { const i = FONT_STYLES.findIndex(r => r.style === h.style); return i < 0 ? 99 : i; };
+
+  /** Every font request on ONE line: { hits: [{ cue, id, how, style, canon, type, ns, ne (the name), s, e (the whole request, to take out), question }], asks: [plain lines] }.
+   *  o.others: the text has other non-blank lines (a bare font word counts only then). */
+  function fontScanLine(line, o) {
+    o = o || {}; line = String(line == null ? "" : line);
+    const toks = fontTokens(line), K = toks.map(t => t.k), n = toks.length, hits = [], asks = [];
+    if (!n) return { hits, asks };
+    const question = /\?/.test(line), say = t => clip(String(t).trim(), 50);
+    const gapOk = (a, b) => /^[\s\-–—'"“”‘’*_]*$/.test(line.slice(toks[a].e, toks[b].s));      // token a then token b, nothing but spaces (and a dash or a quote) between
+    const brk = (a, b) => /[.!?;:,()\/|\\\[\]{}]/.test(line.slice(toks[a].e, toks[b].s));
+    const negated = i => { for (let j = i - 1; j >= 0 && j >= i - 3; j--) { if (brk(j, j + 1)) break; if (FONT_NEG.has(K[j])) return true; } return false; };
+    const joined = (a, b) => { for (let q = a; q < b; q++) if (!gapOk(q, q + 1)) return false; return true; };
+    const taken = (a, b) => hits.some(h => !(b < h.i0 || a > h.i1));
+    const push = (h, a, b, cueIx) => { if (taken(a, b)) return false; hits.push(Object.assign({ question, i0: a, i1: b }, h)); return true; };
+    // "font #3", "font 3", "font number 3", "font no. 3": a picture on the listing, not a font name
+    const numbered = c => (c + 1 < n && /^#?\d{1,2}$/.test(toks[c + 1].t)) || (c + 2 < n && /^(?:no|nr|num|number)$/.test(K[c + 1]) && /^\d{1,2}$/.test(toks[c + 2].t));
+
+    // 1 · a label: "Font: Pristina", "font Angelina", "Font style: Stylish", "Font: As discussed in messages, Slab Serif"
+    const lab = FONT_LABEL.exec(line);
+    if (lab && lab[3]) {
+      const sep = lab[2], rest = lab[3], at = line.lastIndexOf(rest);
+      const cut = rest.search(/\s[\/|]\s|;/), value = (cut > 0 ? rest.slice(0, cut) : rest).replace(/[\s.!]+$/, "").replace(/\s*(?:please|pls|thanks?)$/i, "").trim();
+      const ts = fontTokens(value), ks = ts.map(t => t.k);
+      let h = null, from = 0, upto = 0;
+      if (ts.length && (/^(?:#\s*|no\.?\s*|nr\.?\s*|number\s*)\d{1,2}\b/i.test(value) || (sep && /^\d{1,2}$/.test(value)) || (/#/.test(sep) && /^\d{1,2}\b/.test(value)))) asks.push(`the message names “${say(line)}”, a number on the listing's photo: a person picks the font`);
+      else {
+        for (let len = Math.min(5, ts.length); len >= 1 && !h; len--) { h = fontName(ks.slice(0, len), { cue: "label" }); if (h) upto = len; }
+        for (let st = 1; st < ts.length && !h; st++) for (let len = Math.min(3, ts.length - st); len >= 1 && !h; len--) { const g = fontName(ks.slice(st, st + len), { cue: "label" }); if (g && g.how !== "vague") { h = g; from = st; upto = len; } }
+        if (h) hits.push(Object.assign({ question, cue: "label", i0: 0, i1: n - 1, ns: at + ts[from].s, ne: at + ts[from + upto - 1].e, s: 0, e: cut > 0 ? at + cut : line.length }, h));
+        else if (sep && ts.length <= 8 && !question) hits.push({ question, cue: "label", i0: 0, i1: n - 1, ns: at, ne: at + value.length, s: 0, e: cut > 0 ? at + cut : line.length, id: "", how: "none", style: "", canon: "", asked: value });
+      }
+    }
+
+    // 2 · the word font beside the name: "Typewriter font", "the uppercase Ace font", "font Pristina", "a nice pretty font"
+    for (let c = 0; c < n; c++) {
+      if (!FONT_CUE.has(K[c]) || taken(c, c)) continue;
+      let found = null;
+      for (let len = Math.min(4, c); len >= 1 && !found; len--) {
+        const a = c - len; if (!joined(a, c)) continue;
+        const h = fontName(K.slice(a, c), { cue: "font" });
+        if (h && !negated(a) && !negated(c)) found = { h, a, b: c, ns: toks[a].s, ne: toks[c - 1].e, s: toks[a].s, e: toks[c].e };
+      }
+      if (!found && c > 0) {   // a run of kind-of-font words: "clean all-caps block font", "in a nice pretty font"
+        let a = c; while (a > 0 && c - a < 3 && gapOk(a - 1, a) && !FONT_STOPRUN.has(K[a - 1])) a--;
+        let best = null, at = -1;
+        for (let q = c - 1; q >= a; q--) { const w = asClass(K[q], { fuzzy: true }); if (w && !FONT_VETO.has(K[q]) && (!best || styleIx(w) < styleIx(best))) { best = w; at = q; } }
+        if (best && !negated(at) && !negated(c)) found = { h: best, a, b: c, ns: toks[a].s, ne: toks[c - 1].e, s: toks[a].s, e: toks[c].e };
+      }
+      if (!found) {   // the name after the word: "font Pristina", "Font: Vibur", "font #3"
+        if (!/^[\s:=#\-–—(\[“"']*$/.test(c + 1 < n ? line.slice(toks[c].e, toks[c + 1].s) : "")) continue;
+        if (numbered(c)) { asks.push(`the message names “${say(line)}”, a number on the listing's photo: a person picks the font`); continue; }
+        let q = c + 1; while (q < n && q <= c + 3 && FONT_SKIP_AFTER.has(K[q]) && joined(q - 1, q)) q++;
+        for (let len = Math.min(4, n - q); len >= 1 && !found; len--) {
+          if (q + len > n || !joined(q, q + len - 1)) continue;
+          const h = fontName(K.slice(q, q + len), { cue: "font" });
+          if (h && h.how !== "vague" && h.how !== "usual" && !negated(c)) found = { h, a: c, b: q + len - 1, ns: toks[q].s, ne: toks[q + len - 1].e, s: toks[c].s, e: toks[q + len - 1].e };
+        }
+      }
+      if (found && found.a > 0) {   // the taste words in front of a name belong to the request: "a really nice pretty script font", "the nice Pristina font"
+        let a = found.a, swallowed = false;
+        while (a > 0 && found.b - a < 5 && gapOk(a - 1, a) && (FONT_INTENSIFIER.has(K[a - 1]) || ((CLS_WORD.get(K[a - 1]) || {}).style === "vague" && !FONT_VETO.has(K[a - 1])))) { a--; swallowed = true; }
+        const words = a;
+        if (swallowed && a > 0 && FONT_DET.has(K[a - 1]) && gapOk(a - 1, a)) a--;
+        if (a < found.a && !negated(a)) { found.a = a; found.s = toks[a].s; if (found.h.how === "vague") found.ns = toks[words].s; }   // (a taste is asked in all its words: "nice pretty")
+      }
+      if (found && push(Object.assign({ cue: "font", ns: found.ns, ne: found.ne, s: found.s, e: found.e }, found.h), found.a, found.b)) { /* taken */ }
+    }
+
+    // 3 · the name before a style word: "Angelina script", "Pristina Style", "Cursive text", "block letters"
+    for (let c = 1; c < n; c++) {
+      if (!FONT_STYLE_CUE.has(K[c]) || taken(c, c)) continue;
+      for (let len = Math.min(3, c + 1); len >= 2; len--) {   // (a font NAME that ends in the style word: "Brush Script", "Edwardian Script ITC" is read whole)
+        const a = c - len + 1; if (a < 0 || !joined(a, c) || taken(a, c)) continue;
+        const h = asExternal(K.slice(a, c + 1).join("")); if (h && !negated(a) && push(Object.assign({ cue: "style", ns: toks[a].s, ne: toks[c].e, s: toks[a].s, e: toks[c].e }, h), a, c)) break;
+      }
+      if (taken(c, c)) continue;
+      for (let len = Math.min(3, c); len >= 1; len--) {
+        const a = c - len; if (!joined(a, c) || taken(a, c)) continue;
+        const h = fontName(K.slice(a, c), { cue: "style" });
+        if (h && !negated(a) && push(Object.assign({ cue: "style", ns: toks[a].s, ne: toks[c - 1].e, s: toks[a].s, e: toks[c].e }, h), a, c)) break;
+      }
+    }
+
+    // 4 · a bare in / with / using + a name that ENDS the phrase: "in Comic Sans please", "Evie in cursive", "using Vibur."
+    for (let w = 0; w < n; w++) {
+      if (!FONT_WEAK_CUE.has(K[w]) || taken(w, w)) continue;
+      let q = w + 1; while (q < n && FONT_DET.has(K[q]) && joined(q - 1, q)) q++;
+      if (q >= n || (!joined(w, w + 1) && q === w + 1)) continue;
+      let adj = 0; while (adj < 2 && q + adj < n - 1 && (CLS_WORD.get(K[q + adj]) || {}).style === "vague" && joined(q + adj, q + adj + 1)) adj++;   // ("in a pretty cursive": the taste words before the style are part of the request)
+      for (let len = Math.min(3, n - q - adj); len >= 1; len--) {
+        const first = q + adj, last = first + len - 1; if (!joined(first, last) || taken(w, last)) continue;
+        const h = fontName(K.slice(first, last + 1), { cue: "weak" });
+        if (!h || negated(w)) continue;
+        if (!(last === n - 1 || FONT_END.has(K[last + 1]) || brk(last, last + 1))) continue;
+        if (push(Object.assign({ cue: "weak", ns: toks[first].s, ne: toks[last].e, s: toks[w].s, e: toks[last].e }, h), w, last)) break;
+      }
+    }
+
+    // 5 · the whole line is one of the shop's font words (and other lines carry the words)
+    if (!hits.length && o.others) {
+      let a = 0; if (n > 1 && /^\d{1,2}$/.test(toks[0].t) && /^\s*[.)]\s*$/.test(line.slice(toks[0].e, toks[1].s))) a = 1;   // ("3. Typewriter")
+      const keys = K.slice(a); const lead = line.slice(0, toks[a].s), tail = line.slice(toks[n - 1].e);
+      if (keys.length && keys.length <= 3 && joined(a, n - 1) && /^[\s\-–—*•"'“”‘’(]*$/.test(lead) && /^[\s.!,\-–—*"'“”‘’)]*$/.test(tail)) {
+        const h = fontName(keys, { cue: "bare" });
+        if (h) hits.push(Object.assign({ question, cue: "bare", i0: a, i1: n - 1, ns: toks[a].s, ne: toks[n - 1].e, s: 0, e: line.length }, h));
+        else { const sh = asShop(keys.join(""), { shopOnly: true }); if (sh && FONT_NAMELIKE[sh.canon]) asks.push(`“${say(line)}” is alone on a line: a name or the ${sh.canon === "ace" ? "Ace" : "Angelina"} font? It stays in the words; a person checks`); }
+      }
+    }
+    hits.sort((x, y) => x.i0 - y.i0);
+    return { hits, asks };
+  }
+
+  const FONT_EDGE_L = /^(?:[\s,;:.!\-–—|\/&+*"'“”‘’()\[\]]|(?:please|pls|plz|kindly|thanks|thx|and|in|with|using|use)\b)+/i;
+  const FONT_EDGE_R = /(?:[\s,;:.!\-–—|\/&+*"'“”‘’()\[\]]|\b(?:please|pls|plz|kindly|thanks|thx|and|in|with|using|use|the|for|on|at|to|of)|\bthank\s*you)+$/i;
+  const FONT_SENT = new Set("i i'd id i'll please pls engrave engraved engraving write written put add make want wanted like would could can you name names word words letter letters initial initials is are be will text".split(" "));
+  /** A line's leftover after a request is taken out: still words to engrave ("D", "Evie", "Sarah & Tom") and not a sentence or an instruction. */
+  const fontCleanRest = r => { if (r === "I") return true; /* (the initial I: "I font Stylish") */ const ts = r.toLowerCase().split(/\s+/).map(x => x.replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, "")).filter(Boolean); return r.length <= 45 && ts.length > 0 && ts.length <= 5 && !ts.some(t => FONT_SENT.has(t)) && !/\b(?:font|typeface|script|cursive|capitals?|uppercase|lowercase|caps|centre?d?|cent(?:er|re))\b/i.test(r); };
+  const fontFiller = r => { const w = r.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").split(/\s+/).filter(Boolean); return w.length > 0 && w.every(x => new Set("please pls kindly can could would you i id i'd to have has put place write add engrave engraved engraving the my this that following text words word wording on at in for it and thanks thank thx want like need use using with a an be is".split(" ")).has(x)) && !(w.length === 1 && (w[0] === "i" || w[0] === "id" || w[0] === "a")); };
+  /** The font requests of a free text and the text without them: { text, lines, requests: [{ asked, id, how, style, canon, cue, line, quote }], asks: [plain lines], removed: [quotes], changed }.
+   *  A line that is only a request goes; a request at the edge of a short line of words ("D font Stylish", "Evie in cursive please") is cut out of it; a request inside a sentence stays where it is (the font is
+   *  read, the sentence is a person's or the paid reader's to settle). o.keepFaceLines: a line that names the front or the back is left to the face reader; o.cueOnly: a bare font word on a line of its own is not read (the paid reader's own words). Text with no request is answered unchanged. */
+  function fontReadText(text, o) {
+    o = o || {}; const raw = String(text == null ? "" : text), src = raw.replace(/\r/g, "").split("\n");
+    const others = !o.cueOnly && src.filter(l => l.trim()).length > 1, out = [], requests = [], asks = [], removed = []; let changed = false;
+    src.forEach((line, ix) => {
+      if (!line.trim()) { out.push(line); return; }
+      const sc = fontScanLine(line.length > 1500 ? line.slice(0, 1500) : line, { others });   // (a long message is read as far as its first 1,500 letters of a line)
+      for (const a of sc.asks) asks.push(a);
+      const use = [];
+      for (const h of sc.hits) {
+        if (h.question) { asks.push(`the buyer asks about a font (“${clip(line.trim(), 50)}”): the shop answers`); continue; }
+        use.push(h);
+        requests.push({ asked: h.asked != null ? h.asked : line.slice(h.ns, h.ne).trim(), id: h.id, how: h.how, style: h.style || "", canon: h.canon || "", cue: h.cue, line: ix, quote: clip(line.trim(), 60) });
+      }
+      if (!use.length) { out.push(line); return; }
+      // the request, with the in / using / please that leads into it and the please / thanks that follows
+      let rest = line;
+      for (const h of use.slice().sort((a, b) => b.s - a.s)) {
+        let s = h.s, e = h.e;
+        if (h.cue !== "label" && h.cue !== "bare") {
+          const head = rest.slice(0, s).replace(/\s+$/, ""), m = /(?:^|[\s,;])((?:(?:please|pls|plz|kindly)\s+)?(?:in|with|using|use|uses|choose|pick|select|prefer)\s+(?:(?:the|a|an|my|your)\s+)?)$/i.exec(head + " ");
+          if (m) s = Math.max(0, head.length + 1 - m[1].length);
+          const t = /^\s*(?:,?\s*(?:please|pls|plz|kindly|thanks?|thank\s*you|thx))?[\s.!]*/i.exec(rest.slice(e)); if (t) e += t[0].length;
+        }
+        rest = rest.slice(0, s) + " " + rest.slice(e);
+      }
+      rest = rest.replace(/[ \t]+/g, " ").replace(FONT_EDGE_L, "").replace(FONT_EDGE_R, "").trim().replace(/^(?:\d{1,2}\s*[.)]?|[-*•])$/, "");   // ("3. Typewriter Font": the list number goes with it)
+      const faced = o.keepFaceLines && /(?:^|[^\p{L}\p{N}_])(?:front|back)(?![\p{L}\p{N}_])/iu.test(line);
+      if (/^(?:a|an|the)$/.test(rest) && use.every(h => h.type === "class")) rest = "";   // ("a nice font": the article goes with it; an initial after a font NAME stays)
+      if (!rest || fontFiller(rest)) { removed.push(clip(line.trim(), 60)); changed = true; }
+      else if (!faced && fontCleanRest(rest)) { out.push(rest); removed.push(clip(line.trim(), 60)); changed = true; }
+      else out.push(line);
+    });
+    let outText = raw;
+    if (changed) outText = out.join("\n").replace(/^(?:[ \t]*\n)+/, "").replace(/(?:\n[ \t]*)+$/, "").replace(/\n[ \t]*(?:\n[ \t]*){2,}/g, "\n\n");
+    return { text: outText, lines: outText.split("\n").map(x => x.trim()).filter(Boolean), requests, asks, removed, changed };
+  }
+  /** A font phrase the paid reader or a face gave ("cursive", "Typewriter font", "Courier New", "Pristine"): { id, how, style, canon } - id "" when nothing can be chosen. Exact readings are the shop's (fontOfPhrase). */
+  function fontResolve(phrase) {
+    const s = String(phrase == null ? "" : phrase).trim(); if (!s) return { id: "", how: "none", style: "", canon: "" };
+    const exact = fontOfPhrase(s); if (exact) return { id: exact, how: "exact", style: "", canon: "" };
+    const ts = fontTokens(s).filter(t => !FONT_CUE.has(t.k)), ks = ts.map(t => t.k);
+    for (let len = Math.min(5, ks.length); len >= 1; len--) for (let st = 0; st + len <= ks.length; st++) { const h = fontName(ks.slice(st, st + len), { cue: "label" }); if (h && h.how !== "vague") return h; }
+    const vague = ks.map(k => asClass(k, { fuzzy: true })).find(h => h && h.how === "vague");
+    return vague || { id: "", how: "none", style: "", canon: "" };
+  }
+  /** The font the buyer's own words ask for, as spec.fontText: { asked, id, name, how, style, from, quote, cue, also?, asks? } or null when the words name no font and raise no question.
+   *  Read in this order: the staff note (the shop's own word), the personalisation box, the buyer's message; the first one that names a font decides, the others are listed in `also`. */
+  function fontTextOf(spec) {
+    if (!spec || spec.noDesign) return null;
+    const pools = [["staffNote", spec.staffNote], ["personalization", (spec.personalization || []).join("\n")], ["buyerMessage", spec.buyerMessage]];
+    let main = null; const also = [], asks = [];
+    for (const [from, txt] of pools) {
+      if (!txt || !String(txt).trim()) continue;
+      const r = fontReadText(visible(txt));
+      for (const a of r.asks) if (!asks.includes(a)) asks.push(a);
+      for (const q of r.requests) {
+        if (!main) { if (q.id || q.asked) main = Object.assign({}, q, { from }); }
+        else if (q.asked && fontKey(q.asked) !== fontKey(main.asked) && !also.includes(q.asked)) also.push(q.asked);
+      }
+    }
+    if (!main && !asks.length) return null;
+    if (!main) return { asked: "", id: "", name: "", how: "ask", asks };
+    const f = main.id ? fontById(main.id) : null;
+    return Object.assign({ asked: main.asked, id: f ? f.id : "", name: f ? f.name : "", how: main.id ? main.how : main.how === "vague" ? "vague" : "none", style: main.style, from: main.from, quote: main.quote, cue: main.cue },
+      also.length ? { also: also.slice(0, 3) } : {}, asks.length ? { asks: asks.slice(0, 3) } : {});
+  }
 
   /** { field, value, source } for one option, or null when nothing deterministic applies. */
   function optionLookup(maps, listingId, name, value) {
@@ -701,6 +1108,102 @@
     const bad = k => (skuFamilyConflict(k, o.line) ? 2 : 0) + (/\(HUGGIE\)\s*$/i.test(k) && !huggieLine ? 1 : 0);
     return [...found.values()].sort((a, b) => a.rank - b.rank || (a.rank ? bad(a.sku) - bad(b.sku) : 0) || a.sku.length - b.sku.length || a.sku.localeCompare(b.sku)).slice(0, max).map(x => ({ sku: x.sku, why: x.why }));
   }
+  /* ═══ 3b · THE FORM GUARD (HUGGIEGUARD, 12 Oct 2026) ═════════════════════════════════════════════════════════════════════
+     Paul, on order 4198409468 (Etsy SKU "SCHRODINGER CAT", Jewellery: Necklace, Silver, 18"): "This order is a dual piece/charm necklace and the SKU you currently have associated with is
+     for the (Huggie) version of this charm. Since this is a necklace piece how did this get past your safeguards? This should be an obvious one."
+     WHY IT GOT PAST: resolveSku takes a transaction SKU that is a master SKU as it stands (source "transaction"), and nothing else looked at WHAT that master entry is. The only
+     form check there was (skuFamilyConflict) reads the WORDS NECKLACE / EARRING / STUD / HUGGIE / HOOP in the SKU text, and only on the paths that come from Etsy's inventory table; the
+     master's plain "SCHRODINGER CAT" has none of those words. It is the same drawing as "SCHRODINGER CAT 2 (HUGGIE)" (one design file, charmnest/master/SCHRODINGER_CAT.ai, 21.2 x 24.3 pt:
+     the library keeps one drawing under several SKU names), while the necklace charms are the numbered "SCHRODINGER CAT 1" and "SCHRODINGER CAT 2" (29 to 31 pt). The line read as that huggie drawing,
+     with no question, and its vector picture showed the huggie skull cat.
+     THE GUARD: every master entry and every line gets a FORM, "huggie" | "earring" | "necklace" | "unknown", from signals that already exist:
+       a master entry: its SKU text ("(HUGGIE)", "HUGGIE HOOPS- X", "HOOPS- X", an EARRING or STUD word, a NECKLACE / CHOKER / PENDANT word; two families in one SKU say nothing); else the design FILE it
+         shares with other SKUs (ctx.masterShared: the library keeps one drawing under several names): a plain-named SKU on a drawing that a (HUGGIE)-named SKU also holds is the huggie drawing when
+         the huggie names are at least as many as the plain ones (SCHRODINGER CAT and "SCHRODINGER CAT 2 (HUGGIE)": one each), and the drawing's file is named for a huggie (".._HUGGIE_.ai",
+         "HUGGIE_HOOPS-_X.ai") counts as one more huggie name; a drawing that six plain SKUs hold and one (HUGGIE) SKU is not a huggie drawing; else a plain X whose "X (HUGGIE)" (or "HUGGIE HOOPS- X")
+         is a DIFFERENT drawing is the necklace-size charm of that design (1,330 of the master's SKUs: the shop draws the huggie version apart, "soft": it only keeps a huggie line off it);
+       a line: a Huggie CHARM SET option; an option that says the form (Type / Style / Necklace or Earrings, a person's saved form answer first); a necklace length option; the earring words
+         (lineSignals: earring, stud, huggies, hoop words, the shop's own earring SKUs) and a person's answer to "is this a pair of earrings?"; the title's family when it says necklace; the -CO charm-only mark.
+     THE RULE: an automatic match (the transaction SKU as it stands, its master spelling, -CO, a known typo or name, Etsy's inventory SKU, a letter-family member, two designs named in words) never
+     crosses these forms: a NECKLACE line never takes a huggie design, a HUGGIE line never takes a necklace design, an EARRING (stud) line never takes a huggie design. An unknown form on either
+     side never clashes, and the SKU-word checks that already existed (a necklace SKU on an earrings listing and the reverse) are left exactly as they were. A clash is not cut: the line waits for a
+     person with ONE plain line, and the numbered siblings of the same name that fit the line are offered (spec.siblings).
+     A person's saved answer for the listing and SKU (alias, option map, saved pair) is never touched: it wins, also over an exact master SKU (resolveSku trusts the exact SKU; the answer is read here). */
+  const FORMS = Object.freeze(["huggie", "earring", "necklace", "unknown"]);
+  const FORM_TEXT = { huggie: [/\(\s*HUGGIES?\s*\)/, /(?:^|[^A-Z0-9_])HUGGIES?(?![A-Z0-9_])/, /HUGGIE[\s_-]*HOOPS?(?![A-Z])/, /^\s*HOOPS?\s*-/], earring: [/(?:^|[^A-Z])(?:EARRINGS?|STUDS?)(?=[^A-Z]|$)/], necklace: [/(?:^|[^A-Z])(?:NECKLACES?|CHOKERS?|CHOCKERS?|PENDANTS?)(?=[^A-Z]|$)/] };
+  /** The form a SKU's TEXT says: "huggie" | "earring" | "necklace", or "" when it says none or two families ("HUGGIE_3722", a numbered design named Huggie, says nothing). */
+  function formOfText(sku) {
+    const s = upSku(sku), h = FORM_TEXT.huggie.some(r => r.test(s)), e = FORM_TEXT.earring.some(r => r.test(s)), n = FORM_TEXT.necklace.some(r => r.test(s));
+    if (n && (h || e)) return "";
+    return h ? "huggie" : e ? "earring" : n ? "necklace" : "";
+  }
+  const HUGGIE_FILE = /^HUGGIE_?HOOPS?|[A-Z0-9]_HUGGIE(?:_|\.)/i;   // (a design file named for a huggie: "HUGGIE_HOOPS-_UNICORN.ai", "CROWN_2_HUGGIE_.ai"; never "HUGGIE_3722.ai")
+  const fileOf = e => { const p = e && e.aiPath ? String(e.aiPath) : ""; return p.slice(p.lastIndexOf("/") + 1); };
+  /** The form of a master design, from its SKU and what the library says of its drawing. ctx: { masterEntry, masterShared? (sku → the master SKUs that share its design file; none: SKU text only) }.
+   *  → { form: "huggie" | "earring" | "necklace" | "unknown", by: "text" | "shared" | "twin" | "none", soft? (a necklace read only from a distinct huggie twin) } */
+  function masterForm(sku, ctx) {
+    ctx = ctx || {}; const s = upSku(sku); if (!s) return { form: "unknown", by: "none" };
+    const t = formOfText(s); if (t) return { form: t, by: "text" };
+    const me = ctx.masterEntry, e = me ? me(s) : null; if (!e) return { form: "unknown", by: "none" };
+    let H = HUGGIE_FILE.test(fileOf(e)) ? 1 : 0, P = 1, X = 0; const plain = [s];
+    if (typeof ctx.masterShared === "function") for (const k of ctx.masterShared(s) || []) { const u = upSku(k); if (!u || u === s) continue; const f = formOfText(u); if (f === "huggie") H++; else if (f) X++; else { P++; plain.push(u); } }
+    if (H >= 1 && !X && H >= P) return { form: "huggie", by: "shared" };
+    // (a design is one form whatever name it is asked under: "MUSIC 4" and "MUSIC4" are one drawing, so any of its plain names with a distinct huggie twin makes it the necklace-size charm)
+    const mine = designFile(e);
+    for (const n of plain) for (const twin of [n + " (HUGGIE)", "HUGGIE HOOPS- " + n]) { const te = me(twin); if (te && mine && designFile(te) && designFile(te) !== mine) return { form: "necklace", by: "twin", soft: true }; }
+    return { form: "unknown", by: "none" };
+  }
+  const HUGG_WORD = /\bhugg(?:ie|y|ies)\b/i;
+  /** The form a LINE is, by the words and options it already carries. o: { optionMaps } (a person's saved form answers are read first). → { form, by } (by: the plain words for what said it). */
+  function lineForm(line, o) {
+    line = line || {}; o = o || {};
+    if (huggieSet(line)) return { form: "huggie", by: "its Huggie CHARM SET option" };
+    const vars = (line.variations || []).map(v => ({ name: lvName(v), value: lvValue(v) })).filter(v => v.name && v.value && !isPersonalisation(v.name)), opts = vars.filter(v => !isMetalOption(v.name));
+    const hug = HUGG_WORD.test([String(line.title || "")].concat(opts.map(v => v.value)).join(" ")) || FORM_TEXT.huggie.some(r => r.test(upSku(line.sku)));
+    const f = formOfLine(line, o.optionMaps);
+    if (f === "necklace") return { form: "necklace", by: "its option says necklace" };
+    if (f === "huggie") return { form: "huggie", by: "its option says huggie" };
+    if (f === "earrings" || f === "earring-single") return { form: hug ? "huggie" : "earring", by: "its option says earrings" };
+    if (opts.some(v => /\bnecklace\b/i.test(v.name) && isChainOption(v.name) && looksLikeLength(v.value))) return { form: "necklace", by: "it has a necklace length option" };
+    if (f === "charm" && opts.some(v => /^\s*charm\s*[+&]\s*engraving\s*$/i.test(v.value))) return { form: "necklace", by: "its option is the necklace charm" };
+    const sig = lineSignals(line); let ear = sig.soldAs ? (hug ? "huggie" : "earring") : "";
+    if (!ear && sig.ask && o.optionMaps) { const ans = optionLookup(o.optionMaps, line.listingId, EARS_OPT, sig.ask.value); if (ans && ans.field === "form" && (ans.value === "earrings" || ans.value === "huggie")) ear = ans.value === "huggie" ? "huggie" : "earring"; }
+    if (ear) return { form: ear, by: "its earring words" };
+    if (lineFamily(line) === "necklace") return { form: "necklace", by: "its title says necklace" };
+    if (variationBase(upSku(line.sku))) return { form: "necklace", by: "its SKU is the charm-only mark" };
+    return { form: "unknown", by: "none" };
+  }
+  /** Does a line's form clash with a design's form? Exactly the three crossings GUARD-API.md names: a NECKLACE line on a huggie design, a HUGGIE line on a necklace design, an EARRING (stud) line on a huggie design.
+   *  Everything else (`unknown` on either side, a huggie line on an earring design, a necklace SKU on an earrings listing and the reverse) is NOT this guard's: the SKU-word family check
+   *  (skuFamilyConflict, on Etsy's inventory SKUs) keeps deciding those exactly as it did. */
+  function formClash(lf, df) {
+    if (lf && typeof lf === "object") lf = lf.form;
+    if (df && typeof df === "object") df = df.form;
+    return (lf === "necklace" && df === "huggie") || (lf === "huggie" && df === "necklace") || (lf === "earring" && df === "huggie");
+  }
+  // (what a person may be OFFERED for a line: any design that is not of another known form; a necklace read only from a distinct huggie twin (soft) never stops an earring line)
+  const formFits = (want, f) => !want || want === "unknown" || !f || f.form === "unknown" || f.form === want || (want === "huggie" && f.form === "earring") || (want === "earring" && f.form === "necklace" && !!f.soft);
+  /** The numbered siblings of a SKU the master holds ("SCHRODINGER CAT" → "SCHRODINGER CAT 1", "SCHRODINGER CAT 2"), the ones whose form fits a line of form o.form, numbers only (never the -CO or (HUGGIE) twin of the
+   *  plain name unless the line is a huggie: then "X 1 (HUGGIE)" and the huggie twins of X itself). → [{ sku, form, why, n, widthPt?, heightPt? }] by number, at most 12. ctx: { masterEntry, masterLoose?, masterShared? }. */
+  function siblingsOf(etsySku, ctx, o) {
+    ctx = ctx || {}; o = o || {}; const me = ctx.masterEntry, own = upSku(etsySku); if (!me || !own) return [];
+    const base = own.replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, "").trim(), want = o.form || "unknown", out = [], seen = new Set([own]);
+    const add = (cand, n, why) => {
+      const k = masterSku(cand, me, ctx.masterLoose); if (!k || seen.has(k)) return;
+      const mf = masterForm(k, ctx); if (!formFits(want, mf)) return;
+      seen.add(k); const e = me(k) || {}; out.push(Object.assign({ sku: k, form: mf.form, why, n }, Number.isFinite(e.widthPt) ? { widthPt: e.widthPt } : {}, Number.isFinite(e.heightPt) ? { heightPt: e.heightPt } : {}));
+    };
+    if (want === "huggie") { add(base + " (HUGGIE)", 0, `the huggie version of ${base}`); add("HUGGIE HOOPS- " + base, 0, `the huggie version of ${base}`); }
+    // the same name written for the line's family ("GREEKGODDESS_NECKLACE_4" on an earrings line: "GREEKGODDESS_EARRING_4"), when the master holds it
+    const fam = want === "necklace" ? "necklace" : want === "earring" || want === "huggie" ? "earring" : "";
+    if (fam) for (const t of familyTwins(own, fam, me, ctx.masterLoose)) add(t, 0, `the ${fam} version of ${own} (same number)`);
+    for (let n = 0; n <= 12; n++) for (const sep of [" ", "-", "_", ""]) add(base + sep + n + (want === "huggie" ? " (HUGGIE)" : ""), n, `numbered version ${n} of ${base}`);
+    return out.sort((a, b) => a.n - b.n || a.sku.localeCompare(b.sku)).slice(0, 12);
+  }
+  const FORM_AUTO = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory", "letter"]);   // (a person's answer, "alias" / "option" / a saved pair, is never in this list)
+  const FORM_THIS = { huggie: "a huggie design", earring: "an earring design", necklace: "a necklace design" }, FORM_LINE = { huggie: "huggie hoops", earring: "a pair of earrings", necklace: "a necklace" };
+  /** The ONE plain line for a held line: what the design is and what the listing is. */
+  const formReason = (etsy, design, df, lf) => (etsy === design ? `SKU “${etsy}” is ${FORM_THIS[df.form]} in the library` : `SKU “${etsy}” reads as “${design}”, which is ${FORM_THIS[df.form]} in the library`) + `, but this listing is ${FORM_LINE[lf.form]}`;   // (starts "SKU ": QUESTION_REASON reads a stored hold that begins so as a question)
   function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
     const raw = upSku(line.sku);
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
@@ -1470,6 +1973,12 @@
       const named = info.source !== "design" && info.source !== "name";   // (two designs the line names, not one design file that draws two bodies)
       info.mismatched = false; info.source = null; info.members = null; if (named) info.twoNamed = true; else info.twoBodies = true;
     }
+    /* A SET OF TWO DESIGNS (SIBLINGS, Paul, 12 Oct 2026: a necklace whose listing wears two different charms, "SCHRODINGER CAT 1" and "SCHRODINGER CAT 2"): the pair of designs a PERSON
+       saved for this listing and SKU (the saved pair link, source "alias", charm-nest-siblings.js suggests it) on a line that is not an earring pair is two pieces of ONE order line, each
+       its own design, no Left and Right, nothing mirrored, counted like any other multi-piece line (units times two). Never read from words: a SKU or title that names two designs
+       on a necklace is still one piece of the first design (twoNamed above), and an earring line keeps the Left and Right it always had. */
+    const aliasSet = o.members && o.members.source === "alias" && Array.isArray(o.members.members) && o.members.members.length === 2 ? o.members.members.map(m => upSku(m && m.sku)) : null;
+    if (aliasSet && aliasSet[0] && aliasSet[1] && aliasSet[0] !== aliasSet[1] && !info.earring && soldAs !== "single") { delete info.twoNamed; delete info.twoBodies; info.set = { designs: aliasSet, source: "alias" }; }
     if (earForm) info.earForm = earForm;
     if (askWords && !earForm && !(ansWords && ansWords.field === "ignore")) info.asks.push({ name: EARS_OPT, value: askWords.value, guess: 0, why: askWords.why, rule: "ear:words" });
     // a line that says two different designs but names ONE waits for a person (never guessed): the second design, or "the same on both ears" (the answer under SECOND_OPT)
@@ -1495,6 +2004,7 @@
     else if (info.mismatched && info.earring) { if (PIECE_RULES.mismatchedMakesTwo) info.perUnit = 2; else info.glued = true; }
     else if (info.earring && PIECE_RULES.pairFormsMakeTwo) info.perUnit = 2;
     else if (!info.earring && !info.single && PIECE_RULES.optionCountsMake && cr.certain && cr.n > 1) info.perUnit = cr.n;
+    if (info.set) info.perUnit = info.set.designs.length;   // (a set of two designs: two pieces for each unit bought, whatever a count option says)
     // what a person should see, plainly
     if (info.asks.some(a => a.rule === "ear:words")) info.notes.push("it waits until a person says whether this is a pair of earrings (" + askWords.why + ")");
     else if (earForm) info.notes.push("a person said this listing is " + (earForm === "huggie" ? "huggie hoops" : "a pair of earrings"));
@@ -1503,6 +2013,7 @@
     if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the line says two different designs: ${info.second.why}` : "the line says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
+    if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order line, no Left or Right, nothing mirrored`);
     // (the same outline twice, two keys or two mittens, on a line that is not an earring pair: ONE charm. A single earring that names no ear is such a line too.)
     if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) info.oneBody = { index: 0, count: 2, rule: "the left body" };
     if (info.oneBody) info.notes.push(ONE_WORDS(info.oneBody.index, info.oneBody.count, "the same outline twice"));
@@ -1515,11 +2026,11 @@
   const perUnitOf = p => Math.max(1, Math.floor(+(p && p.perUnit)) || 1);
   /** The form a RAW line's options choose (necklace, earrings, huggie, charm...), by the deterministic rules interpretLine applies to a line with no
    *  learned answers: a Huggie CHARM SET value, the default option map, a form word in a Type / Style / chain option. null when none. */
-  function formOfLine(line) {
+  function formOfLine(line, maps) {   // (maps: a person's saved option maps, read first: HUGGIEGUARD; none = the default rules only, as before)
     for (const v of (line && line.variations) || []) {
       const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
       if (HUGGIE_SET.test(value)) return "huggie";
-      const hit = optionLookup(null, line.listingId, name, value); if (hit && hit.field === "form") return hit.value;
+      const hit = optionLookup(maps || null, line.listingId, name, value); if (hit && hit.field === "form") return hit.value;
       const byName = isChainOption(name) || isFormOption(name) || isEarFormOption(name), asForm = byName ? formByWords(value) : EAR_NEG_TEST.test(value) && formByWords(value) === "charm" ? "charm" : null;   // ("Charm only (no hoops)" is the loose charm under any name)
       if (asForm) return asForm;
     }
@@ -1642,13 +2153,14 @@
   const E_ENG = "(?:engrav\\w*|engr\\b|etch\\w*|inscri\\w*|writing|handwrit\\w*|personali[sz]\\w*|monogram\\w*)";
   const E_SIDE = "(?:[\\s-]*side)?", E_JOIN = "(?:\\+|&|\\/|,|\\band\\b|\\bplus\\b)";
   const E_RX = s => new RegExp(s, "i");
-  const FB_BOTH = [E_RX(`\\bfront${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?back\\b`), E_RX(`\\bback${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?front\\b`), /\bboth[\s-]*(?:sides?|faces?)\b/i, /\b(?:two|2|double|dual|dbl|dble)[\s-]*(?:sided|sides|faces?)\b/i];
+  const FB_SIDES_2 = /\b(?:two|2|double|dual|dbl|dble)(?:\s*x)?[\s-]*(?:sided|sides?|faces?)\b|\bboth[\s-]*(?:sides?|faces?)\b/i, FB_SIDES_1 = /\b(?:one|1|single|sgl)(?:\s*x)?[\s-]*(?:sided|sides?|faces?)\b|\b(?:flower|bloom|design|art|artwork|picture|image|symbol|motif)s?[\s-]*only\b/i;   // (the number of engraved sides a value names: "Gold - 16\" - 2 sides", "single sided", "2x sided", "1side", "one side only", "flower only")
+  const FB_BOTH = [E_RX(`\\bfront${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?back\\b`), E_RX(`\\bback${E_SIDE}\\s*${E_JOIN}\\s*(?:the\\s+)?front\\b`), /\bboth[\s-]*(?:sides?|faces?)\b/i, /\b(?:two|2|double|dual|dbl|dble)(?:\s*x)?[\s-]*(?:sided|sides?|faces?)\b/i];
   const FB_BOTH_ENG = [E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+)?both\\b`)];
   const FB_FRONT = [E_RX(`\\bfront${E_SIDE}\\s*[-–:()]*\\s*(?:only\\b|${E_ENG})`), E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+|to\\s+|for\\s+|in\\s+)?(?:the\\s+)?front\\b`)];
   const FB_BACK = [E_RX(`\\bback${E_SIDE}\\s*[-–:()]*\\s*(?:only\\b|${E_ENG})`), E_RX(`\\b${E_ENG}\\s*[-–:()]*\\s*(?:on\\s+|at\\s+|to\\s+|for\\s+|in\\s+)?(?:the\\s+)?back\\b`)];
   const FB_NONE = /\bno[\s-]*engrav\w*|\bwithout\s+(?:any\s+)?engrav\w*|\bengrav\w*\s*[:\-]?\s*(?:none|no)\b|\bnot\s+engraved\b|\bno\s+personali[sz]ation\b/i;
   const FB_NEAR = new RegExp(E_ENG, "i");
-  const FB_QUICK = /front|back|both|sided|faces?\b|\bsides?\b|blank/i;
+  const FB_QUICK = /front|back|both|sided|faces?\b|sides?\b|only\b|blank/i;
   const FB_BLANK = /(?:^|[\s·|\-–+\/,])blank(?:$|[\s·|\-–+\/,])/i;   // a bar's "GOLD · Blank" / "Blank- SILVER": the buyer chose no engraving
   const FB_VALUE = /^\s*(?:the\s+)?(front|back|both)(?:[\s-]*sides?)?(?:\s+only)?\s*$/i, FB_NAME = /engrav|side|face|where|position|placement|location|inscri|writing|monogram|etch|personali[sz]/i;
   const FB_YES = /^\s*(?:yes|y|true|included?|add(?:ed)?|\+|1)\s*$/i, FB_NO = /^\s*(?:no|none|n\/a|false|0|-)\s*$/i;
@@ -1668,6 +2180,38 @@
     if (!m && FB_NAME.test(n)) for (const seg of v.split(/\s*[·|]\s*/)) { const f = FB_VALUE.exec(seg); if (f) { m = f[1].toLowerCase(); break; } }   // ("GOLD·Front" under "Metal/Both Sides Engraved? (Front/Back)")
     if (!m && FB_YES.test(v)) m = engravingModeIn(n, false);
     return m;
+  }
+  /** SIDES (BFSIDES, Paul 12 Oct 2026, order 4200828980: Birth Flower necklace "Gold - 16\" - 2 sides"): the number of engraved sides an option VALUE names, 2 / 1 / 0 (none named). Any option, any case, with
+   *  metal and length words around it ("Silver- 16\"- 2 sides", "GOLD·DOUBLE SIDED", "one-sided", "single side", "both sides"). A value that also names a face ("Tag1 (front+back) 2 sided") says its faces itself, so it is no side count. */
+  function sidesOfValue(value) {
+    const v = decodeEntities(value == null ? "" : value).replace(/&nbsp;|\u00a0/gi, " ").trim(); if (!v) return 0;
+    const two = FB_SIDES_2.test(v), one = FB_SIDES_1.test(v);
+    if (two === one) return 0;   // (none, or both at once ("1 side / 2 sides"): the value does not say, nothing is guessed)
+    const rest = v.replace(new RegExp(FB_SIDES_2.source, "ig"), " ").replace(new RegExp(FB_SIDES_1.source, "ig"), " ");
+    return engravingModeIn(rest, false, true) || FB_NONE.test(rest) ? 0 : two ? 2 : 1;
+  }
+  /** THE POLICY for the two readings a person might want the other way round (BFSIDES, 12 Oct 2026; each is read when a line is read, so one line here flips it for every order, nothing else changes):
+   *    oneSideWithWords  "skip" (default): "1 side" on a design with its own front art engraves nothing of the buyer's even when words were written: ONE calm line "Buyer chose 1 side; words not engraved: ...", the order is never held.
+   *                      "ask": the same, and a person is asked (reviewKind "conflict"). "back": the words are engraved on the back anyway, as for 2 sides.
+   *    twoSidesUnlabelled "back" (default): 2 sides on such a design puts the buyer's unlabelled words on the BACK, no question. "ask": the words are suggested for the back and a person confirms.
+   *  Labelled words ("back: ...") are the back's in both; words the buyer labelled "front:" / "back:" against the side count are always a question for a person. */
+  const SIDES_POLICY = { oneSideWithWords: "skip", twoSidesUnlabelled: "back" };
+  /** A listing whose pictures or handwriting come from the buyer (a photo, a drawing, a signature): its design is only a blank carrier and its sides are the buyer's, whatever the master draws. */
+  const SIDES_PICT_TITLE = /\b(?:hand[\s-]?writ\w*|photos?|photographs?|pictures?|drawings?|sketch\w*|logos?|fingerprints?)\b/i;
+  /** Does a master design carry its own engraved front art (a flower, a sign, a picture) that the buyer's words only sit beside? { front: true | false | null, art, long, how }.
+   *  An entry counts its members: the outline, the hanging holes (entry.holes), the BACK KEEP-OUT layers (entry.backKeepOut), and what is left is the design's artwork. A LONG design (a bar, a plate, a tag:
+   *  its long side is LONG_ASPECT = 1.4 times its short side, as charm-nest-geom lies it flat) is a carrier of words whatever drawing it holds, so it never counts as art-first. (BFSIDES checked it on the 1,907 designs of the library
+   *  index of 9 Oct 2026 against their real drawings: with the long-design guard it says "has art" wrongly for 6, and misses 27 that have some; a miss only leaves the line read as before.) An explicit entry.frontArt (a person's patch,
+   *  a later index) wins over the count. null = the entry is not known or counts nothing: the line is read as before. */
+  function frontArtOf(entry, title) {
+    if (!entry || typeof entry !== "object") return { front: null, art: 0, long: false, how: "" };
+    const w = +entry.widthPt, h = +entry.heightPt, long = w > 0 && h > 0 && Math.max(w, h) / Math.min(w, h) >= 1.4;
+    if (typeof entry.frontArt === "boolean") return { front: entry.frontArt, art: entry.frontArt ? 1 : 0, long, how: "flag" };
+    if (title && SIDES_PICT_TITLE.test(decodeEntities(String(title)))) return { front: false, art: 0, long, how: "kind" };   // (a handwriting / photo / drawing listing: the buyer's picture is the art, read as before)
+    const m = Math.floor(+entry.members), n = Math.floor(+entry.holes);
+    if (!(m >= 1) || !(n >= 0)) return { front: null, art: 0, long, how: "" };
+    const art = m - 1 - n - (Array.isArray(entry.backKeepOut) ? entry.backKeepOut.length : 0);
+    return { front: art > 0 && !long, art: Math.max(0, art), long, how: "index" };
   }
 
   /* ── the words of each face ─────────────────────────────────────────────────────────────────────────────────────────── */
@@ -1816,8 +2360,8 @@
   /** What the buyer chose and wrote about the faces of ONE line (the CONTRACT's spec.engraving, plans/front-back-1011/CONTRACT.md section 2). line: the Etsy line (variations, title,
    *  personalization); spec: its reading (personalization, buyerMessage, staffNote, messages, font, pair, pieceCount). null when the line has no face word anywhere: such a line has no
    *  `spec.engraving`, which the faces model reads as today's default (the back, as the engraving reader always read it). Never a person's word: that is row.engravingOverride. */
-  function engravingOf(line, spec) {
-    line = line || {}; spec = spec || {};
+  function engravingOf(line, spec, art) {
+    line = line || {}; spec = spec || {}; art = art || { front: null };
     // a rework / modification fee line ("Re-work: $5 back engraving fee") and any line with no design of its own is never an engraving of its own
     if (spec.noDesign || /\b(?:re-?work|modifications?)\b/i.test(String(line.title || ""))) return null;
     const opts = (line.variations || []).map(v => { const id = idOf(v && (v.valueId != null ? v.valueId : v.value_id)); return { name: decodeEntities(lvName(v)).trim(), value: decodeEntities(lvValue(v)).trim(), drop: !!id && id !== "0" }; }).filter(v => v.name || v.value);
@@ -1846,17 +2390,32 @@
     const said = new Map();
     for (const o of spec.options || []) if (o && o.mapped && /^(?:front|both|back)$/.test(String(o.mapped.engrave || ""))) said.set(decodeEntities(String(o.name || "")).trim() + "\n" + decodeEntities(String(o.value == null ? "" : o.value)).trim(), o.mapped.engrave);
     const hits = [];
-    for (const v of opts) { if (free(v) || !v.value) continue; const mode = said.get(v.name + "\n" + v.value) || engravingModeOfOption(v.name, v.value); if (mode) hits.push({ mode, name: v.name, value: v.value, from: `${v.name}: ${v.value}` }); }
+    for (const v of opts) {
+      if (free(v) || !v.value) continue;
+      const asked = said.get(v.name + "\n" + v.value); let mode = asked || engravingModeOfOption(v.name, v.value), side = 0;
+      // SIDES (BFSIDES): a value that only counts sides ("Gold - 16\" - 2 sides") on a design that already carries its own front art (a birth flower, a zodiac sign, a disc with a picture) engraves the BUYER'S words on the
+      // back for 2 sides (the front is the design's art, untouched) and nothing of the buyer's for 1 side. A design with no art of its own (a tag, a bar, a plain disc) keeps both faces as buyer text, as before;
+      // a person's saved answer for the value (`said`) and a value that names its faces stay above this.
+      if (!asked && art.front === true) { const n = sidesOfValue(v.value); if (n) { side = n; mode = n === 2 ? "back" : "none"; } }
+      if (mode) hits.push({ mode, name: v.name, value: v.value, from: `${v.name}: ${v.value}`, side });
+    }
     const noneOpt = opts.find(v => !free(v) && v.value && (FB_NONE.test(v.value) || (/engrav/i.test(v.name) && FB_NO.test(v.value))));
     const blankOpt = !noneOpt && !hits.length && pers.length ? opts.find(v => !free(v) && v.value && FB_BLANK.test(v.value)) : null;
     const titleMode = engravingModeIn(title, true);
     // font lines ("font: Ace", "Ace font") are not words to engrave: set aside and read as the buyer's font
     let noteFont = "";
-    const stripFont = txt => String(txt || "").split("\n").filter(l => {
+    // BFFONT: and the lines / phrases the tolerant font reader knows (a misspelling, "Pristine font", "in cursive please", "Courier New font", "3. Typewriter Font"): their font is spec.fontText, they are not words to engrave
+    const stripFont = txt => fontReadText(String(txt || "").split("\n").filter(l => {
       const f = /^\s*(?:(?:the\s+)?font(?:\s+choice)?|typeface|lettering)\s*(?:is|[:=\-–—])\s*(.+?)\s*$/i.exec(l) || /^\s*(.+?)\s+font\s*$/i.exec(l);
-      if (f && fontOfPhrase(f[1])) { noteFont = noteFont || f[1].trim(); return false; }
+      if (f && fontOfPhrase(f[1])) {
+        // (a line that holds WORDS beside the font - "D+R in the Ace font", "please engrave “MC” in the uppercase Ace font" - is never dropped whole: the reader below takes the font phrase out and leaves the
+        //  words; a sentence stays whole for the front / back checks that hold a non-plain inscription. Only a line that is nothing but the font goes, as it always did.)
+        const rd = fontReadText(l, { keepFaceLines: true });
+        if (rd.requests.length && (rd.text.trim() || !rd.changed)) return true;
+        noteFont = noteFont || f[1].trim(); return false;
+      }
       return true;
-    }).join("\n");
+    }).join("\n"), { keepFaceLines: true }).text;
     const persText = stripFont(pers.join("\n"));
     const pools = [["staffNote", staff], ["personalization", persText], ["buyerMessage", buyer], ["messages", msgs.join("\n")]].map(([k, t]) => ({ k, text: k === "personalization" ? t : stripFont(t) })).filter(p => p.text.trim());
     const readPool = p => {
@@ -1901,6 +2460,10 @@
     }
     if (!mode) return null;
     const optHit = source === "option" ? (hits.length ? { name: hits[0].name, value: hits[0].value } : noneHit ? { name: noneHit.name, value: noneHit.value } : null) : null;
+    const sideN = source === "option" && hits.length && hits[0].side && !conflict ? hits[0].side : 0;   // (a side count read on a design with its own front art: the buyer's words on the back, or none)
+    const sideWords = sideN === 1 ? persText.trim() : "", oneWay = sideWords ? String(SIDES_POLICY.oneSideWithWords || "skip") : "";   // (1 side and words anyway: see SIDES_POLICY)
+    const sideBack = sideN === 2 || (sideN === 1 && oneWay === "back"), sideNone = sideN === 1 && !sideBack;
+    if (sideN === 1 && sideBack) mode = "back";
 
     // ── the texts: what goes on each face ──
     const eng = { v: 1, mode, source, front: null, back: null, textSource: "none", needsPerson: false, confidence: 0.5, why: "", option: optHit };
@@ -1908,7 +2471,7 @@
     const flag = (kind, reason, partial) => { if (!review) review = { kind, reason: clip(reason, 170), partial: !!partial }; };
     const raw = (pers.length ? pers.join("\n") : [staff, buyer, msgs.join("\n")].filter(Boolean).join("\n")).slice(0, 300);
     const modeWords = { front: "front", back: "back", both: "front and back", none: "no engraving" }[mode];
-    const fromWhat = source === "option" ? `the option “${clip(modeFrom, 50)}”` : source === "title" ? "the listing title" : modeFrom;
+    const fromWhat = source === "option" ? `the option “${clip(sideN ? hits[0].value : modeFrom, 50)}”` : source === "title" ? "the listing title" : modeFrom;
     const hand = source === "option" && /hand\s*writ|writing/i.test(modeFrom);
     const picture = PICT.test(raw) || hand;
     let single = false, quoted = false;
@@ -1933,7 +2496,7 @@
       }
       else if (mode === "front" && has("back")) flag("conflict", `front engraving chosen but the words are labelled back${has("front") ? " too" : ""}: a person says which face`);
       else if (mode === "back" && has("front")) flag("conflict", `back engraving chosen but the words are labelled front${has("back") ? " too" : ""}: a person says which face`);
-      else if (mode === "none") flag("conflict", "the option says no engraving, but the buyer labelled front / back words: a person decides");
+      else if (mode === "none") flag("conflict", sideNone ? "1 side was chosen (the design's own art only), but the buyer labelled front / back words: a person decides" : "the option says no engraving, but the buyer labelled front / back words: a person decides");
       else if (mode === "front" && !allHave("front")) flag("texts", `front engraving, but ${pieceName((fsets.find(x => !x.front) || {}).slot)} has no words: a person says what goes on it`);
       if (odd.length) flag("texts", `the words include instructions or notes (${odd.slice(0, 2).map(x => `“${clip(x.text, 30)}”`).join(", ")}): a person writes exactly what is engraved`);
       if (!review || review.partial) {
@@ -1966,12 +2529,23 @@
       else if (picture && !labelled.length) flag("texts", "front and back engraving, but the writing comes as pictures or handwriting: a person handles it");
       else if (!pers.length && !staff) flag("texts", "front and back engraving; the words are only in a note, not in the personalisation box: a person says what goes on each face");
       else flag("texts", "front and back engraving, but the words do not say which go on the front and which on the back: a person decides");
-    } else if (mode === "none" && pers.length) flag("conflict", "the option says blank (no engraving), but the buyer wrote words: a person decides");
-    if (mode === "none" && !review) return null;
-    if (mode === "back") { eng.front = null; eng.back = null; }   // (back only: the engraving reader reads the words as it always did)
+    } else if (mode === "none" && pers.length && !sideNone) flag("conflict", "the option says blank (no engraving), but the buyer wrote words: a person decides");
+    else if (sideNone && sideWords && oneWay === "ask") flag("conflict", `1 side was chosen (the design's own art only), but the buyer wrote words (“${clip(sideWords.replace(/\s*\n+\s*/g, " / "), 40)}”): a person says whether they go on the back`);
+    // SIDES: 2 sides on a design with its own front: the words are the BACK's (labelled "back: ..." or one plain block), no guess is needed because the front is the art. Words that are no plain inscription
+    // (a request, a long note) are left to the engraving reader, as every back line is; no words at all is asked of a person.
+    if (sideBack && !review) {
+      const lab = pick && !pick.problems.length && pick.back && ["personalization", "staffNote"].includes(pick.k) ? pick.back : null, own = lab ? lab.text : persText.trim();
+      if (!own) { if (!buyer && !staff && !msgs.length) flag("nowords", "2 sides were chosen (the design's own art on the front, the buyer's words on the back), but no words were written"); }
+      else if (plainInscription(own)) { eng.back = faceOut({ text: own, own: lab && lab.own }); single = !lab; if (!lab && sideN === 2 && SIDES_POLICY.twoSidesUnlabelled === "ask") flag("texts", `2 sides were chosen (the design's own art on the front), and the words are not labelled: a person confirms they go on the back`, true); }
+      else { const q = quotedOne(own); if (q && plainInscription(q)) { eng.back = faceOut({ text: q }); single = quoted = true; if (sideN === 2 && SIDES_POLICY.twoSidesUnlabelled === "ask") flag("texts", `2 sides were chosen (the design's own art on the front), and the words are not labelled: a person confirms they go on the back`, true); } }
+    }
+    if (mode === "none" && !review && !sideNone) return null;
+    if (mode === "back" && !sideBack) { eng.front = null; eng.back = null; }   // (back only: the engraving reader reads the words as it always did)
     // ── the plain line, the confidence and what a person is asked ──
     const fw = eng.front && eng.front.fontWord, bw = eng.back && eng.back.fontWord, lineFont = !fw && !bw && spec.font && spec.font.asked ? String(spec.font.asked) : "";
-    const fontSay = fw && bw && fw !== bw ? ` · fonts ${fw} / ${bw}` : fw || bw ? ` · font ${fw || bw}` : lineFont ? ` · font ${lineFont}` : "";
+    // (the message's font, when no face and no option names one: "· font Courier New → Crimson Text (from the message)")
+    const msgFont = !fw && !bw && !lineFont && spec.fontText && spec.fontText.asked ? (() => { const p = pieceFont(spec, null); return ` · font ${clip(spec.fontText.asked, 30)}${p.name && spec.fontText.id && p.name.toLowerCase() !== String(spec.fontText.asked).toLowerCase() ? " → " + p.name : ""} (from the message)`; })() : "";
+    const fontSay = (fw && bw && fw !== bw ? ` · fonts ${fw} / ${bw}` : fw || bw ? ` · font ${fw || bw}` : lineFont ? ` · font ${lineFont}` : msgFont) + (!fw && !bw && fontDisagree(spec) ? ` · ${fontDisagree(spec, true)}` : "");
     if (review) {
       eng.needsPerson = true; eng.reviewKind = review.kind; eng.why = review.reason; eng.raw = raw;
       eng.textSource = mode === "none" || review.kind === "nowords" || picture ? "none" : pick && !pick.problems.length ? "labelled" : "unlabelled";
@@ -1982,9 +2556,12 @@
       const sure = source === "option" ? 0.95 : source === "title" ? 0.7 : 0.6;
       if (mode === "both") { eng.why = `front and back from ${fromWhat}: front ${sayFace(eng.front)}, back ${sayFace(eng.back)}${fontSay}`; eng.confidence = sure; }
       else if (mode === "front") { eng.why = `front only from ${fromWhat}: ${sayFace(eng.front)} goes on the front${fontSay}`; eng.confidence = quoted ? Math.min(sure, 0.8) : Math.min(sure, 0.9); }
+      else if (sideBack) { eng.why = clip(`${sideN} side${sideN === 1 ? "" : "s"} from ${fromWhat}: the design's own art is the front, the words go on the back${eng.back ? `: ${sayFace(eng.back)}` : " (read from the note)"}${fontSay}`, 200); eng.confidence = Math.min(art.how === "flag" ? 0.95 : 0.9, quoted ? 0.8 : 1); }
+      else if (sideNone) { eng.why = sideWords ? clip(`Buyer chose 1 side; words not engraved: “${clip(sideWords.replace(/\s*\n+\s*/g, " / "), 90)}”`, 200) : clip(`1 side from ${fromWhat}: only the design's own art is engraved`, 200); eng.confidence = art.how === "flag" ? 0.95 : 0.9; }
       else { eng.why = `back only from ${fromWhat}: read as before`; eng.confidence = source === "option" ? 0.95 : 0.8; }
       if (source !== "option" && (mode === "front" || mode === "both")) eng.why = clip(`${eng.why} · the listing has no such option: a person confirms`, 200);
     }
+    if (sideN) eng.sides = { n: sideN, art: art.how };   // (the side count that was read, and how the design's own front art was known: "index" counted from the library entry, "flag" a person's / the index's word)
     return eng;
   }
   engravingOf.faceParse = faceParse; engravingOf.modeIn = engravingModeIn; engravingOf.modeOfOption = engravingModeOfOption;
@@ -2017,7 +2594,7 @@
       // product's own) is never read differently.
       const old = !!tx && listing.by !== "listing" && Array.isArray(table.products) && names(tx) && !table.products.some(p => p && !p.d && upSku(p.sku) === tx) && !isNoDesign(listing.sku, ctx.noDesign) &&
         (line.variations || []).some(v => { const nm = v.name || v.formatted_name, val = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
-          return !!nm && !!val && !isMetalOption(nm) && !isPersonalisation(nm) && !optionLookup(ctx.optionMaps, line.listingId, nm, val) && tiesToOption(table, v, listing.sku); });
+          return !!nm && !!val && !isMetalVariation(nm, val) && !isPersonalisation(nm) && !optionLookup(ctx.optionMaps, line.listingId, nm, val) && tiesToOption(table, v, listing.sku); });
       if (listing.sku !== tx && (names(listing.sku) ? (!tx || !names(tx) || wide || old) : (wide && !names(tx)))) {
         // Etsy's SKU for the option must also be the right kind of design for the line. A necklace SKU on an earrings listing is read as its
         // earring twin only when the whole listing's SKUs have one (listingTwin) and nobody has picked a charm for the option; else the line waits
@@ -2032,6 +2609,18 @@
     const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
     if (viaInventory && skuSource !== "alias") skuSource = "inventory";
+    // HUGGIEGUARD (stage A): what the line IS, and a person's saved answer for this listing and SKU. resolveSku trusts an exact master SKU before any saved answer, so when the exact design's form clashes
+    // with the line (below) the saved answer is read here: another design wins (source "alias"), the same design is the person's word that it is right (formSaid: never held again)
+    const guardCtx = { masterEntry: me, masterLoose: loose, masterShared: ctx.masterShared };
+    let lf = { form: "unknown", by: "none" }, formSaid = false;
+    try {
+      lf = lineForm(line, { optionMaps: ctx.optionMaps });
+      if (me && sku && !set && FORM_AUTO.has(skuSource)) {
+        const a0 = ctx.aliases && ctx.aliases[String(line.listingId)], r0 = upSku(line.sku);
+        const saved = a0 ? upSku((r0 && a0.bySku ? bySkuOf(a0.bySku, r0) : "") || (a0.sku && !a0.v && !/\(HUGGIE\)$/.test(r0) ? a0.sku : "")) : "";
+        if (saved && formClash(lf, masterForm(sku, guardCtx))) { if (saved !== sku) { sku = saved; skuSource = "alias"; } else formSaid = true; }
+      }
+    } catch (_) { /* the guard never stops a line from being read */ }
     // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
     // option's answer: the option is not asked, and no charm a person once picked for it stands over the SKU
     const sold = viaInventory && viaInventory.etsy || upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
@@ -2050,7 +2639,7 @@
     if (!viaPick && !huggieSet(line)) {
       for (const v of line.variations || []) {
         const nm = lvName(v), val = lvValue(v).trim();
-        if (!nm || !val || isMetalOption(nm) || isPersonalisation(nm) || isSizeOption(nm) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
+        if (!nm || !val || isMetalVariation(nm, val) || isPersonalisation(nm) || isSizeOption(nm) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
         const r = letterRead(nm, val, sku, me, ctx.optionMaps && ctx.optionMaps[String(line.listingId)]); if (r) letters.set(v, Object.assign(r, { name: nm, value: val }));
       }
       if (letters.size > 1) letters.clear();                                    // (two letter options may be two charms: a person says, as before)
@@ -2089,6 +2678,15 @@
     // nothing closes its order until its own designs are sent to a sheet or a person completes it), and nothing is asked about it: no metal, SKU or option question, no engraving
     const own = !!(special && special.own && !special.notCut);
     const quiet = noDesign || own;
+    // HUGGIEGUARD (stage B): an automatic match never crosses forms (see section 3b). A person's answer (source alias / option / a saved pair) and a line that is not cut are never held.
+    let formHold = null, df = { form: "unknown", by: "none" };
+    try {
+      if (me && sku) df = masterForm(sku, guardCtx);
+      if (!quiet && me && sku && !formSaid) {
+        const named = skuSource === "pair" && members && (members.source === "skus" || members.source === "title");   // (two designs named in words: each is checked)
+        if (FORM_AUTO.has(skuSource) || named) for (const d of named ? members.members.map(m => m.sku) : [sku]) { if (!me(d)) continue; const f = masterForm(d, guardCtx); if (formClash(lf, f)) { formHold = { design: d, df: f }; break; } }
+      }
+    } catch (_) { formHold = null; }
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
     if (!quiet && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
@@ -2130,7 +2728,7 @@
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
       if (name && value && !spec.font) { const fm = fontInMetal(name, value, fx); if (fm) spec.font = fontSpecOf(fm, fm.listing ? "rule:font-listing" : "rule:font-in-metal"); }   // ("Metal? Font Choice?": the metal is read as before, the font from the same value)
-      if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
+      if (!name || !value || isMetalVariation(name, value) || isPersonalisation(name)) continue;   // (BFWHY: a value that is only a metal / length / sides is the metal option whatever it is called)
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       let mapped = hit ? Object.assign({ field: hit.field, value: hit.value, source: hit.source }, hit.engrave ? { engrave: hit.engrave } : {}) : null;
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
@@ -2204,7 +2802,12 @@
       : { kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
     if (ctx.masterEntry && sku && !quiet) {
       const entry = ctx.masterEntry(sku);
-      if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }
+      if (!entry) {
+        // HUGGIEGUARD: the numbered siblings of the SKU the master does hold ("X 1", "X 2" for an "X" it has not), the ones that fit the line: for whoever offers them (spec.siblings)
+        let sib = []; try { sib = siblingsOf(sku, guardCtx, { form: lf.form }); } catch (_) { sib = []; }
+        if (sib.length) spec.siblings = sib;
+        if (!optionOpen) problems.push(Object.assign({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }, sib.length ? { siblings: sib } : {}));
+      }
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
@@ -2232,14 +2835,29 @@
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
     if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !quiet && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
+    // BFFONT: a font the buyer named in their own words (personalisation, message, staff note), whatever the listing: spec.fontText (fontTextOf). A font option is read as before (spec.font) and wins over
+    // it; nothing is added to a line whose words name no font. Before the faces reading (engravingOf), which takes the words of a font request out of the engraved words.
+    try {
+      const ft = fontTextOf(spec);
+      if (ft) { if (spec.font && spec.font.id && !spec.font.listing && ft.id && ft.id !== spec.font.id) ft.differs = spec.font.asked || spec.font.name || ""; spec.fontText = ft; }
+    } catch (_) { /* a font reading that fails leaves the line as it was */ }
     // front and back engraving (ENGINTAKE): what the buyer chose and wrote about the faces, for EVERY line; null (nothing added to the spec) when the line has no front / back word.
     // ENGINTAKE (CONTRACT section 2): what the buyer chose for the faces, for EVERY line. A line with no face word has no `spec.engraving` (the faces model reads that as the default back); a person's
     // word is never here (it is row.engravingOverride). Nothing else of the spec is touched, engraveCandidate included: a front / both-faces line with no words says so in its reading
     // (needsPerson, reviewKind "nowords") and the engraving pass (the faces model) raises it; here it is still cut plain exactly as before.
     try {
-      const eng = engravingOf(line, spec);
+      const me2 = spec.designSku && me ? me(spec.designSku) : null;   // (the design's own front art, when its library entry says so: "1 side / 2 sides" options read by it)
+      const eng = engravingOf(line, spec, frontArtOf(me2, line.title));
       if (eng) spec.engraving = eng;
     } catch (_) { /* a reading that fails leaves the line as it always was */ }
+    // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
+    spec.lineForm = lf.form; spec.designForm = df.soft ? "unknown" : df.form;   // (a necklace read only from a distinct huggie twin is not told: it only keeps a huggie line off the plain design)
+    if (formHold) {
+      const etsy = upSku(line.sku) || spec.boughtSku, sibs = siblingsOf(etsy, guardCtx, { form: lf.form }), reason = formReason(etsy, formHold.design, formHold.df, lf);
+      spec.formHold = { sku: spec.boughtSku, design: formHold.design, lineForm: lf.form, designForm: formHold.df.form, reason, siblings: sibs };
+      spec.siblings = sibs; spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, lineForm: lf.form, designForm: formHold.df.form, siblings: sibs });
+    }
     return spec;
   }
   /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
@@ -2609,11 +3227,11 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
-    engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
-    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+    engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY,
+    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
-    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

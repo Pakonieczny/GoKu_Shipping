@@ -20,11 +20,12 @@
  * What still refuses a move, each with one plain line (reasons[].label is that line):
  *   setPrinciple    the set would have no completed GF (or SS) sheet any more
  *   sharedOrders    rule A: a multi-piece order (pair, counted-option necklace) would be split over two sets
- *   sheetCut / sheetCompleted   rule B: the sheet was laser cut
+ *   sheetCut / sheetCompleted   rule B: the sheet was laser cut (a recorded green-line cut keeps a sheet in the set it is in; a cut sheet in NO set may join one, Paul 12 Oct)
  *   lastSheet       a set is never emptied
  *   setOpen         the set is still being made by a run that is open on ANOTHER screen (two screens would undo each other); the screen that
  *                   holds the run passes `owned` (its run ids) and may change it; a set of a finished run has no such owner
- *   setCompleted / setClosed / roseSet / missing / noSet / notInSet   as before
+ *   backsNotApproved (Paul, 12 Oct) a 10K, 14K or Rose Gold sheet in no set joins one once its back engraving is approved
+ *   setCompleted / setClosed / missing / noSet / notInSet   as before (roseSet is gone: Rose Gold joins a committed set like any sheet, with its own Cut Sheet yes)
  * ONE rule, for the server and the page (charmNestLibrary.js requires this file; the page's plan reads it too):
  *   SetEdit.verifyMoves({ moves:[{id, to:<setId>|null}], recs:{id:record}, sets:{setId:{doc, members:[record]}}, others:[record],
  *                         runs?:{runId:{open}}, owned?:[runId] })
@@ -39,6 +40,8 @@
   const SN = () => root.CharmNestSheetName || SNnode;   // the one name and number rule (charm-nest-sheet-name.js)
   let RULEnode = null; try { RULEnode = require('./charm-nest-set-rules.js'); } catch (_) { RULEnode = null; }
   const RULES = () => root.CharmNestSetRules || RULEnode;      // (SETFORM's definition of a Completed sheet and of a valid set: the one copy)
+  let CUTnode = null; try { CUTnode = require('./charm-nest-rose.js'); } catch (_) { CUTnode = null; }
+  const CUTS = () => root.CharmNestRose || CUTnode;            // (which metals have a green line: Rose Gold, 10K, 14K; the one list)
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
   const str = v => String(v == null ? '' : v);
   const idOf = r => str(r && (r.id || r.sheetId));
@@ -51,12 +54,28 @@
   const count = (n, one, more) => `${n} ${n === 1 ? one : (more || one + 's')}`;
   const orderIdsOf = r => [...new Set([].concat(Array.isArray(r.orders) ? r.orders : [], (Array.isArray(r.poolIds) ? r.poolIds : []).map(k => (/^(\d{1,30})_/.exec(str(k)) || [])[1])).map(str).filter(x => /^\d{1,30}$/.test(x)))];
 
-  /** Rule B: why a sheet cannot change set at all ({key,label,detail}), or null. The same words the plan used before. */
-  function cutReason(rec) {
+  /** Rule B: why a sheet cannot change set at all ({key,label,detail}), or null. The same words the plan used before.
+   *  `o.joining`: the sheet is in no set and is only being put in one (Paul, 12 Oct: a 10K, 14K or Rose Gold sheet whose green line is already cut may join a set):
+   *  a recorded cut then keeps nothing in place (it is permanent where the sheet IS in a set: it stays there). A completed (laser cut) sheet still takes no move. */
+  function cutReason(rec, o) {
     const w = wordOf(rec);
-    if (rec.roseCutAt) return { key: 'sheetCut', label: `${w} was already cut`, detail: 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.' };
+    if (rec.roseCutAt && !(o && o.joining)) return { key: 'sheetCut', label: `${w} was already cut`, detail: 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.' };
     if (isDone(rec)) return { key: 'sheetCompleted', label: `${w} is completed`, detail: 'It keeps its cut record and set until it is moved back to Laser cutting.' };
     return null;
+  }
+  /** Paul, 12 Oct: a 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved. The one plain line when it is not (null when it is, when the sheet is not of
+   *  such a metal, when it is in a set already, when it is only being put back where it was taken out of, and when nothing says: `rec.laser` is the readiness report of the
+   *  Library's live read, a record without it is never refused here). `o.cuts`: the metals test of the caller (default: charm-nest-rose.js cuts). */
+  function engravingGap(rec, o) {
+    if (!rec || inSetOf(rec)) return null;
+    const C = CUTS(), isCut = o && typeof o.cuts === 'function' ? o.cuts : (C && typeof C.cuts === 'function' ? C.cuts : m => m === 'rose');
+    if (!isCut(rec.metal)) return null;
+    const hold = rec.laserHold;
+    if (hold && +hold.at > 0 && /^Taken out of /.test(str(hold.note))) return null;      // (a sheet a person took out comes back as it is)
+    const L = rec.laser && typeof rec.laser === 'object' && rec.laser.stages ? rec.laser : null;
+    if (!L || L.stages.approval !== false) return null;
+    const E = L.faces || L, fr = !!L.faces, w = wordOf(rec), what = fr ? 'engravings' : 'back engraving', n = +E.approved || 0, of = +E.required || 0;
+    return { key: 'backsNotApproved', label: `${w}: ${what} not approved yet${of ? ` (${n} of ${of} approved)` : ''}`, detail: 'A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved.', extra: { sheetId: idOf(rec) } };
   }
   const joinWords = labels => labels.length <= 1 ? (labels[0] || '') : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
   /** "Order 4171450075 has pieces on GF Sheet 1 and SS Sheet 1: they stay in one set": orders with the same sheets are said together. */
@@ -119,9 +138,10 @@
       if (!r || r.archived) { add('missing', 'That sheet could not be found', 'It may have been removed. Refresh the Library.', { sheetId: id }); continue; }
       const from = inSetOf(r), to = moves[id];
       if (from === to) { delete moves[id]; continue; }
-      const w = wordOf(r), c = cutReason(r);
+      const w = wordOf(r), c = cutReason(r, { joining: !from });
       if (c) { add(c.key, c.label, c.detail, { sheetId: id }); continue; }
-      if (to && r.metal === 'rose' && !from) { add('roseSet', `${w} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press, so it cannot be added to a committed set from here.', { sheetId: id }); continue; }
+      // (Paul, 12 Oct) a sheet with a green line joins a set once its back engraving is approved: `inp.engravings` (the server's readiness read) or the record's own report says
+      if (to && !from) { const g = inp.engravings && Object.prototype.hasOwnProperty.call(inp.engravings, id) ? inp.engravings[id] : engravingGap(r); if (g) { add(g.key, g.label, g.detail, { sheetId: id }); continue; } }
       real.push(id);
       if (from) {
         const F = sets[from];
@@ -359,5 +379,5 @@
     try { if (sheets.length && C && C.loadLibrary) Promise.resolve(C.loadLibrary()).catch(() => {}); } catch (_) { /* refreshed at its next read */ }
   }
 
-  return { relabel, remakeFiles, applyMembership, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
+  return { relabel, remakeFiles, applyMembership, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, engravingGap, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
 });

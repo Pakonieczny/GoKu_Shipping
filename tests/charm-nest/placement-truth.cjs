@@ -4,9 +4,9 @@
 //
 // Root cause (charm-nest-timeline-ui.js derive/whereOf): the step a piece has reached (D.step) is a HIGH-WATER MARK over the permanent
 // history, so a piece that was placed once keeps Nested (and the "next" step after it) for ever, even after it is taken off its sheet
-// (Hold, remove, sheet deleted, set undone), while the hold card's chips and the Sheet tab read where the piece IS (the sheets' own records).
+// (Hold, remove, sheet deleted, set undone), while the Sheet tab and the rows' chips read where the piece IS (the sheets' own records).
 // Two independent sources, so they disagreed. charm-nest-piece-placement.js (window.PiecePlacement) is now the ONE answer, read from the
-// live sources; the dots, the header rail, the row status, the chips, the Sheet tab and the Timeline NOW marker all follow it. The permanent
+// live sources; the dots, the header rail, the row status and its chip, the Sheet tab and the Timeline NOW marker all follow it. The permanent
 // history (every seal on the Timeline) is untouched.
 //
 // Proves, in headless Chromium over the fake site (tests/charm-nest/bridge-server.cjs: the real charmNestLibrary ops over an in-memory store;
@@ -14,7 +14,7 @@
 //   on a sheet · waiting for a sheet · held (Paul's image 3: order 4174601819, SS + GF, "Taken off SS Sheet 1, GF Sheet 2 by Paul") · released
 //   and placed again · released and not placed yet · cancelled · completed by hand (Complete Order and QR label) · one piece split over two
 //   sheets · half placed · the sheet deleted behind a history that says "placed" · records ahead of the timeline
-// and asserting that the hold card's chips, every piece row (status text and its six dots), the header rail, the Sheet tab and the Timeline's
+// and asserting that the hold card has no buttons or sheet shortcuts, every piece row (status text and its six dots), the header rail, the Sheet tab and the Timeline's
 // NOW marker never disagree, that the ON SHEET seals stay on the Timeline for a piece taken off its sheet, and that a MUTANT that restores
 // the old contradiction (the resolver says nothing, so the dots fall back to the high-water mark) is caught by the very same check.
 //   node tests/charm-nest/placement-truth.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>, PROBE=1 prints what each surface says)
@@ -112,7 +112,7 @@ function unit() {
   A(JSON.stringify(ev2) === before, 'derive never touches the events');
   const rq = UI.requirementsOf('sheet', { events: ev2, place: PP.withHistory(wait, evs) });
   A(rq.state === 'now' && rq.fenced && rq.need.some(n => n.t === 'Not on a sheet now') && /^Was on SS Sheet 1 until Paul took it off, /.test(rq.was) && rq.done.length === 0, 'the Nested card: ' + JSON.stringify([rq.state, rq.need, rq.was]));
-  const rl = UI.requirementsOf('laser', { events: ev2, place: wait }); A(rl.state === 'later' && rl.need.some(n => n.kind === 'after' && /Nested/.test(n.t)), 'the laser card waits for Nested: ' + JSON.stringify(rl.need));
+  const rl = UI.requirementsOf('laser', { events: ev2, place: wait }); A(rl.state === 'later' && !rl.need.some(n => n.kind === 'after' || n.kind === 'next'), 'the laser card names no step before or after it (Paul, 12 Oct 2026: the bar shows where the piece is): ' + JSON.stringify(rl.need));
   const sum = UI.summary(ev2, [{ key: 'a', qty: 1, line: {} }, { key: 'b', qty: 1, line: {} }], null, k => (k === 'a' ? on : wait));
   A(sum.rail.find(r => r.i === 1).n === 1 && sum.step === 0, 'summary counts a piece off its sheet as not at Nested: ' + JSON.stringify(sum.rail.map(r => r.n + '/' + r.of)));
   console.log('  ok  placement-truth: the pure answer');
@@ -254,16 +254,17 @@ async function main() {
     const snap = () => page.evaluate(() => {
       const t = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
       const card = document.getElementById('owNowCard');
-      const chips = [...card.querySelectorAll('.shs .owShChip')].map(c => ({ pc: c.dataset.pc || '', text: t(c.querySelector('b')), sub: t(c.querySelector('span span')), off: c.classList.contains('off'), hand: !!c.dataset.hand }));
+      // (the head card has nothing to press and no sheet shortcut: Paul, 12 Oct 2026. The pieces' own status chips are the doors to their sheets)
+      const cardControls = card.querySelectorAll('button, a[href], input, select, textarea, [role=button], .shs, .owShChip, .owShItem, [data-go], [data-pc]').length;
       const rows = {}, ears = {};
       for (const r of document.querySelectorAll('#owPcSum .owPcRow')) {
         const k = r.dataset.piece || '', chip = r.querySelector('.st .pcSt'), sr = r.querySelector('.st.owPcSr');
-        rows[k] = { st: t(chip) || t(sr), k: chip ? chip.dataset.k : null, dots: [...r.querySelectorAll('.steps i')].map(i => i.classList.contains('on')), side: r.dataset.side || '' };
+        rows[k] = { st: t(chip) || t(sr), k: chip ? chip.dataset.k : null, open: !!chip && chip.tagName === 'BUTTON', dots: [...r.querySelectorAll('.steps i')].map(i => i.classList.contains('on')), side: r.dataset.side || '' };
         (ears[k] = ears[k] || []).push(rows[k]);
       }
       const rail = [...document.querySelectorAll('#owRail .tlStop')].map(s => ({ k: s.dataset.stage, cls: s.className.replace('tlStop', '').trim(), cnt: t(s.querySelector('.tlCnt')) }));
       const tab = document.querySelector('.owTabsV [data-ow-view="sheet"]');
-      return { head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), pill: t(document.getElementById('owNow')), chips, rows, ears, rail, tab: { off: tab.classList.contains('off'), count: t(document.getElementById('owShCount')) } };
+      return { head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), pill: t(document.getElementById('owNow')), cardControls, rows, ears, rail, tab: { off: tab.classList.contains('off'), count: t(document.getElementById('owShCount')) } };
     });
     const timelineSnap = () => page.evaluate(() => {
       const t = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
@@ -278,8 +279,8 @@ async function main() {
       const out = [], truth = TRUTH[o.rid], keys = { hug: kOf(o, 'hug'), duck: kOf(o, 'duck') };
       const allOn = Object.values(truth).every(t => t.on), noneOn = Object.values(truth).every(t => !t.on);
       for (const [name, key] of Object.entries(keys)) {
-        const t = truth[name], row = s.rows[key], chip = s.chips.find(c => c.pc === key), tag = `${o.rid} ${name} (${t.state})`;
-        if (!row && t.state === 'cancelled') { if (chip && !chip.off) out.push(`${tag}: a cancelled piece's chip names a sheet ${JSON.stringify(chip)}`); continue; }   // (a cancelled order has no list of pieces)
+        const t = truth[name], row = s.rows[key], tag = `${o.rid} ${name} (${t.state})`;
+        if (!row && t.state === 'cancelled') continue;   // (a cancelled order has no list of pieces)
         if (!row) { out.push(`${tag}: no row`); continue; }
         // an earring pair that the pool holds no pieces of any more is drawn as its Left row and its Right row (one row for a pooled line)
         const list = (s.ears && s.ears[key]) || [row], wantRows = earsOfTruth(t);
@@ -300,12 +301,14 @@ async function main() {
             if (dots.slice(1).some(Boolean)) out.push(`${tg}: not on a sheet, but a later dot is solid ${JSON.stringify(dots)}`);
           }
         }
-        // the hold card's chip
-        if (t.on) { if (!chip || chip.off || !(chip.text || '').includes(t.label)) out.push(`${tag}: its chip says ${JSON.stringify(chip)}`); }
-        else if (t.state === 'hand') { if (!chip || !chip.off || !/Completed by hand/.test(chip.text)) out.push(`${tag}: its chip says ${JSON.stringify(chip)}`); }
-        else if (t.state === 'cancelled') { /* (a cancelled order keeps its sheets' history only: it has no chips of a sheet it is not on) */ if (chip && !chip.off) out.push(`${tag}: a cancelled piece's chip names a sheet ${JSON.stringify(chip)}`); }
-        else if (!chip || !chip.off || !/^Not on a sheet yet/.test(chip.text)) out.push(`${tag}: its chip says ${JSON.stringify(chip)}`);
+        // the head card has no sheet chips any more (Paul, 12 Oct 2026): a row's own status chip is the door, a button for a piece on a sheet and only words for any other
+        for (const ear of list) {
+          const tg = ear.side ? `${tag} ${ear.side === 'L' ? 'Left' : 'Right'}` : tag;
+          if (t.on && !ear.open) out.push(`${tg}: on a sheet, but its row's status chip does not open the sheet ${JSON.stringify(ear)}`);
+          if (!t.on && ear.open) out.push(`${tg}: on no sheet, but its row's status chip opens one ${JSON.stringify(ear)}`);
+        }
       }
+      if (s.cardControls) out.push(`${o.rid}: the head card has ${s.cardControls} buttons, links or sheet shortcuts: it has none (Paul, 12 Oct 2026)`);
       // the header rail: Nested is done only when every piece is on a sheet; never "done" for a piece that is on none
       const nested = s.rail.find(r => r.k === 'sheet');
       if (!nested) out.push(`${o.rid}: the rail has no Nested step ${JSON.stringify(s.rail)}`);
@@ -352,7 +355,7 @@ async function main() {
       if (withTimeline) { await view('timeline'); tl = await timelineSnap(); await view('info'); }
       if (probe) {
         const d = r => (r.dots || []).map(x => x ? '#' : '.').join('');
-        console.log(`\n== ${o.rid} head="${s.head}" pill="${s.pill}" tab=${JSON.stringify(s.tab)}\n  chips: ${s.chips.map(c => (c.off ? '(off) ' : '') + c.text + ' / ' + c.sub).join(' | ')}\n  rows: ${Object.entries(s.rows).map(([k, r]) => k.slice(-2) + ' "' + r.st + '" ' + d(r)).join(' | ')}\n  rail: ${s.rail.map(r => r.k + ':' + r.cls + (r.cnt ? '(' + r.cnt + ')' : '')).join(' ')}` + (tl ? `\n  timeline: now="${tl.now}" sub="${tl.sub}" seals=${tl.seals.join(',')} ghosts=${tl.ghosts.join(',')}` : ''));
+        console.log(`\n== ${o.rid} head="${s.head}" pill="${s.pill}" tab=${JSON.stringify(s.tab)}\n  controls: ${s.cardControls}\n  rows: ${Object.entries(s.rows).map(([k, r]) => k.slice(-2) + ' "' + r.st + '" ' + d(r)).join(' | ')}\n  rail: ${s.rail.map(r => r.k + ':' + r.cls + (r.cnt ? '(' + r.cnt + ')' : '')).join(' ')}` + (tl ? `\n  timeline: now="${tl.now}" sub="${tl.sub}" seals=${tl.seals.join(',')} ghosts=${tl.ghosts.join(',')}` : ''));
       }
       return { s, tl, problems: problems(o, s, tl) };
     };

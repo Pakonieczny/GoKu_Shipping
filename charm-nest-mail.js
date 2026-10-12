@@ -213,6 +213,7 @@
      being written in. It is checked about once a minute while a place to write is on screen, once for all tabs. */
   const HEALTH_EVERY = 60000;
   let healthTimer = 0, healthBusy = false, healthErr = "", healthErrAt = 0;
+  let gapBusy = false, gapNote = null;   // the missing-messages notice: a re-check or a dismissal under way, and the line that says how it went ({ tone, text, at })
   M.health = get(LS.health, null); M.healthFails = 0; M.linkBell = null;
   const writingShown = () => !!M.key && ([...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => L.node.isConnected && !!L.node.offsetParent));
   function healthLater() {
@@ -232,7 +233,7 @@
     else healthLater();
   }
   async function checkHealth(fresh) {
-    if (!M.key || healthBusy) return;
+    if (!M.key || healthBusy || gapBusy) return;
     const shared = get(LS.health, null);
     if (!fresh && shared && Date.now() - shared.at < HEALTH_EVERY - 5000) { M.health = shared; paintLights(); healthLater(); return; }
     healthBusy = true; paintLights();
@@ -253,7 +254,10 @@
     if (!("link" in res)) return;
     const now = Date.now();
     if (!M.linkBell) M.linkBell = { first: now, link: null, at: now };
+    const was = M.linkBell.link;
     M.linkBell.link = res.link && typeof res.link === "object" ? res.link : null; M.linkBell.at = now;
+    // the missing-messages notice cleared without anybody pressing anything: the panel, if it is open, says so
+    if (was && was.kind === "consistency" && was.level !== "ok" && M.linkBell.link && M.linkBell.link.level === "ok" && !gapBusy) gapNote = { tone: "ok", text: "All messages match.", at: now };
     linkAlert(M.linkBell.link);
     const mon = monitorState();
     if (mon && mon.stale) staleAlert(mon);
@@ -265,7 +269,7 @@
     const now = Date.now(), l = b.link;
     if (l && l.atMs) {
       if (now - l.atMs > LINK_STALE) return { stale: true, tone: "warn", word: "Monitor stopped", text: `Nothing has confirmed the email link for ${Math.round((now - l.atMs) / 60000)} minutes: the inbox's link monitor has stopped reporting. Messages may still be going, but that cannot be confirmed.` };
-      if (l.level === "warn" || l.level === "down") return { tone: l.level, word: l.short || "Problem", text: l.problem || "The email link has a problem." };
+      if (l.level === "warn" || l.level === "down") return { tone: l.level, word: l.short || "Problem", text: l.problem || "The email link has a problem.", kind: l.kind || "", gap: l.gap || null };
       return null;
     }
     if (now - b.first > LINK_STALE) return { stale: true, tone: "warn", word: "Monitor not running", text: "The inbox's link monitor has not reported yet, so nothing is confirming the email link works. Messages may still be going." };
@@ -284,7 +288,7 @@
     const h = M.health && now - M.health.at < 5 * 60000 ? M.health.res : null;
     if (M.link === "offline") return { tone: "down", word: "Offline", text: "This sorter cannot reach the inbox's server right now. What you write is kept, and goes as soon as it answers again." };
     const mon = monitorState();
-    const full = h && h.level !== "ok" ? { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "" } : null;
+    const full = h && h.level !== "ok" ? { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "", kind: h.kind || "", gap: h.gap || null } : null;
     // the check itself cannot be made: that is not "all is well" (one failure is shown at once when there is nothing older to go on)
     const blind = healthErr && now - healthErrAt < 3 * 60000 && (!h || M.healthFails >= 2)
       ? { tone: "warn", word: "Can't check", text: `Can't check the email link: ${healthErr} - retrying.` } : null;
@@ -294,7 +298,8 @@
     return { tone: "ok", word: "Active", text: "" };
   }
   let lastLinkSig = "";
-  const linkSig = () => { const st = M.key ? lightState() : null; return st ? st.tone + "|" + st.word + "|" + st.text : ""; };
+  const sigOf = st => st.tone + "|" + st.word + "|" + st.text + (st.gap ? "|" + JSON.stringify(st.gap.items) : "");   // (the notice's own numbers count too)
+  const linkSig = () => { const st = M.key ? lightState() : null; return st ? sigOf(st) : ""; };
   /** The light's problem (amber or red) as the top-bar envelope shows it, or null. */
   const linkProblem = () => { if (!M.key) return null; const st = lightState(); return st.tone === "warn" || st.tone === "down" ? st : null; };
   /* An alert Paul will see: ONE red notice per incident, only after the trouble has lasted 5 minutes (a blip says nothing).
@@ -309,7 +314,7 @@
   const sayKeyed = (msg, kind, ms, key) => { try { return toast(msg, kind, ms, key) || null; } catch (_) { return null; } };
   const linkAlive = () => !!linkToast && linkToast.isConnected && linkToast.style.opacity !== "0";
   /** The notice's words: how bad it is, then the monitor's sentence (which says what to do when the Etsy helper is quiet). */
-  const linkMessage = l => `${l.level === "down" ? "The email link is down" : "The email link needs attention"}: ${l.problem || l.short || "see the light under the message box"}`;
+  const linkMessage = l => `${l.kind === "consistency" ? (l.level === "down" ? "Messages are still missing" : "Messages missing") : l.level === "down" ? "The email link is down" : "The email link needs attention"}: ${l.problem || l.short || "see the light under the message box"}`;
   /** Closing the red notice is remembered for this incident and this level. */
   function watchLinkToast(el, id, level) {
     linkToast = el;
@@ -328,7 +333,7 @@
       if (told.id !== l.incidentId || (l.level === "down" && told.level !== "down")) {
         // a new incident, or the same one gone from "needs attention" to "is down": the notice appears (or its words change in
         // place), with a ding and a desktop notification
-        put(LS.linkTold, { id: l.incidentId, level: l.level, at: now, seen: now, msg });
+        put(LS.linkTold, { id: l.incidentId, level: l.level, at: now, seen: now, msg, kind: l.kind || "" });
         watchLinkToast(sayKeyed(msg, "bad", 15000, LINK_TOAST_KEY), l.incidentId, l.level);
         try { if (typeof ding === "function") ding(); } catch (_) {}
         try { if (typeof notifyPerson === "function") notifyPerson("Customer email link", msg); } catch (_) {}
@@ -346,7 +351,7 @@
       linkToast = null;
       if (told.id && !told.cleared) {
         put(LS.linkTold, Object.assign({}, told, { cleared: now }));
-        if (now - (told.seen || told.at || 0) < 3 * 3600000) say("The email link is working again.", "ok", 8000);
+        if (now - (told.seen || told.at || 0) < 3 * 3600000) say(told.kind === "consistency" ? "All messages match: the missing-messages notice has cleared." : "The email link is working again.", "ok", 8000);
       }
     }
   }
@@ -360,6 +365,109 @@
     if (st.tone !== "warn" && st.tone !== "down") return "";
     return `<span>${E(st.text)}</span> <button type="button" class="lnk" data-health>Details</button>`;
   }
+  /* ─── the missing-messages notice (the nightly check's open gaps; see _etsyMailLinkConsistency.js) ───
+     The server sends the gap as data (which conversations by order number, how many short, where the re-read stands, last and next
+     try) and this page words it in its own clock. Check now re-runs the comparison for those conversations on the server (and asks for
+     the next re-read if one is due; the Chrome extension reads Etsy's page, no Etsy API call); Dismiss hides THIS gap for everybody
+     until it changes while the checking goes on. Both say what happened in a line under the notice. */
+  const clock = ms => {
+    const d = new Date(ms), now = new Date();
+    const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString([], { weekday: "short" }) + " " + hm;
+  };
+  const mins = ms => { const m = Math.max(1, Math.round(ms / 60000)); return m < 90 ? m + " min" : m < 36 * 60 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " days"; };
+  const shortBy = x => (x && x.c >= 0 && x.c > x.s ? x.c - x.s : 0);
+  const orderOf = x => (x && x.o ? "order " + x.o : "the conversation");
+  /** The sentence under "Messages missing.": which conversation, what is short, what the inbox is doing and when it tries next. */
+  function gapSentence(g) {
+    const now = Date.now(), it = g.items || [], first = it[0] || {};
+    let what;
+    if (g.n === 1) {
+      const d = shortBy(first);
+      what = first.k === "inbound_missing" ? `${first.o ? "Order " + first.o : "A conversation"} may be missing the customer's newest message.`
+        : first.k === "claimed_but_none" ? `${first.o ? "Order " + first.o : "A conversation"} shows no messages in the inbox, but its record counts ${first.c}.`
+        : `${first.o ? "Order " + first.o : "A conversation"} shows ${d || "some"} fewer message${d === 1 ? "" : "s"} in the inbox than expected (${first.c} expected, ${first.s} stored).`;
+    } else {
+      const orders = it.map(x => x.o).filter(Boolean);
+      what = `${g.n} conversations show fewer messages in the inbox than expected${orders.length ? " (orders " + orders.join(", ") + (g.more ? " and " + g.more + " more" : "") + ")" : ""}.`;
+    }
+    const last = Math.max(0, ...it.map(x => x.lt || 0));
+    const nexts = it.filter(x => x.st === "retry" && x.nt).map(x => x.nt).sort((a, b) => a - b);
+    const waiting = it.some(x => x.st === "wait");
+    let doing;
+    if (!last) doing = "The inbox is about to re-read it from Etsy.";
+    else if (waiting) doing = `The inbox asked the Etsy helper to re-read ${g.n === 1 ? "it" : "them"} ${when(last)}; it is waiting for the helper's turn (at night that can take up to an hour).`;
+    else doing = `Last tried ${when(last)}, still short. Next try ${nexts.length ? (nexts[0] > now ? "about " + clock(nexts[0]) + " (in " + mins(nexts[0] - now) + ")" : "any minute now") : "soon"}.`;
+    const red = g.esc ? ` Short for ${mins(now - Math.min(...it.map(x => x.fa || now)))} after ${Math.max(...it.map(x => x.tr || 0))} tries: open ${g.n === 1 ? "it" : "them"} in the inbox and compare with Etsy.` : "";
+    return `${what} ${doing}${red}`;
+  }
+  /** The line that says how a Check now went (the server's result for each conversation). */
+  function gapNoteFrom(res) {
+    const now = Date.now(), rs = res.results || [];
+    const left = rs.filter(x => !["matched", "proven", "gone"].includes(x.outcome));
+    const done = rs.length - left.length;
+    if (!res.ran) return res.health && res.health.level === "ok" ? { tone: "ok", text: "All messages match.", at: now } : null;
+    if (!left.length) {
+      const x = rs[0];
+      const text = rs.length > 1 ? `Re-read: all ${rs.length} conversations match.`
+        : x.outcome === "gone" ? "That conversation no longer exists, so nothing is missing."
+        : x.outcome === "matched" ? `Re-read: all ${x.s} messages match.`
+        : `Re-read from Etsy: nothing is missing${x.s ? ` (all ${x.s} messages are in the inbox)` : ""}.`;
+      return { tone: "ok", text, at: now };
+    }
+    const x = left[0], d = shortBy(x), who = left.length > 1 ? `${left.length} conversations` : orderOf(x);
+    const still = left.length > 1 ? `Still ${left.length} conversations short` : d ? `Still ${d} short` : "Still not matching";
+    const cleared = done ? ` ${done} cleared.` : "";
+    if (x.outcome === "waiting") return { tone: "warn", text: `${still}${left.length > 1 ? "" : " (" + who + ")"}.${cleared} A re-read is waiting for the Etsy helper${x.q ? " (just asked)" : ""}; the inbox looks again every 5 minutes.`, at: now };
+    if (x.outcome === "reading") return { tone: "warn", text: `${still}. ${who} is still being read in.${cleared}`, at: now };
+    if (x.outcome === "error") return { tone: "warn", text: `Could not look at ${who} just now. Try again in a minute.${cleared}`, at: now };
+    return { tone: "warn", text: `${still}${left.length > 1 ? "" : " (" + who + ")"}, trying again ${x.nt && x.nt > now ? "at " + clock(x.nt) : "soon"}.${cleared}`, at: now };
+  }
+  /** What a server answer changes here at once: the judgement (the light, the notice) and the link summary every sorter reads. */
+  function applyLinkResult(res) {
+    const now = Date.now();
+    if (res.health && typeof res.health === "object") {
+      M.health = { at: now, res: res.health }; healthErr = ""; M.healthFails = 0;
+      put(LS.health, M.health);
+      if (bc) try { bc.postMessage({ t: "health", h: M.health }); } catch (_) {}
+    }
+    if (res.link && typeof res.link === "object") { if (!M.linkBell) M.linkBell = { first: now, link: null, at: now }; M.linkBell.link = res.link; M.linkBell.at = now; linkAlert(res.link); }
+  }
+  async function recheckNow() {
+    if (!M.key || gapBusy || healthBusy) return;
+    gapBusy = true; gapNote = null; paintLights();
+    try {
+      const res = await call("link_recheck", {}, { timeout: 45000 });
+      applyLinkResult(res);
+      gapNote = gapNoteFrom(res);
+    } catch (e) {
+      if (authLost(e)) return;
+      if (e.status === 400) { gapBusy = false; return checkHealth(true); }   // (a server without this question: the plain check)
+      gapNote = { tone: "warn", text: `Could not re-check just now (${e.message}). Try again in a minute.`, at: Date.now() };
+    } finally { gapBusy = false; paintLights(); healthLater(); }
+  }
+  async function dismissGap(sig) {
+    if (!M.key || gapBusy || healthBusy || !sig) return;
+    gapBusy = true; gapNote = null; paintLights();
+    try {
+      const res = await call("link_dismiss", { sig }, { timeout: 30000 });
+      applyLinkResult(res);
+      gapNote = res.ok ? { tone: "info", text: "Dismissed. It comes back only if the gap changes or another conversation falls short; the inbox keeps re-reading it.", at: Date.now() }
+        : res.changed ? { tone: "warn", text: "The gap changed just now, so it is shown again with the new numbers.", at: Date.now() }
+        : { tone: "ok", text: "Nothing is missing any more.", at: Date.now() };
+    } catch (e) {
+      if (authLost(e)) return;
+      gapNote = { tone: "warn", text: `Could not dismiss just now (${e.message}). Try again in a minute.`, at: Date.now() };
+    } finally { gapBusy = false; paintLights(); healthLater(); }
+  }
+  /** The notice's two buttons and the line under it. */
+  function gapButtons(sig) {
+    return `<button type="button" class="lnk" data-pill-check${gapBusy || healthBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Re-reading…' : "Check now"}</button>`
+      + (sig ? ` <button type="button" class="lnk" data-gap-dismiss="${E(sig)}"${gapBusy || healthBusy ? " disabled" : ""}>Dismiss</button>` : "");
+  }
+  const gapNoteHtml = () => gapNote && Date.now() - gapNote.at < 180000 ? `<div class="cmGapNote ${gapNote.tone}" role="status" aria-live="polite">${E(gapNote.text)}</div>` : "";
+  const gapHint = '<div class="cmGapHint">Check now re-reads it right away. Dismiss hides this notice until something changes; the inbox keeps re-reading it either way. Nothing is lost.</div>';
+
   let healthBox = null;   // { box, owner } — the one details panel open, if any
   function healthRows() {
     const h = M.health && M.health.res;
@@ -367,14 +475,18 @@
     const rows = [];
     if (SANDBOX) rows.push(row("wait", "Sandbox", "What you write here stays in the sorter and never uses this link. The checks below are the real email link's."));
     rows.push(row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : "")));
-    if (h) for (const c of h.checks) rows.push(row(c.level, c.label, c.text));
+    if (h) for (const c of h.checks) {
+      if (c.id === "consistency" && c.data && c.data.n > 0 && (c.level === "warn" || c.level === "down")) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` ${gapButtons(c.data.sig).replace("data-pill-check", "data-hcheck")}</span></li>`));
+      else rows.push(row(c.data && c.data.dismissed ? "wait" : c.level, c.label, c.text));   // (a dismissed notice is listed quietly: grey, not green)
+    }
     else {
       const mon = monitorState();
       if (mon) rows.push(row(mon.tone, "Link monitor", mon.text));
       rows.push(healthErr ? row("warn", "Full check", `Can't check: ${healthErr} - retrying`) : `<li class="wait"><i></i><b>Checking the rest</b><span>…</span></li>`);
     }
-    const when0 = healthBusy ? `<span class="cmSpin" aria-hidden="true"></span>checking` : M.health ? "checked " + when(M.health.at) : "";
-    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`;
+    const busy = healthBusy || gapBusy;
+    const when0 = busy ? `<span class="cmSpin" aria-hidden="true"></span>${gapBusy ? "re-reading" : "checking"}` : M.health ? "checked " + when(M.health.at) : "";
+    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${busy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>${gapNoteHtml()}`;
   }
   function toggleHealth(box, owner) {
     if (healthBox && healthBox.box === box) { closeHealth(); return; }
@@ -392,7 +504,12 @@
   }
   document.addEventListener("pointerdown", e => { if (healthBox && !healthBox.box.contains(e.target) && !e.target.closest("[data-health]")) closeHealth(); }, true);
   document.addEventListener("keydown", e => { if (e.key === "Escape" && healthBox) { e.preventDefault(); e.stopPropagation(); closeHealth(); } }, true);
-  document.addEventListener("click", e => { const b = e.target.closest("[data-hcheck]"); if (b && healthBox && healthBox.box.contains(b)) checkHealth(true); });
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-hcheck]");
+    if (b && healthBox && healthBox.box.contains(b)) { recheckNow(); return; }
+    const x = e.target.closest("[data-gap-dismiss]");
+    if (x && healthBox && healthBox.box.contains(x)) dismissGap(x.dataset.gapDismiss);
+  });
   /** One place to write: its light and its sentence, redrawn only when they changed (a redrawn button loses focus). */
   function paintLight(el, owner, cls, st) {
     st = st || lightState();
@@ -406,7 +523,7 @@
     if (el.foot) el.foot.hidden = !light;
   }
   function paintLights() {
-    const st = lightState(); lastLinkSig = M.key ? st.tone + "|" + st.word + "|" + st.text : "";
+    const st = lightState(); lastLinkSig = M.key ? sigOf(st) : "";
     for (const P of M.panes) if (P.host.isConnected) { paintLight(P.el, P.host, "cmWarn", st); if (P.visible()) paintHist(P); }
     for (const L of M.lines.values()) if (L.node.isConnected) paintLight(L.el, L.node, "cmLWarn", st);
     if (healthBox) { if (healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); else closeHealth(); }
@@ -548,13 +665,18 @@
     const open = [...M.store.values()].filter(s => s.status === "open" && (s.unread > 0 || s.failed > 0 || s.manual > 0 || s.attention > 0))
       .sort((a, b) => (b.unread > 0) - (a.unread > 0) || (b.lastInboundAtMs || b.updatedAtMs || 0) - (a.lastInboundAtMs || a.updatedAtMs || 0));
     const lp = linkProblem();
-    pillMenu.innerHTML = (lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy ? " disabled" : ""}>Check now</button></div>` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
+    const gap = lp && lp.kind === "consistency" && lp.gap && lp.gap.n > 0 ? lp.gap : null;
+    const okNote = !lp && gapNote && gapNote.tone === "ok" && Date.now() - gapNote.at < 180000;
+    pillMenu.innerHTML = (gap ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(gapSentence(gap))} ${gapButtons(gap.sig)}</div>${gapNoteHtml()}${gapHint}`
+      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button></div>${gapNoteHtml()}`
+      : okNote || (gapNote && Date.now() - gapNote.at < 180000) ? `<div class="mmHead">Email link</div>${gapNote.tone === "ok" ? `<div class="cmWarn ok" role="status" aria-live="polite"><b>✓</b> ${E(gapNote.text)}</div>` : gapNoteHtml()}` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
       const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : s.attention > 0 ? "A message may or may not have gone — open it and check Etsy" : "Waiting to be sent by hand on Etsy";
       return `<button type="button" class="mmRow${s.unread > 0 ? " new" : " bad"}" data-id="${E(s.id)}"><span class="mmTop"><b>${E(who)}</b><span class="mono">${String(s.receiptId) === TEST ? "email link test" : E(s.receiptId)}${s.scope === "engraving" ? " · engraving" : ""}</span><span class="mmWhen">${E(when(s.lastInboundAtMs || s.updatedAtMs))}</span></span><span class="mmLine">${line}</span></button>`;
     }).join("") : `<div class="mmEmpty">Nothing waiting.</div>`);
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
-    pillMenu.querySelectorAll("[data-pill-check]").forEach(x => x.onclick = e => { e.stopPropagation(); checkHealth(true); });
+    pillMenu.querySelectorAll("[data-pill-check]").forEach(x => x.onclick = e => { e.stopPropagation(); recheckNow(); });
+    pillMenu.querySelectorAll("[data-gap-dismiss]").forEach(x => x.onclick = e => { e.stopPropagation(); dismissGap(x.dataset.gapDismiss); });
   }
 
   /** Show one question: in the order window when its order is in the pull, otherwise in the order window that is

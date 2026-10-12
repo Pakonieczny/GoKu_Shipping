@@ -185,12 +185,14 @@ okA('C3 a press pins the card (a tap too), a second press puts it away, Esc clos
   chipEl('ship').click(); assert.equal(openId(), 'ship'); ev(d.body, 'pointerdown'); assert.equal(openId(), '', 'a press outside closes it');
   chipEl('ship').click(); ev(host.querySelector('.owfBar'), 'pointerdown'); assert.equal(openId(), '', 'a press on the empty line closes it too');
   // OrderFacts.escape: the window's Esc puts a card away first (true), and then lets the window go (false)
+  await wait(150);   // (an Esc that just put a card away is still remembered for 120 ms, so the dialog's own cancel after that key does not also close the window)
   chipEl('metal').click(); assert.equal(OF.escape(d.body), true); assert.equal(openId(), ''); assert.equal(OF.escape(d.body), false);
   // focus leaving closes it
   chipEl('metal').click(); chipEl('metal').focus(); chipEl('metal').blur(); assert.equal(openId(), '', 'blur closes it');
 });
 ok('C4 the keyboard: the arrows walk the line (one Tab stop), a focused chip opens its card, Enter pins it', () => {
   paint(F.pair); d.body.dispatchEvent(new w.Event('pointerdown'));
+  for (const t0 = Date.now(); Date.now() - t0 < 130;);   // (a focus within 120 ms of a press counts as the press's own, so the keyboard waits that out)
   const first = chipEl('order'); first.focus();
   assert.equal(openId(), 'order', 'keyboard focus opens the card'); assert.equal(host.querySelector('[data-owf-item][tabindex="0"]'), first);
   kd(first, 'ArrowRight'); assert.equal(d.activeElement, chipEl('buyer')); assert.equal(openId(), 'buyer'); assert.equal(chipEl('buyer').tabIndex, 0); assert.equal(first.tabIndex, -1);

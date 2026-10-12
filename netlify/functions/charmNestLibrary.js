@@ -2080,7 +2080,8 @@ async function op_setAllocate(b) {
   if (after) {
     if (!isId(after) || !runId) return { error: "bad set id" };
     const prior = await col(SETS).doc(after).get();
-    if (!prior.exists || prior.data().runId !== runId || !prior.data().committedAt) return { error: "the set this one follows is not a committed set of the run" };
+    // (Paul, 12 Oct: a set that has formed is closed to automatic joining and the run's next sheets form the NEXT set, committed or not: it must be a set of this run that was committed or holds sheets)
+    if (!prior.exists || prior.data().runId !== runId || !(prior.data().committedAt || (Array.isArray(prior.data().sheetIds) && prior.data().sheetIds.length))) return { error: "the set this one follows is not a committed set of the run" };
   }
   const key = (group ? `${runId}|${group}` : runId) + (after ? `|after:${after}` : "");
   if (runId) { const ex = await col(SETS).where("key", "==", key).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; }
@@ -3686,7 +3687,7 @@ async function sharedAnswer(move) {
   if (move.together && kind === "sheet") moving = SharedRule.groupOf(sheets, id).ids;
   const items = SharedRule.between(sheets, moving, kind === "set" && !dest ? id : dest);
   const g = kind === "sheet" ? SharedRule.groupOf(sheets, id) : { ids: moving, orders: [] };
-  return { shared: items, group: { ids: g.ids, labels: g.ids.map(i => (by.get(i) || {}).label || i), members: g.ids.map(i => ({ id: i, label: (by.get(i) || {}).label || i, setId: (by.get(i) || {}).setId || null })), orders: g.orders, fixed: g.ids.filter(i => by.get(i) && by.get(i).fixed).map(i => ({ sheetId: i, sheetLabel: by.get(i).label, why: by.get(i).fixed })), ...(more ? { more: true } : {}) } };
+  return { shared: items, group: { ids: g.ids, labels: g.ids.map(i => (by.get(i) || {}).label || i), members: g.ids.map(i => ({ id: i, label: (by.get(i) || {}).label || i, setId: (by.get(i) || {}).setId || null, metal: (by.get(i) || {}).metal || "" })), orders: g.orders, fixed: g.ids.filter(i => by.get(i) && by.get(i).fixed).map(i => ({ sheetId: i, sheetLabel: by.get(i).label, why: by.get(i).fixed })), ...(more ? { more: true } : {}) } };
 }
 /** The orders of a set's sheets that also have pieces on a sheet outside it that COULD still join it (not cut, not in a committed set). */
 async function splitOfSet(setId, memberIds) {
@@ -3768,6 +3769,19 @@ async function pieceMeta(tx, items) {
   for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "", bodyIndex: x.bodyIndex != null && Number.isFinite(+x.bodyIndex) ? +x.bodyIndex : null }); }
   return map.size ? (k => map.get(String(k)) || null) : null;
 }
+/** Paul, 12 Oct 2026: a 10K, 14K or Rose Gold sheet joins a set once its BACK ENGRAVING is approved (SetEdit.engravingGap, the one rule the page's plan reads too). Read from the same
+ *  readiness report the Library's live read gives (sheetEntries), before the transaction, and only for a sheet of such a metal that is in no set and is being put in one: any other move
+ *  costs nothing. { sheetId: the plain refusal | null } for the sheets it looked at. */
+async function joinEngravings(moves) {
+  const ids = moves.filter(m => m.to).map(m => m.id), out = {};
+  if (!ids.length) return out;
+  const docs = await db.getAll(...ids.map(id => col(SHEETS).doc(id)), { fieldMask: ["metal", "setId", "draft", "solidIncluded", "archived", "laserHold"] });
+  const want = docs.filter(d => { const x = d.exists ? d.data() : null; return x && !x.archived && CutLine.cuts(x.metal) && !SetEdit.inSetOf(x); }).map(d => d.id);
+  if (!want.length) return out;
+  const { sheets } = await sheetEntries(want.map(id => [id]), answerBudget());
+  for (const e of sheets) out[e.id] = SetEdit.engravingGap(e);
+  return out;
+}
 async function applySetMembers(step, by, device, via) {
   const moves = [], seen = new Set();
   for (const m of (Array.isArray(step.moves) ? step.moves : []).slice(0, 12)) {
@@ -3781,6 +3795,7 @@ async function applySetMembers(step, by, device, via) {
   const expect = step.expect && typeof step.expect === "object" ? step.expect : {};
   // the sheets that share an order with a moving sheet (found now, read again inside the transaction)
   const near = (await sharedSheets(moves.map(m => m.id))).sheets.map(s => s.id).filter(id => !seen.has(id)).slice(0, 400);
+  const engravings = await joinEngravings(moves);
   const at = Date.now();
   const res = await db.runTransaction(async tx => {
     const rec = new Map(), setDoc = new Map();
@@ -3797,7 +3812,7 @@ async function applySetMembers(step, by, device, via) {
     await readSheets(near.filter(id => !rec.has(id)), SHARED_FIELDS);
     for (const m of moves) { const e = expect[m.id]; if (e && typeof e === "object" && Object.prototype.hasOwnProperty.call(e, "setId") && (e.setId || null) !== (SetEdit.inSetOf(rec.get(m.id)) || null)) return { error: "The sheet changed since this move was planned: nothing was changed. Try the move again", status: 409 }; }
     const sets = {}; for (const [id, d] of setDoc) sets[id] = { doc: d, members: d ? (Array.isArray(d.sheetIds) ? d.sheetIds : []).map(i => rec.get(String(i))).filter(r => r && !r.archived) : [] };
-    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), runs, owned, ...(meta ? { meta } : {}) });
+    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), runs, owned, engravings, ...(meta ? { meta } : {}) });
     let v = verify();
     // a refusal for shared orders says WHAT the pieces are (a left and a right earring, two earrings, n discs): one small read of at most 24 pool rows, only here (never on a move that goes through)
     if (!v.ok && v.shared && v.shared.length) { const meta = await pieceMeta(tx, v.shared); if (meta) v = verify(meta); }
