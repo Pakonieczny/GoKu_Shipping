@@ -142,7 +142,7 @@ const REC = { key: KC, state: 'open', how: 'button', completedAt: T0 + 50 * H, c
     check(viaSummary.rows.filter(r => r[0] === 0 && ['arrived', 'sheet', 'laser', 'sorted'].includes(r[1])).every(r => r[2] === 'done') && viaSummary.rows.find(r => r[0] === 1 && r[1] === 'laser')[2] === 'missing', "…piece A's first four steps are done (real seals), piece B's Laser cut is missing (a ghost)");
     // ═══ 5 · the card data ═══
     const inf = await page.evaluate(() => ({ b: PieceSeals.info('laser', __ctx(1)), a: PieceSeals.info('laser', __ctx(0)), none: PieceSeals.info('scan', __ctx(0)) }));
-    check(inf.b && inf.b.state !== 'done' && inf.b.ghost === true && inf.b.seals.length === 0 && inf.b.need.length > 0, 'info(): the missing step says what is missing and that a ghost goes with it');
+    check(inf.b && inf.b.state !== 'done' && inf.b.ghost === true && inf.b.seals.length === 0 && Array.isArray(inf.b.need) && inf.b.need.length === 0, 'info(): the missing step is a ghost; its card lists only what holds the piece back (nothing: no next-step lines, no sheet lines)');
     check(inf.a && inf.a.state === 'done' && inf.a.ghost === false && inf.a.seals.length === 1 && inf.a.seals[0].person === 'Marco R.' && inf.a.seals[0].sheet === 'GF Sheet 1' && inf.a.seals[0].at > 0, 'info(): the done step says who, where and when from the same event as the seal');
     check(inf.none === null, 'info(): none for a step with no seal');
   }
