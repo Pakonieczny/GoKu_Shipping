@@ -5,14 +5,15 @@
 // (and, as the server derives it from a record's completedAt, a sealCompleted with data.how "print" for the label).
 // Proves, in headless Chromium over the real charmNestLibrary ops and an in-memory store (nothing live, no Etsy, no paid call):
 //  - each Completed piece has its seals on its row (FOOTBALL: ORDER COMPLETE; FIGURE SKATE: QR LABEL PRINTED, which is what completed it), small
-//  - both "Completed by hand" boxes have that piece's completion seal; the box of a piece on a sheet has none
+//  - the head card has no "Completed by hand" boxes any more (Paul, 12 Oct 2026: no buttons, no sheet shortcuts on it): the completion seal of each piece is on its ROW, which is where
+//    it stays; the card itself draws no control
 //  - the card is the ORDER's: while SNAKE 5 is on a sheet it says where the order is (no "Order completed", no ORDER COMPLETE seal); once every
 //    piece is complete it says "Completed by ... . time" and draws ONE ORDER COMPLETE seal of that very press (the line and the seal agree)
 //  - a record with no stamps still shows what it names (completedAt, how, completedBy), a record with only a timeline press shows that press,
 //    and a record with nothing recorded shows no seal (nothing invented)
 //  - the Timeline tab draws every press once; the Sheet tab's "Completed by hand" draws the picked piece's completion seal
 //  - no seal appears twice in a surface; no seal has a tooltip or a caption; a single-piece order draws its completion once (the card)
-//  - fits at 1440, 900 and 390 (no sideways scroll, every seal inside its row or box, small)
+//  - fits at 1440, 900 and 390 (no sideways scroll, every seal inside its row, small)
 //  - Reopen (Review tab) keeps every seal (record, timeline, row); Complete Order again adds one seal and removes none
 //  - a mutant that drops the seals (Seal.ofPiece / Seal.pieceRow return nothing) is caught by the same check
 //   node tests/charm-nest/completed-seals-order-window.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
@@ -109,15 +110,15 @@ async function main() {
       await page.mouse.move(3, 3); await page.waitForTimeout(1800); await idle();
     };
     const view = async v => { await page.evaluate(x => OrderWin.setView(x), v); await page.mouse.move(3, 3); await page.waitForTimeout(2200); await idle(); };
-    // what each place of the Overview draws: the card's seal, each box's seal, each piece row's seals (as they read on their faces), and the card's words
+    // what each place of the Overview draws: the card's seal, each piece row's seals (as they read on their faces), and the card's words
     const snap = () => page.evaluate(() => {
       const t = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
       const models = n => n ? [...n.querySelectorAll('svg[data-seal-model]')].map(s => { const j = JSON.parse(s.getAttribute('data-seal-model')); return `${j.action} ${j.date} ${j.time}`; }) : [];
-      const card = document.getElementById('owNowCard'), boxes = {}, rows = {};
-      for (const c of card.querySelectorAll('.owShChip[data-pc]')) { const item = c.closest('.owShItem'); boxes[c.dataset.pc] = { text: t(c), seals: models(item), titled: item ? item.querySelectorAll('[title]').length : 0 }; }
+      const card = document.getElementById('owNowCard'), rows = {};
+      const cardControls = card.querySelectorAll('button, a[href], input, select, textarea, [role=button], .shs, .owShChip, .owShItem, [data-go], [data-pc]').length;
       for (const r of document.querySelectorAll('#owPcSum .owPcRow')) rows[r.dataset.piece] = { text: t(r), seals: models(r), btns: [...r.querySelectorAll('.pcAct button')].map(b => b.textContent.trim()).filter(x => x && x !== 'Hold'), titled: r.querySelectorAll('.seal [title], .sealRow[title], .seal[title]').length };
       const now = card.querySelector('.tlNowSeal');
-      return { pill: t(document.getElementById('owNow')), head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), card: models(now), nCard: card.querySelectorAll('.tlNowSeal').length, cardText: t(card), boxes, rows,
+      return { pill: t(document.getElementById('owNow')), head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), card: models(now), nCard: card.querySelectorAll('.tlNowSeal').length, cardText: t(card), cardControls, rows,
         titledAnywhere: [...document.querySelectorAll('#orderWin .seal, #orderWin .sealRow, #orderWin .tlNowSeal, #orderWin .tlSeal')].filter(n => n.hasAttribute('title') || n.querySelector('title')).length };
     });
     const dup = list => list.length !== new Set(list).size;
@@ -128,9 +129,7 @@ async function main() {
       same(s.rows[foot] && s.rows[foot].seals, [OC('10:57 AM')], 'FOOTBALL row (Completed by Complete Order)', out);
       same(s.rows[fig] && s.rows[fig].seals, [QR('12:41 PM')], 'FIGURE SKATE row (Completed by its QR label)', out);
       same(s.rows[snake] && s.rows[snake].seals, [], 'SNAKE 5 row (on a sheet)', out);
-      same(s.boxes[foot] && s.boxes[foot].seals, [OC('10:57 AM')], 'FOOTBALL box (Completed by hand)', out);
-      same(s.boxes[fig] && s.boxes[fig].seals, [QR('12:41 PM')], 'FIGURE SKATE box (Completed by hand)', out);
-      same(s.boxes[snake] && s.boxes[snake].seals, [], 'SNAKE 5 box (on a sheet)', out);
+      if (s.cardControls) out.push('the head card draws ' + s.cardControls + ' control(s) (boxes, buttons, sheet shortcuts): it has none');
       if (s.nCard !== 1 || s.card.length !== 1) out.push('the card draws one seal: ' + JSON.stringify(s.card));
       if (/Order completed/i.test(s.cardText) || /ORDER COMPLETE/.test(s.card.join())) out.push('the order is not complete while SNAKE 5 is on a sheet: ' + s.cardText);
       for (const [k, r] of Object.entries(s.rows)) if (dup(r.seals)) out.push('a seal twice on the row of ' + k);
@@ -138,13 +137,12 @@ async function main() {
     };
     // the same pieces on the Timeline (the stamps drawn on its canvas, one for each press) and the Sheet tab
     const tlSeals = () => page.evaluate(() => [...document.querySelectorAll('#orderWin .tlCanvas button.tlSt svg[data-seal-model]')].map(s => { const j = JSON.parse(s.getAttribute('data-seal-model')); return `${j.action} ${j.date} ${j.time}`; }));
-    // layout: nothing leaves its row, box or the screen, every row/box seal is small, the page never scrolls sideways
+    // layout: nothing leaves its row or the screen, every row seal is small, the page never scrolls sideways
     const fitProblems = () => page.evaluate(() => {
       const out = [];
       if (document.documentElement.scrollWidth > innerWidth + 1) out.push('the page scrolls sideways');
       const inside = (n, box, what) => { const r = n.getBoundingClientRect(), b = box.getBoundingClientRect(); if (r.width && (r.left < b.left - 5 || r.right > b.right + 5)) out.push(`${what} leaves its box (${Math.round(r.left)}-${Math.round(r.right)} in ${Math.round(b.left)}-${Math.round(b.right)})`); if (r.width > 30) out.push(`${what} is ${Math.round(r.width)}px wide (it is a small seal)`); };
       for (const r of document.querySelectorAll('#owPcSum .owPcRow')) for (const s of r.querySelectorAll('.seal')) inside(s, r, 'a seal of the row ' + r.dataset.piece.slice(-2));
-      for (const i of document.querySelectorAll('#owNowCard .owShItem')) for (const s of i.querySelectorAll('.seal')) inside(s, i, 'a seal of a box');
       for (const s of document.querySelectorAll('#orderWin .seal')) { const r = s.getBoundingClientRect(); if (r.width && (r.right > innerWidth + 1 || r.left < -1)) out.push('a seal is off the screen'); }
       return out;
     });
@@ -159,7 +157,7 @@ async function main() {
     };
     const recOf = key => st.doc('Charm_Custom_Orders', key);
 
-    // ── 1 · order A (Paul's): rows, boxes, card; then the same through the mutant ──
+    // ── 1 · order A (Paul's): rows, card; then the same through the mutant ──
     await openWin(kOf(A, 'foot'), 3);
     let p = await aProblems(); assert.deepEqual(p, [], 'order 4171711853: ' + p.join(' | '));
     let s = await snap();
@@ -170,7 +168,7 @@ async function main() {
     // a mutant that drops the seals (the helper returns nothing) is caught by the same check
     await page.evaluate(() => { window.__seal0 = { ofPiece: Seal.ofPiece, pieceRow: Seal.pieceRow }; Seal.ofPiece = () => []; Seal.pieceRow = () => ''; });
     await closeWin(); await openWin(kOf(A, 'foot'), 3);
-    p = await aProblems(); assert(p.length >= 4 && p.some(x => /FOOTBALL row/.test(x)) && p.some(x => /FIGURE SKATE box/.test(x)), 'the mutant that drops the seals is caught: ' + JSON.stringify(p));
+    p = await aProblems(); assert(p.length >= 2 && p.some(x => /FOOTBALL row/.test(x)) && p.some(x => /FIGURE SKATE row/.test(x)), 'the mutant that drops the seals is caught: ' + JSON.stringify(p));
     await page.evaluate(() => { Seal.ofPiece = window.__seal0.ofPiece; Seal.pieceRow = window.__seal0.pieceRow; });
     await closeWin(); await openWin(kOf(A, 'foot'), 3);
     p = await aProblems(); assert.deepEqual(p, [], 'and passes again with the helper back: ' + p.join(' | '));
@@ -215,7 +213,7 @@ async function main() {
     await page.mouse.move(3, 3); await page.waitForTimeout(1500); await idle();
     s = await snap(); assert.equal(s.rows[foot].seals.length, 2, 'two ORDER COMPLETE seals now (the first, and the new one): ' + JSON.stringify(s.rows[foot].seals));
     assert(s.rows[foot].seals.every(x => /^ORDER COMPLETE /.test(x)) && s.rows[foot].seals.includes(OC('10:57 AM')) && !dup(s.rows[foot].seals), 'the first seal stays, the new one is another: ' + JSON.stringify(s.rows[foot].seals));
-    assert.equal(s.boxes[foot].seals.length, 1, 'its box draws the one that completed it now: ' + JSON.stringify(s.boxes[foot])); assert.notEqual(s.boxes[foot].seals[0], OC('10:57 AM'), 'the newest press');
+    assert.equal(s.cardControls, 0, 'and the head card still has no box or control');
     assert.equal(recOf(foot).stamps.length, 2); assert.deepEqual(await fitProblems(), []);
     await closeWin();
 
@@ -228,7 +226,7 @@ async function main() {
     const norm = x => String(x).replace(/[\s  ]/g, '').toUpperCase();
     if (!lineTime || norm(lineTime) !== norm(sealTime)) bad.push(`the card's line (${s.line}) and its seal (${s.card[0]}) are the same moment`);
     same(s.rows[kOf(Bo, 'foot')].seals, [OC('10:57 AM')], 'FOOTBALL row', bad); same(s.rows[kOf(Bo, 'rope')].seals, [OC('11:30 AM')], 'ROPE row', bad); same(s.rows[kOf(Bo, 'fig')].seals, [QR('12:41 PM')], 'FIGURE SKATE row', bad);
-    same(Object.values(s.boxes).map(b => b.seals.length), [1, 1, 1], 'every Completed by hand box has its seal', bad);
+    if (s.cardControls) bad.push('the head card draws ' + s.cardControls + ' control(s): it has none');
     assert.deepEqual(bad, [], 'order 4171711860 (all complete): ' + bad.join(' | '));
     assert.equal(s.nCard, 1, 'one seal on the card'); assert.equal(s.titledAnywhere, 0);
     await shot('b-all-complete'); await layout('b', [[900, 800], [390, 844]]);
@@ -241,17 +239,15 @@ async function main() {
     assert.deepEqual(s.rows[kOf(C, 'old')].seals, [OC('11:30 AM')], 'the older record (no stamps): the completion it names (completedAt, how, completedBy)');
     assert.deepEqual(s.rows[kOf(C, 'tl')].seals, [OC('12:41 PM')], 'a record with no stamps and no dates: the press the permanent timeline remembers');
     assert.deepEqual(s.rows[kOf(C, 'none')].seals, [], 'nothing recorded: no seal (nothing invented)');
-    assert.deepEqual(s.boxes[kOf(C, 'none')] && s.boxes[kOf(C, 'none')].seals, [], 'and its box has none');
-    assert.deepEqual([s.boxes[kOf(C, 'old')].seals, s.boxes[kOf(C, 'tl')].seals], [[OC('11:30 AM')], [OC('12:41 PM')]], 'the boxes of the other two have theirs');
     assert(s.rows[kOf(C, 'none')].btns.includes('Completed'), 'that piece still says Completed');
     assert.equal(s.titledAnywhere, 0); await shot('c-legacy');
     await closeWin();
 
-    // ── 6 · a single piece: its completion is drawn once (the card), the row and the box do not draw it again ──
+    // ── 6 · a single piece: its completion is drawn once (the card), the row does not draw it again ──
     await openWin(kOf(D, 'solo'), 1);
     s = await snap();
     assert.deepEqual(s.card, [OC('10:57 AM')], 'the card draws the completion of the single piece: ' + JSON.stringify(s.card));
-    const total = s.card.length + Object.values(s.rows).reduce((n, r) => n + r.seals.length, 0) + Object.values(s.boxes).reduce((n, b) => n + b.seals.length, 0);
+    const total = s.card.length + Object.values(s.rows).reduce((n, r) => n + r.seals.length, 0);
     assert.equal(total, 1, 'one seal of that fact on the screen: ' + JSON.stringify(s));
     await shot('d-single'); await layout('d', [[390, 844]]);
     await closeWin();
@@ -265,7 +261,7 @@ async function main() {
     await closeWin();
 
     assert.deepEqual(outside, [], 'no Etsy call'); assert.deepEqual(errors, [], 'no page error');
-    console.log('  ok  every Completed piece and the complete order keep their seals in the order window: rows, both "Completed by hand" boxes, the card (one ORDER COMPLETE of the press its line says; none while a piece is on a sheet), the Timeline once, the Sheet tab; older and timeline-only records read, nothing recorded shows no seal; no tooltips; fits 1440/900/390; reopen keeps every seal; the card line and its seal read the same zone in a browser of another zone; a mutant that drops them is caught');
+    console.log('  ok  every Completed piece and the complete order keep their seals in the order window: rows, the card (one ORDER COMPLETE of the press its line says; none while a piece is on a sheet), the Timeline once, the Sheet tab; older and timeline-only records read, nothing recorded shows no seal; no tooltips; fits 1440/900/390; reopen keeps every seal; the card line and its seal read the same zone in a browser of another zone; a mutant that drops them is caught');
   } finally { await browser.close(); srv.close(); }
 }
 main().catch(e => { console.error(e); process.exit(1); });

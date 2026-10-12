@@ -89,7 +89,7 @@
   function fill(t, d, info) {
     info = info || infoOf(d) || { name: '', state: '', line: '', by: '', seal: null };
     const node = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; n.textContent = text; return n; };
-    const head = doc.createElement('div'); head.className = 'rtHead'; head.append(node('b', '', info.name), node('span', 'rtState', info.state));
+    const head = doc.createElement('div'); head.className = 'rtHead'; head.append(...[node('b', '', info.name), info.state && node('span', 'rtState', info.state)].filter(Boolean));
     t.dataset.state = info.state; st.text = keyOf(info); st.sig = sigOf(d);
     let seal = null;
     if (info.seal) {   // (the seal slot: what PieceSeals drew for this step, the real seal of a done step or its unfinished version; in the card it is only looked at)

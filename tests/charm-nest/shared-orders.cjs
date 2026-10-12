@@ -75,6 +75,8 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
   mkSet('set-6', ['sx-1'], { status: 'labelled' }); mk('sx-1', [piece(V, 1)], { setId: 'set-6', setSeq: 6, page: 11, sheetIndex: 11 }); mkSet('set-7', ['sx-2'], { status: 'labelled' }); mk('sx-2', [piece(V, 2)], { setId: 'set-7', setSeq: 7, page: 12, sheetIndex: 12 });   // the same order in two different sets, both ready
   // the lines of the run for the one set the server is asked to complete (what Readiness reads for engraving)
   const lines = {}; for (const [o, n] of [[V, 1], [V, 2]]) lines[`${o}_1`] = { orderId: o, state: 'written', quantity: 2, poolIds: [piece(o, 1), piece(o, 2)], engraveCandidate: false };
+  // the Rose Gold / 10K / 14K sheets read their back engraving as approved (the rule of 12 Oct: a gold sheet joins a set once its backs are approved)
+  for (const o of [N, R, T]) lines[`${o}_1`] = { orderId: o, state: 'written', quantity: 2, poolIds: [piece(o, 1), piece(o, 2)], engraveCandidate: false };
   st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines }); st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines: {} });
 
   const joins = [], draftOf = id => !!(st.doc(S, id) || {}).draft;

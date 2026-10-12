@@ -126,8 +126,9 @@ await t('7 a design with NO art of its own keeps today\'s reading: 2 sides = bot
 
 await t('8 a value that names its faces, a person\'s saved answer for the value, a conflicting option and the title all stay above a side count', () => {
   const tag = withOpt('Tag1 (front+back)'); assert.equal(tag.engraving.mode, 'both'); assert.equal(tag.engraving.sides, undefined);
-  const answered = O.interpretLine({ receiptId: '4200828980', updateTs: 0 }, { transactionId: 't1', listingId: '870782383', sku: 'BIRTHFLOWER_NECKLACE_DISC-9', title: TITLE, quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: ['front: A\nback: B'], variations: [V('Birth Flower', 'Marigold'), V(OPT, 'Gold - 16" - 2 sides')] },
-    ctx({ optionMaps: { '870782383': { [OPT]: { 'Gold - 16" - 2 sides': { field: 'ignore', value: null, source: 'answer', engrave: 'both' } } } } }));
+  // (a value that is only metal + length + sides is the metal option since BFWHY and is not asked, so the saved-answer path is checked with a bare "2 sides" value, which still is an option a person can answer)
+  const answered = O.interpretLine({ receiptId: '4200828980', updateTs: 0 }, { transactionId: 't1', listingId: '870782383', sku: 'BIRTHFLOWER_NECKLACE_DISC-9', title: TITLE, quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: ['front: A\nback: B'], variations: [V('Birth Flower', 'Marigold'), V(OPT, '2 sides')] },
+    ctx({ optionMaps: { '870782383': { [OPT]: { '2 sides': { field: 'ignore', value: null, source: 'answer', engrave: 'both' } } } } }));
   const ans = answered.options.find(o => o.name === OPT);
   assert.equal(ans && ans.mapped && ans.mapped.engrave, 'both', 'the saved answer reaches the option');
   assert.equal(answered.engraving.mode, 'both', 'a saved answer that says both is both, whatever the art'); assert.equal(answered.engraving.front.text, 'A'); assert.equal(answered.engraving.back.text, 'B'); assert.equal(answered.engraving.sides, undefined);

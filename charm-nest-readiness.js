@@ -176,7 +176,7 @@
       const sku=String(l.spec?.designSku ?? l.sku ?? l.line?.sku ?? (p && p.sku) ?? '').trim();
       key=!sku || (p && typeof p==='object' && /no SKU/i.test(p.reason || ''))?'noSku':'unmatched';
     }
-    return {key,why:PROBLEM_WORDS[kind] || String(kind)};
+    return {key,why:p && typeof p==='object' && p.formHold && p.reason?String(p.reason):PROBLEM_WORDS[kind] || String(kind)};   // (HUGGIEGUARD: a line the form guard holds says its own plain reason)
   }
   // a sheet's readiness for another sheet's order: the physical stages only (never its own order check), a cut sheet, or one cut before
   const physicalReady=(s,r)=>+s.laserDoneAt>0 || (r.included && (completedBefore(s) || r.ready));
