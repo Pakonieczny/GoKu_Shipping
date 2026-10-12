@@ -29,8 +29,8 @@ const entryFor = s => lib.get(String(s || '').toUpperCase()) || null, sharedFor 
 const ctx = extra => Object.assign({ optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [] }, customDone: {}, customRead: {}, customDecided: {}, listingSkus: {}, masterEntry: entryFor, masterLoose: s => loose[O.looseKey(s)] || '', masterShared: sharedFor }, extra || {});
 let tx = 8000000000;
 const LISTING = '1801980526';
-const mk = (sku, listing) => ({ transactionId: String(++tx), listingId: String(listing || LISTING), sku, title: 'Dachshund Dog Charm Animal Jewelry Sausage Dog Charm', quantity: 1, metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '',
-  variations: [['Charm Type', 'CHARM + Engraving'], ['Metal Choice', 'Gold Filled'], ['Personalization', 'Pet']].map(([name, value]) => ({ name, value })) });
+const mk = (sku, listing) => ({ transactionId: String(++tx), listingId: String(listing || LISTING), sku, title: 'Dachshund Dog Charm Animal Jewelry Sausage Dog Charm', quantity: 1, metalKey: 'gold', metalLabel: 'GF 14/20', personalization: ['Pet'], buyerMessage: '',
+  variations: [['Charm Type', 'CHARM + Engraving'], ['Metal Choice', 'Gold Filled']].map(([name, value]) => ({ name, value })) });
 const read = (l, extra) => O.interpretLine({ receiptId: 'R' + l.transactionId, updateTs: 1 }, JSON.parse(JSON.stringify(l)), ctx(extra));
 const alias = (v, listing) => ({ aliases: { [listing || LISTING]: v } });
 const resolve = (l, aliases) => O.resolveSku(l, aliases || {}, entryFor, { patterns: [], skus: [] }, s => loose[O.looseKey(s)] || '');
@@ -86,5 +86,15 @@ function otherLinksStillWin() {
   step('a saved pair link and a saved option answer keep their own place');
 }
 
-before(); linkWins(); neverTheReverse(); otherLinksStillWin();
+// the back engraving of a charm is read from the line's own words and options, never from which design the SKU names: the link changes the design and where it came from, nothing else of the reading
+function engravingUntouched() {
+  const a = read(mk('DACHSHUND')), b = read(mk('DACHSHUND'), alias({ v: 2, bySku: { DACHSHUND: 'DACHSHUND_36943' } }));
+  ok(a.engraveCandidate === true && b.engraveCandidate === true, 'the personalised charm is an engraving candidate before and after');
+  const strip = sp => { const c = JSON.parse(JSON.stringify(sp)); delete c.designSku; delete c.skuSource; delete c.sources; return c; };
+  eq(strip(b), strip(a), 'every other part of the reading (form, metal, engraving words, pieces, problems) is exactly the same before and after the link');
+  eq([b.form, b.problems.length], ['charm', 0], 'still a charm line with nothing to ask');
+  step('the back engraving reading of the charm line is unchanged by the link');
+}
+
+before(); linkWins(); neverTheReverse(); otherLinksStillWin(); engravingUntouched();
 console.log(`saved-link-wins: ${n} checks ok`);

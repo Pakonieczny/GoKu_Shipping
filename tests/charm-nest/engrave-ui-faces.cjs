@@ -68,7 +68,7 @@ const SLOTKEY_NEW = 'const slotKey = (row, slot, face) => (face === "front" ? wi
 const JOBSOF_NEW = 'function jobsOf(row) { row = lineOf(row); if (!row) return []; const out = []; for (const s of SLOT_PROBE) { const f = items().get(slotKey(row, s, "front")); if (f) out.push(f); const j = items().get(slotKey(row, s)); if (j) out.push(j); } return out; }';
 /** One-line `  const NAME = ...` definitions of the page's job engine (face of a job, record keys, piece counts) that sit outside the pieces of code the slice tests cut out: run first, when the page has them */
 const outerDefs = (names, within) => names.map(n => { const m = new RegExp('^  const ' + n + ' = .*$', 'm').exec(SOURCE); return m && !(within || '').includes(m[0]) ? m[0] : ''; }).filter(Boolean).join('\n');
-const OUTER = ['FACES', 'faceOf', 'isFront', 'faceWord', 'fileViewOf', 'recKeyFor', 'pieceCountOf'];
+const OUTER = ['FACES', 'faceOf', 'isFront', 'faceWord', 'fileViewOf', 'recKeyFor', 'pieceCountOf', 'neverEngraves', 'NEVER_OPEN', 'NEVER_WHY'];   // (the last three: ZODNOBACK's "no earring is ever engraved" door of approve, the page's own lines)
 const jobEngineStandIn = src => (src.includes(SLOTKEY_OLD) && src.includes(JOBSOF_OLD) ? src.replace(SLOTKEY_OLD, SLOTKEY_NEW).replace(JOBSOF_OLD, JOBSOF_NEW) : src);
 
 /* the seals module with a plain stand-in for the seal drawing (the real picture needs the page's Seal widget): one <i class="seal"> for each seal the REAL module lists for a job, with its face */

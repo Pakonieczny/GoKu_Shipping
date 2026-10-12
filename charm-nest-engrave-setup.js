@@ -110,6 +110,7 @@
   /** What the control shows for a line. null when the line has nothing to say (no spec, left the pull, done by hand, mode none with no edit). */
   function read(row, o) {
     const F = Faces(), line = lineOf(row); if (!F || !line || !line.spec) return null;
+    if (F.neverOf && F.neverOf(line)) return null;   // (NO EARRING IS EVER ENGRAVED, charm-nest-orders.js section 3d: nothing to verify and nothing to edit, so the control is not drawn)
     const setup = setupFor(line); if (!setup) return null;
     if (line.state === 'gone' || (line.spec.customDone && line.spec.customDone.state !== 'open')) return null;
     const jobs = ((o && o.jobs) || (root.Engrave && root.Engrave.jobsOf ? root.Engrave.jobsOf(line) : []) || []).filter(Boolean);
@@ -187,6 +188,8 @@
     const res = { ok: false, removed: [], plain: [], none: [], reopened: [], seeded: [], added: [], pending: false };
     if (!line || !line.spec) { res.message = 'This line is not loaded.'; return res; }
     if (line.state === 'gone') { res.message = 'This order has left the pull, so its engraving is not changed here.'; return res; }
+    // NO EARRING IS EVER ENGRAVED (charm-nest-orders.js section 3d): a person's pick for an earring is dropped quietly (nothing is stored, no job is made, nothing asks); only taking an old pick back is allowed
+    if (F.neverOf && F.neverOf(line) && !o.undo) { res.ok = true; res.never = true; return res; }
     let by = env.who(); if (by && typeof by.then === 'function') by = await by;
     by = str(by).trim(); if (!by) { res.cancelled = true; return res; }
     const prev = line.engravingOverride || null, now = env.now ? env.now() : Date.now();

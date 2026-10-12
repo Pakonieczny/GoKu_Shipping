@@ -1502,6 +1502,7 @@ const Orders = window.Orders = (() => {
         row.problems = []; row.spec.engraveCandidate = false; const m0 = CustomSheet.metalOf(row); if (m0) row.spec.material = m0;
         if (CustomSheet.piecesOf(row) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "oversize", "noDesign"].includes(row.state)) { row.state = "pulled"; row.reason = null; }
       }
+      window.Engrave?.putAwayNever?.(row);     // (NO EARRING IS EVER ENGRAVED, ZODNOBACK: an engraving job still open on an earring line, from an earlier reading or session, is put away as "no engraving")
       window.Engrave?.raiseCandidate?.(row);   // (a front / both line the buyer wrote no words for is a line to engrave: a person is asked; the intake's engraveCandidate is about words)
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
     }
@@ -3007,6 +3008,7 @@ const Master = window.Master = (() => {
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
         (e.aiUrl ? `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-repo="download" title="download this charm's .ai file (asks for your password)">.ai</button>`
                  : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-size="${esc(k)}" data-repo="download" title="download this charm's .ai file (asks for your password)">${esc(k)}.ai</button>`).join("")) +
+        (!WORKSPACE_SANDBOX && window.CharmNestEtsyLink ? `<button type="button" class="btn ghost xs" data-etsylink="${keys}" data-repo="modify" title="put this charm's SKU on an Etsy listing (asks for your password)">Etsy</button>` : "") +
         `</div></div>`;
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
     mountMasterPreviews(grid);
@@ -3027,6 +3029,8 @@ const Master = window.Master = (() => {
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; if (e && e.cancelled) toast(`${skus.join(", ")} not unblocked — the repo stayed locked`, "", 4000); else toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
+    // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
+    each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName }); });
   }
   return { entryFor, looseFor, sharedFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
@@ -3303,20 +3307,32 @@ const Pool = window.Pool = (() => {
   const setToldFixed = new Set();
   function noticeSet(row, live) {
     try {
-      const sp = row.spec, want = O.setDesignsOf(sp);
+      const sp = row.spec, set = O.setDesignsOf(sp);
+      // COMETMAP (12 Oct 2026): ONE design a person saved for this listing and SKU (source "alias": "Use this charm", aliasPut bySku) is the same kind of change when the line was pooled as another drawing
+      // (the Etsy SKU read as a look-alike master entry: CELESTIAL3-COMET, a comet with no loop, before the link to CELESTIAL 3 - COMET). Only that source, and only a line that reads clean and is not made by hand
+      const one = !set && sp && sp.skuSource === "alias" && sp.designSku && !sp.noDesign && !sp.ownDesign && !sp.customDone && !(sp.problems || []).length ? [String(sp.designSku)] : null, want = set || one;
       if (!want || ["gone", "committed"].includes(row.state) || row.hold) return;
       if (row.changePending && row.repoolChanged && ((B.review && B.review.items) || []).some(x => x.key === "chg:" + row.key)) return;   // (already offered: the card stands until a person answers it)
       const units = Math.max(1, Math.round(+sp.quantity || 1)), expect = []; for (let u = 0; u < units; u++) for (const d of want) expect.push(d.toUpperCase());
       const made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
-      if (made.length === expect.length && made.every((s, i) => s === expect[i])) return;   // (already made as the link says)
+      if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) return;   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
+      if (one && (!made.length || made.some(s => !s))) return;   // (nothing made yet: the line is simply made up from the link; a piece whose record names no design is not guessed at)
       const ids = new Set(row.poolIds || []), cut = sh => !!sh.roseCutAt || Sets.ofRun(sh.runId).some(s => s.committedAt && s.sheetIds.includes(sh.sheetId));
       const fixed = allSheets().filter(sh => (cut(sh) || sh.releaseFull || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c => ids.has(c.poolId)));
-      if (fixed.length) { if (!setToldFixed.has(row.key)) { setToldFixed.add(row.key); agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this line a set of charms (${want.join(" + ")}), but its piece is on ${fixed.map(sh => sh.fileBase || sh.sheetId).join(", ")}, released or cut: left as it was`); } return; }
+      if (fixed.length) {
+        if (!setToldFixed.has(row.key)) {
+          setToldFixed.add(row.key); const where = fixed.map(sh => sh.fileBase || sh.sheetId).join(", ");
+          agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece is on ${where}, released or cut: left as it was`);
+          // (one design: the order window already says "Read as <the linked design>" while the sheet still holds the old drawing; its timeline says so too, in words, once. Nothing is written to a sheet.)
+          if (one) try { TL.line(row, "interpreted", { id: `${row.key}.relink.${TL.hash(want[0] + "|" + made.join(","))}`, once: true, text: `Saved link: now ${want[0]}, but ${[...new Set(made)].join(" + ") || "its piece"} is on ${where}, released or cut, so the sheet was left as it was`.slice(0, 200), data: { sku: want[0], was: made.slice(0, 6), sheets: fixed.map(sh => sh.sheetId).slice(0, 4) } }); } catch (_) {}
+        }
+        return;
+      }
       row.changePending = true; row.repoolChanged = true;
-      const was = made.length ? made.join(" + ") : "nothing yet";
+      const was = made.length ? (one ? [...new Set(made)] : made).join(" + ") : "nothing yet", pcs = one ? Math.max(1, Math.round(+sp.pieceCount || expect.length)) : expect.length;
       Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
-        why: `Now ${want.length === 2 ? "two" : want.length} charms, ${want.join(" + ")} (a saved link). Accept the new order to make it up again as ${expect.length} pieces: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
-    } catch (e) { console.warn("[bridge] saved two-charm link not noticed:", e && e.message); }
+        why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
+    } catch (e) { console.warn("[bridge] saved link not noticed:", e && e.message); }
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
@@ -5517,6 +5533,12 @@ const Engrave = window.Engrave = (() => {
   const FACES = () => window.CharmNestEngraveFaces || null;
   const faceOf = x => { const F = FACES(); return F ? F.faceOf(x) : "back"; };
   const isFront = x => faceOf(x) === "front";
+  /** NO EARRING IS EVER ENGRAVED (ZODNOBACK, Paul 12 Oct 2026; the one rule is charm-nest-orders.js section 3d, the verdict is spec.engraveNever, read through CharmNestEngraveFaces.neverOf): a line (or any side row / job row of it)
+   *  whose form is huggie or earring has no engraving on either face. Every door that could make one asks THIS: the intake's candidate flag, the classifier, the words card, the ready step, a person's pick
+   *  (the setup control, applyEngraving), "ask again", "send back", the approval. A job that is already APPROVED or WRITTEN is left as it is (its seals are permanent); everything still open is put away as "no engraving". */
+  const neverEngraves = row => { const r = row && (row.parentRow || row), F = FACES(); return F && F.neverOf ? F.neverOf(r) : (r && r.spec && r.spec.engraveNever) || null; };
+  const NEVER_OPEN = j => !["approved", "written"].includes(j.state);   // (the jobs the rule may put away: not the ones with an approval on them)
+  const NEVER_WHY = "Earrings are never engraved (the shop's rule)";
   /** The key of a saved record (a backPool entry / Charm_Pool_Back doc): the poolId for a back, `<poolId>~front` for a front. */
   const recKeyFor = (poolId, x) => { const F = FACES(); return F ? F.recKey(poolId, faceOf(x)) : poolId; };
   const slotKey = (row, slot, face) => (face === "front" && FACES() ? FACES().jobKey(row.key, slot, "front") : slot ? `${row.key}#${slot}` : row.key);
@@ -5743,11 +5765,23 @@ const Engrave = window.Engrave = (() => {
   /** engraveCandidate is the intake's word about WORDS ("something is written to engrave"). A line the buyer asked to engrave on a face without writing any (the intake's reading: needsPerson, "nowords"), or
    *  that a person set up with faces, is raised here so a person is asked rather than the line being cut plain. Custom, add-on and no-design lines are never raised. In memory only: it is read again on every pull. */
   function raiseCandidate(row) {
-    row = (row && row.parentRow) || row; const sp = row && row.spec; if (!sp) return false; if (sp.engraveCandidate) return true;
+    row = (row && row.parentRow) || row; const sp = row && row.spec; if (!sp) return false; if (neverEngraves(row)) return false; if (sp.engraveCandidate) return true;   // (an earring is never raised: ZODNOBACK)
     const F = FACES(); if (!F || !sp.designSku || sp.noDesign || sp.ownDesign || (sp.special && (sp.special.notCut || sp.special.own)) || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row))) return false;
     let st; try { st = F.setupOf(row); } catch (_) { return false; }
     if (!st.faces.length || !(st.needsPerson || st.edited)) return false;
     sp.engraveCandidate = true; sp.engraveRaised = true; return true;
+  }
+  /** NO EARRING IS EVER ENGRAVED (ZODNOBACK): the line's open engraving jobs (a words card, a placement to check, a restored card from an earlier session) are put away as "no engraving", and an open summary with no job
+   *  of its own likewise; its Review cards go with them. A job with an approval on it, a cut-plain decision, its seals and the records on sheets are never touched. Asked for every line each time it is read again
+   *  (Orders.interpretAll), so a restore, a pull and a changed order all pass here. → true when something changed. */
+  function putAwayNever(row) {
+    row = (row && row.parentRow) || row; if (!row || !row.spec || row.state === "gone" || !neverEngraves(row)) return false;
+    let hit = false; const js = jobsOf(row);
+    for (const j of js) if (NEVER_OPEN(j) && j.state !== "none" && j.state !== "skipped") { setNone(j, NEVER_WHY); hit = true; }
+    const e = row.engrave;
+    if (e && !js.length && e.needed && !e.approved && !["approved", "written", "skipped", "none"].includes(e.state)) { row.engrave = { ...e, needed: false, state: "none", approved: true, reason: NEVER_WHY, seals: CNEngravingSeals.merge(e) }; hit = true; }
+    if (hit) { try { const S = SIDES(); if (S && row._engraveLinked) S.linkParent(sidesCtx, row, jobsOf(row)); } catch (_) { /* the summary is drawn again from the jobs */ } }
+    return hit;
   }
   /** What a face job starts with from the setup, or null. A back line the intake read as "back" with nothing a person said keeps the old reader: no seed. */
   function seedOf(setup, job) {
@@ -5785,6 +5819,8 @@ const Engrave = window.Engrave = (() => {
   async function classifyOnce(row) {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
+    // NO EARRING IS EVER ENGRAVED (ZODNOBACK): nothing is read, nothing is paid for, nothing asks; a job with an approval on it stays as it is
+    if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, NEVER_WHY); return job; }
     if (!sp.engraveCandidate && !raiseCandidate(row)) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
     // a person said "no engraving" for this line: it stays so (never the paid reader again)
     const said = FACES() ? FACES().setupOf(row) : null;
@@ -5794,7 +5830,7 @@ const Engrave = window.Engrave = (() => {
     // a line with a front (or a person's own words for a face, or a reading marked for a person): each face job takes its words from the line's setup, no paid reading (charm-nest-engrave-faces.js)
     const faceSetup = facedSetup(row, jobs); if (faceSetup) return classifyFaces(row, jobs, faceSetup);
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
-    const engravable = true;
+    const engravable = !neverEngraves(row);   // (always true here: an earring never gets this far, the line above puts it away; the server answers "no engraving" for engravable:false too)
     // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
     if (jobs.length > 1 && jobs.every(j => j.seededFrom && j.text)) {
       for (const j of jobs) { const earOf = SIDES().earOf(j.slot); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
@@ -5871,10 +5907,12 @@ const Engrave = window.Engrave = (() => {
     return setReady(job);
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
-  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
+  function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, NEVER_WHY);   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
+    job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (owner.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
+    if (neverEngraves(row)) return setNone(job, NEVER_WHY);   // (NO EARRING IS EVER ENGRAVED: a person's words for an earring never make it ready either)
     await loadFonts();
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
@@ -5912,6 +5950,8 @@ const Engrave = window.Engrave = (() => {
     const F = FACES(); row = lineOf(row);
     if (!F || !row || !row.spec) return { ok: false, error: "This piece is not read yet" };
     if ((O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) || row.state === "gone") return { ok: false, error: "This order is past engraving" };
+    // NO EARRING IS EVER ENGRAVED (ZODNOBACK): a person's pick for an earring is dropped quietly: nothing is stored, no job is made, nothing asks
+    if (neverEngraves(row)) return { ok: true, never: true, setup: F.setupOf(row), added: [], dropped: [], skipped: [], kept: [] };
     by = by || employeeName() || await needEmployee("Kept with this change to the engraving."); if (!by) return { ok: false, error: "No name signed in" };
     const owner = items(), was = F.setupOf(row), at = Date.now(), clean = {};
     for (const k of ["mode", "front", "back"]) if (patch && patch[k] !== undefined) clean[k] = patch[k];
@@ -6228,7 +6268,7 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
-  function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
+  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, NEVER_WHY); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   /* ── the line's engraving SETUP: a person's edit of what the system decided (charm-nest-engrave-setup.js, CONTRACT 3, SURFACES row 6) ───────────────────────────
      "Engraves: None / Front only / Back only / Front + back", each face's words and font. Saved as row.engravingOverride on the LINE row (by = the signed-in login, never typed), kept by
      lineRecord / rowFromRecord / the resume keep-list / Carry.adopt, and applied to the jobs: an UNDECIDED face job that is no longer asked for is removed, a DECIDED one is never
@@ -6249,6 +6289,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** A face asked for again after it was cut plain / set to no engraving: the job is open for words again (its old seals stay in its history). */
   function reopenJob(job) {
+    if (neverEngraves(job.row)) return job;   // (NO EARRING IS EVER ENGRAVED: a face is never asked for again on an earring)
     const face = (window.CharmNestEngraveFaces && CharmNestEngraveFaces.faceOf(job)) || "back";
     job.decision = null; job.decidedAt = null; job.decidedBy = null; job.approvedBy = null; job.approvedAt = null; job.fit = null; job.view = null; job.mask = null; job.backs = [];
     toWords(job, `Say what to engrave on the ${face}`);
@@ -6348,6 +6389,7 @@ const Engrave = window.Engrave = (() => {
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     if(owner.get(job.key)!==job || row?.state==="gone" || job.state!=="review" && !(job.state==="fitting" && pendingFit) || job.stamping || job.backSaving || job.approvalPreparing) return;
+    if(neverEngraves(row) && !job.approvalIntent){setNone(job,NEVER_WHY);Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
     if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
@@ -7779,7 +7821,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, undoSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, undoSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -12150,6 +12192,9 @@ const Review = window.Review = (() => {
     }
     if(row.repoolChanged){
       const old=new Set(row.poolIds || []);
+      // a line made up again as ANOTHER drawing (a saved link: COMETMAP / SCHROLINK) has the engraving it was fitted to the old outline asked again, as an Etsy change does (once: an invalidated job is not invalidated twice)
+      try { const was=[...old].map(id=>B.pool.rows.get(id)).filter(Boolean).map(r=>String(r.sku || "")), to=O.setDesignsOf(row.spec) || [row.spec && row.spec.designSku];
+        if(row.engrave && was.length && to.every(Boolean) && !was.every(w=>to.some(t=>O.sameDesign(w,t,k=>Master.entryFor(k))))){ row.engrave.invalidatedBy="design changed"; row.engrave.approved=false; row.engrave.state="reclassify"; Engrave.invalidate(row,"design changed"); } } catch(_) {}
       // (a sheet already released keeps its set and gets its QR label made again for the orders left on it: it used to leave
       // the set without a label and wait to fill again, as a sheet did after charms were taken off by hand, 26 Sep)
       for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){Gate.keep(sh);sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));Orders.keepRest(sh);}
@@ -14350,6 +14395,9 @@ const OrderWin = window.OrderWin = (() => {
    *  A line that reads as the plain default back (no word of its own) stays as quiet as it always was: null. Nothing here reads a record or the network. */
   function engReadingOf(r) {
     const F = window.CharmNestEngraveFaces; if (!F || !F.setupOf || !F.describe || !r || !r.spec) return null;
+    // NO EARRING IS EVER ENGRAVED (ZODNOBACK): said once, calmly, only when the buyer wrote something in the box (a zodiac sign, a name): it is kept as what the customer wrote, never engraved, never a question
+    const nv = F.neverOf && F.neverOf(r);
+    if (nv) { const words = (nv.note || []).join(" / "); return words ? { chip: "No engraving", html: `<span>${esc(nv.why || "Earrings are never engraved")}<br>${esc(`“${words}” is the buyer's note (see What the customer wrote), not an engraving.`)}</span>` } : null; }
     const st = F.setupOf(r), n = st && st.sides && +st.sides.n || 0;
     const faced = !!st && st.faces.length > 0 && st.source !== "default", plain = !!st && !st.faces.length && st.mode === "none" && n === 1 && !st.edited;   // ("1 side": the design's own art only)
     if (!faced && !plain) return null;

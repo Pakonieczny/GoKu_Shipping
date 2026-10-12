@@ -2276,6 +2276,42 @@
     return spec;
   }
 
+  /* ═══ 3d · NO EARRING IS EVER ENGRAVED (ZODNOBACK, Paul 12 Oct 2026, order 4200256896) ═══════════════════════════════════
+     (Paul: "for some reason that was interpreted as an engraving. No earrings are ever allowed to have back engraving, make that a rule forever." The listing was the zodiac
+     huggie hoops; the buyer's sign, "Capricorn", sat in the personalisation box because the drop-down has no zodiac list; the engraving reader took it for words for the back, "45% sure".)
+     THE RULE, in one place: a line whose FORM is "huggie" or "earring" (the form guard of section 3b: studs, hoops, huggies, zodiac / letter earrings, pairs, a huggie charm set; never a
+     necklace, a bracelet, a keychain, a loose charm or a line of unknown form) has NO engraving, on either face, whatever it says: spec.engraveCandidate is false, spec.engraving is never
+     written (so no "2 sides", "front and back", labelled words or option can make one), and spec.engraveNever says why. Every later reader asks this one fact, never the words again: the faces
+     model (CharmNestEngraveFaces.setupOf, so a person's later pick cannot add one back: the pick is dropped quietly, nothing asks), Engrave (jobs, cards, seals, readiness), the order window,
+     the Orders rows and the timeline. The buyer's words are NOT lost: they stay in spec.personalization (the sign word is the sign resolver's to read, interpretLine) and show as what the
+     customer wrote; here they are only never an engraving and never a question.
+     Not touched: an engraving an earring line already has APPROVED or WRITTEN (a seal is the permanent record; Engrave leaves a decided job as it is). A line whose form is not
+     known to be earrings keeps its engraving exactly as before: when the title also names a necklace, a pendant, a bracelet or the like and only earring WORDS say earrings, the form is not
+     sure and the rule stays out of it (never a necklace's back engraving lost to a guess). */
+  const EAR_NEVER_WHY = "Earrings are never engraved (the shop's rule for every huggie, hoop and stud)";
+  const EAR_OTHER_PRODUCT = /\b(?:necklaces?|pendants?|bracelets?|anklets?|key\s*(?:chains?|rings?)|keychains?|chokers?)\b/i;
+  /** Does this line (a raw Etsy line, an interpretLine spec, or a row carrying one) never engrave? → { rule: "earring", form: "huggie" | "earring", by: plain words, why } or null.
+   *  Takes `{ lineForm, designForm, form, pair, line }` too (what interpretLine knows when it asks). A spec that already carries its verdict (spec.engraveNever) answers with it. */
+  function earringNeverBackEngraves(x) {
+    if (!x || typeof x !== "object") return null;
+    const row = x.parentRow || x, sp = row.spec && typeof row.spec === "object" ? row.spec : row;
+    if (sp.engraveNever && typeof sp.engraveNever === "object" && sp.engraveNever.rule) return sp.engraveNever;
+    const line = row.line && typeof row.line === "object" ? row.line : x.line && typeof x.line === "object" ? x.line : Array.isArray(row.variations) || row.title != null ? row : null;
+    let lf = sp.lineForm, by = "";
+    if (lf && typeof lf === "object") { by = String(lf.by || ""); lf = lf.form; }
+    if ((lf === undefined || lf === null) && line) { try { const r = lineForm(line, {}); lf = r.form; by = String(r.by || ""); } catch (_) { lf = "unknown"; } }
+    const df = sp.designForm && typeof sp.designForm === "object" ? sp.designForm.form : sp.designForm, unsure = !lf || lf === "unknown";
+    let form = "";
+    if (lf === "huggie" || lf === "earring") form = lf;
+    else if (unsure && (df === "huggie" || df === "earring")) form = df;                                  // (the design drawn is a huggie / earring design, and nothing says otherwise)
+    else if (unsure && (sp.form === "huggie" || sp.form === "earrings" || sp.form === "earring-single")) form = sp.form === "huggie" ? "huggie" : "earring";
+    else if (unsure && sp.pair && sp.pair.earring) form = "earring";
+    if (!form) return null;
+    // earring WORDS alone, under a title that also names a necklace / pendant / bracelet: not sure (a bundle): the rule stays out of it
+    if (line && by === "its earring words" && EAR_OTHER_PRODUCT.test(String(line.title || ""))) return null;
+    return { rule: "earring", form, by: by || (unsure && (df === "huggie" || df === "earring") ? "its design" : "its form"), why: EAR_NEVER_WHY };
+  }
+
   /* ═══ 3e · front and back engraving (ENGINTAKE, Paul 11 Oct 2026) ═══════════════════════════════════════════════════════
      (Paul, order 4195966039, Mini Tag listing 4458930445, Charm Type "Tag1 (front+back)", font Ace, personalisation "front - W" / "back - 1. 27. 24":
      "there must be an actual check on every single listing that is being processed to ensure that if there is back and front engraving, it's
@@ -2515,6 +2551,8 @@
     line = line || {}; spec = spec || {}; art = art || { front: null };
     // a rework / modification fee line ("Re-work: $5 back engraving fee") and any line with no design of its own is never an engraving of its own
     if (spec.noDesign || /\b(?:re-?work|modifications?)\b/i.test(String(line.title || ""))) return null;
+    // ZODNOBACK (section 3d): an earring is never engraved, on either face: no mode, no side count, no label, no option or title can make one, so nothing below is read at all
+    if (spec.engraveNever) return null;
     const opts = (line.variations || []).map(v => { const id = idOf(v && (v.valueId != null ? v.valueId : v.value_id)); return { name: decodeEntities(lvName(v)).trim(), value: decodeEntities(lvValue(v)).trim(), drop: !!id && id !== "0" }; }).filter(v => v.name || v.value);
     const asText = x => visible(x).replace(/\r/g, "").trim();
     // (every line passes here: a line that mentions no face at all is answered at once)
@@ -3005,7 +3043,11 @@
     }
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
     if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
-    spec.engraveCandidate = !quiet && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
+    // ZODNOBACK (section 3d): NO EARRING IS EVER ENGRAVED. The form guard's verdict (lf: the line's form, df: its design's) decides, once, here; every later reader asks spec.engraveNever. The buyer's words stay in
+    // spec.personalization (a zodiac sign typed in the box is the buyer's choice of sign, never words for the back) and are never a question.
+    let never = null; try { never = earringNeverBackEngraves({ lineForm: lf, designForm: df, form: spec.form, pair: spec.pair, line }); } catch (_) { never = null; }
+    if (never) spec.engraveNever = Object.assign({}, never, { note: (spec.personalization || []).map(x => visible(x).trim()).filter(Boolean).slice(0, 4).map(x => x.slice(0, 120)) });
+    spec.engraveCandidate = !quiet && !never && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     // BFFONT: a font the buyer named in their own words (personalisation, message, staff note), whatever the listing: spec.fontText (fontTextOf). A font option is read as before (spec.font) and wins over
     // it; nothing is added to a line whose words name no font. Before the faces reading (engravingOf), which takes the words of a font request out of the engraved words.
     try {
@@ -3413,7 +3455,7 @@
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
   return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
-    engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY,
+    engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,

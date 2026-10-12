@@ -278,12 +278,19 @@ await t('4i fee lines and no-design lines are never read as an engraving of thei
 });
 
 /* ═══ 5 · pairs and discs ═══ */
-const PAIRLINE = (pers, opt) => read({ sku: 'EAR_1', listingId: '999', title: 'Stud Earrings, Personalized Charms', variations: [V('Metal Choice', 'Gold Filled'), V('Engraving', opt || 'Front&Back')], personalization: pers });
+// ZODNOBACK (Paul, 12 Oct 2026): NO EARRING IS EVER ENGRAVED, so an earring line has no spec.engraving at all (5f; the rule's own test is earring-never-engraved.cjs). 5a-5d keep testing the reader's per-ear logic
+// (the same logic the counted discs use) by taking the rule's verdict off the spec and asking the reader again for that line.
+const unruled = line => {
+  const l = Object.assign({ transactionId: 't1', listingId: '4458930445', sku: 'MINI_0445', title: 'Mini Tag Initial Charm Add On Charm Personalized Letter Charm Minimalist Tiny Pendant Gift for Her Custom Initial Charm', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: [], variations: [] }, line);
+  const sp = O.interpretLine({ receiptId: '4195966039', updateTs: 0 }, l, ctx()); assert.ok(sp.engraveNever, 'an earring line carries the rule'); const bare = Object.assign({}, sp); delete bare.engraveNever;
+  const e = O.engravingOf(l, bare); if (e) sp.engraving = e; else delete sp.engraving; return sp;
+};
+const PAIRLINE = (pers, opt) => unruled({ sku: 'EAR_1', listingId: '999', title: 'Stud Earrings, Personalized Charms', variations: [V('Metal Choice', 'Gold Filled'), V('Engraving', opt || 'Front&Back')], personalization: pers });
 const DISCLINE = (pers, n) => read({ sku: 'INITIAL_DISC_4571', listingId: '888', title: 'Initial Disc Necklace', variations: [V('Metal Choice', 'Gold'), V('Discs', n + ' Disc'), V('Engraving', 'Front&Back')], personalization: pers });
 await t('5a a front+back earring pair with one set of words: the same front and back on both ears; the Left / Right rule (2 pieces, L R) is untouched', () => {
   const sp = PAIRLINE(['front: A\nback: B']), e = sp.engraving; shapeOk(e, 'pair');
   assert.deepEqual([sp.pieceCount, sp.pair.kind, sp.pair.sides, e.front.text, e.back.text, e.pieces, e.needsPerson], [2, 'pair', ['L', 'R'], 'A', 'B', undefined, false]);
-  const q2 = read({ sku: 'EAR_1', listingId: '999', title: 'Stud Earrings', quantity: 2, variations: [V('Engraving', 'Front&Back'), V('Metal Choice', 'Gold Filled')], personalization: ['front: A\nback: B'] }); assert.deepEqual([q2.pieceCount, q2.engraving.front.text], [4, 'A']);
+  const q2 = unruled({ sku: 'EAR_1', listingId: '999', title: 'Stud Earrings', quantity: 2, variations: [V('Engraving', 'Front&Back'), V('Metal Choice', 'Gold Filled')], personalization: ['front: A\nback: B'] }); assert.deepEqual([q2.pieceCount, q2.engraving.front.text], [4, 'A']);
 });
 await t('5b a front+back pair with words per ear: each ear\'s own front and back are read into `pieces` (additive); until the faces model reads them a person enters them, so the line asks one; same words per ear collapse to one set', () => {
   const e = PAIRLINE(['Left: front A back B\nRight: front C back D']).engraving; shapeOk(e, 'pieces');
@@ -301,6 +308,12 @@ await t('5c a pair whose words name the ears but not the faces, or only one ear,
 await t('5d front-only earrings: each ear\'s own plain words are that ear\'s front', () => {
   const e = PAIRLINE(['Left: Anna\nRight: Ben'], 'Front engrave').engraving; assert.deepEqual([e.mode, e.reviewKind, e.pieces.L.front.text, e.pieces.R.front.text, e.pieces.L.back], ['front', 'pieces', 'Anna', 'Ben', null]);
   assert.deepEqual(faces(PAIRLINE(['Anna'], 'Front engrave').engraving), ['front', 'Anna', null], 'one name: both ears');
+});
+await t('5f the same earring lines, read as the page reads them: no engraving at all (no front, no back, no question), the words stay the buyer\'s note', () => {
+  for (const pers of [['front: A\nback: B'], ['Left: front A back B\nRight: front C back D'], ['Left: Anna\nRight: Ben'], ['W\n5']]) for (const opt of ['Front&Back', 'Front engrave', 'Back engraving']) {
+    const sp = read({ sku: 'EAR_1', listingId: '999', title: 'Stud Earrings, Personalized Charms', variations: [V('Metal Choice', 'Gold Filled'), V('Engraving', opt)], personalization: pers });
+    assert.equal(sp.engraving, undefined, opt + ' ' + pers[0]); assert.equal(sp.engraveCandidate, false); assert.equal(sp.engraveNever.rule, 'earring'); assert.deepEqual(sp.personalization, pers);
+  }
 });
 await t('5e counted discs: D1..Dn each with its own front and back', () => {
   const sp = DISCLINE(['Disc 1: front A back B\nDisc 2: front C back D\nDisc 3: front E back F'], 3), e = sp.engraving; shapeOk(e, 'discs');

@@ -183,6 +183,7 @@
     "_charmNestCustomRead.js",
     "_charmNestCustomSave.js",
     "_charmNestEtsySku.js",
+    "_charmNestEtsyLink.js",
     "_charmNestListingSkus.js",
     "_charmNestSkuCheck.js",
     "_charmNestMaster.js",

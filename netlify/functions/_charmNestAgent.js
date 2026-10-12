@@ -271,8 +271,18 @@ function buildRequest(mode, body) {
   return { error: "unknown mode" };
 }
 
+/** NO EARRING IS EVER ENGRAVED (ZODNOBACK, Paul 12 Oct 2026; the one rule is charm-nest-orders.js section 3d, the page asks it before it ever asks for a reading). A reading the page marks as not engravable
+ *  (engravable: false) or whose line form is an earring's answers "no engraving" here, without a model call: nothing is paid for and no question is made up ("Is Capricorn the engraving text, or the customer's
+ *  zodiac charm choice?"). The sign or name the buyer typed stays what the customer wrote. */
+const EARRING_FORMS = /^(?:earrings?|earring-single|huggie|huggies|studs?)$/i;
+const neverEngraves = body => !!body && (body.engravable === false || EARRING_FORMS.test(String(body.form || "")));
+function noEngravingAnswer(mode) {
+  return { mode, model: null, effort: null, usage: null, reasoning: "Earrings are never engraved (the shop's rule): no reading was made.", engrave: false, text: "", source: "none", sourceQuote: "",
+    requests: { side: "unspecified", font: null, handwriting: false, image: false }, questions: [], confidence: 1, never: true };
+}
 /** Run one mode. Never throws for model trouble: returns {skipped} instead. */
 async function run(mode, body) {
+  if (mode === "engraveIntent" && neverEngraves(body)) return noEngravingAnswer(mode);
   if (!process.env.ANTHROPIC_API_KEY) return { skipped: "ANTHROPIC_API_KEY is not set" };
   const req = buildRequest(mode, body);
   if (req.error) return { error: req.error };
@@ -308,4 +318,4 @@ async function run(mode, body) {
     return { skipped: `${mode === "name" ? "naming" : mode === "packing" ? "shape analysis" : /^engrave/.test(mode) ? "engraving classifier" : "review"} unavailable (${e.status ? e.status + " " : ""}${String(detail).slice(0, 200)})` };
   }
 }
-module.exports = { run, buildRequest, MODEL, EFFORT, NAME_EFFORT };
+module.exports = { run, buildRequest, MODEL, EFFORT, NAME_EFFORT, neverEngraves };
