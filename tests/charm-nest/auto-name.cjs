@@ -105,11 +105,13 @@ async function partA(browser) {
   const signOutName = () => page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   const focusJob = async (k, rid) => { await page.evaluate(({ k, rid }) => { CN.setMode('engrave'); Engrave.restoreView(Object.assign({}, Engrave.view(), { tab: 'place', focus: k, list: false, chosen: true, q: rid, openDone: null })); Engrave.render(); }, { k, rid }); };
   const useBtn = k => `#egQueue .rvItem[data-key="${k}"] [data-a=usewords]`;
+  const wordsBox = k => `#egQueue .rvItem[data-key="${k}"] .engp .engpWords`;   // (the Engrave detail has no words box of its own any more: the words are typed in the options panel, "Engrave these words" settles them)
   const apprBtn = k => `#egQueue .rvItem[data-key="${k}"] [data-a=approve]`;
   const pressUse = async (k, rid, words) => {
     await focusJob(k, rid);
     await page.waitForSelector(useBtn(k), { timeout: 20000 });
-    await page.fill(`#egQueue .rvItem[data-key="${k}"] [data-f=words]`, words);
+    await page.waitForSelector(wordsBox(k), { timeout: 20000 });
+    await page.fill(wordsBox(k), words);
     await page.click(useBtn(k));
   };
   const states = await page.evaluate(() => Object.fromEntries([...Engrave.items().values()].map(j => [j.key, j.state])));
@@ -154,11 +156,11 @@ async function partA(browser) {
     console.log('· A3: Esc puts the bar away calmly: nothing decided, the words typed stay as typed');
     await signOutName();
     await focusJob(K.W3, R.W3); await page.waitForSelector(useBtn(K.W3), { timeout: 20000 });
-    await page.fill(`#egQueue .rvItem[data-key="${K.W3}"] [data-f=words]`, 'TYPED WORDS');
+    await page.fill(wordsBox(K.W3), 'TYPED WORDS');
     await page.click(useBtn(K.W3)); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('.cnNameBar'), null, { timeout: 4000 });
     await page.waitForTimeout(500);
-    const kept = await page.evaluate(k => { const t = document.querySelector(`#egQueue .rvItem[data-key="${k}"] [data-f=words]`); return t ? t.value : null; }, K.W3);
+    const kept = await page.evaluate(k => { const t = document.querySelector(`#egQueue .rvItem[data-key="${k}"] .engp .engpWords`); return t ? t.value : null; }, K.W3);
     check(kept === 'TYPED WORDS' && (await jobOf(K.W3)).state === 'words' && !(await page.evaluate(() => CNEmployee.name())), 'Esc: no decision, no name, the typed words are still in the box: ' + JSON.stringify([kept, await jobOf(K.W3)]));
 
     console.log('· A4: CAUSE of the empty name: a non-Admin\'s name is cleared by the idle sign-out; the chip brings it back');
@@ -171,7 +173,7 @@ async function partA(browser) {
     check(await page.evaluate(() => CNEmployee.name()) === '' && await page.evaluate(() => localStorage.getItem('cn.employee')) === null, 'after 10 minutes without input the idle sign-out cleared the name (the cause: a name that is not the Admin\'s)');
     check(await page.evaluate(() => localStorage.getItem('cn.lastEmployee')) === STAFF, 'cn.lastEmployee still has the name for the chip');
     await focusJob(K.W3, R.W3); await page.waitForSelector(useBtn(K.W3), { timeout: 20000 });
-    await page.fill(`#egQueue .rvItem[data-key="${K.W3}"] [data-f=words]`, 'UNA');
+    await page.fill(wordsBox(K.W3), 'UNA');
     await page.click(useBtn(K.W3)); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     b = await bar();
     check(b && b.chip === 'Continue as ' + STAFF, 'after the idle sign-out the next press shows the inline bar with Continue as: ' + JSON.stringify(b));

@@ -3,7 +3,7 @@
 // that is easily usable by the user at a glance."). charm-nest-emoji-picker.js is the one picker; charm-nest-emoji-data.js (CNEmojiData) is
 // what the laser can engrave. Headless Chromium against the local fake site (bridge-server.cjs): a real master file, a real Auto run for one
 // personalised piece, up to the Engraving card, then the card is driven the way a person drives it:
-//   · the Emoji button in the Words on the back box; the picker opens inside the window (not full screen), says "Loading emoji…" while the
+//   · the Emoji button of the engraving panel in the Engrave detail (the old "Words on the back" box is gone); the picker opens inside the window (not full screen), says "Loading emoji…" while the
 //     engraving font is not there yet, draws every cell as it will be engraved (SVG path from the engraving font), lists the count;
 //   · picks: a hand, a flag, a family (ZWJ), a keycap, and one of the six emoji whose tones engrave differently, in the middle of the words; text and caret exactly right, the `input` event
 //     fired, the card's preview refit (job.lines, job.fit.ok) with the picker staying open through the card's rebuild, one more pick after it;
@@ -72,9 +72,11 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     const jstate = await page.evaluate(k => Engrave.items().get(k) && Engrave.items().get(k).state, KEY);
     check(jstate === 'review', 'one personalised piece waits in the engraving review (state ' + jstate + ')');
     await page.evaluate(k => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); Engrave.render(); }, KEY);   // (the card open, as a person opens it from the list)
-    await page.waitForSelector('#egQueue .rvItem[data-kind=placement] textarea[data-f=words]');
+    await page.waitForSelector('#egQueue .rvItem[data-kind=placement] .engp .engpWords');
     const sleep = ms => page.waitForTimeout(ms);
-    const ta = '#egQueue textarea[data-f=words]', btn = '#egQueue [data-emoji]', pop = '.emPop:not([hidden])';
+    // (the Engrave detail has no words box of its own any more: the words are typed in the options panel, whose box carries the one Emoji button; typing there is staged until Save)
+    const ta = '#egQueue .engp .engpWords', btn = '#egQueue [data-emoji]', pop = '.emPop:not([hidden])';
+    const save = async () => { await page.evaluate(() => document.querySelector('#egQueue [data-engp=save]').click()); };   // (a script click: the open picker sits over the button)
     const words = async () => {
       const r = await page.evaluate(sel => { const t = document.querySelector(sel); return t ? { v: t.value, s: t.selectionStart, e: t.selectionEnd, focus: document.activeElement === t } : null; }, ta);
       if (r) return r;
@@ -86,8 +88,8 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     const all = await itemsOf();
 
     // ── the button ──
-    const b0 = await page.evaluate(() => { const b = document.querySelector('#egQueue [data-emoji]'), w = document.querySelector('#egQueue .pvWords'), u = document.querySelector('#egQueue [data-a=usewords]'); const r = b.getBoundingClientRect(), wr = w.getBoundingClientRect(); return { text: b.textContent.trim(), cls: b.className, inBox: w.contains(b), fits: r.left >= wr.left - .5 && r.right <= wr.right + .5, h: Math.round(r.height), uh: Math.round(u.getBoundingClientRect().height), sans: getComputedStyle(b).fontFamily === getComputedStyle(u).fontFamily }; });
-    check(b0.text === 'Emoji' && /btn ghost xs/.test(b0.cls) && b0.inBox && b0.fits, 'an "Emoji" button, ghost xs like the others, sits in the Words on the back box ' + JSON.stringify(b0));
+    const b0 = await page.evaluate(() => { const b = document.querySelector('#egQueue [data-emoji]'), w = document.querySelector('#egQueue .engp .engpBox'), u = document.querySelector('#egQueue [data-engp=cancel]'); const r = b.getBoundingClientRect(), wr = w.getBoundingClientRect(); return { text: b.textContent.trim(), cls: b.className, inBox: w.contains(b), fits: r.left >= wr.left - .5 && r.right <= wr.right + .5, h: Math.round(r.height), uh: Math.round(u.getBoundingClientRect().height), sans: getComputedStyle(b).fontFamily === getComputedStyle(u).fontFamily, oldBox: !!document.querySelector('#egQueue [data-f=words], #egQueue .pvWords') }; });
+    check(b0.text === 'Emoji' && /btn ghost xs/.test(b0.cls) && b0.inBox && b0.fits && !b0.oldBox, 'an "Emoji" button, ghost xs like the others, sits in the panel\'s words box (and there is no second words box) ' + JSON.stringify(b0));
     check(Math.abs(b0.h - b0.uh) <= 3 && b0.sans, 'it is the size and type of the existing xs buttons (' + b0.h + ' vs ' + b0.uh + ' px)');
 
     // ── opening: "Loading emoji…" while the engraving font is not there, instant when it is ──
@@ -128,7 +130,8 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     const expect = 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣LA';
     check(w.v === expect && w.s === 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣'.length, 'a flag, a family and a keycap follow it, caret after them: ' + JSON.stringify(w.v) + ' caret ' + w.s);
     check((await ui()).open, 'the picker is still open after several picks');
-    // the preview refits (350 ms after the last pick); the card is rebuilt behind the open picker and the picker follows
+    // Save (the panel stages typing: no refit until then); the card is rebuilt behind the open picker and the picker follows
+    await save();
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.lines.join('\n') === 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣LA' && j.fit && j.fit.ok !== false; }, KEY, { timeout: 30000 });
     const job = await page.evaluate(k => { const j = Engrave.items().get(k); return { lines: j.lines, state: j.state, ok: !!j.fit, reason: j.reason || '', size: j.fit && j.fit.capMm }; }, KEY);
     check(job.lines.join('\n') === expect && job.ok && !/Unsupported/.test(job.reason), 'the preview refit with the picked emoji: job.lines updated, the engraving fits (cap ' + (job.size && job.size.toFixed(2)) + ' mm), no "Unsupported engraving characters"');
@@ -138,6 +141,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     await pick(by('❤️'));
     w = await words();
     check(w.v === 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣❤️LA', 'one more pick after the rebuild lands at the caret too: ' + JSON.stringify(w.v));
+    await save();
     await page.waitForFunction(k => Engrave.items().get(k).lines.join('\n').includes('❤️'), KEY, { timeout: 30000 });
     check(await page.waitForFunction(k => { const j = Engrave.items().get(k); return !!j.fit && j.state === 'review' && !j.reason; }, KEY, { timeout: 30000 }).then(() => true, async () => { console.log('    ' + JSON.stringify(await page.evaluate(k => { const j = Engrave.items().get(k); return { state: j.state, reason: j.reason, fit: !!j.fit }; }, KEY))); return false; }), 'and the placement is still a placement to approve (state review, no reason line)');
 
@@ -166,6 +170,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     check(!also.hidden && /^Also: /.test(also.t) && (foldItem.n !== 'health worker' || (/man health worker/.test(also.t) && /woman health worker/.test(also.t))), 'a folded cell says what else it stands for: "' + also.t + '"');
     if (shots) await page.locator('.emPop').screenshot({ path: path.join(shots, 'folded.png') });
     await page.fill('.emQ', '');
+    await save();
     await page.waitForFunction(k => Engrave.items().get(k).lines.join('\n').includes('🏽'), KEY, { timeout: 30000 });
 
     // ── the typed-emoji path: coverage with the real fonts, for what was picked and for everything on offer ──
@@ -218,12 +223,13 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     await page.click(btn); await sleep(60); check(!(await ui()).open, 'the button again closes it');
     check((await words()).focus, 'and the words have the focus');
     await page.click(btn); await page.waitForSelector(pop);
-    await page.click('#egQueue .pvH >> nth=0'); await sleep(60);
+    await page.click('#egQueue .rh .ttl'); await sleep(60);
     check(!(await ui()).open, 'a tap outside closes it');
     // a line break stays
     await page.click(ta); await page.keyboard.press('Control+End'); await page.keyboard.press('Enter'); await page.keyboard.type('two');
     await page.click(btn); await page.waitForSelector(pop); await pick(by('🔥') || all[0]); await page.keyboard.press('Escape');
     check(/\n/.test((await words()).v), 'line breaks stay: ' + JSON.stringify((await words()).v));
+    await save();
     await page.waitForFunction(k => Engrave.items().get(k).lines.length === 2, KEY, { timeout: 30000 }).then(() => check(true, 'the two lines are two lines in the preview'), () => check(false, 'the two lines are two lines in the preview'));
 
     // ── widths: 280, 390, 700, 1280 ──

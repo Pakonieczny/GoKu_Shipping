@@ -102,7 +102,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const em = await page.evaluate(() => ({ btn: document.querySelectorAll('.pvSetup [data-emoji]').length, picker: !!window.CNEmojiPicker, approve: !!document.querySelector('[data-a=approve]') }));
     check(!em.picker || em.btn === 1, 'one quiet Emoji button beside the words (the page\'s own picker, attached to the panel\'s text box): ' + JSON.stringify(em));
     if (em.approve) {
-      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), t = c.querySelector('.pvH'); let hit = 0; const f = () => { hit++; }; t.addEventListener('keydown', f); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })); t.removeEventListener('keydown', f); return { hit, dis: c.querySelector('[data-a=approve]').disabled, title: c.querySelector('[data-a=approve]').title }; });
+      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), t = c.querySelector('.pvH') || c.querySelector('.pvMain');   // (ENGTRIM: the big picture's title is gone when the card is on the page; any element of the card does as the key's target)
+      let hit = 0; const f = () => { hit++; }; t.addEventListener('keydown', f); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })); t.removeEventListener('keydown', f); return { hit, dis: c.querySelector('[data-a=approve]').disabled, title: c.querySelector('[data-a=approve]').title }; });
       const before = await probe();
       await page.fill('.pvSetup .engpWords', 'Name Three');
       const staged = await probe();

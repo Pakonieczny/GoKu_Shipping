@@ -7077,9 +7077,9 @@ const Engrave = window.Engrave = (() => {
       const count=host.querySelector('b');if(count.textContent!==String(n))count.textContent=String(n);
     }
   }
-  const waitingReason = job => ["ready", "fitting"].includes(job.state)
+  const waitingReason = (job, panel) => ["ready", "fitting"].includes(job.state)
     ? (canFit(job) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…` : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
-    : job.state === "classify" ? "Processing stopped before these words were read. Confirm the inscription below or resume the run." : `the ${facedJob(job) ? faceWord(job) + " " : ""}words need a decision`;
+    : job.state === "classify" ? (panel ? "Processing stopped before these words were read." : "Processing stopped before these words were read. Confirm the inscription below or resume the run.") : `the ${facedJob(job) ? faceWord(job) + " " : ""}words need a decision`;
   const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().earOf(j.slot) : "", lineHasFront(j.row) ? faceNoun(faceOfJob(j)) : ""].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
@@ -7550,10 +7550,15 @@ const Engrave = window.Engrave = (() => {
     const ears = ctx && Array.isArray(ctx.ears) && ctx.ears.length >= 2 && ctx.ears.includes(job) ? ctx.ears : null;
     card._headSig = headSig(ears);
     // One card, one order, one screen: the back is the work and the right column is everything you need to judge it.
+    // ENGTRIM (Paul, 12 Oct: "way too many needless text and titles ... keep it very simple"): in the Engrave tab the options panel (words, font, position, mode) and the card's Front / Back thumbnails already carry
+    // the piece, so this detail does not draw a second words box (the panel's text area, Save and Emoji button are the one place) or a "Front · reference" picture and its title (the card's two thumbnails are the pictures).
+    // The Review tab's placement card (no ctx, no panel) is not the Engrave detail: it keeps them all, so their handlers and CSS stay.
+    const pLine = lineOf(job.row), panelOn = !!(ctx && window.CharmNestEngravePanel && CharmNestEngravePanel.modesFor && CharmNestEngravePanel.modesFor(pLine).length && window.CharmNestEngraveSetup && CharmNestEngraveSetup.read && CharmNestEngraveSetup.read(pLine));
+    const byCard = panelOn && !!(window.CharmNestEngraveCard && CharmNestEngraveCard.mountPiece);   // (the card's two thumbnails are on the page: they are the pictures and the face switch)
     const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
-    const wordsJob = job.state !== "review";
+    const wordsJob = job.state !== "review", undecided = ["words", "blocked", "classify"].includes(job.state);   // (undecided: a person still has to settle the words)
     const requests = job.requests || {};
     // what to check with the buyer: Claude's questions from reading the order (each one a click away from the message
     // box) and what the buyer asked for that the words alone do not carry
@@ -7577,15 +7582,15 @@ const Engrave = window.Engrave = (() => {
     const fromOrder = `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears) : faced ? faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
-        <div class="pvMain"><h4 class="pvH">${cap1(fw)} · engraving</h4><div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
+        <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
           <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No ${fw} engraving` : "No engraving"} <b class="k">S</b></button></span></div>
         <div class="pvSide">
           <section class="pvSec pvSetup" data-engsetup hidden></section>
-          <section class="pvSec pvRef"><h4 class="pvH">${fw === "front" ? "Back" : "Front"} · reference</h4><div class="frontHost"></div></section>
-          <div class="pvWords"><div class="wordsHead"><span class="lbl">Words on the ${fw}</span><button type="button" class="btn ghost xs emBtn" data-emoji title="choose an emoji the laser can engrave and put it in the words">Emoji</button></div><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
+          ${byCard ? "" : `<section class="pvSec pvRef"><h4 class="pvH">${fw === "front" ? "Back" : "Front"} · reference</h4><div class="frontHost"></div></section>`}
+          ${panelOn ? (undecided ? `<div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="settle these words and draw the placement">Engrave these words</button></div>` : "") : `<div class="pvWords"><div class="wordsHead"><span class="lbl">Words on the ${fw}</span><button type="button" class="btn ghost xs emBtn" data-emoji title="choose an emoji the laser can engrave and put it in the words">Emoji</button></div><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
             <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No ${fw} engraving` : "No engraving"}</button>` : ""}</div>
-            ${wordsJob || !f ? `<div class="why">${esc(job.reason || waitingReason(job))}</div>` : ""}</div>
+            ${wordsJob || !f ? `<div class="why">${esc(job.reason || waitingReason(job))}</div>` : ""}</div>`}
           ${job.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the ${fw} outline and cut-outs before approving.</div>` : ""}
           ${fromOrder ? `<section class="pvSec pvOrder"><h4 class="pvH">From the order</h4><dl class="meta">${fromOrder}</dl></section>` : ""}
           ${asks.length || wants.length ? `<section class="pvSec pvCheck"><h4 class="pvH">To check with the buyer</h4><ul>${asks.map(q => `<li><span>${esc(q)}</span><button type="button" class="pvAsk" data-ask="${esc(q)}" title="put this question in the message to the buyer">Ask</button></li>`).join("")}${wants.map(w => `<li class="want"><span>${esc(w)}</span></li>`).join("")}</ul></section>` : ""}
@@ -7593,7 +7598,8 @@ const Engrave = window.Engrave = (() => {
         <section class="pvMail"></section></div>`;
     const charm = job.copies.length ? charmFor(job) : null;
 
-    if (fw === "front") {
+    if (byCard) { /* the card's Front / Back thumbnails are the pictures of the piece: no reference picture */ }
+    else if (fw === "front") {
       // the FRONT being placed is the main picture; the reference is the other face of the piece, as it stands (the back with its words), when that has been drawn: nothing to look at otherwise
       const ref = card.querySelector(".pvRef"), other = jobsOf(job.row).find(j => !isFrontJob(j) && sameSlot(j, job));
       try { if (other && other.view && other.view.members && other.mask) ref.querySelector(".frontHost").appendChild(renderBack(other, 420, { hatch: false })); else ref.remove(); } catch (_) { ref.remove(); }
@@ -7608,20 +7614,22 @@ const Engrave = window.Engrave = (() => {
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
     { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) CharmNestEngravePanel.mountPiece(su, job); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only)
     card.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => window.CustomerMail?.cardAsk?.(job, b.dataset.ask));
-    if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${esc(job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`; }
+    if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${esc(panelOn && undecided ? (job.reason || waitingReason(job, true)) : job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`; }   // (no words box here: the reason the words box's line used to give is said once, in the empty picture)
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');
+    // (the Engrave tab draws no words box: "Engrave these words" settles what the panel's own box holds for this face, the Lines drop-down refits the words the job has)
+    const wordsNow = () => { const w = !ta && wordsJob ? card.querySelector(".engp .engpWords") : null; return ta ? ta.value : w && w.dataset.face === fw && w.value.trim() ? w.value : (job.lineInput || job.lines || []).join("\n"); };
     const applyWords = async (keepFocus = false) => {
       clearTimeout(card._wordsTimer);
       if (!card.isConnected || job.backSaving || job.approvalPreparing) return;
-      const text = ta.value.trim(), start = ta.selectionStart, end = ta.selectionEnd;
-      const focused = keepFocus && document.activeElement === ta;
+      const text = wordsNow().trim(), start = ta ? ta.selectionStart : 0, end = ta ? ta.selectionEnd : 0;
+      const focused = keepFocus && !!ta && document.activeElement === ta;
       if (!text) { if (!keepFocus) toast("Type the words first", "bad"); return; }
       // the decision is recorded under a name: asked FIRST, in the small bar (never a browser box), before anything is touched, so putting it away
       // leaves the words exactly as typed (the draft is kept) and the press goes on by itself, with the words typed, once a name is saved (the
       // card may be drawn again meanwhile: the job and the typed words are all it needs)
       if (wordsJob && !employeeName()) { if (!(await needEmployee("Kept with your decision on these words."))) return; if (job.backSaving || job.approvalPreparing) return; }
       delete EG.drafts?.[job.key];
-      use.disabled = true;
+      if (use) use.disabled = true;
       try {
         if (wordsJob) await decideWords(job, { text, note: text !== (job.text || "").trim() ? "edited" : "confirmed" });
         else {
@@ -7630,7 +7638,9 @@ const Engrave = window.Engrave = (() => {
           await fitNewWords(job);
         }
       } catch (e) { toast(e.message, "bad"); }
-      use.disabled = false; render();
+      if (use) use.disabled = false;
+      if (!ta && panelOn && wordsJob) { try { CharmNestEngravePanel.DRAFTS.delete(pLine.key + (job.slot ? "#" + job.slot : "")); } catch (_) {} }   // (what the panel held is settled now: nothing stays staged)
+      render();
       if (focused && EG.cardKey === job.key) {
         // back to the words, unless the person has moved on to another control meanwhile. When the rebuild already put
         // focus back (the person kept typing through the fit), its caret is the current one: the one from before the fit
@@ -7639,7 +7649,8 @@ const Engrave = window.Engrave = (() => {
         if (next && (live || !now || now === document.body)) { next.focus(); next.setSelectionRange(live ? next.selectionStart : start, live ? next.selectionEnd : end); }
       }
     };
-    use.onclick = () => applyWords();
+    if (use) use.onclick = () => applyWords();
+    if (ta) {
     const keepDraft = () => { EG.drafts ||= {}; if (ta.value === ta.defaultValue) delete EG.drafts[job.key]; else EG.drafts[job.key] = { value: ta.value, base: ta.defaultValue }; };
     ta.addEventListener("input", () => {
       keepDraft();
@@ -7656,11 +7667,12 @@ const Engrave = window.Engrave = (() => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); applyWords(); }
       e.stopPropagation();
     });
+    }
     // the back preview is drawn to the box it is actually given, and redrawn when that box changes: no fixed number,
     // nothing cut off on a short laptop screen, nothing left blurry after the window is resized
     // the Emoji button of the words box: one picker for every words box (charm-nest-emoji-picker.js); it follows this box through
     // every rebuild of the card. Without the picker or its data the button is not offered.
-    { const eb = card.querySelector("[data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: card.querySelector('[data-f="words"]'), button: eb, key: "words:" + job.key }))) eb.remove(); }
+    { const eb = ta && card.querySelector(".pvWords [data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: ta, button: eb, key: "words:" + job.key }))) eb.remove(); }   // (only this box's own button: the panel's Emoji button is the panel's)
     const backHost = card.querySelector(".backHost");
     let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => {

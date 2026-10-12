@@ -81,7 +81,7 @@ const root = path.join(__dirname, '../..');
       const rh = c.querySelector('.rh'), sw = c.querySelector('.egEarSwitch'), x = c.querySelector('.rh .x');
       return { key: c.dataset.key, kind: c.querySelector('.rh .kind').textContent, card: R(c), rh: R(rh), sw: R(sw), close: R(x), canvas: R(c.querySelector('.backHost canvas')), host: R(c.querySelector('.backHost')),
         tabs: [...c.querySelectorAll('.egEarSwitch .egEarTab')].map(b => ({ chip: b.querySelector('.egPiece').textContent, words: b.querySelector('.egEarWords').textContent, font: (b.querySelector('.egEarFont') || {}).textContent || '', stage: b.querySelector('.egEarStage').textContent, on: b.getAttribute('aria-pressed'), r: R(b) })),
-        words: c.querySelector('[data-f="words"]') && c.querySelector('[data-f="words"]').value, both: c.querySelector('[data-a="approveBoth"]') ? { text: c.querySelector('[data-a="approveBoth"]').textContent, disabled: c.querySelector('[data-a="approveBoth"]').disabled, title: c.querySelector('[data-a="approveBoth"]').title } : null,
+        words: (c.querySelector('.engp .engpWords') || c.querySelector('[data-f="words"]')) && (c.querySelector('.engp .engpWords') || c.querySelector('[data-f="words"]')).value, oldBox: !!c.querySelector('[data-f="words"]'), both: c.querySelector('[data-a="approveBoth"]') ? { text: c.querySelector('[data-a="approveBoth"]').textContent, disabled: c.querySelector('[data-a="approveBoth"]').disabled, title: c.querySelector('[data-a="approveBoth"]').title } : null,
         approve: !!c.querySelector('[data-a="approve"]'), plainTag: (c.querySelector('.rh .reviewIdentity > .egPiece') || {}).textContent || null, scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth };
     });
     const press = async (sel) => { if (process.env.STEPS) console.log('press', sel); await page.click(sel); await settle(); return cardInfo(); };
@@ -108,7 +108,7 @@ const root = path.join(__dirname, '../..');
     check(c.tabs.map(t => t.on).join() === 'true,false,false', 'Disc 1 is the one pressed');
     check(c.tabs.map(t => t.words).join() === 'Mom,Dad,Sis' && c.tabs.map(t => t.font).join() === 'Stylish,Stylish,Comic', `each disc: its words and its font by name: ${JSON.stringify(c.tabs.map(t => [t.words, t.font]))}`);
     check(c.kind === '1 of 4 · 0 done', `the counter counts orders: ${c.kind}`);
-    check(c.words === 'Mom' && c.approve && c.plainTag === null, 'Disc 1\'s own words box and Approve');
+    check(c.words === 'Mom' && c.approve && c.plainTag === null && !c.oldBox, 'Disc 1\'s own words (in the panel: the old second words box is gone) and Approve');
     check(within(c.sw, c.rh) && c.tabs.every(t => within(t.r, c.rh)) && c.scrollW <= c.innerW, `the switch stays inside the card header (switch ${JSON.stringify(c.sw)}, header ${JSON.stringify(c.rh)})`);
     check(c.close && c.sw && !(c.sw.x < c.close.r && c.sw.r > c.close.x && c.sw.y < c.close.b && c.sw.b > c.close.y), 'the switch does not cover the close button');
     check(c.canvas && c.canvas.w > 200 && c.canvas.h > 150 && within(c.canvas, c.host), `the work area keeps its room: canvas ${Math.round(c.canvas.w)} x ${Math.round(c.canvas.h)} inside its box`);

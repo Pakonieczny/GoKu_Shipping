@@ -243,7 +243,7 @@ const receipts = [
         const tabs = [...v.querySelectorAll('.egTab[data-tab]')].map(b => ({ id: b.dataset.tab, on: b.classList.contains('on'), n: +((b.querySelector('b') || {}).textContent || 0) }));
         const panes = [...v.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden'));
         const card = v.querySelector('.rvItem[data-kind=placement]');
-        const head = card ? { kind: card.querySelector('.rh .kind').textContent, ttl: card.querySelector('.rh .ttl').textContent, words: (card.querySelector('.pvWords') || {}).textContent || '', confs: card.querySelectorAll('.rh .conf').length } : null;
+        const head = card ? { kind: card.querySelector('.rh .kind').textContent, ttl: card.querySelector('.rh .ttl').textContent, words: ((card.querySelector('.engp .engpWords') || {}).value || '') + ((card.querySelector('.pvWords') || {}).textContent || ''), oldBox: !!card.querySelector('.pvWords, [data-f=words]'), confs: card.querySelectorAll('.rh .conf').length } : null;
         const canvas = card ? card.querySelector('.backHost canvas') : null;
         const box = canvas ? canvas.getBoundingClientRect() : null;
         const stage = document.querySelector('.stage');
@@ -260,7 +260,8 @@ const receipts = [
       if (eg.head) {
         assert(/^\d+ of \d+ · \d+ done$/.test(eg.head.kind.trim()), 'the card says where you are in the queue and how many are done: ' + eg.head.kind);
         assert(/^\d{6,}$/.test(eg.head.ttl.trim()), 'the order number is the heading: ' + eg.head.ttl);
-        assert(/ANNA/.test(eg.head.words), 'and the words that will be cut are beside the preview: ' + eg.head.words);
+        assert(/ANNA/.test(eg.head.words), 'and the words that will be cut are beside the preview (in the options panel; the second words box is gone): ' + eg.head.words);
+        assert.strictEqual(eg.head.oldBox, false, 'the Engrave detail draws no second words box');
         assert.strictEqual(eg.head.confs, 1, 'one confidence score, not several');
         assert(eg.canvasW <= Math.round(eg.inner.w * 0.6) && eg.canvasH <= Math.round(eg.inner.h * 0.7),
           `the back preview fits the window: ${eg.canvasW}x${eg.canvasH} in ${eg.inner.w}x${eg.inner.h}`);
@@ -792,8 +793,8 @@ const receipts = [
         const turned = await page.evaluate(async () => { const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j || !j.fit) return null; const out = {}; for (const a of [90, 0, 180, 45]) { Engrave.rotateTo(j, a); await new Promise(r => setTimeout(r, 50)); out[a] = { angle: j.fit.angle, field: +(document.querySelector('#egQueue input[data-a=angle]') || {}).value }; } Engrave.rotateTo(j, 0); return out; });
         console.log('turned', JSON.stringify(turned));
         if (turned) for (const a of [90, 0, 180]) assert(turned[a].angle === a && turned[a].field === a, `a turn to ${a}° holds: ` + JSON.stringify(turned[a]));
-        const wordsHere = await page.evaluate(() => ({ ta: !!document.querySelector('#egQueue textarea[data-f=words]'), use: !!document.querySelector('#egQueue [data-a=usewords]'), tabs: [...document.querySelectorAll('.egTab[data-tab]')].map(b => b.dataset.tab) }));
-        assert(wordsHere.ta && wordsHere.use && !wordsHere.tabs.includes('words'), 'the words are editable on the card and there is no Words tab: ' + JSON.stringify(wordsHere));
+        const wordsHere = await page.evaluate(() => ({ ta: !!document.querySelector('#egQueue .engp .engpWords'), use: !!document.querySelector('#egQueue [data-engp=save]'), oldBox: !!document.querySelector('#egQueue textarea[data-f=words], #egQueue [data-a=usewords]'), tabs: [...document.querySelectorAll('.egTab[data-tab]')].map(b => b.dataset.tab) }));
+        assert(wordsHere.ta && wordsHere.use && !wordsHere.oldBox && !wordsHere.tabs.includes('words'), 'the words are editable on the card, in the one options panel (its box and Save; no second words box, no "Use these words"), and there is no Words tab: ' + JSON.stringify(wordsHere));
         assert(ed.box && ed.close && !ed.slider && !ed.arrows, 'the text has its box, the card has a way out, and the slider and arrow buttons are gone: ' + JSON.stringify(ed));
         const exit = await page.evaluate(async () => { document.querySelector('#egQueue [data-a=close]').click(); await new Promise(r => setTimeout(r, 200)); const rows = document.querySelectorAll('#egQueue [data-open]').length; const first = document.querySelector('#egQueue [data-open]'); if (first) first.click(); await new Promise(r => setTimeout(r, 300)); return { rows, back: !!document.querySelector('#egQueue .rvItem[data-kind=placement]') }; });
         assert(exit.rows >= 1 && exit.back, 'closing the card shows the list of placements, and a row opens one again: ' + JSON.stringify(exit));

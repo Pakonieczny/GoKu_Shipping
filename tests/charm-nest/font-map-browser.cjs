@@ -93,7 +93,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     // the card of each piece says which font it is engraved in
     for (const s of SCENES) {
       await page.evaluate(k => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); Engrave.render(); }, keyOf(s));
-      await page.waitForSelector('#egQueue .rvItem[data-kind=placement] textarea[data-f=words]');
+      await page.waitForSelector('#egQueue .rvItem[data-kind=placement] .engp .engpFont');   // (ENGTRIM: the words box is the panel's now; the card is drawn once the panel is)
       const text = await page.evaluate(() => document.querySelector('#egQueue .rvItem').innerText.replace(/\s+/g, ' '));
       check(s.card.test(text), `${s.rid}: the engraving card says "${(s.card.exec(text) || [''])[0] || 'nothing: ' + text.slice(text.indexOf('From the order'), text.indexOf('From the order') + 160)}"`);
       if (shots) await (await page.$('#egQueue .rvItem')).screenshot({ path: path.join(shots, `card-${s.shot}.png`) });
