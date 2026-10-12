@@ -1427,7 +1427,7 @@ const Orders = window.Orders = (() => {
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
   let seenIx = {};
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku), masterSkus: () => [...B.master.entries.keys()] });   // (masterSkus: every SKU the library holds; read only by a line whose SKU is a shared zodiac SKU, ZODSIGN)
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku), masterLike: sku => Master.likeFor(sku), masterSkus: () => [...B.master.entries.keys()] });   // (masterSkus: every SKU the library holds; read only by a line whose SKU is a shared zodiac SKU, ZODSIGN)
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -1445,6 +1445,8 @@ const Orders = window.Orders = (() => {
   const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   const formFacts = sku => { try { const f = O.masterForm ? O.masterForm(sku, { masterEntry: s => Master.entryFor(s), masterShared: s => Master.sharedFor(s) }) : null; return f ? f.form + "/" + f.by : ""; } catch (_) { return ""; } };
+  // LOOKALIKE (charm-nest-orders.js section 3b): the master SKUs that read like a SKU (spacing and punctuation set aside) with each one's hole count, box and blocked flag: a line is read again when a lookalike arrives, goes, is blocked or is redrawn
+  const lookFacts = sku => { try { const k = String(sku || "").trim().toUpperCase(), set = k ? Master.likeFor(k) : []; return set.length < 2 ? "" : set.map(x => { const e = Master.entryFor(x); return e ? `${x}:${e.blocked ? "b" : ""}${e.holes}:${e.widthPt}x${e.heightPt}:${e.charmHash || ""}` : x; }).join("|"); } catch (_) { return ""; } };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
@@ -1459,6 +1461,7 @@ const Orders = window.Orders = (() => {
       libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
       // the form of the design the SKU is (huggie, earring, necklace: read from every name its drawing carries) and, for a line the form guard holds or that waits for an unknown SKU, the library's size (the siblings it offers are read from it): HUGGIEGUARD
       formFacts(l.sku), row.spec && (row.spec.formHold || (row.spec.problems || []).some(p => p.kind === "unmatchedSku")) ? B.master.entries.size : 0,
+      lookFacts(l.sku) + "~" + lookFacts(O.variationBase(l.sku)) + "~" + (own ? lookFacts(own.sku) : "") + "~" + lookFacts(row.spec && (row.spec.designSku || (row.spec.lookalike && row.spec.lookalike.design))),   // (LOOKALIKE)
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
       row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
@@ -2332,6 +2335,14 @@ const Master = window.Master = (() => {
     if (looseIx.entries !== e || looseIx.size !== e.size) { const m = new Map(); for (const k of e.keys()) { const key = O.looseKey(k); m.set(key, m.has(key) ? "" : k); } looseIx = { entries: e, size: e.size, map: m }; }
     return looseIx.map.get(O.looseKey(sku)) || "";
   }
+  /* The master SKUs that read the same as a SKU once spacing and punctuation are set aside, the SKU itself included ("CELESTIAL3-COMET" and "CELESTIAL 3 - COMET"): LOOKALIKE, charm-nest-orders.js section 3b.
+     looseFor says "" when two read alike; this lists them. Made again when the library held is replaced or grows. */
+  let likeIx = { entries: null, size: -1, map: null };
+  function likeFor(sku) {
+    const e = B.master.entries;
+    if (likeIx.entries !== e || likeIx.size !== e.size) { const m = new Map(); for (const k of e.keys()) { const key = O.looseKey(k), a = m.get(key); if (a) a.push(k); else m.set(key, [k]); } likeIx = { entries: e, size: e.size, map: m }; }
+    return (likeIx.map.get(O.looseKey(sku)) || []).slice();
+  }
   /* The master SKUs that hold the same design file as a SKU (HUGGIEGUARD, 12 Oct 2026): the library keeps one drawing under several names ("SCHRODINGER CAT" and "SCHRODINGER CAT 2 (HUGGIE)" are one file), and the
      orders module reads a design's FORM from every name it carries (charm-nest-orders.js masterForm). Made again when the library held is replaced or grows, like looseFor. */
   let sharedIx = { entries: null, size: -1, map: null };
@@ -3032,7 +3043,7 @@ const Master = window.Master = (() => {
     // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
     each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName }); });
   }
-  return { entryFor, looseFor, sharedFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, likeFor, sharedFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -12063,7 +12074,7 @@ const Review = window.Review = (() => {
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
   const SEP = "\u0000";
   function decisionKey(row, p) {
-    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}${p.generic ? SEP + "L" + p.generic : ""}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
+    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}${p.generic ? SEP + "L" + p.generic : ""}${p.lookalike ? SEP + "K" + p.lookalike : ""}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
     if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
     if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
     if (p.kind === "needsMaterial") return `ord:mat:${p.listingId || row.key}${SEP}${p.metalLabel || ""}`;
@@ -12255,6 +12266,11 @@ const Review = window.Review = (() => {
   function sibIndex() { const e = B.master.entries; if (sibIx.entries !== e || sibIx.size !== e.size) sibIx = { entries: e, size: e.size, map: window.CharmNestSiblings.index(e.keys()) }; return sibIx.map; }
   function siblingOffer(row, p, group) {
     try {
+      // LOOKALIKE: a necklace whose SKU is a drawing with no loop while a differently drawn lookalike with a ring exists: each drawing is one tap (no "use both"); the tap is this listing's and this SKU's saved link, like every "Use this charm"
+      if (p && p.lookalike && Array.isArray(p.candidates) && p.candidates.length > 1 && row && row.line) {
+        const mine = x => !!(x && x.line && x.spec && x.spec.lookalike && x.spec.lookalike.state === "held" && String(x.line.listingId || "?") === String(p.lookalike)), rows = (group && group.length ? group : [row]).filter(mine);
+        return { lookalike: true, ask: "Which drawing is this necklace? One tap, kept for this listing:", pair: null, siblings: p.candidates.map(c => ({ sku: c.sku, note: `${c.ring ? "with ring" : "no loop"}${c.mm ? ", " + c.mm : ""}` })), rows: rows.length ? rows : [row] };
+      }
       const S = window.CharmNestSiblings; if (!S || !row || !row.line) return null;
       const blocked = k => { const e = Master.entryFor(k); return !!(e && e.blocked); };
       const ask = (x, own) => { if (!x || !x.line || !/^\d+$/.test(String(x.line.listingId || ""))) return null; return S.suggest(x.line, { spec: x.spec, siblings: own && p && Array.isArray(p.siblings) ? p.siblings : undefined, index: sibIndex(), base: p && p.sku || undefined, blocked }); };
@@ -12289,12 +12305,13 @@ const Review = window.Review = (() => {
   /** The choices of an offer: ONE "Use both" button with the two designs' thumbnails (the master's own picture tag, the SKU picker's `dsPick` button), then each numbered design as a single choice. */
   function sibButtons(sib) {
     const pic = k => (Master.pictureTag(Master.entryFor(k)) || "");
+    if (sib.lookalike) return sib.siblings.map(x => `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(`use ${x.sku} (${x.note}) for this listing and this SKU`)}">${pic(x.sku)}${esc(x.sku)}</button>`).join("");   // (LOOKALIKE: the drawings, one tap each)
     return `<button type="button" class="btn ghost sm dsPick" data-both="1" title="${esc(`two pieces for each ${sib.noun}, one of each design; kept for this listing, so its next order is already linked`)}">${pic(sib.pair.L)}${pic(sib.pair.R)}Use both: ${esc(sib.pair.L)} + ${esc(sib.pair.R)}</button>`
       + sib.siblings.slice(0, 8).map(x => `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(`use only ${x.sku} for this listing`)}">${pic(x.sku)}${esc(x.sku)}</button>`).join("")
       + (sib.siblings.length > 8 ? `<span class="dsFor">and ${sib.siblings.length - 8} more: pick them in the master index</span>` : "");
   }
   /** What the offer is drawn from (a row or card redraws when it changes: the designs it names and their pictures, which arrive with the library). */
-  const siblingStamp = it => { if (it.kind !== "unmatchedSku" || it.done || it.decided) return ""; const row = it.row || rowsOf(it)[0], s = row ? siblingOffer(row, it.problem || {}, rowsOf(it)) : null; return s ? [s.pair.L, s.pair.R, s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask] : ""; };
+  const siblingStamp = it => { if (it.kind !== "unmatchedSku" || it.done || it.decided) return ""; const row = it.row || rowsOf(it)[0], s = row ? siblingOffer(row, it.problem || {}, rowsOf(it)) : null; return s ? [s.pair ? s.pair.L : "", s.pair ? s.pair.R : "", s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask] : ""; };
   /** The two kinds of button an offer has, wired: `guard` wraps a save so the buttons hold while it saves and a failure says so. */
   function wireSib(host, it, p, sib, guard) {
     host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = guard(() => saveCharm(it, p, b.dataset.dsku, sib && sib.rows)); });
