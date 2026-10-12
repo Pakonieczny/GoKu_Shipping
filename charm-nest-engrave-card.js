@@ -51,7 +51,16 @@
     return 'words';   // words, blocked
   }
   const worst = states => states.filter(Boolean).reduce((a, b) => (!a || RANK[b] > RANK[a] ? b : a), '') || 'plain';
-  const wordsOfJob = j => linesText((j && j.lines && j.lines.length ? j.lines : j && j.text) || '').join('\n');
+  /** The words of a job as they were GIVEN (ENGAUTO): the fit lays them out again (job.lines is the cut's layout: "NAME" / "ONE", capitals for Ace), job.lineInput keeps what went in; a job a person decided, or laid
+   *  out by hand (lineMode "preserve"), shows its lines as they are. */
+  const wordsOfJob = j => {
+    const ls = linesText((j && j.lines && j.lines.length ? j.lines : j && j.text) || '');
+    if (j && !DECIDED.includes(j.state) && j.lineMode !== 'preserve' && Array.isArray(j.lineInput) && j.lineInput.length) {
+      const li = linesText(j.lineInput), run = v => v.join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (li.length && run(li) === run(ls)) return li.join('\n');
+    }
+    return ls.join('\n');
+  };
 
   const facesOfMode = m => (m === 'both' ? ['front', 'back'] : m === 'front' ? ['front'] : m === 'back' ? ['back'] : []);
   const stagedOf = (stage, face) => { const x = stage && stage.faces && stage.faces[face]; return x == null ? null : typeof x === 'string' ? { text: x, font: '' } : { text: String(x.text == null ? '' : x.text), font: String(x.font == null ? '' : x.font) }; };

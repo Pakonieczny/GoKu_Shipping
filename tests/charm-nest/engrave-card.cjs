@@ -90,4 +90,12 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
   const row = line('K6'), W = world({ K6: [job(row, 'K6', 'none', '')] });
   assert.equal(W.CharmNestEngraveCard.piecesOf([row], {}).length, 0, 'nothing to engrave: no card'); ok('a line that engraves nothing has no card'); n++;
 }
+// 7 ── the words under a picture are the words as GIVEN, not the fit's layout (ENGAUTO: Ace capitals, one word a line)
+{
+  const row = line('K7'), W = world({}), C = W.CharmNestEngraveCard, f = (state, extra) => C.facesOf('K7', null, [job(row, 'K7', state, 'NAME\nONE', Object.assign({ lines: ['NAME', 'ONE'], lineInput: ['Name One'] }, extra || {}))], { faces: ['back'] }, { row }).back.text;
+  assert.equal(f('review'), 'Name One', 'an undecided job shows what went in');
+  assert.equal(f('approved'), 'NAME\nONE', 'a decided job shows its lines as they are'); assert.equal(f('review', { lineMode: 'preserve' }), 'NAME\nONE', 'a hand layout shows its lines');
+  assert.equal(f('review', { lineInput: ['Other words'] }), 'NAME\nONE', 'other words than the fit holds: the fit\'s lines');
+  ok('the words under a picture are the words as given'); n++;
+}
 console.log(`engrave-card: ${n} groups passed`);
