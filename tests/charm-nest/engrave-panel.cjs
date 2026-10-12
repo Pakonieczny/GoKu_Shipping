@@ -129,7 +129,19 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const lg = await page.evaluate(() => JSON.parse(JSON.stringify(__log)));
     check(lg.nudge.length === 2 && lg.nudge.every(n => n[0] === jobKeys.back) && lg.nudge[0][1] === 0.5 && lg.nudge[0][2] === 0 && lg.nudge[1][1] === 0 && lg.nudge[1][2] === 2, 'right = 0.5 mm, Shift + up = 2 mm, both on the BACK job only: ' + JSON.stringify(lg.nudge));
     check(lg.size.length === 1 && lg.size[0][1] === 0.95 && lg.centre.length === 1 && lg.size[0][0] === jobKeys.back, 'smaller = x0.95, centre: both on the back job');
-    check(lg.snap.includes(jobKeys.back) && lg.snap.filter(k => k === jobKeys.back).length === 1, 'the back\'s placement was snapshotted once, when the panel showed it: ' + JSON.stringify(lg.snap));
+    check(lg.snap.length === 1 && lg.snap[0] === jobKeys.back, 'the back\'s placement was snapshotted once, right before the panel first moved it (the front was not touched): ' + JSON.stringify(lg.snap));
+    // a refused move (no room) dims THAT button with a title, nothing else; a move that works gives the room back; a job that cannot move (approved) turns the whole row off
+    await page.evaluate(() => { const P = CharmNestEngravePosition; P.nudge = (j, dx, dy) => { __log.nudge.push([j.key, dx, dy]); return { ok: false, why: 'no room' }; }; });
+    await page.click(S + ' [data-act=left]');
+    let nr = await page.evaluate(() => { const b = document.querySelector('#__slot [data-act=left]'); return [b.disabled, b.title, document.querySelector('#__slot [data-act=right]').disabled]; });
+    check(nr[0] && /No room/.test(nr[1]) && !nr[2], 'no room: the left button is dimmed with its title, the others stay: ' + JSON.stringify(nr));
+    await page.click(S + ' [data-act=larger]');
+    nr = await page.evaluate(() => document.querySelector('#__slot [data-act=left]').disabled);
+    check(nr === false, 'a move that works gives the room back');
+    await page.evaluate(() => { CharmNestEngravePosition.canMove = () => false; __h.draw(); });
+    nr = await page.evaluate(() => [...document.querySelectorAll('#__slot .engpPb')].every(b => b.disabled));
+    check(nr, 'a job that cannot move (approved, locked) has the whole position row off');
+    await page.evaluate(() => { delete CharmNestEngravePosition.canMove; __h.draw(); });
     await page.click(S + ' [data-engp=cancel]'); st = await state();
     const lr = await page.evaluate(() => __log.restore.slice());
     check(lr.length === 1 && lr[0][0] === jobKeys.back && lr[0][1] === jobKeys.back, 'Cancel put the moved face\'s position back with the snapshot of that job, and touched no other job: ' + JSON.stringify(lr));

@@ -94,8 +94,8 @@
   /* ── the position of a face (CharmNestEngravePosition, ENGPOS) ─────────────── */
   const faceJobOf = (vm, face, slot) => { const r = vm.rows.find(x => x.face === face); return r && r.jobs ? (r.jobs.find(j => (slotOfJob(j) || null) === (slot || null)) || (slot ? null : r.jobs[0]) || null) : null; };
   const snapOf = job => { const P = Pos(); return job && P && P.snapshot ? tryDo(() => P.snapshot(job), null) : null; };
-  /** The snapshot of a face's placement, taken the first time the panel shows that face (kept with the draft: it survives every redraw of the card, not a Save or a Cancel). */
-  function ensureSnap(d, job) { if (job && job.key && !(job.key in d.snaps)) d.snaps[job.key] = snapOf(job); }
+  /** The snapshot of a face's placement, taken right before the panel's first move of it (what the placement was when the person began; kept with the draft, so it survives every redraw of the card, until Save or Cancel). */
+  function snapBeforeMove(d, job) { if (job && job.key && !d.moved[job.key]) d.snaps[job.key] = snapOf(job); }
   const positionOf = job => { const P = Pos(); return job && P && P.of ? tryDo(() => P.of(job), null) : null; };
 
   /* ── the font drop-down ────────────────────────────────────────────────────── */
@@ -222,9 +222,10 @@
       const m = model(), fs = focusState();
       if (!m || !modesFor(line).length) { untrack(); el.innerHTML = ''; el.hidden = true; if (opts.onVisible) tryDo(() => opts.onVisible(false)); return; }
       track(); el.hidden = false; if (opts.onVisible) tryDo(() => opts.onVisible(true));
-      const { vm, d } = m; const job = faceJobOf(vm, d.face, slot); ensureSnap(d, job);
+      const { vm, d } = m;
       el.innerHTML = html(vm, d, { slot, faceSwitch: !!opts.faceSwitch });
       const ta = el.querySelector('.engpWords'); if (ta) growBox(ta);
+      { const fs = el.querySelector('.engpFont'); if (fs && fs.selectedOptions[0] && fs.selectedOptions[0].style.fontFamily) fs.style.fontFamily = fs.selectedOptions[0].style.fontFamily; }
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
       restoreFocus(want);
@@ -277,7 +278,7 @@
         run(m, patch);
       } else if (a === 'pos') {
         const P = Pos(), job = faceJobOf(vm, d.face, slot); if (!P || !job || !job.fit) return;
-        const step = e.shiftKey ? 2 : 0.5, act = b.dataset.act; ensureSnap(d, job);
+        const step = e.shiftKey ? 2 : 0.5, act = b.dataset.act; snapBeforeMove(d, job);
         let r = null;
         if (act === 'left') r = P.nudge(job, -step, 0); else if (act === 'right') r = P.nudge(job, step, 0);
         else if (act === 'up') r = P.nudge(job, 0, step); else if (act === 'down') r = P.nudge(job, 0, -step);
