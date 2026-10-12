@@ -55,6 +55,13 @@
   const DRAFTS = new Map();    // piece key -> { mode, face, faces: { front: { text, font }, back: ... }, dirty, posTouched, snaps: { jobKey: snapshot }, busy, error, confirm, ... }
   const LIVE = new Map();      // piece key -> the bindings on screen (a save that ends tells every one of them)
   let uid = 0;
+  /** What the card must show while a piece is being edited: the mode the person staged and the words and font typed so far (null when nothing is staged: the card shows what is saved).
+   *  The faces of the card follow it at once (None draws no face, Front + back draws both). */
+  function stageOf(key) {
+    const d = DRAFTS.get(key); if (!d || !(d.dirty || d.posTouched)) return null;
+    const x = f => ({ text: str(d.faces[f] && d.faces[f].text), font: str(d.faces[f] && d.faces[f].font) });
+    return { mode: d.mode, faces: { front: x('front'), back: x('back') } };
+  }
 
   function draftOf(vm, key) {
     let d = DRAFTS.get(key);
@@ -261,7 +268,7 @@
     const setFace = face => {
       const m = model(); if (!m || !['front', 'back'].includes(face) || modesFor(line).length === 0) return;
       const { vm, d } = m;
-      if (!facesOf(d.mode).includes(face)) setMode(vm, d, d.mode === 'none' ? face : 'both');   // (an empty slot was picked: the panel turns that face on)
+      if (!facesOf(d.mode).includes(face)) return;   // (a face the engraving does not need is not drawn, so it cannot be picked; the mode control turns a face on)
       d.face = face; d.focus = null; draw(); paintAll(vm, d);
       try { if (typeof opts.onFace === 'function') opts.onFace(face); } catch (_) { /* the host's own */ }
     };
@@ -372,24 +379,33 @@
       const cardHost = doc.createElement('div'); cardHost.className = 'engpCard'; const panelHost = doc.createElement('div'); panelHost.className = 'engpHost';
       slot.appendChild(cardHost); slot.appendChild(panelHost);
       const C = root.CharmNestEngraveCard; let card = null, panel = null;
+      const pk = pieceKeyOf(line, slotOfJob(job)), stage = () => stageOf(pk);
       const pick = f => { if (panel) panel.setFace(f); };
-      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, onPick: pick, approve: false, nameOf: o.nameOf || lineName, isWorking: Eng() && Eng().isWorking ? Eng().isWorking : undefined }), null);
+      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, stage: stage(), onPick: pick, approve: false, nameOf: o.nameOf || lineName, isWorking: Eng() && Eng().isWorking ? Eng().isWorking : undefined }), null);
       if (!card) cardHost.remove();
+      /** The card follows the STAGED edit: the faces it draws are the ones the staged mode asks for (the same tick), the face being edited is marked, and the thumbnails get the staged words back. */
+      const follow = f => { if (!card || !card.update) return; tryDo(() => card.update({ face: f, stage: stage() })); tryDo(() => panel.paintAll()); };
       panel = mount(panelHost, line, {
         job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),
         onFace: f => {
-          if (card && card.update) { tryDo(() => card.update({ face: f })); tryDo(() => panel.paintAll()); }   // (the card draws its thumbnails from the saved jobs: the staged words go back on them)
+          follow(f);   // (the card draws its thumbnails from the saved jobs: the staged words go back on them)
           // the card in front is for the face being edited: another face that has its own placement is shown by the tab itself (its card is drawn again; the staged edit stays)
           const E = Eng(), other = E && E.jobsOf ? E.jobsOf(line).find(j => (slotOfJob(j) || null) === (slotOfJob(job) || null) && F && F.faceOf(j) === f) : null;
           if (other && other !== job && E.restoreView && E.render && typeof o.refocus !== 'function') { tryDo(() => { E.restoreView({ focus: other.key }); E.render(); }); }
           else if (other && other !== job && typeof o.refocus === 'function') tryDo(() => o.refocus(other));
           if (typeof o.onFace === 'function') tryDo(() => o.onFace(f));
         },
-        onChange: ev => { if (card && card.update && ev && (ev.kind === 'saved' || ev.kind === 'cancel')) { tryDo(() => card.update({ face: ev.face })); tryDo(() => panel.paintAll()); } if (typeof o.onChange === 'function') tryDo(() => o.onChange(ev)); }
+        onChange: ev => {
+          if (card && ev) {
+            if (ev.kind === 'mode' || ev.kind === 'saved' || ev.kind === 'cancel') follow(ev.face);
+            else if (ev.kind === 'words' && card.label) { const d = DRAFTS.get(ev.key), x = d && d.faces[ev.face]; tryDo(() => card.label(ev.face, x ? x.text : '')); }   // (the words under the picture are the words being typed)
+          }
+          if (typeof o.onChange === 'function') tryDo(() => o.onChange(ev));
+        }
       });
       return { destroy() { tryDo(() => panel.destroy()); if (card && card.destroy) tryDo(() => card.destroy()); }, refresh() { tryDo(() => panel.refresh()); }, setFace: f => panel.setFace(f), panel, card };
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel slot', e); return none; }
   }
 
-  return { mount, mountPiece, html, bind, modesFor, seedText, DRAFTS, MODES };
+  return { mount, mountPiece, html, bind, modesFor, seedText, stageOf, DRAFTS, MODES };
 });
