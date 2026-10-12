@@ -203,7 +203,8 @@ const OLD = 'OLDREC';
   if (PEEK) for (const c of ['Station_Sessions', 'Sandbox_Station_Sessions', 'Station_Activity', 'Sandbox_Station_Activity']) console.log('  before:', c, JSON.stringify(st.list(c).map(d => [d._id, d.person, d.station])));
   // the control: the old records are on screen (so a clean page below proves something)
   assert(before.orders.includes(A) && before.orders.includes(B), 'before: the Orders tab lists the orders');
-  assert(/NESTED|nested|on the cards|written/i.test(before.orders), 'before: the Orders tab shows pool/nested state: ' + before.orders.slice(0, 400));
+  // (the old state on the cards is now the seals the old records left, QR LABEL PRINTED and ORDER COMPLETE: the numbered stage "2/5 nested" is printed nowhere any more, Paul 12 Oct 2026; the pool, sheet and set records are still looked for on the Library and Nest tabs below)
+  assert(/QR LABEL/i.test(before.orders) && !/\b\d\/5\b|\bnested\b/i.test(before.orders), 'before: the Orders tab shows the old records (their seals), and never the numbered stage: ' + before.orders.slice(0, 400));
   assert(/QR label printed/i.test(before.reviewDone) || before.reviewDone.includes(A), 'before: Review > Completed lists the old record');
   assert(/Paul/.test(before.signins) && !/Sandy/.test(before.signins), "before: Sign-ins lists the shop's real sign-in, not the sandbox's: " + before.signins.slice(0, 300));
   assert(/Sandy/.test(before.efficiency) && /Paul/.test(before.efficiency), "before: Employee efficiency lists the sandbox's own people (a sign-in, and the seals Paul's QR label left): " + before.efficiency.slice(0, 300));
