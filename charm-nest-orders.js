@@ -1212,7 +1212,11 @@
     const own = raw && a && a.bySku ? up(bySkuOf(a.bySku, raw)) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
     // a blocked SKU's card offers "Use this charm" too: the answer for that SKU is its design (the blocked entry beat it)
     const held = raw && masterEntry ? masterEntry(raw) : null;
-    if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
+    // DACHMAP (12 Oct 2026): a person's saved link for THIS listing and THIS transaction SKU (bySku, "Use this charm") beats an exact master match of that SKU when the saved design is in the master and
+    // is not blocked. The Etsy SKU "DACHSHUND" is also a master entry (a cat disc filed under that name); Paul linked the listing to DACHSHUND_36943 and the exact match kept winning. Never the reverse:
+    // no saved link (or one naming a design the master does not hold, or the same SKU) reads exactly as before. Only the SKU's own answer (own), never the listing-wide one (whole).
+    const ownEntry = held && own && own !== raw && masterEntry ? masterEntry(own) : null, ownWins = !!(ownEntry && !ownEntry.blocked);
+    if (raw && (!masterEntry || (held && !(own && (held.blocked || ownWins))) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
     // the master's own spelling of the SKU (a person's answer for the SKU as written came first), then the charm-only mark
     const spelt = raw && spelling(raw, masterEntry, masterLoose);
