@@ -273,7 +273,8 @@
     /** What the cards show now, as data. */
     function read() {
       const C = CARD(), rows = rowsOf(), vis = visible();
-      const pieces = C ? C.piecesOf(rows, { nameOf, isWorking, seen: j => vis || seen.has(j.key) }) : [];
+      const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
+      let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
       const ev = events(); for (const p of pieces) withForeign(p, ev, seenAt);
       return { rows, pieces, loading: rows.some(r => r && r.loading) };
     }
@@ -330,11 +331,24 @@
     }
     const cssEsc = v => (root.CSS && root.CSS.escape ? root.CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&'));
     const mkCard = piece => {
+      try { return mkCardRaw(piece); } catch (e) {   // (ENGCRASH: one card that cannot be drawn is a small quiet card; the others are drawn)
+        tryDo(() => console.warn('order engraving: a card could not be drawn', e));
+        const d = root.document, el = d.createElement('article'); el.className = 'engCard'; el.dataset.piece = piece.pieceKey || ''; el.dataset.state = 'plain'; el.dataset.rid = piece.rid || ''; el.dataset.key = piece.lineKey || ''; el.dataset.quiet = '1';
+        const b = d.createElement('b'); b.className = 'engName'; b.textContent = piece.title || 'Piece'; const f = d.createElement('div'); f.className = 'engFail'; f.textContent = 'This piece could not be drawn here.'; el.append(b, f);
+        return el;
+      }
+    };
+    const mkCardRaw = piece => {
       const C = CARD(), el = C.card(piece, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), onOpen: (face, key, btn, p) => openEngrave(face, key, btn, p || piece) });
       // (what each placement looked like when this card was drawn: an approval presses only what the person saw)
       el._drawn = new Map(piece.jobs.map(j => [j, [j.fit, j.view]]));
       const b = el.querySelector('[data-e=approve]'); if (b) b.addEventListener('click', () => { if (!b.disabled) approve(piece, b); });
       const f = fails.get(keyOf(piece)); if (f && piece.state === 'approve') showFail(el, f); else fails.delete(keyOf(piece));
+      // (ENGCRASH: a piece with no engraving job yet, held or on no sheet: the picture stays, its press says why in one line instead of opening nothing)
+      if (!piece.jobs.length) {
+        el.dataset.noJob = '1'; const why = tryDo(() => (root.EngraveLink && root.EngraveLink.resolve ? root.EngraveLink.resolve({ rid: String(piece.rid || ''), key: piece.lineKey }).why : ''), '');
+        if (why) { el.querySelectorAll('.engFace .engThumb').forEach(b => { b.title = why; }); el.querySelectorAll('.engCue').forEach(n => n.remove()); const dot = el.querySelector('.engDot'); if (dot) { dot.title = why; dot.setAttribute('aria-label', why); } }   // (no job is coming: it is not "Preparing")
+      }
       return el;
     };
     /** Look again; draw only the cards whose content has changed (or all at once when asked). `quiet`: the host is not told. */
