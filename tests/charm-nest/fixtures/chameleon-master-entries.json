@@ -1,0 +1,89 @@
+{
+ "about": "The chameleon designs of the master (read-only copy of the 9 Oct index, backups/catalog-1009): one drawing is one design file; CHAMELEON_28151 and CHAMELEON_87521 are one drawing (9.3 x 14.8 mm). Six necklace drawings, three huggie drawings.",
+ "entries": [
+  {
+   "sku": "CHAMELEON_28151",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_28151.ai",
+   "widthPt": 26.259,
+   "heightPt": 41.917
+  },
+  {
+   "sku": "CHAMELEON_33973",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_33973.ai",
+   "widthPt": 36.515,
+   "heightPt": 32.04
+  },
+  {
+   "sku": "CHAMELEON_49645",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_49645.ai",
+   "widthPt": 19.427,
+   "heightPt": 25.174
+  },
+  {
+   "sku": "CHAMELEON_60896",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_33973.ai",
+   "widthPt": 36.515,
+   "heightPt": 32.04
+  },
+  {
+   "sku": "CHAMELEON_60896 (HUGGIE)",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_60896_HUGGIE_.ai",
+   "widthPt": 28.506,
+   "heightPt": 44.387
+  },
+  {
+   "sku": "CHAMELEON_80192",
+   "aiPath": "charmnest/sandbox/master/COLOR_30356.ai",
+   "widthPt": 35.381,
+   "heightPt": 30.624
+  },
+  {
+   "sku": "CHAMELEON_87521",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_28151.ai",
+   "widthPt": 26.259,
+   "heightPt": 41.917
+  },
+  {
+   "sku": "CHAMELEON_87521 (HUGGIE)",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_87521_HUGGIE_.ai",
+   "widthPt": 26.122,
+   "heightPt": 47.648
+  },
+  {
+   "sku": "CHAMELEON_98293",
+   "aiPath": "charmnest/sandbox/master/COLOR_30356.ai",
+   "widthPt": 35.381,
+   "heightPt": 30.624
+  },
+  {
+   "sku": "CHAMELEON_98293 (HUGGIE)",
+   "aiPath": "charmnest/sandbox/master/COLOR_30356_HUGGIE_.ai",
+   "widthPt": 26.12,
+   "heightPt": 44.277
+  },
+  {
+   "sku": "CHAMELEON_99780",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_99780.ai",
+   "widthPt": 28.829,
+   "heightPt": 20.938
+  },
+  {
+   "sku": "COLOR_30356",
+   "aiPath": "charmnest/sandbox/master/COLOR_30356.ai",
+   "widthPt": 35.381,
+   "heightPt": 30.624
+  },
+  {
+   "sku": "CURLED_39935",
+   "aiPath": "charmnest/sandbox/master/CHAMELEON_99780.ai",
+   "widthPt": 28.829,
+   "heightPt": 20.938
+  },
+  {
+   "sku": "REPTILE 3-CHAMELEON",
+   "aiPath": "charmnest/sandbox/master/REPTILE_3-CHAMELEON.ai",
+   "widthPt": 25.413,
+   "heightPt": 20.143
+  }
+ ]
+}

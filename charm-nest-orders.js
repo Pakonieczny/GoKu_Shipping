@@ -1234,7 +1234,7 @@
   const NECKLACE_SIZE = 1.2;
   /** The lookalike reading of a design a line matched by its exact name. x: the matched master SKU; lf: the line's form ({ form } from lineForm); ctx: { masterEntry, masterLike (sku → the master SKUs that read the same
    *  once spacing and punctuation are set aside), guardCtx? }. → null (nothing to say) | { state: "held" | "agrees", design, others: [{ sku, holes, mm, ring }], candidates (held: the matched design first), reason | note } */
-  function lookalikeRead(x, lf, ctx, etsy) {
+  function lookalikeRead(x, lf, ctx) {
     ctx = ctx || {}; const me = ctx.masterEntry, like = ctx.masterLike, form = lf && typeof lf === "object" ? lf.form : lf;
     if (typeof me !== "function" || typeof like !== "function" || !x) return null;
     const xe = me(x); if (!xe || xe.blocked) return null;
@@ -1253,7 +1253,7 @@
     if (form === "necklace" && big.length) {
       const cands = [mine].concat(big).slice(0, 4);
       const list = cands.map(name), words = list.length === 2 ? list.join(" and ") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
-      return { state: "held", design: x, others: big, candidates: cands, reason: `SKU “${etsy || x}” matches ${cands.length === 2 ? "two" : cands.length} different drawings: ${words}, and this listing is a necklace, which a drawing with no loop cannot hang on. Pick the right one.` };
+      return { state: "held", design: x, others: big, candidates: cands, reason: `This SKU matches ${cands.length === 2 ? "two" : cands.length} different drawings: ${words}, and this listing is a necklace, which a drawing with no loop cannot hang on. Pick the right one.` };
     }
     if (form === "necklace" && small.length) return { state: "agrees", design: x, others: small, note: `“${x}” has a look-alike, ${name(small[0])}, which is a different drawing; this listing is a necklace, so it keeps ${x} (with ring)` };
     if (form === "earring" && big.length) return { state: "agrees", design: x, others: big, note: `“${x}” has a look-alike, ${name(big[0])}, which is a different drawing; this listing is a pair of earrings, so it keeps ${x} (no loop)` };
@@ -2805,14 +2805,215 @@
   }
   engravingOf.faceParse = faceParse; engravingOf.modeIn = engravingModeIn; engravingOf.modeOfOption = engravingModeOfOption;
 
+  /* ═══ 3d · NOSKU: a line with no SKU anywhere (NOSKU, 12 Oct 2026) ══════════════════════════════════════════════════════════════
+     Paul, on order 4199225418 (Etsy listing 4494184284 "Chameleon Charm Necklace", gold, 14", the personalisation a first name): "for some reason this same listing did not get matched at all to
+     anything. Please fix this issue everywhere". The row said "Needs a decision: Unknown SKU: SKU ?: no SKU on the transaction and no alias for the listing", "No vector available", nothing suggested.
+     WHY NOTHING: the listing has no SKU on Etsy at all, so every way a line finds its charm came up empty, each in its turn (interpretLine, resolveSku):
+       1 · a person's saved link for the listing (Charm_Sku_Aliases/{listing}.sku, "Use this charm" on a line with no SKU): none;
+       2 · the SKU on the transaction (Etsy copies the product's SKU onto it): blank;
+       3 · the listing's own inventory SKU (charmNestLibrary listingSkus, one cached Etsy GET per listing): blank too, a table { uni: "" } that says nothing (inventorySku);
+       4 · a person's pick for an option (an option map): the listing has no option that picks a charm.
+     And the card that asked had nothing to offer: its chips came from the line's SKU (siblingOffer needs one) or from an option's value (suggestCharms), and the TITLE, the one place that said "Chameleon", was never read.
+     THE FIX, for every listing and never a list of listings: a line that still has no SKU after 1 to 4 reads the words of its listing TITLE against the master (noSkuRead below):
+       · the design word is what is left of the title once the generic words are dropped (charm, necklace, gold, pendant, personalised, gift, for her, birthstone ... TITLE_GENERIC: words of the trade, no listings);
+         it must be a word of a master SKU's name (CHAMELEON_28151), or of another SKU the same drawing carries (the card's second SKU line), or of the title of a listing a person already linked to that design
+         (the aliases): a one-letter slip of a long word counts only as a candidate;
+       · the master's designs are DRAWINGS: SKUs that share one design file are one family (CHAMELEON_28151 and CHAMELEON_87521 are one chameleon);
+       · the line's FORM must agree: the same form guard as HUGGIEGUARD (masterForm / formClash) leaves a huggie or earring design out of a necklace line and a necklace design out of a huggie line, a blocked design is never offered.
+     THE CONFIDENCE RULE (conservative: a wrong silent match is worse than a line that waits). A design is taken by the title ALONE, with no question, only when ALL of these hold:
+       a · the line has no SKU of any kind: none on the transaction, none in Etsy's list for the listing (even one the master does not hold; the list must have been READ, an unread one waits), no saved link,
+          no option's pick, no saved pair;
+       b · the line is no special order (custom, rework, chain only, add-on, a listing a person flagged pre-made or custom, Claude's reading of one) and no Huggie CHARM SET, and no option of it is still unanswered
+           (an option may be what picks the charm);
+       c · the master is fully loaded, and the line's form is KNOWN (necklace, earrings, huggies) and agrees with the design: no clash (HUGGIEGUARD), and for a huggie or an earring line the design must
+           itself BE a huggie / an earring design (a design whose form nothing tells is only offered); a necklace line takes a necklace design or one whose form nothing contradicts;
+       d · the title's first phrase (Etsy titles are lists of phrases; the first is what the listing is) names a design word, every design word in it is a word of the master, none is a spelling guess, and
+           nothing in the title says the piece may be made to order (custom, bespoke, pre-made, rework, add-on, "your own": TITLE_DOUBT);
+       e · exactly ONE family of the master (not blocked, form agreeing) holds all of those words: no second family holds the word at all, and no other design word anywhere in the title is a word of the master
+           that this family lacks (a title that names two designs never matches);
+     Anything short of that never matches: the line waits for a person, as before, but with the ranked candidates as one-tap chips with their drawings (several designs, a weak or an unsure match) or a plain line
+     saying what was tried (nothing plausible). A match by the title is NEVER written as the listing's saved link by code: a person's tap saves it, and "Use another charm" changes it in one tap. It never overrides a real
+     SKU, a saved link, an option's pick or a person's word, and never applies to a custom, pre-made or add-on listing.
+     Two passes: the first reading finds that the line has no SKU and asks noSkuRead; when the answer is "unique" the line is read again as if that design were its SKU (skuSource "title"), so every other rule
+     (sizes, pairs, engraving, the form guard, the design's own questions) runs exactly as it does for a line with that SKU. A second reading that finds the design itself unusable for the line (not in the master, blocked,
+     a size the design lacks, the form guard) falls back to the first. */
+  const TITLE_GENERIC = new Set(("charm charms pendant pendants necklace necklaces chain chains choker chokers jewelry jewellery jewelery jewel jewels jewlery accessory accessories gold silver sterling solid filled plated plating " +
+    "yellow white real genuine pure fine karat carat tarnish stainless steel waterproof hypoallergenic free " +
+    "personalized personalised personalization personalisation custom customized customised name names initial initials letter letters monogram engraved engraving engrave hand handmade handcrafted made " +
+    "gift gifts present presents for her him them you your my our the and with without or in of a an to on by from set pair pairs one two three " +
+    "women woman womens ladies lady men mens girl girls kids kid children baby teen teens " +
+    "mom mommy mama mother mothers mum daughter sister sisters friend friends bff bestie wife girlfriend boyfriend husband fiance grandma grandmother nana aunt niece granddaughter teacher nurse " +
+    "bridesmaid bridesmaids bride wedding birthday christmas xmas valentine valentines anniversary graduation holiday easter thanksgiving halloween day days " +
+    "birthstone birth month months " +
+    "dainty tiny small mini little minimalist minimal simple delicate cute pretty lovely beautiful elegant trendy boho modern classic unique special perfect best ideal idea ideas " +
+    "love lover lovers collection style color colour colored coloured inch inches length long short size sizes layering layered stacking stack " +
+    "earring earrings stud studs hoop hoops huggie huggies huggy ear dangle dangles drop drops mismatched matching single bracelet bracelets anklet anklets keychain keyring ring rings add on extra").split(/\s+/));
+  const TITLE_FORMISH = new Set(["huggie", "huggy", "hoop", "earring", "stud", "necklace", "pendant", "choker", "charm"]);   // (words of a master SKU that say what it is, never which design)
+  /** Words that say a listing may be made to order or finished by hand, not cut from a master design: a title that holds one is never taken by its words alone (the special-order rules above still decide custom listings; this only keeps a doubtful title from a silent match). */
+  const TITLE_DOUBT = /\b(?:custom|customi[sz]ed|bespoke|made[\s-]to[\s-]order|pre[\s-]?made|rework(?:ed)?|add[\s-]?on|your own|commission(?:ed)?|repair)\b/i;
+  const asciiLower = s => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  /** The stem both sides are compared by: plurals are one word ("chameleons", "butterflies", "foxes"). */
+  const stemWord = w => (w.length > 4 && /ies$/.test(w) ? w.slice(0, -3) + "y" : w.length > 4 && /(?:ss|sh|ch|x|z)es$/.test(w) ? w.slice(0, -2) : w.length > 3 && /s$/.test(w) && !/(?:ss|us|is)$/.test(w) ? w.slice(0, -1) : w);
+  /** The words of a text that could name a design, as [{ word (as written, folded), stem }] (generic words, form words and metals dropped, each once). */
+  function designWordsOf(text) {
+    const t = asciiLower(decodeEntities(text)).replace(/['’`´]/g, "").replace(/\brose[\s-]*gold\b/g, " ").replace(/\b(?:yellow|white)[\s-]*gold\b/g, " "), out = [], seen = new Set();
+    for (const w of t.match(/[a-z]{3,}/g) || []) {
+      const s = stemWord(w);
+      if (TITLE_GENERIC.has(w) || TITLE_GENERIC.has(s) || seen.has(s)) continue;
+      seen.add(s); out.push({ word: w, stem: s });
+    }
+    return out;
+  }
+  /** The stems of the words of a master SKU's name (numbers, form words and one or two letters left out). */
+  const skuStems = sku => [...new Set((asciiLower(sku).replace(/['’`]/g, "").match(/[a-z]{3,}/g) || []).map(stemWord).filter(s => !TITLE_FORMISH.has(s)))];
+  /** The master as families of one drawing: Map key → { key, skus[], words:Set }, and word → families. Built once per library (titleIndexFor caches it). */
+  function buildTitleIndex(skus, masterEntry) {
+    const fams = new Map(), famOf = new Map();
+    for (const raw of skus || []) {
+      const sku = upSku(raw); if (!sku) continue;
+      const e = masterEntry ? masterEntry(sku) : null, file = e ? designFile(e) : "", key = file ? "f:" + file : "s:" + sku;
+      let fam = fams.get(key); if (!fam) { fam = { key, skus: [], words: new Set() }; fams.set(key, fam); }
+      fam.skus.push(sku); famOf.set(sku, fam);
+      for (const w of skuStems(sku)) fam.words.add(w);
+    }
+    const byWord = new Map();
+    for (const fam of fams.values()) for (const w of fam.words) { const a = byWord.get(w); if (a) a.push(fam); else byWord.set(w, [fam]); }
+    return { fams, famOf, byWord, words: [...byWord.keys()] };
+  }
+  const TIX = new WeakMap();
+  /** The title index for a ctx ({ masterSkus: array or () => iterable, masterKey?: object that changes with the library, masterSize?, masterEntry }); null when the caller has no list of SKUs. */
+  function titleIndexFor(ctx) {
+    const src = ctx && ctx.masterSkus; if (!src || typeof ctx.masterEntry !== "function") return null;
+    const key = ctx.masterKey && typeof ctx.masterKey === "object" ? ctx.masterKey : typeof src === "object" ? src : null, size = ctx.masterSize != null ? +ctx.masterSize : -1;
+    const hit = key ? TIX.get(key) : null; if (hit && hit.size === size) return hit.ix;
+    const ix = buildTitleIndex(typeof src === "function" ? src() : src, ctx.masterEntry);
+    if (key) TIX.set(key, { size, ix });
+    return ix;
+  }
+  const quoted = ws => ws.map(w => "“" + w + "”").join(" + ");
+  const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+  /** The listings a person linked (aliases: the title kept with the link) whose title names exactly these design words, by the family of the design they were linked to: Map family → [listing ids]. */
+  function linkedFamilies(aliases, ix, stems, ownListing) {
+    const out = new Map(); if (!aliases || typeof aliases !== "object" || !stems.length) return out;
+    for (const lid of Object.keys(aliases)) {
+      const a = aliases[lid]; if (!a || typeof a !== "object" || !a.title || String(lid) === String(ownListing) || (a.listingKind && a.listingKind.kind && a.listingKind.kind !== "regular")) continue;
+      const target = upSku(a.sku || a.huggie || ""); if (!target) continue;
+      const fam = ix.famOf.get(target); if (!fam) continue;
+      const lead = designWordsOf(titleLead(asciiLower(decodeEntities(a.title)))).map(d => d.stem);
+      if (lead.length && sameSet(lead, stems)) { const l = out.get(fam) || []; l.push(String(lid)); out.set(fam, l); }
+    }
+    return out;
+  }
+  /**
+   * What the TITLE of a line with no SKU says. line: the line; o: { index (titleIndexFor), masterEntry, masterLoose?, masterShared?, lf (lineForm of the line), aliases?, own? (the listing id) }.
+   * → { state, words[], leadWords[], candidates[{ sku, why, form, hits[] }], more, pick?: { sku, family }, why, formBlocked, others }
+   *   state: "unique" (taken by the title: every condition of the confidence rule above), "one" (one design plausibly, not surely enough: confirm it), "several" (the title names a design the library draws more than once),
+   *          "weak" (only part of the title's words, or a spelling guess), "none" (no charm of the library, or none of this form, has a word of the title).
+   * Pure: no clock, no network, no write. Never throws (a failure answers "none").
+   */
+  function noSkuRead(line, o) {
+    const out = { state: "none", words: [], leadWords: [], candidates: [], more: 0, pick: null, why: "", formBlocked: 0 };
+    try {
+      o = o || {}; const ix = o.index, me = o.masterEntry; if (!ix || !me) { out.why = "the charm library is not loaded"; out.loading = true; return out; }
+      const lf = o.lf && typeof o.lf === "object" ? o.lf : { form: "unknown", by: "none" }, g = { masterEntry: me, masterLoose: o.masterLoose, masterShared: o.masterShared };
+      const title = String(line && line.title || "").trim(), lead = titleLead(asciiLower(decodeEntities(title)));
+      const dwLead = designWordsOf(lead), dwAll = designWordsOf(title);
+      out.words = dwAll.map(d => d.word); out.leadWords = dwLead.map(d => d.word);
+      // the design words of the whole title that are a word of some master design, exactly (by stem) or as a one-letter slip (a spelling guess: never enough alone)
+      const exact = d => ix.byWord.has(d.stem), exactAll = dwAll.filter(exact), exactLead = dwLead.filter(exact), slips = new Map();
+      for (const d of dwAll) {
+        if (exact(d) || d.stem.length < 6) continue;
+        const max = d.stem.length >= 10 ? 2 : 1, near = [];
+        for (const w of ix.words) if (Math.abs(w.length - d.stem.length) <= max && (w[0] === d.stem[0] ? damerau(d.stem, w, max) <= max : w.length === d.stem.length && w.slice(1) === d.stem.slice(1))) near.push(w);
+        if (near.length && near.length <= 3) slips.set(d.stem, near);
+      }
+      if (!dwAll.length) { out.why = "no word of the title names a design"; return out; }
+      if (!exactAll.length && !slips.size) { out.why = "no word of the title is a word of a charm in the library"; return out; }
+      const leadStems = exactLead.map(d => d.stem), allStems = exactAll.map(d => d.stem), primary = leadStems.length ? leadStems : allStems, leadless = !leadStems.length;
+      // families, with the design each would be for THIS line: the SKU whose own name holds the title's words first, then the plain one, never one of another form, never a blocked one
+      const reps = new Map(), repFor = fam => {
+        if (reps.has(fam)) return reps.get(fam);
+        let best = null;
+        for (const sku of fam.skus) {
+          const e = me(sku); if (!e || e.blocked) continue;
+          const df = masterForm(sku, g); if (formClash(lf, df) || !formFits(lf.form, df) || skuFamilyConflict(sku, line)) continue;
+          const own = skuStems(sku), want = primary.length ? primary : [...slips.values()].flat(), named = want.length && (primary.length ? want.every(x => own.includes(x)) : want.some(x => own.includes(x))) ? 0 : 1;
+          const hug = /\(\s*HUGGIES?\s*\)/.test(sku) || df.form === "huggie", rank = [named, lf.form === "huggie" ? (df.form === "huggie" ? 0 : 1) : hug ? 1 : 0, sku.length];
+          const less = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
+          if (!best || less(rank, best.rank) || (!less(best.rank, rank) && sku < best.sku)) best = { sku, df, rank };
+        }
+        reps.set(fam, best); return best;
+      };
+      const hits = new Map(), at = f => { let h = hits.get(f); if (!h) hits.set(f, h = { hit: new Set(), slip: new Map() }); return h; };
+      for (const d of exactAll) for (const f of ix.byWord.get(d.stem)) at(f).hit.add(d.stem);
+      for (const [stem, near] of slips) for (const w of near) for (const f of ix.byWord.get(w)) at(f).slip.set(stem, w);
+      const all = [...hits.keys()], elig = all.filter(f => repFor(f)); out.formBlocked = all.length - elig.length;
+      const holds = (f, stems) => stems.every(s => f.words.has(s));
+      const H = primary.length ? elig.filter(f => holds(f, primary)) : [];   // (a title whose words are all spelling guesses holds no design: it only offers candidates)
+      const links = linkedFamilies(o.aliases, ix, dwLead.map(d => d.stem), o.own);
+      const exactName = f => { const r = repFor(f); if (!r) return false; const w = skuStems(r.sku); return sameSet(w, primary); };
+      const score = f => { const h = hits.get(f), r = repFor(f); let s = 0; for (const x of h.hit) s += leadStems.includes(x) ? 1 : .5; s += h.slip.size * .4 + (exactName(f) ? .5 : 0) + (lf.form !== "unknown" && r.df.form === lf.form ? .3 : r.df.form === "necklace" && r.df.soft ? .15 : 0) + (links.has(f) ? 1.5 : 0); return s; };
+      const sorted = elig.slice().sort((a, b) => score(b) - score(a) || repFor(a).sku.length - repFor(b).sku.length || (repFor(a).sku < repFor(b).sku ? -1 : 1));
+      const sayHits = f => { const h = hits.get(f), miss = primary.filter(s => !h.hit.has(s)), have = [...h.hit].map(s => (dwAll.find(d => d.stem === s) || {}).word || s);
+        return links.has(f) ? `a person linked ${links.get(f).length === 1 ? "listing " + links.get(f)[0] : links.get(f).length + " listings"} with this title to it` : h.slip.size && !h.hit.size ? `close to “${[...h.slip.values()][0].toLowerCase()}” (a spelling guess)` : miss.length ? `its name holds ${quoted(have)}, not ${quoted(miss)}` : exactName(f) ? `named ${quoted(have)}` : `its name holds ${quoted(have)}`; };
+      out.candidates = sorted.slice(0, 8).map(f => { const r = repFor(f); return { sku: r.sku, why: sayHits(f), form: r.df.form, hits: [...hits.get(f).hit], linked: links.has(f) ? links.get(f).length : 0 }; });
+      out.more = Math.max(0, sorted.length - out.candidates.length);
+      const names = quoted(exactLead.length ? exactLead.map(d => d.word) : exactAll.length ? exactAll.map(d => d.word) : dwAll.filter(d => slips.has(d.stem)).map(d => d.word)); out.said = names;
+      if (!sorted.length) { out.why = out.formBlocked ? "every charm with those words is another form or blocked" : "none"; return out; }
+      out.others = H.length;
+      // the confidence rule (above): every condition, else a person decides
+      const why = [];
+      if (leadless && !slips.size) why.push("the first words of the title name no design");
+      const lost = dwLead.filter(d => !exact(d) && !slips.has(d.stem)); if (lost.length) why.push(`the title has ${quoted(lost.map(d => d.word))}, which no charm of the library has`);
+      if (slips.size) why.push(`${quoted(dwAll.filter(d => slips.has(d.stem)).map(d => d.word))} is only a spelling guess of ${quoted([...new Set([...slips.values()].flat())])}`);
+      if (lf.form === "unknown") why.push("the listing does not say whether it is a necklace or earrings");
+      if (TITLE_DOUBT.test(title)) why.push("its title says it may be a custom or made-to-order piece");
+      if (o.etsyKnown === false) why.push("Etsy's SKU list for the listing is not read yet");
+      if (H.length !== 1) why.push(H.length ? `the library has ${H.length} charms with ${names}` : `no one charm has all of ${names}`);
+      else {
+        if (!holds(H[0], allStems)) why.push(`the title also names ${quoted(exactAll.filter(d => !H[0].words.has(d.stem)).map(d => d.word))}`);
+        // (the design must positively be of the line's kind: a necklace takes a necklace or a design whose form nothing contradicts; a huggie line or an earring line only a design that IS one)
+        const df = repFor(H[0]).df.form; if (lf.form !== "unknown" && (lf.form === "necklace" ? df !== "necklace" && df !== "unknown" : df !== lf.form)) why.push(`nothing says ${repFor(H[0]).sku} is ${lf.form === "huggie" ? "a huggie" : "an earring"} design`);
+      }
+      if (!why.length) { const f = H[0], r = repFor(f); out.state = "unique"; out.pick = { sku: r.sku, family: f.key, others: f.skus.filter(k => k !== r.sku).slice(0, 4) }; out.why = `its title names ${names}, and no other charm of the library does`; return out; }
+      out.why = why[0];
+      out.state = H.length > 1 ? "several" : H.length === 1 ? "one" : "weak";
+      return out;
+    } catch (_) { out.state = "none"; out.why = "the title could not be read"; return out; }
+  }
+  /** The plain line a Review row, a card and the order's head card say for a line with no SKU, whatever the title gave. */
+  function noSkuLine(tr, tried) {
+    const base = "This listing has no SKU on Etsy yet", t = tr || {}, words = t.said || "", n = t.others || 0;
+    if (!tr) {   // (the title was not read: Etsy's list has a SKU the library does not hold, or the line is a special order / a Huggie CHARM SET with its own questions)
+      const x = tried || {}; if (x.listingSku) return `The transaction has no SKU, and the SKU Etsy lists for this listing (${x.listingSku}) names no charm of the library: pick the charm below.`;
+      return `${base}. Tried: its saved link (${x.alias ? "none usable" : "none"}), the transaction's SKU (none), Etsy's SKU list (${x.etsy || "not loaded yet"}). Pick the charm below.`;
+    }
+    if (t.state === "several") return `${base}. Its title says ${words} and the library has ${n} charms with that name: tap the right one below.`;
+    if (t.state === "one") return `${base}. Its title says ${words}, and one charm of the library matches it, but not surely enough to use without you (${t.why}): tap it to confirm.`;
+    if (t.state === "weak") return `${base}. Only part of its title matches these charms (${t.why}): tap the right one below.`;
+    const x = tried || {}, e = x.etsy || "not loaded yet";
+    const said = t.loading ? "not read yet: the charm library is still loading" : t.formBlocked && !(t.candidates || []).length ? `its design words (${(t.words || []).slice(0, 3).join(", ")}) are only on charms of another form (huggie or earring), or blocked` : (t.words || []).length ? `its words (${(t.words || []).slice(0, 3).join(", ")}) name no charm of the library` : "no design word in it";
+    return `${base}. Tried: its saved link (${x.alias ? "none usable" : "none"}), the transaction's SKU (none), Etsy's SKU list (${e}), the title (${said}). Pick the charm below.`;
+  }
+  /** The same in one short sentence, for the order's timeline and the head card (200 characters at most). */
+  function noSkuShort(tr, tried) {
+    const base = "No SKU on Etsy for this listing", t = tr || {}, first = (t.candidates || [])[0];
+    if (!tr) return tried && tried.listingSku ? `Etsy's SKU for this listing (${tried.listingSku}) names no charm of the library: pick one.`.slice(0, 200) : `${base}: pick the charm.`;
+    if (t.state === "several") return `${base}. Its title says ${t.said || ""}; the library has ${t.others || 0} charms with that name: pick the right one.`.slice(0, 200);
+    if (t.state === "one" && first) return `${base}. Its title points to ${first.sku}: confirm it.`.slice(0, 200);
+    if (t.state === "weak") return `${base}. Only part of its title matches the library: pick the right charm.`;
+    if (t.loading) return `${base}. The charm library is still loading.`;
+    return `${base}, and nothing in its title matches a charm: pick one.`;
+  }
   /* ═══ 4 · the line spec ════════════════════════════════════════════════ */
   /**
    * order: the bridge order (design §4.4); line: one of its lines
    * ctx: { optionMaps, aliases, noDesign, masterEntry?: (sku) => entry|null }
    * → { designSku, skuSource, material, materialKey, materialLabel, form, size, chain, quantity, personalization[],
    *     buyerMessage, staffNote, messages[], updateTs, options[], problems[], noDesign, engraveCandidate, sources }
+   * pick: INTERNAL (NOSKU, section 3d): the design the title of a line with no SKU gave, { sku }; the line is then read as if that were its SKU (skuSource "title"). Callers never pass it.
    */
-  function interpretLine(order, line, ctx) {
+  function interpretLine(order, line, ctx, pick) {
     ctx = ctx || {};
     const problems = [];
     const me = ctx.masterEntry, loose = ctx.masterLoose, txSku = upSku(line.sku);   // (txSku: the SKU as the transaction carries it, before any inventory SKU stands in for it)
@@ -2848,6 +3049,7 @@
     const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
     if (viaInventory && skuSource !== "alias" && skuSource !== "generic") skuSource = "inventory";   // (CHAMMAP: a placeholder SKU Etsy's table gives the product is as generic as one on the transaction)
+    if (pick && pick.sku && !sku) { sku = upSku(pick.sku); skuSource = "title"; }   // NOSKU: the second reading of a line whose title named one design (section 3d)
     // HUGGIEGUARD (stage A): what the line IS, and a person's saved answer for this listing and SKU. resolveSku trusts an exact master SKU before any saved answer, so when the exact design's form clashes
     // with the line (below) the saved answer is read here: another design wins (source "alias"), the same design is the person's word that it is right (formSaid: never held again)
     const guardCtx = { masterEntry: me, masterLoose: loose, masterShared: ctx.masterShared };
@@ -2941,7 +3143,7 @@
       if (!quiet && !set && me && sku && !viaPick && !viaLetter && !members && !formHold && !(zodiac && zodiac.hold) && LOOK_AUTO.has(skuSource) && typeof ctx.masterLike === "function") {
         const a1 = ctx.aliases && ctx.aliases[String(line.listingId)], keys = [upSku(line.sku), txSku].filter(Boolean);
         const saidWord = !!a1 && (keys.some(r => (a1.bySku && bySkuOf(a1.bySku, r) !== undefined) || (a1.pairBySku && bySkuOf(a1.pairBySku, r) !== undefined)) || (!!a1.sku && !a1.v));
-        if (!saidWord) look = lookalikeRead(sku, lf, { masterEntry: me, masterLike: ctx.masterLike, guardCtx }, upSku(line.sku) || txSku);
+        if (!saidWord) look = lookalikeRead(sku, lf, { masterEntry: me, masterLike: ctx.masterLike, guardCtx });
       }
     } catch (_) { look = null; }
     const metalKey = String(line.metalKey || "");
@@ -3057,8 +3259,28 @@
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
     // listing whose signs share one SKU), and a charm given to the SKU instead would be every sign's
     const optionOpen = problems.some(p => p.kind === "needsMapping");
-    if (!quiet && !sku && !optionOpen) problems.push(set ? { kind: "unmatchedSku", reason: "no SKU on the transaction · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: String(line.listingId || ""), title: line.title || "" }
-      : { kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
+    if (!quiet && !sku && !optionOpen) {
+      // NOSKU (section 3d): a line with no SKU anywhere reads the words of its listing's TITLE against the master. One design that the confidence rule trusts is taken (read again as if it were the SKU);
+      // otherwise the ranked candidates ride on the problem (nosku) for the Review row and the cards, or a plain line says what was tried. Never for a special order, a Huggie CHARM SET, a listing with a SKU
+      // in Etsy's list, or a line with an unanswered option (those keep their own questions).
+      const lid = String(line.listingId || ""), tried = { alias: !!(ctx.aliases && ctx.aliases[lid]), etsy: table ? (Array.isArray(table.products) ? "no SKU on the product bought" : "none on the listing") : "", listingSku: listing && listing.sku ? upSku(listing.sku) : "" };
+      let tr = null;
+      if (!set && !special && !pick && !txSku && !(listing && listing.sku) && me) {
+        const ix = ctx.masterReady === false ? null : titleIndexFor(ctx);
+        tr = ix ? noSkuRead(line, { index: ix, masterEntry: me, masterLoose: loose, masterShared: ctx.masterShared, lf, aliases: ctx.aliases, own: lid, etsyKnown: !!table }) : { state: "none", words: [], leadWords: [], candidates: [], more: 0, pick: null, why: "the charm library is not loaded", loading: true, formBlocked: 0 };
+        if (tr.state === "unique" && tr.pick) {
+          const again = interpretLine(order, line, ctx, tr.pick);
+          // (the second reading stands unless the design itself does not suit the line: not in the master, blocked, a size it lacks, the form guard)
+          if (again && again.designSku === tr.pick.sku && !again.formHold && !again.problems.some(p => p.kind === "unmatchedSku" || p.kind === "blockedSku" || p.kind === "missingSize")) {
+            again.titleMatch = { sku: tr.pick.sku, family: tr.pick.family, others: tr.pick.others, words: tr.words, said: tr.said, why: tr.why, listingId: lid, title: String(line.title || "") };
+            return again;
+          }
+          tr = Object.assign({}, tr, { state: "one", why: "the design does not fit this line", pick: null });
+        }
+      }
+      if (set) problems.push({ kind: "unmatchedSku", reason: "This listing has no SKU on Etsy yet · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: lid, title: line.title || "" });
+      else problems.push(Object.assign({ kind: "unmatchedSku", reason: noSkuLine(tr, tried), listingId: lid, title: line.title || "" }, tr ? { nosku: { state: tr.state, candidates: tr.candidates, more: tr.more, words: tr.words, said: tr.said || "", others: tr.others || 0, why: tr.why, short: noSkuShort(tr, tried), tried } } : {}));
+    }
     if (ctx.masterEntry && sku && !quiet) {
       const entry = ctx.masterEntry(sku);
       if (!entry) {
@@ -3527,6 +3749,7 @@
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
+    noSkuRead, noSkuLine, noSkuShort, designWordsOf, titleIndexFor, buildTitleIndex,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead,
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
