@@ -278,6 +278,15 @@ await t('6f a person\'s pick on an earring (applyEngraving, the setup control): 
   const res = await h2.ctx.applyEngraving(n, { mode: 'back' }, undefined); assert.notEqual(res.never, true, 'a necklace is not swallowed by the rule'); assert.equal(res.ok, true);
 });
 
+await t('6g the order window says it calmly: one "No engraving" fact that names the buyer\'s word as a note (only when the buyer wrote something); a necklace keeps its own fact', () => {
+  const SL = cut('  function engReadingOf(r) {', '  /** The order\'s facts, gathered for OrderFacts');
+  const c = { window: { CharmNestEngraveFaces: Faces }, O, esc: x => String(x).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]), tryDo: f => { try { return f(); } catch (_) { return undefined; } }, String, Number };
+  vm.createContext(c); vm.runInContext(SL + '\nthis.engReadingOf = engReadingOf;', c);
+  const say = c.engReadingOf(earRow()); assert.equal(say.chip, 'No engraving'); assert.match(say.html, /Earrings are never engraved/); assert.match(say.html, /Capricorn/); assert.match(say.html, /not an engraving/); assert.doesNotMatch(say.html, /approve|Engrave tab|\?/i, 'no question, no card to approve');
+  const quiet = rowOf(1, 10, Object.assign({}, EAR.huggie, { variations: [V('Metal Choice', '14k Gold Filled')], personalization: [] })); assert.equal(c.engReadingOf(quiet), null, 'nothing written, nothing said');
+  const nk = c.engReadingOf(neckRow()); assert.equal(nk.chip, 'Back engraving'); assert.doesNotMatch(nk.html, /never engraved/);
+});
+
 /* ═══ 7 · the paid reader ═══ */
 await t('7 the server reader answers "no engraving" for an earring without a model call and without a key; a necklace is read as before', async () => {
   const had = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
