@@ -2080,7 +2080,8 @@ async function op_setAllocate(b) {
   if (after) {
     if (!isId(after) || !runId) return { error: "bad set id" };
     const prior = await col(SETS).doc(after).get();
-    if (!prior.exists || prior.data().runId !== runId || !prior.data().committedAt) return { error: "the set this one follows is not a committed set of the run" };
+    // (Paul, 12 Oct: a set that has formed is closed to automatic joining and the run's next sheets form the NEXT set, committed or not: it must be a set of this run that was committed or holds sheets)
+    if (!prior.exists || prior.data().runId !== runId || !(prior.data().committedAt || (Array.isArray(prior.data().sheetIds) && prior.data().sheetIds.length))) return { error: "the set this one follows is not a committed set of the run" };
   }
   const key = (group ? `${runId}|${group}` : runId) + (after ? `|after:${after}` : "");
   if (runId) { const ex = await col(SETS).where("key", "==", key).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; }
